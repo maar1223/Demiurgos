@@ -59,12 +59,14 @@ Ensure `{mundo_activo}/.demiurgos-estado.json` exists with valid schema:
 
 If it already exists, validate it. If it's corrupt, follow the recovery protocol (backup corrupt file, start clean, warn Author).
 
-### 4. Engram Detection
+### 4. Engram Verification (MANDATORY)
 
-Check if Engram persistent memory is available:
+Engram is a **hard requirement**. Demiurgos WILL NOT work without it.
 
-- **Available**: Report "Engram activo — los artefactos se persistirán en memoria persistente."
-- **Not available**: Report "Engram no disponible — los artefactos se guardarán solo como archivos locales en {mundo_activo}/."
+Verify Engram is connected by attempting `mem_search("narrative-init/{project}")`:
+
+- **Success**: Report "Engram activo — memoria persistente operativa."
+- **Failure**: STOP. Report "Engram no está disponible. Demiurgos no puede funcionar sin memoria persistente. Instalalo con: engram mcp --tools=agent y conectalo a Hermes." Do NOT proceed until Engram is available.
 
 ### 5. Init Report
 
@@ -72,8 +74,8 @@ Return a structured report:
 
 ```json
 {
-  "status": "ready",
-  "executive_summary": "Proyecto listo. {N} arcos existentes. Engram: {disponible|no disponible}.",
+    "status": "ready",
+  "executive_summary": "Proyecto listo. {N} arcos existentes. Engram: activo.",
   "artifacts": {
     "project_structure": {
       "required_present": ["Lore/", "Personajes/", "sagas/"],
@@ -82,7 +84,7 @@ Return a structured report:
     },
     "conventions": "Agente_Maestro.md: {brief summary}. LEEME.md: {brief summary}.",
     "state_file": "creado | validado | recuperado de copia corrupta",
-    "engram": "disponible | no disponible"
+    "engram": "activo"
   },
   "next_recommended": "explore",
   "risks": [],
@@ -94,5 +96,5 @@ Return a structured report:
 
 - NEVER create Lore/, Personajes/, or sagas/ content during init — those come from the Author.
 - NEVER modify Agente_Maestro.md or LEEME.md — read them as reference only.
-- Save init report to Engram with topic_key "narrative-init/{project}" when available.
+- Save init report to Engram with topic_key "narrative-init/{project}". This is MANDATORY — the report must persist in Engram.
 - After init completes, the next step is always explore or propose — the Author decides.
