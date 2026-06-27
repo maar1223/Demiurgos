@@ -68,6 +68,27 @@ You speak naturally
 | [Engram](https://github.com/Gentleman-Programming/engram) | Persistent memory | ✅ Yes |
 | Python 3.11+ | Lore indexing (optional) | ❌ Manual |
 
+## Provider Configuration
+
+Demiurgos uses a unified provider system. Two independent configurations
+for text and vision, each with their own model, endpoint, and API key:
+
+```env
+# Text (entity extraction, story writing)
+DEMIURGOS_TEXT_MODEL=deepseek-v4-flash
+DEMIURGOS_TEXT_ENDPOINT=https://opencode.ai/zen/go/v1
+DEMIURGOS_TEXT_API_KEY_ENV=OPENCODE_GO_API_KEY
+
+# Vision (image analysis, generation)
+DEMIURGOS_VISION_MODEL=qwen3.6-plus
+DEMIURGOS_VISION_ENDPOINT=https://opencode.ai/zen/go/v1
+DEMIURGOS_VISION_API_KEY_ENV=OPENCODE_GO_API_KEY
+```
+
+Add any provider: OpenAI, Google Gemini, Groq, etc. — just change the
+endpoint, model, and API key env var name. All Demiurgos components
+(sync_lore, drafts, image gen) read from the same convention.
+
 ---
 
 ## Architecture
