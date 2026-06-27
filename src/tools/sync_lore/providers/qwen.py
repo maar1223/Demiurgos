@@ -97,6 +97,7 @@ class QwenProvider(ProviderAdapter):
         self._api_key = (
             os.environ.get(config.api_key_env)
             or os.environ.get("OPENCODE_API_KEY")
+            or os.environ.get("OPENCODE_GO_API_KEY")
             or ""
         )
 
@@ -117,7 +118,7 @@ class QwenProvider(ProviderAdapter):
         if not self._api_key:
             print(
                 f"  \u26a0 {self._config.provider} API key not set "
-                f"({self._config.api_key_env} or OPENCODE_API_KEY)",
+                f"({self._config.api_key_env}, OPENCODE_API_KEY, or OPENCODE_GO_API_KEY)",
                 file=sys.stderr,
             )
             return ChunkResult()
@@ -143,7 +144,7 @@ class QwenProvider(ProviderAdapter):
         if not self._api_key:
             print(
                 f"  \u26a0 {self._config.provider} API key not set "
-                f"({self._config.api_key_env} or OPENCODE_API_KEY)",
+                f"({self._config.api_key_env}, OPENCODE_API_KEY, or OPENCODE_GO_API_KEY)",
                 file=sys.stderr,
             )
             return None

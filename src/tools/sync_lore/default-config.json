@@ -1,0 +1,7 @@
+{
+  "provider": "qwen",
+  "endpoint": "https://opencode.ai/zen/go/v1",
+  "model": "qwen3.6-plus",
+  "api_key_env": "OPENCODE_GO_API_KEY",
+  "timeout": 120
+}
