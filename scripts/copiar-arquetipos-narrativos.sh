@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Demiurgos — Copy universal narrative catalogs to a world
-# Usage: ./copiar-arquetipos.sh <world-name> [--force]
+# Usage: ./copiar-arquetipos-narrativos.sh <world-name> [--force]
 #   --force: overwrite conflicting files with the source version
 set -euo pipefail
 
@@ -17,8 +17,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-SOURCE_DIR="$PROJECT_ROOT/mundos/Arquetipos"
-TARGET_DIR="$PROJECT_ROOT/mundos/$WORLD_NAME/Arquetipos"
+SOURCE_DIR="$PROJECT_ROOT/mundos/arquetipos-narrativos"
+TARGET_DIR="$PROJECT_ROOT/mundos/$WORLD_NAME/arquetipos-narrativos"
 
 # Catalogs to copy (13 files)
 FILES=(
@@ -43,7 +43,7 @@ PRESERVED=("00_Eneagrama_Stal.md" "08_Escenarios_Adaptados.md")
 echo ":: Verificando directorio origen..."
 if [[ ! -d "$SOURCE_DIR" ]]; then
     echo "  ERROR: No se encuentra el directorio origen: $SOURCE_DIR"
-    echo "  El directorio mundos/Arquetipos/ debe existir con los catálogos."
+    echo "  El directorio mundos/arquetipos-narrativos/ debe existir con los catálogos."
     exit 1
 fi
 echo "   OK  Origen: $SOURCE_DIR"

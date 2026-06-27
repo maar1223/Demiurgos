@@ -27,7 +27,7 @@ tu-mundo/
 │   ├── Lore/                       ← Reglas del mundo, política, tecnología
 │   ├── Personajes/                 ← Fichas de personajes
 │   ├── sagas/                      ← Relatos y capítulos terminados
-│   ├── Arquetipos/                 ← Catálogos narrativos (Snyder, tramas)
+│   ├── arquetipos-narrativos/        ← Catálogos narrativos (Snyder, tramas)
 │   └── Ideas/                      ← Banco de ideas
 └── .gitignore
 ```

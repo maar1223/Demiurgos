@@ -58,7 +58,7 @@ Cada relato puede dividirse en capítulos (1500-4000 palabras recomendado).
 
 ## 5. Blindaje Narrativo (Anti-Cliché)
 
-- **Consulta de Catálogos:** Antes de proponer cualquier escena, se deben consultar los catálogos narrativos universales: tramas, conflictos, dilemas, miedos arquetípicos (disponibles en `mundos/Arquetipos/` y en el mundo activo).
+- **Consulta de Catálogos:** Antes de proponer cualquier escena, se deben consultar los catálogos narrativos universales: tramas, conflictos, dilemas, miedos arquetípicos (disponibles en `mundos/arquetipos-narrativos/` y en el mundo activo).
 - **Estructura sobre Fórmula:** Los beats narrativos son guías, no moldes rígidos. La historia manda.
 
 ---

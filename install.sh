@@ -334,8 +334,8 @@ EOF
     ask "¿Copiar catálogos narrativos universales? (Snyder, arquetipos, tramas) [S/n]:"
     read -r copy_catalogs
     if [ "$copy_catalogs" != "n" ] && [ "$copy_catalogs" != "N" ]; then
-        local catalogs_source="$DEMIURGOS_HOME/repo/mundos/Arquetipos"
-        local catalogs_target="$world_dir/mundos/$world_name/Arquetipos"
+        local catalogs_source="$DEMIURGOS_HOME/repo/mundos/arquetipos-narrativos"
+        local catalogs_target="$world_dir/mundos/$world_name/arquetipos-narrativos"
         mkdir -p "$catalogs_target"
         cp "$catalogs_source"/* "$catalogs_target/" 2>/dev/null || true
         ok "Catálogos copiados (Snyder beats, arquetipos, tramas, conflictos)"

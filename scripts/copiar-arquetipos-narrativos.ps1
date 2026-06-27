@@ -1,8 +1,8 @@
-﻿# Demiurgos — Copia de catalogos de Arquetipos
-# Copia 13 archivos desde mundos/Arquetipos/ a mundos/vibrantes/Arquetipos/
+﻿# Demiurgos — Copia de catalogos de Arquetipos Narrativos
+# Copia 13 archivos desde mundos/arquetipos-narrativos/ a un mundo destino
 # sin sobrescribir archivos existentes que difieran del origen.
 #
-# Uso: .\scripts\copiar-arquetipos.ps1 [-Force]
+# Uso: .\scripts\copiar-arquetipos-narrativos.ps1 [-Force]
 #   -Force: sobrescribe archivos en conflicto con la version origen
 
 param(
@@ -17,8 +17,8 @@ $ErrorActionPreference = "Stop"
 
 $ScriptDir = $PSScriptRoot
 $ProjectRoot = Split-Path -Parent $ScriptDir
-$SourceDir = Join-Path $ProjectRoot "mundos\Arquetipos"
-$TargetDir = Join-Path $ProjectRoot "mundos\vibrantes\Arquetipos"
+$SourceDir = Join-Path $ProjectRoot "mundos\arquetipos-narrativos"
+$TargetDir = Join-Path $ProjectRoot "mundos\vibrantes\arquetipos-narrativos"
 
 # ============================================================
 # FUNCIONES
@@ -57,7 +57,7 @@ $Archivos = @(
 Write-Step "Verificando directorio origen..."
 if (-not (Test-Path -LiteralPath $SourceDir -PathType Container)) {
     Write-ErrorMsg "No se encuentra el directorio origen: $SourceDir"
-    Write-Host "  El directorio mundos/Arquetipos/ debe existir con los 13 catalogos."
+    Write-Host "  El directorio mundos/arquetipos-narrativos/ debe existir con los 13 catalogos."
     exit 1
 }
 Write-Ok "Origen encontrado: $SourceDir"
