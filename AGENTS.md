@@ -52,6 +52,8 @@ Map natural language to skill invocations. Invoke skills via `/narrative-{phase}
 | "busca ideas sobre...", "muéstrame ideas" | Idea search | `/narrative-idea` (browse/search) |
 | "sincroniza ideas", "trae ideas del celular" | Idea sync | `/narrative-idea` (sync) |
 | "qué arcos hay activos" | Arc list | Read `.demiurgos-estado.json` → report all |
+| "importar lore", "cargar archivos", "indexar mundo", "sync mundo" | Lore import | Run `python3 src/tools/sync-lore --world . --output .demiurgos-index` via bash |
+| "generar imagen", "crear imagen de personaje" | Image generation | Run `hermes mcp invoke nanobanana` or use `/image` skill |
 
 **Ambiguous intents**: If unclear between two phases, state both and ask. Never assume. One question, then STOP.
 
