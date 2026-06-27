@@ -75,13 +75,15 @@ for text and vision, each with their own model, endpoint, and API key:
 
 ```env
 # Text (entity extraction, story writing)
-DEMIURGOS_TEXT_MODEL=deepseek-v4-flash
+DEMIURGOS_TEXT_PROVIDER=opencode-go
 DEMIURGOS_TEXT_ENDPOINT=https://opencode.ai/zen/go/v1
+DEMIURGOS_TEXT_MODEL=deepseek-v4-flash
 DEMIURGOS_TEXT_API_KEY_ENV=OPENCODE_GO_API_KEY
 
 # Vision (image analysis, generation)
-DEMIURGOS_VISION_MODEL=qwen3.6-plus
+DEMIURGOS_VISION_PROVIDER=opencode-go
 DEMIURGOS_VISION_ENDPOINT=https://opencode.ai/zen/go/v1
+DEMIURGOS_VISION_MODEL=qwen3.6-plus
 DEMIURGOS_VISION_API_KEY_ENV=OPENCODE_GO_API_KEY
 ```
 

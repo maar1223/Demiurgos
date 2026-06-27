@@ -1,11 +1,11 @@
 {
-  "provider": "qwen",
+  "provider": "opencode-go",
   "endpoint": "https://opencode.ai/zen/go/v1",
   "model": "deepseek-v4-flash",
   "api_key_env": "OPENCODE_GO_API_KEY",
   "timeout": 120,
   "vision": {
-    "provider": "qwen",
+    "provider": "opencode-go",
     "endpoint": "https://opencode.ai/zen/go/v1",
     "model": "qwen3.6-plus",
     "api_key_env": "OPENCODE_GO_API_KEY",
