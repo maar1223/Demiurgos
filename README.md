@@ -1,97 +1,102 @@
-# Proyecto Demiurgos
+# Demiurgos
 
-Motor de Ingeniería Narrativa basado en la arquitectura de Gentle-AI + OpenCode.
+**Hermes-powered narrative engine.** Create, index, and write stories with AI — while maintaining canon coherence and continuity across arcs.
 
-## Objetivo
+> 🚧 **Status:** In active development. Public beta coming soon.
 
-Adaptar el flujo Spec-Driven Development (SDD) de Gentle-AI para la creación de sagas literarias complejas de ciencia-ficción/fantasía, evitando errores de continuidad, invención de lore y ediciones no autorizadas.
+---
 
-## Paradigma: Intent-Driven (NO command-driven)
+## What is Demiurgos?
 
-**Hablás naturalmente. El orquestador interpreta tu intención.** No necesitás memorizar comandos ni saber en qué fase estás.
+Demiurgos is an open-source narrative engine that runs on **Hermes Agent**. It brings structured creative writing to AI-assisted storytelling:
 
-Ejemplos de lo que podés decir:
-- *"Quiero crear un personaje nuevo"* → el orquestador lanza `narrative-character-spec`
-- *"Arranquemos un arco sobre los Áyagars"* → explora lore, propone, pregunta antes de seguir
-- *"Escribamos el próximo capítulo"* → verifica estado actual, lanza `narrative-draft`
-- *"¿En qué estábamos?"* → busca el estado en Engram y te dice qué fase sigue
+- **13 narrative phases** — from world-building to final archive
+- **Intent-driven** — speak naturally, the orchestrator routes to the right phase
+- **Canon protection** — lore is sacred, contradictions are flagged before they reach the page
+- **Persistent memory** — Engram ensures no idea or decision is lost between sessions
+- **World-agnostic** — works with any fictional universe you create
 
-Los comandos `/narrative-*` quedan como atajos opcionales para cuando quieras ser explícito.
+---
 
-## Arquitectura
+## Quick Install
 
-**Overlay sobre Gentle-AI**: Demiurgos NO es un fork completo. Es una capa de dominio narrativo que se instala COMO EXTENSIÓN de Gentle-AI en `~/.config/opencode/`.
-
-- Gentile-AI mantiene el **runtime** (delegación, protocolo MCP, TUI, sistema SDD)
-- Demiurgos agrega el **dominio narrativo** (agentes, skills, interpretación de intención)
-- Convivencia pacífica: proyectos técnicos usan SDD, proyectos narrativos usan SDD + Demiurgos
-
-### 4 Orquestadores Jerárquicos
-
-1. **Meta-Orquestador** (`Demiurgos-Orchestrator`) — coordina el ciclo de vida del arco/saga, interpreta intención natural, NUNCA escribe
-2. **Planificador Narrativo** — explora, propone, especifica, diseña y desglosa tareas (read-only)
-3. **Escritor Narrativo** — escribe borradores en `mundos/vibrantes/sagas/`, revisa (write scope acotado)
-4. **Validador Narrativo** — verifica canon, consistencia, archiva (write solo CHANGELOG)
-
-### 3 Mini-SDDs especializados
-
-- **Planner** (6 ejecutores): explore → propose → world-spec ∥ character-spec → design → tasks
-- **Writer** (3 ejecutores): outline → draft → revise
-- **Validator** (2 ejecutores): verify → archive
-
-Base teórica: Blake Snyder (15 beats, Save the Cat), Orson Scott Card (MICE Quotient), Brandon Sanderson (3 Leyes de la Magia, Promises→Progress→Payoff).
-
-## Instalación
-
-```powershell
-# Desde el directorio de Demiurgos:
-.\install.ps1
+```bash
+curl -fsSL https://get.demiurgos.dev | bash
 ```
 
-El instalador:
-1. Verifica OpenCode + Gentle-AI instalados
-2. Mergea agentes narrativos en `~/.config/opencode/opencode.json`
-3. Copia commands, prompts y skills a `~/.config/opencode/`
-4. Appendea reglas del meta-orquestador en `AGENTS.md`
-5. Copia plugins TUI + logo
+The installer handles everything: Hermes Agent, Engram memory, Demiurgos skills, and world setup. Two flows available:
 
-Es **NO destructivo**: no toca nada de Gentle-AI existente.
+- **[1] Create a new world** — from scratch, with narrative catalogs included
+- **[2] Load an existing world** — scan your lore files, index with AI, ready to write
 
-## Estructura del proyecto
+---
+
+## How It Works
+
+```
+You speak naturally
+        │
+        ▼
+┌─────────────────────┐
+│  AGENTS.md           │  ← Orchestrator (system prompt)
+│  Intent recognition  │
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  /narrative-explore  │  ← Hermes skills (progressive disclosure)
+│  /narrative-propose  │
+│  /narrative-design   │
+│  /narrative-draft    │
+│  ... (13 phases)     │
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│  Engram MCP          │  ← Persistent memory
+│  mem_save/search     │
+└─────────────────────┘
+```
+
+---
+
+## Requirements
+
+| Component | Purpose | Auto-installed? |
+|-----------|---------|----------------|
+| [Hermes Agent](https://github.com/NousResearch/hermes-agent) | AI runtime | ✅ Yes |
+| [Engram](https://github.com/Gentleman-Programming/engram) | Persistent memory | ✅ Yes |
+| Python 3.11+ | Lore indexing (optional) | ❌ Manual |
+
+---
+
+## Architecture
 
 ```
 Demiurgos/
-├── README.md                 ← este archivo
-├── src/                      ← fuentes a instalar
-│   ├── opencode.json         ← fragmento con 15 agentes narrativos
-│   ├── AGENTS.md             ← reglas del meta-orquestador (a appendear)
-│   ├── commands/             ← 8 slash commands narrativos
-│   ├── prompts/narrative/    ← 10 prompt stubs
-│   ├── skills/               ← 11 skills ejecutores + _shared/
-│   ├── plugins/              ← TUI plugin (logo)
-│   └── tui-plugins/
-├── install.ps1               ← instalador para Windows
-└── install.sh                ← instalador para Linux/Mac
+├── AGENTS.md              ← Orchestrator system prompt
+├── skills/                ← 13 Hermes-compatible SKILL.md
+│   ├── narrative-init/
+│   ├── narrative-explore/
+│   ├── narrative-propose/
+│   └── ...
+├── mundos/Arquetipos/     ← Universal narrative catalogs
+├── src/tools/sync-lore/   ← Lore indexing pipeline (35 tests)
+├── src/tools/sync-ideas.py ← Idea bank sync (Telegram → Sheets)
+├── scripts/               ← Utility scripts
+└── install.sh             ← One-command installer
 ```
 
-## Estado de construcción
+---
 
-- [x] Paso 1 — Estructura de directorios overlay (Demiurgos/src/)
-- [x] Paso 2 — `src/opencode.json` — 12 agentes narrativos
-- [x] Paso 3 — `src/prompts/narrative/Demiurgos-Orchestrator.md` — prompt del meta-orquestador
-- [x] Paso 4 — `src/commands/` — 8 commands narrativos
-- [x] Paso 5 — `src/prompts/narrative/` — 11 prompt stubs
-- [x] Paso 6 — `src/skills/narrative-*/` — 11 skills ejecutores
-- [x] Paso 7 — `src/skills/_shared/` — archivos compartidos
-- [x] Paso 8 — Plugin TUI + logo
-- [x] Paso 9 — `install.ps1` — script instalador overlay
-- [x] Paso 10 — Prompt del orquestador reescrito como intent-driven (interpretación de lenguaje natural)
-- [ ] Paso 11 — Prueba con material de Vibrantes
-- [ ] Paso 12 — `install.sh` para Linux/Mac
+## Development
 
-## Referencias
+Demiurgos is built as a **Hermes skill tap** — skills are loaded via `skills.external_dirs` in Hermes' config. The orchestrator lives in `AGENTS.md` and is loaded as Hermes' system prompt when the user opens their world directory.
 
-- Proyecto base: Vibrantes (universo Stal/Eneagrama/Áyagars)
-- Framework base: Gentle-AI 1.27.3+ sobre OpenCode 1.15.0
-- Memoria persistente: Engram MCP
-- Directorio de instalación: `~/.config/opencode/` (overlay sobre Gentle-AI)
+- **Stack:** Hermes Agent + Engram MCP + Python (sync tools)
+- **License:** MIT
+- **Built by:** [@maar1223](https://github.com/maar1223)
+
+---
+
+*"No asumir nada. Si tienes dudas, busca el contexto en el proyecto."*

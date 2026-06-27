@@ -1,88 +1,62 @@
-# SCN (Sistema de Creación Narrativa)
+# Demiurgos — Sistema de Creación Narrativa
 
-Bienvenido a la consola del SCN, el motor narrativo diseñado para gestionar y desarrollar el universo de **Vibrantes**.
+Bienvenido a Demiurgos, el motor narrativo para Hermes Agent. Creá, indexá y escribí historias con asistencia de IA, manteniendo coherencia de canon y continuidad entre arcos.
 
-Este sistema ha sido creado para optimizar la co-escritura entre un Autor (Humano) y una Inteligencia Artificial (Agente Maestro). Su objetivo es automatizar y dar profundidad extrema a la creación de relatos, unificando narrativa, psicología y lore.
-
-Si eres un nuevo usuario o una IA recién inicializada en este directorio, este documento es tu **Punto de Partida**.
+Si sos un nuevo usuario, este documento es tu **Punto de Partida**.
 
 ---
 
-## 1. El Rol de la IA (Agente Maestro)
+## 1. El Rol de la IA
 
-Todo Agente de IA que opere dentro del SCN debe someterse a las reglas establecidas en `Agente_Maestro.md`. Tus directrices principales son:
+Demiurgos opera bajo las reglas establecidas en `Agente_Maestro.md`. Las directrices principales son:
 
-1.  **Protector del Canon:** No eres un simple asistente de redacción; eres el guardián de la coherencia. Las reglas mágicas, políticas y físicas del mundo (ver carpeta `mundos/vibrantes/Lore/`) son sagradas. Si el usuario pide algo que contradice el Canon, debes advertirlo y proponer una solución coherente.
-2.  **Tono:** Epicidad, misticismo y honestidad. Evita el tono complaciente, corporativo o genérico.
-3.  **Skills:** Usa los skills modulares en `skills/` para cada tarea específica.
-
----
-
-## 2. Radiografía del Directorio (Arquitectura de Carpetas)
-
-El SCNA es modular. Nunca debes inventar reglas desde cero; siempre debes consultar la biblioteca:
-
-*   **📄 `Agente_Maestro.md`**: Constitución del proyecto. Léelo primero.
-*   **📄 `Plantilla_Guion.md`**: Plantilla de guion narrativo para relatos.
-*   **📂 `skills/`**: Skills modulares. Cada uno encapsula una función específica:
-    *   `crear_personaje.md` — Creación de personajes adaptativa por rango
-    *   `escribir_historia.md` — Escritura de relatos con estructura narrativa
-    *   `verificar_canon.md` — Validación de coherencia contra el lore
-    *   `actualizar_lore.md` — Expansión controlada del mundo
-*   **📂 `mundos/vibrantes/Lore/`**: La "Biblia". Contiene las reglas del Planeta Vibral, religión, política, y el Sistema Stal. Consulta esto siempre para asegurar la fidelidad del contexto.
-*   **📂 `mundos/vibrantes/Arquetipos/`**: El esqueleto narrativo. Antes de escribir, cruza componentes de aquí: arquetipos y beats de Snyder, conflictos, dilemas, dinámicas de grupo y miedos arquetípicos.
-*   **📂 `mundos/vibrantes/Personajes/`**: Base de datos de fichas de personajes. Cada ficha contiene identidad base, psicología, rol narrativo y apuntes de desarrollo.
-*   **📂 `mundos/vibrantes/sagas/`**: Aquí se guardan las sagas, capítulos y relatos terminados.
-*   **📂 `_archivo_produccion/`**: Material de producción archivado (Midjourney, CapCut, ElevenLabs, etc.). No funcional.
+1. **Protector del Canon:** La IA es guardiana de la coherencia. Las reglas del mundo (carpeta `mundos/{mundo_activo}/Lore/`) son sagradas. Si pedís algo que contradice el canon, la IA te advertirá y propondrá una solución coherente.
+2. **Tono:** Épico, místico y honesto. Sin lenguaje genérico ni complaciente.
+3. **Fases:** Demiurgos usa 13 fases narrativas para cada paso del proceso creativo.
 
 ---
 
-## 3. El Motor Mágico: La Simetría Sagrada (Eneagrama + Stal)
+## 2. Estructura del Proyecto
 
-El concepto más fuerte del SCNA es su vinculación inquebrantable entre la psicología y el poder mágico. Al crear o desarrollar personajes (usar `skills/crear_personaje.md`), se siguen fases adaptativas según el rango del personaje:
-
-1.  **El Núcleo (Poder):** El poder físico y mágico de un personaje (Stals 1 al 9) nace única y exclusivamente de su personalidad (Eneatipo 1 al 9 del Eneagrama). No existen poderes al azar; la magia es el reflejo del alma.
-2.  **Máscara Social:** Se complementa su esencia con uno de los 49 Arquetipos de Personalidad y su profesión en Vibral.
-3.  **Brújula Ética:** Se escoge su nivel de relevancia narrativa, alineamiento moral y miedo principal.
-4.  **Rol Narrativo:** Se define su trama, conflicto, dilema y tema.
-
----
-
-## 4. El Flujo de Trabajo
-
-### Crear un personaje
-1. Invocar `skills/crear_personaje.md`
-2. Elegir rango (Relleno / Secundario / Principal / Inmortal)
-3. Responder las preguntas estructuradas (la IA presenta opciones del lore)
-4. La IA ensambla la ficha y valida contra canon
-5. Guardar en `mundos/vibrantes/Personajes/`
-
-### Escribir un relato
-1. Invocar `skills/escribir_historia.md`
-2. Elegir extensión y ubicación en el universo
-3. Seleccionar piezas narrativas (Trama, Conflicto, Dilema, Tema)
-4. Definir arquitectura (Snyder, beats, capítulos)
-5. Población de personajes (protagonista, antagonista, secundarios)
-6. Ambientación (nación, escenario, época)
-7. La IA genera escaleta → tú apruebas → escribe capítulo a capítulo
-8. Validación de canon con `skills/verificar_canon.md`
-9. Guardar en `mundos/vibrantes/sagas/`
-
-### Actualizar el lore
-1. Invocar `skills/actualizar_lore.md`
-2. Clasificar el cambio por TIER (1=intocable, 2=actualizable, 3=documentable)
-3. Verificar conflictos con lore existente
-4. Aprobar cambios propuestos
-5. Ejecutar y registrar en `mundos/vibrantes/Lore/CHANGELOG.md`
+```
+tu-mundo/
+├── AGENTS.md                       ← Orquestador (system prompt)
+├── .env                            ← DEMIURGOS_WORLD=tu-mundo
+├── .demiurgos-estado.json          ← Tracking de arcos
+├── mundos/tu-mundo/
+│   ├── Lore/                       ← Reglas del mundo, política, tecnología
+│   ├── Personajes/                 ← Fichas de personajes
+│   ├── sagas/                      ← Relatos y capítulos terminados
+│   ├── Arquetipos/                 ← Catálogos narrativos (Snyder, tramas)
+│   └── Ideas/                      ← Banco de ideas
+└── .gitignore
+```
 
 ---
 
-## 5. Cómo Empezar
+## 3. El Flujo de Trabajo
 
-Si eres IA: Analiza tu entorno y permanece al aguardo de la entrada del usuario. Las formas de iniciar un ciclo narrativo son:
-- *"Quiero crear un personaje nuevo..."* → `skills/crear_personaje.md`
-- *"Quiero escribir una historia..."* → `skills/escribir_historia.md`
-- *"Valida esto contra el canon..."* → `skills/verificar_canon.md`
-- *"Quiero añadir algo al lore..."* → `skills/actualizar_lore.md`
+Demiurgos es **intent-driven**: hablás naturalmente y el orquestador interpreta qué fase necesitás.
 
-*Que el Flud brille de carmesí; el Canon está blindado.*
+| Si decís... | Demiurgos ejecuta... |
+|-------------|---------------------|
+| "arranquemos" | `/narrative-init` — inicializa el proyecto |
+| "crear un personaje" | `/narrative-character-spec` |
+| "quiero escribir una historia sobre..." | Explora → Propone → Diseña → Escribe |
+| "revisá lo que escribí" | `/narrative-revise` |
+| "verificá el canon" | `/narrative-verify` |
+| "¿en qué estábamos?" | Recupera el estado y sugiere la siguiente fase |
+
+No necesitás memorizar comandos. La conversación natural es el camino principal.
+
+---
+
+## 4. Cómo Empezar
+
+1. **Instalá Demiurgos:** `curl -fsSL https://get.demiurgos.dev | bash`
+2. **Elegí:** Crear un mundo nuevo o cargar uno existente
+3. **Entrá a tu mundo:** `cd ~/demiurgos/tu-mundo`
+4. **Iniciá Hermes:** `hermes`
+5. **Decí:** "arranquemos"
+
+La IA tomará el control desde ahí, guiándote por las fases narrativas.
