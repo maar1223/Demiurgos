@@ -228,6 +228,47 @@ main_menu() {
     done
 }
 
+# ── Language Selection ──────────────────────────────────
+select_language() {
+    echo ""
+    echo -e "${BOLD}¿En qué idioma querés trabajar?${NC}"
+    echo "  [1]  English"
+    echo "  [2]  中文 (Chinese · 简体中文)"
+    echo "  [3]  हिन्दी (Hindi)"
+    echo "  [4]  Español (neutro)"
+    echo "  [5]  Español (rioplatense · voseo)"
+    echo "  [6]  Français"
+    echo "  [7]  العربية (Arabic)"
+    echo "  [8]  বাংলা (Bengali)"
+    echo "  [9]  Português"
+    echo "  [10] Русский (Russian)"
+    echo "  [11] اردو (Urdu)"
+    echo ""
+    
+    local choice
+    while true; do
+        ask "Idioma [1-11]:"
+        read -r choice
+        case "$choice" in
+            1)  DEMIURGOS_LANG="en";   LANG_NAME="English"; break;;
+            2)  DEMIURGOS_LANG="zh";   LANG_NAME="中文 (Chinese)"; break;;
+            3)  DEMIURGOS_LANG="hi";   LANG_NAME="हिन्दी (Hindi)"; break;;
+            4)  DEMIURGOS_LANG="es";   LANG_NAME="Español (neutro)"; break;;
+            5)  DEMIURGOS_LANG="es-ar"; LANG_NAME="Español (rioplatense)"; break;;
+            6)  DEMIURGOS_LANG="fr";   LANG_NAME="Français"; break;;
+            7)  DEMIURGOS_LANG="ar";   LANG_NAME="العربية (Arabic)"; break;;
+            8)  DEMIURGOS_LANG="bn";   LANG_NAME="বাংলা (Bengali)"; break;;
+            9)  DEMIURGOS_LANG="pt";   LANG_NAME="Português"; break;;
+            10) DEMIURGOS_LANG="ru";   LANG_NAME="Русский (Russian)"; break;;
+            11) DEMIURGOS_LANG="ur";   LANG_NAME="اردو (Urdu)"; break;;
+            *) warn "Elegí un número del 1 al 11";;
+        esac
+    done
+    
+    ok "Idioma: $LANG_NAME"
+    echo "$DEMIURGOS_LANG"
+}
+
 # ── Flow 1: Create New World ──────────────────────────────
 create_new_world() {
     header "Crear mundo nuevo"
@@ -244,6 +285,9 @@ create_new_world() {
     
     # Sanitize name (lowercase, no spaces)
     world_name=$(echo "$world_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+    
+    # Select language
+    DEMIURGOS_LANG=$(select_language)
     
     local world_dir="$HOME/demiurgos/$world_name"
     
@@ -263,8 +307,9 @@ create_new_world() {
     cat > "$world_dir/.env" <<EOF
 # Demiurgos — Configuración de mundo
 DEMIURGOS_WORLD=$world_name
+DEMIURGOS_LANGUAGE=$DEMIURGOS_LANG
 EOF
-    ok ".env configurado (DEMIURGOS_WORLD=$world_name)"
+    ok ".env configurado (DEMIURGOS_WORLD=$world_name, idioma=$DEMIURGOS_LANG)"
     
     # Create .gitignore
     cat > "$world_dir/.gitignore" <<EOF
