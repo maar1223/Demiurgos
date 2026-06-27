@@ -40,17 +40,38 @@ class Veredicto(str, Enum):
 
 
 # ---------------------------------------------------------------------------
-# Provider
+# Provider (dual config: text + optional vision)
 # ---------------------------------------------------------------------------
 
 @dataclass
 class ProviderConfig:
-    """LLM provider configuration. Priority: CLI > config file > env > defaults."""
+    """LLM provider configuration for text analysis.
+    
+    The optional `vision` field allows separate provider config for image
+    analysis (different model, endpoint, or API key).
+    If `vision` is None, image analysis is skipped.
+    """
+    provider: str = "qwen"
+    endpoint: str = "https://opencode.ai/zen/go/v1"
+    model: str = "deepseek-v4-flash"
+    timeout: int = 60
+    api_key_env: str = "OPENCODE_GO_API_KEY"
+    vision: VisionConfig | None = None
+
+
+@dataclass
+class VisionConfig:
+    """Separate provider configuration for image/vision analysis.
+    
+    Every field mirrors ProviderConfig. When set, image analysis uses
+    these values instead of the base config. Allows different providers,
+    endpoints, models, and API keys for text vs vision.
+    """
     provider: str = "qwen"
     endpoint: str = "https://opencode.ai/zen/go/v1"
     model: str = "qwen3.6-plus"
-    timeout: int = 60
-    api_key_env: str = "QWEN_API_KEY"
+    timeout: int = 120
+    api_key_env: str = "OPENCODE_GO_API_KEY"
 
 
 # ---------------------------------------------------------------------------

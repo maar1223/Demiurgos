@@ -93,17 +93,32 @@ class QwenProvider(ProviderAdapter):
     """
 
     def __init__(self, config: "ProviderConfig") -> None:
-        self._config = config
-        self._api_key = (
+        self._text_config = config
+        self._vision_config = config.vision
+
+        # Text API key — from text config, with fallback chain
+        self._text_api_key = (
             os.environ.get(config.api_key_env)
             or os.environ.get("OPENCODE_API_KEY")
             or os.environ.get("OPENCODE_GO_API_KEY")
             or ""
         )
 
-    @property
-    def config(self) -> "ProviderConfig":
-        return self._config
+        # Vision API key — from vision config if set, else shared with text
+        if self._vision_config is not None:
+            self._vision_api_key = (
+                os.environ.get(self._vision_config.api_key_env)
+                or self._text_api_key  # fallback to text key
+                or ""
+            )
+        else:
+            self._vision_api_key = ""
+
+    def _cfg(self, text_or_vision: str = "text") -> tuple[Any, str, str]:
+        """Return (config, api_key, label) for the given mode."""
+        if text_or_vision == "vision" and self._vision_config is not None:
+            return self._vision_config, self._vision_api_key, "vision"
+        return self._text_config, self._text_api_key, "text"
 
     # ------------------------------------------------------------------
     # Text analysis
@@ -115,10 +130,11 @@ class QwenProvider(ProviderAdapter):
 
         Returns empty ChunkResult if API key is not set or call fails.
         """
-        if not self._api_key:
+        cfg, key, label = self._cfg("text")
+        if not key:
             print(
-                f"  \u26a0 {self._config.provider} API key not set "
-                f"({self._config.api_key_env}, OPENCODE_API_KEY, or OPENCODE_GO_API_KEY)",
+                f"  \u26a0 {cfg.provider} ({label}) API key not set "
+                f"({cfg.api_key_env}, OPENCODE_API_KEY, or OPENCODE_GO_API_KEY)",
                 file=sys.stderr,
             )
             return ChunkResult()
@@ -127,6 +143,8 @@ class QwenProvider(ProviderAdapter):
             chunk.full_context(),
             _TEXT_SYSTEM_PROMPT,
             ChunkResult,
+            cfg,
+            key,
         )
 
     # ------------------------------------------------------------------
@@ -139,12 +157,20 @@ class QwenProvider(ProviderAdapter):
         """
         Analyze an image with vision LLM.
 
-        Returns None if API key is not set or call fails.
+        Returns None if vision config is not set or API key is missing.
         """
-        if not self._api_key:
+        cfg, key, label = self._cfg("vision")
+        if self._vision_config is None:
             print(
-                f"  \u26a0 {self._config.provider} API key not set "
-                f"({self._config.api_key_env}, OPENCODE_API_KEY, or OPENCODE_GO_API_KEY)",
+                "  \u26a0 No vision provider configured — skipping image analysis. "
+                "Add a 'vision' section to your sync-lore config.",
+                file=sys.stderr,
+            )
+            return None
+        if not key:
+            print(
+                f"  \u26a0 {cfg.provider} ({label}) API key not set "
+                f"({cfg.api_key_env}, OPENCODE_API_KEY, or OPENCODE_GO_API_KEY)",
                 file=sys.stderr,
             )
             return None
@@ -154,7 +180,7 @@ class QwenProvider(ProviderAdapter):
         ctx = context or "[Image — standalone, no surrounding text]"
 
         payload: dict = {
-            "model": self._config.model,
+            "model": cfg.model,
             "messages": [
                 {"role": "system", "content": _IMAGE_SYSTEM_PROMPT},
                 {
@@ -171,7 +197,7 @@ class QwenProvider(ProviderAdapter):
             "response_format": {"type": "json_object"},
         }
 
-        result = await self._post(payload)
+        result = await self._post(payload, cfg, key)
         if result is None:
             return None
 
@@ -191,17 +217,19 @@ class QwenProvider(ProviderAdapter):
         user_text: str,
         system_prompt: str,
         fallback_cls: type,
+        cfg: Any,
+        api_key: str,
     ) -> "ChunkResult | ImageAnalysis":
         """Call LLM with JSON response_format, return typed result or empty."""
         payload: dict = {
-            "model": self._config.model,
+            "model": cfg.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_text},
             ],
             "response_format": {"type": "json_object"},
         }
-        result = await self._post(payload)
+        result = await self._post(payload, cfg, api_key)
         if result is None:
             return fallback_cls()
         try:
@@ -209,7 +237,7 @@ class QwenProvider(ProviderAdapter):
         except TypeError:
             return fallback_cls()
 
-    async def _post(self, payload: dict) -> dict | None:
+    async def _post(self, payload: dict, cfg: Any, api_key: str) -> dict | None:
         """
         Core HTTP async call with 3 retries and exponential backoff.
 
@@ -219,15 +247,15 @@ class QwenProvider(ProviderAdapter):
             Parsed JSON dict from the LLM response, or None on failure.
         """
         headers = {
-            "Authorization": f"Bearer {self._api_key}",
+            "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
         }
 
-        async with httpx.AsyncClient(timeout=self._config.timeout) as client:
+        async with httpx.AsyncClient(timeout=cfg.timeout) as client:
             for attempt in range(3):
                 try:
                     resp = await client.post(
-                        f"{self._config.endpoint}/chat/completions",
+                        f"{cfg.endpoint}/chat/completions",
                         json=payload,
                         headers=headers,
                     )

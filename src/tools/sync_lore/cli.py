@@ -20,9 +20,11 @@ from .schemas import ProviderConfig
 # ---------------------------------------------------------------------------
 
 DEFAULT_ENDPOINT = "https://opencode.ai/zen/go/v1"
-DEFAULT_MODEL = "qwen3.6-plus"
+DEFAULT_MODEL = "deepseek-v4-flash"
 DEFAULT_TIMEOUT = 60
 DEFAULT_API_KEY_ENV = "QWEN_API_KEY"
+DEFAULT_VISION_MODEL = "qwen3.6-plus"
+DEFAULT_VISION_TIMEOUT = 120
 DEFAULT_MODE = "text"
 DEFAULT_OUTPUT = "./output"
 DEFAULT_WORKERS = 5
@@ -52,16 +54,32 @@ def build_config(args: argparse.Namespace) -> tuple[ProviderConfig, dict]:
     # Priority 4: defaults (already set)
 
     # Priority 3: environment variables
-    if os.environ.get("QWEN_ENDPOINT"):
+    # Primary: DEMIURGOS_TEXT_* (standard convention)
+    if os.environ.get("DEMIURGOS_TEXT_PROVIDER"):
+        provider = os.environ["DEMIURGOS_TEXT_PROVIDER"]
+    if os.environ.get("DEMIURGOS_TEXT_ENDPOINT"):
+        endpoint = os.environ["DEMIURGOS_TEXT_ENDPOINT"]
+    if os.environ.get("DEMIURGOS_TEXT_MODEL"):
+        model = os.environ["DEMIURGOS_TEXT_MODEL"]
+    if os.environ.get("DEMIURGOS_TEXT_TIMEOUT"):
+        try:
+            timeout = int(os.environ["DEMIURGOS_TEXT_TIMEOUT"])
+        except ValueError:
+            pass
+    if os.environ.get("DEMIURGOS_TEXT_API_KEY_ENV"):
+        api_key_env = os.environ["DEMIURGOS_TEXT_API_KEY_ENV"]
+
+    # Fallback: QWEN_* (legacy compatibility)
+    if not os.environ.get("DEMIURGOS_TEXT_ENDPOINT") and os.environ.get("QWEN_ENDPOINT"):
         endpoint = os.environ["QWEN_ENDPOINT"]
-    if os.environ.get("QWEN_MODEL"):
+    if not os.environ.get("DEMIURGOS_TEXT_MODEL") and os.environ.get("QWEN_MODEL"):
         model = os.environ["QWEN_MODEL"]
-    if os.environ.get("QWEN_TIMEOUT"):
+    if not os.environ.get("DEMIURGOS_TEXT_TIMEOUT") and os.environ.get("QWEN_TIMEOUT"):
         try:
             timeout = int(os.environ["QWEN_TIMEOUT"])
         except ValueError:
             pass
-    if os.environ.get("QWEN_PROVIDER"):
+    if not os.environ.get("DEMIURGOS_TEXT_PROVIDER") and os.environ.get("QWEN_PROVIDER"):
         provider = os.environ["QWEN_PROVIDER"]
 
     # Priority 2: config file (--config)
@@ -94,12 +112,56 @@ def build_config(args: argparse.Namespace) -> tuple[ProviderConfig, dict]:
     # (CLI flags for provider/model/endpoint would be added via extras,
     #  but spec defines config priority via --config JSON file)
 
+    # Parse optional vision config (env vars, then config file override)
+    from .schemas import VisionConfig
+    vision_cfg = None
+    vision_provider = os.environ.get("DEMIURGOS_VISION_PROVIDER", provider)
+    vision_endpoint = os.environ.get("DEMIURGOS_VISION_ENDPOINT", endpoint)
+    vision_model = os.environ.get("DEMIURGOS_VISION_MODEL", DEFAULT_VISION_MODEL)
+    vision_timeout = DEFAULT_VISION_TIMEOUT
+    if os.environ.get("DEMIURGOS_VISION_TIMEOUT"):
+        try:
+            vision_timeout = int(os.environ["DEMIURGOS_VISION_TIMEOUT"])
+        except ValueError:
+            pass
+    vision_api_key_env = os.environ.get("DEMIURGOS_VISION_API_KEY_ENV", api_key_env)
+
+    # Override vision config from config file
+    if args.config:
+        try:
+            with open(args.config, "r", encoding="utf-8") as vf:
+                vfile = json.load(vf)
+            if "vision" in vfile:
+                v = vfile["vision"]
+                vision_provider = v.get("provider", vision_provider)
+                vision_endpoint = v.get("endpoint", vision_endpoint)
+                vision_model = v.get("model", vision_model)
+                vision_timeout = int(v.get("timeout", vision_timeout))
+                vision_api_key_env = v.get("api_key_env", vision_api_key_env)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Build vision config if it differs from text defaults
+    if (vision_model != model or vision_endpoint != endpoint
+            or vision_api_key_env != api_key_env
+            or vision_provider != provider
+            or os.environ.get("DEMIURGOS_VISION_PROVIDER")
+            or os.environ.get("DEMIURGOS_VISION_MODEL")):
+        vision_cfg = VisionConfig(
+            provider=vision_provider,
+            endpoint=vision_endpoint,
+            model=vision_model,
+            timeout=vision_timeout,
+            api_key_env=vision_api_key_env,
+        )
+
     provider_config = ProviderConfig(
         provider=provider,
         endpoint=endpoint,
         model=model,
         timeout=timeout,
         api_key_env=api_key_env,
+        vision=vision_cfg,
     )
 
     runtime_opts = {
