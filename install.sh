@@ -351,6 +351,8 @@ EOF
     echo ""
     echo -e "  Después decí ${BOLD}\"arranquemos\"${NC} o ${BOLD}\"crear un personaje\"${NC}"
     echo ""
+    
+    offer_optional_features "$world_dir"
 }
 
 # ── Flow 2: Load Existing World ───────────────────────────
@@ -430,6 +432,110 @@ EOF
     echo ""
     echo -e "  Decí ${BOLD}\"¿en qué estábamos?\"${NC} para recuperar el estado anterior."
     echo ""
+    
+    offer_optional_features "$source_dir"
+}
+
+# ── Optional: Google Drive Sync ───────────────────────────
+offer_sync_setup() {
+    local world_dir="${1:-}"
+    echo ""
+    ask "¿Activar backup automático a Google Drive? [s/N]:"
+    read -r choice
+    if [[ "$choice" != "s" && "$choice" != "S" && "$choice" != "y" && "$choice" != "Y" ]]; then
+        echo "  Omitido. Podés activarlo después con: demiurgos sync enable"
+        return 0
+    fi
+    
+    step "Configurando backup a Google Drive..."
+    
+    # Check/install rclone
+    if ! command -v rclone &>/dev/null; then
+        if command -v brew &>/dev/null; then
+            brew install rclone 2>/dev/null || warn "No se pudo instalar rclone con brew"
+        elif command -v apt-get &>/dev/null; then
+            sudo apt-get install -y rclone 2>/dev/null || warn "No se pudo instalar rclone con apt"
+        else
+            curl https://rclone.org/install.sh | sudo bash 2>/dev/null || warn "No se pudo instalar rclone"
+        fi
+    fi
+    
+    if ! command -v rclone &>/dev/null; then
+        warn "rclone no se pudo instalar. Instalalo manualmente: https://rclone.org/downloads/"
+        return 1
+    fi
+    
+    ok "rclone instalado"
+    
+    # Configure remote
+    if ! rclone listremotes 2>/dev/null | grep -q "Demiurgos:"; then
+        echo "  Se va a abrir el navegador para autorizar Google Drive."
+        rclone config create Demiurgos drive scope=drive.file 2>/dev/null && \
+            ok "Google Drive conectado" || warn "No se pudo configurar Google Drive"
+    else
+        ok "Google Drive ya configurado"
+    fi
+    
+    # Add RCLONE_CONFIG to .env if we have a world_dir
+    if [[ -n "$world_dir" && -f "$world_dir/.env" ]]; then
+        if ! grep -q "RCLONE_CONFIG" "$world_dir/.env" 2>/dev/null; then
+            echo "# RCLONE_CONFIG=default  (descomentar si usas un perfil específico)" >> "$world_dir/.env"
+        fi
+    fi
+    
+    echo ""
+    echo -e "  ${GREEN}✓${NC} Backup activado. Tus archivos se sincronizan a Google Drive."
+    echo -e "  Para sync manual: ${BOLD}./scripts/sync-now.sh${NC}"
+    echo -e "  Para sync automático: ${BOLD}./scripts/start-sync.sh${NC}"
+}
+
+# ── Optional: Image Generation (Nano Banana) ─────────────
+offer_image_gen() {
+    echo ""
+    ask "¿Activar generación de imágenes con IA (personajes, escenarios)? [s/N]:"
+    read -r choice
+    if [[ "$choice" != "s" && "$choice" != "S" && "$choice" != "y" && "$choice" != "Y" ]]; then
+        echo "  Omitido. Podés activarlo después con: demiurgos images enable"
+        return 0
+    fi
+    
+    step "Configurando generación de imágenes..."
+    
+    # Check Python
+    if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
+        warn "Python 3 requerido para Nano Banana. Instalalo primero."
+        return 1
+    fi
+    
+    local PYTHON="python3"
+    command -v python3 &>/dev/null || PYTHON="python"
+    
+    # Install Nano Banana
+    $PYTHON -m pip install nanobanana-mcp-server 2>/dev/null && \
+        ok "Nano Banana instalado" || warn "No se pudo instalar nanobanana-mcp-server"
+    
+    # Add to Hermes MCP
+    if command -v hermes &>/dev/null; then
+        hermes mcp add nanobanana --command "nanobanana-mcp-server" 2>/dev/null && \
+            ok "Nano Banana conectado a Hermes" || \
+            warn "No se pudo conectar a Hermes. Hacelo manualmente: hermes mcp add nanobanana --command nanobanana-mcp-server"
+    fi
+    
+    echo ""
+    echo -e "  ${GREEN}✓${NC} Imágenes activadas. Usá ${BOLD}/image${NC} en Hermes para generar."
+    echo "  Requiere GOOGLE_API_KEY en tu .env"
+}
+
+# ── Optional features menu ──────────────────────────────
+offer_optional_features() {
+    local world_dir="${1:-}"
+    echo ""
+    echo -e "${CYAN}${BOLD}════════════════════════════════════════${NC}"
+    echo -e "${CYAN}${BOLD}  Configuración adicional (opt-in)${NC}"
+    echo -e "${CYAN}${BOLD}════════════════════════════════════════${NC}"
+    
+    offer_sync_setup "$world_dir"
+    offer_image_gen
 }
 
 # ── Main ───────────────────────────────────────────────────
