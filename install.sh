@@ -394,8 +394,8 @@ load_existing_world() {
     # Run sync_lore if available
     local sync_lore="$DEMIURGOS_HOME/repo/src/tools/sync_lore"
     if [ -f "$sync_lore/__main__.py" ] && command -v python3 &>/dev/null; then
-        step "Indexando con sync-lore..."
-        python3 "$sync_lore" --world "$source_dir" --output "$source_dir/.demiurgos-index" 2>/dev/null && {
+        step "Indexando con sync_lore..."
+        PYTHONUNBUFFERED=1 python3 "$sync_lore" --world "$source_dir" --output "$source_dir/.demiurgos-index" 2>/dev/null && {
             ok "Contenido indexado y categorizado"
             ok "Índice persistido en Engram"
         } || warn "sync-lore no pudo ejecutarse (requiere dependencias Python). Podés indexar después manualmente."
