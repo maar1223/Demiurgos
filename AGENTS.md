@@ -34,24 +34,23 @@ Map natural language to skill invocations. Invoke skills via `/narrative-{phase}
 
 | Author says... | Intent | Action |
 |---|---|---|
-| "crear un personaje", "necesito un personaje para..." | Character creation | `/narrative-character-spec` |
+| "propongamos una historia", "haz una propuesta para..." | Direct proposal | `/narrative-propose` |
+| "planifiquemos", "dame los beats", "estructura la historia" | Structural design | Validate deps → `/narrative-design` |
+| "desglosa escenas", "divide en capítulos" | Writing tasks | Validate deps → `/narrative-tasks` |
+| "crea un personaje", "necesito un personaje para..." | Character creation | `/narrative-character-spec` |
 | "háblame de [X]", "qué sabemos de [X]", "lore de..." | Lore/character lookup | `/narrative-explore` |
-| "define las reglas de...", "cómo es [lugar]", "expandí el mundo" | World specification | `/narrative-world-spec` |
-| "arranquemos un arco nuevo sobre...", "quiero escribir una historia de..." | New arc | `/narrative-explore` → `/narrative-propose` |
-| "propongamos una historia", "hacé una propuesta para..." | Direct proposal | `/narrative-propose` |
-| "planifiquemos", "dame los beats", "estructurá la historia" | Structural design | Validate deps → `/narrative-design` |
-| "desglosá escenas", "dividí en capítulos" | Writing tasks | Validate deps → `/narrative-tasks` |
-| "escribí el capítulo/escena", "redactá el borrador" | Drafting | Validate deps → `/narrative-outline` → `/narrative-draft` |
-| "seguí escribiendo", "continuá" | Continue drafting | `/narrative-draft` with current progress |
-| "revisá lo que escribí", "corregí el borrador" | Revision | `/narrative-revise` |
-| "verificá el canon", "chequeá continuidad" | Verification | `/narrative-verify` |
-| "cerrá el arco", "archivá la historia" | Archive | `/narrative-archive` |
+| "define las reglas de...", "cómo es [lugar]", "expande el mundo" | World specification | `/narrative-world-spec` |
+| "escribe el capítulo/escena", "redacta el borrador" | Drafting | Validate deps → `/narrative-outline` → `/narrative-draft` |
+| "sigue escribiendo", "continúa" | Continue drafting | `/narrative-draft` with current progress |
+| "revisa lo que escribí", "corrige el borrador" | Revision | `/narrative-revise` |
+| "verifica el canon", "chequea continuidad" | Verification | `/narrative-verify` |
+| "cierra el arco", "archiva la historia" | Archive | `/narrative-archive` |
 | "arranquemos", "iniciemos Demiurgos" | Setup | `/narrative-init` |
 | "¿en qué estábamos?", "qué sigue" | Status check | Read `.demiurgos-estado.json` → report |
 | "tengo una idea..." | Ambiguous idea | Ask: "Save to idea bank or develop as arc?" |
-| "guardá esta idea", "anotá esto" | Idea capture | `/narrative-idea` (capture) |
-| "buscá ideas sobre...", "mostrame ideas" | Idea search | `/narrative-idea` (browse/search) |
-| "sincronizá ideas", "traé ideas del celu" | Idea sync | `/narrative-idea` (sync) |
+| "guarda esta idea", "anota esto" | Idea capture | `/narrative-idea` (capture) |
+| "busca ideas sobre...", "muéstrame ideas" | Idea search | `/narrative-idea` (browse/search) |
+| "sincroniza ideas", "trae ideas del celular" | Idea sync | `/narrative-idea` (sync) |
 | "qué arcos hay activos" | Arc list | Read `.demiurgos-estado.json` → report all |
 
 **Ambiguous intents**: If unclear between two phases, state both and ask. Never assume. One question, then STOP.
