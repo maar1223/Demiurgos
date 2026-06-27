@@ -194,11 +194,11 @@ def main() -> None:
 
     # Validate API key for non-dry-run modes
     if not runtime_opts["dry_run"]:
-        api_key = os.environ.get(provider_config.api_key_env) or os.environ.get("OPENCODE_API_KEY")
+        api_key = os.environ.get(provider_config.api_key_env) or os.environ.get("OPENCODE_API_KEY") or os.environ.get("OPENCODE_GO_API_KEY")
         if not api_key:
             print(
                 f"\u26a0 {provider_config.provider} API key not set "
-                f"({provider_config.api_key_env} or OPENCODE_API_KEY)",
+                f"({provider_config.api_key_env}, OPENCODE_API_KEY, or OPENCODE_GO_API_KEY)",
                 file=sys.stderr,
             )
             sys.exit(1)
