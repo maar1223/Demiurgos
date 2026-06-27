@@ -1,0 +1,13 @@
+# Filtros de sincronización Demiurgos → Google Drive
+# Las reglas se evalúan de arriba hacia abajo.
+# La última regla que coincide gana.
+
+# === INCLUIR: Contenido narrativo ===
++ /mundos/**
++ /Ideas/**
++ /Arquetipos/**
++ /_archivo_produccion/**
+
+# === EXCLUIR: Todo lo demás ===
+# Código, config, git, temporales
+- *

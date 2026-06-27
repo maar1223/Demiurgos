@@ -1,0 +1,55 @@
+# ============================================================
+# Configuración local con credenciales
+# ============================================================
+.env
+
+# ============================================================
+# Mundos del Autor — contenido narrativo privado
+# ============================================================
+mundos/vibrantes/
+_archivo_produccion/
+
+# ============================================================
+# Estado local de Demiurgos (tracking de arcos narrativos)
+# ============================================================
+.demiurgos-estado.*
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# ============================================================
+# Build artifacts y temporales
+# ============================================================
+.tmp.driveupload/
+output/
+*.docx
+
+# ============================================================
+# SDD artifacts (persisten en Engram)
+# ============================================================
+sdd/
+exploration.md
+
+# ============================================================
+# OpenCode legacy (no aplica a Hermes)
+# ============================================================
+src/opencode.json
+src/tui.json
+src/tui-plugins/
+install.ps1
+.migration-baseline.txt
+src/tools/sync-ideas.py.bak-*
+src/tools/gas-webhook.js
+src/tools/pipedream-image-webhook.md
+src/tools/set-webhook.ps1
+
+# ============================================================
+# OS junk
+# ============================================================
+Thumbs.db
+.DS_Store
