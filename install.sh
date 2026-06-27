@@ -391,8 +391,8 @@ load_existing_world() {
     [ "$img_count" -gt 0 ] && ok "$img_count imágenes detectadas"
     [ "$docx_count" -gt 0 ] && ok "$docx_count documentos .docx"
     
-    # Run sync-lore if available
-    local sync_lore="$DEMIURGOS_HOME/repo/src/tools/sync-lore"
+    # Run sync_lore if available
+    local sync_lore="$DEMIURGOS_HOME/repo/src/tools/sync_lore"
     if [ -f "$sync_lore/__main__.py" ] && command -v python3 &>/dev/null; then
         step "Indexando con sync-lore..."
         python3 "$sync_lore" --world "$source_dir" --output "$source_dir/.demiurgos-index" 2>/dev/null && {
