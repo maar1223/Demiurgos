@@ -1,0 +1,20 @@
+<!-- _errors.html — htmx fragment returned on test-connection or save errors -->
+<!--
+  Swaps itself into the hx-target. Uses Pico.css color tokens for
+  error styling (red tones).
+-->
+
+<article class="connection-error" role="alert" aria-live="assertive">
+  <header>❌ Error</header>
+  <p>{{ error }}</p>
+  <footer>
+    <small>Verificá el endpoint, la API key y tu conexión a internet.</small>
+  </footer>
+</article>
+
+<!-- Clear the model datalists on error (out-of-band) -->
+<datalist id="text-model-options" hx-swap-oob="true"></datalist>
+
+<div id="vision-model-container" hx-swap-oob="true">
+  <datalist id="vision-model-options"></datalist>
+</div>

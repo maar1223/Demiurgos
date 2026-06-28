@@ -1,0 +1,40 @@
+<!-- _model_select.html — htmx fragment returned on successful connection test -->
+<!--
+  Swaps itself into the target (#connection-status) and uses
+  hx-swap-oob to update datalists and the vision-model-container.
+-->
+
+<!-- ===================================================================== -->
+<!-- Connection status (inside the hx-target: #connection-status)            -->
+<!-- ===================================================================== -->
+<article class="connection-success" role="status">
+  <header>✅ Conexión exitosa</header>
+  <p>Se descubrieron <strong>{{ models | length }}</strong> modelos compatibles.</p>
+</article>
+
+<!-- ===================================================================== -->
+<!-- Populate text model datalist (out-of-band swap)                         -->
+<!-- ===================================================================== -->
+<datalist id="text-model-options" hx-swap-oob="true">
+  {% for model in models %}
+  <option value="{{ model }}">
+  {% endfor %}
+</datalist>
+
+<!-- ===================================================================== -->
+<!-- Vision model container (out-of-band swap)                                -->
+<!-- ===================================================================== -->
+<div id="vision-model-container" hx-swap-oob="true">
+  {% if supports_vision %}
+  <datalist id="vision-model-options">
+    {% for model in models %}
+    <option value="{{ model }}">
+    {% endfor %}
+  </datalist>
+  <small class="vision-ok">✅ Proveedor compatible con visión. Los modelos fueron cargados.</small>
+  {% else %}
+  <small role="alert" class="vision-warning">
+    ⚠️ Este proveedor <strong>no soporta visión</strong>. La sección de proveedor de visión fue deshabilitada.
+  </small>
+  {% endif %}
+</div>
