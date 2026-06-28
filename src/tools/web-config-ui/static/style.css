@@ -307,3 +307,317 @@
     margin: 0.5rem auto;
   }
 }
+
+/* =========================================================================
+   Language Grid (Screen 0)
+   ========================================================================= */
+
+.language-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.language-card {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border: 2px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  background: var(--pico-background-color);
+}
+
+.language-card:hover {
+  border-color: var(--pico-primary-background);
+  background: var(--pico-primary-hover-background);
+}
+
+.language-card:has(input:checked) {
+  border-color: var(--pico-primary-background);
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}
+
+.language-card input[type="radio"] {
+  margin: 0;
+  accent-color: var(--pico-primary-background);
+}
+
+.language-name {
+  font-size: 1.05rem;
+  font-weight: 500;
+}
+
+/* =========================================================================
+   Wizard Navigation (Back / Next / Skip)
+   ========================================================================= */
+
+.wizard-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+
+.wizard-nav-right {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.wizard-nav button[type="submit"],
+.wizard-nav a[role="button"] {
+  margin-bottom: 0;
+}
+
+/* =========================================================================
+   World Screen (Screen 1)
+   ========================================================================= */
+
+.world-option-card {
+  margin-bottom: 0;
+}
+
+.world-option-card h2 {
+  margin-bottom: 0.75rem;
+}
+
+.world-option-card .input-group {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.world-option-card .input-group input {
+  flex: 1;
+}
+
+.format-badges {
+  margin-top: 1.5rem;
+}
+
+.badge-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.75rem;
+  border-radius: 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border: 1px solid var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+}
+
+.badge.supported {
+  border-color: var(--pico-primary-background);
+  color: var(--pico-primary-background);
+  background: var(--pico-primary-hover-background);
+}
+
+.badge.coming-soon {
+  opacity: 0.6;
+}
+
+/* =========================================================================
+   AI Screen (Screen 2)
+   ========================================================================= */
+
+.vision-section {
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  padding: 1rem;
+  margin-top: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.vision-section legend {
+  font-weight: 600;
+  padding: 0 0.5rem;
+}
+
+.vision-warning-card {
+  background: var(--pico-color-amber-50, #fff8e1);
+  border: 1px solid var(--pico-color-amber-400, #ffa000);
+  border-radius: var(--pico-border-radius);
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.vision-warning-card p {
+  margin: 0;
+  color: var(--pico-color-amber-700, #f57f17);
+}
+
+/* =========================================================================
+   Chat Screen (Screen 4)
+   ========================================================================= */
+
+.chat-providers {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.chat-provider-card {
+  margin-bottom: 0;
+}
+
+.chat-provider-card.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+.chat-provider-card h2 {
+  margin-bottom: 0.5rem;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.chat-config-fields {
+  margin-top: 0.5rem;
+}
+
+/* =========================================================================
+   Backup Screen (Screen 5)
+   ========================================================================= */
+
+.backup-config-fields {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+
+.warning-card {
+  background: var(--pico-color-amber-50, #fff8e1);
+  border: 1px solid var(--pico-color-amber-400, #ffa000);
+  border-radius: var(--pico-border-radius);
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.warning-card p {
+  margin: 0;
+  color: var(--pico-color-amber-700, #f57f17);
+}
+
+/* =========================================================================
+   Summary Screen (Screen 6)
+   ========================================================================= */
+
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+.summary-card {
+  margin-bottom: 0;
+}
+
+.summary-card h3 {
+  margin-bottom: 0.25rem;
+  font-size: 1rem;
+  color: var(--pico-muted-color);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.summary-card p {
+  font-size: 1.1rem;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+}
+
+.summary-card footer {
+  text-align: right;
+}
+
+.summary-card footer a {
+  font-size: 0.85rem;
+  margin-bottom: 0;
+}
+
+/* =========================================================================
+   Skip Button
+   ========================================================================= */
+
+.skip-button {
+  border: 2px dashed var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  background: transparent;
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.skip-button:hover {
+  border-color: var(--pico-primary-background);
+  color: var(--pico-primary-background);
+}
+
+/* =========================================================================
+   Connection Test Result
+   ========================================================================= */
+
+#test-result,
+#vision-test-result {
+  margin-top: 0.5rem;
+  min-height: 1.5rem;
+}
+
+/* =========================================================================
+   Responsive additions for wizard screens
+   ========================================================================= */
+
+@media (max-width: 600px) {
+  .language-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem;
+  }
+
+  .language-card {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .language-name {
+    font-size: 0.9rem;
+  }
+
+  .summary-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-providers {
+    grid-template-columns: 1fr;
+  }
+
+  .wizard-nav {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .wizard-nav-right {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .world-option-card .input-group {
+    flex-direction: column;
+  }
+}
