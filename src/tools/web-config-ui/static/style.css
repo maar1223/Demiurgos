@@ -1,0 +1,126 @@
+/* =========================================================================
+   web-config-ui — Custom styles (minimal Pico.css overrides)
+
+   Pico.css v2 is vendored at static/pico.min.css and loaded by index.html.
+   This file adds only what Pico.css doesn't provide out of the box.
+   ========================================================================= */
+
+/* --- Container --- */
+.config-container {
+  max-width: 640px;
+  margin: 2rem auto;
+  padding: 1rem;
+}
+
+/* --- Password wrapper --- */
+.password-wrapper {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.password-wrapper input {
+  flex: 1;
+}
+
+.password-toggle {
+  width: auto;
+  padding-inline: 0.75rem;
+  margin-bottom: var(--pico-spacing, 0);
+}
+
+/* --- htmx indicator --- */
+.htmx-indicator {
+  display: none;
+  opacity: 0;
+  transition: opacity 200ms ease-in;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-indicator.htmx-request {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  opacity: 1;
+}
+
+/* --- Connection success banner --- */
+.connection-success {
+  --pico-border-color: var(--pico-color-green-400, #388e3c);
+  border-left: 4px solid var(--pico-color-green-400, #388e3c);
+  margin-top: 1rem;
+}
+
+.connection-success header {
+  color: var(--pico-color-green-400, #388e3c);
+}
+
+/* --- Connection error banner --- */
+.connection-error {
+  --pico-border-color: var(--pico-color-red-400, #d32f2f);
+  border-left: 4px solid var(--pico-color-red-400, #d32f2f);
+  margin-top: 1rem;
+}
+
+.connection-error header {
+  color: var(--pico-color-red-400, #d32f2f);
+}
+
+/* --- Vision status --- */
+.vision-ok {
+  display: block;
+  margin-top: 0.5rem;
+  color: var(--pico-color-green-400, #388e3c);
+}
+
+.vision-warning {
+  display: block;
+  margin-top: 0.5rem;
+  color: var(--pico-color-amber-400, #ffa000);
+}
+
+/* --- Save status --- */
+#save-status {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border-radius: var(--pico-border-radius, 4px);
+  animation: fadeIn 300ms ease-in;
+}
+
+#save-status:has([role="status"]) {
+  background: var(--pico-color-green-50, #e8f5e9);
+  border: 1px solid var(--pico-color-green-400, #388e3c);
+}
+
+/* --- Vision section collapse transition --- */
+#vision-section {
+  transition: opacity 200ms ease-in;
+  border: 1px solid var(--pico-muted-border-color, #ddd);
+  border-radius: var(--pico-border-radius, 4px);
+  padding: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+/* --- Responsive --- */
+@media (max-width: 680px) {
+  .config-container {
+    margin: 0.5rem auto;
+    padding: 0.75rem;
+  }
+
+  .password-wrapper {
+    flex-direction: column;
+  }
+}
+
+/* --- Fade-in animation for status messages --- */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
