@@ -7,9 +7,17 @@
 <!-- ===================================================================== -->
 <!-- Connection status (inside the hx-target: #connection-status)            -->
 <!-- ===================================================================== -->
-<article class="connection-success" role="status">
+<article class="connection-success" role="status" id="connection-status">
   <header>✅ Conexión exitosa</header>
   <p>Se descubrieron <strong>{{ models | length }}</strong> modelos compatibles.</p>
+  <script>
+    (function(el) {
+      setTimeout(function() {
+        el.style.opacity = '0';
+        setTimeout(function() { if (el.parentNode) el.remove(); }, 500);
+      }, 5000);
+    })(document.currentScript.parentElement);
+  </script>
 </article>
 
 <!-- ===================================================================== -->

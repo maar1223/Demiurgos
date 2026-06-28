@@ -113,6 +113,34 @@
   }
 }
 
+/* --- Status message containers --- */
+#connection-status,
+#save-status {
+  transition: opacity 0.5s ease;
+}
+
+/* --- Dismiss button in error articles --- */
+.connection-error header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+.dismiss:hover {
+  opacity: 1;
+}
+
 /* --- Fade-in animation for status messages --- */
 @keyframes fadeIn {
   from {

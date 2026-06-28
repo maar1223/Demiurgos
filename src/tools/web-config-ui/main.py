@@ -47,7 +47,12 @@ templates = Jinja2Templates(directory=str(_HERE / "templates"))
 @app.on_event("startup")
 async def startup() -> None:
     port = os.environ.get("PORT", "8000")
-    logger.info("Demiurgos Web Config UI started on http://localhost:%s", port)
+    if "PORT" not in os.environ:
+        port = None
+    if port:
+        logger.info("Demiurgos Web Config UI started on http://localhost:%s", port)
+    else:
+        logger.info("Demiurgos Web Config UI started (port set by uvicorn)")
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +192,8 @@ async def save_config(request: Request) -> HTMLResponse:
         return HTMLResponse(
             '<div role="status" id="save-status" aria-live="polite">'
             "✅ Configuración guardada correctamente"
+            '<script>setTimeout(function(){var e=document.getElementById("save-status");'
+            "if(e){e.style.opacity='0';setTimeout(function(){if(e.parentNode)e.remove()},500)}},5000)</script>"
             "</div>"
         )
     else:

@@ -5,7 +5,11 @@
 -->
 
 <article class="connection-error" role="alert" aria-live="assertive">
-  <header>❌ Error</header>
+  <header>
+    <span>❌ Error</span>
+    <button class="dismiss" aria-label="Cerrar" title="Cerrar"
+            onclick="this.closest('article').remove()">✕</button>
+  </header>
   <p>{{ error }}</p>
   <footer>
     <small>Verificá el endpoint, la API key y tu conexión a internet.</small>
