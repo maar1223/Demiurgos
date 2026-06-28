@@ -124,6 +124,29 @@ MODEL_VISION: dict[str, dict[str, bool]] = {
         "deepseek-chat": False,
         "deepseek-reasoner": False,
     },
+    "ollama": {
+        "gemma4": True,
+        "qwen3.5": True,
+        "qwen3.6": True,
+        "minimax-m3": True,
+        "kimi-k2.7-code": True,
+        "nemotron3": True,
+        "translategemma": True,
+        "glm-ocr": True,
+        "llava": True,
+        "bakllava": True,
+        "llama3.2-vision": True,
+    },
+    "opencode-go": {
+        "deepseek-v4-flash": False,
+        "deepseek-v4-pro": False,
+        "deepseek-v4-lite": False,
+    },
+    "opencode-zen": {
+        "deepseek-v4-flash": False,
+        "deepseek-v4-pro": False,
+        "deepseek-v4-lite": False,
+    },
 }
 
 # Keywords that strongly suggest a model supports vision.
@@ -441,12 +464,11 @@ _EXCLUDE_MODEL_KEYWORDS: list[str] = [
 
 def test_connection(
     endpoint: str, api_key: str, timeout: int = 5
-) -> tuple[Optional[list[str]], Optional[str]]:
+) -> tuple[Optional[list[str]], Optional[str], Optional[dict]]:
     """Test connectivity to a provider's models endpoint.
 
     Calls ``GET {endpoint}/models`` and returns a ``(model_list,
-    error_message)`` tuple — exactly one of them will be ``None`` on a given
-    call.
+    error_code, error_params)`` tuple.
 
     Parameters
     ----------
@@ -460,11 +482,11 @@ def test_connection(
 
     Returns
     -------
-    tuple[list[str] | None, str | None]
-        - On success: ``(models, None)`` where *models* is the filtered list
-          of model IDs.
-        - On failure: ``(None, error_message)`` with a human-readable
-          description.
+    tuple[list[str] | None, str | None, dict | None]
+        - On success: ``(models, None, None)`` where *models* is the filtered
+          list of model IDs.
+        - On failure: ``(None, error_code, error_params)`` with a
+          machine-readable error code and optional parameters for i18n.
     """
     url = endpoint.rstrip("/") + "/models"
     masked = mask_api_key(api_key)
@@ -477,52 +499,39 @@ def test_connection(
             timeout=timeout,
         )
     except httpx.TimeoutException:
-        msg = f"Timeout: el endpoint no respondió en {timeout}s"
         logger.warning("Connection test timeout: %s", url)
-        return (None, msg)
+        return (None, "timeout", {"seconds": timeout})
     except httpx.ConnectError:
-        msg = "Error de conexión: endpoint inalcanzable"
         logger.warning("Connection test connect error: %s", url)
-        return (None, msg)
+        return (None, "connect_error", {})
     except httpx.RequestError as exc:
-        msg = f"Error de red: {exc}"
         logger.warning("Connection test request error: %s", exc)
-        return (None, msg)
+        return (None, "network_error", {"error": str(exc)})
     except Exception as exc:
-        msg = f"Error inesperado: {exc}"
         logger.error("Connection test unexpected error: %s", exc)
-        return (None, msg)
+        return (None, "unexpected_error", {"error": str(exc)})
 
     # --- HTTP-level errors ---
     if response.status_code == 401:
-        return (None, "Error de autenticación: API key inválida (401)")
+        return (None, "auth_401", {})
     if response.status_code == 403:
-        return (
-            None,
-            "Acceso denegado: verifica los permisos de la API key (403)",
-        )
+        return (None, "auth_403", {})
     if response.status_code == 404:
-        return (
-            None,
-            "Endpoint /models no encontrado (404). ¿La URL base es correcta?",
-        )
+        return (None, "endpoint_404", {})
     if response.status_code >= 400:
-        return (
-            None,
-            f"Error del servidor: HTTP {response.status_code}",
-        )
+        return (None, "server_error", {"code": response.status_code})
 
     # --- parse body ---
     try:
         body = response.json()
-    except Exception as exc:
-        return (None, f"No se pudo parsear la respuesta JSON: {exc}")
+    except Exception:
+        return (None, "json_parse", {})
 
     # Different providers use different keys: "data" (OpenAI), "models" (Ollama)
     models_raw = body.get("data") or body.get("models") or []
 
     if not isinstance(models_raw, list):
-        return (None, "Formato de respuesta inesperado (no es una lista de modelos)")
+        return (None, "unexpected_format", {})
 
     # --- filter ---
     filtered: list[str] = []
@@ -542,10 +551,10 @@ def test_connection(
         filtered.append(model_id)
 
     if not filtered:
-        return (None, "No se encontraron modelos de texto/imagen compatibles")
+        return (None, "no_models", {})
 
     logger.info(
         "Connection test succeeded: %d models discovered",
         len(filtered),
     )
-    return (filtered, None)
+    return (filtered, None, None)

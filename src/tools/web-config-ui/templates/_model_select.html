@@ -9,8 +9,8 @@
 <!-- Connection status (inside the hx-target: #connection-status)            -->
 <!-- ===================================================================== -->
 <article class="connection-success" role="status" id="connection-status">
-  <header>✅ Conexión exitosa</header>
-  <p>Se descubrieron <strong>{{ models | length }}</strong> modelos compatibles.</p>
+  <header>✅ {{ t('connection_success_title') }}</header>
+  <p>{{ t('connection_success_detail', count=models|length) }}</p>
   <script>
     (function(el) {
       setTimeout(function() {
@@ -26,13 +26,13 @@
 <!-- ===================================================================== -->
 <select id="text-model" name="text_model" hx-swap-oob="true"
         onchange="var c=document.getElementById('text-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
-  <option value="">— Selecciona un modelo —</option>
+  <option value="">{{ t('model_select_placeholder') }}</option>
   {% for model in models %}
   <option value="{{ model.id }}"{% if model.id == current_text_model %} selected{% endif %}>
     {{ model.id }} {{ model.tag }}
   </option>
   {% endfor %}
-  <option value="__other__">Otro (escribir manualmente)</option>
+  <option value="__other__">{{ t('model_custom_option') }}</option>
 </select>
 
 <!-- ===================================================================== -->
@@ -41,13 +41,13 @@
 {% if supports_vision %}
 <select id="vision-model" name="vision_model" hx-swap-oob="true"
         onchange="var c=document.getElementById('vision-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
-  <option value="">— Selecciona un modelo —</option>
+  <option value="">{{ t('model_select_placeholder') }}</option>
   {% for model in models %}
   <option value="{{ model.id }}"{% if model.id == current_vision_model %} selected{% endif %}>
     {{ model.id }} {{ model.tag }}
   </option>
   {% endfor %}
-  <option value="__other__">Otro (escribir manualmente)</option>
+  <option value="__other__">{{ t('model_custom_option') }}</option>
 </select>
 {% endif %}
 
@@ -56,10 +56,10 @@
 <!-- ===================================================================== -->
 <div id="vision-model-container" hx-swap-oob="true">
   {% if supports_vision %}
-  <small class="vision-ok">✅ Proveedor compatible con visión. {{ models | length }} modelos cargados.</small>
+  <small class="vision-ok">✅ {{ t('vision_supported_notice', count=models|length) }}</small>
   {% else %}
   <small role="alert" class="vision-warning">
-    ⚠️ Este proveedor <strong>no soporta visión</strong>. La sección de proveedor de visión fue deshabilitada.
+    ⚠️ {{ t('vision_not_supported_notice') }}
   </small>
   {% endif %}
 </div>

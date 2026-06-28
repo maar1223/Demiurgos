@@ -26,10 +26,10 @@
                  name="chat_telegram"
                  role="switch"
                  {% if chat_telegram_enabled %}checked{% endif %}>
-          <span>{{ t('enable_backup') }}</span>
+          <span>{{ t('enable_chat_platform') }}</span>
         </label>
         <div class="chat-config-fields">
-          <label for="telegram-token">Bot Token</label>
+          <label for="telegram-token">{{ t('bot_token_label') }}</label>
           <input type="password"
                  id="telegram-token"
                  name="telegram_token"
@@ -48,10 +48,10 @@
                  name="chat_discord"
                  role="switch"
                  {% if chat_discord_enabled %}checked{% endif %}>
-          <span>{{ t('enable_backup') }}</span>
+          <span>{{ t('enable_chat_platform') }}</span>
         </label>
         <div class="chat-config-fields">
-          <label for="discord-token">Bot Token</label>
+          <label for="discord-token">{{ t('bot_token_label') }}</label>
           <input type="password"
                  id="discord-token"
                  name="discord_token"

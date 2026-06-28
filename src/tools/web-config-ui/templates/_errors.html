@@ -6,23 +6,23 @@
 
 <article class="connection-error" role="alert" aria-live="assertive">
   <header>
-    <span>❌ Error</span>
-    <button class="dismiss" aria-label="Cerrar" title="Cerrar"
+    <span>❌ {{ t('error_title') }}</span>
+    <button class="dismiss" aria-label="{{ t('error_dismiss_label') }}" title="{{ t('error_dismiss_label') }}"
             onclick="this.closest('article').remove()">✕</button>
   </header>
   <p>{{ error }}</p>
   <footer>
-    <small>Verifica el endpoint, la API key y tu conexión a internet.</small>
+    <small>{{ t('error_connection_hint') }}</small>
   </footer>
 </article>
 
 <!-- Clear the model selects on error (out-of-band, standalone) -->
 <select id="text-model" name="text_model" hx-swap-oob="true">
-  <option value="">— Prueba la conexión primero —</option>
+  <option value="">{{ t('error_test_first') }}</option>
 </select>
 
 <select id="vision-model" name="vision_model" hx-swap-oob="true">
-  <option value="">— Prueba la conexión primero —</option>
+  <option value="">{{ t('error_test_first') }}</option>
 </select>
 
 <div id="vision-model-container" hx-swap-oob="true"></div>

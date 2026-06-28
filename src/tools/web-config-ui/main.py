@@ -928,6 +928,12 @@ async def wizard_finish(request: Request) -> HTMLResponse:
         backup = sess.get("backup", {})
 
         optional_lines: list[str] = []
+
+        # --- Core non-AI config: language and world ---
+        optional_lines.append(f"DEMIURGOS_LANGUAGE={lang}")
+        if world.get("name"):
+            optional_lines.append(f"DEMIURGOS_WORLD={world['name']}")
+
         if not img.get("skipped") and img.get("api_key"):
             optional_lines.append(f"DEMIURGOS_IMAGE_PROVIDER={img.get('provider', '')}")
             optional_lines.append(f"DEMIURGOS_IMAGE_ENDPOINT={img.get('endpoint', '')}")

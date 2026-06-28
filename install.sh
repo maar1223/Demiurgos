@@ -202,340 +202,47 @@ EOF
     ok "Skills registradas (13 fases narrativas)"
 }
 
-# ── Stage 6: Main Menu ────────────────────────────────────
-main_menu() {
-    header "Demiurgos listo"
+# ── Stage 6: Launch Web Config UI ──────────────────────────
+launch_web_ui() {
+    step "Instalando dependencias de la Web UI..."
     
-    ok "Hermes Agent operativo"
-    ok "Engram conectado (memoria persistente)"
-    ok "Demiurgos skills cargadas (13 fases narrativas)"
-    
-    echo ""
-    echo -e "${BOLD}¿Qué querés hacer?${NC}"
-    echo "  [1] Crear un mundo nuevo (empezar desde cero)"
-    echo "  [2] Cargar un mundo existente (ya tenés archivos de lore)"
-    echo ""
-    
-    local choice
-    while true; do
-        ask "Opción [1/2]:"
-        read -r choice
-        case "$choice" in
-            1) create_new_world; break;;
-            2) load_existing_world; break;;
-            *) warn "Elegí 1 o 2";;
-        esac
-    done
-}
-
-# ── Language Selection ──────────────────────────────────
-select_language() {
-    echo ""
-    echo -e "${BOLD}¿En qué idioma querés trabajar?${NC}"
-    echo "  [1]  English"
-    echo "  [2]  中文 (Chinese · 简体中文)"
-    echo "  [3]  हिन्दी (Hindi)"
-    echo "  [4]  Español (neutro)"
-    echo "  [5]  Español (rioplatense · voseo)"
-    echo "  [6]  Français"
-    echo "  [7]  العربية (Arabic)"
-    echo "  [8]  বাংলা (Bengali)"
-    echo "  [9]  Português"
-    echo "  [10] Русский (Russian)"
-    echo "  [11] اردو (Urdu)"
-    echo ""
-    
-    local choice
-    while true; do
-        ask "Idioma [1-11]:"
-        read -r choice
-        case "$choice" in
-            1)  DEMIURGOS_LANG="en";   LANG_NAME="English"; break;;
-            2)  DEMIURGOS_LANG="zh";   LANG_NAME="中文 (Chinese)"; break;;
-            3)  DEMIURGOS_LANG="hi";   LANG_NAME="हिन्दी (Hindi)"; break;;
-            4)  DEMIURGOS_LANG="es";   LANG_NAME="Español (neutro)"; break;;
-            5)  DEMIURGOS_LANG="es-ar"; LANG_NAME="Español (rioplatense)"; break;;
-            6)  DEMIURGOS_LANG="fr";   LANG_NAME="Français"; break;;
-            7)  DEMIURGOS_LANG="ar";   LANG_NAME="العربية (Arabic)"; break;;
-            8)  DEMIURGOS_LANG="bn";   LANG_NAME="বাংলা (Bengali)"; break;;
-            9)  DEMIURGOS_LANG="pt";   LANG_NAME="Português"; break;;
-            10) DEMIURGOS_LANG="ru";   LANG_NAME="Русский (Russian)"; break;;
-            11) DEMIURGOS_LANG="ur";   LANG_NAME="اردو (Urdu)"; break;;
-            *) warn "Elegí un número del 1 al 11";;
-        esac
-    done
-    
-    ok "Idioma: $LANG_NAME"
-    echo "$DEMIURGOS_LANG"
-}
-
-# ── Flow 1: Create New World ──────────────────────────────
-create_new_world() {
-    header "Crear mundo nuevo"
-    
-    # Ask world name
-    local world_name
-    while true; do
-        ask "¿Nombre de tu mundo? (ej: thalassia):"
-        read -r world_name
-        if [ -n "$world_name" ]; then
-            break
-        fi
-    done
-    
-    # Sanitize name (lowercase, no spaces)
-    world_name=$(echo "$world_name" | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
-    
-    # Select language
-    DEMIURGOS_LANG=$(select_language)
-    
-    local world_dir="$HOME/demiurgos/$world_name"
-    
-    if [ -d "$world_dir" ]; then
-        fail "El directorio $world_dir ya existe. Elegí otro nombre o usá [2] para cargar un mundo existente."
-    fi
-    
-    # Create structure
-    mkdir -p "$world_dir/mundos/$world_name"/{Lore,Personajes,sagas,Ideas}
-    ok "Estructura creada en $world_dir"
-    
-    # Copy AGENTS.md (orchestrator)
-    cp "$DEMIURGOS_HOME/repo/AGENTS.md" "$world_dir/AGENTS.md"
-    ok "Orquestador copiado (AGENTS.md)"
-    
-    # Create .env
-    cat > "$world_dir/.env" <<EOF
-# Demiurgos — Configuración de mundo
-DEMIURGOS_WORLD=$world_name
-DEMIURGOS_LANGUAGE=$DEMIURGOS_LANG
-EOF
-    ok ".env configurado (DEMIURGOS_WORLD=$world_name, idioma=$DEMIURGOS_LANG)"
-    
-    # Create .gitignore
-    cat > "$world_dir/.gitignore" <<EOF
-.env
-.demiurgos-estado.*
-EOF
-    
-    # Create initial .demiurgos-estado.json
-    cat > "$world_dir/.demiurgos-estado.json" <<EOF
-{
-  "version": 1,
-  "mundo_activo": "$world_name",
-  "last_session": "",
-  "arcos": {},
-  "sesiones": []
-}
-EOF
-    ok "Estado inicial creado"
-    
-    # Offer catalogs
-    echo ""
-    ask "¿Copiar catálogos narrativos universales? (Snyder, arquetipos, tramas) [S/n]:"
-    read -r copy_catalogs
-    if [ "$copy_catalogs" != "n" ] && [ "$copy_catalogs" != "N" ]; then
-        local catalogs_source="$DEMIURGOS_HOME/repo/mundos/arquetipos-narrativos"
-        local catalogs_target="$world_dir/mundos/$world_name/arquetipos-narrativos"
-        mkdir -p "$catalogs_target"
-        cp "$catalogs_source"/* "$catalogs_target/" 2>/dev/null || true
-        ok "Catálogos copiados (Snyder beats, arquetipos, tramas, conflictos)"
-    fi
-    
-    # Done
-    echo ""
-    header "✅ $world_name listo"
-    echo ""
-    echo -e "  Para empezar a crear:"
-    echo -e "    ${BOLD}cd $world_dir${NC}"
-    echo -e "    ${BOLD}hermes${NC}"
-    echo ""
-    echo -e "  Después decí ${BOLD}\"arranquemos\"${NC} o ${BOLD}\"crear un personaje\"${NC}"
-    echo ""
-    
-    offer_optional_features "$world_dir"
-}
-
-# ── Flow 2: Load Existing World ───────────────────────────
-load_existing_world() {
-    header "Cargar mundo existente"
-    
-    # Ask for directory
-    local source_dir
-    while true; do
-        ask "📂 Ruta de tu mundo (arrastrá la carpeta o escribí la ruta):"
-        read -r source_dir
-        
-        # Expand ~
-        source_dir="${source_dir/#\~/$HOME}"
-        
-        if [ -d "$source_dir" ]; then
-            break
-        fi
-        warn "Directorio no encontrado: $source_dir"
-    done
-    
-    ok "Directorio: $source_dir"
-    
-    # Detect world name from directory name
-    local world_name
-    world_name=$(basename "$source_dir")
-    
-    # Count files
-    step "Escaneando archivos de lore..."
-    local md_count img_count docx_count
-    md_count=$(find "$source_dir" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
-    img_count=$(find "$source_dir" -name "*.jpg" -o -name "*.png" -o -name "*.webp" 2>/dev/null | wc -l | tr -d ' ')
-    docx_count=$(find "$source_dir" -name "*.docx" -type f 2>/dev/null | wc -l | tr -d ' ')
-    
-    ok "$md_count archivos .md encontrados"
-    [ "$img_count" -gt 0 ] && ok "$img_count imágenes detectadas"
-    [ "$docx_count" -gt 0 ] && ok "$docx_count documentos .docx"
-    
-    # Run sync_lore if available
-    local sync_lore="$DEMIURGOS_HOME/repo/src/tools/sync_lore"
-    if [ -f "$sync_lore/__main__.py" ] && command -v python3 &>/dev/null; then
-        step "Indexando con sync_lore..."
-        PYTHONUNBUFFERED=1 python3 "$sync_lore" --world "$source_dir" --output "$source_dir/.demiurgos-index" 2>/dev/null && {
-            ok "Contenido indexado y categorizado"
-            ok "Índice persistido en Engram"
-        } || warn "sync-lore no pudo ejecutarse (requiere dependencias Python). Podés indexar después manualmente."
+    local PYTHON=""
+    if command -v python3 &>/dev/null; then
+        PYTHON="python3"
+    elif command -v python &>/dev/null; then
+        PYTHON="python"
     else
-        warn "sync-lore no disponible (Python 3 requerido). El mundo se cargará sin indexación automática."
-    fi
-    
-    # Ensure AGENTS.md exists
-    if [ ! -f "$source_dir/AGENTS.md" ]; then
-        cp "$DEMIURGOS_HOME/repo/AGENTS.md" "$source_dir/AGENTS.md"
-        ok "AGENTS.md copiado (orquestador)"
-    fi
-    
-    # Ensure .env has DEMIURGOS_WORLD
-    if [ -f "$source_dir/.env" ]; then
-        if ! grep -q "DEMIURGOS_WORLD" "$source_dir/.env" 2>/dev/null; then
-            echo "DEMIURGOS_WORLD=$world_name" >> "$source_dir/.env"
-            ok "DEMIURGOS_WORLD=$world_name agregado a .env"
-        fi
-    else
-        cat > "$source_dir/.env" <<EOF
-DEMIURGOS_WORLD=$world_name
-EOF
-        ok ".env creado (DEMIURGOS_WORLD=$world_name)"
-    fi
-    
-    # Done
-    echo ""
-    header "✅ $world_name listo"
-    echo ""
-    echo -e "  Para empezar a trabajar:"
-    echo -e "    ${BOLD}cd $source_dir${NC}"
-    echo -e "    ${BOLD}hermes${NC}"
-    echo ""
-    echo -e "  Decí ${BOLD}\"¿en qué estábamos?\"${NC} para recuperar el estado anterior."
-    echo ""
-    
-    offer_optional_features "$source_dir"
-}
-
-# ── Optional: Google Drive Sync ───────────────────────────
-offer_sync_setup() {
-    local world_dir="${1:-}"
-    echo ""
-    ask "¿Activar backup automático a Google Drive? [s/N]:"
-    read -r choice
-    if [[ "$choice" != "s" && "$choice" != "S" && "$choice" != "y" && "$choice" != "Y" ]]; then
-        echo "  Omitido. Podés activarlo después con: demiurgos sync enable"
-        return 0
-    fi
-    
-    step "Configurando backup a Google Drive..."
-    
-    # Check/install rclone
-    if ! command -v rclone &>/dev/null; then
-        if command -v brew &>/dev/null; then
-            brew install rclone 2>/dev/null || warn "No se pudo instalar rclone con brew"
-        elif command -v apt-get &>/dev/null; then
-            sudo apt-get install -y rclone 2>/dev/null || warn "No se pudo instalar rclone con apt"
-        else
-            curl https://rclone.org/install.sh | sudo bash 2>/dev/null || warn "No se pudo instalar rclone"
-        fi
-    fi
-    
-    if ! command -v rclone &>/dev/null; then
-        warn "rclone no se pudo instalar. Instalalo manualmente: https://rclone.org/downloads/"
+        warn "Python 3 no encontrado. La Web UI no se puede iniciar."
+        warn "Instalalo con: apt install python3 / brew install python3"
         return 1
     fi
     
-    ok "rclone instalado"
-    
-    # Configure remote
-    if ! rclone listremotes 2>/dev/null | grep -q "Demiurgos:"; then
-        echo "  Se va a abrir el navegador para autorizar Google Drive."
-        rclone config create Demiurgos drive scope=drive.file 2>/dev/null && \
-            ok "Google Drive conectado" || warn "No se pudo configurar Google Drive"
-    else
-        ok "Google Drive ya configurado"
-    fi
-    
-    # Add RCLONE_CONFIG to .env if we have a world_dir
-    if [[ -n "$world_dir" && -f "$world_dir/.env" ]]; then
-        if ! grep -q "RCLONE_CONFIG" "$world_dir/.env" 2>/dev/null; then
-            echo "# RCLONE_CONFIG=default  (descomentar si usas un perfil específico)" >> "$world_dir/.env"
-        fi
-    fi
-    
-    echo ""
-    echo -e "  ${GREEN}✓${NC} Backup activado. Tus archivos se sincronizan a Google Drive."
-    echo -e "  Para sync manual: ${BOLD}./scripts/sync-now.sh${NC}"
-    echo -e "  Para sync automático: ${BOLD}./scripts/start-sync.sh${NC}"
-}
-
-# ── Optional: Image Generation (Nano Banana) ─────────────
-offer_image_gen() {
-    echo ""
-    ask "¿Activar generación de imágenes con IA (personajes, escenarios)? [s/N]:"
-    read -r choice
-    if [[ "$choice" != "s" && "$choice" != "S" && "$choice" != "y" && "$choice" != "Y" ]]; then
-        echo "  Omitido. Podés activarlo después con: demiurgos images enable"
-        return 0
-    fi
-    
-    step "Configurando generación de imágenes..."
-    
-    # Check Python
-    if ! command -v python3 &>/dev/null && ! command -v python &>/dev/null; then
-        warn "Python 3 requerido para Nano Banana. Instalalo primero."
+    local req="$DEMIURGOS_HOME/repo/src/tools/web-config-ui/requirements.txt"
+    $PYTHON -m pip install -r "$req" 2>/dev/null || {
+        warn "No se pudieron instalar las dependencias de la Web UI."
         return 1
+    }
+    ok "Dependencias de Web UI instaladas"
+    
+    # Launch uvicorn in background
+    local ui_dir="$DEMIURGOS_HOME/repo/src/tools/web-config-ui"
+    cd "$ui_dir"
+    nohup uvicorn main:app --host 127.0.0.1 --port 8000 >/dev/null 2>&1 &
+    
+    sleep 2
+    
+    # Open browser
+    if command -v xdg-open &>/dev/null; then
+        xdg-open "http://localhost:8000" 2>/dev/null &
+    elif command -v open &>/dev/null; then
+        open "http://localhost:8000" 2>/dev/null &
     fi
     
-    local PYTHON="python3"
-    command -v python3 &>/dev/null || PYTHON="python"
-    
-    # Install Nano Banana
-    $PYTHON -m pip install nanobanana-mcp-server 2>/dev/null && \
-        ok "Nano Banana instalado" || warn "No se pudo instalar nanobanana-mcp-server"
-    
-    # Add to Hermes MCP
-    if command -v hermes &>/dev/null; then
-        hermes mcp add nanobanana --command "nanobanana-mcp-server" 2>/dev/null && \
-            ok "Nano Banana conectado a Hermes" || \
-            warn "No se pudo conectar a Hermes. Hacelo manualmente: hermes mcp add nanobanana --command nanobanana-mcp-server"
-    fi
+    ok "Web UI iniciada en http://localhost:8000"
     
     echo ""
-    echo -e "  ${GREEN}✓${NC} Imágenes activadas. Usá ${BOLD}/image${NC} en Hermes para generar."
-    echo "  Requiere GOOGLE_API_KEY en tu .env"
-}
-
-# ── Optional features menu ──────────────────────────────
-offer_optional_features() {
-    local world_dir="${1:-}"
-    echo ""
-    echo -e "${CYAN}${BOLD}════════════════════════════════════════${NC}"
-    echo -e "${CYAN}${BOLD}  Configuración adicional (opt-in)${NC}"
-    echo -e "${CYAN}${BOLD}════════════════════════════════════════${NC}"
-    
-    offer_sync_setup "$world_dir"
-    offer_image_gen
+    echo -e "  ${GREEN}✓${NC} Abrí tu navegador en ${BOLD}http://localhost:8000${NC}"
+    echo -e "  ${GREEN}✓${NC} Para detener: ${BOLD}pkill -f \"uvicorn main:app\"${NC}"
 }
 
 # ── Main ───────────────────────────────────────────────────
@@ -545,7 +252,7 @@ main() {
     install_engram
     configure_engram "$DEMIURGOS_HOME/bin/engram"
     install_demiurgos
-    main_menu
+    launch_web_ui
 }
 
 main "$@"

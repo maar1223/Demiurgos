@@ -119,6 +119,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "Something went wrong. Please try again.",
         "error_required_field": "This field is required.",
         "error_connection": "Could not connect to the server. Check your network and try again.",
+        "error_timeout": "Connection timed out after {seconds}s",
+        "error_connect": "Cannot reach endpoint — check the URL",
+        "error_network": "Network error",
+        "error_auth_401": "Invalid API key — check your credentials",
+        "error_auth_403": "Access denied — check API key permissions",
+        "error_endpoint_404": "Endpoint /models not found — is the URL correct?",
+        "error_server": "Server error (HTTP {code})",
+        "error_json_parse": "Could not read the server response",
+        "error_unexpected_format": "Unexpected response format",
+        "error_no_models": "No compatible text/image models found",
 
         # -- Model tags ------------------------------------------------
         "vision_tag_confirmed": "👁️ vision",
@@ -155,6 +165,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "Image Generation",
         "chats_label": "Chats",
         "backup_label": "Backup",
+
+        # -- Connection/error fragments ---------------------------------
+        "connection_success_title": "Connection successful",
+        "connection_success_detail": "Discovered {count} compatible models.",
+        "vision_connection_success_detail": "Discovered {count} vision models.",
+        "model_select_placeholder": "— Select a model —",
+        "model_custom_option": "Other (type manually)",
+        "vision_supported_notice": "Provider supports vision. {count} models loaded.",
+        "vision_not_supported_notice": "This provider does not support vision. Vision section disabled.",
+        "error_title": "Error",
+        "error_dismiss_label": "Close",
+        "error_connection_hint": "Check the endpoint, API key, and internet connection.",
+        "error_test_first": "— Test the connection first —",
+
+        # -- Backup screen extensions ------------------------------------
+        "backup_interval_label": "Interval",
+        "backup_interval_hourly": "Every hour",
+        "backup_interval_daily": "Every day",
+        "backup_interval_weekly": "Every week",
+
+        # -- Chat screen extensions --------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "Enable",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos is already configured",
+        "already_configured_subtitle": "Your LLM provider is set up. Continue to your world or reconfigure.",
+        "continue_to_demiurgos": "Continue to Demiurgos",
+        "reconfigure": "Reconfigure",
+        "config_dashboard_title": "Configuration",
+        "config_dashboard_subtitle": "Manage your Demiurgos settings",
+        "not_configured": "Not configured",
+        "config_skipped": "Skipped",
+        "config_coming_soon": "Full configuration panel coming soon",
+        "config_language": "Language",
+        "config_world": "World",
+        "config_ai": "AI Text & Vision",
+        "config_images": "Images",
+        "config_chats": "Chats",
+        "config_backup": "Backup",
+        "restart_wizard": "Restart Wizard",
     },
 
     # ==================================================================
@@ -225,6 +276,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "出了点问题。请重试。",
         "error_required_field": "此字段为必填项。",
         "error_connection": "无法连接到服务器。请检查网络后重试。",
+        "error_timeout": "连接在 {seconds} 秒后超时",
+        "error_connect": "无法到达端点 — 请检查 URL",
+        "error_network": "网络错误",
+        "error_auth_401": "API 密钥无效 — 请检查您的凭据",
+        "error_auth_403": "访问被拒绝 — 请检查 API 密钥权限",
+        "error_endpoint_404": "未找到 /models 端点 — URL 是否正确？",
+        "error_server": "服务器错误 (HTTP {code})",
+        "error_json_parse": "无法读取服务器响应",
+        "error_unexpected_format": "意外的响应格式",
+        "error_no_models": "未找到兼容的文本/图像模型",
 
         "vision_tag_confirmed": "👁️ 视觉",
         "vision_tag_text_only": "✍️ 文本",
@@ -249,6 +310,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "图像生成",
         "chats_label": "聊天",
         "backup_label": "备份",
+
+        # -- Connection/error fragments ---------------------------------
+        "connection_success_title": "连接成功",
+        "connection_success_detail": "发现 {count} 个兼容模型。",
+        "vision_connection_success_detail": "发现 {count} 个视觉模型。",
+        "model_select_placeholder": "— 选择模型 —",
+        "model_custom_option": "其他（手动输入）",
+        "vision_supported_notice": "提供商支持视觉。已加载 {count} 个模型。",
+        "vision_not_supported_notice": "此提供商不支持视觉。视觉部分已禁用。",
+        "error_title": "错误",
+        "error_dismiss_label": "关闭",
+        "error_connection_hint": "检查端点、API 密钥和互联网连接。",
+        "error_test_first": "— 请先测试连接 —",
+
+        # -- Backup screen extensions ------------------------------------
+        "backup_interval_label": "间隔",
+        "backup_interval_hourly": "每小时",
+        "backup_interval_daily": "每天",
+        "backup_interval_weekly": "每周",
+
+        # -- Chat screen extensions --------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "启用",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos 已配置",
+        "already_configured_subtitle": "您的 LLM 提供商已设置。继续到您的世界或重新配置。",
+        "continue_to_demiurgos": "继续使用 Demiurgos",
+        "reconfigure": "重新配置",
+        "config_dashboard_title": "配置",
+        "config_dashboard_subtitle": "管理您的 Demiurgos 设置",
+        "not_configured": "未配置",
+        "config_skipped": "已跳过",
+        "config_coming_soon": "完整配置面板即将推出",
+        "config_language": "语言",
+        "config_world": "世界",
+        "config_ai": "AI 文本与视觉",
+        "config_images": "图像",
+        "config_chats": "聊天",
+        "config_backup": "备份",
+        "restart_wizard": "重启向导",
     },
 
     # ==================================================================
@@ -319,6 +421,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "कुछ गलत हो गया। कृपया पुनः प्रयास करें।",
         "error_required_field": "यह फ़ील्ड आवश्यक है।",
         "error_connection": "सर्वर से कनेक्ट नहीं हो सका। अपना नेटवर्क जाँचें और पुनः प्रयास करें।",
+        "error_timeout": "{seconds} सेकंड के बाद कनेक्शन का समय समाप्त",
+        "error_connect": "एंडपॉइंट तक नहीं पहुंच सकते — URL जांचें",
+        "error_network": "नेटवर्क त्रुटि",
+        "error_auth_401": "अमान्य API कुंजी — अपने क्रेडेंशियल जांचें",
+        "error_auth_403": "पहुंच अस्वीकृत — API कुंजी अनुमतियां जांचें",
+        "error_endpoint_404": "/models एंडपॉइंट नहीं मिला — क्या URL सही है?",
+        "error_server": "सर्वर त्रुटि (HTTP {code})",
+        "error_json_parse": "सर्वर प्रतिक्रिया पढ़ नहीं सके",
+        "error_unexpected_format": "अप्रत्याशित प्रतिक्रिया प्रारूप",
+        "error_no_models": "कोई संगत टेक्स्ट/इमेज मॉडल नहीं मिला",
 
         "vision_tag_confirmed": "👁️ विज़न",
         "vision_tag_text_only": "✍️ टेक्स्ट",
@@ -343,6 +455,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "छवि निर्माण",
         "chats_label": "चैट",
         "backup_label": "बैकअप",
+
+        # -- Connection/error fragments ---------------------------------
+        "connection_success_title": "कनेक्शन सफल",
+        "connection_success_detail": "{count} संगत मॉडल मिले।",
+        "vision_connection_success_detail": "{count} विज़न मॉडल मिले।",
+        "model_select_placeholder": "— मॉडल चुनें —",
+        "model_custom_option": "अन्य (मैन्युअल टाइप करें)",
+        "vision_supported_notice": "प्रदाता विज़न समर्थित करता है। {count} मॉडल लोड हुए।",
+        "vision_not_supported_notice": "यह प्रदाता विज़न समर्थित नहीं करता। विज़न अनुभाग अक्षम।",
+        "error_title": "त्रुटि",
+        "error_dismiss_label": "बंद करें",
+        "error_connection_hint": "एंडपॉइंट, API की और इंटरनेट कनेक्शन जाँचें।",
+        "error_test_first": "— पहले कनेक्शन जाँचें —",
+
+        # -- Backup screen extensions ------------------------------------
+        "backup_interval_label": "अंतराल",
+        "backup_interval_hourly": "हर घंटे",
+        "backup_interval_daily": "हर दिन",
+        "backup_interval_weekly": "हर सप्ताह",
+
+        # -- Chat screen extensions --------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "सक्षम करें",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos पहले से कॉन्फ़िगर है",
+        "already_configured_subtitle": "आपका LLM प्रदाता सेट है। अपनी दुनिया में जाएं या पुनः कॉन्फ़िगर करें।",
+        "continue_to_demiurgos": "Demiurgos पर जारी रखें",
+        "reconfigure": "पुनः कॉन्फ़िगर करें",
+        "config_dashboard_title": "कॉन्फ़िगरेशन",
+        "config_dashboard_subtitle": "अपनी Demiurgos सेटिंग प्रबंधित करें",
+        "not_configured": "कॉन्फ़िगर नहीं किया गया",
+        "config_skipped": "छोड़ा गया",
+        "config_coming_soon": "पूर्ण कॉन्फ़िगरेशन पैनल जल्द आ रहा है",
+        "config_language": "भाषा",
+        "config_world": "दुनिया",
+        "config_ai": "AI टेक्स्ट और विज़न",
+        "config_images": "छवियां",
+        "config_chats": "चैट",
+        "config_backup": "बैकअप",
+        "restart_wizard": "विज़ार्ड पुनः आरंभ करें",
     },
 
     # ==================================================================
@@ -413,6 +566,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "Algo salió mal. Intente de nuevo.",
         "error_required_field": "Este campo es obligatorio.",
         "error_connection": "No se pudo conectar al servidor. Verifique su red e intente de nuevo.",
+        "error_timeout": "Timeout tras {seconds}s",
+        "error_connect": "Endpoint inalcanzable — verificá la URL",
+        "error_network": "Error de red",
+        "error_auth_401": "API key inválida — revisá tus credenciales",
+        "error_auth_403": "Acceso denegado — revisá los permisos",
+        "error_endpoint_404": "Endpoint /models no encontrado — ¿la URL es correcta?",
+        "error_server": "Error del servidor (HTTP {code})",
+        "error_json_parse": "No se pudo leer la respuesta del servidor",
+        "error_unexpected_format": "Formato de respuesta inesperado",
+        "error_no_models": "No se encontraron modelos compatibles",
 
         "vision_tag_confirmed": "👁️ visión",
         "vision_tag_text_only": "✍️ texto",
@@ -437,6 +600,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "Generación de Imágenes",
         "chats_label": "Chats",
         "backup_label": "Respaldo",
+
+        # -- Fragmentos de conexión/error --------------------------------
+        "connection_success_title": "Conexión exitosa",
+        "connection_success_detail": "Se descubrieron {count} modelos compatibles.",
+        "vision_connection_success_detail": "Se descubrieron {count} modelos de visión.",
+        "model_select_placeholder": "— Seleccione un modelo —",
+        "model_custom_option": "Otro (escribir manualmente)",
+        "vision_supported_notice": "El proveedor soporta visión. {count} modelos cargados.",
+        "vision_not_supported_notice": "Este proveedor no soporta visión. Sección de visión deshabilitada.",
+        "error_title": "Error",
+        "error_dismiss_label": "Cerrar",
+        "error_connection_hint": "Verifique el endpoint, la API key y su conexión a internet.",
+        "error_test_first": "— Pruebe la conexión primero —",
+
+        # -- Pantalla de respaldo ----------------------------------------
+        "backup_interval_label": "Intervalo",
+        "backup_interval_hourly": "Cada hora",
+        "backup_interval_daily": "Cada día",
+        "backup_interval_weekly": "Cada semana",
+
+        # -- Pantalla de chats -------------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "Activar",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos ya está configurado",
+        "already_configured_subtitle": "Su proveedor LLM está listo. Continúe a su mundo o reconfigure.",
+        "continue_to_demiurgos": "Continuar a Demiurgos",
+        "reconfigure": "Reconfigurar",
+        "config_dashboard_title": "Configuración",
+        "config_dashboard_subtitle": "Gestione su configuración de Demiurgos",
+        "not_configured": "No configurado",
+        "config_skipped": "Omitido",
+        "config_coming_soon": "Panel de configuración completo próximamente",
+        "config_language": "Idioma",
+        "config_world": "Mundo",
+        "config_ai": "IA Texto y Visión",
+        "config_images": "Imágenes",
+        "config_chats": "Chats",
+        "config_backup": "Respaldo",
+        "restart_wizard": "Reiniciar Asistente",
     },
 
     # ==================================================================
@@ -507,6 +711,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "Algo salió mal. Intentá de nuevo.",
         "error_required_field": "Este campo es obligatorio.",
         "error_connection": "No se pudo conectar al servidor. Verificá tu red e intentá de nuevo.",
+        "error_timeout": "Timeout después de {seconds}s",
+        "error_connect": "Endpoint inalcanzable — revisá la URL",
+        "error_network": "Error de red",
+        "error_auth_401": "API key inválida — revisá tus credenciales",
+        "error_auth_403": "Acceso denegado — revisá los permisos",
+        "error_endpoint_404": "Endpoint /models no encontrado — ¿la URL es correcta?",
+        "error_server": "Error del servidor (HTTP {code})",
+        "error_json_parse": "No se pudo leer la respuesta del servidor",
+        "error_unexpected_format": "Formato de respuesta inesperado",
+        "error_no_models": "No se encontraron modelos compatibles",
 
         "vision_tag_confirmed": "👁️ visión",
         "vision_tag_text_only": "✍️ texto",
@@ -531,6 +745,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "Generación de Imágenes",
         "chats_label": "Chats",
         "backup_label": "Respaldo",
+
+        # -- Fragmentos de conexión/error --------------------------------
+        "connection_success_title": "Conexión exitosa",
+        "connection_success_detail": "Se descubrieron {count} modelos compatibles.",
+        "vision_connection_success_detail": "Se descubrieron {count} modelos de visión.",
+        "model_select_placeholder": "— Seleccioná un modelo —",
+        "model_custom_option": "Otro (escribir manualmente)",
+        "vision_supported_notice": "El proveedor soporta visión. {count} modelos cargados.",
+        "vision_not_supported_notice": "Este proveedor no soporta visión. Sección de visión deshabilitada.",
+        "error_title": "Error",
+        "error_dismiss_label": "Cerrar",
+        "error_connection_hint": "Verificá el endpoint, la API key y tu conexión a internet.",
+        "error_test_first": "— Probá la conexión primero —",
+
+        # -- Pantalla de respaldo ----------------------------------------
+        "backup_interval_label": "Intervalo",
+        "backup_interval_hourly": "Cada hora",
+        "backup_interval_daily": "Cada día",
+        "backup_interval_weekly": "Cada semana",
+
+        # -- Pantalla de chats -------------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "Activar",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos ya está configurado",
+        "already_configured_subtitle": "Tu proveedor LLM está listo. Continuá a tu mundo o reconfigurá.",
+        "continue_to_demiurgos": "Continuar a Demiurgos",
+        "reconfigure": "Reconfigurar",
+        "config_dashboard_title": "Configuración",
+        "config_dashboard_subtitle": "Gestioná tu configuración de Demiurgos",
+        "not_configured": "No configurado",
+        "config_skipped": "Omitido",
+        "config_coming_soon": "Panel de configuración completo próximamente",
+        "config_language": "Idioma",
+        "config_world": "Mundo",
+        "config_ai": "IA Texto y Visión",
+        "config_images": "Imágenes",
+        "config_chats": "Chats",
+        "config_backup": "Respaldo",
+        "restart_wizard": "Reiniciar Asistente",
     },
 
     # ==================================================================
@@ -601,6 +856,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "Quelque chose s'est mal passé. Veuillez réessayer.",
         "error_required_field": "Ce champ est obligatoire.",
         "error_connection": "Impossible de se connecter au serveur. Vérifiez votre réseau et réessayez.",
+        "error_timeout": "Délai de connexion dépassé après {seconds}s",
+        "error_connect": "Endpoint inaccessible — vérifiez l'URL",
+        "error_network": "Erreur réseau",
+        "error_auth_401": "Clé API invalide — vérifiez vos identifiants",
+        "error_auth_403": "Accès refusé — vérifiez les permissions de la clé API",
+        "error_endpoint_404": "Endpoint /models introuvable — l'URL est-elle correcte ?",
+        "error_server": "Erreur serveur (HTTP {code})",
+        "error_json_parse": "Impossible de lire la réponse du serveur",
+        "error_unexpected_format": "Format de réponse inattendu",
+        "error_no_models": "Aucun modèle texte/image compatible trouvé",
 
         "vision_tag_confirmed": "👁️ vision",
         "vision_tag_text_only": "✍️ texte",
@@ -625,6 +890,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "Génération d'Images",
         "chats_label": "Chats",
         "backup_label": "Sauvegarde",
+
+        # -- Fragments connexion/erreur ----------------------------------
+        "connection_success_title": "Connexion réussie",
+        "connection_success_detail": "{count} modèles compatibles découverts.",
+        "vision_connection_success_detail": "{count} modèles de vision découverts.",
+        "model_select_placeholder": "— Sélectionnez un modèle —",
+        "model_custom_option": "Autre (saisir manuellement)",
+        "vision_supported_notice": "Le fournisseur prend en charge la vision. {count} modèles chargés.",
+        "vision_not_supported_notice": "Ce fournisseur ne prend pas en charge la vision. Section vision désactivée.",
+        "error_title": "Erreur",
+        "error_dismiss_label": "Fermer",
+        "error_connection_hint": "Vérifiez l'endpoint, la clé API et votre connexion internet.",
+        "error_test_first": "— Testez la connexion d'abord —",
+
+        # -- Écran sauvegarde --------------------------------------------
+        "backup_interval_label": "Intervalle",
+        "backup_interval_hourly": "Toutes les heures",
+        "backup_interval_daily": "Tous les jours",
+        "backup_interval_weekly": "Toutes les semaines",
+
+        # -- Écran chats -------------------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "Activer",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos est déjà configuré",
+        "already_configured_subtitle": "Votre fournisseur LLM est configuré. Continuez vers votre monde ou reconfigurez.",
+        "continue_to_demiurgos": "Continuer vers Demiurgos",
+        "reconfigure": "Reconfigurer",
+        "config_dashboard_title": "Configuration",
+        "config_dashboard_subtitle": "Gérez vos paramètres Demiurgos",
+        "not_configured": "Non configuré",
+        "config_skipped": "Ignoré",
+        "config_coming_soon": "Panneau de configuration complet bientôt disponible",
+        "config_language": "Langue",
+        "config_world": "Monde",
+        "config_ai": "IA Texte et Vision",
+        "config_images": "Images",
+        "config_chats": "Chats",
+        "config_backup": "Sauvegarde",
+        "restart_wizard": "Redémarrer l'assistant",
     },
 
     # ==================================================================
@@ -695,6 +1001,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "حدث خطأ ما. يرجى المحاولة مرة أخرى.",
         "error_required_field": "هذا الحقل مطلوب.",
         "error_connection": "تعذر الاتصال بالخادم. تحقق من شبكتك وحاول مرة أخرى.",
+        "error_timeout": "انتهت مهلة الاتصال بعد {seconds} ثانية",
+        "error_connect": "لا يمكن الوصول إلى النقطة الطرفية — تحقق من الرابط",
+        "error_network": "خطأ في الشبكة",
+        "error_auth_401": "مفتاح API غير صالح — تحقق من بيانات اعتمادك",
+        "error_auth_403": "تم رفض الوصول — تحقق من صلاحيات مفتاح API",
+        "error_endpoint_404": "النقطة الطرفية /models غير موجودة — هل الرابط صحيح؟",
+        "error_server": "خطأ في الخادم (HTTP {code})",
+        "error_json_parse": "تعذرت قراءة استجابة الخادم",
+        "error_unexpected_format": "تنسيق استجابة غير متوقع",
+        "error_no_models": "لم يتم العثور على نماذج نص/صورة متوافقة",
 
         "vision_tag_confirmed": "👁️ رؤية",
         "vision_tag_text_only": "✍️ نص",
@@ -719,6 +1035,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "توليد الصور",
         "chats_label": "الدردشات",
         "backup_label": "النسخ الاحتياطي",
+
+        # -- أجزاء الاتصال/الخطأ -----------------------------------------
+        "connection_success_title": "تم الاتصال بنجاح",
+        "connection_success_detail": "تم اكتشاف {count} نموذج متوافق.",
+        "vision_connection_success_detail": "تم اكتشاف {count} نموذج رؤية.",
+        "model_select_placeholder": "— اختر نموذجاً —",
+        "model_custom_option": "آخر (اكتب يدوياً)",
+        "vision_supported_notice": "المزود يدعم الرؤية. تم تحميل {count} نموذج.",
+        "vision_not_supported_notice": "هذا المزود لا يدعم الرؤية. قسم الرؤية معطل.",
+        "error_title": "خطأ",
+        "error_dismiss_label": "إغلاق",
+        "error_connection_hint": "تحقق من النقطة الطرفية ومفتاح API واتصالك بالإنترنت.",
+        "error_test_first": "— اختبر الاتصال أولاً —",
+
+        # -- شاشة النسخ الاحتياطي ----------------------------------------
+        "backup_interval_label": "الفاصل",
+        "backup_interval_hourly": "كل ساعة",
+        "backup_interval_daily": "كل يوم",
+        "backup_interval_weekly": "كل أسبوع",
+
+        # -- شاشة الدردشة -------------------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "تفعيل",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos مُهيأ بالفعل",
+        "already_configured_subtitle": "تم إعداد مزود LLM الخاص بك. تابع إلى عالمك أو أعد التهيئة.",
+        "continue_to_demiurgos": "المتابعة إلى Demiurgos",
+        "reconfigure": "إعادة التهيئة",
+        "config_dashboard_title": "التهيئة",
+        "config_dashboard_subtitle": "إدارة إعدادات Demiurgos",
+        "not_configured": "غير مُهيأ",
+        "config_skipped": "تم التخطي",
+        "config_coming_soon": "لوحة التهيئة الكاملة قريباً",
+        "config_language": "اللغة",
+        "config_world": "العالم",
+        "config_ai": "الذكاء الاصطناعي للنص والرؤية",
+        "config_images": "الصور",
+        "config_chats": "الدردشات",
+        "config_backup": "النسخ الاحتياطي",
+        "restart_wizard": "إعادة تشغيل المعالج",
     },
 
     # ==================================================================
@@ -789,6 +1146,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "কিছু ভুল হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।",
         "error_required_field": "এই ক্ষেত্রটি আবশ্যক।",
         "error_connection": "সার্ভারে সংযোগ করা যায়নি। আপনার নেটওয়ার্ক পরীক্ষা করে আবার চেষ্টা করুন।",
+        "error_timeout": "{seconds} সেকেন্ড পর সংযোগের সময় শেষ",
+        "error_connect": "এন্ডপয়েন্টে পৌঁছানো যাচ্ছে না — URL পরীক্ষা করুন",
+        "error_network": "নেটওয়ার্ক ত্রুটি",
+        "error_auth_401": "অবৈধ API কী — আপনার শংসাপত্র পরীক্ষা করুন",
+        "error_auth_403": "অ্যাক্সেস অস্বীকৃত — API কী অনুমতি পরীক্ষা করুন",
+        "error_endpoint_404": "/models এন্ডপয়েন্ট পাওয়া যায়নি — URL কি সঠিক?",
+        "error_server": "সার্ভার ত্রুটি (HTTP {code})",
+        "error_json_parse": "সার্ভারের প্রতিক্রিয়া পড়তে পারেনি",
+        "error_unexpected_format": "অপ্রত্যাশিত প্রতিক্রিয়া বিন্যাস",
+        "error_no_models": "কোনো সামঞ্জস্যপূর্ণ টেক্সট/ইমেজ মডেল পাওয়া যায়নি",
 
         "vision_tag_confirmed": "👁️ ভিশন",
         "vision_tag_text_only": "✍️ টেক্সট",
@@ -813,6 +1180,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "ছবি তৈরি",
         "chats_label": "চ্যাট",
         "backup_label": "ব্যাকআপ",
+
+        # -- সংযোগ/ত্রুটি টুকরো -------------------------------------------
+        "connection_success_title": "সংযোগ সফল",
+        "connection_success_detail": "{count}টি সামঞ্জস্যপূর্ণ মডেল পাওয়া গেছে।",
+        "vision_connection_success_detail": "{count}টি ভিশন মডেল পাওয়া গেছে।",
+        "model_select_placeholder": "— মডেল নির্বাচন করুন —",
+        "model_custom_option": "অন্যান্য (ম্যানুয়ালি টাইপ করুন)",
+        "vision_supported_notice": "প্রদানকারী ভিশন সমর্থন করে। {count}টি মডেল লোড হয়েছে।",
+        "vision_not_supported_notice": "এই প্রদানকারী ভিশন সমর্থন করে না। ভিশন বিভাগ নিষ্ক্রিয়।",
+        "error_title": "ত্রুটি",
+        "error_dismiss_label": "বন্ধ করুন",
+        "error_connection_hint": "এন্ডপয়েন্ট, API কী এবং ইন্টারনেট সংযোগ পরীক্ষা করুন।",
+        "error_test_first": "— প্রথমে সংযোগ পরীক্ষা করুন —",
+
+        # -- ব্যাকআপ স্ক্রিন ----------------------------------------------
+        "backup_interval_label": "ব্যবধান",
+        "backup_interval_hourly": "প্রতি ঘণ্টা",
+        "backup_interval_daily": "প্রতিদিন",
+        "backup_interval_weekly": "প্রতি সপ্তাহ",
+
+        # -- চ্যাট স্ক্রিন -------------------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "সক্রিয় করুন",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos ইতিমধ্যে কনফিগার করা আছে",
+        "already_configured_subtitle": "আপনার LLM প্রদানকারী সেট আপ করা আছে। আপনার বিশ্বে যান বা পুনরায় কনফিগার করুন।",
+        "continue_to_demiurgos": "Demiurgos-এ চালিয়ে যান",
+        "reconfigure": "পুনরায় কনফিগার করুন",
+        "config_dashboard_title": "কনফিগারেশন",
+        "config_dashboard_subtitle": "আপনার Demiurgos সেটিংস পরিচালনা করুন",
+        "not_configured": "কনফিগার করা হয়নি",
+        "config_skipped": "বাদ দেওয়া হয়েছে",
+        "config_coming_soon": "সম্পূর্ণ কনফিগারেশন প্যানেল শীঘ্রই আসছে",
+        "config_language": "ভাষা",
+        "config_world": "বিশ্ব",
+        "config_ai": "AI টেক্সট ও ভিশন",
+        "config_images": "ছবি",
+        "config_chats": "চ্যাট",
+        "config_backup": "ব্যাকআপ",
+        "restart_wizard": "উইজার্ড পুনরায় শুরু করুন",
     },
 
     # ==================================================================
@@ -883,6 +1291,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "Algo deu errado. Tente novamente.",
         "error_required_field": "Este campo é obrigatório.",
         "error_connection": "Não foi possível conectar ao servidor. Verifique sua rede e tente novamente.",
+        "error_timeout": "Conexão expirou após {seconds}s",
+        "error_connect": "Endpoint inacessível — verifique a URL",
+        "error_network": "Erro de rede",
+        "error_auth_401": "Chave API inválida — verifique suas credenciais",
+        "error_auth_403": "Acesso negado — verifique as permissões da chave API",
+        "error_endpoint_404": "Endpoint /models não encontrado — a URL está correta?",
+        "error_server": "Erro do servidor (HTTP {code})",
+        "error_json_parse": "Não foi possível ler a resposta do servidor",
+        "error_unexpected_format": "Formato de resposta inesperado",
+        "error_no_models": "Nenhum modelo de texto/imagem compatível encontrado",
 
         "vision_tag_confirmed": "👁️ visão",
         "vision_tag_text_only": "✍️ texto",
@@ -907,6 +1325,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "Geração de Imagens",
         "chats_label": "Chats",
         "backup_label": "Backup",
+
+        # -- Fragmentos de conexão/erro ----------------------------------
+        "connection_success_title": "Conexão bem-sucedida",
+        "connection_success_detail": "{count} modelos compatíveis descobertos.",
+        "vision_connection_success_detail": "{count} modelos de visão descobertos.",
+        "model_select_placeholder": "— Selecione um modelo —",
+        "model_custom_option": "Outro (digitar manualmente)",
+        "vision_supported_notice": "O provedor suporta visão. {count} modelos carregados.",
+        "vision_not_supported_notice": "Este provedor não suporta visão. Seção de visão desativada.",
+        "error_title": "Erro",
+        "error_dismiss_label": "Fechar",
+        "error_connection_hint": "Verifique o endpoint, a chave API e sua conexão com a internet.",
+        "error_test_first": "— Teste a conexão primeiro —",
+
+        # -- Tela de backup ----------------------------------------------
+        "backup_interval_label": "Intervalo",
+        "backup_interval_hourly": "A cada hora",
+        "backup_interval_daily": "Todos os dias",
+        "backup_interval_weekly": "Toda semana",
+
+        # -- Tela de chats -----------------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "Ativar",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos já está configurado",
+        "already_configured_subtitle": "Seu provedor LLM está configurado. Continue para seu mundo ou reconfigure.",
+        "continue_to_demiurgos": "Continuar para o Demiurgos",
+        "reconfigure": "Reconfigurar",
+        "config_dashboard_title": "Configuração",
+        "config_dashboard_subtitle": "Gerencie suas configurações do Demiurgos",
+        "not_configured": "Não configurado",
+        "config_skipped": "Pulado",
+        "config_coming_soon": "Painel de configuração completo em breve",
+        "config_language": "Idioma",
+        "config_world": "Mundo",
+        "config_ai": "IA Texto e Visão",
+        "config_images": "Imagens",
+        "config_chats": "Chats",
+        "config_backup": "Backup",
+        "restart_wizard": "Reiniciar Assistente",
     },
 
     # ==================================================================
@@ -977,6 +1436,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "Что-то пошло не так. Попробуйте снова.",
         "error_required_field": "Это поле обязательно для заполнения.",
         "error_connection": "Не удалось подключиться к серверу. Проверьте сеть и попробуйте снова.",
+        "error_timeout": "Тайм-аут соединения через {seconds} сек.",
+        "error_connect": "Недоступный эндпоинт — проверьте URL",
+        "error_network": "Ошибка сети",
+        "error_auth_401": "Неверный API-ключ — проверьте учетные данные",
+        "error_auth_403": "Доступ запрещен — проверьте разрешения API-ключа",
+        "error_endpoint_404": "Эндпоинт /models не найден — правильный ли URL?",
+        "error_server": "Ошибка сервера (HTTP {code})",
+        "error_json_parse": "Не удалось прочитать ответ сервера",
+        "error_unexpected_format": "Неожиданный формат ответа",
+        "error_no_models": "Совместимые модели текст/изображение не найдены",
 
         "vision_tag_confirmed": "👁️ зрение",
         "vision_tag_text_only": "✍️ текст",
@@ -1001,6 +1470,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "Генерация Изображений",
         "chats_label": "Чаты",
         "backup_label": "Бэкап",
+
+        # -- Фрагменты соединения/ошибки ----------------------------------
+        "connection_success_title": "Соединение успешно",
+        "connection_success_detail": "Найдено {count} совместимых моделей.",
+        "vision_connection_success_detail": "Найдено {count} моделей зрения.",
+        "model_select_placeholder": "— Выберите модель —",
+        "model_custom_option": "Другая (ввести вручную)",
+        "vision_supported_notice": "Провайдер поддерживает зрение. Загружено {count} моделей.",
+        "vision_not_supported_notice": "Этот провайдер не поддерживает зрение. Раздел зрения отключён.",
+        "error_title": "Ошибка",
+        "error_dismiss_label": "Закрыть",
+        "error_connection_hint": "Проверьте эндпоинт, API-ключ и подключение к интернету.",
+        "error_test_first": "— Сначала проверьте соединение —",
+
+        # -- Экран бэкапа ------------------------------------------------
+        "backup_interval_label": "Интервал",
+        "backup_interval_hourly": "Каждый час",
+        "backup_interval_daily": "Каждый день",
+        "backup_interval_weekly": "Каждую неделю",
+
+        # -- Экран чатов -------------------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "Включить",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos уже настроен",
+        "already_configured_subtitle": "Ваш LLM-провайдер настроен. Перейдите к своему миру или перенастройте.",
+        "continue_to_demiurgos": "Перейти к Demiurgos",
+        "reconfigure": "Перенастроить",
+        "config_dashboard_title": "Конфигурация",
+        "config_dashboard_subtitle": "Управление настройками Demiurgos",
+        "not_configured": "Не настроено",
+        "config_skipped": "Пропущено",
+        "config_coming_soon": "Полная панель конфигурации скоро будет доступна",
+        "config_language": "Язык",
+        "config_world": "Мир",
+        "config_ai": "ИИ Текст и Зрение",
+        "config_images": "Изображения",
+        "config_chats": "Чаты",
+        "config_backup": "Бэкап",
+        "restart_wizard": "Перезапустить мастер",
     },
 
     # ==================================================================
@@ -1071,6 +1581,16 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "error_generic": "کچھ غلط ہو گیا۔ براہ کرم دوبارہ کوشش کریں۔",
         "error_required_field": "یہ فیلڈ ضروری ہے۔",
         "error_connection": "سرور سے رابطہ نہیں ہو سکا۔ اپنا نیٹ ورک چیک کریں اور دوبارہ کوشش کریں۔",
+        "error_timeout": "{seconds} سیکنڈ کے بعد کنکشن کا وقت ختم",
+        "error_connect": "اینڈپوائنٹ تک نہیں پہنچ سکتے — URL چیک کریں",
+        "error_network": "نیٹ ورک کی خرابی",
+        "error_auth_401": "غلط API کلید — اپنی اسناد چیک کریں",
+        "error_auth_403": "رسائی مسترد — API کلید کی اجازتیں چیک کریں",
+        "error_endpoint_404": "/models اینڈپوائنٹ نہیں ملا — کیا URL درست ہے؟",
+        "error_server": "سرور کی خرابی (HTTP {code})",
+        "error_json_parse": "سرور کا جواب نہیں پڑھ سکے",
+        "error_unexpected_format": "غیر متوقع جوابی فارمیٹ",
+        "error_no_models": "کوئی مطابقت پذیر ٹیکسٹ/امیج ماڈل نہیں ملا",
 
         "vision_tag_confirmed": "👁️ ویژن",
         "vision_tag_text_only": "✍️ ٹیکسٹ",
@@ -1095,6 +1615,47 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "images_label": "تصویر سازی",
         "chats_label": "چیٹس",
         "backup_label": "بیک اپ",
+
+        # -- کنکشن/خرابی کے ٹکڑے -----------------------------------------
+        "connection_success_title": "کنکشن کامیاب",
+        "connection_success_detail": "{count} ہم آہنگ ماڈل دریافت ہوئے۔",
+        "vision_connection_success_detail": "{count} ویژن ماڈل دریافت ہوئے۔",
+        "model_select_placeholder": "— ماڈل منتخب کریں —",
+        "model_custom_option": "دیگر (دستی طور پر ٹائپ کریں)",
+        "vision_supported_notice": "فراہم کنندہ ویژن کو سپورٹ کرتا ہے۔ {count} ماڈل لوڈ ہوئے۔",
+        "vision_not_supported_notice": "یہ فراہم کنندہ ویژن کو سپورٹ نہیں کرتا۔ ویژن سیکشن غیر فعال۔",
+        "error_title": "خرابی",
+        "error_dismiss_label": "بند کریں",
+        "error_connection_hint": "اینڈپوائنٹ، API کلید اور انٹرنیٹ کنکشن چیک کریں۔",
+        "error_test_first": "— پہلے کنکشن ٹیسٹ کریں —",
+
+        # -- بیک اپ اسکرین -----------------------------------------------
+        "backup_interval_label": "وقفہ",
+        "backup_interval_hourly": "ہر گھنٹے",
+        "backup_interval_daily": "ہر روز",
+        "backup_interval_weekly": "ہر ہفتے",
+
+        # -- چیٹ اسکرین --------------------------------------------------
+        "bot_token_label": "Bot Token",
+        "enable_chat_platform": "فعال کریں",
+
+        # -- Dashboard / already-configured ------------------------------
+        "already_configured_title": "Demiurgos پہلے سے ترتیب شدہ ہے",
+        "already_configured_subtitle": "آپ کا LLM فراہم کنندہ سیٹ ہے۔ اپنی دنیا میں جائیں یا دوبارہ ترتیب دیں۔",
+        "continue_to_demiurgos": "Demiurgos پر جاری رکھیں",
+        "reconfigure": "دوبارہ ترتیب دیں",
+        "config_dashboard_title": "ترتیب",
+        "config_dashboard_subtitle": "اپنی Demiurgos ترتیبات کا انتظام کریں",
+        "not_configured": "ترتیب شدہ نہیں",
+        "config_skipped": "چھوڑ دیا گیا",
+        "config_coming_soon": "مکمل ترتیبات کا پینل جلد آرہا ہے",
+        "config_language": "زبان",
+        "config_world": "دنیا",
+        "config_ai": "AI ٹیکسٹ اور ویژن",
+        "config_images": "تصاویر",
+        "config_chats": "چیٹس",
+        "config_backup": "بیک اپ",
+        "restart_wizard": "وزرڈ دوبارہ شروع کریں",
     },
 }
 
