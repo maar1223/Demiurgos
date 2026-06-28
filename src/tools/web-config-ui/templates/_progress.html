@@ -1,0 +1,25 @@
+<!-- =========================================================================
+     _progress.html — Horizontal wizard progress indicator (7 steps)
+
+     Context: current_step (int 0-6), steps (list[str] of step names)
+     Uses Pico.css grid + custom.css progress classes.
+     No JavaScript.
+     ========================================================================= -->
+
+<nav class="wizard-progress" aria-label="{{ t('step_x_of_y', current=current_step+1, total=steps|length) }}">
+  <ol class="progress-steps">
+    {% for name in steps %}
+    <li class="progress-step{% if loop.index0 < current_step %} completed{% endif %}{% if loop.index0 == current_step %} active{% endif %}"
+        {% if loop.index0 == current_step %}aria-current="step"{% endif %}>
+      <span class="step-marker">
+        {% if loop.index0 < current_step %}
+          ✓
+        {% else %}
+          {{ loop.index0 + 1 }}
+        {% endif %}
+      </span>
+      <span class="step-label">{{ name }}</span>
+    </li>
+    {% endfor %}
+  </ol>
+</nav>

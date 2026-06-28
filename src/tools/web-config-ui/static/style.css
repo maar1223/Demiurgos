@@ -152,3 +152,158 @@
     transform: translateY(0);
   }
 }
+
+/* =========================================================================
+   Wizard Progress Indicator
+   ========================================================================= */
+
+.wizard-progress {
+  margin-bottom: 2rem;
+}
+
+.progress-steps {
+  display: flex;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  gap: 0;
+  counter-reset: step;
+}
+
+.progress-step {
+  flex: 1;
+  text-align: center;
+  position: relative;
+  padding-top: 2rem;
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+}
+
+/* Connector line between steps */
+.progress-step::before {
+  content: "";
+  position: absolute;
+  top: 0.85rem;
+  left: 0;
+  right: 50%;
+  height: 2px;
+  background: var(--pico-muted-border-color);
+  z-index: 0;
+}
+
+.progress-step::after {
+  content: "";
+  position: absolute;
+  top: 0.85rem;
+  left: 50%;
+  right: 0;
+  height: 2px;
+  background: var(--pico-muted-border-color);
+  z-index: 0;
+}
+
+.progress-step:first-child::before {
+  display: none;
+}
+
+.progress-step:last-child::after {
+  display: none;
+}
+
+/* Completed connector */
+.progress-step.completed::before,
+.progress-step.completed::after {
+  background: var(--pico-primary-background);
+}
+
+/* Active step connector (up to current) */
+.progress-step.active::before {
+  background: var(--pico-primary-background);
+}
+
+/* Step marker (circle) */
+.step-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  background: var(--pico-muted-border-color);
+  color: var(--pico-background-color);
+  font-weight: 700;
+  font-size: 0.8rem;
+  position: relative;
+  z-index: 1;
+  margin-bottom: 0.35rem;
+  transition: background 0.2s, color 0.2s;
+}
+
+.progress-step.completed .step-marker {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}
+
+.progress-step.active .step-marker {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+  box-shadow: 0 0 0 3px var(--pico-primary-background);
+  transform: scale(1.15);
+}
+
+/* Step label */
+.step-label {
+  display: block;
+  line-height: 1.3;
+}
+
+.progress-step.active .step-label {
+  color: var(--pico-color);
+  font-weight: 600;
+}
+
+.progress-step.completed .step-label {
+  color: var(--pico-muted-color);
+}
+
+/* =========================================================================
+   Wizard Shell
+   ========================================================================= */
+
+.wizard-container {
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 1rem;
+}
+
+.wizard-screen {
+  animation: fadeIn 300ms ease-in;
+}
+
+/* Language selector radio list */
+.wizard-screen fieldset label {
+  display: block;
+  padding: 0.35rem 0;
+  cursor: pointer;
+}
+
+.wizard-screen fieldset label input[type="radio"] {
+  margin-right: 0.5rem;
+}
+
+/* Responsive: stack step labels on small screens */
+@media (max-width: 600px) {
+  .step-label {
+    font-size: 0.7rem;
+  }
+
+  .step-marker {
+    width: 1.4rem;
+    height: 1.4rem;
+    font-size: 0.7rem;
+  }
+
+  .wizard-container {
+    margin: 0.5rem auto;
+  }
+}

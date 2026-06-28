@@ -8,6 +8,7 @@ All user-facing text in Spanish. API keys are masked in all log output.
 import logging
 import os
 import sys
+from contextvars import ContextVar
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -21,6 +22,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import config  # noqa: E402
+from i18n import register_with_jinja, t  # noqa: E402
 
 # --- Logging ---
 logging.basicConfig(
@@ -29,8 +31,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger("web-config-ui")
 
-# --- Paths relative to project root ---
-_PROJECT_ROOT = _HERE.parents[3]  # src/tools/web-config-ui -> project root
+# --- Path resolution ---
+# Override with DEMIURGOS_WORLD_DIR env var (set by install.sh launcher)
+# so the UI reads/writes the correct .env in the world directory.
+_PROJECT_ROOT = Path(
+    os.environ.get(
+        "DEMIURGOS_WORLD_DIR",
+        str(_HERE.parents[3]),  # fallback: src/tools/web-config-ui -> project root
+    )
+)
 ENV_PATH = str(_PROJECT_ROOT / ".env")
 JSON_CONFIG_PATH = str(_PROJECT_ROOT / "config" / "default-config.json")
 
@@ -42,6 +51,34 @@ app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static"
 
 # --- Templates ---
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
+
+# --- i18n ---
+# ContextVar so the middleware can set the language per-request and the
+# Jinja globals (registered below) can read it at render time.
+_current_language: ContextVar[str] = ContextVar("current_language", default="en")
+register_with_jinja(templates, _current_language.get)
+
+
+# ---------------------------------------------------------------------------
+# Middleware
+# ---------------------------------------------------------------------------
+
+
+@app.middleware("http")
+async def language_middleware(request: Request, call_next):
+    """Read language from cookie, query param, or default to English.
+
+    Sets the ContextVar so that ``t(key)`` in Jinja templates resolves to
+    the correct language at render time.
+    """
+    lang = (
+        request.cookies.get("demiurgos_lang")
+        or request.query_params.get("lang")
+        or "en"
+    )
+    _current_language.set(lang)
+    response = await call_next(request)
+    return response
 
 
 @app.on_event("startup")
@@ -62,16 +99,28 @@ async def startup() -> None:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
-    """Render the main config form pre-filled with current .env values."""
-    env_data = config.read_env(ENV_PATH)
+    """Render the wizard shell with progress indicator.
+
+    On first load, screen 0 (language selector) is shown.
+    The ``lang`` context variable drives the ``<html lang>`` attribute.
+    """
+    lang = _current_language.get()
+    steps = [
+        "welcome_title",
+        "world_title",
+        "ai_title",
+        "images_title",
+        "chats_title",
+        "backup_title",
+        "summary_title",
+    ]
     return templates.TemplateResponse(
         request,
         "index.html",
         context={
-            "providers": config.KNOWN_PROVIDERS,
-            "env": env_data,
-            "current_text_model": env_data.get("text_model", ""),
-            "current_vision_model": env_data.get("vision_model", ""),
+            "lang": lang,
+            "current_step": 0,
+            "steps": [t(lang, key) for key in steps],
         },
     )
 

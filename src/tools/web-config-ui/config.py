@@ -79,6 +79,110 @@ KNOWN_PROVIDERS: list[dict] = [
     },
 ]
 
+# ---------------------------------------------------------------------------
+# Model Vision Registry
+# ---------------------------------------------------------------------------
+# Maps provider_id -> {model_id: has_vision (bool)} for known models.
+# Provider not in dict → all models unknown (return None, not False).
+# Provider in dict but model not → unknown (return None).
+# Unknown means "we don't know" ≠ "no vision".
+
+MODEL_VISION: dict[str, dict[str, bool]] = {
+    "openai": {
+        "gpt-4o": True,
+        "gpt-4o-mini": True,
+        "gpt-4-turbo": True,
+        "gpt-4.1": True,
+        "gpt-4": False,
+        "gpt-3.5-turbo": False,
+    },
+    "anthropic": {
+        "claude-sonnet-4-20250514": True,
+        "claude-opus-4-20250514": True,
+        "claude-3-5-sonnet": True,
+        "claude-3-5-haiku": True,
+        "claude-3-opus": True,
+        "claude-3-sonnet": True,
+        "claude-3-haiku": True,
+    },
+    "google": {
+        "gemini-2.5-flash": True,
+        "gemini-2.5-pro": True,
+        "gemini-2.0-flash": True,
+        "gemini-1.5-flash": True,
+        "gemini-1.5-pro": True,
+    },
+    "groq": {
+        "qwen/qwen3.6-27b": True,
+        "meta-llama/llama-4-scout-17b-16e-instruct": True,
+        "llama-3.3-70b-versatile": False,
+        "llama-3.1-8b-instant": False,
+        "openai/gpt-oss-120b": False,
+        "openai/gpt-oss-20b": False,
+    },
+    "deepseek": {
+        "deepseek-chat": False,
+        "deepseek-reasoner": False,
+    },
+}
+
+# Keywords that strongly suggest a model supports vision.
+# Used as heuristic fallback when neither provider nor model is in MODEL_VISION.
+_VISION_HEURISTIC_KEYWORDS: list[str] = [
+    "vl",
+    "vision",
+    "gpt-4o",
+    "claude",
+    "gemini",
+    "omni",
+    "llava",
+    "bakllava",
+    "minimax",
+]
+
+
+def get_vision_tag(provider_id: str, model_id: str) -> dict:
+    """Return a vision capability tag for *provider_id* / *model_id*.
+
+    Returns
+    -------
+    dict
+        ``{"tag": "👁️+✍️"|"✍️"|"❓", "confidence": "confirmed"|"probable"|"unknown"}``
+    """
+    # 1. Look up confirmed entry
+    provider_models = MODEL_VISION.get(provider_id)
+    if provider_models is not None:
+        has_vision = provider_models.get(model_id)
+        if has_vision is not None:
+            return {
+                "tag": "👁️+✍️" if has_vision else "✍️",
+                "confidence": "confirmed",
+            }
+
+    # 2. Heuristic fallback: check model name for vision keywords
+    model_lower = model_id.lower()
+    for kw in _VISION_HEURISTIC_KEYWORDS:
+        if kw in model_lower:
+            return {"tag": "👁️+✍️", "confidence": "probable"}
+
+    # 3. Unknown
+    return {"tag": "❓", "confidence": "unknown"}
+
+
+def get_vision_models(provider_id: str, models: list[str]) -> list[dict]:
+    """Tag every model in *models* with its vision capability.
+
+    Returns
+    -------
+    list[dict]
+        Each item: ``{"id": str, "tag": str, "confidence": str}``
+    """
+    return [
+        {"id": m, **get_vision_tag(provider_id, m)}
+        for m in models
+    ]
+
+
 # Env variable names managed by this tool
 _TEXT_VARS = {
     "text_provider": "DEMIURGOS_TEXT_PROVIDER",
