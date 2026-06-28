@@ -1,0 +1,189 @@
+<!-- =========================================================================
+     screen_summary.html — Screen 6: Summary & Finish
+     
+     Final screen showing all configuration decisions with edit links.
+     Big "Start Using Demiurgos" primary button.
+     ========================================================================= -->
+
+<article class="wizard-screen" data-screen="6">
+  <header>
+    <h1>🎉 {{ t('summary_title') }}</h1>
+    <p>{{ t('summary_subtitle') }}</p>
+  </header>
+
+  <form hx-post="/wizard/finish"
+        hx-target="#wizard-content"
+        hx-swap="innerHTML">
+
+    <!-- Summary cards -->
+    <div class="summary-cards">
+
+      <!-- Language -->
+      <article class="card summary-card">
+        <header>
+          <h3>{{ t('language_label') }}</h3>
+        </header>
+        <p>{{ language_name or t('configured') }}</p>
+        <footer>
+          <a hx-get="/wizard/0"
+             hx-target="#wizard-content"
+             hx-swap="innerHTML"
+             hx-push-url="true"
+             class="secondary">
+            {{ t('edit') }}
+          </a>
+        </footer>
+      </article>
+
+      <!-- World -->
+      <article class="card summary-card">
+        <header>
+          <h3>{{ t('world_label') }}</h3>
+        </header>
+        <p>{{ world_name or t('configured') }}</p>
+        <footer>
+          <a hx-get="/wizard/1"
+             hx-target="#wizard-content"
+             hx-swap="innerHTML"
+             hx-push-url="true"
+             class="secondary">
+            {{ t('edit') }}
+          </a>
+        </footer>
+      </article>
+
+      <!-- AI Text -->
+      <article class="card summary-card">
+        <header>
+          <h3>{{ t('ai_text_label') }}</h3>
+        </header>
+        <p>
+          {% if text_provider %}
+            {{ text_provider }} / {{ text_model }}
+          {% else %}
+            {{ t('skipped') }}
+          {% endif %}
+        </p>
+        <footer>
+          <a hx-get="/wizard/2"
+             hx-target="#wizard-content"
+             hx-swap="innerHTML"
+             hx-push-url="true"
+             class="secondary">
+            {{ t('edit') }}
+          </a>
+        </footer>
+      </article>
+
+      <!-- AI Vision -->
+      <article class="card summary-card">
+        <header>
+          <h3>{{ t('ai_vision_label') }}</h3>
+        </header>
+        <p>
+          {% if same_as_text_model %}
+            {{ t('same_as_text') }}
+          {% elif vision_provider %}
+            {{ vision_provider }} / {{ vision_model }}
+          {% else %}
+            {{ t('skipped') }}
+          {% endif %}
+        </p>
+        <footer>
+          <a hx-get="/wizard/2"
+             hx-target="#wizard-content"
+             hx-swap="innerHTML"
+             hx-push-url="true"
+             class="secondary">
+            {{ t('edit') }}
+          </a>
+        </footer>
+      </article>
+
+      <!-- Images -->
+      <article class="card summary-card">
+        <header>
+          <h3>{{ t('images_label') }}</h3>
+        </header>
+        <p>
+          {% if img_provider %}
+            {{ img_provider }} / {{ img_model }}
+          {% else %}
+            {{ t('skipped') }}
+          {% endif %}
+        </p>
+        <footer>
+          <a hx-get="/wizard/3"
+             hx-target="#wizard-content"
+             hx-swap="innerHTML"
+             hx-push-url="true"
+             class="secondary">
+            {{ t('edit') }}
+          </a>
+        </footer>
+      </article>
+
+      <!-- Chats -->
+      <article class="card summary-card">
+        <header>
+          <h3>{{ t('chats_label') }}</h3>
+        </header>
+        <p>
+          {% if chat_providers %}
+            {{ chat_providers | join(', ') }}
+          {% else %}
+            {{ t('skipped') }}
+          {% endif %}
+        </p>
+        <footer>
+          <a hx-get="/wizard/4"
+             hx-target="#wizard-content"
+             hx-swap="innerHTML"
+             hx-push-url="true"
+             class="secondary">
+            {{ t('edit') }}
+          </a>
+        </footer>
+      </article>
+
+      <!-- Backup -->
+      <article class="card summary-card">
+        <header>
+          <h3>{{ t('backup_label') }}</h3>
+        </header>
+        <p>
+          {% if backup_enabled %}
+            Google Drive — {{ t('configured') }}
+          {% else %}
+            {{ t('skipped') }}
+          {% endif %}
+        </p>
+        <footer>
+          <a hx-get="/wizard/5"
+             hx-target="#wizard-content"
+             hx-swap="innerHTML"
+             hx-push-url="true"
+             class="secondary">
+            {{ t('edit') }}
+          </a>
+        </footer>
+      </article>
+
+    </div>
+
+    <!-- Navigation -->
+    <div class="wizard-nav">
+      <button type="button" class="secondary"
+              hx-get="/wizard/5"
+              hx-target="#wizard-content"
+              hx-swap="innerHTML"
+              hx-push-url="true">
+        ← {{ t('back') }}
+      </button>
+      <button type="submit" class="primary" style="font-size: 1.2rem; padding: 1rem 2rem;">
+        🚀 {{ t('start_using') }}
+      </button>
+    </div>
+
+  </form>
+</article>
