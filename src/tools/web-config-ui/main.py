@@ -202,7 +202,7 @@ async def save_config(request: Request) -> HTMLResponse:
 
     # --- validate ---
     if not env_data["text_provider"]:
-        return _error_fragment(request, "Seleccioná un proveedor de texto")
+        return _error_fragment(request, "Selecciona un proveedor de texto")
     if not env_data["text_endpoint"]:
         return _error_fragment(request, "El endpoint de texto es obligatorio")
     if not env_data["text_api_key"]:

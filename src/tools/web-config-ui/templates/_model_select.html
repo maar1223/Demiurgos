@@ -25,7 +25,7 @@
 <!-- ===================================================================== -->
 <select id="text-model" name="text_model" hx-swap-oob="true"
         onchange="var c=document.getElementById('text-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
-  <option value="">— Seleccioná un modelo —</option>
+  <option value="">— Selecciona un modelo —</option>
   {% for model in models %}
   <option value="{{ model }}"{% if model == current_text_model %} selected{% endif %}>{{ model }}</option>
   {% endfor %}
@@ -39,7 +39,7 @@
   {% if supports_vision %}
   <select id="vision-model" name="vision_model"
           onchange="var c=document.getElementById('vision-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
-    <option value="">— Seleccioná un modelo —</option>
+    <option value="">— Selecciona un modelo —</option>
     {% for model in models %}
     <option value="{{ model }}"{% if model == current_vision_model %} selected{% endif %}>{{ model }}</option>
     {% endfor %}

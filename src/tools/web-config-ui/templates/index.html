@@ -37,7 +37,7 @@
         {% endfor %}
         <option value="custom" data-endpoint="">Personalizado</option>
       </select>
-      <small id="text-provider-help">Elegí el proveedor que usará Demiurgos para generación de texto.</small>
+      <small id="text-provider-help">Elige el proveedor que usará Demiurgos para generación de texto.</small>
     </label>
 
     <!-- ================================================================= -->
@@ -106,16 +106,16 @@
       Modelo de Texto
       <select id="text-model" name="text_model"
               aria-describedby="text-model-help">
-        <option value="">— Probá la conexión primero —</option>
+        <option value="">— Prueba la conexión primero —</option>
         {% if current_text_model %}
         <option value="{{ current_text_model }}" selected>{{ current_text_model }}</option>
         {% endif %}
       </select>
       <input type="text" id="text-model-custom" name="text_model_custom"
-             placeholder="Escribí el nombre del modelo..."
+             placeholder="Escribe el nombre del modelo..."
              style="display:none; margin-top:0.5rem">
       <small id="text-model-help">
-        Probá la conexión para ver los modelos disponibles, o elegí "Otro" para escribir uno manualmente.
+        Prueba la conexión para ver los modelos disponibles, o elige "Otro" para escribir uno manualmente.
       </small>
     </label>
 
@@ -155,7 +155,7 @@
           <option value="custom" data-endpoint="">Personalizado</option>
         </select>
         <small id="vision-provider-help">
-          Opcional: elegí un proveedor distinto para análisis de imágenes.
+          Opcional: elige un proveedor distinto para análisis de imágenes.
         </small>
       </label>
 
@@ -191,16 +191,16 @@
         Modelo de Visión
         <select id="vision-model" name="vision_model"
                 aria-describedby="vision-model-help">
-          <option value="">— Probá la conexión primero —</option>
+          <option value="">— Prueba la conexión primero —</option>
           {% if current_vision_model %}
           <option value="{{ current_vision_model }}" selected>{{ current_vision_model }}</option>
           {% endif %}
         </select>
         <input type="text" id="vision-model-custom" name="vision_model_custom"
-               placeholder="Escribí el nombre del modelo..."
+               placeholder="Escribe el nombre del modelo..."
                style="display:none; margin-top:0.5rem">
         <small id="vision-model-help">
-          Opcional: elegí un modelo específico para análisis de imágenes.
+          Opcional: elige un modelo específico para análisis de imágenes.
         </small>
       </label>
 
