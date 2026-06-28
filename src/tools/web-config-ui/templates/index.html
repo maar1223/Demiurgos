@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Demiurgos — Configuración de Proveedor LLM</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+
+<main class="container config-container">
+  <header>
+    <h1>⚙️ Configuración de Proveedor LLM</h1>
+    <p>Conectá Demiurgos a tu proveedor de modelos de lenguaje.</p>
+  </header>
+
+  <form id="config-form" aria-label="Formulario de configuración LLM">
+
+    <!-- ================================================================= -->
+    <!-- Proveedor de Texto                                                  -->
+    <!-- ================================================================= -->
+
+    <label for="text-provider">
+      Proveedor de Texto
+      <select id="text-provider" name="text_provider" required
+              aria-describedby="text-provider-help">
+        <option value="">— Seleccionar —</option>
+        {% for p in providers %}
+        <option value="{{ p.id }}"
+                data-endpoint="{{ p.default_endpoint }}"
+                data-vision="{{ 'true' if p.supports_vision else 'false' }}"
+                {% if env.text_provider == p.id %}selected{% endif %}>
+          {{ p.name }}
+        </option>
+        {% endfor %}
+        <option value="custom" data-endpoint="">Personalizado</option>
+      </select>
+      <small id="text-provider-help">Elegí el proveedor que usará Demiurgos para generación de texto.</small>
+    </label>
+
+    <!-- ================================================================= -->
+    <!-- Endpoint                                                            -->
+    <!-- ================================================================= -->
+
+    <label for="text-endpoint">
+      Endpoint
+      <input type="url" id="text-endpoint" name="text_endpoint"
+             value="{{ env.text_endpoint }}"
+             placeholder="https://api.openai.com/v1"
+             aria-describedby="text-endpoint-help">
+      <small id="text-endpoint-help">
+        URL base de la API. Se auto-completa al elegir proveedor conocido.
+      </small>
+    </label>
+
+    <!-- ================================================================= -->
+    <!-- API Key                                                             -->
+    <!-- ================================================================= -->
+
+    <label for="text-api-key">
+      API Key
+      <div class="password-wrapper">
+        <input type="password" id="text-api-key" name="text_api_key"
+               value="{{ env.text_api_key }}"
+               placeholder="sk-..."
+               autocomplete="off"
+               aria-describedby="text-api-key-help">
+        <button type="button" id="toggle-api-key"
+                class="outline secondary password-toggle"
+                aria-label="Mostrar / ocultar API key"
+                title="Mostrar / ocultar">👁️</button>
+      </div>
+      <small id="text-api-key-help">La API key nunca se muestra en logs ni respuestas.</small>
+    </label>
+
+    <!-- ================================================================= -->
+    <!-- Probar Conexión                                                     -->
+    <!-- ================================================================= -->
+
+    <div class="grid">
+      <button type="button" id="test-btn" class="secondary"
+              hx-post="/test-connection"
+              hx-target="#connection-status"
+              hx-swap="innerHTML"
+              hx-indicator="#test-spinner"
+              hx-include="[name='text_endpoint'], [name='text_api_key'], [name='text_provider']"
+              aria-describedby="test-btn-help">
+        🔌 Probar Conexión
+      </button>
+      <span id="test-spinner" class="htmx-indicator" aria-live="polite">
+        ⏳ Probando conexión...
+      </span>
+    </div>
+    <small id="test-btn-help">Verifica que la API key y el endpoint sean válidos y descubre los modelos disponibles.</small>
+
+    <!-- Status area for connection test -->
+    <div id="connection-status" role="status" aria-live="polite"></div>
+
+    <!-- ================================================================= -->
+    <!-- Modelo de Texto                                                     -->
+    <!-- ================================================================= -->
+
+    <label for="text-model">
+      Modelo de Texto
+      <input type="text" id="text-model" name="text_model"
+             list="text-model-options"
+             value="{{ env.text_model }}"
+             placeholder="gpt-4o"
+             aria-describedby="text-model-help">
+      <datalist id="text-model-options">
+      </datalist>
+      <small id="text-model-help">
+        Probá la conexión para ver los modelos disponibles, o escribí uno manualmente.
+      </small>
+    </label>
+
+    <!-- ================================================================= -->
+    <!-- Visión — Toggle                                                     -->
+    <!-- ================================================================= -->
+
+    <fieldset>
+      <label for="vision-toggle">
+        <input type="checkbox" id="vision-toggle" name="use_vision"
+               role="switch"
+               {% if env.vision_provider %}checked{% endif %}>
+        Usar proveedor diferente para visión
+      </label>
+    </fieldset>
+
+    <!-- ================================================================= -->
+    <!-- Sección de Visión (colapsable)                                      -->
+    <!-- ================================================================= -->
+
+    <section id="vision-section"
+             {% if not env.vision_provider %}hidden{% endif %}
+             aria-label="Configuración de proveedor de visión">
+
+      <label for="vision-provider">
+        Proveedor de Visión
+        <select id="vision-provider" name="vision_provider"
+                aria-describedby="vision-provider-help">
+          <option value="">— Mismo que texto —</option>
+          {% for p in providers %}
+          <option value="{{ p.id }}"
+                  data-endpoint="{{ p.default_endpoint }}"
+                  {% if env.vision_provider == p.id %}selected{% endif %}>
+            {{ p.name }}
+          </option>
+          {% endfor %}
+          <option value="custom" data-endpoint="">Personalizado</option>
+        </select>
+        <small id="vision-provider-help">
+          Opcional: elegí un proveedor distinto para análisis de imágenes.
+        </small>
+      </label>
+
+      <label for="vision-endpoint">
+        Endpoint (Visión)
+        <input type="url" id="vision-endpoint" name="vision_endpoint"
+               value="{{ env.vision_endpoint }}"
+               placeholder="https://api.openai.com/v1">
+      </label>
+
+      <label for="vision-api-key">
+        API Key (Visión)
+        <input type="password" id="vision-api-key" name="vision_api_key"
+               value="{{ env.vision_api_key }}"
+               placeholder="sk-..."
+               autocomplete="off">
+      </label>
+
+      <label for="vision-model">
+        Modelo de Visión
+        <input type="text" id="vision-model" name="vision_model"
+               list="vision-model-options"
+               value="{{ env.vision_model }}"
+               placeholder="gpt-4o">
+        <datalist id="vision-model-options">
+        </datalist>
+      </label>
+
+      <!-- Dynamic vision status injected by htmx -->
+      <div id="vision-model-container" aria-live="polite"></div>
+    </section>
+
+    <!-- ================================================================= -->
+    <!-- Guardar                                                             -->
+    <!-- ================================================================= -->
+
+    <div class="grid">
+      <button type="button" id="save-btn"
+              hx-post="/save"
+              hx-target="#save-status"
+              hx-swap="innerHTML"
+              hx-indicator="#save-spinner"
+              hx-include="#config-form">
+        💾 Guardar Configuración
+      </button>
+      <span id="save-spinner" class="htmx-indicator" aria-live="polite">
+        ⏳ Guardando...
+      </span>
+    </div>
+    <div id="save-status" role="status" aria-live="polite"></div>
+
+  </form>
+</main>
+
+<!-- ===================================================================== -->
+<!-- Inline scripts (minimal)                                               -->
+<!-- ===================================================================== -->
+
+<script>
+// Provider selector: auto-fill endpoint on change
+(function () {
+  const providerSelect = document.getElementById("text-provider");
+  if (!providerSelect) return;
+
+  const endpointInput = document.getElementById("text-endpoint");
+
+  providerSelect.addEventListener("change", function () {
+    const option = this.options[this.selectedIndex];
+    const endpoint = option.dataset.endpoint;
+    if (endpoint !== undefined) {
+      endpointInput.value = endpoint;
+    }
+  });
+})();
+
+// Vision toggle: show/hide vision section
+(function () {
+  const toggle = document.getElementById("vision-toggle");
+  const section = document.getElementById("vision-section");
+  if (!toggle || !section) return;
+
+  toggle.addEventListener("change", function () {
+    section.hidden = !this.checked;
+  });
+})();
+
+// Show/hide API key (eye toggle)
+(function () {
+  const btn = document.getElementById("toggle-api-key");
+  const input = document.getElementById("text-api-key");
+  if (!btn || !input) return;
+
+  btn.addEventListener("click", function () {
+    const isPassword = input.type === "password";
+    input.type = isPassword ? "text" : "password";
+    this.textContent = isPassword ? "🙈" : "👁️";
+  });
+})();
+
+// Provider-specific vision support check
+// When test-connection returns, we check if the provider supports vision
+// and update the vision section accordingly.
+document.body.addEventListener("htmx:afterSwap", function (evt) {
+  // Only handle test-connection responses
+  if (evt.detail.target.id !== "connection-status") return;
+
+  const visionContainer = document.getElementById("vision-model-container");
+  if (!visionContainer) return;
+
+  // If the vision container now has a warning, disable the vision section
+  const warning = visionContainer.querySelector(".vision-warning");
+  if (warning) {
+    const toggle = document.getElementById("vision-toggle");
+    const section = document.getElementById("vision-section");
+    if (toggle) toggle.checked = false;
+    if (section) section.hidden = true;
+  }
+});
+</script>
+
+</body>
+</html>
