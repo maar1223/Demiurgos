@@ -1,7 +1,7 @@
 <!-- _model_select.html — htmx fragment returned on successful connection test -->
 <!--
   Swaps itself into the target (#connection-status) and uses
-  hx-swap-oob to update datalists and the vision-model-container.
+  hx-swap-oob to update the model selects and vision-model-container.
 -->
 
 <!-- ===================================================================== -->
@@ -21,24 +21,30 @@
 </article>
 
 <!-- ===================================================================== -->
-<!-- Populate text model datalist (out-of-band swap)                         -->
+<!-- Populate text model select (out-of-band swap)                          -->
 <!-- ===================================================================== -->
-<datalist id="text-model-options" hx-swap-oob="true">
+<select id="text-model" name="text_model" hx-swap-oob="true"
+        onchange="var c=document.getElementById('text-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
+  <option value="">— Seleccioná un modelo —</option>
   {% for model in models %}
-  <option value="{{ model }}">
+  <option value="{{ model }}"{% if model == current_text_model %} selected{% endif %}>{{ model }}</option>
   {% endfor %}
-</datalist>
+  <option value="__other__">Otro (escribir manualmente)</option>
+</select>
 
 <!-- ===================================================================== -->
-<!-- Vision model container (out-of-band swap)                                -->
+<!-- Vision model container (out-of-band swap)                              -->
 <!-- ===================================================================== -->
 <div id="vision-model-container" hx-swap-oob="true">
   {% if supports_vision %}
-  <datalist id="vision-model-options">
+  <select id="vision-model" name="vision_model"
+          onchange="var c=document.getElementById('vision-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
+    <option value="">— Seleccioná un modelo —</option>
     {% for model in models %}
-    <option value="{{ model }}">
+    <option value="{{ model }}"{% if model == current_vision_model %} selected{% endif %}>{{ model }}</option>
     {% endfor %}
-  </datalist>
+    <option value="__other__">Otro (escribir manualmente)</option>
+  </select>
   <small class="vision-ok">✅ Proveedor compatible con visión. Los modelos fueron cargados.</small>
   {% else %}
   <small role="alert" class="vision-warning">

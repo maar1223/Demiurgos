@@ -16,9 +16,13 @@
   </footer>
 </article>
 
-<!-- Clear the model datalists on error (out-of-band) -->
-<datalist id="text-model-options" hx-swap-oob="true"></datalist>
+<!-- Clear the model selects on error (out-of-band) -->
+<select id="text-model" name="text_model" hx-swap-oob="true">
+  <option value="">— Probá la conexión primero —</option>
+</select>
 
 <div id="vision-model-container" hx-swap-oob="true">
-  <datalist id="vision-model-options"></datalist>
+  <select id="vision-model" name="vision_model">
+    <option value="">— Probá la conexión primero —</option>
+  </select>
 </div>

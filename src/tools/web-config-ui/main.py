@@ -70,6 +70,8 @@ async def index(request: Request) -> HTMLResponse:
         context={
             "providers": config.KNOWN_PROVIDERS,
             "env": env_data,
+            "current_text_model": env_data.get("text_model", ""),
+            "current_vision_model": env_data.get("vision_model", ""),
         },
     )
 
@@ -120,12 +122,16 @@ async def test_connection(request: Request) -> HTMLResponse:
         len(models),
         supports_vision,
     )
+    # Read current models from .env so we can pre-select them in the fragment
+    current_env = config.read_env(ENV_PATH)
     return templates.TemplateResponse(
         request,
         "_model_select.html",
         context={
             "models": models,
             "supports_vision": supports_vision,
+            "current_text_model": current_env.get("text_model", ""),
+            "current_vision_model": current_env.get("vision_model", ""),
         },
     )
 
@@ -139,14 +145,23 @@ async def save_config(request: Request) -> HTMLResponse:
         return _error_fragment(request, "Error al procesar el formulario")
 
     # --- extract fields ---
+    text_model_raw = (form_data.get("text_model") or "").strip()
+    vision_model_raw = (form_data.get("vision_model") or "").strip()
+
+    # If user selected "Otro", use the custom typed value
+    if text_model_raw == "__other__":
+        text_model_raw = (form_data.get("text_model_custom") or "").strip()
+    if vision_model_raw == "__other__":
+        vision_model_raw = (form_data.get("vision_model_custom") or "").strip()
+
     env_data = {
         "text_provider": (form_data.get("text_provider") or "").strip(),
         "text_endpoint": (form_data.get("text_endpoint") or "").strip(),
-        "text_model": (form_data.get("text_model") or "").strip(),
+        "text_model": text_model_raw,
         "text_api_key": (form_data.get("text_api_key") or "").strip(),
         "vision_provider": (form_data.get("vision_provider") or "").strip(),
         "vision_endpoint": (form_data.get("vision_endpoint") or "").strip(),
-        "vision_model": (form_data.get("vision_model") or "").strip(),
+        "vision_model": vision_model_raw,
         "vision_api_key": (form_data.get("vision_api_key") or "").strip(),
     }
 

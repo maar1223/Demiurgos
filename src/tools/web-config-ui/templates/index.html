@@ -104,15 +104,18 @@
 
     <label for="text-model">
       Modelo de Texto
-      <input type="text" id="text-model" name="text_model"
-             list="text-model-options"
-             value="{{ env.text_model }}"
-             placeholder="gpt-4o"
-             aria-describedby="text-model-help">
-      <datalist id="text-model-options">
-      </datalist>
+      <select id="text-model" name="text_model"
+              aria-describedby="text-model-help">
+        <option value="">— Probá la conexión primero —</option>
+        {% if current_text_model %}
+        <option value="{{ current_text_model }}" selected>{{ current_text_model }}</option>
+        {% endif %}
+      </select>
+      <input type="text" id="text-model-custom" name="text_model_custom"
+             placeholder="Escribí el nombre del modelo..."
+             style="display:none; margin-top:0.5rem">
       <small id="text-model-help">
-        Probá la conexión para ver los modelos disponibles, o escribí uno manualmente.
+        Probá la conexión para ver los modelos disponibles, o elegí "Otro" para escribir uno manualmente.
       </small>
     </label>
 
@@ -173,12 +176,19 @@
 
       <label for="vision-model">
         Modelo de Visión
-        <input type="text" id="vision-model" name="vision_model"
-               list="vision-model-options"
-               value="{{ env.vision_model }}"
-               placeholder="gpt-4o">
-        <datalist id="vision-model-options">
-        </datalist>
+        <select id="vision-model" name="vision_model"
+                aria-describedby="vision-model-help">
+          <option value="">— Probá la conexión primero —</option>
+          {% if current_vision_model %}
+          <option value="{{ current_vision_model }}" selected>{{ current_vision_model }}</option>
+          {% endif %}
+        </select>
+        <input type="text" id="vision-model-custom" name="vision_model_custom"
+               placeholder="Escribí el nombre del modelo..."
+               style="display:none; margin-top:0.5rem">
+        <small id="vision-model-help">
+          Opcional: elegí un modelo específico para análisis de imágenes.
+        </small>
       </label>
 
       <!-- Dynamic vision status injected by htmx -->
