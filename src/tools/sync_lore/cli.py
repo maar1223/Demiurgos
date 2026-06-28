@@ -22,7 +22,7 @@ from .schemas import ProviderConfig
 DEFAULT_ENDPOINT = "https://opencode.ai/zen/go/v1"
 DEFAULT_MODEL = "deepseek-v4-flash"
 DEFAULT_TIMEOUT = 60
-DEFAULT_API_KEY_ENV = "QWEN_API_KEY"
+DEFAULT_API_KEY_ENV = "OPENCODE_GO_API_KEY"
 DEFAULT_VISION_MODEL = "qwen3.6-plus"
 DEFAULT_VISION_TIMEOUT = 120
 DEFAULT_MODE = "text"
@@ -45,7 +45,7 @@ def build_config(args: argparse.Namespace) -> tuple[ProviderConfig, dict]:
         runtime_opts contains: input_path, mode, dry_run, output, engram, workers
     """
     # Start with defaults
-    provider = "qwen"
+    provider = "opencode-go"
     endpoint = DEFAULT_ENDPOINT
     model = DEFAULT_MODEL
     timeout = DEFAULT_TIMEOUT

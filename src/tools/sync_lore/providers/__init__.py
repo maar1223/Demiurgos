@@ -21,9 +21,9 @@ def load_provider(config: ProviderConfig) -> ProviderAdapter:
     Raises:
         ValueError: if provider name is unknown.
     """
-    # Any OpenAI-compatible provider name resolves to LlmProvider.
-    # This covers: opencode-go, openai, google, groq, together,
-    # deepseek, xai, ollama, etc.
+    # LlmProvider handles any HTTP Chat Completion API endpoint.
+    # Works with: OpenCode Go, OpenAI, Google, Groq, Together,
+    # DeepSeek, xAI, Ollama, etc.
     from .llm import LlmProvider
     return LlmProvider(config)
 

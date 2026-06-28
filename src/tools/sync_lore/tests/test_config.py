@@ -52,11 +52,11 @@ class TestBuildConfigDefaults(unittest.TestCase):
     def test_all_defaults(self):
         args = self._make_args()
         provider_config, runtime_opts = cli.build_config(args)
-        self.assertEqual(provider_config.provider, "qwen")
+        self.assertEqual(provider_config.provider, "opencode-go")
         self.assertEqual(provider_config.endpoint, "https://opencode.ai/zen/go/v1")
-        self.assertEqual(provider_config.model, "qwen3.6-plus")
+        self.assertEqual(provider_config.model, "deepseek-v4-flash")
         self.assertEqual(provider_config.timeout, 60)
-        self.assertEqual(provider_config.api_key_env, "QWEN_API_KEY")
+        self.assertEqual(provider_config.api_key_env, "OPENCODE_GO_API_KEY")
         self.assertEqual(runtime_opts["workers"], 5)
         self.assertEqual(runtime_opts["mode"], "text")
 

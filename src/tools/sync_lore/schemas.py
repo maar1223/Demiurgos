@@ -51,7 +51,7 @@ class ProviderConfig:
     analysis (different model, endpoint, or API key).
     If `vision` is None, image analysis is skipped.
     """
-    provider: str = "qwen"
+    provider: str = "opencode-go"
     endpoint: str = "https://opencode.ai/zen/go/v1"
     model: str = "deepseek-v4-flash"
     timeout: int = 60
@@ -67,7 +67,7 @@ class VisionConfig:
     these values instead of the base config. Allows different providers,
     endpoints, models, and API keys for text vs vision.
     """
-    provider: str = "qwen"
+    provider: str = "opencode-go"
     endpoint: str = "https://opencode.ai/zen/go/v1"
     model: str = "qwen3.6-plus"
     timeout: int = 120

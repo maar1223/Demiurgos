@@ -23,11 +23,11 @@ class TestProviderConfig(unittest.TestCase):
 
     def test_defaults(self):
         cfg = schemas.ProviderConfig()
-        self.assertEqual(cfg.provider, "qwen")
+        self.assertEqual(cfg.provider, "opencode-go")
         self.assertEqual(cfg.endpoint, "https://opencode.ai/zen/go/v1")
-        self.assertEqual(cfg.model, "qwen3.6-plus")
+        self.assertEqual(cfg.model, "deepseek-v4-flash")
         self.assertEqual(cfg.timeout, 60)
-        self.assertEqual(cfg.api_key_env, "QWEN_API_KEY")
+        self.assertEqual(cfg.api_key_env, "OPENCODE_GO_API_KEY")
 
     def test_custom_values(self):
         cfg = schemas.ProviderConfig(

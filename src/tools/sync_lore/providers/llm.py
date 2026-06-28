@@ -1,5 +1,5 @@
 """
-providers/qwen.py — General LLM provider (OpenAI-compatible).
+providers/llm.py — General LLM provider (OpenAI-compatible).
 
 Replicates the LLM call pattern from sync-ideas.py, adapted for async
 via httpx.AsyncClient with 3 retries and exponential backoff.
@@ -86,7 +86,7 @@ _IMAGE_SYSTEM_PROMPT = (
 
 class LlmProvider(ProviderAdapter):
     """
-    Qwen LLM provider via OpenCode Go OpenAI-compatible endpoint.
+    LlmProvider � HTTP Chat Completion API (any OpenAI, Google, Groq, etc.)
 
     Uses httpx.AsyncClient for async HTTP. 3 retries with exponential
     backoff on connection/timeout errors.
