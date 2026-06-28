@@ -136,6 +136,41 @@ async def test_connection(request: Request) -> HTMLResponse:
     )
 
 
+@app.post("/test-vision-connection", response_class=HTMLResponse)
+async def test_vision_connection(request: Request) -> HTMLResponse:
+    """Same as test-connection but reads vision fields."""
+    try:
+        form_data = await request.form()
+    except Exception:
+        return _error_fragment(request, "Datos inválidos")
+
+    endpoint = (form_data.get("vision_endpoint") or "").strip()
+    api_key = (form_data.get("vision_api_key") or "").strip()
+    provider_id = (form_data.get("vision_provider") or "").strip()
+
+    if not endpoint:
+        return _error_fragment(request, "El endpoint de visión es obligatorio")
+    if not api_key:
+        return _error_fragment(request, "La API key de visión es obligatoria")
+
+    masked = config.mask_api_key(api_key)
+    logger.info("Testing vision connection: endpoint=%s key=%s", endpoint, masked)
+
+    models, error = config.test_connection(endpoint, api_key)
+
+    if error:
+        return _error_fragment(request, error)
+
+    logger.info("Vision connection test succeeded: %d models", len(models))
+    return templates.TemplateResponse(
+        request,
+        "_vision_model_select.html",
+        context={
+            "models": models,
+        },
+    )
+
+
 @app.post("/save", response_class=HTMLResponse)
 async def save_config(request: Request) -> HTMLResponse:
     """Accept form data, validate, persist to .env and default-config.json."""

@@ -1,0 +1,30 @@
+<!-- _vision_model_select.html — htmx fragment for vision connection test only -->
+<!--
+  Swaps into #vision-connection-status and OOB-updates vision-model + vision-model-container.
+-->
+
+<article class="connection-success" role="status">
+  <header>✅ Conexión exitosa</header>
+  <p>Se descubrieron <strong>{{ models | length }}</strong> modelos de visión.</p>
+  <script>
+    (function(el) {
+      setTimeout(function() {
+        el.style.opacity = '0';
+        setTimeout(function() { if (el.parentNode) el.remove(); }, 500);
+      }, 5000);
+    })(document.currentScript.parentElement);
+  </script>
+</article>
+
+<select id="vision-model" name="vision_model" hx-swap-oob="true"
+        onchange="var c=document.getElementById('vision-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
+  <option value="">— Seleccioná un modelo —</option>
+  {% for model in models %}
+  <option value="{{ model }}">{{ model }}</option>
+  {% endfor %}
+  <option value="__other__">Otro (escribir manualmente)</option>
+</select>
+
+<div id="vision-model-container" hx-swap-oob="true">
+  <small class="vision-ok">✅ Proveedor de visión conectado. {{ models | length }} modelos cargados.</small>
+</div>
