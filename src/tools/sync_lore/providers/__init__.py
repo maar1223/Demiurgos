@@ -21,10 +21,11 @@ def load_provider(config: ProviderConfig) -> ProviderAdapter:
     Raises:
         ValueError: if provider name is unknown.
     """
-    if config.provider == "qwen":
-        from .qwen import QwenProvider
-        return QwenProvider(config)
-    raise ValueError(f"Unknown provider: {config.provider}")
+    # Any OpenAI-compatible provider name resolves to LlmProvider.
+    # This covers: opencode-go, openai, google, groq, together,
+    # deepseek, xai, ollama, etc.
+    from .llm import LlmProvider
+    return LlmProvider(config)
 
 
 __all__ = ["ProviderAdapter", "load_provider", "ChunkResult", "ImageAnalysis"]

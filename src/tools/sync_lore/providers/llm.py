@@ -1,5 +1,5 @@
 """
-providers/qwen.py — QwenProvider implementation.
+providers/qwen.py — General LLM provider (OpenAI-compatible).
 
 Replicates the LLM call pattern from sync-ideas.py, adapted for async
 via httpx.AsyncClient with 3 retries and exponential backoff.
@@ -81,10 +81,10 @@ _IMAGE_SYSTEM_PROMPT = (
 
 
 # ---------------------------------------------------------------------------
-# QwenProvider
+# LlmProvider
 # ---------------------------------------------------------------------------
 
-class QwenProvider(ProviderAdapter):
+class LlmProvider(ProviderAdapter):
     """
     Qwen LLM provider via OpenCode Go OpenAI-compatible endpoint.
 
