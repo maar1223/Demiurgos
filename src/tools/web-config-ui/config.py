@@ -38,8 +38,8 @@ KNOWN_PROVIDERS: list[dict] = [
     {
         "id": "google",
         "name": "Google (Gemini)",
-        "default_endpoint": "https://generativelanguage.googleapis.com/v1beta",
-        "default_text_model": "gemini-2.5-flash",
+        "default_endpoint": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "default_text_model": "gemini-2.0-flash",
         "supports_vision": True,
     },
     {
