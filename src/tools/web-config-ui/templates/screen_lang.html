@@ -1,0 +1,75 @@
+<!-- =========================================================================
+     screen_lang.html — Screen 0: Language Selector
+     
+     Rendered as a standalone htmx fragment that swaps into #wizard-content.
+     Also included by index.html on first load.
+     ========================================================================= -->
+
+<article class="wizard-screen" data-screen="0">
+  <header>
+    <h1>{{ t('welcome_title') }}</h1>
+    <p>{{ t('welcome_subtitle') }}</p>
+  </header>
+
+  <form hx-post="/wizard/0"
+        hx-target="#wizard-content"
+        hx-swap="innerHTML"
+        hx-push-url="true"
+        aria-label="{{ t('select_language') }}">
+
+    <fieldset>
+      <legend>{{ t('select_language') }}</legend>
+      <div class="grid language-grid">
+        <!-- Each card shows the language name in its own script -->
+        <label class="language-card">
+          <input type="radio" name="lang" value="en" checked>
+          <span class="language-name">English</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="zh">
+          <span class="language-name">中文</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="hi">
+          <span class="language-name">हिन्दी</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="es">
+          <span class="language-name">Español (neutro)</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="es-ar">
+          <span class="language-name">Español (rioplatense)</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="fr">
+          <span class="language-name">Français</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="ar">
+          <span class="language-name">العربية</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="bn">
+          <span class="language-name">বাংলা</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="pt">
+          <span class="language-name">Português</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="ru">
+          <span class="language-name">Русский</span>
+        </label>
+        <label class="language-card">
+          <input type="radio" name="lang" value="ur">
+          <span class="language-name">اردو</span>
+        </label>
+      </div>
+    </fieldset>
+
+    <button type="submit" class="primary">
+      {{ t('continue_button') }} →
+    </button>
+  </form>
+</article>

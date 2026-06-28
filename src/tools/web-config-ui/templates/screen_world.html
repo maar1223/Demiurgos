@@ -1,0 +1,88 @@
+<!-- =========================================================================
+     screen_world.html — Screen 1: World Selection/Creation
+     
+     Two card options: Create New World or Load Existing World.
+     Blocking screen (no skip button).
+     ========================================================================= -->
+
+<article class="wizard-screen" data-screen="1">
+  <header>
+    <h1>{{ t('world_title') }}</h1>
+    <p>{{ t('world_subtitle') }}</p>
+  </header>
+
+  <form hx-post="/wizard/1"
+        hx-target="#wizard-content"
+        hx-swap="innerHTML"
+        hx-push-url="true">
+
+    <!-- Option cards -->
+    <div class="grid">
+      <!-- Create New World card -->
+      <article class="card world-option-card">
+        <header>
+          <h2>{{ t('create_new_world') }}</h2>
+        </header>
+        <label for="world-name">{{ t('world_name_label') }}</label>
+        <input type="text"
+               id="world-name"
+               name="world_name"
+               placeholder="{{ t('world_name_placeholder') }}"
+               pattern="[a-z0-9-]+"
+               autocomplete="off">
+        <small>{{ t('world_name_hint') }}</small>
+      </article>
+
+      <!-- Load Existing World card -->
+      <article class="card world-option-card">
+        <header>
+          <h2>{{ t('load_existing_world') }}</h2>
+        </header>
+        <label for="world-folder">{{ t('select_folder') }}</label>
+        <div class="input-group">
+          <input type="text"
+                 id="world-folder"
+                 name="world_folder"
+                 placeholder="/ruta/a/tu/mundo"
+                 autocomplete="off">
+          <button type="button" class="secondary outline"
+                  onclick="document.getElementById('world-upload').click()">
+            {{ t('browse_button') }}
+          </button>
+          <input type="file"
+                 id="world-upload"
+                 name="world_upload"
+                 accept=".docx"
+                 style="display:none"
+                 onchange="document.getElementById('world-folder').value=this.files[0]?.name||''">
+        </div>
+      </article>
+    </div>
+
+    <!-- Supported formats badges -->
+    <section class="format-badges">
+      <h3>{{ t('supported_formats') }}</h3>
+      <div class="badge-group">
+        <span class="badge supported">{{ t('format_docx') }}</span>
+        <span class="badge supported">{{ t('format_md') }}</span>
+        <span class="badge coming-soon">{{ t('format_notion') }}</span>
+        <span class="badge coming-soon">{{ t('format_pdf') }}</span>
+      </div>
+    </section>
+
+    <!-- Navigation -->
+    <div class="wizard-nav">
+      <button type="button" class="secondary"
+              hx-get="/wizard/0"
+              hx-target="#wizard-content"
+              hx-swap="innerHTML"
+              hx-push-url="true">
+        ← {{ t('back') }}
+      </button>
+      <button type="submit" class="primary">
+        {{ t('next') }} →
+      </button>
+    </div>
+
+  </form>
+</article>
