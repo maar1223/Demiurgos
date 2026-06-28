@@ -68,14 +68,14 @@ KNOWN_PROVIDERS: list[dict] = [
         "name": "OpenCode Go",
         "default_endpoint": "https://opencode.ai/zen/go/v1",
         "default_text_model": "deepseek-v4-flash",
-        "supports_vision": False,
+        "supports_vision": True,
     },
     {
         "id": "opencode-zen",
         "name": "OpenCode Zen",
         "default_endpoint": "https://opencode.ai/zen/zen/v1",
         "default_text_model": "deepseek-v4-flash",
-        "supports_vision": False,
+        "supports_vision": True,
     },
 ]
 

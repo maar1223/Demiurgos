@@ -224,6 +224,9 @@
     const endpoint = option.dataset.endpoint;
     if (endpoint !== undefined) {
       endpointInput.value = endpoint;
+      // Auto-fill vision endpoint too (same provider, same endpoint)
+      const visionEndpoint = document.getElementById("vision-endpoint");
+      if (visionEndpoint) visionEndpoint.value = endpoint;
     }
   });
 })();
@@ -236,6 +239,30 @@
 
   toggle.addEventListener("change", function () {
     section.hidden = !this.checked;
+    // When enabling vision, copy text endpoint if vision endpoint is empty
+    if (this.checked) {
+      const visionEndpoint = document.getElementById("vision-endpoint");
+      const textEndpoint = document.getElementById("text-endpoint");
+      if (visionEndpoint && textEndpoint && !visionEndpoint.value) {
+        visionEndpoint.value = textEndpoint.value;
+      }
+    }
+  });
+})();
+
+// Vision provider selector: auto-fill endpoint on change
+(function () {
+  const visionProvider = document.getElementById("vision-provider");
+  if (!visionProvider) return;
+
+  const visionEndpoint = document.getElementById("vision-endpoint");
+
+  visionProvider.addEventListener("change", function () {
+    const option = this.options[this.selectedIndex];
+    const endpoint = option.dataset.endpoint;
+    if (endpoint !== undefined) {
+      visionEndpoint.value = endpoint;
+    }
   });
 })();
 

@@ -65,9 +65,9 @@ async def index(request: Request) -> HTMLResponse:
     """Render the main config form pre-filled with current .env values."""
     env_data = config.read_env(ENV_PATH)
     return templates.TemplateResponse(
+        request,
         "index.html",
-        {
-            "request": request,
+        context={
             "providers": config.KNOWN_PROVIDERS,
             "env": env_data,
         },
@@ -121,9 +121,9 @@ async def test_connection(request: Request) -> HTMLResponse:
         supports_vision,
     )
     return templates.TemplateResponse(
+        request,
         "_model_select.html",
-        {
-            "request": request,
+        context={
             "models": models,
             "supports_vision": supports_vision,
         },
@@ -216,6 +216,7 @@ async def save_config(request: Request) -> HTMLResponse:
 def _error_fragment(request: Request, message: str) -> HTMLResponse:
     """Render ``_errors.html`` with *message*."""
     return templates.TemplateResponse(
+        request,
         "_errors.html",
-        {"request": request, "error": message},
+        context={"error": message},
     )
