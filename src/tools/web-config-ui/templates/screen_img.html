@@ -20,30 +20,30 @@
             name="img_provider"
             aria-label="{{ t('select_provider') }}">
       <option value="">{{ t('select_provider') }}</option>
-      <option value="openai">OpenAI (DALL·E)</option>
-      <option value="groq">Groq</option>
-      <option value="ollama">Ollama (Local)</option>
+      <option value="openai" {% if img_provider == "openai" %}selected{% endif %}>OpenAI (DALL·E)</option>
+      <option value="groq" {% if img_provider == "groq" %}selected{% endif %}>Groq</option>
+      <option value="ollama" {% if img_provider == "ollama" %}selected{% endif %}>Ollama (Local)</option>
     </select>
 
     <label for="img-endpoint">{{ t('endpoint_label') }}</label>
     <input type="url"
            id="img-endpoint"
            name="img_endpoint"
-           value=""
+           value="{{ img_endpoint or '' }}"
            placeholder="https://api.openai.com/v1">
 
     <label for="img-api-key">{{ t('api_key_label') }}</label>
     <input type="password"
            id="img-api-key"
            name="img_api_key"
-           value=""
+           value="{{ img_api_key or '' }}"
            placeholder="sk-...">
 
     <label for="img-model">{{ t('select_model') }}</label>
     <select id="img-model" name="img_model">
       <option value="">{{ t('select_model') }}</option>
-      <option value="dall-e-3">DALL·E 3</option>
-      <option value="dall-e-2">DALL·E 2</option>
+      <option value="dall-e-3" {% if img_model == "dall-e-3" %}selected{% endif %}>DALL·E 3</option>
+      <option value="dall-e-2" {% if img_model == "dall-e-2" %}selected{% endif %}>DALL·E 2</option>
     </select>
 
     <!-- Navigation -->

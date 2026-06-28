@@ -17,7 +17,7 @@ from contextvars import ContextVar
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -170,8 +170,22 @@ def _provider_display(provider_id: str) -> str:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
-    """Render the full wizard shell with progress indicator and screen 0."""
+    """Render the full wizard shell or already-configured page."""
     lang = _current_language.get()
+
+    # Check if Demiurgos is already configured
+    current_env = config.read_env(ENV_PATH)
+    if current_env.get("text_provider"):
+        return templates.TemplateResponse(
+            request,
+            "already_configured.html",
+            context={
+                "lang": lang,
+                "text_provider": _provider_display(current_env["text_provider"]),
+                "text_model": current_env.get("text_model", ""),
+            },
+        )
+
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -212,10 +226,21 @@ async def test_connection(request: Request) -> HTMLResponse:
         endpoint, masked, provider_id or "(none)",
     )
 
-    models, error = config.test_connection(endpoint, api_key)
+    models, error_code, error_params = config.test_connection(endpoint, api_key)
 
-    if error:
-        return _error_fragment(request, error)
+    if error_code:
+        lang = request.cookies.get("demiurgos_lang", "en")
+        error_key = f"error_{error_code}"
+        error_msg = t(lang, error_key)
+        # Fall back to generic error if specific key is not translated
+        if error_msg == error_key:
+            error_msg = t(lang, "error_generic")
+        if error_params:
+            try:
+                error_msg = error_msg.format(**error_params)
+            except (KeyError, ValueError):
+                pass
+        return _error_fragment(request, error_msg)
 
     # --- tag every model with its vision capability (T-C4) ---
     tagged_models = (
@@ -265,10 +290,21 @@ async def test_vision_connection(request: Request) -> HTMLResponse:
     masked = config.mask_api_key(api_key)
     logger.info("Testing vision connection: endpoint=%s key=%s", endpoint, masked)
 
-    models, error = config.test_connection(endpoint, api_key)
+    models, error_code, error_params = config.test_connection(endpoint, api_key)
 
-    if error:
-        return _error_fragment(request, error)
+    if error_code:
+        lang = request.cookies.get("demiurgos_lang", "en")
+        error_key = f"error_{error_code}"
+        error_msg = t(lang, error_key)
+        # Fall back to generic error if specific key is not translated
+        if error_msg == error_key:
+            error_msg = t(lang, "error_generic")
+        if error_params:
+            try:
+                error_msg = error_msg.format(**error_params)
+            except (KeyError, ValueError):
+                pass
+        return _error_fragment(request, error_msg)
 
     tagged_models = (
         config.get_vision_models(provider_id, models)
@@ -282,6 +318,110 @@ async def test_vision_connection(request: Request) -> HTMLResponse:
         "_vision_model_select.html",
         context={"models": tagged_models},
     )
+
+
+# ===========================================================================
+# Routes — config dashboard
+# ===========================================================================
+
+
+@app.get("/config", response_class=HTMLResponse)
+async def config_dashboard(request: Request) -> HTMLResponse:
+    """Render the configuration dashboard with status for all 6 sections."""
+    lang = _current_language.get()
+    raw_env = config.read_env(ENV_PATH)
+
+    # --- Gather data for each section ---
+    language_code = (
+        os.environ.get("DEMIURGOS_LANGUAGE", "")
+        or request.cookies.get("demiurgos_lang", "")
+    )
+    world_name = os.environ.get("DEMIURGOS_WORLD", "")
+    text_provider = raw_env.get("text_provider", "")
+    image_provider = os.environ.get("DEMIURGOS_IMAGE_PROVIDER", "")
+    chat_providers = os.environ.get("DEMIURGOS_CHAT_PROVIDERS", "")
+    backup_enabled = os.environ.get("DEMIURGOS_BACKUP_ENABLED", "")
+
+    sections = [
+        {
+            "id": "language",
+            "icon": "🌐",
+            "title_key": "config_language",
+            "configured": bool(language_code),
+            "value": get_language_name(language_code) if language_code else "",
+            "badge": "configured" if language_code else "not_configured",
+            "edit_url": "/wizard/0",
+        },
+        {
+            "id": "world",
+            "icon": "🌍",
+            "title_key": "config_world",
+            "configured": bool(world_name),
+            "value": world_name,
+            "badge": "configured" if world_name else "not_configured",
+            "edit_url": "/wizard/1",
+        },
+        {
+            "id": "ai",
+            "icon": "🤖",
+            "title_key": "config_ai",
+            "configured": bool(text_provider),
+            "value": _provider_display(text_provider) if text_provider else "",
+            "badge": "configured" if text_provider else "not_configured",
+            "edit_url": "/wizard/2",
+        },
+        {
+            "id": "images",
+            "icon": "🎨",
+            "title_key": "config_images",
+            "configured": bool(image_provider),
+            "value": image_provider,
+            "badge": "skipped" if not image_provider and os.environ.get("DEMIURGOS_IMAGE_PROVIDER") is not None else (
+                "configured" if image_provider else "not_configured"
+            ),
+            "edit_url": "/wizard/3",
+        },
+        {
+            "id": "chats",
+            "icon": "💬",
+            "title_key": "config_chats",
+            "configured": bool(chat_providers),
+            "value": chat_providers,
+            "badge": "configured" if chat_providers else "not_configured",
+            "edit_url": "/wizard/4",
+        },
+        {
+            "id": "backup",
+            "icon": "☁️",
+            "title_key": "config_backup",
+            "configured": backup_enabled == "true",
+            "value": backup_enabled,
+            "badge": (
+                "skipped" if backup_enabled == "false"
+                else "configured" if backup_enabled == "true"
+                else "not_configured"
+            ),
+            "edit_url": "/wizard/5",
+        },
+    ]
+
+    return templates.TemplateResponse(
+        request,
+        "config_dashboard.html",
+        context={
+            "lang": lang,
+            "sections": sections,
+        },
+    )
+
+
+@app.get("/restart")
+async def restart_wizard(request: Request) -> RedirectResponse:
+    """Clear session and restart the wizard."""
+    session_id = request.cookies.get("demiurgos_session")
+    if session_id and session_id in sessions:
+        del sessions[session_id]
+    return RedirectResponse(url="/", status_code=303)
 
 
 # ===========================================================================
@@ -303,11 +443,12 @@ async def wizard_back_0(request: Request) -> HTMLResponse:
 
 @app.get("/wizard/1", response_class=HTMLResponse)
 async def wizard_back_1(request: Request) -> HTMLResponse:
-    """Back to world selection (screen 1)."""
+    """Back to world selection (screen 1). Pre-fill from .env."""
     sid = _get_session_id(request)
     sess = sessions[sid]
     ctx = _wizard_ctx(sess)
     ctx["current_step"] = 1
+    ctx["world_name"] = os.environ.get("DEMIURGOS_WORLD", "")
     response = templates.TemplateResponse(request, "screen_world.html", ctx)
     _attach_session(response, sid)
     return response
@@ -315,23 +456,25 @@ async def wizard_back_1(request: Request) -> HTMLResponse:
 
 @app.get("/wizard/2", response_class=HTMLResponse)
 async def wizard_back_2(request: Request) -> HTMLResponse:
-    """Back to AI config (screen 2) with session data pre-filled."""
+    """Back to AI config (screen 2) with session/.env data pre-filled."""
     sid = _get_session_id(request)
     sess = sessions[sid]
     ai = sess.get("ai", {})
+    # Fall back to .env when session has no AI data
+    env = {} if ai else config.read_env(ENV_PATH)
     ctx = _wizard_ctx(sess)
     ctx.update({
         "current_step": 2,
         "providers": config.KNOWN_PROVIDERS,
-        "current_text_provider": ai.get("text_provider", ""),
-        "current_text_endpoint": ai.get("text_endpoint", ""),
-        "current_text_api_key": ai.get("text_api_key", ""),
-        "current_text_model": ai.get("text_model", ""),
+        "current_text_provider": ai.get("text_provider") or env.get("text_provider", ""),
+        "current_text_endpoint": ai.get("text_endpoint") or env.get("text_endpoint", ""),
+        "current_text_api_key": ai.get("text_api_key") or env.get("text_api_key", ""),
+        "current_text_model": ai.get("text_model") or env.get("text_model", ""),
         "text_models": [],
-        "current_vision_provider": ai.get("vision_provider", ""),
-        "current_vision_endpoint": ai.get("vision_endpoint", ""),
-        "current_vision_api_key": ai.get("vision_api_key", ""),
-        "current_vision_model": ai.get("vision_model", ""),
+        "current_vision_provider": ai.get("vision_provider") or env.get("vision_provider", ""),
+        "current_vision_endpoint": ai.get("vision_endpoint") or env.get("vision_endpoint", ""),
+        "current_vision_api_key": ai.get("vision_api_key") or env.get("vision_api_key", ""),
+        "current_vision_model": ai.get("vision_model") or env.get("vision_model", ""),
         "vision_models": [],
         "same_as_text": True,
     })
@@ -342,11 +485,18 @@ async def wizard_back_2(request: Request) -> HTMLResponse:
 
 @app.get("/wizard/3", response_class=HTMLResponse)
 async def wizard_back_3(request: Request) -> HTMLResponse:
-    """Back to image generation (screen 3)."""
+    """Back to image generation (screen 3). Pre-fill from session or .env."""
     sid = _get_session_id(request)
     sess = sessions[sid]
     ctx = _wizard_ctx(sess)
     ctx["current_step"] = 3
+    # Pre-fill from .env if session has no image data (dashboard re-entry)
+    img = sess.get("images", {})
+    if not img:
+        ctx["img_provider"] = os.environ.get("DEMIURGOS_IMAGE_PROVIDER", "")
+        ctx["img_endpoint"] = os.environ.get("DEMIURGOS_IMAGE_ENDPOINT", "")
+        ctx["img_model"] = os.environ.get("DEMIURGOS_IMAGE_MODEL", "")
+        ctx["img_api_key"] = os.environ.get("DEMIURGOS_IMAGE_API_KEY", "")
     response = templates.TemplateResponse(request, "screen_img.html", ctx)
     _attach_session(response, sid)
     return response
@@ -770,6 +920,38 @@ async def wizard_finish(request: Request) -> HTMLResponse:
         json_ok = config.write_json_config(JSON_CONFIG_PATH, json_data)
         if not json_ok:
             errors.append("Error al escribir default-config.json")
+
+    # --- 4. Persist optional configs (images, chats, backup) ---
+    if not errors:
+        img = sess.get("images", {})
+        chat = sess.get("chats", {})
+        backup = sess.get("backup", {})
+
+        optional_lines: list[str] = []
+        if not img.get("skipped") and img.get("api_key"):
+            optional_lines.append(f"DEMIURGOS_IMAGE_PROVIDER={img.get('provider', '')}")
+            optional_lines.append(f"DEMIURGOS_IMAGE_ENDPOINT={img.get('endpoint', '')}")
+            optional_lines.append(f"DEMIURGOS_IMAGE_MODEL={img.get('model', '')}")
+            optional_lines.append(f"DEMIURGOS_IMAGE_API_KEY={img['api_key']}")
+
+        if not chat.get("skipped") and chat.get("providers"):
+            providers_str = ",".join(chat["providers"])
+            optional_lines.append(f"DEMIURGOS_CHAT_PROVIDERS={providers_str}")
+
+        if not backup.get("skipped"):
+            optional_lines.append(
+                f"DEMIURGOS_BACKUP_ENABLED={'true' if backup.get('enabled') else 'false'}"
+            )
+
+        if optional_lines:
+            try:
+                with open(ENV_PATH, "a", encoding="utf-8") as f:
+                    f.write("\n# Optional Demiurgos config\n")
+                    for line in optional_lines:
+                        f.write(line + "\n")
+                logger.info("Optional config persisted to .env: %d vars", len(optional_lines))
+            except OSError as exc:
+                logger.error("Failed to write optional config to .env: %s", exc)
 
     # --- Render result ---
     if errors:

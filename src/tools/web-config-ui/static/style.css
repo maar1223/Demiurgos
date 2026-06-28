@@ -621,3 +621,124 @@
     flex-direction: column;
   }
 }
+
+/* =========================================================================
+   Model Vision Tags (👁️+✍️ / ✍️ / ❓)
+   ========================================================================= */
+
+.model-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-left: 0.35rem;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+/* Vision-capable: green */
+.model-tag.vision-true {
+  background: var(--pico-color-green-50, #e8f5e9);
+  color: var(--pico-color-green-700, #2e7d32);
+  border: 1px solid var(--pico-color-green-400, #66bb6a);
+}
+
+/* Text-only: neutral gray */
+.model-tag.vision-false {
+  background: var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  border: 1px solid var(--pico-muted-border-color);
+}
+
+/* Unknown: amber/orange */
+.model-tag.vision-unknown {
+  background: var(--pico-color-amber-50, #fff8e1);
+  color: var(--pico-color-amber-700, #f57f17);
+  border: 1px solid var(--pico-color-amber-400, #ffa000);
+}
+
+/* =========================================================================
+   Wizard Done Page
+   ========================================================================= */
+
+.wizard-done {
+  text-align: center;
+  padding: 3rem 2rem;
+}
+
+.wizard-done header h1 {
+  font-size: 2.2rem;
+  margin-bottom: 0.5rem;
+}
+
+.done-content {
+  margin: 2rem 0;
+  font-size: 1.1rem;
+}
+
+.done-content code {
+  font-size: 1.3rem;
+  color: var(--pico-primary-background);
+  background: var(--pico-primary-hover-background);
+  padding: 0.2rem 0.6rem;
+  border-radius: var(--pico-border-radius);
+}
+
+/* =========================================================================
+   Provider Defaults Fragment (inline endpoint + API key)
+   ========================================================================= */
+
+#provider-defaults {
+  margin-bottom: 1rem;
+}
+
+#provider-defaults label {
+  margin-bottom: 0.3rem;
+}
+
+#provider-defaults input {
+  margin-bottom: 1rem;
+}
+
+/* =========================================================================
+   Vision Warning Banner (when text model lacks vision)
+   ========================================================================= */
+
+.vision-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--pico-color-amber-50, #fff8e1);
+  border: 1px solid var(--pico-color-amber-400, #ffa000);
+  border-left: 4px solid var(--pico-color-amber-600, #ffb300);
+  border-radius: var(--pico-border-radius);
+  margin: 0.75rem 0;
+  font-size: 0.9rem;
+  color: var(--pico-color-amber-800, #e65100);
+}
+
+.vision-warning-banner p {
+  margin: 0;
+}
+
+/* =========================================================================
+   Dashboard Badge Styles
+   ========================================================================= */
+
+.badge-green {
+  --pico-mark-background-color: var(--pico-color-green-100, #c8e6c9);
+  --pico-mark-color: var(--pico-color-green-800, #1b5e20);
+}
+
+.badge-amber {
+  --pico-mark-background-color: var(--pico-color-amber-100, #ffecb3);
+  --pico-mark-color: var(--pico-color-amber-800, #e65100);
+}
+
+.badge-muted {
+  --pico-mark-background-color: var(--pico-color-slate-100, #eceff1);
+  --pico-mark-color: var(--pico-color-slate-600, #546e7a);
+}

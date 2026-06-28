@@ -27,6 +27,7 @@
         <input type="text"
                id="world-name"
                name="world_name"
+               value="{{ world_name or '' }}"
                placeholder="{{ t('world_name_placeholder') }}"
                pattern="[a-z0-9-]+"
                autocomplete="off">

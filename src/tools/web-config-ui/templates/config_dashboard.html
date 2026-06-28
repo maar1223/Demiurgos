@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Demiurgos — {{ t('config_dashboard_title') }}</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<main class="container wizard-container">
+
+  <article class="wizard-card">
+    <h1>{{ t('config_dashboard_title') }}</h1>
+    <p>{{ t('config_dashboard_subtitle') }}</p>
+
+    <div class="grid">
+      {% for s in sections %}
+      <div class="card">
+        <header>
+          <h3>{{ s.icon }} {{ t(s.title_key) }}</h3>
+        </header>
+
+        {% if s.badge == "configured" %}
+        <p><mark class="badge-green">✅ {{ t('configured') }}</mark></p>
+        {% elif s.badge == "skipped" %}
+        <p><mark class="badge-amber">⏭️ {{ t('config_skipped') }}</mark></p>
+        {% else %}
+        <p><mark class="badge-muted">⚠️ {{ t('not_configured') }}</mark></p>
+        {% endif %}
+
+        {% if s.value %}
+        <p><small>{{ s.value }}</small></p>
+        {% endif %}
+
+        <footer>
+          <a href="{{ s.edit_url }}" role="button" class="outline secondary">
+            {% if s.configured %}{{ t('edit') }}{% else %}{{ t('configure_later') }}{% endif %}
+          </a>
+        </footer>
+      </div>
+      {% endfor %}
+    </div>
+
+    <p class="muted" style="margin-top:1rem">
+      <small>{{ t('config_coming_soon') }}</small>
+    </p>
+
+    <div class="wizard-actions" style="margin-top:1.5rem">
+      <a href="/" role="button" class="primary">{{ t('continue_to_demiurgos') }}</a>
+      <a href="/restart" role="button" class="secondary">{{ t('restart_wizard') }}</a>
+    </div>
+  </article>
+
+</main>
+
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Demiurgos — {{ t('already_configured_title') }}</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<main class="container wizard-container">
+
+  <article class="wizard-card">
+    <h1>{{ t('already_configured_title') }}</h1>
+    <p>{{ t('already_configured_subtitle') }}</p>
+
+    <div class="grid">
+      <div class="card">
+        <h3>🤖 {{ t('config_ai') }}</h3>
+        <p>{{ text_provider }} / {{ text_model }}</p>
+      </div>
+    </div>
+
+    <div class="wizard-actions">
+      <a href="/restart" role="button" class="secondary">{{ t('reconfigure') }}</a>
+      <a href="/config" role="button">{{ t('config_dashboard_title') }}</a>
+    </div>
+
+    <p class="muted" style="margin-top:1rem">{{ t('continue_to_demiurgos') }}</p>
+  </article>
+
+</main>
+
+</body>
+</html>
