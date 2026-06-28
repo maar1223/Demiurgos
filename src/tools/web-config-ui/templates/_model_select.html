@@ -2,6 +2,7 @@
 <!--
   Swaps itself into the target (#connection-status) and uses
   hx-swap-oob to update text-model, vision-model, and vision-model-container.
+  Models are tagged with vision capability: 👁️+✍️ (vision), ✍️ (text), ❓ (unknown).
 -->
 
 <!-- ===================================================================== -->
@@ -14,7 +15,7 @@
     (function(el) {
       setTimeout(function() {
         el.style.opacity = '0';
-        setTimeout(function() { if (el.parentNode) el.remove(); }, 500);
+        setTimeout(function() { el.remove(); }, 500);
       }, 5000);
     })(document.currentScript.parentElement);
   </script>
@@ -27,7 +28,9 @@
         onchange="var c=document.getElementById('text-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
   <option value="">— Selecciona un modelo —</option>
   {% for model in models %}
-  <option value="{{ model }}"{% if model == current_text_model %} selected{% endif %}>{{ model }}</option>
+  <option value="{{ model.id }}"{% if model.id == current_text_model %} selected{% endif %}>
+    {{ model.id }} {{ model.tag }}
+  </option>
   {% endfor %}
   <option value="__other__">Otro (escribir manualmente)</option>
 </select>
@@ -40,7 +43,9 @@
         onchange="var c=document.getElementById('vision-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
   <option value="">— Selecciona un modelo —</option>
   {% for model in models %}
-  <option value="{{ model }}"{% if model == current_vision_model %} selected{% endif %}>{{ model }}</option>
+  <option value="{{ model.id }}"{% if model.id == current_vision_model %} selected{% endif %}>
+    {{ model.id }} {{ model.tag }}
+  </option>
   {% endfor %}
   <option value="__other__">Otro (escribir manualmente)</option>
 </select>

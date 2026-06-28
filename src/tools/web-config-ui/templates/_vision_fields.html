@@ -1,0 +1,78 @@
+<!-- _vision_fields.html — htmx fragment: vision fields conditional content -->
+<!-- Swaps into #vision-fields when same_as_text checkbox toggles -->
+
+{% if same_as_text %}
+<!-- Hidden: using same text provider for vision -->
+<input type="hidden" name="vision_provider" value="{{ current_text_provider or '' }}">
+<input type="hidden" name="vision_endpoint" value="{{ current_text_endpoint or '' }}">
+<input type="hidden" name="vision_api_key" value="{{ current_text_api_key or '' }}">
+<input type="hidden" name="vision_model" value="{{ current_text_model or '' }}">
+<small class="vision-ok">{{ t('same_as_text') }}</small>
+
+{% if text_model_has_vision is not defined or not text_model_has_vision %}
+<div role="alert" class="vision-warning-card">
+  <p>⚠️ {{ t('vision_warning', model=current_text_model or t('select_model')) }}</p>
+</div>
+{% endif %}
+
+{% else %}
+<!-- Separate vision config -->
+<label for="vision-provider">{{ t('provider_label') }}</label>
+<select id="vision-provider"
+        name="vision_provider"
+        aria-label="{{ t('select_provider') }}">
+  <option value="">{{ t('select_provider') }}</option>
+  {% for p in providers %}
+  <option value="{{ p.id }}"
+          {% if p.id == current_vision_provider %}selected{% endif %}>
+    {{ p.name }}
+  </option>
+  {% endfor %}
+</select>
+
+<label for="vision-endpoint">{{ t('endpoint_label') }}</label>
+<input type="url"
+       id="vision-endpoint"
+       name="vision_endpoint"
+       value="{{ current_vision_endpoint or '' }}"
+       placeholder="https://api.openai.com/v1">
+
+<label for="vision-api-key">{{ t('api_key_label') }}</label>
+<input type="password"
+       id="vision-api-key"
+       name="vision_api_key"
+       value="{{ current_vision_api_key or '' }}"
+       placeholder="sk-...">
+
+<button type="button" class="secondary"
+        hx-post="/test-vision-connection"
+        hx-target="#vision-test-result"
+        hx-swap="innerHTML"
+        hx-include="closest form">
+  {{ t('test_vision_connection') }}
+  <span class="htmx-indicator" aria-label="{{ t('testing') }}">⏳</span>
+</button>
+
+<div id="vision-test-result" aria-live="polite" role="status"></div>
+
+<label for="vision-model">{{ t('model_vision_label') }}</label>
+<select id="vision-model"
+        name="vision_model"
+        aria-label="{{ t('select_model') }}">
+  <option value="">{{ t('select_model') }}</option>
+  {% for m in vision_models or [] %}
+  <option value="{{ m.id }}"
+          {% if m.id == current_vision_model %}selected{% endif %}>
+    {{ m.id }} {{ m.tag }}
+  </option>
+  {% endfor %}
+  <option value="__other__">{{ t('discover_models') }}</option>
+</select>
+
+<input type="text"
+       id="vision-model-custom"
+       name="vision_model_custom"
+       placeholder="{{ t('discover_models') }}"
+       style="display:none"
+       autocomplete="off">
+{% endif %}

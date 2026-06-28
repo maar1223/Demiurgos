@@ -1,6 +1,7 @@
 <!-- _vision_model_select.html — htmx fragment for vision connection test only -->
 <!--
   Swaps into #vision-connection-status and OOB-updates vision-model + vision-model-container.
+  Models are tagged with vision capability indicators.
 -->
 
 <article class="connection-success" role="status">
@@ -10,7 +11,7 @@
     (function(el) {
       setTimeout(function() {
         el.style.opacity = '0';
-        setTimeout(function() { if (el.parentNode) el.remove(); }, 500);
+        setTimeout(function() { el.remove(); }, 500);
       }, 5000);
     })(document.currentScript.parentElement);
   </script>
@@ -19,8 +20,8 @@
 <select id="vision-model" name="vision_model" hx-swap-oob="true"
         onchange="var c=document.getElementById('vision-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
   <option value="">— Selecciona un modelo —</option>
-  {% for model in models %}
-  <option value="{{ model }}">{{ model }}</option>
+  {% for m in models %}
+  <option value="{{ m.id }}">{{ m.id }} {{ m.tag }}</option>
   {% endfor %}
   <option value="__other__">Otro (escribir manualmente)</option>
 </select>
