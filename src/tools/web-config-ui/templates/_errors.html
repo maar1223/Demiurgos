@@ -16,13 +16,13 @@
   </footer>
 </article>
 
-<!-- Clear the model selects on error (out-of-band) -->
+<!-- Clear the model selects on error (out-of-band, standalone) -->
 <select id="text-model" name="text_model" hx-swap-oob="true">
   <option value="">— Prueba la conexión primero —</option>
 </select>
 
-<div id="vision-model-container" hx-swap-oob="true">
-  <select id="vision-model" name="vision_model">
-    <option value="">— Prueba la conexión primero —</option>
-  </select>
-</div>
+<select id="vision-model" name="vision_model" hx-swap-oob="true">
+  <option value="">— Prueba la conexión primero —</option>
+</select>
+
+<div id="vision-model-container" hx-swap-oob="true"></div>

@@ -1,7 +1,7 @@
 <!-- _model_select.html — htmx fragment returned on successful connection test -->
 <!--
   Swaps itself into the target (#connection-status) and uses
-  hx-swap-oob to update the model selects and vision-model-container.
+  hx-swap-oob to update text-model, vision-model, and vision-model-container.
 -->
 
 <!-- ===================================================================== -->
@@ -33,19 +33,25 @@
 </select>
 
 <!-- ===================================================================== -->
-<!-- Vision model container (out-of-band swap)                              -->
+<!-- Populate vision model select (out-of-band swap, standalone)            -->
+<!-- ===================================================================== -->
+{% if supports_vision %}
+<select id="vision-model" name="vision_model" hx-swap-oob="true"
+        onchange="var c=document.getElementById('vision-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
+  <option value="">— Selecciona un modelo —</option>
+  {% for model in models %}
+  <option value="{{ model }}"{% if model == current_vision_model %} selected{% endif %}>{{ model }}</option>
+  {% endfor %}
+  <option value="__other__">Otro (escribir manualmente)</option>
+</select>
+{% endif %}
+
+<!-- ===================================================================== -->
+<!-- Vision status container (out-of-band swap, no nested select)           -->
 <!-- ===================================================================== -->
 <div id="vision-model-container" hx-swap-oob="true">
   {% if supports_vision %}
-  <select id="vision-model" name="vision_model"
-          onchange="var c=document.getElementById('vision-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
-    <option value="">— Selecciona un modelo —</option>
-    {% for model in models %}
-    <option value="{{ model }}"{% if model == current_vision_model %} selected{% endif %}>{{ model }}</option>
-    {% endfor %}
-    <option value="__other__">Otro (escribir manualmente)</option>
-  </select>
-  <small class="vision-ok">✅ Proveedor compatible con visión. Los modelos fueron cargados.</small>
+  <small class="vision-ok">✅ Proveedor compatible con visión. {{ models | length }} modelos cargados.</small>
   {% else %}
   <small role="alert" class="vision-warning">
     ⚠️ Este proveedor <strong>no soporta visión</strong>. La sección de proveedor de visión fue deshabilitada.

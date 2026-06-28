@@ -306,19 +306,25 @@
 // When test-connection returns, we check if the provider supports vision
 // and update the vision section accordingly.
 document.body.addEventListener("htmx:afterSwap", function (evt) {
-  // Only handle test-connection responses
-  if (evt.detail.target.id !== "connection-status") return;
+  var targetId = evt.detail.target.id;
+  // Handle both text and vision connection tests
+  if (targetId !== "connection-status" && targetId !== "vision-connection-status") return;
 
-  const visionContainer = document.getElementById("vision-model-container");
+  var visionContainer = document.getElementById("vision-model-container");
   if (!visionContainer) return;
 
+  var toggle = document.getElementById("vision-toggle");
+  var section = document.getElementById("vision-section");
+
   // If the vision container now has a warning, disable the vision section
-  const warning = visionContainer.querySelector(".vision-warning");
+  var warning = visionContainer.querySelector(".vision-warning");
   if (warning) {
-    const toggle = document.getElementById("vision-toggle");
-    const section = document.getElementById("vision-section");
     if (toggle) toggle.checked = false;
     if (section) section.hidden = true;
+  } else {
+    // Provider supports vision — enable the section
+    if (toggle) toggle.checked = true;
+    if (section) section.hidden = false;
   }
 });
 </script>
