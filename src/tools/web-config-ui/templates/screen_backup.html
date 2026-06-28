@@ -1,0 +1,75 @@
+<!-- =========================================================================
+     screen_backup.html — Screen 5: Backup & Sync
+     
+     Optional screen. Google Drive toggle with rclone requirement notice.
+     ========================================================================= -->
+
+<article class="wizard-screen" data-screen="5">
+  <header>
+    <h1>{{ t('backup_title') }}</h1>
+    <p>{{ t('backup_explanation') }}</p>
+  </header>
+
+  <form hx-post="/wizard/5"
+        hx-target="#wizard-content"
+        hx-swap="innerHTML"
+        hx-push-url="true">
+
+    <article class="card">
+      <header>
+        <h2>📦 Google Drive</h2>
+      </header>
+
+      <label class="toggle-row">
+        <input type="checkbox"
+               name="backup_enabled"
+               role="switch"
+               {% if backup_enabled %}checked{% endif %}>
+        <span>{{ t('enable_backup') }}</span>
+      </label>
+
+      <!-- rclone warning (shown when toggle is on but rclone not detected) -->
+      {% if backup_enabled and not rclone_detected %}
+      <div role="alert" class="warning-card">
+        <p>⚠️ {{ t('rclone_warning') }}</p>
+      </div>
+      {% endif %}
+
+      <!-- rclone config fields (shown when backup enabled) -->
+      <div class="backup-config-fields">
+        <label for="backup-interval">Intervalo</label>
+        <select id="backup-interval" name="backup_interval">
+          <option value="hourly">Cada hora</option>
+          <option value="daily" selected>Cada día</option>
+          <option value="weekly">Cada semana</option>
+        </select>
+      </div>
+    </article>
+
+    <!-- Navigation -->
+    <div class="wizard-nav">
+      <button type="button" class="secondary"
+              hx-get="/wizard/4"
+              hx-target="#wizard-content"
+              hx-swap="innerHTML"
+              hx-push-url="true">
+        ← {{ t('back') }}
+      </button>
+      <div class="wizard-nav-right">
+        <button type="submit"
+                name="action"
+                value="skip"
+                class="outline contrast skip-button">
+          {{ t('skip_for_now') }} ⌛
+        </button>
+        <button type="submit"
+                name="action"
+                value="save"
+                class="primary">
+          {{ t('save_and_continue') }} →
+        </button>
+      </div>
+    </div>
+
+  </form>
+</article>
