@@ -1188,7 +1188,80 @@ fieldset {
 }
 
 /* =========================================================================
-   28. Responsive
+   28. Verify Warnings — Missing Utility Classes
+   ========================================================================= */
+
+/* select-wrapper: anchor for absolute-positioned chevron */
+.select-wrapper {
+  position: relative;
+}
+
+/* divider alias (same as wizard-divider) */
+.divider {
+  width: 100%;
+  height: 1px;
+  background: var(--d-border);
+  margin: 14px 0;
+}
+
+/* coming-soon-label (WhatsApp/Slack cards) */
+.coming-soon-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: var(--d-subtle);
+}
+
+/* done-subtitle (wizard_done.html) */
+.done-subtitle {
+  color: var(--d-muted);
+  font-size: 0.95rem;
+  max-width: 480px;
+}
+
+/* done-world (wizard_done.html) */
+.done-world {
+  color: var(--d-muted);
+  font-size: 0.85rem;
+}
+
+/* checkbox-label (screen_ai.html vision toggle) */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--d-text);
+  cursor: pointer;
+}
+
+/* form-group (screen_ai.html, screen_img.html) */
+.form-group {
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+/* surface-card.disabled (coming-soon cards in chat screen) */
+.surface-card.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* vision-warning alias */
+.vision-warning {
+  color: var(--d-warning);
+  font-size: 0.8125rem;
+}
+
+/* =========================================================================
+   29. Responsive
    ========================================================================= */
 
 @media (max-width: 680px) {
