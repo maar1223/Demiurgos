@@ -1,15 +1,18 @@
 <!-- _model_select.html — htmx fragment returned on successful connection test -->
 <!--
-  Swaps itself into the target (#connection-status) and uses
+  Swaps itself into the target and uses
   hx-swap-oob to update text-model, vision-model, and vision-model-container.
   Models are tagged with vision capability: 👁️+✍️ (vision), ✍️ (text), ❓ (unknown).
 -->
 
 <!-- ===================================================================== -->
-<!-- Connection status (inside the hx-target: #connection-status)            -->
+<!-- Connection status (inside the hx-target)                                -->
 <!-- ===================================================================== -->
-<article class="connection-success" role="status" id="connection-status">
-  <header>✅ {{ t('connection_success_title') }}</header>
+<div class="connection-success" role="status">
+  <div class="wizard-header">
+    <svg class="icon icon-md"><use href="#check"/></svg>
+    {{ t('connection_success_title') }}
+  </div>
   <p>{{ t('connection_success_detail', count=models|length) }}</p>
   <script>
     (function(el) {
@@ -19,7 +22,7 @@
       }, 5000);
     })(document.currentScript.parentElement);
   </script>
-</article>
+</div>
 
 <!-- ===================================================================== -->
 <!-- Populate text model select (out-of-band swap)                          -->
@@ -56,10 +59,14 @@
 <!-- ===================================================================== -->
 <div id="vision-model-container" hx-swap-oob="true">
   {% if supports_vision %}
-  <small class="vision-ok">✅ {{ t('vision_supported_notice', count=models|length) }}</small>
+  <span class="vision-ok text-muted">
+    <svg class="icon icon-sm"><use href="#check"/></svg>
+    {{ t('vision_supported_notice', count=models|length) }}
+  </span>
   {% else %}
-  <small role="alert" class="vision-warning">
-    ⚠️ {{ t('vision_not_supported_notice') }}
-  </small>
+  <span role="alert" class="vision-warning text-muted">
+    <svg class="icon icon-sm"><use href="#alert-triangle"/></svg>
+    {{ t('vision_not_supported_notice') }}
+  </span>
   {% endif %}
 </div>

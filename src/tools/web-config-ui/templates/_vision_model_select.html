@@ -4,8 +4,11 @@
   Models are tagged with vision capability indicators.
 -->
 
-<article class="connection-success" role="status">
-  <header>✅ {{ t('connection_success_title') }}</header>
+<div class="connection-success" role="status">
+  <div class="wizard-header">
+    <svg class="icon icon-md"><use href="#check"/></svg>
+    {{ t('connection_success_title') }}
+  </div>
   <p>{{ t('vision_connection_success_detail', count=models|length) }}</p>
   <script>
     (function(el) {
@@ -15,7 +18,7 @@
       }, 5000);
     })(document.currentScript.parentElement);
   </script>
-</article>
+</div>
 
 <select id="vision-model" name="vision_model" hx-swap-oob="true"
         onchange="var c=document.getElementById('vision-model-custom');if(c)c.style.display=this.value==='__other__'?'block':'none'">
@@ -27,5 +30,8 @@
 </select>
 
 <div id="vision-model-container" hx-swap-oob="true">
-  <small class="vision-ok">✅ {{ t('vision_supported_notice', count=models|length) }}</small>
+  <span class="vision-ok text-muted">
+    <svg class="icon icon-sm"><use href="#check"/></svg>
+    {{ t('vision_supported_notice', count=models|length) }}
+  </span>
 </div>

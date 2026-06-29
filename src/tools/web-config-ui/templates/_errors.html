@@ -1,20 +1,20 @@
 <!-- _errors.html — htmx fragment returned on test-connection or save errors -->
 <!--
-  Swaps itself into the hx-target. Uses Pico.css color tokens for
-  error styling (red tones).
+  Swaps itself into the hx-target. Styled with custom design system tokens.
 -->
 
-<article class="connection-error" role="alert" aria-live="assertive">
-  <header>
-    <span>❌ {{ t('error_title') }}</span>
+<div class="connection-error" role="alert" aria-live="assertive">
+  <div class="wizard-header">
+    <svg class="icon icon-md"><use href="#alert-triangle"/></svg>
+    <span>{{ t('error_title') }}</span>
     <button class="dismiss" aria-label="{{ t('error_dismiss_label') }}" title="{{ t('error_dismiss_label') }}"
-            onclick="this.closest('article').remove()">✕</button>
-  </header>
+            onclick="this.closest('.connection-error').remove()">✕</button>
+  </div>
   <p>{{ error }}</p>
-  <footer>
-    <small>{{ t('error_connection_hint') }}</small>
-  </footer>
-</article>
+  <div class="wizard-footer">
+    <span class="text-muted">{{ t('error_connection_hint') }}</span>
+  </div>
+</div>
 
 <!-- Clear the model selects on error (out-of-band, standalone) -->
 <select id="text-model" name="text_model" hx-swap-oob="true">
