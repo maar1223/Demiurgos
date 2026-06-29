@@ -1,75 +1,65 @@
 <!-- =========================================================================
      screen_img.html — Screen 3: Image Generation
-     
-     Optional screen with prominent "Skip for now" button.
+     Optional screen with Skip for now button.
      ========================================================================= -->
 
-<article class="wizard-screen" data-screen="3">
-  <header>
-    <h1>{{ t('images_title') }}</h1>
-    <p>{{ t('images_explanation') }}</p>
-  </header>
+<div class="wizard-screen" data-screen="3">
+  {% include "_progress.html" %}
 
-  <form hx-post="/wizard/3"
-        hx-target="#wizard-content"
-        hx-swap="innerHTML"
-        hx-push-url="true">
-
-    <label for="img-provider">{{ t('provider_label') }}</label>
-    <select id="img-provider"
-            name="img_provider"
-            aria-label="{{ t('select_provider') }}">
-      <option value="">{{ t('select_provider') }}</option>
-      <option value="openai" {% if img_provider == "openai" %}selected{% endif %}>OpenAI (DALL·E)</option>
-      <option value="groq" {% if img_provider == "groq" %}selected{% endif %}>Groq</option>
-      <option value="ollama" {% if img_provider == "ollama" %}selected{% endif %}>Ollama (Local)</option>
-    </select>
-
-    <label for="img-endpoint">{{ t('endpoint_label') }}</label>
-    <input type="url"
-           id="img-endpoint"
-           name="img_endpoint"
-           value="{{ img_endpoint or '' }}"
-           placeholder="https://api.openai.com/v1">
-
-    <label for="img-api-key">{{ t('api_key_label') }}</label>
-    <input type="password"
-           id="img-api-key"
-           name="img_api_key"
-           value="{{ img_api_key or '' }}"
-           placeholder="sk-...">
-
-    <label for="img-model">{{ t('select_model') }}</label>
-    <select id="img-model" name="img_model">
-      <option value="">{{ t('select_model') }}</option>
-      <option value="dall-e-3" {% if img_model == "dall-e-3" %}selected{% endif %}>DALL·E 3</option>
-      <option value="dall-e-2" {% if img_model == "dall-e-2" %}selected{% endif %}>DALL·E 2</option>
-    </select>
-
-    <!-- Navigation -->
-    <div class="wizard-nav">
-      <button type="button" class="secondary"
-              hx-get="/wizard/2"
-              hx-target="#wizard-content"
-              hx-swap="innerHTML"
-              hx-push-url="true">
-        ← {{ t('back') }}
-      </button>
-      <div class="wizard-nav-right">
-        <button type="submit"
-                name="action"
-                value="skip"
-                class="outline contrast skip-button">
-          {{ t('skip_for_now') }} ⌛
-        </button>
-        <button type="submit"
-                name="action"
-                value="save"
-                class="primary">
-          {{ t('save_and_continue') }} →
-        </button>
-      </div>
+  <div class="wizard-card">
+    <div class="wizard-header">
+      <h1>{{ t('images_title') }}</h1>
+      <p>{{ t('images_explanation') }}</p>
     </div>
 
-  </form>
-</article>
+    <form hx-post="/wizard/3"
+          hx-target="#wizard-content"
+          hx-swap="innerHTML"
+          hx-push-url="true">
+
+      <div class="form-group">
+        <label for="img-provider">{{ t('provider_label') }}</label>
+        <div class="select-wrapper">
+          <select id="img-provider"
+                  name="img_provider"
+                  aria-label="{{ t('select_provider') }}">
+            <option value="">{{ t('select_provider') }}</option>
+            <option value="openai" {% if img_provider == "openai" %}selected{% endif %}>OpenAI (DALL·E)</option>
+            <option value="groq" {% if img_provider == "groq" %}selected{% endif %}>Groq</option>
+            <option value="ollama" {% if img_provider == "ollama" %}selected{% endif %}>Ollama (Local)</option>
+          </select>
+          <svg class="icon icon-sm select-chevron"><use href="#chevron-down"/></svg>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="img-endpoint">{{ t('endpoint_label') }}</label>
+        <input type="url"
+               id="img-endpoint"
+               name="img_endpoint"
+               value="{{ img_endpoint or '' }}"
+               placeholder="https://api.openai.com/v1">
+      </div>
+
+      <div class="form-group">
+        <label for="img-api-key">{{ t('api_key_label') }}</label>
+        <input type="password"
+               id="img-api-key"
+               name="img_api_key"
+               value="{{ img_api_key or '' }}"
+               placeholder="sk-...">
+      </div>
+
+      <div class="form-group">
+        <label for="img-model">{{ t('select_model') }}</label>
+        <select id="img-model" name="img_model">
+          <option value="">{{ t('select_model') }}</option>
+          <option value="dall-e-3" {% if img_model == "dall-e-3" %}selected{% endif %}>DALL·E 3</option>
+          <option value="dall-e-2" {% if img_model == "dall-e-2" %}selected{% endif %}>DALL·E 2</option>
+        </select>
+      </div>
+
+      {% include "_nav_optional.html" %}
+    </form>
+  </div>
+</div>
