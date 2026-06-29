@@ -1,75 +1,56 @@
 <!-- =========================================================================
      screen_backup.html — Screen 5: Backup & Sync
-     
      Optional screen. Google Drive toggle with rclone requirement notice.
      ========================================================================= -->
 
-<article class="wizard-screen" data-screen="5">
-  <header>
-    <h1>{{ t('backup_title') }}</h1>
-    <p>{{ t('backup_explanation') }}</p>
-  </header>
+<div class="wizard-screen" data-screen="5">
+  {% include "_progress.html" %}
 
-  <form hx-post="/wizard/5"
-        hx-target="#wizard-content"
-        hx-swap="innerHTML"
-        hx-push-url="true">
-
-    <article class="card">
-      <header>
-        <h2>📦 Google Drive</h2>
-      </header>
-
-      <label class="toggle-row">
-        <input type="checkbox"
-               name="backup_enabled"
-               role="switch"
-               {% if backup_enabled %}checked{% endif %}>
-        <span>{{ t('enable_backup') }}</span>
-      </label>
-
-      <!-- rclone warning (shown when toggle is on but rclone not detected) -->
-      {% if backup_enabled and not rclone_detected %}
-      <div role="alert" class="warning-card">
-        <p>⚠️ {{ t('rclone_warning') }}</p>
-      </div>
-      {% endif %}
-
-      <!-- rclone config fields (shown when backup enabled) -->
-      <div class="backup-config-fields">
-        <label for="backup-interval">{{ t('backup_interval_label') }}</label>
-        <select id="backup-interval" name="backup_interval">
-          <option value="hourly">{{ t('backup_interval_hourly') }}</option>
-          <option value="daily" selected>{{ t('backup_interval_daily') }}</option>
-          <option value="weekly">{{ t('backup_interval_weekly') }}</option>
-        </select>
-      </div>
-    </article>
-
-    <!-- Navigation -->
-    <div class="wizard-nav">
-      <button type="button" class="secondary"
-              hx-get="/wizard/4"
-              hx-target="#wizard-content"
-              hx-swap="innerHTML"
-              hx-push-url="true">
-        ← {{ t('back') }}
-      </button>
-      <div class="wizard-nav-right">
-        <button type="submit"
-                name="action"
-                value="skip"
-                class="outline contrast skip-button">
-          {{ t('skip_for_now') }} ⌛
-        </button>
-        <button type="submit"
-                name="action"
-                value="save"
-                class="primary">
-          {{ t('save_and_continue') }} →
-        </button>
-      </div>
+  <div class="wizard-card">
+    <div class="wizard-header">
+      <h1>{{ t('backup_title') }}</h1>
+      <p>{{ t('backup_explanation') }}</p>
     </div>
 
-  </form>
-</article>
+    <form hx-post="/wizard/5"
+          hx-target="#wizard-content"
+          hx-swap="innerHTML"
+          hx-push-url="true">
+
+      <div class="surface-card">
+        <div class="chat-card-header">
+          <h3>Google Drive</h3>
+          <label class="toggle-row">
+            <input type="checkbox"
+                   name="backup_enabled"
+                   role="switch"
+                   {% if backup_enabled %}checked{% endif %}>
+          </label>
+        </div>
+
+        <!-- rclone warning (shown when toggle is on but rclone not detected) -->
+        {% if backup_enabled and not rclone_detected %}
+        <div role="alert" class="warning-box">
+          <svg class="icon icon-md"><use href="#alert-triangle"/></svg>
+          <span>{{ t('rclone_warning') }}</span>
+        </div>
+        {% endif %}
+
+        <!-- Backup config fields -->
+        <div class="backup-config-fields">
+          <label for="backup-interval">{{ t('backup_interval_label') }}</label>
+          <div class="select-wrapper">
+            <select id="backup-interval" name="backup_interval">
+              <option value="hourly">{{ t('backup_interval_hourly') }}</option>
+              <option value="daily" selected>{{ t('backup_interval_daily') }}</option>
+              <option value="weekly">{{ t('backup_interval_weekly') }}</option>
+            </select>
+            <svg class="icon icon-sm select-chevron"><use href="#chevron-down"/></svg>
+          </div>
+        </div>
+      </div>
+
+      {% include "_nav_optional.html" %}
+    </form>
+  </div>
+</div>
