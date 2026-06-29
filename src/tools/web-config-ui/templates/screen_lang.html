@@ -1,75 +1,44 @@
 <!-- =========================================================================
      screen_lang.html — Screen 0: Language Selector
-     
      Rendered as a standalone htmx fragment that swaps into #wizard-content.
-     Also included by index.html on first load.
      ========================================================================= -->
 
-<article class="wizard-screen" data-screen="0">
-  <header>
-    <h1>{{ t('welcome_title') }}</h1>
-    <p>{{ t('welcome_subtitle') }}</p>
-  </header>
+<div class="wizard-screen" data-screen="0">
+  {% include "_progress.html" %}
 
-  <form hx-post="/wizard/0"
-        hx-target="#wizard-content"
-        hx-swap="innerHTML"
-        hx-push-url="true"
-        aria-label="{{ t('select_language') }}">
+  <div class="wizard-card">
+    <div class="wizard-header">
+      <h1>{{ t('welcome_title') }}</h1>
+      <p>{{ t('welcome_subtitle') }}</p>
+    </div>
+    <p class="step-indicator">{{ t('step_x_of_y', current=current_step+1, total=steps|length) }}</p>
 
-    <fieldset>
-      <legend>{{ t('select_language') }}</legend>
-      <div class="grid language-grid">
-        <!-- Each card shows the language name in its own script -->
-        <label class="language-card">
-          <input type="radio" name="lang" value="en" checked>
-          <span class="language-name">English</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="zh">
-          <span class="language-name">中文</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="hi">
-          <span class="language-name">हिन्दी</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="es">
-          <span class="language-name">Español (neutro)</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="es-ar">
-          <span class="language-name">Español (rioplatense)</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="fr">
-          <span class="language-name">Français</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="ar">
-          <span class="language-name">العربية</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="bn">
-          <span class="language-name">বাংলা</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="pt">
-          <span class="language-name">Português</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="ru">
-          <span class="language-name">Русский</span>
-        </label>
-        <label class="language-card">
-          <input type="radio" name="lang" value="ur">
-          <span class="language-name">اردو</span>
-        </label>
+    <form hx-post="/wizard/0"
+          hx-target="#wizard-content"
+          hx-swap="innerHTML"
+          hx-push-url="true"
+          aria-label="{{ t('select_language') }}">
+
+      <div class="language-grid">
+        <!-- Row 1 -->
+        <button type="submit" name="lang" value="en" class="language-btn{% if lang == 'en' %} selected{% endif %}">English</button>
+        <button type="submit" name="lang" value="zh" class="language-btn{% if lang == 'zh' %} selected{% endif %}">中文</button>
+        <button type="submit" name="lang" value="hi" class="language-btn{% if lang == 'hi' %} selected{% endif %}">हिन्दी</button>
+        <!-- Row 2 -->
+        <button type="submit" name="lang" value="es" class="language-btn{% if lang == 'es' %} selected{% endif %}">Español (neutro)</button>
+        <button type="submit" name="lang" value="es-ar" class="language-btn{% if lang == 'es-ar' %} selected{% endif %}">Español (Argentina)</button>
+        <button type="submit" name="lang" value="fr" class="language-btn{% if lang == 'fr' %} selected{% endif %}">Français</button>
+        <!-- Row 3 -->
+        <button type="submit" name="lang" value="ar" class="language-btn{% if lang == 'ar' %} selected{% endif %}">العربية</button>
+        <button type="submit" name="lang" value="bn" class="language-btn{% if lang == 'bn' %} selected{% endif %}">বাংলা</button>
+        <button type="submit" name="lang" value="pt" class="language-btn{% if lang == 'pt' %} selected{% endif %}">Português</button>
+        <!-- Row 4 -->
+        <button type="submit" name="lang" value="ru" class="language-btn{% if lang == 'ru' %} selected{% endif %}">Русский</button>
+        <button type="submit" name="lang" value="ur" class="language-btn{% if lang == 'ur' %} selected{% endif %}">اردو</button>
+        <button type="submit" name="lang" value="other" class="language-btn muted{% if lang == 'other' %} selected{% endif %}">{{ t('other') }}</button>
       </div>
-    </fieldset>
 
-    <button type="submit" class="primary">
-      {{ t('continue_button') }} →
-    </button>
-  </form>
-</article>
+      {% include "_nav_continue.html" %}
+    </form>
+  </div>
+</div>
