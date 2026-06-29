@@ -1,117 +1,117 @@
 <!-- =========================================================================
      screen_ai.html — Screen 2: AI Text & Vision Configuration
-     
      Most complex screen: provider selector, connection test, model dropdowns
      with vision tags, vision model section with "same as text" toggle.
-     Blocking screen (no skip button).
      ========================================================================= -->
 
-<article class="wizard-screen" data-screen="2">
-  <header>
-    <h1>{{ t('ai_title') }}</h1>
-    <p>{{ t('ai_subtitle') }}</p>
-  </header>
+<div class="wizard-screen" data-screen="2">
+  {% include "_progress.html" %}
 
-  <form hx-post="/wizard/2"
-        hx-target="#wizard-content"
-        hx-swap="innerHTML"
-        hx-push-url="true">
-
-    <!-- Provider selection -->
-    <fieldset>
-      <legend>{{ t('provider_label') }}</legend>
-      <select id="text-provider"
-              name="text_provider"
-              aria-label="{{ t('select_provider') }}"
-              hx-trigger="change"
-              hx-get="/wizard/2/provider-defaults"
-              hx-target="#provider-defaults"
-              hx-swap="innerHTML">
-        <option value="">{{ t('select_provider') }}</option>
-        {% for p in providers %}
-        <option value="{{ p.id }}"
-                {% if p.id == current_text_provider %}selected{% endif %}>
-          {{ p.name }}
-        </option>
-        {% endfor %}
-      </select>
-    </fieldset>
-
-    <!-- Auto-filled endpoint + API key (updated by provider selection) -->
-    <div id="provider-defaults">
-      {% include "_provider_defaults.html" %}
+  <div class="wizard-card">
+    <div class="wizard-header">
+      <h1>{{ t('ai_title') }}</h1>
+      <p>{{ t('ai_subtitle') }}</p>
     </div>
 
-    <!-- Test Connection -->
-    <button type="button" class="secondary"
-            hx-post="/test-connection"
-            hx-target="#test-result"
-            hx-swap="innerHTML"
-            hx-include="closest form">
-      {{ t('test_connection') }}
-      <span class="htmx-indicator" aria-label="{{ t('testing') }}">⏳</span>
-    </button>
+    <form hx-post="/wizard/2"
+          hx-target="#wizard-content"
+          hx-swap="innerHTML"
+          hx-push-url="true">
 
-    <div id="test-result" aria-live="polite" role="status"></div>
-
-    <!-- Text model selector (populated by test connection) -->
-    <label for="text-model">{{ t('model_text_label') }}</label>
-    <select id="text-model"
-            name="text_model"
-            aria-label="{{ t('select_model') }}">
-      <option value="">{{ t('select_model') }}</option>
-      {% for m in text_models or [] %}
-      <option value="{{ m.id }}"
-              {% if m.id == current_text_model %}selected{% endif %}>
-        {{ m.id }} {{ m.tag }}
-      </option>
-      {% endfor %}
-      <option value="__other__">{{ t('discover_models') }}</option>
-    </select>
-
-    <input type="text"
-           id="text-model-custom"
-           name="text_model_custom"
-           placeholder="{{ t('discover_models') }}"
-           style="display:none"
-           autocomplete="off">
-
-    <!-- Vision model section -->
-    <fieldset id="vision-section" class="vision-section">
-      <legend>{{ t('model_vision_label') }}</legend>
-
-      <!-- "Same as text" toggle -->
-      <label>
-        <input type="checkbox"
-               id="same-as-text"
-               name="same_as_text"
-               checked
-               hx-trigger="change"
-               hx-get="/wizard/2/vision-toggle"
-               hx-target="#vision-fields"
-               hx-swap="innerHTML">
-        {{ t('same_as_text') }}
-      </label>
-
-      <!-- Vision fields, conditionally shown -->
-      <div id="vision-fields">
-        {% include "_vision_fields.html" %}
+      <!-- Provider selection -->
+      <div class="form-group">
+        <label for="text-provider">{{ t('provider_label') }}</label>
+        <div class="select-wrapper">
+          <select id="text-provider"
+                  name="text_provider"
+                  aria-label="{{ t('select_provider') }}"
+                  hx-trigger="change"
+                  hx-get="/wizard/2/provider-defaults"
+                  hx-target="#provider-defaults"
+                  hx-swap="innerHTML">
+            <option value="">{{ t('select_provider') }}</option>
+            {% for p in providers %}
+            <option value="{{ p.id }}"
+                    {% if p.id == current_text_provider %}selected{% endif %}>
+              {{ p.name }}
+            </option>
+            {% endfor %}
+          </select>
+          <svg class="icon icon-sm select-chevron"><use href="#chevron-down"/></svg>
+        </div>
       </div>
-    </fieldset>
 
-    <!-- Navigation -->
-    <div class="wizard-nav">
-      <button type="button" class="secondary"
-              hx-get="/wizard/1"
-              hx-target="#wizard-content"
+      <!-- Auto-filled endpoint + API key (updated by provider selection) -->
+      <div id="provider-defaults">
+        {% include "_provider_defaults.html" %}
+      </div>
+
+      <!-- Test Connection -->
+      <button type="button" class="btn-test"
+              hx-post="/test-connection"
+              hx-target="#test-result"
               hx-swap="innerHTML"
-              hx-push-url="true">
-        ← {{ t('back') }}
+              hx-include="closest form">
+        {{ t('test_connection') }}
+        <span class="htmx-indicator" aria-label="{{ t('testing') }}">
+          <svg class="icon icon-sm"><use href="#clock"/></svg>
+        </span>
       </button>
-      <button type="submit" class="primary">
-        {{ t('next') }} →
-      </button>
-    </div>
 
-  </form>
-</article>
+      <div id="test-result" aria-live="polite" role="status"></div>
+
+      <div class="divider"></div>
+
+      <!-- Text model selector (populated by test connection) -->
+      <div class="form-group">
+        <label for="text-model">{{ t('model_text_label') }}</label>
+        <select id="text-model"
+                name="text_model"
+                aria-label="{{ t('select_model') }}">
+          <option value="">{{ t('select_model') }}</option>
+          {% for m in text_models or [] %}
+          <option value="{{ m.id }}"
+                  {% if m.id == current_text_model %}selected{% endif %}>
+            {{ m.id }} {{ m.tag }}
+          </option>
+          {% endfor %}
+          <option value="__other__">{{ t('discover_models') }}</option>
+        </select>
+      </div>
+
+      <input type="text"
+             id="text-model-custom"
+             name="text_model_custom"
+             placeholder="{{ t('discover_models') }}"
+             style="display:none"
+             autocomplete="off">
+
+      <div class="divider"></div>
+
+      <!-- Vision model section -->
+      <div class="surface-card" id="vision-section">
+        <h3>{{ t('model_vision_label') }}</h3>
+
+        <!-- "Same as text" toggle -->
+        <label class="checkbox-label">
+          <input type="checkbox"
+                 id="same-as-text"
+                 name="same_as_text"
+                 checked
+                 hx-trigger="change"
+                 hx-get="/wizard/2/vision-toggle"
+                 hx-target="#vision-fields"
+                 hx-swap="innerHTML">
+          {{ t('same_as_text') }}
+        </label>
+
+        <!-- Vision fields, conditionally shown -->
+        <div id="vision-fields">
+          {% include "_vision_fields.html" %}
+        </div>
+      </div>
+
+      {% include "_nav_next.html" %}
+    </form>
+  </div>
+</div>
