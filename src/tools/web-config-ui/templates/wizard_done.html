@@ -1,21 +1,18 @@
 <!-- wizard_done.html — success page after wizard completion -->
 
-<article class="wizard-screen wizard-done" data-screen="done">
-  <header>
-    <h1>🚀 {{ t('welcome_title') }}</h1>
-  </header>
-
+<div class="wizard-screen wizard-done" data-screen="done">
   <div class="done-content">
-    <p>{{ t('summary_subtitle') }}</p>
+    <svg class="icon icon-xl"><use href="#check"/></svg>
+    <h1>{{ t('welcome_title') }}</h1>
+
+    <p class="done-subtitle">{{ t('summary_subtitle') }}</p>
 
     {% if world_name %}
-    <p><strong>{{ t('world_label') }}:</strong> <code>{{ world_name }}</code></p>
+    <p class="done-world"><strong>{{ t('world_label') }}:</strong> <code>{{ world_name }}</code></p>
     {% endif %}
-  </div>
 
-  <footer class="wizard-nav">
-    <a href="/" class="primary" role="button">
+    <a href="/" class="btn-primary">
       {{ t('configured') }}
     </a>
-  </footer>
-</article>
+  </div>
+</div>
