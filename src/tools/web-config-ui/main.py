@@ -163,6 +163,18 @@ def _provider_display(provider_id: str) -> str:
     return info["name"] if info else provider_id
 
 
+def _wizard_response(request: Request, template_name: str, ctx: dict, step: int) -> HTMLResponse:
+    """Return fragment for htmx requests, full page for direct navigation."""
+    is_htmx = bool(request.headers.get("HX-Request"))
+    ctx["current_step"] = step
+    if is_htmx:
+        return templates.TemplateResponse(request, template_name, ctx)
+    # Full page for direct navigation
+    ctx["screen_template"] = template_name
+    ctx["steps"] = _steps_list(ctx.get("lang", "en"))
+    return templates.TemplateResponse(request, "index.html", ctx)
+
+
 # ===========================================================================
 # Routes — index
 # ===========================================================================
@@ -193,6 +205,7 @@ async def index(request: Request) -> HTMLResponse:
             "lang": lang,
             "current_step": 0,
             "steps": _steps_list(lang),
+            "screen_template": "screen_lang.html",
         },
     )
 
@@ -435,8 +448,7 @@ async def wizard_back_0(request: Request) -> HTMLResponse:
     sid = _get_session_id(request)
     sess = sessions[sid]
     ctx = _wizard_ctx(sess)
-    ctx["current_step"] = 0
-    response = templates.TemplateResponse(request, "screen_lang.html", ctx)
+    response = _wizard_response(request, "screen_lang.html", ctx, 0)
     _attach_session(response, sid)
     return response
 
@@ -447,9 +459,8 @@ async def wizard_back_1(request: Request) -> HTMLResponse:
     sid = _get_session_id(request)
     sess = sessions[sid]
     ctx = _wizard_ctx(sess)
-    ctx["current_step"] = 1
     ctx["world_name"] = os.environ.get("DEMIURGOS_WORLD", "")
-    response = templates.TemplateResponse(request, "screen_world.html", ctx)
+    response = _wizard_response(request, "screen_world.html", ctx, 1)
     _attach_session(response, sid)
     return response
 
@@ -464,7 +475,6 @@ async def wizard_back_2(request: Request) -> HTMLResponse:
     env = {} if ai else config.read_env(ENV_PATH)
     ctx = _wizard_ctx(sess)
     ctx.update({
-        "current_step": 2,
         "providers": config.KNOWN_PROVIDERS,
         "current_text_provider": ai.get("text_provider") or env.get("text_provider", ""),
         "current_text_endpoint": ai.get("text_endpoint") or env.get("text_endpoint", ""),
@@ -478,7 +488,7 @@ async def wizard_back_2(request: Request) -> HTMLResponse:
         "vision_models": [],
         "same_as_text": True,
     })
-    response = templates.TemplateResponse(request, "screen_ai.html", ctx)
+    response = _wizard_response(request, "screen_ai.html", ctx, 2)
     _attach_session(response, sid)
     return response
 
@@ -489,7 +499,6 @@ async def wizard_back_3(request: Request) -> HTMLResponse:
     sid = _get_session_id(request)
     sess = sessions[sid]
     ctx = _wizard_ctx(sess)
-    ctx["current_step"] = 3
     # Pre-fill from .env if session has no image data (dashboard re-entry)
     img = sess.get("images", {})
     if not img:
@@ -497,7 +506,7 @@ async def wizard_back_3(request: Request) -> HTMLResponse:
         ctx["img_endpoint"] = os.environ.get("DEMIURGOS_IMAGE_ENDPOINT", "")
         ctx["img_model"] = os.environ.get("DEMIURGOS_IMAGE_MODEL", "")
         ctx["img_api_key"] = os.environ.get("DEMIURGOS_IMAGE_API_KEY", "")
-    response = templates.TemplateResponse(request, "screen_img.html", ctx)
+    response = _wizard_response(request, "screen_img.html", ctx, 3)
     _attach_session(response, sid)
     return response
 
@@ -511,13 +520,12 @@ async def wizard_back_4(request: Request) -> HTMLResponse:
     providers = chats.get("providers", [])
     ctx = _wizard_ctx(sess)
     ctx.update({
-        "current_step": 4,
         "chat_telegram_enabled": "telegram" in providers,
         "chat_discord_enabled": "discord" in providers,
         "telegram_token": chats.get("telegram_token", ""),
         "discord_token": chats.get("discord_token", ""),
     })
-    response = templates.TemplateResponse(request, "screen_chat.html", ctx)
+    response = _wizard_response(request, "screen_chat.html", ctx, 4)
     _attach_session(response, sid)
     return response
 
@@ -530,11 +538,10 @@ async def wizard_back_5(request: Request) -> HTMLResponse:
     backup = sess.get("backup", {})
     ctx = _wizard_ctx(sess)
     ctx.update({
-        "current_step": 5,
         "backup_enabled": backup.get("enabled", False),
         "rclone_detected": shutil.which("rclone") is not None,
     })
-    response = templates.TemplateResponse(request, "screen_backup.html", ctx)
+    response = _wizard_response(request, "screen_backup.html", ctx, 5)
     _attach_session(response, sid)
     return response
 
@@ -587,20 +594,23 @@ async def wizard_post_world(request: Request) -> HTMLResponse:
 
     world_name_raw = (form_data.get("world_name") or "").strip()
     world_folder = (form_data.get("world_folder") or "").strip()
+    world_mode = (form_data.get("world_mode") or "create").strip()
 
-    if world_name_raw:
+    if world_mode == "load" and world_folder:
+        # Load existing world — use provided name or basename of path
+        world_name = world_name_raw or os.path.basename(world_folder.rstrip("/\\")) or world_folder
+        sess["world"] = {
+            "type": "load",
+            "name": world_name,
+            "path": world_folder,
+        }
+        logger.info("Wizard: loading existing world '%s' from '%s'", world_name, world_folder)
+    elif world_name_raw:
         # Create new world — sanitize name
         world_name = world_name_raw.lower().replace(" ", "-")
         world_name = re.sub(r"[^a-z0-9-]", "", world_name)
         sess["world"] = {"type": "create", "name": world_name, "path": ""}
         logger.info("Wizard: creating new world '%s'", world_name)
-    elif world_folder:
-        sess["world"] = {
-            "type": "load",
-            "name": os.path.basename(world_folder.rstrip("/\\")) or world_folder,
-            "path": world_folder,
-        }
-        logger.info("Wizard: loading existing world from '%s'", world_folder)
     else:
         ctx = _wizard_ctx(sess)
         ctx["current_step"] = 1
