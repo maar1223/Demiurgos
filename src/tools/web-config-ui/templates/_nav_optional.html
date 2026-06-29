@@ -1,0 +1,18 @@
+<!-- =========================================================================
+     _nav_optional.html — Navigation for Screens 3, 4, 5 (Images, Chats, Backup)
+     Back + Skip + Save & Continue button triplet.
+     ========================================================================= -->
+
+<div class="wizard-nav">
+  <button type="button" class="btn-secondary" onclick="history.back()">
+    <svg class="icon icon-md"><use href="#arrow-left"/></svg>
+    {{ t('back') }}
+  </button>
+  <div class="wizard-nav-right">
+    <button type="submit" name="skip" value="1" class="btn-skip">{{ t('skip_for_now') }}</button>
+    <button type="submit" class="btn-primary">
+      {{ t('save_and_continue') }}
+      <svg class="icon icon-md"><use href="#arrow-right"/></svg>
+    </button>
+  </div>
+</div>
