@@ -1,0 +1,15 @@
+<!-- =========================================================================
+     _nav_next.html — Navigation for Screens 1, 2 (World, AI)
+     Back + Next button pair.
+     ========================================================================= -->
+
+<div class="wizard-nav">
+  <button type="button" class="btn-secondary" onclick="history.back()">
+    <svg class="icon icon-md"><use href="#arrow-left"/></svg>
+    {{ t('back') }}
+  </button>
+  <button type="submit" class="btn-primary">
+    {{ t('next') }}
+    <svg class="icon icon-md"><use href="#arrow-right"/></svg>
+  </button>
+</div>
