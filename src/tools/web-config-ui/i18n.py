@@ -25,7 +25,7 @@ _LANGUAGE_NAMES: dict[str, str] = {
     "zh": "中文",
     "hi": "हिन्दी",
     "es": "Español (neutro)",
-    "es-ar": "Español (rioplatense)",
+    "es-ar": "Español (Argentina)",
     "fr": "Français",
     "ar": "العربية",
     "bn": "বাংলা",
@@ -51,6 +51,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "Your narrative engine for Hermes. Let's set things up.",
         "select_language": "Choose your language",
         "continue_button": "Continue",
+        "other": "Other",
 
         # -- Screen 1: World -------------------------------------------
         "world_title": "Your World",
@@ -216,6 +217,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "您的 Hermes 叙事引擎。让我们开始配置。",
         "select_language": "选择您的语言",
         "continue_button": "继续",
+        "other": "其他",
 
         "world_title": "您的世界",
         "world_subtitle": "每个传奇都需要一个家园。创建新世界或加载已有世界。",
@@ -361,6 +363,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "Hermes के लिए आपका कथा इंजन। आइए सेटअप करें।",
         "select_language": "अपनी भाषा चुनें",
         "continue_button": "जारी रखें",
+        "other": "अन्य",
 
         "world_title": "आपकी दुनिया",
         "world_subtitle": "हर गाथा को एक घर चाहिए। नई दुनिया बनाएँ या मौजूदा लोड करें।",
@@ -506,6 +509,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "Su motor narrativo para Hermes. Configuremos todo.",
         "select_language": "Seleccione su idioma",
         "continue_button": "Continuar",
+        "other": "Otro",
 
         "world_title": "Su Mundo",
         "world_subtitle": "Toda saga necesita un hogar. Cree un nuevo mundo o cargue uno existente.",
@@ -651,6 +655,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "Tu motor narrativo para Hermes. Configuremos todo.",
         "select_language": "Elegí tu idioma",
         "continue_button": "Continuar",
+        "other": "Otro",
 
         "world_title": "Tu Mundo",
         "world_subtitle": "Toda saga necesita un hogar. Creá un nuevo mundo o cargá uno existente.",
@@ -796,6 +801,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "Votre moteur narratif pour Hermes. Configurons tout cela.",
         "select_language": "Choisissez votre langue",
         "continue_button": "Continuer",
+        "other": "Autre",
 
         "world_title": "Votre Monde",
         "world_subtitle": "Toute saga a besoin d'un foyer. Créez un nouveau monde ou chargez-en un existant.",
@@ -941,6 +947,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "محركك السردي لـ Hermes. هيا لنُعد الإعدادات.",
         "select_language": "اختر لغتك",
         "continue_button": "متابعة",
+        "other": "أخرى",
 
         "world_title": "عالمك",
         "world_subtitle": "كل ملحمة تحتاج إلى موطن. أنشئ عالماً جديداً أو حمّل عالماً موجوداً.",
@@ -1086,6 +1093,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "Hermes-এর জন্য আপনার কাহিনী ইঞ্জিন। চলুন সেটআপ করি।",
         "select_language": "আপনার ভাষা নির্বাচন করুন",
         "continue_button": "চালিয়ে যান",
+        "other": "অন্যান্য",
 
         "world_title": "আপনার বিশ্ব",
         "world_subtitle": "প্রতিটি গাথার একটি ঘর প্রয়োজন। নতুন বিশ্ব তৈরি করুন বা বিদ্যমান লোড করুন।",
@@ -1231,6 +1239,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "Seu motor narrativo para o Hermes. Vamos configurar.",
         "select_language": "Escolha seu idioma",
         "continue_button": "Continuar",
+        "other": "Outro",
 
         "world_title": "Seu Mundo",
         "world_subtitle": "Toda saga precisa de um lar. Crie um novo mundo ou carregue um existente.",
@@ -1376,6 +1385,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "Ваш нарративный движок для Hermes. Давайте настроим всё.",
         "select_language": "Выберите язык",
         "continue_button": "Продолжить",
+        "other": "Другой",
 
         "world_title": "Ваш Мир",
         "world_subtitle": "Каждой саге нужен дом. Создайте новый мир или загрузите существующий.",
@@ -1521,6 +1531,7 @@ _LANGUAGES: dict[str, dict[str, str]] = {
         "welcome_subtitle": "Hermes کے لیے آپ کا کہانی انجن۔ آئیے سیٹ اپ کرتے ہیں۔",
         "select_language": "اپنی زبان منتخب کریں",
         "continue_button": "جاری رکھیں",
+        "other": "دیگر",
 
         "world_title": "آپ کی دنیا",
         "world_subtitle": "ہر کہانی کو ایک گھر چاہیے۔ نئی دنیا بنائیں یا موجودہ لوڈ کریں۔",
@@ -1720,7 +1731,7 @@ def get_language_name(lang_code: str) -> str:
     Examples::
 
         >>> get_language_name("es-ar")
-        'Español (rioplatense)'
+        'Español (Argentina)'
 
         >>> get_language_name("en")
         'English'
