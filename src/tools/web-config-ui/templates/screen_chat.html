@@ -1,105 +1,88 @@
 <!-- =========================================================================
      screen_chat.html — Screen 4: Chat Platforms
-     
      Optional screen. Toggle cards for Telegram/Discord, others grayed out.
      ========================================================================= -->
 
-<article class="wizard-screen" data-screen="4">
-  <header>
-    <h1>{{ t('chats_title') }}</h1>
-    <p>{{ t('chats_explanation') }}</p>
-  </header>
+<div class="wizard-screen" data-screen="4">
+  {% include "_progress.html" %}
 
-  <form hx-post="/wizard/4"
-        hx-target="#wizard-content"
-        hx-swap="innerHTML"
-        hx-push-url="true">
-
-    <div class="chat-providers">
-      <!-- Telegram card -->
-      <article class="card chat-provider-card">
-        <header>
-          <h2>✈️ {{ t('telegram') }}</h2>
-        </header>
-        <label class="toggle-row">
-          <input type="checkbox"
-                 name="chat_telegram"
-                 role="switch"
-                 {% if chat_telegram_enabled %}checked{% endif %}>
-          <span>{{ t('enable_chat_platform') }}</span>
-        </label>
-        <div class="chat-config-fields">
-          <label for="telegram-token">{{ t('bot_token_label') }}</label>
-          <input type="password"
-                 id="telegram-token"
-                 name="telegram_token"
-                 value="{{ telegram_token or '' }}"
-                 placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
-        </div>
-      </article>
-
-      <!-- Discord card -->
-      <article class="card chat-provider-card">
-        <header>
-          <h2>🎮 {{ t('discord') }}</h2>
-        </header>
-        <label class="toggle-row">
-          <input type="checkbox"
-                 name="chat_discord"
-                 role="switch"
-                 {% if chat_discord_enabled %}checked{% endif %}>
-          <span>{{ t('enable_chat_platform') }}</span>
-        </label>
-        <div class="chat-config-fields">
-          <label for="discord-token">{{ t('bot_token_label') }}</label>
-          <input type="password"
-                 id="discord-token"
-                 name="discord_token"
-                 value="{{ discord_token or '' }}"
-                 placeholder="MTAxMTE...">
-        </div>
-      </article>
-
-      <!-- Coming soon cards (grayed out, non-interactive) -->
-      <article class="card chat-provider-card disabled" aria-disabled="true">
-        <header>
-          <h2>💬 WhatsApp</h2>
-        </header>
-        <p><small>⌛ {{ t('coming_soon') }}</small></p>
-      </article>
-
-      <article class="card chat-provider-card disabled" aria-disabled="true">
-        <header>
-          <h2>📱 Slack</h2>
-        </header>
-        <p><small>⌛ {{ t('coming_soon') }}</small></p>
-      </article>
+  <div class="wizard-card">
+    <div class="wizard-header">
+      <h1>{{ t('chats_title') }}</h1>
+      <p>{{ t('chats_explanation') }}</p>
     </div>
 
-    <!-- Navigation -->
-    <div class="wizard-nav">
-      <button type="button" class="secondary"
-              hx-get="/wizard/3"
-              hx-target="#wizard-content"
-              hx-swap="innerHTML"
-              hx-push-url="true">
-        ← {{ t('back') }}
-      </button>
-      <div class="wizard-nav-right">
-        <button type="submit"
-                name="action"
-                value="skip"
-                class="outline contrast skip-button">
-          {{ t('skip_for_now') }} ⌛
-        </button>
-        <button type="submit"
-                name="action"
-                value="save"
-                class="primary">
-          {{ t('save_and_continue') }} →
-        </button>
+    <form hx-post="/wizard/4"
+          hx-target="#wizard-content"
+          hx-swap="innerHTML"
+          hx-push-url="true">
+
+      <div class="chat-providers">
+        <!-- Telegram card -->
+        <div class="surface-card">
+          <div class="chat-card-header">
+            <h3>{{ t('telegram') }}</h3>
+            <label class="toggle-row">
+              <input type="checkbox"
+                     name="chat_telegram"
+                     role="switch"
+                     {% if chat_telegram_enabled %}checked{% endif %}>
+            </label>
+          </div>
+          <div class="chat-config-fields">
+            <label for="telegram-token">{{ t('bot_token_label') }}</label>
+            <input type="password"
+                   id="telegram-token"
+                   name="telegram_token"
+                   value="{{ telegram_token or '' }}"
+                   placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+          </div>
+        </div>
+
+        <!-- Discord card -->
+        <div class="surface-card">
+          <div class="chat-card-header">
+            <h3>{{ t('discord') }}</h3>
+            <label class="toggle-row">
+              <input type="checkbox"
+                     name="chat_discord"
+                     role="switch"
+                     {% if chat_discord_enabled %}checked{% endif %}>
+            </label>
+          </div>
+          <div class="chat-config-fields">
+            <label for="discord-token">{{ t('bot_token_label') }}</label>
+            <input type="password"
+                   id="discord-token"
+                   name="discord_token"
+                   value="{{ discord_token or '' }}"
+                   placeholder="MTAxMTE...">
+          </div>
+        </div>
+
+        <!-- Coming soon cards (grayed out, non-interactive) -->
+        <div class="surface-card disabled" aria-disabled="true">
+          <div class="chat-card-header">
+            <h3>WhatsApp</h3>
+          </div>
+          <p class="coming-soon-label">
+            <svg class="icon icon-sm"><use href="#clock"/></svg>
+            {{ t('coming_soon') }}
+          </p>
+        </div>
+
+        <div class="surface-card disabled" aria-disabled="true">
+          <div class="chat-card-header">
+            <h3>Slack</h3>
+          </div>
+          <p class="coming-soon-label">
+            <svg class="icon icon-sm"><use href="#clock"/></svg>
+            {{ t('coming_soon') }}
+          </p>
+        </div>
       </div>
-    </div>
 
-  </form>
-</article>
+      {% include "_nav_optional.html" %}
+    </form>
+  </div>
+</div>
