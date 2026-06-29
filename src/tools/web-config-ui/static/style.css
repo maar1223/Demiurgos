@@ -1,482 +1,700 @@
 /* =========================================================================
-   web-config-ui — Custom styles (minimal Pico.css overrides)
-
-   Pico.css v2 is vendored at static/pico.min.css and loaded by index.html.
-   This file adds only what Pico.css doesn't provide out of the box.
+   Demiurgos — OpenPencil "La Cripta" Design System v2
+   Standalone CSS custom properties. No preprocessors, no Pico.
+   Source of truth: Demiurgos - Wizard de instalacion.op
    ========================================================================= */
 
-/* --- Container --- */
-.config-container {
-  max-width: 640px;
-  margin: 2rem auto;
-  padding: 1rem;
-}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
 
-/* --- Password wrapper --- */
-.password-wrapper {
-  display: flex;
-  gap: 0.5rem;
-  align-items: stretch;
-}
+/* =========================================================================
+   1. Custom Properties — OpenPencil "La Cripta" Palette
+   ========================================================================= */
 
-.password-wrapper input {
-  flex: 1;
-}
+:root {
+  /* Fondos */
+  --d-bg: #0A0907;            /* La Cripta */
+  --d-card: #161310;          /* Madero */
+  --d-elevated: #1F1B16;      /* Piedra */
+  --d-input: #211D17;         /* Lecho */
 
-.password-toggle {
-  width: auto;
-  padding-inline: 0.75rem;
-  margin-bottom: var(--pico-spacing, 0);
-}
+  /* Acentos */
+  --d-primary: #D4A853;       /* Llamita Media */
+  --d-primary-hover: #F5C95A; /* Llama Alta */
+  --d-secondary: #8A9BA8;     /* Plata Lunar */
+  --d-secondary-dim: #6D7D88; /* Plata Tenue */
+  --d-warning: #A85D3A;       /* Terracota */
 
-/* --- htmx indicator --- */
-.htmx-indicator {
-  display: none;
-  opacity: 0;
-  transition: opacity 200ms ease-in;
-}
+  /* Texto */
+  --d-text: #DED5C7;          /* Pergamino */
+  --d-muted: #A6988A;         /* Tinta Desvaída */
+  --d-subtle: #73685E;        /* Sombra */
 
-.htmx-request .htmx-indicator,
-.htmx-indicator.htmx-request {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  opacity: 1;
-}
+  /* Bordes */
+  --d-border: #3A3229;        /* Filo */
 
-/* --- Connection success banner --- */
-.connection-success {
-  --pico-border-color: var(--pico-color-green-400, #388e3c);
-  border-left: 4px solid var(--pico-color-green-400, #388e3c);
-  margin-top: 1rem;
-}
+  /* Estados */
+  --d-success: #4A6B3E;       /* Musgo */
+  --d-error: #8B2D24;         /* Sangre */
 
-.connection-success header {
-  color: var(--pico-color-green-400, #388e3c);
-}
+  /* Radios — from OpenPencil */
+  --d-radius-lg: 10px;
+  --d-radius: 8px;
+  --d-radius-sm: 6px;
+  --d-radius-xs: 3px;
+  --d-radius-pill: 12px;
 
-/* --- Connection error banner --- */
-.connection-error {
-  --pico-border-color: var(--pico-color-red-400, #d32f2f);
-  border-left: 4px solid var(--pico-color-red-400, #d32f2f);
-  margin-top: 1rem;
-}
-
-.connection-error header {
-  color: var(--pico-color-red-400, #d32f2f);
-}
-
-/* --- Vision status --- */
-.vision-ok {
-  display: block;
-  margin-top: 0.5rem;
-  color: var(--pico-color-green-400, #388e3c);
-}
-
-.vision-warning {
-  display: block;
-  margin-top: 0.5rem;
-  color: var(--pico-color-amber-400, #ffa000);
-}
-
-/* --- Save status --- */
-#save-status {
-  margin-top: 1rem;
-  padding: 0.75rem;
-  border-radius: var(--pico-border-radius, 4px);
-  animation: fadeIn 300ms ease-in;
-}
-
-#save-status:has([role="status"]) {
-  background: var(--pico-color-green-50, #e8f5e9);
-  border: 1px solid var(--pico-color-green-400, #388e3c);
-}
-
-/* --- Vision section collapse transition --- */
-#vision-section {
-  transition: opacity 200ms ease-in;
-  border: 1px solid var(--pico-muted-border-color, #ddd);
-  border-radius: var(--pico-border-radius, 4px);
-  padding: 1rem;
-  margin-bottom: 1.5rem;
-}
-
-/* --- Responsive --- */
-@media (max-width: 680px) {
-  .config-container {
-    margin: 0.5rem auto;
-    padding: 0.75rem;
-  }
-
-  .password-wrapper {
-    flex-direction: column;
-  }
-}
-
-/* --- Status message containers --- */
-#connection-status,
-#save-status {
-  transition: opacity 0.5s ease;
-}
-
-/* --- Dismiss button in error articles --- */
-.connection-error header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.dismiss {
-  background: none;
-  border: none;
-  color: inherit;
-  font-size: 1.2rem;
-  cursor: pointer;
-  padding: 0 0.3rem;
-  line-height: 1;
-  opacity: 0.6;
-  transition: opacity 0.2s;
-}
-.dismiss:hover {
-  opacity: 1;
-}
-
-/* --- Fade-in animation for status messages --- */
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  /* Espaciado */
+  --d-gap: 14px;
+  --d-gap-lg: 20px;
 }
 
 /* =========================================================================
-   Wizard Progress Indicator
+   2. Base Reset
    ========================================================================= */
 
-.wizard-progress {
-  margin-bottom: 2rem;
+*, *::before, *::after {
+  box-sizing: border-box;
 }
 
-.progress-steps {
-  display: flex;
-  list-style: none;
-  padding: 0;
+html, body {
+  background: var(--d-bg);
   margin: 0;
-  gap: 0;
-  counter-reset: step;
+  padding: 0;
+  min-height: 100vh;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--d-text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-.progress-step {
-  flex: 1;
-  text-align: center;
-  position: relative;
-  padding-top: 2rem;
-  color: var(--pico-muted-color);
-  font-size: 0.85rem;
-}
-
-/* Connector line between steps */
-.progress-step::before {
-  content: "";
-  position: absolute;
-  top: 0.85rem;
-  left: 0;
-  right: 50%;
-  height: 2px;
-  background: var(--pico-muted-border-color);
-  z-index: 0;
-}
-
-.progress-step::after {
-  content: "";
-  position: absolute;
-  top: 0.85rem;
-  left: 50%;
-  right: 0;
-  height: 2px;
-  background: var(--pico-muted-border-color);
-  z-index: 0;
-}
-
-.progress-step:first-child::before {
-  display: none;
-}
-
-.progress-step:last-child::after {
-  display: none;
-}
-
-/* Completed connector */
-.progress-step.completed::before,
-.progress-step.completed::after {
-  background: var(--pico-primary-background);
-}
-
-/* Active step connector (up to current) */
-.progress-step.active::before {
-  background: var(--pico-primary-background);
-}
-
-/* Step marker (circle) */
-.step-marker {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.75rem;
-  height: 1.75rem;
-  border-radius: 50%;
-  background: var(--pico-muted-border-color);
-  color: var(--pico-background-color);
-  font-weight: 700;
-  font-size: 0.8rem;
-  position: relative;
-  z-index: 1;
-  margin-bottom: 0.35rem;
-  transition: background 0.2s, color 0.2s;
-}
-
-.progress-step.completed .step-marker {
-  background: var(--pico-primary-background);
-  color: var(--pico-primary-inverse);
-}
-
-.progress-step.active .step-marker {
-  background: var(--pico-primary-background);
-  color: var(--pico-primary-inverse);
-  box-shadow: 0 0 0 3px var(--pico-primary-background);
-  transform: scale(1.15);
-}
-
-/* Step label */
-.step-label {
-  display: block;
-  line-height: 1.3;
-}
-
-.progress-step.active .step-label {
-  color: var(--pico-color);
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  color: var(--d-text);
+  margin: 0;
   font-weight: 600;
 }
 
-.progress-step.completed .step-label {
-  color: var(--pico-muted-color);
+h1 { font-size: 2rem; font-weight: 700; line-height: 1.2; }
+h2 { font-size: 1.25rem; font-weight: 600; }
+h3 { font-size: 1rem; font-weight: 500; color: var(--d-muted); }
+
+p { margin: 0; }
+
+a {
+  color: var(--d-secondary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: #A8BBC7;
 }
 
 /* =========================================================================
-   Wizard Shell
+   3. Layout
    ========================================================================= */
 
+.wizard-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 2rem 1rem;
+}
+
+.wizard-card {
+  max-width: 640px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 2.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--d-gap);
+}
+
+/* Backward compat — .wizard-container as outer centering wrapper (dashboard pages) */
 .wizard-container {
-  max-width: 720px;
+  max-width: 640px;
+  width: 100%;
   margin: 2rem auto;
-  padding: 1rem;
+  padding: 0 1rem;
 }
 
-.wizard-screen {
-  animation: fadeIn 300ms ease-in;
+.wizard-header {
+  padding: 0;
+  margin-bottom: 0.5rem;
 }
 
-/* Language selector radio list */
-.wizard-screen fieldset label {
-  display: block;
-  padding: 0.35rem 0;
-  cursor: pointer;
+.wizard-footer {
+  padding: 0;
+  margin-top: 0.5rem;
 }
 
-.wizard-screen fieldset label input[type="radio"] {
-  margin-right: 0.5rem;
-}
-
-/* Responsive: stack step labels on small screens */
-@media (max-width: 600px) {
-  .step-label {
-    font-size: 0.7rem;
-  }
-
-  .step-marker {
-    width: 1.4rem;
-    height: 1.4rem;
-    font-size: 0.7rem;
-  }
-
-  .wizard-container {
-    margin: 0.5rem auto;
-  }
+.wizard-actions {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
 }
 
 /* =========================================================================
-   Language Grid (Screen 0)
+   4. Progress Bar — 7 segments (80×6px each)
+   ========================================================================= */
+
+.wizard-progress {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 2rem;
+}
+
+.progress-segment {
+  width: 80px;
+  height: 6px;
+  border-radius: var(--d-radius-xs);
+  background: var(--d-border);
+  transition: background 0.3s ease;
+  flex-shrink: 0;
+}
+
+.progress-segment.active {
+  background: var(--d-primary);
+}
+
+/* =========================================================================
+   5. Buttons
+   ========================================================================= */
+
+/* Primary */
+.btn-primary {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 600;
+  background: var(--d-primary);
+  color: var(--d-bg);
+  border: none;
+  border-radius: var(--d-radius);
+  cursor: pointer;
+  padding: 0 1.5rem;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+  transition: background 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-primary:hover {
+  background: var(--d-primary-hover);
+  color: var(--d-bg);
+}
+
+/* Primary Large — Continue (screen 0), Start (screen 6) */
+.btn-primary-lg {
+  height: 52px;
+  border-radius: var(--d-radius-lg);
+  font-size: 1rem;
+  font-weight: 700;
+  width: 100%;
+}
+
+/* Secondary */
+.btn-secondary {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  background: var(--d-card);
+  color: var(--d-muted);
+  border: none;
+  border-radius: var(--d-radius);
+  cursor: pointer;
+  padding: 0 1.5rem;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+  transition: background 0.2s ease, color 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-secondary:hover {
+  background: var(--d-input);
+  color: var(--d-text);
+}
+
+/* Skip — width 130px */
+.btn-skip {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  background: var(--d-card);
+  color: var(--d-muted);
+  border: none;
+  border-radius: var(--d-radius);
+  cursor: pointer;
+  padding: 0 1.5rem;
+  height: 44px;
+  width: 130px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+  transition: background 0.2s ease, color 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-skip:hover {
+  background: var(--d-input);
+  color: var(--d-text);
+}
+
+/* Test Connection */
+.btn-test {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.9rem;
+  font-weight: 500;
+  background: var(--d-input);
+  color: var(--d-secondary);
+  border: none;
+  border-radius: var(--d-radius-sm);
+  cursor: pointer;
+  width: 100%;
+  height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.2s ease;
+}
+
+.btn-test:hover {
+  background: var(--d-elevated);
+  color: #A8BBC7;
+}
+
+/* =========================================================================
+   6. Form Elements
+   ========================================================================= */
+
+label {
+  display: block;
+  font-size: 0.8125rem; /* 13px */
+  font-weight: 500;
+  color: var(--d-muted);
+  margin-bottom: 6px;
+}
+
+input[type="text"],
+input[type="url"],
+input[type="password"] {
+  width: 100%;
+  height: 44px;
+  padding: 0 16px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.875rem; /* 14px */
+  color: var(--d-text);
+  background: var(--d-input);
+  border: none;
+  border-radius: var(--d-radius-sm);
+  outline: none;
+  transition: outline 0.15s ease;
+}
+
+input[type="text"]::placeholder,
+input[type="url"]::placeholder,
+input[type="password"]::placeholder {
+  color: var(--d-subtle);
+}
+
+input[type="text"]:focus,
+input[type="url"]:focus,
+input[type="password"]:focus {
+  outline: 1px solid var(--d-primary);
+  outline-offset: -1px;
+}
+
+select {
+  width: 100%;
+  height: 42px;
+  padding: 0 36px 0 14px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.875rem; /* 14px */
+  color: var(--d-text);
+  background: var(--d-input);
+  border: none;
+  border-radius: var(--d-radius-sm);
+  outline: none;
+  appearance: none;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='%23A6988A'%3E%3Cpath d='M3 5l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  transition: outline 0.15s ease;
+}
+
+select:focus {
+  outline: 1px solid var(--d-primary);
+  outline-offset: -1px;
+}
+
+select option {
+  background: var(--d-elevated);
+  color: var(--d-text);
+}
+
+fieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+/* =========================================================================
+   7. Toggle Group — for World screen
+   ========================================================================= */
+
+.toggle-group {
+  display: flex;
+  gap: 0;
+  border-radius: var(--d-radius);
+}
+
+.toggle-btn {
+  flex: 1;
+  height: 48px;
+  background: var(--d-card);
+  color: var(--d-muted);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.875rem; /* 14px */
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  border-radius: var(--d-radius);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.toggle-btn:hover {
+  background: var(--d-input);
+}
+
+.toggle-btn.active {
+  background: var(--d-primary);
+  color: var(--d-bg);
+  font-weight: 600;
+}
+
+/* =========================================================================
+   8. Language Grid
    ========================================================================= */
 
 .language-grid {
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 0.5rem;
-  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
 }
 
+.language-btn {
+  height: 56px;
+  background: var(--d-card);
+  color: var(--d-text);
+  border: none;
+  border-radius: var(--d-radius);
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  cursor: pointer;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.9375rem; /* 15px */
+  font-weight: 500;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.language-btn:hover {
+  background: var(--d-elevated);
+}
+
+.language-btn.selected {
+  background: var(--d-primary);
+  color: var(--d-bg);
+  font-weight: 600;
+}
+
+.language-btn.muted {
+  color: var(--d-muted);
+}
+
+/* Language card (radio-based) — backward compat for screen_lang.html */
 .language-card {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  border: 2px solid var(--pico-muted-border-color);
-  border-radius: var(--pico-border-radius);
+  justify-content: center;
+  height: 56px;
+  padding: 0 18px;
+  background: var(--d-card);
+  border-radius: var(--d-radius);
   cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
-  background: var(--pico-background-color);
+  transition: background 0.2s ease, color 0.2s ease;
+  border: none;
 }
 
 .language-card:hover {
-  border-color: var(--pico-primary-background);
-  background: var(--pico-primary-hover-background);
+  background: var(--d-elevated);
 }
 
-.language-card:has(input:checked) {
-  border-color: var(--pico-primary-background);
-  background: var(--pico-primary-background);
-  color: var(--pico-primary-inverse);
+.language-card:has(input:checked),
+.language-card.selected {
+  background: var(--d-primary);
+  color: var(--d-bg);
+  font-weight: 600;
+}
+
+.language-card:has(input:checked) .language-name,
+.language-card.selected .language-name {
+  color: var(--d-bg);
 }
 
 .language-card input[type="radio"] {
-  margin: 0;
-  accent-color: var(--pico-primary-background);
+  display: none;
 }
 
 .language-name {
-  font-size: 1.05rem;
+  font-size: 0.9375rem;
   font-weight: 500;
+  color: var(--d-text);
+  text-align: center;
 }
 
 /* =========================================================================
-   Wizard Navigation (Back / Next / Skip)
+   9. Summary Cards
    ========================================================================= */
 
-.wizard-nav {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 2rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--pico-muted-border-color);
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
 }
 
-.wizard-nav-right {
+.summary-card {
+  background: var(--d-card);
+  border-radius: var(--d-radius);
+  padding: 12px 14px;
+  min-height: 90px;
   display: flex;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.wizard-nav button[type="submit"],
-.wizard-nav a[role="button"] {
-  margin-bottom: 0;
+.summary-card .summary-label {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.6875rem; /* 11px */
+  font-weight: 500;
+  color: var(--d-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.summary-card .summary-value {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.9375rem; /* 15px */
+  font-weight: 600;
+  color: var(--d-text);
+}
+
+.summary-card .summary-action {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.6875rem; /* 11px */
+  font-weight: 400;
+  color: var(--d-secondary);
+}
+
+.summary-card .summary-action:hover {
+  color: #A8BBC7;
+}
+
+.summary-card.muted {
+  opacity: 0.4;
+}
+
+.summary-card .summary-value.skipped {
+  color: var(--d-subtle);
 }
 
 /* =========================================================================
-   World Screen (Screen 1)
+   10. Badges
    ========================================================================= */
-
-.world-option-card {
-  margin-bottom: 0;
-}
-
-.world-option-card h2 {
-  margin-bottom: 0.75rem;
-}
-
-.world-option-card .input-group {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.world-option-card .input-group input {
-  flex: 1;
-}
-
-.format-badges {
-  margin-top: 1.5rem;
-}
 
 .badge-group {
   display: flex;
+  gap: 8px;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-top: 0.5rem;
 }
 
 .badge {
   display: inline-flex;
   align-items: center;
-  padding: 0.25rem 0.75rem;
-  border-radius: 1rem;
-  font-size: 0.85rem;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  background: var(--d-input);
+  border-radius: var(--d-radius-sm);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.8125rem; /* 13px */
   font-weight: 500;
-  border: 1px solid var(--pico-muted-border-color);
-  color: var(--pico-muted-color);
+  color: var(--d-muted);
+  border: none;
 }
 
 .badge.supported {
-  border-color: var(--pico-primary-background);
-  color: var(--pico-primary-background);
-  background: var(--pico-primary-hover-background);
+  color: var(--d-text);
+}
+
+.badge.supported::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--d-success);
+  flex-shrink: 0;
 }
 
 .badge.coming-soon {
+  color: var(--d-muted);
   opacity: 0.6;
 }
 
+/* Dashboard backward compat — keep .badge-green, .badge-amber, .badge-muted */
+.badge-green {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  background: var(--d-input);
+  border-radius: var(--d-radius-sm);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--d-text);
+  border: none;
+}
+
+.badge-green::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--d-success);
+  flex-shrink: 0;
+}
+
+.badge-amber {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  background: var(--d-input);
+  border-radius: var(--d-radius-sm);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--d-warning);
+  border: none;
+}
+
+.badge-muted {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  background: var(--d-input);
+  border-radius: var(--d-radius-sm);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--d-muted);
+  opacity: 0.6;
+  border: none;
+}
+
 /* =========================================================================
-   AI Screen (Screen 2)
+   11. Toggle Switch
    ========================================================================= */
 
-.vision-section {
-  border: 1px solid var(--pico-muted-border-color);
-  border-radius: var(--pico-border-radius);
-  padding: 1rem;
-  margin-top: 1.5rem;
-  margin-bottom: 1.5rem;
+.toggle-switch {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border-radius: var(--d-radius-pill);
+  background: var(--d-border);
+  cursor: pointer;
+  transition: background 0.2s ease;
 }
 
-.vision-section legend {
-  font-weight: 600;
-  padding: 0 0.5rem;
+.toggle-switch.on {
+  background: var(--d-primary);
 }
 
-.vision-warning-card {
-  background: var(--pico-color-amber-50, #fff8e1);
-  border: 1px solid var(--pico-color-amber-400, #ffa000);
-  border-radius: var(--pico-border-radius);
-  padding: 0.75rem;
-  margin-top: 0.75rem;
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #FFFFFF;
+  transition: transform 0.2s ease;
 }
 
-.vision-warning-card p {
-  margin: 0;
-  color: var(--pico-color-amber-700, #f57f17);
+.toggle-switch.on::after {
+  transform: translateX(18px);
+}
+
+/* Checkbox inside toggle (for htmx forms) */
+.toggle-row input[type="checkbox"][role="switch"] {
+  accent-color: var(--d-primary);
 }
 
 /* =========================================================================
-   Chat Screen (Screen 4)
+   12. Cards — Reusable Surface
    ========================================================================= */
 
+.surface-card {
+  background: var(--d-card);
+  border-radius: var(--d-radius);
+  padding: 16px 18px;
+}
+
+.surface-card.warning {
+  background: var(--d-input);
+  border-radius: var(--d-radius-sm);
+  padding: 10px 14px;
+}
+
+/* Chat provider cards */
 .chat-providers {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1rem;
-  margin-top: 1rem;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
 }
 
 .chat-provider-card {
-  margin-bottom: 0;
+  background: var(--d-card);
+  border-radius: var(--d-radius);
+  padding: 16px 18px;
 }
 
 .chat-provider-card.disabled {
-  opacity: 0.5;
+  opacity: 0.35;
   pointer-events: none;
-  cursor: not-allowed;
 }
 
 .chat-provider-card h2 {
@@ -494,85 +712,217 @@
   margin-top: 0.5rem;
 }
 
-/* =========================================================================
-   Backup Screen (Screen 5)
-   ========================================================================= */
-
+/* Backup config fields */
 .backup-config-fields {
   margin-top: 1rem;
   padding-top: 0.75rem;
-  border-top: 1px solid var(--pico-muted-border-color);
+  border-top: 1px solid var(--d-border);
 }
 
+/* Vision section */
+.vision-section {
+  background: var(--d-card);
+  border-radius: var(--d-radius);
+  padding: 1.25rem;
+}
+
+.vision-section legend {
+  color: var(--d-primary);
+  font-weight: 600;
+}
+
+/* Warning card (rclone, vision) */
 .warning-card {
-  background: var(--pico-color-amber-50, #fff8e1);
-  border: 1px solid var(--pico-color-amber-400, #ffa000);
-  border-radius: var(--pico-border-radius);
-  padding: 0.75rem;
-  margin-top: 0.75rem;
+  background: var(--d-input);
+  border-radius: var(--d-radius-sm);
+  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
 }
 
 .warning-card p {
   margin: 0;
-  color: var(--pico-color-amber-700, #f57f17);
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--d-warning);
 }
 
-/* =========================================================================
-   Summary Screen (Screen 6)
-   ========================================================================= */
-
-.summary-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1rem;
-  margin-top: 1.5rem;
+.vision-warning-card {
+  background: var(--d-input);
+  border-radius: var(--d-radius-sm);
+  padding: 10px 14px;
 }
 
-.summary-card {
-  margin-bottom: 0;
-}
-
-.summary-card h3 {
-  margin-bottom: 0.25rem;
-  font-size: 1rem;
-  color: var(--pico-muted-color);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.summary-card p {
-  font-size: 1.1rem;
-  font-weight: 500;
-  margin-bottom: 0.5rem;
-}
-
-.summary-card footer {
-  text-align: right;
-}
-
-.summary-card footer a {
+.vision-warning-card p {
+  margin: 0;
+  color: var(--d-warning);
   font-size: 0.85rem;
-  margin-bottom: 0;
 }
 
+.vision-warning-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--d-input);
+  border-radius: var(--d-radius-sm);
+  color: var(--d-warning);
+  font-size: 0.85rem;
+}
+
+.vision-warning-banner p { margin: 0; }
+
 /* =========================================================================
-   Skip Button
+   13. Dividers
    ========================================================================= */
 
-.skip-button {
-  border: 2px dashed var(--pico-muted-border-color);
-  color: var(--pico-muted-color);
-  background: transparent;
-  transition: border-color 0.2s, color 0.2s;
-}
-
-.skip-button:hover {
-  border-color: var(--pico-primary-background);
-  color: var(--pico-primary-background);
+.wizard-divider {
+  width: 100%;
+  height: 1px;
+  background: var(--d-border);
+  margin: 14px 0;
 }
 
 /* =========================================================================
-   Connection Test Result
+   14. Navigation Bars
+   ========================================================================= */
+
+.wizard-nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: auto;
+  padding-top: 1.25rem;
+}
+
+.wizard-nav-right {
+  display: flex;
+  gap: 10px;
+}
+
+/* =========================================================================
+   15. Icons — Inline SVG
+   ========================================================================= */
+
+.icon {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+}
+
+.icon svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.icon-sm {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.icon-md {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.icon-lg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.icon-xl {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+}
+
+/* =========================================================================
+   16. Step Indicator
+   ========================================================================= */
+
+.step-indicator {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.6875rem; /* 11px */
+  font-weight: 500;
+  color: var(--d-subtle);
+}
+
+/* =========================================================================
+   17. Text Utilities
+   ========================================================================= */
+
+.text-muted {
+  color: var(--d-muted);
+}
+
+.text-subtle {
+  color: var(--d-subtle);
+}
+
+.text-success {
+  color: var(--d-success);
+}
+
+.text-warning {
+  color: var(--d-warning);
+}
+
+.text-error {
+  color: var(--d-error);
+}
+
+/* =========================================================================
+   18. Dashboard Grid
+   ========================================================================= */
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+/* =========================================================================
+   19. Model Tags (vision indicator in model selects)
+   ========================================================================= */
+
+.model-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.15rem 0.5rem;
+  border-radius: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  margin-left: 0.35rem;
+  white-space: nowrap;
+}
+
+.model-tag.vision-true {
+  background: rgba(74, 107, 62, 0.2);
+  color: #7A9B68;
+  border: 1px solid var(--d-success);
+}
+
+.model-tag.vision-false {
+  background: var(--d-input);
+  color: var(--d-muted);
+}
+
+.model-tag.vision-unknown {
+  background: rgba(168, 93, 58, 0.15);
+  color: var(--d-warning);
+  border: 1px solid var(--d-warning);
+}
+
+/* =========================================================================
+   20. Connection Test
    ========================================================================= */
 
 #test-result,
@@ -581,30 +931,239 @@
   min-height: 1.5rem;
 }
 
+.connection-success {
+  border-left: 4px solid var(--d-success);
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+  background: var(--d-card);
+  border-radius: var(--d-radius-sm);
+}
+
+.connection-success header { color: #7A9B68; }
+
+.connection-error {
+  border-left: 4px solid var(--d-error);
+  padding: 0.75rem;
+  margin-top: 0.75rem;
+  background: var(--d-card);
+  border-radius: var(--d-radius-sm);
+}
+
+.connection-error header {
+  color: var(--d-error);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
 /* =========================================================================
-   Responsive additions for wizard screens
+   21. Wizard Done
    ========================================================================= */
 
-@media (max-width: 600px) {
-  .language-grid {
-    grid-template-columns: 1fr 1fr;
-    gap: 0.35rem;
+.wizard-done {
+  text-align: center;
+  padding: 3rem 2rem;
+}
+
+.wizard-done h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+/* =========================================================================
+   22. HTMX Indicators & Status
+   ========================================================================= */
+
+.htmx-indicator {
+  display: none;
+  opacity: 0;
+  transition: opacity 200ms ease-in;
+}
+
+.htmx-request .htmx-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  opacity: 1;
+}
+
+#provider-defaults label {
+  margin-bottom: 0.3rem;
+}
+
+#provider-defaults input {
+  margin-bottom: 1rem;
+}
+
+#save-status {
+  margin-top: 1rem;
+  padding: 0.75rem;
+  border-radius: var(--d-radius-sm);
+  animation: fadeIn 300ms ease-in;
+}
+
+.dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0 0.3rem;
+  line-height: 1;
+  opacity: 0.6;
+  transition: opacity 0.2s ease;
+}
+
+.dismiss:hover {
+  opacity: 1;
+}
+
+/* =========================================================================
+   23. Animations
+   ========================================================================= */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* Spin for htmx indicator icon */
+.htmx-request .spin {
+  animation: spin 0.8s linear infinite;
+}
+
+/* =========================================================================
+   24. Screen Transition
+   ========================================================================= */
+
+.wizard-screen {
+  animation: fadeIn 250ms ease-in;
+}
+
+/* =========================================================================
+   25. Form Helper Sections
+   ========================================================================= */
+
+.input-group {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.input-group input {
+  flex: 1;
+}
+
+.world-form-section {
+  animation: fadeIn 250ms ease-in;
+}
+
+.world-form-card {
+  background: var(--d-card);
+  border-radius: var(--d-radius-lg);
+  padding: 1.5rem;
+}
+
+.format-badges {
+  margin-top: 1rem;
+}
+
+.format-badges h3 {
+  margin-bottom: 0.5rem;
+}
+
+/* Legacy summary — backward compat during transition */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.summary-cards .summary-card {
+  background: var(--d-card);
+  border-radius: var(--d-radius);
+  padding: 1rem;
+}
+
+.summary-cards .summary-card h3 {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--d-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.35rem;
+}
+
+.summary-cards .summary-card p {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--d-text);
+  margin-bottom: 0.5rem;
+}
+
+/* =========================================================================
+   26. Loading Skeleton
+   ========================================================================= */
+
+.skeleton {
+  background: linear-gradient(90deg, var(--d-input) 25%, var(--d-elevated) 50%, var(--d-input) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--d-radius-sm);
+}
+
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* =========================================================================
+   27. Responsive
+   ========================================================================= */
+
+@media (max-width: 680px) {
+  .wizard-card,
+  .wizard-container {
+    padding: 1.5rem 1rem;
   }
 
-  .language-card {
-    padding: 0.5rem 0.75rem;
+  .wizard-progress {
+    justify-content: center;
+  }
+
+  .progress-segment {
+    width: 12vw;
+    max-width: 80px;
+    min-width: 30px;
+  }
+
+  .language-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+
+  .language-card,
+  .language-btn {
+    height: 50px;
+    padding: 0 14px;
   }
 
   .language-name {
-    font-size: 0.9rem;
+    font-size: 0.85rem;
+  }
+
+  .summary-grid {
+    grid-template-columns: repeat(2, 1fr);
   }
 
   .summary-cards {
-    grid-template-columns: 1fr;
-  }
-
-  .chat-providers {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
   }
 
   .wizard-nav {
@@ -617,128 +1176,36 @@
     flex-direction: column;
   }
 
-  .world-option-card .input-group {
+  .wizard-nav-right .btn-skip {
+    width: 100%;
+  }
+
+  .wizard-actions {
     flex-direction: column;
+    width: 100%;
+  }
+
+  .wizard-actions .btn-primary,
+  .wizard-actions .btn-secondary {
+    width: 100%;
   }
 }
 
-/* =========================================================================
-   Model Vision Tags (👁️+✍️ / ✍️ / ❓)
-   ========================================================================= */
+@media (max-width: 400px) {
+  .language-grid {
+    grid-template-columns: 1fr;
+  }
 
-.model-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.15rem 0.5rem;
-  border-radius: 0.5rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  margin-left: 0.35rem;
-  vertical-align: middle;
-  white-space: nowrap;
-}
+  .summary-grid {
+    grid-template-columns: 1fr;
+  }
 
-/* Vision-capable: green */
-.model-tag.vision-true {
-  background: var(--pico-color-green-50, #e8f5e9);
-  color: var(--pico-color-green-700, #2e7d32);
-  border: 1px solid var(--pico-color-green-400, #66bb6a);
-}
+  .summary-cards {
+    grid-template-columns: 1fr;
+  }
 
-/* Text-only: neutral gray */
-.model-tag.vision-false {
-  background: var(--pico-muted-border-color);
-  color: var(--pico-muted-color);
-  border: 1px solid var(--pico-muted-border-color);
-}
-
-/* Unknown: amber/orange */
-.model-tag.vision-unknown {
-  background: var(--pico-color-amber-50, #fff8e1);
-  color: var(--pico-color-amber-700, #f57f17);
-  border: 1px solid var(--pico-color-amber-400, #ffa000);
-}
-
-/* =========================================================================
-   Wizard Done Page
-   ========================================================================= */
-
-.wizard-done {
-  text-align: center;
-  padding: 3rem 2rem;
-}
-
-.wizard-done header h1 {
-  font-size: 2.2rem;
-  margin-bottom: 0.5rem;
-}
-
-.done-content {
-  margin: 2rem 0;
-  font-size: 1.1rem;
-}
-
-.done-content code {
-  font-size: 1.3rem;
-  color: var(--pico-primary-background);
-  background: var(--pico-primary-hover-background);
-  padding: 0.2rem 0.6rem;
-  border-radius: var(--pico-border-radius);
-}
-
-/* =========================================================================
-   Provider Defaults Fragment (inline endpoint + API key)
-   ========================================================================= */
-
-#provider-defaults {
-  margin-bottom: 1rem;
-}
-
-#provider-defaults label {
-  margin-bottom: 0.3rem;
-}
-
-#provider-defaults input {
-  margin-bottom: 1rem;
-}
-
-/* =========================================================================
-   Vision Warning Banner (when text model lacks vision)
-   ========================================================================= */
-
-.vision-warning-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.75rem 1rem;
-  background: var(--pico-color-amber-50, #fff8e1);
-  border: 1px solid var(--pico-color-amber-400, #ffa000);
-  border-left: 4px solid var(--pico-color-amber-600, #ffb300);
-  border-radius: var(--pico-border-radius);
-  margin: 0.75rem 0;
-  font-size: 0.9rem;
-  color: var(--pico-color-amber-800, #e65100);
-}
-
-.vision-warning-banner p {
-  margin: 0;
-}
-
-/* =========================================================================
-   Dashboard Badge Styles
-   ========================================================================= */
-
-.badge-green {
-  --pico-mark-background-color: var(--pico-color-green-100, #c8e6c9);
-  --pico-mark-color: var(--pico-color-green-800, #1b5e20);
-}
-
-.badge-amber {
-  --pico-mark-background-color: var(--pico-color-amber-100, #ffecb3);
-  --pico-mark-color: var(--pico-color-amber-800, #e65100);
-}
-
-.badge-muted {
-  --pico-mark-background-color: var(--pico-color-slate-100, #eceff1);
-  --pico-mark-color: var(--pico-color-slate-600, #546e7a);
+  .progress-segment {
+    width: 10vw;
+    min-width: 24px;
+  }
 }
