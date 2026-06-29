@@ -20,7 +20,7 @@
       <div class="summary-grid">
 
         <!-- Language -->
-        <div class="summary-item">
+        <div class="summary-card">
           <span class="summary-label">{{ t('language_label') }}</span>
           <span class="summary-value">{{ language_name or t('configured') }}</span>
           <a hx-get="/wizard/0"
@@ -31,7 +31,7 @@
         </div>
 
         <!-- World -->
-        <div class="summary-item">
+        <div class="summary-card">
           <span class="summary-label">{{ t('world_label') }}</span>
           <span class="summary-value">{{ world_name or t('configured') }}</span>
           <a hx-get="/wizard/1"
@@ -42,7 +42,7 @@
         </div>
 
         <!-- AI Text -->
-        <div class="summary-item">
+        <div class="summary-card">
           <span class="summary-label">{{ t('ai_text_label') }}</span>
           <span class="summary-value">
             {% if text_provider %}
@@ -59,7 +59,7 @@
         </div>
 
         <!-- AI Vision -->
-        <div class="summary-item">
+        <div class="summary-card">
           <span class="summary-label">{{ t('ai_vision_label') }}</span>
           <span class="summary-value">
             {% if same_as_text_model %}
@@ -78,7 +78,7 @@
         </div>
 
         <!-- Images -->
-        <div class="summary-item">
+        <div class="summary-card">
           <span class="summary-label">{{ t('images_label') }}</span>
           <span class="summary-value">
             {% if img_provider %}
@@ -95,7 +95,7 @@
         </div>
 
         <!-- Chats -->
-        <div class="summary-item">
+        <div class="summary-card">
           <span class="summary-label">{{ t('chats_label') }}</span>
           <span class="summary-value">
             {% if chat_providers %}
@@ -112,7 +112,7 @@
         </div>
 
         <!-- Backup -->
-        <div class="summary-item">
+        <div class="summary-card">
           <span class="summary-label">{{ t('backup_label') }}</span>
           <span class="summary-value">
             {% if backup_enabled %}
@@ -129,7 +129,7 @@
         </div>
 
         <!-- Theme — Coming soon (dimmed card) -->
-        <div class="summary-item dim">
+        <div class="summary-card muted">
           <span class="summary-label">Theme</span>
           <span class="summary-value">{{ t('coming_soon') }}</span>
         </div>

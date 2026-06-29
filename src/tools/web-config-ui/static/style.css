@@ -1124,7 +1124,71 @@ fieldset {
 }
 
 /* =========================================================================
-   27. Responsive
+   27. Utility Classes (verify-fix)
+   ========================================================================= */
+
+.btn-edit {
+  display: inline-block;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: var(--d-secondary);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.btn-edit:hover {
+  color: #A8BBC7;
+}
+
+.chat-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.hint {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: var(--d-subtle);
+  margin-top: 0.35rem;
+}
+
+.select-chevron {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.vision-ok {
+  color: #7A9B68;
+}
+
+.done-content {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.done-content h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 0.5rem;
+}
+
+.done-content p {
+  color: var(--d-muted);
+  font-size: 0.95rem;
+}
+
+/* =========================================================================
+   28. Responsive
    ========================================================================= */
 
 @media (max-width: 680px) {

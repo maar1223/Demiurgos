@@ -10,7 +10,7 @@
 <span class="vision-ok text-muted">{{ t('same_as_text') }}</span>
 
 {% if text_model_has_vision is not defined or not text_model_has_vision %}
-<div role="alert" class="warning-box">
+<div role="alert" class="warning-card">
   <svg class="icon icon-md"><use href="#alert-triangle"/></svg>
   <span>{{ t('vision_warning', model=current_text_model or t('select_model')) }}</span>
 </div>

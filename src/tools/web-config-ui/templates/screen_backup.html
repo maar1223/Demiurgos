@@ -30,7 +30,7 @@
 
         <!-- rclone warning (shown when toggle is on but rclone not detected) -->
         {% if backup_enabled and not rclone_detected %}
-        <div role="alert" class="warning-box">
+        <div role="alert" class="warning-card">
           <svg class="icon icon-md"><use href="#alert-triangle"/></svg>
           <span>{{ t('rclone_warning') }}</span>
         </div>
