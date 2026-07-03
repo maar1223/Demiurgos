@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply bg-cripta text-pergamino;
+    scrollbar-color: #3A3229 #0A0907;
+    scrollbar-width: thin;
+  }
+
+  body {
+    @apply min-h-screen antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-heading;
+  }
+}
+
+@layer components {
+  /* Prose styles for markdown content */
+  .prose-demiurgos {
+    @apply prose prose-invert max-w-none;
+    --tw-prose-body: #DED5C7;
+    --tw-prose-headings: #F5C95A;
+    --tw-prose-links: #D4A853;
+    --tw-prose-bold: #DED5C7;
+    --tw-prose-code: #D4A853;
+    --tw-prose-pre-bg: #1F1B16;
+    --tw-prose-quotes: #A6988A;
+    --tw-prose-quote-borders: #3A3229;
+    --tw-prose-hr: #3A3229;
+    --tw-prose-th-borders: #3A3229;
+    --tw-prose-td-borders: #2C2A24;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: #0A0907;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: #3A3229;
+    border-radius: 3px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: #4A4035;
+  }
+}

@@ -54,3 +54,11 @@ src/tools/set-webhook.ps1
 # ============================================================
 Thumbs.db
 .DS_Store
+
+testsprite_tests\tmp\config.json
+
+# ============================================================
+# Wiki Frontend (React SPA)
+# ============================================================
+frontend/node_modules/
+frontend/dist/
