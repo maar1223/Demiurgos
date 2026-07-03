@@ -9,7 +9,6 @@ import { FileTree } from "@/components/organisms/FileTree";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
 import { Breadcrumb } from "@/components/molecules/Breadcrumb";
 import { EmptyState } from "@/components/organisms/EmptyState";
-import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
@@ -46,7 +45,7 @@ export default function WikiEditor() {
   const sectionValid = section && VALID_SECTIONS.includes(section as typeof VALID_SECTIONS[number]);
 
   // Worlds (for Navbar world selector and world validation)
-  const { worlds, isLoading: worldsLoading, error: worldsError } = useWorlds();
+  const { worlds, isLoading: worldsLoading } = useWorlds();
 
   // File tree for the sidebar
   const {

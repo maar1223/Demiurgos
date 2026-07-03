@@ -59,13 +59,11 @@ export default function WikiDiff() {
   const editedContent = locationState?.editedContent;
 
   // Worlds (for Navbar)
-  const { worlds, isLoading: worldsLoading, error: worldsError } = useWorlds();
+  const { worlds, isLoading: worldsLoading } = useWorlds();
 
   // Current file content (for reference)
   const {
-    file,
     isLoading: contentLoading,
-    error: contentError,
   } = useFileContent(
     mundo,
     sectionValid ? section : undefined,
