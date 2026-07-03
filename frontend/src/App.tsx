@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import WikiHome from "@/pages/WikiHome";
+import WikiEditor from "@/pages/WikiEditor";
 import NotFound from "@/pages/NotFound";
 
 /**
@@ -8,7 +9,7 @@ import NotFound from "@/pages/NotFound";
  * Routes:
  * - `/` → redirect to `/wiki`
  * - `/wiki` → Wiki Home page
- * - `/wiki/:mundo/:section/*path` → WikiEditor (placeholder for PR 2)
+ * - `/wiki/:mundo/:section/*` → WikiEditor (file tree + markdown viewer)
  * - `*` → 404 NotFound
  */
 export default function App() {
@@ -19,23 +20,10 @@ export default function App() {
         <Route path="/wiki" element={<WikiHome />} />
         <Route
           path="/wiki/:mundo/:section/*"
-          element={<WikiEditorPlaceholder />}
+          element={<WikiEditor />}
         />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
-  );
-}
-
-/**
- * Placeholder for the WikiEditor page (implemented in PR 2).
- */
-function WikiEditorPlaceholder() {
-  return (
-    <div className="flex min-h-screen items-center justify-center bg-cripta">
-      <p className="text-body text-tinta-desvaida">
-        Editor — próximamente
-      </p>
-    </div>
   );
 }
