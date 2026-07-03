@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
@@ -24,9 +24,8 @@ import { decodePathSegment } from "@/lib/utils";
  * - 🟡 Loading world list: Spinner
  * - 🟢 Ready: EditorLayout with FileTree sidebar + MarkdownViewer + Breadcrumb
  *
- * File selection loads content on demand via useFileContent (S9).
- * Breadcrumb segments are clickable for navigation (S17-S18).
- * Section validation via VALID_SECTIONS (S36 fallback).
+ * Supports an edit mode: clicking "Editar" switches to a textarea for editing.
+ * "Ver diff" navigates to the diff page with the edited content.
  */
 export default function WikiEditor() {
   const navigate = useNavigate();
@@ -35,6 +34,10 @@ export default function WikiEditor() {
     section: string;
     "*"?: string;
   }>();
+
+  // Edit mode state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedContent, setEditedContent] = useState<string | null>(null);
 
   // Decode the path from URL encoding
   const filePath = splatPath ? decodePathSegment(splatPath) : undefined;
@@ -65,15 +68,24 @@ export default function WikiEditor() {
     filePath,
   );
 
+  // Content to display/edit
+  const currentContent = file?.content ?? "";
+
+  // Initialise edited content when file loads or path changes
+  // We use a ref to track whether we've initialised for this file path
+  const [initialisedPath, setInitialisedPath] = useState<string | null>(null);
+  if (filePath && filePath !== initialisedPath && currentContent) {
+    setEditedContent(currentContent);
+    setInitialisedPath(filePath);
+  }
+
   // Breadcrumb segments
   const breadcrumbSegments = useMemo(() => {
     const segs: string[] = [];
     if (mundo) segs.push(mundo);
     if (section) segs.push(section);
     if (filePath) {
-      // Split the file path into segments
       const parts = filePath.split("/");
-      // Merge last part (the filename) if it's a file
       segs.push(...parts);
     }
     return segs;
@@ -84,8 +96,6 @@ export default function WikiEditor() {
     (index: number) => {
       if (!mundo || !section) return;
 
-      // Segments structure: [mundo, section, ...pathParts]
-      // If clicking mundo or section, navigate to section root (no file)
       if (index === 0) {
         navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
         return;
@@ -95,7 +105,6 @@ export default function WikiEditor() {
         return;
       }
 
-      // Reconstruct the path up to the clicked segment
       const pathParts = breadcrumbSegments.slice(2, index + 1);
       const newPath = pathParts.map((s) => encodeURIComponent(s)).join("/");
       navigate(`/wiki/${encodeURIComponent(mundo)}/${section}/${newPath}`);
@@ -112,6 +121,34 @@ export default function WikiEditor() {
     },
     [mundo, section, navigate],
   );
+
+  // Navigate to diff page with edited content
+  const handleViewDiff = useCallback(() => {
+    if (!mundo || !section || !filePath || editedContent === null) return;
+    navigate(
+      `/wiki/${encodeURIComponent(mundo)}/${section}/${encodePathSegments(filePath)}?diff=1`,
+      { state: { editedContent } },
+    );
+  }, [mundo, section, filePath, editedContent, navigate]);
+
+  // Toggle edit mode
+  const handleToggleEdit = useCallback(() => {
+    if (isEditing) {
+      // Exiting edit mode — reset edited content to original
+      if (file) {
+        setEditedContent(file.content);
+      }
+    } else {
+      // Entering edit mode — initialise content if needed
+      if (editedContent === null && file) {
+        setEditedContent(file.content);
+      }
+    }
+    setIsEditing((prev) => !prev);
+  }, [isEditing, file, editedContent]);
+
+  const hasChanges =
+    editedContent !== null && editedContent !== currentContent;
 
   // --- Render states ---
 
@@ -228,14 +265,78 @@ export default function WikiEditor() {
         />
       </div>
 
-      {/* Content area */}
-      <MarkdownViewer
-        content={file?.content ?? null}
-        fileName={file?.name}
-        isLoading={contentLoading}
-        error={contentError}
-        onRetry={retryContent}
-      />
+      {/* Toolbar — shown when a file is selected */}
+      {filePath && file && (
+        <div className="mb-4 flex items-center justify-between rounded-lg border border-filio bg-madero px-4 py-2">
+          <span className="text-small text-tinta-desvaida">
+            {file.name}
+            {isEditing && (
+              <span className="ml-2 rounded bg-llamita/10 px-2 py-0.5 text-xs text-llamita">
+                Editando
+              </span>
+            )}
+          </span>
+          <div className="flex items-center gap-2">
+            {isEditing ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleToggleEdit}
+                >
+                  <Icon name="close" size={14} />
+                  Cancelar
+                </Button>
+                {hasChanges && (
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={handleViewDiff}
+                  >
+                    <Icon name="diff" size={14} />
+                    Ver diff
+                  </Button>
+                )}
+              </>
+            ) : (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleToggleEdit}
+              >
+                <Icon name="edit" size={14} />
+                Editar
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Content area: editor or viewer */}
+      {isEditing && editedContent !== null ? (
+        <textarea
+          value={editedContent}
+          onChange={(e) => setEditedContent(e.target.value)}
+          className="min-h-[400px] w-full resize-y rounded-lg border border-filio bg-madero px-4 py-3 font-mono text-body text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+          aria-label="Editor de contenido"
+          spellCheck={false}
+        />
+      ) : (
+        <MarkdownViewer
+          content={file?.content ?? null}
+          fileName={file?.name}
+          isLoading={contentLoading}
+          error={contentError}
+          onRetry={retryContent}
+        />
+      )}
     </EditorLayout>
   );
+}
+
+/**
+ * Encodes a path for use in URLs, preserving forward slashes.
+ */
+function encodePathSegments(path: string): string {
+  return path.split("/").map((s) => encodeURIComponent(s)).join("/");
 }
