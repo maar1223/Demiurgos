@@ -31,7 +31,7 @@ function apiUrl(
 
 /** GET /api/worlds — list all available worlds. */
 export async function listWorlds(): Promise<WorldInfo[]> {
-  return apiFetch<WorldInfo[]>(apiUrl(["/api/worlds"]));
+  return apiFetch<WorldInfo[]>(apiUrl(["api", "worlds"]));
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +44,7 @@ export async function getFileTree(
   section: string,
 ): Promise<FileNode[]> {
   return apiFetch<FileNode[]>(
-    apiUrl(["/api", mundo, section, "tree"]),
+    apiUrl(["api", mundo, section, "tree"]),
   );
 }
 
@@ -59,7 +59,7 @@ export async function getFileContent(
   path: string,
 ): Promise<FileContent> {
   return apiFetch<FileContent>(
-    apiUrl(["/api", mundo, section, "file"], { path }),
+    apiUrl(["api", mundo, section, "file"], { path }),
   );
 }
 
@@ -75,7 +75,7 @@ export async function saveFile(
   content: string,
 ): Promise<SuccessResponse> {
   return apiFetch<SuccessResponse>(
-    apiUrl(["/api", mundo, section, "save"], { path }),
+    apiUrl(["api", mundo, section, "save"], { path }),
     {
       method: "POST",
       body: JSON.stringify({ content }),
@@ -95,7 +95,7 @@ export async function createFile(
   content?: string,
 ): Promise<SuccessResponse> {
   return apiFetch<SuccessResponse>(
-    apiUrl(["/api", mundo, section, "create"], { path }),
+    apiUrl(["api", mundo, section, "create"], { path }),
     {
       method: "POST",
       body: JSON.stringify({ content: content ?? "" }),
@@ -114,7 +114,7 @@ export async function deleteFile(
   path: string,
 ): Promise<SuccessResponse> {
   return apiFetch<SuccessResponse>(
-    apiUrl(["/api", mundo, section, "file"], { path }),
+    apiUrl(["api", mundo, section, "file"], { path }),
     { method: "DELETE" },
   );
 }
@@ -131,7 +131,7 @@ export async function getDiff(
   newContent: string,
 ): Promise<DiffPreview> {
   return apiFetch<DiffPreview>(
-    apiUrl(["/api", mundo, section, "diff"], { path }),
+    apiUrl(["api", mundo, section, "diff"], { path }),
     {
       method: "POST",
       body: JSON.stringify({ content: newContent }),
