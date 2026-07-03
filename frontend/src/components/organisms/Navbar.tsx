@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
+import { WorldSelector } from "@/components/molecules/WorldSelector";
 import type { WorldInfo } from "@/api/types";
 import { NAV_LINKS, PLACEHOLDER_TOAST, AI_PLACEHOLDER_TOAST } from "@/lib/constants";
 
@@ -18,7 +19,6 @@ interface NavbarProps {
 export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [worldSelectorOpen, setWorldSelectorOpen] = useState(false);
 
   const handleNavClick = (to: string, active: boolean) => {
     if (!active) {
@@ -27,15 +27,6 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
     }
     setMobileMenuOpen(false);
     navigate(to);
-  };
-
-  const handleWorldSelect = (world: string) => {
-    setWorldSelectorOpen(false);
-    if (onWorldChange) {
-      onWorldChange(world);
-    } else {
-      navigate(`/wiki/${encodeURIComponent(world)}/lore`);
-    }
   };
 
   const handleAIClick = () => {
@@ -81,55 +72,12 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
 
         {/* Right: World selector, AI button, avatar */}
         <div className="flex items-center gap-2">
-          {/* World selector */}
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setWorldSelectorOpen((prev) => !prev)}
-              className="flex items-center gap-1.5 rounded-lg border border-filio bg-piedra px-3 py-1.5 text-small text-pergamino transition-colors hover:bg-filio"
-            >
-              <Icon name="world" size={14} />
-              <span className="max-w-[100px] truncate">
-                {currentWorld ?? "Mundos"}
-              </span>
-              <Icon
-                name="chevron-down"
-                size={12}
-                className={`transition-transform ${worldSelectorOpen ? "rotate-180" : ""}`}
-              />
-            </button>
-
-            {worldSelectorOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-10"
-                  onClick={() => setWorldSelectorOpen(false)}
-                />
-                <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-filio bg-madero py-1 shadow-xl">
-                  {worlds.length === 0 ? (
-                    <span className="block px-3 py-2 text-small text-sombra">
-                      No hay mundos
-                    </span>
-                  ) : (
-                    worlds.map((w) => (
-                      <button
-                        key={w.name}
-                        type="button"
-                        onClick={() => handleWorldSelect(w.name)}
-                        className={`block w-full px-3 py-2 text-left text-small transition-colors hover:bg-piedra ${
-                          w.name === currentWorld
-                            ? "text-llamita"
-                            : "text-pergamino"
-                        }`}
-                      >
-                        {w.name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </>
-            )}
-          </div>
+          {/* World selector (extracted to WorldSelector molecule) */}
+          <WorldSelector
+            worlds={worlds}
+            currentWorld={currentWorld}
+            onWorldChange={onWorldChange}
+          />
 
           {/* Asistente IA button (desktop) */}
           <Button
