@@ -11,7 +11,7 @@ interface EditorLayoutProps {
 /**
  * Layout for the Wiki Editor page.
  *
- * Desktop: sidebar (280px) + content area side-by-side.
+ * Desktop: sidebar (240px) + content area side-by-side.
  * Mobile: sidebar collapses to overlay with hamburger toggle.
  *
  * The sidebar slot receives the FileTree. The children slot receives the
@@ -36,14 +36,14 @@ export function EditorLayout({ header, sidebar, children }: EditorLayoutProps) {
           <Icon name={sidebarOpen ? "close" : "menu"} size={20} />
         </button>
 
-        {/* Sidebar — desktop: static 280px, mobile: overlay */}
+        {/* Sidebar — desktop: static 240px, mobile: overlay */}
         <aside
           className={cn(
             "border-r border-filio bg-madero",
             // Desktop: always visible, fixed width
-            "hidden md:block md:w-[280px] lg:w-[280px]",
+            "hidden md:block md:w-[240px] lg:w-[240px]",
             // Mobile: overlay with transition
-            "fixed inset-y-0 left-0 z-30 w-[280px] translate-x-0 transition-transform duration-200 ease-in-out md:relative md:inset-auto md:translate-x-0",
+            "fixed inset-y-0 left-0 z-30 w-[240px] translate-x-0 transition-transform duration-200 ease-in-out md:relative md:inset-auto md:translate-x-0",
             !sidebarOpen && "-translate-x-full md:translate-x-0",
           )}
         >

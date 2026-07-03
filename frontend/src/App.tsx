@@ -1,8 +1,11 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import WikiHome from "@/pages/WikiHome";
 import WikiEditor from "@/pages/WikiEditor";
-import WikiDiff from "@/pages/WikiDiff";
 import NotFound from "@/pages/NotFound";
+
+/** Lazy-loaded diff page — code-split because it's only used on `?diff=1` */
+const WikiDiff = lazy(() => import("@/pages/WikiDiff"));
 
 /**
  * Root application component with routing.
@@ -47,7 +50,11 @@ function WikiEditorOrDiff() {
   const isDiff = params.get("diff") === "1";
 
   if (isDiff) {
-    return <WikiDiff />;
+    return (
+      <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-cripta"><span className="text-tinta-desvaida">Cargando diff…</span></div>}>
+        <WikiDiff />
+      </Suspense>
+    );
   }
 
   return <WikiEditor />;
