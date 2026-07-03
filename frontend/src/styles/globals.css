@@ -10,11 +10,23 @@
   }
 
   body {
-    @apply min-h-screen antialiased;
+    @apply min-h-screen antialiased overflow-x-hidden;
   }
 
   h1, h2, h3, h4, h5, h6 {
     @apply font-heading;
+  }
+
+  /*
+   * Global focus-visible ring for all interactive elements.
+   * Individual components can override with more specific selectors.
+   */
+  button:focus-visible,
+  a:focus-visible,
+  [tabindex]:not([tabindex="-1"]):focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    @apply outline-none ring-2 ring-llamita/50 ring-offset-2 ring-offset-cripta;
   }
 }
 

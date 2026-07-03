@@ -38,14 +38,14 @@ export function Breadcrumb({ segments, onSegmentClick }: BreadcrumbProps) {
             )}
 
             {isLast ? (
-              <span className="truncate text-pergamino max-w-[200px]">
+              <span className="truncate text-pergamino max-w-[120px] mobile:max-w-[80px]">
                 {segment}
               </span>
             ) : (
               <button
                 type="button"
                 onClick={() => onSegmentClick?.(index)}
-                className="truncate text-tinta-desvaida transition-colors hover:text-pergamino max-w-[150px]"
+                className="truncate text-tinta-desvaida transition-colors hover:text-pergamino max-w-[120px] mobile:max-w-[80px]"
               >
                 {segment}
               </button>

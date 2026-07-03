@@ -39,6 +39,8 @@ export function WorldSelector({
         type="button"
         onClick={() => setOpen((prev) => !prev)}
         className="flex items-center gap-1.5 rounded-lg border border-filio bg-piedra px-3 py-1.5 text-small text-pergamino transition-colors hover:bg-filio"
+        aria-expanded={open}
+        aria-haspopup="listbox"
       >
         <Icon name="world" size={14} />
         <span className="max-w-[100px] truncate">
@@ -68,6 +70,8 @@ export function WorldSelector({
                   key={w.name}
                   type="button"
                   onClick={() => handleSelect(w.name)}
+                  role="option"
+                  aria-selected={w.name === currentWorld}
                   className={`block w-full px-3 py-2 text-left text-small transition-colors hover:bg-piedra ${
                     w.name === currentWorld ? "text-llamita" : "text-pergamino"
                   }`}

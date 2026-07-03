@@ -31,6 +31,7 @@ export function EditorLayout({ header, sidebar, children }: EditorLayoutProps) {
           onClick={() => setSidebarOpen((prev) => !prev)}
           className="fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-llamita text-cripta shadow-lg hover:bg-llama-alta md:hidden"
           aria-label={sidebarOpen ? "Cerrar panel" : "Abrir panel"}
+          aria-expanded={sidebarOpen}
         >
           <Icon name={sidebarOpen ? "close" : "menu"} size={20} />
         </button>

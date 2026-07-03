@@ -52,6 +52,7 @@ export function FileTreeNode({
           isSelected
             ? "border-l-2 border-llamita bg-filio text-pergamino"
             : "border-l-2 border-transparent text-tinta-desvaida hover:bg-piedra hover:text-pergamino",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50",
         )}
         style={{ paddingLeft: `${12 + depth * 16}px` }}
         aria-expanded={isDirectory ? expanded : undefined}

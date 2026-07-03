@@ -210,10 +210,12 @@ export function DiffViewer({
   const renderSingleColumn = () => (
     <div className="overflow-hidden rounded-lg border border-filio bg-madero">
       {/* Tabs */}
-      <div className="flex border-b border-filio">
+      <div className="flex border-b border-filio" role="tablist">
         <button
           type="button"
           onClick={() => setMobileView("original")}
+          role="tab"
+          aria-selected={mobileView === "original"}
           className={cn(
             "flex-1 px-4 py-2 text-small font-medium transition-colors",
             mobileView === "original"
@@ -226,6 +228,8 @@ export function DiffViewer({
         <button
           type="button"
           onClick={() => setMobileView("modified")}
+          role="tab"
+          aria-selected={mobileView === "modified"}
           className={cn(
             "flex-1 px-4 py-2 text-small font-medium transition-colors",
             mobileView === "modified"
