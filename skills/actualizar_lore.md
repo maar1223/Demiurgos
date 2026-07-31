@@ -44,7 +44,7 @@ Determinar en qué tier cae el cambio.
 | `mundos/vibrantes/Lore/El_Origen.md` | Mitología fundacional del mundo |
 | `mundos/vibrantes/Lore/Vibrastal.md` | Propiedades físicas del Vibrastal (5 estados: Sold, Gelat, Flud, Vent, Aett) |
 | `mundos/vibrantes/Lore/Sistema_Stal/Stal_XX_*.md` | Los 3 Stalers por Stal son FIJOS (1 negativo, 1 positivo, 1 neutral) |
-| `mundos/vibrantes/Arquetipos/00_Eneagrama_Stal.md` | Simetría Sagrada: Eneatipo X ↔ Stal X (inviolable) |
+| `mundos/vibrantes/lore/00_eneagrama_stal.md` | Simetría Sagrada: Eneatipo X ↔ Stal X (inviolable) |
 | `mundos/vibrantes/Lore/Ayagars/*` | Naturaleza y formas de los Áyagars |
 
 Si el cambio propuesto cae en TIER 1:
@@ -82,7 +82,7 @@ Ejemplo: Daest usa **Flotación Vibrante** (Staler neutral de Stal 05) no solo p
 
 ## FASE 2: MAPEO DE IMPACTO
 
-Buscar en todo `mundos/vibrantes/Lore/` y `mundos/vibrantes/Arquetipos/` si el nuevo elemento:
+Buscar en todo `mundos/vibrantes/Lore/` y `plantillas/` si el nuevo elemento:
 
 - [ ] **Existe ya** con otro nombre → avisar para evitar duplicados
 - [ ] **Contradice** algo existente → marcar conflicto
@@ -163,7 +163,7 @@ Cada entrada sigue este formato:
 - `mundos/vibrantes/Lore/Ayagars/Dvins_por_Stal/*`
 - `mundos/vibrantes/Lore/Ayagars/Dvex_por_Stal/*`
 - `mundos/vibrantes/Lore/Ayagars/Aetters_Gigantes.md`
-- `mundos/vibrantes/Arquetipos/00_Eneagrama_Stal.md`
+- `mundos/vibrantes/lore/00_eneagrama_stal.md`
 
 ### TIER 2 (Actualizable)
 - `mundos/vibrantes/Lore/Planeta_Vibral.md`
@@ -172,9 +172,9 @@ Cada entrada sigue este formato:
 - `mundos/vibrantes/Lore/Religion.md`
 - `mundos/vibrantes/Lore/Politica_y_Territorios/*`
 - `mundos/vibrantes/Lore/Indice_de_Terminos.md`
-- `mundos/vibrantes/Lore/Escenarios/_Plantilla_Escenario.md`
-- `mundos/vibrantes/Arquetipos/11_Profesiones_y_Roles.md` (nuevas profesiones)
-- `mundos/vibrantes/Arquetipos/13_Miedos_Arquetipicos.md` (nuevos miedos, con precaución)
+- `plantillas/_plantilla_escenario.md`
+- `plantillas/11_profesiones_y_roles.md` (nuevas profesiones)
+- `plantillas/13_miedos_arquetipicos.md` (nuevos miedos, con precaución)
 - `skills/crear_personaje.md` (nuevas opciones en apéndices)
 - `skills/verificar_canon.md` (nuevas reglas de validación)
 

@@ -192,7 +192,7 @@ Describe brevemente qué busca lograr, enfrentar o descubrir.
 
 ### P10: Arquetipo de Historia (Snyder)
 
-Elegir UNO de los 10 arquetipos. Consulta `mundos/vibrantes/Arquetipos/01_Arquetipos_Historias_Snyder.md` para la referencia completa con reglas, promesas, y trampas de cada uno.
+Elegir UNO de los 10 arquetipos. Consulta `plantillas/01_arquetipos_historias_snyder.md` para la referencia completa con reglas, promesas, y trampas de cada uno.
 
 | # | Arquetipo | Regla | Ejemplo Vibrantes |
 |---|---|---|---|
@@ -211,7 +211,7 @@ Elegir UNO de los 10 arquetipos. Consulta `mundos/vibrantes/Arquetipos/01_Arquet
 
 ### P11: Los 15 Beats de Snyder
 
-Consulta `mundos/vibrantes/Arquetipos/07_Beat_Sheet_Snyder.md` para la referencia completa.
+Consulta `plantillas/07_beat_sheet_snyder.md` para la referencia completa.
 
 Con el Arquetipo de Historia ya elegido (P10), asigna los 15 beats a tu historia. No todos pesan igual — el arquetipo determina cuáles son más extensos y cuáles más breves.
 
@@ -271,7 +271,7 @@ Cada uno: existente o nuevo (`skill:crear_personaje.md` - rango Secundario)
 | 9 | Nafaar | Violeta/negro | Misterio, mística oscura |
 
 ### P17: Escenario
-Real adaptado (`mundos/vibrantes/Arquetipos/08_Escenarios_Adaptados.md`) o fantasía (`mundos/vibrantes/Arquetipos/12_Locaciones_de_Fantasia.md`)
+Real adaptado (`plantillas/08_escenarios_adaptados.md`) o fantasía (`plantillas/12_locaciones_de_fantasia.md`)
 
 ### P18: Época o momento histórico (texto libre)
 
@@ -340,14 +340,14 @@ Incluye metadatos: fecha, extensión, piezas narrativas usadas
 | Elemento | Archivo |
 |----------|---------|
 | Logline + MICE + Tema | FASE 0 de esta skill |
-| Arquetipos Snyder (10) | `mundos/vibrantes/Arquetipos/01_Arquetipos_Historias_Snyder.md` |
-| Beat Sheet Snyder (15 beats) | `mundos/vibrantes/Arquetipos/07_Beat_Sheet_Snyder.md` |
-| Tramas | `mundos/vibrantes/Arquetipos/04_Tipos_de_Trama.md` |
-| Conflictos | `mundos/vibrantes/Arquetipos/05_Tipos_de_Conflicto.md` |
-| Dilemas | `mundos/vibrantes/Arquetipos/09_Dilemas_Filosoficos.md` |
-| Temas | `mundos/vibrantes/Arquetipos/10_Temas_de_la_Ficcion.md` |
-| Dinámicas | `mundos/vibrantes/Arquetipos/06_Dinamicas_de_Grupo.md` |
-| Escenarios | `mundos/vibrantes/Arquetipos/08_Escenarios_Adaptados.md` y `12_Locaciones_de_Fantasia.md` |
+| Arquetipos Snyder (10) | `plantillas/01_arquetipos_historias_snyder.md` |
+| Beat Sheet Snyder (15 beats) | `plantillas/07_beat_sheet_snyder.md` |
+| Tramas | `plantillas/04_tipos_de_trama.md` |
+| Conflictos | `plantillas/05_tipos_de_conflicto.md` |
+| Dilemas | `plantillas/09_dilemas_filosoficos.md` |
+| Temas | `plantillas/10_temas_de_la_ficcion.md` |
+| Dinámicas | `plantillas/06_dinamicas_de_grupo.md` |
+| Escenarios | `plantillas/08_escenarios_adaptados.md` y `12_locaciones_de_fantasia.md` |
 | Crear personaje | `skills/crear_personaje.md` |
 | Verificar canon | `skills/verificar_canon.md` |
 | Lore y naciones | `mundos/vibrantes/Lore/*` |

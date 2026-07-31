@@ -531,27 +531,27 @@ Rey/Reina, Emperatriz Estelar, Bardo, Músico de Resonancia, Plañidero, Buscado
 
 | Elemento | Archivo fuente |
 |---|---|
-| Eneatipo detallado | `mundos/vibrantes/Arquetipos/Eneagrama_Stal/E[X].md` |
-| Simetría Sagrada | `mundos/vibrantes/Arquetipos/00_Eneagrama_Stal.md` |
-| Arquetipos 7x7 | `mundos/vibrantes/Arquetipos/02_Arquetipos_Personalidad.md` |
-| Alineamientos | `mundos/vibrantes/Arquetipos/03_Alineamientos_Morales.md` |
-| Profesiones | `mundos/vibrantes/Arquetipos/11_Profesiones_y_Roles.md` |
-| Miedos | `mundos/vibrantes/Arquetipos/13_Miedos_Arquetipicos.md` |
-| Tramas | `mundos/vibrantes/Arquetipos/04_Tipos_de_Trama.md` |
-| Conflictos | `mundos/vibrantes/Arquetipos/05_Tipos_de_Conflicto.md` |
-| Dilemas | `mundos/vibrantes/Arquetipos/09_Dilemas_Filosoficos.md` |
-| Temas | `mundos/vibrantes/Arquetipos/10_Temas_de_la_Ficcion.md` |
-| Dinámicas | `mundos/vibrantes/Arquetipos/06_Dinamicas_de_Grupo.md` |
-| Plantilla ficha | `mundos/vibrantes/Personajes/_Plantilla_Ficha.md` |
+| Eneatipo detallado | `mundos/vibrantes/lore/eneagrama_stal/e[x].md` |
+| Simetría Sagrada | `mundos/vibrantes/lore/00_eneagrama_stal.md` |
+| Arquetipos 7x7 | `plantillas/02_arquetipos_personalidad.md` |
+| Alineamientos | `plantillas/03_alineamientos_morales.md` |
+| Profesiones | `plantillas/11_profesiones_y_roles.md` |
+| Miedos | `plantillas/13_miedos_arquetipicos.md` |
+| Tramas | `plantillas/04_tipos_de_trama.md` |
+| Conflictos | `plantillas/05_tipos_de_conflicto.md` |
+| Dilemas | `plantillas/09_dilemas_filosoficos.md` |
+| Temas | `plantillas/10_temas_de_la_ficcion.md` |
+| Dinámicas | `plantillas/06_dinamicas_de_grupo.md` |
+| Plantilla ficha | `plantillas/_plantilla_ficha.md` |
 | Lore mundo | `mundos/vibrantes/Lore/*` |
 | Naciones | `mundos/vibrantes/Lore/Politica_y_Territorios/*` |
-| Villanos | `mundos/vibrantes/Arquetipos/14_Creacion_de_Villanos.md` |
+| Villanos | `plantillas/14_creacion_de_villanos.md` |
 
 ---
 
 ## APÉNDICE I: CREACIÓN DE VILLANOS (PREGUNTAS OPCIONALES)
 
-Usar esta guía después de completar la ficha base si el personaje cumple función de villano (antagonista con maldad activa, código propio y justificación moral). No aplicar a antagonistas simples como rivales, sistemas o fuerzas naturales. Para el desarrollo completo de cada punto, consultar `mundos/vibrantes/Arquetipos/14_Creacion_de_Villanos.md`.
+Usar esta guía después de completar la ficha base si el personaje cumple función de villano (antagonista con maldad activa, código propio y justificación moral). No aplicar a antagonistas simples como rivales, sistemas o fuerzas naturales. Para el desarrollo completo de cada punto, consultar `plantillas/14_creacion_de_villanos.md`.
 
 - **¿Cree que es una buena persona?** — ¿Cómo justifica sus acciones como necesarias o correctas?
 - **¿Qué lo hace un oponente digno?** — ¿Qué cualidades obligan al héroe a esforzarse al máximo?

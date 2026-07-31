@@ -30,7 +30,7 @@ Verify these paths exist under the resolved `{mundo_activo}`:
 | `{mundo_activo}/Personajes/` | ✅ Yes | Character sheets |
 | `{mundo_activo}/sagas/` | ✅ Yes | Written narrative output |
 | `{mundo_activo}/Ideas/` | ❌ No | Banco de ideas (created if missing) |
-| `{mundo_activo}/Arquetipos/` | ❌ No | Narrative catalogs (referenced but optional) |
+| `plantillas/` | ❌ No | Narrative catalogs (referenced but optional, at project root) |
 
 For each missing required path, report it as a blocking issue. For optional paths, create them.
 

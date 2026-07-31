@@ -5,7 +5,7 @@
 # === INCLUIR: Contenido narrativo ===
 + /mundos/**
 + /Ideas/**
-+ /Arquetipos/**
++ /plantillas/**
 + /_archivo_produccion/**
 
 # === EXCLUIR: Todo lo demás ===

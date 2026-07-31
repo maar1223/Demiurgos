@@ -20,7 +20,7 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 ## FASE 1: SIMETRÍA SAGRADA
 
-> Consultar: `mundos/vibrantes/Arquetipos/00_Eneagrama_Stal.md`, `mundos/vibrantes/Arquetipos/Eneagrama_Stal/E*.md`
+> Consultar: `mundos/vibrantes/lore/00_eneagrama_stal.md`, `mundos/vibrantes/lore/eneagrama_stal/e*.md`
 
 ### 1a: Eneatipo ↔ Stal
 
@@ -43,14 +43,14 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 | Eneatipo | Conservación | Social | Sexual/Transmisor |
 |---|---|---|---|
-| Consultar `mundos/vibrantes/Arquetipos/Eneagrama_Stal/E[X].md` sección "Subtipos" |
+| Consultar `mundos/vibrantes/lore/eneagrama_stal/e[x].md` sección "Subtipos" |
 
 - [ ] El subtipo elegido existe para ese Eneatipo
 - [ ] La descripción del subtipo es coherente con la personalidad del personaje
 
 ### 1c: Arquetipo 7x7
 
-> Consultar: `mundos/vibrantes/Arquetipos/02_Arquetipos_Personalidad.md`
+> Consultar: `plantillas/02_arquetipos_personalidad.md`
 
 - [ ] El arquetipo existe en la matriz (49 opciones)
 - [ ] El arquetipo no contradice la naturaleza del Eneatipo
@@ -61,13 +61,13 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 ## FASE 2: COHERENCIA DE PERSONAJE
 
-> Consultar: `mundos/vibrantes/Personajes/*`, `mundos/vibrantes/Arquetipos/03_Alineamientos_Morales.md`, `mundos/vibrantes/Arquetipos/11_Profesiones_y_Roles.md`, `mundos/vibrantes/Arquetipos/13_Miedos_Arquetipicos.md`
+> Consultar: `mundos/vibrantes/Personajes/*`, `plantillas/03_alineamientos_morales.md`, `plantillas/11_profesiones_y_roles.md`, `plantillas/13_miedos_arquetipicos.md`
 
 ### 2a: Rango y Alineamiento
 
 | Rango | Alineamientos permitidos | Consultar |
 |---|---|---|
-| Relleno | 9 opciones | `mundos/vibrantes/Arquetipos/03_Alineamientos_Morales.md` - "Relleno" |
+| Relleno | 9 opciones | `plantillas/03_alineamientos_morales.md` - "Relleno" |
 | Secundario | 25 opciones | - "Principal o Secundario" |
 | Principal | 25 opciones | - "Principal o Secundario" |
 | Inmortal | 24 opciones | - "Inmortales" |
@@ -77,14 +77,14 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 ### 2b: Profesión
 
-> Consultar: `mundos/vibrantes/Arquetipos/11_Profesiones_y_Roles.md`
+> Consultar: `plantillas/11_profesiones_y_roles.md`
 
 - [ ] La profesión existe en el catálogo
 - [ ] La profesión es compatible con el Eneatipo (sentido común, no regla estricta)
 
 ### 2c: Miedo
 
-> Consultar: `mundos/vibrantes/Arquetipos/13_Miedos_Arquetipicos.md`
+> Consultar: `plantillas/13_miedos_arquetipicos.md`
 
 - [ ] El miedo está en el catálogo (12 opciones)
 - [ ] El miedo pertenece a la categoría correcta (Existencial/Social/Tecnológico-Místico)
@@ -168,7 +168,7 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 ## FASE 4: COHERENCIA NARRATIVA (solo si aplica a relato)
 
-> Consultar: `mundos/vibrantes/Arquetipos/04_Tipos_de_Trama.md`, `05_Tipos_de_Conflicto.md`, `09_Dilemas_Filosoficos.md`, `10_Temas_de_la_Ficcion.md`, `mundos/vibrantes/Personajes/*`
+> Consultar: `plantillas/04_tipos_de_trama.md`, `05_tipos_de_conflicto.md`, `09_dilemas_filosoficos.md`, `10_temas_de_la_ficcion.md`, `mundos/vibrantes/Personajes/*`
 
 - [ ] La Trama elegida existe en el catálogo (6 opciones)
 - [ ] El Conflicto principal está en el catálogo (13 opciones)

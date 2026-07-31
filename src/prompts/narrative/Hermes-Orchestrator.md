@@ -109,7 +109,7 @@ PARA CADA FASE disparada:
   2. LEER el archivo completo (son cortos, ~40-80 líneas cada uno)
   3. REEMPLAZAR {mundo_activo} → mundos/{mundo_resuelto} en todo el texto
   4. SEGUIR las instrucciones del skill PASO A PASO:
-     - Leer archivos de lore que el skill requiera (Lore/, Personajes/, Arquetipos/)
+     - Leer archivos de lore que el skill requiera (Lore/, Personajes/, plantillas/)
      - Generar el artefacto (exploración, propuesta, diseño, etc.)
      - Guardar resultado en Engram: mem_save(topic_key: "nec/{arco}/{fase}")
      - Si Engram no está disponible: guardar como archivo .md en mundos/{mundo_activo}/

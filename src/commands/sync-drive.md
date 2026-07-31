@@ -5,7 +5,7 @@ Dispara la sincronización unidireccional de todo el contenido narrativo local h
 ## Qué sincroniza
 - `mundos/` — Todos los mundos, personajes, lore, sagas
 - `Ideas/` — Banco de Ideas global
-- `Arquetipos/` — Catálogos de arquetipos compartidos
+- `plantillas/` — Catálogos de arquetipos compartidos
 - `_archivo_produccion/` — Assets de producción (imágenes, video, audio)
 
 ## Qué NO sincroniza
