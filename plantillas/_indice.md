@@ -18,7 +18,6 @@ All filenames follow lowercase snake_case — the project naming convention. Pat
 | `plantillas/12_locaciones_de_fantasia.md` | Fantasy location archetypes | `skills/escribir_historia.md`, `skills/actualizar_lore.md` |
 | `plantillas/13_miedos_arquetipicos.md` | Archetypal fears catalog | `skills/crear_personaje.md` |
 | `plantillas/14_creacion_de_villanos.md` | Villain creation guide | `skills/crear_personaje.md` |
-| `plantillas/99_funciones_de_propp_deprecated.md` | Propp narrative functions (DEPRECATED — preserved for reference) | *(none)* |
 | `plantillas/_plantilla_ficha.md` | Character sheet template | `skills/crear_personaje.md` |
 | `plantillas/_plantilla_escenario.md` | Setting/scenario template | `skills/actualizar_lore.md` |
 
