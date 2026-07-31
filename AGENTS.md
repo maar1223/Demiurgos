@@ -204,12 +204,13 @@ If `DEMIURGOS_LANGUAGE` is not set in `.env`, detect the language the Author is 
 
 When you need a narrative resource (template, archetype, reference):
 
-1. **Check the catalog first**: Read the relevant `_catalog.json` in the resource's directory (e.g., `plantillas/_catalog.json`) before accessing individual files.
+1. **Check the catalog first**: Read the relevant `_catalog.json` in the resource's directory before accessing individual files.
 2. **Resource found**: If the resource is in the catalog, read the referenced file.
-3. **No match**: If nothing matches: "I did not find [resource]. Here's what's available: [list from catalog]." Do NOT invent resources.
+3. **No match**: If nothing matches: "I did not find [resource]. Here's what's available: [list from catalog]." Do NOT invent resources. Do NOT retry more than twice — after two attempts, stop and report.
 4. **Multiple matches**: If several entries match: "I found N options: [list by name]. Which one would you like?"
-5. **Catalog missing**: If `_catalog.json` does not exist at the expected path: "Catalog not found at [path]. Cannot search templates."
-6. **Session caching**: Catalogs are cached in session memory. Only re-read if you suspect the catalog has changed.
+5. **No raw fallback**: Do NOT bypass the catalog by reading template files directly with `read_file`. Always consult the catalog first.
+6. **Catalog missing**: If `_catalog.json` does not exist at the expected path: "Catalog not found at [path]. Cannot search templates."
+7. **Session caching**: Catalogs are cached in session memory. Only re-read if you suspect the catalog has changed.
 
 This protocol is generic — it works with any `_catalog.json` file regardless of directory or content type. Future catalogs (`_lore_catalog.json`, `_character_catalog.json`) use the same rules without modification.
 

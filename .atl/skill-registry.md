@@ -45,10 +45,10 @@
 2. Each rank has a fixed number of questions (7/12/18/10) — do not skip or add.
 3. Sacred Symmetry is law: Stal (1-9) derives directly from Eneatype (1-9).
 4. Never assign a power that doesn't match the base Eneatype.
-5. Always consult `mundos/vibrantes/Lore/*` and `plantillas/*` (general templates at `plantillas/_plantilla_ficha.md`) for validation.
+5. Always consult `mundos/vibrantes/Lore/*` and the template catalog (`_catalog.json`) for validation.
 6. The optional Villain Profile phase applies only to active antagonists with moral justification.
 7. Every dialogue line must resonate with the character's Dominant Passion.
-8. Actions must align with the 58 Alignment system (`plantillas/03_alineamientos_morales.md`).
+8. Actions must align with the 58 Alignment system (see Catalog Discovery Protocol in AGENTS.md).
 9. Character evolution must be gradual through matrices, never abrupt.
 10. Always output to `mundos/vibrantes/Personajes/` with the template format.
 
@@ -62,7 +62,7 @@
 2. Phase 1 sets scope (length, universe position, provisional title).
 3. Phase 2 identifies protagonist(s) — existing from `mundos/vibrantes/Personajes/` or new via `crear_personaje.md`.
 4. Phase 3 selects narrative pieces (Trama, Conflicto, Dilema, Tema) filtered by the MICE type chosen in Phase 0.
-5. Phase 4 picks ONE Snyder story archetype (`plantillas/01_arquetipos_historias_snyder.md`) and maps all 15 beats (`plantillas/07_beat_sheet_snyder.md`). Propp is deprecated — do not use.
+5. Phase 4 picks ONE Snyder story archetype and maps all 15 beats (see Catalog Discovery Protocol in AGENTS.md). Propp is deprecated — do not use.
 6. Phase 5 populates characters: antagonist, supporting cast, fillers.
 7. Phase 6 sets the scene: nation, scenario, era — must match lore.
 8. Phase 7 generates beat-aligned outline → user approves → write chapter by chapter.

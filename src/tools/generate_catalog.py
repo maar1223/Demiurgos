@@ -139,8 +139,7 @@ def parse_indice(path: Path) -> list[dict]:
             entries.append(entry)
 
     if not entries:
-        print(f"Error: No data rows found in {path}. Check table format.", file=sys.stderr)
-        sys.exit(1)
+        return entries  # Empty index → empty catalog (valid state)
 
     return entries
 
