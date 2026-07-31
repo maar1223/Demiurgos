@@ -533,25 +533,16 @@ Rey/Reina, Emperatriz Estelar, Bardo, Músico de Resonancia, Plañidero, Buscado
 |---|---|
 | Eneatipo detallado | `mundos/vibrantes/lore/eneagrama_stal/e[x].md` |
 | Simetría Sagrada | `mundos/vibrantes/lore/00_eneagrama_stal.md` |
-| Arquetipos 7x7 | `plantillas/02_arquetipos_personalidad.md` |
-| Alineamientos | `plantillas/03_alineamientos_morales.md` |
-| Profesiones | `plantillas/11_profesiones_y_roles.md` |
-| Miedos | `plantillas/13_miedos_arquetipicos.md` |
-| Tramas | `plantillas/04_tipos_de_trama.md` |
-| Conflictos | `plantillas/05_tipos_de_conflicto.md` |
-| Dilemas | `plantillas/09_dilemas_filosoficos.md` |
-| Temas | `plantillas/10_temas_de_la_ficcion.md` |
-| Dinámicas | `plantillas/06_dinamicas_de_grupo.md` |
-| Plantilla ficha | `plantillas/_plantilla_ficha.md` |
 | Lore mundo | `mundos/vibrantes/Lore/*` |
 | Naciones | `mundos/vibrantes/Lore/Politica_y_Territorios/*` |
-| Villanos | `plantillas/14_creacion_de_villanos.md` |
+
+**Para plantillas narrativas** (arquetipos, alineamientos, profesiones, miedos, tramas, conflictos, dilemas, temas, dinámicas, ficha de personaje, creación de villanos): usar el **Catalog Discovery Protocol** de AGENTS.md para encontrar la plantilla adecuada en `plantillas/_catalog.json`.
 
 ---
 
 ## APÉNDICE I: CREACIÓN DE VILLANOS (PREGUNTAS OPCIONALES)
 
-Usar esta guía después de completar la ficha base si el personaje cumple función de villano (antagonista con maldad activa, código propio y justificación moral). No aplicar a antagonistas simples como rivales, sistemas o fuerzas naturales. Para el desarrollo completo de cada punto, consultar `plantillas/14_creacion_de_villanos.md`.
+Usar esta guía después de completar la ficha base si el personaje cumple función de villano (antagonista con maldad activa, código propio y justificación moral). No aplicar a antagonistas simples como rivales, sistemas o fuerzas naturales. Para el desarrollo completo de cada punto, usar el **Catalog Discovery Protocol** de AGENTS.md para encontrar la plantilla de creación de villanos en `plantillas/_catalog.json`.
 
 - **¿Cree que es una buena persona?** — ¿Cómo justifica sus acciones como necesarias o correctas?
 - **¿Qué lo hace un oponente digno?** — ¿Qué cualidades obligan al héroe a esforzarse al máximo?

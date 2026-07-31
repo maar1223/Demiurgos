@@ -192,7 +192,7 @@ Describe brevemente qué busca lograr, enfrentar o descubrir.
 
 ### P10: Arquetipo de Historia (Snyder)
 
-Elegir UNO de los 10 arquetipos. Consulta `plantillas/01_arquetipos_historias_snyder.md` para la referencia completa con reglas, promesas, y trampas de cada uno.
+Elegir UNO de los 10 arquetipos. Usar el **Catalog Discovery Protocol** de AGENTS.md para encontrar la plantilla de arquetipos de historia Snyder en `plantillas/_catalog.json`.
 
 | # | Arquetipo | Regla | Ejemplo Vibrantes |
 |---|---|---|---|
@@ -211,7 +211,7 @@ Elegir UNO de los 10 arquetipos. Consulta `plantillas/01_arquetipos_historias_sn
 
 ### P11: Los 15 Beats de Snyder
 
-Consulta `plantillas/07_beat_sheet_snyder.md` para la referencia completa.
+Usar el **Catalog Discovery Protocol** de AGENTS.md para encontrar la plantilla de beat sheet en `plantillas/_catalog.json`.
 
 Con el Arquetipo de Historia ya elegido (P10), asigna los 15 beats a tu historia. No todos pesan igual — el arquetipo determina cuáles son más extensos y cuáles más breves.
 
@@ -271,7 +271,7 @@ Cada uno: existente o nuevo (`skill:crear_personaje.md` - rango Secundario)
 | 9 | Nafaar | Violeta/negro | Misterio, mística oscura |
 
 ### P17: Escenario
-Real adaptado (`plantillas/08_escenarios_adaptados.md`) o fantasía (`plantillas/12_locaciones_de_fantasia.md`)
+Real adaptado o fantasía — usar el **Catalog Discovery Protocol** de AGENTS.md para encontrar las plantillas de escenarios en `plantillas/_catalog.json`
 
 ### P18: Época o momento histórico (texto libre)
 
@@ -340,14 +340,8 @@ Incluye metadatos: fecha, extensión, piezas narrativas usadas
 | Elemento | Archivo |
 |----------|---------|
 | Logline + MICE + Tema | FASE 0 de esta skill |
-| Arquetipos Snyder (10) | `plantillas/01_arquetipos_historias_snyder.md` |
-| Beat Sheet Snyder (15 beats) | `plantillas/07_beat_sheet_snyder.md` |
-| Tramas | `plantillas/04_tipos_de_trama.md` |
-| Conflictos | `plantillas/05_tipos_de_conflicto.md` |
-| Dilemas | `plantillas/09_dilemas_filosoficos.md` |
-| Temas | `plantillas/10_temas_de_la_ficcion.md` |
-| Dinámicas | `plantillas/06_dinamicas_de_grupo.md` |
-| Escenarios | `plantillas/08_escenarios_adaptados.md` y `12_locaciones_de_fantasia.md` |
 | Crear personaje | `skills/crear_personaje.md` |
 | Verificar canon | `skills/verificar_canon.md` |
 | Lore y naciones | `mundos/vibrantes/Lore/*` |
+
+**Para plantillas narrativas** (arquetipos Snyder, beat sheet, tramas, conflictos, dilemas, temas, dinámicas, escenarios): usar el **Catalog Discovery Protocol** de AGENTS.md para encontrar la plantilla adecuada en `plantillas/_catalog.json`.

@@ -50,7 +50,7 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 ### 1c: Arquetipo 7x7
 
-> Consultar: `plantillas/02_arquetipos_personalidad.md`
+> Consultar: usar el **Catalog Discovery Protocol** de AGENTS.md para encontrar la plantilla de arquetipos de personalidad en `plantillas/_catalog.json`
 
 - [ ] El arquetipo existe en la matriz (49 opciones)
 - [ ] El arquetipo no contradice la naturaleza del Eneatipo
@@ -61,15 +61,15 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 ## FASE 2: COHERENCIA DE PERSONAJE
 
-> Consultar: `mundos/vibrantes/Personajes/*`, `plantillas/03_alineamientos_morales.md`, `plantillas/11_profesiones_y_roles.md`, `plantillas/13_miedos_arquetipicos.md`
+> Consultar: `mundos/vibrantes/Personajes/*` y `plantillas/_catalog.json` (usar el **Catalog Discovery Protocol** de AGENTS.md para alineamientos, profesiones y miedos)
 
 ### 2a: Rango y Alineamiento
 
 | Rango | Alineamientos permitidos | Consultar |
 |---|---|---|
-| Relleno | 9 opciones | `plantillas/03_alineamientos_morales.md` - "Relleno" |
-| Secundario | 25 opciones | - "Principal o Secundario" |
-| Principal | 25 opciones | - "Principal o Secundario" |
+| Relleno | 9 opciones | `plantillas/_catalog.json` — buscar "alineamiento" |
+| Secundario | 25 opciones | `plantillas/_catalog.json` — buscar "alineamiento" |
+| Principal | 25 opciones | `plantillas/_catalog.json` — buscar "alineamiento" |
 | Inmortal | 24 opciones | - "Inmortales" |
 
 - [ ] El alineamiento pertenece al rango correcto
@@ -77,14 +77,14 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 ### 2b: Profesión
 
-> Consultar: `plantillas/11_profesiones_y_roles.md`
+> Consultar: `plantillas/_catalog.json` — buscar "profesión" (usar el **Catalog Discovery Protocol**)
 
 - [ ] La profesión existe en el catálogo
 - [ ] La profesión es compatible con el Eneatipo (sentido común, no regla estricta)
 
 ### 2c: Miedo
 
-> Consultar: `plantillas/13_miedos_arquetipicos.md`
+> Consultar: `plantillas/_catalog.json` — buscar "miedo" (usar el **Catalog Discovery Protocol**)
 
 - [ ] El miedo está en el catálogo (12 opciones)
 - [ ] El miedo pertenece a la categoría correcta (Existencial/Social/Tecnológico-Místico)
@@ -168,7 +168,7 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 ## FASE 4: COHERENCIA NARRATIVA (solo si aplica a relato)
 
-> Consultar: `plantillas/04_tipos_de_trama.md`, `05_tipos_de_conflicto.md`, `09_dilemas_filosoficos.md`, `10_temas_de_la_ficcion.md`, `mundos/vibrantes/Personajes/*`
+> Consultar: `mundos/vibrantes/Personajes/*` y `plantillas/_catalog.json` (usar el **Catalog Discovery Protocol** de AGENTS.md para tramas, conflictos, dilemas y temas)
 
 - [ ] La Trama elegida existe en el catálogo (6 opciones)
 - [ ] El Conflicto principal está en el catálogo (13 opciones)

@@ -82,7 +82,7 @@ Ejemplo: Daest usa **Flotación Vibrante** (Staler neutral de Stal 05) no solo p
 
 ## FASE 2: MAPEO DE IMPACTO
 
-Buscar en todo `mundos/vibrantes/Lore/` y `plantillas/` si el nuevo elemento:
+Buscar en todo `mundos/vibrantes/Lore/` y `plantillas/_catalog.json` (usar el **Catalog Discovery Protocol** de AGENTS.md) si el nuevo elemento:
 
 - [ ] **Existe ya** con otro nombre → avisar para evitar duplicados
 - [ ] **Contradice** algo existente → marcar conflicto
@@ -172,9 +172,7 @@ Cada entrada sigue este formato:
 - `mundos/vibrantes/Lore/Religion.md`
 - `mundos/vibrantes/Lore/Politica_y_Territorios/*`
 - `mundos/vibrantes/Lore/Indice_de_Terminos.md`
-- `plantillas/_plantilla_escenario.md`
-- `plantillas/11_profesiones_y_roles.md` (nuevas profesiones)
-- `plantillas/13_miedos_arquetipicos.md` (nuevos miedos, con precaución)
+- Usar el **Catalog Discovery Protocol** de AGENTS.md para encontrar plantillas de escenarios, profesiones y miedos en `plantillas/_catalog.json`
 - `skills/crear_personaje.md` (nuevas opciones en apéndices)
 - `skills/verificar_canon.md` (nuevas reglas de validación)
 
