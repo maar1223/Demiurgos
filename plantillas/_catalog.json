@@ -1,0 +1,152 @@
+[
+  {
+    "file": "plantillas/01_arquetipos_historias_snyder.md",
+    "name": "Arquetipos Historias Snyder",
+    "skill": "skills/escribir_historia.md",
+    "tags": [
+      "archetype",
+      "snyder",
+      "story"
+    ],
+    "use_case": "10 Snyder story archetypes: Monster in the House, Golden Fleece, Out of the Bottle, Dude with a Problem, Rite of Passage, Buddy Love, Whydunit, Triumph of the Fool, Institutionalized, Superhero"
+  },
+  {
+    "file": "plantillas/02_arquetipos_personalidad.md",
+    "name": "Arquetipos Personalidad",
+    "skill": "skills/crear_personaje.md",
+    "tags": [
+      "archetype"
+    ],
+    "use_case": "49 archetypes via 7×7 axis cross (desire × method)"
+  },
+  {
+    "file": "plantillas/03_alineamientos_morales.md",
+    "name": "Alineamientos Morales",
+    "skill": "skills/crear_personaje.md",
+    "tags": [
+      "alignment"
+    ],
+    "use_case": "D&D-style moral alignments: lawful/chaotic × good/evil"
+  },
+  {
+    "file": "plantillas/04_tipos_de_trama.md",
+    "name": "Tipos De Trama",
+    "skill": "skills/escribir_historia.md",
+    "tags": [
+      "plot"
+    ],
+    "use_case": "Plot type taxonomy"
+  },
+  {
+    "file": "plantillas/05_tipos_de_conflicto.md",
+    "name": "Tipos De Conflicto",
+    "skill": "skills/escribir_historia.md",
+    "tags": [
+      "conflict"
+    ],
+    "use_case": "Conflict type taxonomy"
+  },
+  {
+    "file": "plantillas/06_dinamicas_de_grupo.md",
+    "name": "Dinamicas De Grupo",
+    "skill": "skills/escribir_historia.md",
+    "tags": [
+      "group"
+    ],
+    "use_case": "Group dynamics patterns"
+  },
+  {
+    "file": "plantillas/07_beat_sheet_snyder.md",
+    "name": "Beat Sheet Snyder",
+    "skill": "skills/escribir_historia.md",
+    "tags": [
+      "beat-sheet",
+      "snyder"
+    ],
+    "use_case": "Blake Snyder's 15-beat structure"
+  },
+  {
+    "file": "plantillas/08_escenarios_adaptados.md",
+    "name": "Escenarios Adaptados",
+    "skill": "skills/escribir_historia.md",
+    "tags": [
+      "setting"
+    ],
+    "use_case": "Adapted real-world settings"
+  },
+  {
+    "file": "plantillas/09_dilemas_filosoficos.md",
+    "name": "Dilemas Filosoficos",
+    "skill": "skills/escribir_historia.md",
+    "tags": [
+      "dilemma"
+    ],
+    "use_case": "Philosophical dilemmas library"
+  },
+  {
+    "file": "plantillas/10_temas_de_la_ficcion.md",
+    "name": "Temas De La Ficcion",
+    "skill": "skills/escribir_historia.md",
+    "tags": [
+      "theme"
+    ],
+    "use_case": "Fiction theme catalog"
+  },
+  {
+    "file": "plantillas/11_profesiones_y_roles.md",
+    "name": "Profesiones Y Roles",
+    "skill": "skills/crear_personaje.md",
+    "tags": [
+      "profession"
+    ],
+    "use_case": "Professions and social roles"
+  },
+  {
+    "file": "plantillas/12_locaciones_de_fantasia.md",
+    "name": "Locaciones De Fantasia",
+    "skill": "skills/escribir_historia.md",
+    "tags": [
+      "archetype",
+      "setting"
+    ],
+    "use_case": "Fantasy location archetypes"
+  },
+  {
+    "file": "plantillas/13_miedos_arquetipicos.md",
+    "name": "Miedos Arquetipicos",
+    "skill": "skills/crear_personaje.md",
+    "tags": [
+      "fear"
+    ],
+    "use_case": "Archetypal fears catalog"
+  },
+  {
+    "file": "plantillas/14_creacion_de_villanos.md",
+    "name": "Creacion De Villanos",
+    "skill": "skills/crear_personaje.md",
+    "tags": [
+      "villain"
+    ],
+    "use_case": "Villain creation guide"
+  },
+  {
+    "file": "plantillas/_plantilla_ficha.md",
+    "name": "Plantilla Ficha",
+    "skill": "skills/crear_personaje.md",
+    "tags": [
+      "character",
+      "template"
+    ],
+    "use_case": "Character sheet template"
+  },
+  {
+    "file": "plantillas/_plantilla_escenario.md",
+    "name": "Plantilla Escenario",
+    "skill": "skills/actualizar_lore.md",
+    "tags": [
+      "setting",
+      "template"
+    ],
+    "use_case": "Setting/scenario template"
+  }
+]
