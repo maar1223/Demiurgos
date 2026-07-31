@@ -103,7 +103,7 @@ Demiurgos/
 │   ├── narrative-explore/
 │   ├── narrative-propose/
 │   └── ...
-├── mundos/arquetipos-narrativos/     ← Universal narrative catalogs
+├── plantillas/                       ← Universal narrative catalogs
 ├── src/tools/sync_lore/     ← Lore indexing pipeline (35 tests)
 ├── src/tools/sync-ideas.py ← Idea bank sync (Telegram → Sheets)
 ├── scripts/               ← Utility scripts

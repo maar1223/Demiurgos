@@ -26,7 +26,7 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 
 | Eneatipo | Stal | ¿Coincide? |
 |---|---|---|
-| 1. Perfeccionista | 01 - Directores | Consultar `00_Eneagrama_Stal.md` |
+| 1. Perfeccionista | 01 - Directores | Consultar `00_eneagrama_stal.md` |
 | 2. Ayudador | 02 - Conectores | |
 | 3. Triunfador | 03 - Proyectores | |
 | 4. Individualista | 04 - Vibrantes | |

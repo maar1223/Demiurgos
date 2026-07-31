@@ -11,7 +11,7 @@ $DebounceSeconds = 60  # Esperar 60s de inactividad antes de sincronizar
 $WatchPaths = @(
     (Join-Path $ProjectRoot "mundos"),
     (Join-Path $ProjectRoot "Ideas"),
-    (Join-Path $ProjectRoot "Arquetipos"),
+    (Join-Path $ProjectRoot "plantillas"),
     (Join-Path $ProjectRoot "_archivo_produccion")
 )
 
