@@ -4,8 +4,8 @@
 *   **Nombre:**
 *   **Apodo:**
 *   **Rol Narrativo:** [PRIN | SECU | ANTA | VILL]
-*   **Arquetipo de Personalidad:** [Cruces de Ejes: Ej. Poder x Mística] (Ref: 00_Arquetipos_Personalidad.md)
-*   **Alineamiento Moral:** [F1-C1 | F7-C7: Ej. Axiomático Virtuoso] (Ref: 00_Alineamientos_Morales.md)
+*   **Arquetipo de Personalidad:** [Cruces de Ejes: Ej. Poder x Mística] (Ref: 02_arquetipos_personalidad.md)
+*   **Alineamiento Moral:** [F1-C1 | F7-C7: Ej. Axiomático Virtuoso] (Ref: 03_alineamientos_morales.md)
 *   **Edad:**
 *   **Raza (Stal/Inerte/etc):**
 *   **Género / Sexualidad:**

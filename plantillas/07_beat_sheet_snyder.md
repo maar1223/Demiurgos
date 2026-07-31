@@ -2,7 +2,7 @@
 
 > Basado en *Save the Cat!* de Blake Snyder (2005).
 > Material de consulta para estructurar cualquier historia de Vibrantes.
-> Uso: elegir un Arquetipo de Historia (`01_Arquetipos_Historias_Snyder.md`) y luego aplicar los 15 beats.
+> Uso: elegir un Arquetipo de Historia (`01_arquetipos_historias_snyder.md`) y luego aplicar los 15 beats.
 
 ---
 
@@ -322,7 +322,7 @@ Hay que sentir el dolor antes de la solución.
 
 ## Cómo usar este archivo en una sesión de trabajo
 
-1. Asegúrate de tener elegido el **Arquetipo de Historia** (`01_Arquetipos_Historias_Snyder.md`)
+1. Asegúrate de tener elegido el **Arquetipo de Historia** (`01_arquetipos_historias_snyder.md`)
 2. Para cada beat, pregúntate: **¿qué escena concreta cumple esta función en MI historia?**
 3. No todos los beats necesitan el mismo peso — una historia de "Ritos de Pasaje" tendrá una Noche Oscura larga y un Catalizador suave. Una de "Monstruo en Casa" tendrá Catalizador explosivo y Noche Oscura breve.
 4. Anota la función de cada beat aunque no tengas la escena exacta. Sirve como mapa.
