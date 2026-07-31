@@ -1,0 +1,64 @@
+# ────────────────────────────────────────────────────────────────────
+# Demiurgos MCP Serve Profile — Reference Configuration
+# ────────────────────────────────────────────────────────────────────
+# This is a reference excerpt for the `demiurgos-mcp` Hermes profile.
+# The live profile lives at %LOCALAPPDATA%\hermes\profiles\demiurgos-mcp\
+#
+# To create this profile from scratch:
+#   hermes profile create demiurgos-mcp --clone-from demiurgos-core
+#
+# Then customize the cloned config.yaml with the sections below.
+# ────────────────────────────────────────────────────────────────────
+
+# ── Model ─────────────────────────────────────────────────────────
+model:
+  default: deepseek-v4-flash
+  provider: opencode-go
+  base_url: https://opencode.ai/zen/go/v1
+
+# ── Toolsets ───────────────────────────────────────────────────────
+# MCP serve requires: file, terminal, clarify, skills, mcp
+toolsets:
+  - file
+  - terminal
+  - clarify
+  - skills
+  - mcp
+
+# ── Agent ──────────────────────────────────────────────────────────
+agent:
+  max_turns: 90
+  disabled_toolsets: []
+
+# ── Terminal ───────────────────────────────────────────────────────
+# cwd must point to the Demiurgos project root so AGENTS.md is found
+terminal:
+  backend: local
+  cwd: <local-path>\Proyectos\Demiurgos
+  timeout: 180
+
+# ── MCP (Engram connection) ────────────────────────────────────────
+mcp:
+  engram:
+    command: engram
+    args:
+      - mcp
+      - --tools=agent
+    type: stdio
+
+# ── Display ────────────────────────────────────────────────────────
+display:
+  language: es
+  interface: cli
+
+# ── Profile Creation Commands ──────────────────────────────────────
+# 1. Create the profile:
+#    hermes profile create demiurgos-mcp --clone-from demiurgos-core
+#
+# 2. Activate and verify:
+#    hermes profile use demiurgos-mcp
+#    hermes mcp serve --verbose
+#
+# 3. From Demiurgos (OpenCode), the profile is referenced via:
+#    - MCP server config pointing to hermes binary with this profile
+#    - OpenCode's MCP client connects to Hermes over stdio

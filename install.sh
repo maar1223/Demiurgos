@@ -202,6 +202,43 @@ EOF
     ok "Skills registradas (13 fases narrativas)"
 }
 
+# ── Stage 5.5: Configure demiurgos-mcp profile ─────────────
+configure_mcp_profile() {
+    step "Configurando perfil demiurgos-mcp (MCP serve)..."
+    
+    if hermes profile list 2>/dev/null | grep -q "demiurgos-mcp"; then
+        ok "Perfil demiurgos-mcp ya existe"
+        return 0
+    fi
+    
+    # Create profile cloning defaults (or from demiurgos-core if available)
+    local clone_source=""
+    if hermes profile list 2>/dev/null | grep -q "demiurgos-core"; then
+        clone_source="--clone-from demiurgos-core"
+    fi
+    
+    hermes profile create demiurgos-mcp $clone_source \
+        --description "Demiurgos MCP serve — narrative agent with file, terminal, clarify, skills, mcp toolsets" \
+        --no-alias 2>/dev/null || {
+            warn "No se pudo crear el perfil demiurgos-mcp. Creálo manualmente con: hermes profile create demiurgos-mcp"
+            return 1
+        }
+    
+    ok "Perfil demiurgos-mcp creado"
+    
+    # Ensure toolsets are correct for MCP serve
+    local profile_config="$HOME/.hermes/profiles/demiurgos-mcp/config.yaml"
+    if [ -f "$profile_config" ]; then
+        # Add terminal, skills, mcp to toolsets if missing
+        for toolset in terminal skills mcp; do
+            if ! grep -q "  - $toolset" "$profile_config" 2>/dev/null; then
+                sed -i "/^toolsets:/a\\  - $toolset" "$profile_config" 2>/dev/null || true
+            fi
+        done
+        ok "Toolsets del perfil actualizados (file, terminal, clarify, skills, mcp)"
+    fi
+}
+
 # ── Stage 6: Launch Web Config UI ──────────────────────────
 launch_web_ui() {
     step "Instalando dependencias de la Web UI..."
@@ -252,6 +289,7 @@ main() {
     install_engram
     configure_engram "$DEMIURGOS_HOME/bin/engram"
     install_demiurgos
+    configure_mcp_profile
     launch_web_ui
 }
 
