@@ -30,7 +30,7 @@ export function EntitySearchPanel({
   onInsert,
 }: EntitySearchPanelProps) {
   const [query, setQuery] = useState("");
-  const { results, isLoading, error } = useEntitySearch(mundo, query);
+  const { results, isLoading, error, mutate } = useEntitySearch(mundo, query);
 
   const handleInput = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
@@ -88,7 +88,7 @@ export function EntitySearchPanel({
           <div className="px-3 py-2">
             <ErrorBanner
               message={error.message || "Error al buscar entidades."}
-              onRetry={() => setQuery((q) => q)}
+              onRetry={() => mutate()}
             />
           </div>
         )}

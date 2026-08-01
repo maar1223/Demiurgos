@@ -1,9 +1,9 @@
 import { useNavigate } from "react-router-dom";
 import { useEntity } from "@/hooks/useEntity";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
-import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
+import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 
 interface EntityDetailProps {
@@ -54,13 +54,30 @@ export function EntityDetail({ mundo, entityName }: EntityDetailProps) {
 
   // --- Not found (404) ---
   if (error && isNotFoundError(error)) {
+    // Extract section prefix from entityName (e.g. "personajes/Kaelen" → "personajes")
+    // Default to "personajes" if no slash present.
+    const slashIdx = entityName.indexOf("/");
+    const section = slashIdx >= 0 ? entityName.slice(0, slashIdx) : "personajes";
+    const slug = slashIdx >= 0 ? entityName.slice(slashIdx + 1) : entityName;
+    const editorPath = `/wiki/${mundo}/${section}/${slug}`;
+
     return (
-      <EmptyState
-        icon="search"
-        message={`Entidad "${entityName}" no encontrada.`}
-        actionLabel="Volver al inicio"
-        onAction={() => navigate("/wiki")}
-      />
+      <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-piedra text-plata/50">
+          <Icon name="search" size={32} />
+        </div>
+        <div>
+          <p className="text-body text-tinta-desvaida">Entidad no encontrada</p>
+          <p className="mt-1 text-small text-sombra">&ldquo;{entityName}&rdquo;</p>
+        </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => navigate(editorPath)}
+        >
+          Crear entidad
+        </Button>
+      </div>
     );
   }
 

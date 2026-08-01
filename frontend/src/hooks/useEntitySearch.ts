@@ -38,7 +38,7 @@ export function useEntitySearch(
       ? (["entity-search", mundo, debouncedQuery] as const)
       : null;
 
-  const { data, error, isLoading, isValidating } = useSWR<
+  const { data, error, isLoading, isValidating, mutate } = useSWR<
     SearchResult[],
     Error
   >(
@@ -79,5 +79,6 @@ export function useEntitySearch(
     isLoading: !!key && isLoading,
     isValidating,
     error,
+    mutate,
   };
 }
