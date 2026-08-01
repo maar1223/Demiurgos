@@ -5,6 +5,7 @@ export type Section = (typeof VALID_SECTIONS)[number];
 
 export const ROUTES = {
   HOME: "/wiki",
+  ENTITY: "/wiki/:mundo/entity/*path",
   EDITOR: "/wiki/:mundo/:section/*path",
   WILDCARD: "*",
 } as const;
