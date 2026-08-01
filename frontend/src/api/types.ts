@@ -44,6 +44,47 @@ export interface DiffPreview {
   diff: DiffLine[];
 }
 
+// ---------------------------------------------------------------------------
+// Graph
+// ---------------------------------------------------------------------------
+
+/** Result item from graph entity search. */
+export interface SearchResult {
+  name: string;
+  type: string;
+  path: string;
+  title: string;
+  description: string;
+  tags: string[];
+  link_count: number;
+  score: number;
+}
+
+/** Full entity detail from the knowledge graph. */
+export interface GraphEntity {
+  name: string;
+  type: string;
+  path: string;
+  content: string;
+  forward_links: string[];
+  backlinks: string[];
+  relaciones: Record<string, unknown>[];
+}
+
+/** A directed connection between two entities in the graph. */
+export interface EntityLink {
+  source: string;
+  target: string;
+  kind: string;
+}
+
+/** Graph indexing and health status. */
+export interface GraphStatus {
+  node_count: number;
+  link_count: number;
+  indexed: boolean;
+}
+
 /** Structured API error. */
 export class ApiError extends Error {
   constructor(
