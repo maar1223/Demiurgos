@@ -1,0 +1,3 @@
+mcp>=1.0.0
+# Optional: file watching for live index updates
+# watchdog>=4.0.0

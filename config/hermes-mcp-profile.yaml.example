@@ -45,6 +45,15 @@ mcp:
       - mcp
       - --tools=agent
     type: stdio
+  demiurgos-graph:
+    command: python
+    args:
+      - src/tools/demiurgos-suite/wiki/graph_mcp_server.py
+      - --mundo=vibrantes
+      - --mundos-path=mundos
+    type: stdio
+    env:
+      DEMIURGOS_WORLD: vibrantes
 
 # ── Display ────────────────────────────────────────────────────────
 display:

@@ -216,6 +216,45 @@ This protocol is generic — it works with any `_catalog.json` file regardless o
 
 ---
 
+## Graph Navigation Protocol
+
+When responding about entities (characters, places, artifacts, factions), use the graph tools to retrieve accurate canon information. Follow the protocol below.
+
+### Tool Usage Flow
+
+1. **Search first**: Use `graph_search` to locate entities by name. This returns a relevance-scored list.
+2. **Read for content**: Call `graph_read(entity_path)` on the best match to retrieve full content, forward links, and backlinks.
+3. **Explore links**: Use `graph_links(entity_path, kind="forward")` to see what an entity links to, or `kind="backlinks"` to see who links to it.
+4. **Check health**: Call `graph_status()` to verify the index is up-to-date (useful when search returns nothing unexpected).
+
+### Output Convention — Wikilinks
+
+**Every entity reference in your response MUST use `[[Entity Name]]` wikilink syntax.** Examples:
+
+- `[[Rhyz]]` renders as a clickable entity link in the frontend.
+- `[[Vael La Silenciadora]]` for multi-word names.
+- `[[Ekkor]]` for faction/location names found via graph links.
+
+The frontend's `remarkWikiLink` plugin resolves these to entity pages. Dead links (unresolved entities) render grey with strikethrough.
+
+### Behavioral Rails
+
+- **Search before read**: Never call `graph_read` with a guessed path. Use `graph_search` to find the correct entity path first.
+- **Limit output**: When a search returns many matches, list the top 5 with their types. Ask the user to disambiguate if needed.
+- **Cite sources**: When stating facts about an entity, mention `graph_read` as the source so the user knows the information comes from indexed canon.
+- **Entity not found**: If `graph_search` returns empty matches for a name, state that the entity was not found in the index. Offer alternatives: check `graph_status()` for index health, try different search terms, or use `graph_links(kind="hubs")` to browse prominent entities.
+
+### Entity Reference Format
+
+| Context | Format | Example |
+|---------|--------|---------|
+| Character mention | `[[Full Name]]` | `[[Rhyz El Resonante]]` |
+| Location mention | `[[Location Name]]` | `[[Valle del Eco]]` |
+| Faction mention | `[[Faction Name]]` | `[[Ekkor]]` |
+| Artifact mention | `[[Artifact Name]]` | `[[Fragmento Primordial]]` |
+
+---
+
 ## Available Skills
 
 All 13 narrative skills are installed in `skills/narrative-*/SKILL.md` and available as slash commands:
