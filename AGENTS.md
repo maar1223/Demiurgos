@@ -12,7 +12,7 @@ On the first message of any session in a Demiurgos world directory, BEFORE inter
 
 1. **Sync ideas** (best-effort): if `src/tools/sync-ideas.py` exists, run `python src/tools/sync-ideas.py`. If it fails, continue silently.
 2. **Read state**: load `.demiurgos-estado.json`. If missing, create with defaults (see State Tracking).
-3. **Resolve world**: read `DEMIURGOS_WORLD` from `.env` using terminal (see World Resolution).
+3. **Resolve world**: Use the terminal to read `DEMIURGOS_WORLD` from `.env` and parse the value (see World Resolution).
 4. **Report**: "Mundo activo: **{mundo}**. {Arcos activos: N | Sin arcos activos.}"
 5. **Only then** interpret intent.
 
@@ -20,7 +20,7 @@ On the first message of any session in a Demiurgos world directory, BEFORE inter
 
 ## World Resolution (MANDATORY)
 
-1. Read `DEMIURGOS_WORLD` from `.env` using terminal: `cat .env` and parse the value. Do NOT use the `read` tool — Hermes blocks direct reads of `.env` files for security reasons.
+1. Read `DEMIURGOS_WORLD` from `.env` using terminal (run a shell command to extract the value). Do NOT use the `read` tool — Hermes blocks direct reads of `.env` files for security reasons.
 2. If defined: validate `mundos/{world}/` exists. If not → error.
 3. If not defined: scan `mundos/` subdirectories. One → use it. Multiple → ask. Zero → error.
 4. Cache once per session.
@@ -216,42 +216,67 @@ This protocol is generic — it works with any `_catalog.json` file regardless o
 
 ---
 
-## Graph Navigation Protocol
+## Graph Navigation Protocol (MANDATORY)
 
-When responding about entities (characters, places, artifacts, factions), use the graph tools to retrieve accurate canon information. Follow the protocol below.
+When responding about entities (characters, places, artifacts, factions), you MUST use graph tools exclusively. The entity graph is the canonical source of truth — filesystem tools (`read_file`, `search_files`) are PROHIBITED for entity content retrieval because they bypass the graph's structured data (forward_links, backlinks, relationships, word_count).
 
-### Tool Usage Flow
+### Fixed Sequence — Do NOT Skip Steps
 
-1. **Search first**: Use `graph_search` to locate entities by name. This returns a relevance-scored list.
-2. **Read for content**: Call `graph_read(entity_path)` on the best match to retrieve full content, forward links, and backlinks.
-3. **Explore links**: Use `graph_links(entity_path, kind="forward")` to see what an entity links to, or `kind="backlinks"` to see who links to it.
-4. **Check health**: Call `graph_status()` to verify the index is up-to-date (useful when search returns nothing unexpected).
+1. **MUST search first**: Call `graph_search(query)` to locate entities by name. Never guess entity paths. This returns a relevance-scored list with canonical paths.
+2. **MUST read via graph**: Call `graph_read(entity_path)` on search results to get full content including forward links, backlinks, and relationships. **NEVER** use `read_file` on entity paths — `graph_read` returns richer, structured data that filesystem tools cannot provide.
+3. **MUST explore relationships**: Call `graph_links(entity_path, kind="forward")` and `kind="backlinks"` to map connections. If the user's question implies relationships (e.g., "cómo se relacionan", "qué facciones", "conexiones"), this step is mandatory — do not deduce relationships by reading full files.
+4. **MAY check health**: Call `graph_status()` when search returns 0 results or unexpected empty data.
+
+### Prohibited Behaviors (❌ ANTI-PATTERNS)
+
+These are FORBIDDEN. If you violate any of them, you are bypassing the graph:
+
+❌ **NEVER** call `read_file` on paths returned by `graph_search` or any path under `mundos/{mundo}/personajes/` or `mundos/{mundo}/lore/`. The graph IS the content source for entities.
+
+❌ **NEVER** call `search_files` to discover entities — use `graph_search` or `graph_links(kind="hubs")` instead.
+
+❌ **NEVER** call `graph_read` with a guessed, invented, or assumed path. Always `graph_search` first to get the correct canonical entity path.
+
+❌ **NEVER** skip `graph_links` when the query asks about relationships, factions, or connections between entities. Do not manually infer connections by reading multiple files.
+
+❌ **NEVER** load files that are not entities (drafts, templates, READMEs, stubs) unless the user explicitly asks for file-level inspection.
+
+### Tool Hierarchy
+
+Graph tools are the PRIMARY interface for entities. Filesystem tools are only for non-entity files:
+
+| You need to... | MUST use | NEVER use |
+|----------------|----------|-----------|
+| Find entity by name | `graph_search` | `search_files` |
+| Read entity content | `graph_read` | `read_file` |
+| Explore relationships | `graph_links` | `read_file` + manual parsing |
+| Check index health | `graph_status` | — |
+| Browse prominent entities | `graph_links(kind="hubs")` | `list_dir` or `search_files` |
+
+### Escalation
+
+- `graph_search` returns 0 matches → call `graph_status()`. If index is healthy, try alternate search terms. Report to user: "Entity not found in index."
+- `graph_read` returns `{exists: false}` → the path is stale. Re-search with `graph_search` using the entity name.
+- `graph_status()` reports `dirty: true` or missing index → inform user the index may be outdated. Do NOT fall back to `read_file` — the graph is the source of truth; ask the user if they want to reindex.
 
 ### Output Convention — Wikilinks
 
 **Every entity reference in your response MUST use `[[Entity Name]]` wikilink syntax.** Examples:
 
-- `[[Rhyz]]` renders as a clickable entity link in the frontend.
-- `[[Vael La Silenciadora]]` for multi-word names.
-- `[[Ekkor]]` for faction/location names found via graph links.
+- `[[Character Name]]` renders as a clickable entity link in the frontend.
+- `[[Long Character Name]]` for multi-word names.
+- `[[Faction Name]]` for faction/location names found via graph links.
 
 The frontend's `remarkWikiLink` plugin resolves these to entity pages. Dead links (unresolved entities) render grey with strikethrough.
-
-### Behavioral Rails
-
-- **Search before read**: Never call `graph_read` with a guessed path. Use `graph_search` to find the correct entity path first.
-- **Limit output**: When a search returns many matches, list the top 5 with their types. Ask the user to disambiguate if needed.
-- **Cite sources**: When stating facts about an entity, mention `graph_read` as the source so the user knows the information comes from indexed canon.
-- **Entity not found**: If `graph_search` returns empty matches for a name, state that the entity was not found in the index. Offer alternatives: check `graph_status()` for index health, try different search terms, or use `graph_links(kind="hubs")` to browse prominent entities.
 
 ### Entity Reference Format
 
 | Context | Format | Example |
 |---------|--------|---------|
-| Character mention | `[[Full Name]]` | `[[Rhyz El Resonante]]` |
-| Location mention | `[[Location Name]]` | `[[Valle del Eco]]` |
-| Faction mention | `[[Faction Name]]` | `[[Ekkor]]` |
-| Artifact mention | `[[Artifact Name]]` | `[[Fragmento Primordial]]` |
+| Character mention | `[[Full Name]]` | `[[Kael Thornwood]]` |
+| Location mention | `[[Location Name]]` | `[[Ashen Valley]]` |
+| Faction mention | `[[Faction Name]]` | `[[The Iron Covenant]]` |
+| Artifact mention | `[[Artifact Name]]` | `[[The Shattered Crown]]` |
 
 ---
 
