@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
@@ -7,6 +7,9 @@ import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { FileTree } from "@/components/organisms/FileTree";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
+import { EntitySearchPanel } from "@/components/organisms/EntitySearchPanel";
+import { TabBar } from "@/components/molecules/TabBar";
+import type { SidebarTab } from "@/components/molecules/TabBar";
 import { Breadcrumb } from "@/components/molecules/Breadcrumb";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -37,6 +40,17 @@ export default function WikiEditor() {
   // Edit mode state
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState<string | null>(null);
+
+  // Textarea ref for wikilink cursor insertion
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Sidebar tab state — persisted in sessionStorage by TabBar
+  const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => {
+    if (typeof window === "undefined") return "asistente";
+    const stored = sessionStorage.getItem("sidebar-tab");
+    if (stored === "asistente" || stored === "contexto") return stored;
+    return "asistente";
+  });
 
   // Decode the path from URL encoding
   const filePath = splatPath ? decodePathSegment(splatPath) : undefined;
@@ -146,6 +160,30 @@ export default function WikiEditor() {
     setIsEditing((prev) => !prev);
   }, [isEditing, file, editedContent]);
 
+  // Insert a wikilink at the current textarea cursor position
+  const handleInsertWikilink = useCallback(
+    (name: string) => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const wikilink = `[[${name}]]`;
+      const current = editedContent ?? "";
+
+      const newContent =
+        current.slice(0, start) + wikilink + current.slice(end);
+      setEditedContent(newContent);
+
+      // Restore cursor after the inserted wikilink
+      requestAnimationFrame(() => {
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = start + wikilink.length;
+      });
+    },
+    [editedContent],
+  );
+
   const hasChanges =
     editedContent !== null && editedContent !== currentContent;
 
@@ -246,14 +284,34 @@ export default function WikiEditor() {
         <Navbar worlds={worlds} currentWorld={mundo} />
       }
       sidebar={
-        <FileTree
-          nodes={treeNodes}
-          selectedPath={filePath}
-          onSelect={handleFileSelect}
-          isLoading={treeLoading}
-          error={treeError}
-          onRetry={retryTree}
-        />
+        <div className="flex h-full flex-col">
+          <FileTree
+            nodes={treeNodes}
+            selectedPath={filePath}
+            onSelect={handleFileSelect}
+            isLoading={treeLoading}
+            error={treeError}
+            onRetry={retryTree}
+          />
+          <TabBar onTabChange={setSidebarTab} />
+          {sidebarTab === "asistente" ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
+              <Icon
+                name="lightbulb"
+                size={24}
+                className="text-sombra"
+              />
+              <p className="text-small text-sombra">
+                Asistente IA — próximamente
+              </p>
+            </div>
+          ) : (
+            <EntitySearchPanel
+              mundo={mundo}
+              onInsert={handleInsertWikilink}
+            />
+          )}
+        </div>
       }
     >
       {/* Breadcrumb */}
@@ -314,6 +372,7 @@ export default function WikiEditor() {
       {/* Content area: editor or viewer */}
       {isEditing && editedContent !== null ? (
         <textarea
+          ref={textareaRef}
           value={editedContent}
           onChange={(e) => setEditedContent(e.target.value)}
           className="min-h-[400px] w-full resize-y rounded-lg border border-filio bg-madero px-4 py-3 font-mono text-body text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
@@ -327,6 +386,7 @@ export default function WikiEditor() {
           isLoading={contentLoading}
           error={contentError}
           onRetry={retryContent}
+          mundo={mundo}
         />
       )}
     </EditorLayout>
