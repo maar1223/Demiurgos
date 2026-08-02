@@ -39,3 +39,55 @@ class EntityDetail:
     backlinks: list[str] = field(default_factory=list)
     relaciones: list[dict] = field(default_factory=list)
     word_count: int = 0
+
+
+@dataclass
+class EngramMatch:
+    """A single result from Engram memory search.
+
+    Used by lore_search to tag each source as ``engram``.
+    """
+
+    id: int
+    title: str
+    preview: str = ""
+
+
+@dataclass
+class LoreConflict:
+    """A detected contradiction between entity content and Engram memory.
+
+    conflict_type is one of the CONFLICT_TYPES taxonomy:
+    date_contradiction | status_contradiction | name_mismatch |
+    relationship_conflict | unknown
+    """
+
+    claim_a: str
+    source_a: str
+    claim_b: str
+    source_b: str
+    conflict_type: str = "unknown"
+
+
+@dataclass
+class TagResult:
+    """Result of auto-tagging text with entities and themes.
+
+    entities: resolved canonical entity names.
+    themes: lowercase theme names from the keyword map.
+    """
+
+    entities: list[str] = field(default_factory=list)
+    themes: list[str] = field(default_factory=list)
+
+
+@dataclass
+class IdeaLinkResult:
+    """A matched idea from the Idea Bank BM25 search.
+
+    preview_80chars: first 80 characters of the idea body.
+    """
+
+    slug: str
+    score: float
+    preview_80chars: str = ""

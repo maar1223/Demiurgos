@@ -845,6 +845,14 @@ class EntityGraphIndex:
     # Status / introspection
     # -------------------------------------------------------------------
 
+    def get_entity_names(self) -> set[str]:
+        """Return the set of all canonical entity names currently in the cache.
+
+        Thread-safe snapshot for auto-tag entity resolution.
+        """
+        with self._lock:
+            return {ent["name"] for ent in self._cache["entities"].values()}
+
     @property
     def entity_count(self) -> int:
         """Number of entities currently in cache."""
