@@ -30,20 +30,17 @@
   }
 }
 
+/*
+ * Diff view wrap helper (LiveDiffEditor paired rows).
+ * Tailwind 3.4 has no `overflow-wrap: anywhere` utility — only
+ * `break-words` (break-word) — so this small utility provides the stronger
+ * wrap mode that lets long tokens break anywhere inside a cell.
+ */
+.overflow-wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
 @layer components {
-  /* CodeMirror merge view (LiveDiffEditor): fill the fixed-height wrapper.
-     The merge package already sets overflowY:auto on .cm-mergeView, so the
-     whole side-by-side pair scrolls as one unit. */
-  .cm-mergeView {
-    height: 100%;
-  }
-
-  .cm-mergeView .cm-editor {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas,
-      "Liberation Mono", monospace;
-    font-size: 0.875rem;
-  }
-
   /* Prose styles for markdown content */
   .prose-demiurgos {
     @apply prose prose-invert max-w-none;
