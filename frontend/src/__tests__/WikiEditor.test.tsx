@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { forwardRef } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
@@ -17,16 +18,24 @@ vi.mock("@/hooks/useFileContent", () => ({
   useFileContent: vi.fn(),
 }));
 
-// Mock the wiki API — the editor calls getDiff (split preview) and saveFile (Guardar)
+// Mock the wiki API — the editor calls saveFile (Guardar). getDiff is no
+// longer used by the preview (CodeMirror computes the diff client-side),
+// but the module still exports it — keep the mock for parity.
 vi.mock("@/api/wiki", () => ({
   getDiff: vi.fn(),
   saveFile: vi.fn(),
 }));
 
+// Mock the CodeMirror merge view — the real component imperatively mounts
+// DOM editors that don't belong in a jsdom test environment.
+vi.mock("@/components/organisms/LiveDiffEditor", () => ({
+  default: forwardRef(() => <div data-testid="live-diff-editor" />),
+}));
+
 import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
-import { getDiff, saveFile } from "@/api/wiki";
+import { saveFile } from "@/api/wiki";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
@@ -53,16 +62,6 @@ const mockFileContent = {
   size_bytes: 48,
   modified: "2024-01-15T10:30:00Z",
   extension: ".md",
-};
-
-const mockDiffPreview = {
-  original_path: "capitulos/cap1.md",
-  original_content: mockFileContent.content,
-  new_content: `${mockFileContent.content} modificado`,
-  diff: [
-    { type: "same", text: "# Capítulo 1" },
-    { type: "added", text: "modificado" },
-  ],
 };
 
 function renderWikiEditor(initialEntries: string[] = ["/wiki/Vibrantes/lore"]) {
@@ -98,7 +97,6 @@ describe("WikiEditor", () => {
       mutate: vi.fn(),
     });
 
-    (getDiff as Mock).mockResolvedValue(mockDiffPreview);
     (saveFile as Mock).mockResolvedValue({ success: true, path: "capitulos/cap1.md" });
   });
 
@@ -280,7 +278,7 @@ describe("WikiEditor", () => {
     );
   });
 
-  // ── New edit-flow tests: Guardar / Vista previa split / Aceptar ──
+  // ── New edit-flow tests: Guardar / Vista previa live diff / Guardar ──
 
   it("shows toolbar buttons when editing: Cancelar, Vista previa, Guardar", async () => {
     (useFileContent as Mock).mockReturnValue({
@@ -370,7 +368,7 @@ describe("WikiEditor", () => {
     expect(screen.getByRole("textbox", { name: /editor de contenido/i })).toBeInTheDocument();
   });
 
-  it("Vista previa opens the split: textarea left + diff right", async () => {
+  it("Vista previa renders the live diff editor instead of the textarea", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -387,26 +385,16 @@ describe("WikiEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /vista previa/i }));
 
-    // Textarea still present and editable
-    expect(screen.getByRole("textbox", { name: /editor de contenido/i })).toBeInTheDocument();
-
-    // Diff rendered in the right column (debounced fetch, then async render)
+    // The merge view replaces the textarea — it's the writing surface now
     expect(
-      await screen.findByText("modificado", {}, { timeout: 3000 }),
+      await screen.findByTestId("live-diff-editor"),
     ).toBeInTheDocument();
-
-    // getDiff was called with the current edited content
-    await waitFor(() => {
-      expect(getDiff).toHaveBeenCalledWith(
-        "Vibrantes",
-        "lore",
-        "capitulos/cap1.md",
-        expect.stringContaining("modificado"),
-      );
-    });
+    expect(
+      screen.queryByRole("textbox", { name: /editor de contenido/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it("Aceptar cambios saves, closes the split and exits edit mode", async () => {
+  it("Vista previa toggles closed without saving, edits preserved", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -422,13 +410,41 @@ describe("WikiEditor", () => {
     await user.type(textarea, " modificado");
 
     await user.click(screen.getByRole("button", { name: /vista previa/i }));
+    expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
 
-    const accept = await screen.findByRole(
-      "button",
-      { name: /aceptar cambios/i },
-      { timeout: 3000 },
-    );
-    await user.click(accept);
+    // Clicking Vista previa again closes the merge view — no save happened,
+    // and the edits survive back in the textarea
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+
+    expect(saveFile).not.toHaveBeenCalled();
+    expect(
+      screen.queryByTestId("live-diff-editor"),
+    ).not.toBeInTheDocument();
+    const backToTextarea = screen.getByRole("textbox", {
+      name: /editor de contenido/i,
+    });
+    expect(backToTextarea).toHaveValue(`${mockFileContent.content} modificado`);
+  });
+
+  it("Guardar works while the live diff preview is open", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
+    await user.type(textarea, " modificado");
+
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+    expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /guardar/i }));
 
     await waitFor(() => {
       expect(saveFile).toHaveBeenCalledWith(
@@ -439,39 +455,10 @@ describe("WikiEditor", () => {
       );
     });
 
-    // Split closed, edit mode exited
-    expect(screen.queryByRole("button", { name: /aceptar cambios/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: /editor de contenido/i })).not.toBeInTheDocument();
+    // Preview closed, edit mode exited
+    expect(
+      screen.queryByTestId("live-diff-editor"),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
-  });
-
-  it("Seguir editando closes the split without saving", async () => {
-    (useFileContent as Mock).mockReturnValue({
-      file: mockFileContent,
-      isLoading: false,
-      error: null,
-      mutate: vi.fn(),
-    });
-
-    const user = userEvent.setup();
-    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
-
-    await user.click(screen.getByRole("button", { name: /editar/i }));
-    const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
-    await user.type(textarea, " modificado");
-
-    await user.click(screen.getByRole("button", { name: /vista previa/i }));
-
-    const reject = await screen.findByRole(
-      "button",
-      { name: /seguir editando/i },
-      { timeout: 3000 },
-    );
-    await user.click(reject);
-
-    // No save happened, split closed, editor still open with edits intact
-    expect(saveFile).not.toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /aceptar cambios/i })).not.toBeInTheDocument();
-    expect(screen.getByRole("textbox", { name: /editor de contenido/i })).toBeInTheDocument();
   });
 });

@@ -31,6 +31,19 @@
 }
 
 @layer components {
+  /* CodeMirror merge view (LiveDiffEditor): fill the fixed-height wrapper.
+     The merge package already sets overflowY:auto on .cm-mergeView, so the
+     whole side-by-side pair scrolls as one unit. */
+  .cm-mergeView {
+    height: 100%;
+  }
+
+  .cm-mergeView .cm-editor {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas,
+      "Liberation Mono", monospace;
+    font-size: 0.875rem;
+  }
+
   /* Prose styles for markdown content */
   .prose-demiurgos {
     @apply prose prose-invert max-w-none;

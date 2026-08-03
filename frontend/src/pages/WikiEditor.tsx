@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
@@ -15,14 +15,18 @@ import { SectionTabs } from "@/components/molecules/SectionTabs";
 import { Breadcrumb } from "@/components/molecules/Breadcrumb";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
-import { DiffViewer } from "@/components/organisms/DiffViewer";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
 import { VALID_SECTIONS } from "@/lib/constants";
 import { decodePathSegment, getErrorMessage } from "@/lib/utils";
-import { getDiff, saveFile } from "@/api/wiki";
-import type { ApiError, DiffPreview } from "@/api/types";
+import { saveFile } from "@/api/wiki";
+import type { ApiError } from "@/api/types";
+import type { LiveDiffEditorHandle } from "@/components/organisms/LiveDiffEditor";
+
+// CodeMirror is heavy (~300KB) — load the live diff editor only when the
+// preview is actually opened, keeping the initial bundle lean.
+const LiveDiffEditor = lazy(() => import("@/components/organisms/LiveDiffEditor"));
 
 /**
  * Wiki Editor page (`/wiki/:mundo/:section/*path`).
@@ -33,10 +37,10 @@ import type { ApiError, DiffPreview } from "@/api/types";
  * - 🟢 Ready: EditorLayout with FileTree sidebar + MarkdownViewer + Breadcrumb
  *
  * Edit mode: "Editar" switches to a textarea. The toolbar offers
- * [Cancelar] [Vista previa] [Guardar]. "Vista previa" opens a split view —
- * textarea on the left, live diff preview on the right. "Guardar" (or
- * "Aceptar cambios" in the split) persists via POST /save and exits edit mode.
- * No page navigation is involved — the diff renders inline.
+ * [Cancelar] [Vista previa] [Guardar]. "Vista previa" swaps the textarea for a
+ * live CodeMirror merge view — original on the left (red), editable draft on
+ * the right (green), highlighting recomputed client-side on every keystroke.
+ * "Guardar" persists via POST /save and exits edit mode.
  */
 export default function WikiEditor() {
   const navigate = useNavigate();
@@ -50,11 +54,8 @@ export default function WikiEditor() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState<string | null>(null);
 
-  // Split preview state
+  // Split preview state — toggles the LiveDiffEditor merge view
   const [previewOpen, setPreviewOpen] = useState(false);
-  const [diffPreview, setDiffPreview] = useState<DiffPreview | null>(null);
-  const [diffLoading, setDiffLoading] = useState(false);
-  const [diffError, setDiffError] = useState<string | null>(null);
 
   // Save state
   const [isSaving, setIsSaving] = useState(false);
@@ -64,9 +65,8 @@ export default function WikiEditor() {
   // Textarea ref for wikilink cursor insertion
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Debounce + stale-response guards for the live diff preview
-  const previewTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const diffRequestRef = useRef(0);
+  // Imperative handle into the merge view (wikilink insertion in preview)
+  const liveDiffRef = useRef<LiveDiffEditorHandle>(null);
 
   // Sidebar tab state — persisted in sessionStorage by TabBar
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => {
@@ -175,44 +175,6 @@ export default function WikiEditor() {
     [mundo, navigate],
   );
 
-  // Fetch the diff preview for the current edited content. Stale responses
-  // (from a superseded request) are discarded via diffRequestRef.
-  const runDiff = useCallback(async () => {
-    if (!mundo || !section || !filePath || editedContent === null) return;
-    const requestId = ++diffRequestRef.current;
-    setDiffLoading(true);
-    setDiffError(null);
-    try {
-      const preview = await getDiff(mundo, section, filePath, editedContent);
-      if (diffRequestRef.current === requestId) {
-        setDiffPreview(preview);
-      }
-    } catch (err) {
-      if (diffRequestRef.current === requestId) {
-        const apiErr = err as ApiError;
-        setDiffError(getErrorMessage(apiErr.status, apiErr.detail));
-      }
-    } finally {
-      if (diffRequestRef.current === requestId) {
-        setDiffLoading(false);
-      }
-    }
-  }, [mundo, section, filePath, editedContent]);
-
-  // Debounced refetch while the split preview is open: every content change
-  // (or opening the preview) restarts a ~500ms timer before fetching.
-  useEffect(() => {
-    if (!previewOpen) return;
-    setDiffLoading(true);
-    if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
-    previewTimeoutRef.current = setTimeout(() => {
-      void runDiff();
-    }, 500);
-    return () => {
-      if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
-    };
-  }, [previewOpen, editedContent, runDiff]);
-
   // Auto-clear the "Guardado ✓" feedback after a short delay
   useEffect(() => {
     if (!saveSuccess) return;
@@ -221,7 +183,6 @@ export default function WikiEditor() {
   }, [saveSuccess]);
 
   // Save the edited content via POST /save, then exit edit mode.
-  // Used by both the toolbar "Guardar" button and the split's "Aceptar cambios".
   const handleSave = useCallback(async () => {
     if (!mundo || !section || !filePath || editedContent === null) return;
     setIsSaving(true);
@@ -241,11 +202,6 @@ export default function WikiEditor() {
     }
   }, [mundo, section, filePath, editedContent, retryContent]);
 
-  // Close the split preview, keeping the editor open and the edits intact
-  const handleClosePreview = useCallback(() => {
-    setPreviewOpen(false);
-  }, []);
-
   // Toggle edit mode — exiting resets preview and transient state
   const handleToggleEdit = useCallback(() => {
     if (isEditing) {
@@ -254,8 +210,6 @@ export default function WikiEditor() {
         setEditedContent(file.content);
       }
       setPreviewOpen(false);
-      setDiffPreview(null);
-      setDiffError(null);
       setSaveError(null);
       setSaveSuccess(false);
     } else {
@@ -267,15 +221,21 @@ export default function WikiEditor() {
     setIsEditing((prev) => !prev);
   }, [isEditing, file, editedContent]);
 
-  // Insert a wikilink at the current textarea cursor position
+  // Insert a wikilink at the cursor position. In preview mode the merge
+  // view's editor B is the writing surface (imperative handle); otherwise
+  // the plain textarea is used.
   const handleInsertWikilink = useCallback(
     (name: string) => {
+      const wikilink = `[[${name}]]`;
+      if (previewOpen) {
+        liveDiffRef.current?.insertText(wikilink);
+        return;
+      }
       const ta = textareaRef.current;
       if (!ta) return;
 
       const start = ta.selectionStart;
       const end = ta.selectionEnd;
-      const wikilink = `[[${name}]]`;
       const current = editedContent ?? "";
 
       const newContent =
@@ -288,7 +248,7 @@ export default function WikiEditor() {
         ta.selectionStart = ta.selectionEnd = start + wikilink.length;
       });
     },
-    [editedContent],
+    [editedContent, previewOpen],
   );
 
   const hasChanges =
@@ -514,28 +474,23 @@ export default function WikiEditor() {
         <ErrorBanner message={saveError} className="mb-4" />
       )}
 
-      {/* Content area: split preview, editor, or viewer */}
+      {/* Content area: live diff preview, editor, or viewer */}
       {isEditing && editedContent !== null ? (
         previewOpen ? (
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {/* Left: still-editable textarea */}
-            <div className="max-h-[70vh] overflow-y-auto">
-              {editorTextarea}
-            </div>
-            {/* Right: live diff preview */}
-            <div className="max-h-[70vh] min-w-0 overflow-y-auto">
-              <DiffViewer
-                diff={diffPreview?.diff ?? []}
-                isLoading={diffLoading || isSaving}
-                error={diffError}
-                onRetry={() => void runDiff()}
-                onAccept={handleSave}
-                onReject={handleClosePreview}
-                actionsDisabled={isSaving}
-                rejectLabel="Seguir editando"
-              />
-            </div>
-          </div>
+          <Suspense
+            fallback={
+              <div className="flex h-[70vh] items-center justify-center rounded-lg border border-filio bg-madero">
+                <Spinner size="lg" />
+              </div>
+            }
+          >
+            <LiveDiffEditor
+              ref={liveDiffRef}
+              original={currentContent}
+              value={editedContent}
+              onChange={setEditedContent}
+            />
+          </Suspense>
         ) : (
           editorTextarea
         )
