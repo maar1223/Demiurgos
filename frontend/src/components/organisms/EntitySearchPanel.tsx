@@ -49,7 +49,7 @@ export function EntitySearchPanel({
   const hasQuery = query.trim().length > 0;
 
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* Search input */}
       <div className="px-3 py-2">
         <div className="relative">

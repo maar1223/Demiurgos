@@ -454,7 +454,7 @@ export function AIAssistantSidebar({
   const switchToHistory = useCallback(() => setScreen("history"), []);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex min-h-0 flex-1 flex-col">
       {screen === "chat" ? (
         <ChatScreen
           mundo={mundo}

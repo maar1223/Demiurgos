@@ -86,6 +86,33 @@ export interface GraphStatus {
   indexed: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Media / Images
+// ---------------------------------------------------------------------------
+
+/** Info about a single image file in a world. */
+export interface ImageInfo {
+  path: string;
+  name: string;
+  size_bytes: number;
+  extension: string;
+  thumbnail_path?: string;
+}
+
+/** Response from GET /api/{mundo}/media/list — all images in a world. */
+export interface MediaList {
+  images: ImageInfo[];
+  total: number;
+}
+
+/** Response from POST /api/{mundo}/media/upload. */
+export interface UploadResponse {
+  success: boolean;
+  path: string;
+  size_bytes: number;
+  thumbnail_path?: string;
+}
+
 /** Structured API error. */
 export class ApiError extends Error {
   constructor(

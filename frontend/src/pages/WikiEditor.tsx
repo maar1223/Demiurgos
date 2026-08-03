@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
+import { useImageUpload } from "@/hooks/useImages";
 import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { FileTree } from "@/components/organisms/FileTree";
@@ -18,8 +19,11 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
+import { DropZone } from "@/components/atoms/DropZone";
+import { ImagePicker } from "@/components/organisms/ImagePicker";
 import { VALID_SECTIONS } from "@/lib/constants";
 import { decodePathSegment, getErrorMessage } from "@/lib/utils";
+import { splitFrontmatter, mergeFrontmatter } from "@/lib/frontmatter";
 import { saveFile } from "@/api/wiki";
 import type { ApiError } from "@/api/types";
 
@@ -47,6 +51,11 @@ import type { LiveDiffEditorHandle } from "@/components/organisms/LiveDiffEditor
  * panel insert at the caret of the focused diff line through the
  * imperative `insertText` handle (appended at the end when nothing is
  * focused). "Guardar" persists via POST /save and exits edit mode.
+ *
+ * The YAML frontmatter of wiki fichas is agent-only metadata: it never
+ * appears in the editor, the diff, or the viewer. Only the body is
+ * displayed/edited; the raw block is re-merged on save so the file on
+ * disk stays byte-identical.
  */
 export default function WikiEditor() {
   const navigate = useNavigate();
@@ -73,6 +82,12 @@ export default function WikiEditor() {
 
   // Live diff imperative handle — wikilink insertion while the preview is open
   const liveDiffRef = useRef<LiveDiffEditorHandle>(null);
+
+  // Image picker modal state — reachable only from the editing toolbar
+  const [showPicker, setShowPicker] = useState(false);
+
+  // Image upload (DropZone in view mode) — uploads + revalidates the gallery
+  const { upload, isUploading, uploadError } = useImageUpload(mundo ?? "");
 
   // Sidebar tab state — persisted in sessionStorage by TabBar
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => {
@@ -111,8 +126,18 @@ export default function WikiEditor() {
     filePath,
   );
 
-  // Content to display/edit
-  const currentContent = file?.content ?? "";
+  // Content to display/edit — the YAML frontmatter is agent-only metadata
+  // and is hidden from every user-facing surface (editor, diff, viewer).
+  // `body` is the displayable baseline; the raw `frontmatter` block is kept
+  // aside (re-derived only when the file content changes, so it survives
+  // edits) and re-merged on save to keep the on-disk file byte-identical.
+  const { frontmatter, body } = useMemo(
+    () => splitFrontmatter(file?.content ?? ""),
+    [file?.content],
+  );
+
+  // Baseline body — used for change detection and as the diff `original`
+  const currentContent = body;
 
   // Initialise edited content when file path actually changes.
   // MUST use useEffect + useRef, NOT setState during render:
@@ -195,7 +220,7 @@ export default function WikiEditor() {
     setSaveError(null);
     setSaveSuccess(false);
     try {
-      await saveFile(mundo, section, filePath, editedContent);
+      await saveFile(mundo, section, filePath, mergeFrontmatter(frontmatter, editedContent));
       await retryContent();
       setPreviewOpen(false);
       setIsEditing(false);
@@ -206,14 +231,14 @@ export default function WikiEditor() {
     } finally {
       setIsSaving(false);
     }
-  }, [mundo, section, filePath, editedContent, retryContent]);
+  }, [mundo, section, filePath, frontmatter, editedContent, retryContent]);
 
   // Toggle edit mode — exiting resets preview and transient state
   const handleToggleEdit = useCallback(() => {
     if (isEditing) {
-      // Exiting edit mode — reset edited content to original
+      // Exiting edit mode — reset edited content to original body
       if (file) {
-        setEditedContent(file.content);
+        setEditedContent(currentContent);
       }
       setPreviewOpen(false);
       setSaveError(null);
@@ -221,11 +246,11 @@ export default function WikiEditor() {
     } else {
       // Entering edit mode — initialise content if needed
       if (editedContent === null && file) {
-        setEditedContent(file.content);
+        setEditedContent(currentContent);
       }
     }
     setIsEditing((prev) => !prev);
-  }, [isEditing, file, editedContent]);
+  }, [isEditing, file, editedContent, currentContent]);
 
   // Insert a wikilink at the cursor position. While the preview is open the
   // live diff's side B is the writing surface — the imperative handle
@@ -256,6 +281,53 @@ export default function WikiEditor() {
       });
     },
     [editedContent, previewOpen],
+  );
+
+  // Insert an image markdown at the cursor position. Mirrors the wikilink
+  // flow: while the preview is open the live diff is the writing surface
+  // (imperative insertText), otherwise splice into the textarea caret.
+  const insertMarkdown = useCallback(
+    (path: string) => {
+      const name = path.split("/").pop()?.split(".")[0] ?? "image";
+      const md = `![${name}](${path})`;
+      if (previewOpen) {
+        liveDiffRef.current?.insertText(md);
+        return;
+      }
+      const ta = textareaRef.current;
+      if (!ta) return;
+
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const current = editedContent ?? "";
+
+      const newContent =
+        current.slice(0, start) + md + current.slice(end);
+      setEditedContent(newContent);
+
+      // Restore cursor after the inserted markdown
+      requestAnimationFrame(() => {
+        ta.focus();
+        ta.selectionStart = ta.selectionEnd = start + md.length;
+      });
+    },
+    [editedContent, previewOpen],
+  );
+
+  // Handle file drop in view mode — upload and append markdown at the end
+  const handleFileDrop = useCallback(
+    async (file: File) => {
+      if (!mundo) return;
+      try {
+        const result = await upload(file);
+        const md = `![${result.path.split("/").pop()!.split(".")[0]}](${result.path})`;
+        setEditedContent((prev) => (prev ?? "") + "\n" + md + "\n");
+      } catch (err) {
+        // Upload error — surfaced by the uploadError banner
+        console.error("Upload failed:", err);
+      }
+    },
+    [mundo, upload],
   );
 
   const hasChanges =
@@ -393,6 +465,7 @@ export default function WikiEditor() {
           />
           <div className="min-h-0 flex-1 overflow-y-auto pb-2">
             <FileTree
+              key={section}
               nodes={treeNodes}
               selectedPath={filePath}
               onSelect={handleFileSelect}
@@ -432,6 +505,14 @@ export default function WikiEditor() {
           <div className="flex items-center gap-2">
             {isEditing ? (
               <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowPicker(true)}
+                >
+                  <Icon name="image" size={14} />
+                  Imagen
+                </Button>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -482,6 +563,27 @@ export default function WikiEditor() {
         <ErrorBanner message={saveError} className="mb-4" />
       )}
 
+      {/* Upload error banner */}
+      {uploadError && (
+        <div className="mb-4 rounded-lg border border-sangre/50 bg-sangre/10 px-4 py-2 text-small text-sangre">
+          Error al subir imagen: {uploadError.message}
+        </div>
+      )}
+
+      {/* Upload progress indicator */}
+      {isUploading && (
+        <div className="mb-4 rounded-lg border border-llamita/30 bg-llamita/5 px-4 py-2 text-small text-llamita">
+          Subiendo imagen…
+        </div>
+      )}
+
+      {/* DropZone in view mode — drag & drop an image to upload it */}
+      {filePath && file && !isEditing && (
+        <div className="mb-4">
+          <DropZone onFile={handleFileDrop} />
+        </div>
+      )}
+
       {/* Content area: live diff preview, textarea editor, or viewer */}
       {isEditing && editedContent !== null ? (
         // The preview REPLACES the textarea — the diff's right side is the
@@ -507,12 +609,24 @@ export default function WikiEditor() {
         )
       ) : (
         <MarkdownViewer
-          content={file?.content ?? null}
+          content={file ? body : null}
           fileName={file?.name}
           isLoading={contentLoading}
           error={contentError}
           onRetry={retryContent}
           mundo={mundo}
+        />
+      )}
+
+      {/* Image picker modal — opened from the editing toolbar */}
+      {showPicker && mundo && (
+        <ImagePicker
+          mundo={mundo}
+          onSelect={(path) => {
+            insertMarkdown(path);
+            setShowPicker(false);
+          }}
+          onClose={() => setShowPicker(false)}
         />
       )}
     </EditorLayout>

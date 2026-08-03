@@ -1,9 +1,12 @@
 import { apiFetch } from "@/api/client";
+import { ApiError } from "@/api/types";
 import type {
   DiffPreview,
   FileContent,
   FileNode,
+  MediaList,
   SuccessResponse,
+  UploadResponse,
   WorldInfo,
 } from "@/api/types";
 import { API_BASE_URL } from "@/lib/constants";
@@ -138,4 +141,75 @@ export async function getDiff(
       body: JSON.stringify({ content: newContent }),
     },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Media / Images
+// ---------------------------------------------------------------------------
+
+/** GET /api/{mundo}/media/list — list all images in a world. */
+export async function listImages(mundo: string): Promise<MediaList> {
+  return apiFetch<MediaList>(apiUrl(["api", mundo, "media", "list"]));
+}
+
+/** POST /api/{mundo}/media/upload — upload an image file. */
+export async function uploadImage(
+  mundo: string,
+  file: File,
+  overwrite?: boolean,
+): Promise<UploadResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  // Build URL ourselves since this is multipart — apiFetch would set a
+  // JSON content-type that breaks multipart boundary parsing.
+  const basePath =
+    "/" +
+    ["api", mundo, "media", "upload"]
+      .map((s) => encodeURIComponent(s))
+      .join("/");
+
+  let url = `${API_BASE_URL}${basePath}`;
+  if (overwrite) {
+    url += `?overwrite=true`;
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    let detail: string | undefined;
+    try {
+      const body = await response.json();
+      detail = body.detail;
+    } catch {
+      // ignore parse errors
+    }
+    throw new ApiError(response.status, detail ?? `HTTP ${response.status}`, detail);
+  }
+
+  return (await response.json()) as UploadResponse;
+}
+
+/** DELETE /api/{mundo}/media?path= — delete an image from wiki/media/. */
+export async function deleteImage(
+  mundo: string,
+  path: string,
+): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(
+    apiUrl(["api", mundo, "media"], { path }),
+    { method: "DELETE" },
+  );
+}
+
+/**
+ * Returns the full URL to serve an image.
+ * Used directly in <img> tags and for thumbnails.
+ */
+export function getMediaUrl(mundo: string, path: string): string {
+  const encodedMundo = encodeURIComponent(mundo);
+  const encodedPath = encodeURIComponent(path);
+  return `${API_BASE_URL}/api/${encodedMundo}/media?path=${encodedPath}`;
 }

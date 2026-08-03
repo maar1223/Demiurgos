@@ -25,12 +25,27 @@ vi.mock("@/hooks/useEntitySearch", () => ({
   useEntitySearch: vi.fn(),
 }));
 
+// Mock the image hooks — the editor mounts useImageUpload on every render
+// and the picker uses useImages; without mocks the real SWR fetches would
+// hit the network in tests.
+vi.mock("@/hooks/useImages", () => ({
+  useImages: vi.fn(),
+  useImageUpload: vi.fn().mockReturnValue({
+    upload: vi.fn(),
+    isUploading: false,
+    uploadError: null,
+  }),
+  useImageDelete: vi.fn(),
+}));
+
 // Mock the wiki API — the editor calls saveFile (Guardar). getDiff is no
 // longer used by the preview (CodeMirror computes the diff client-side),
-// but the module still exports it — keep the mock for parity.
+// but the module still exports it — keep the mock for parity. getMediaUrl
+// is used by the ImagePicker thumbnails.
 vi.mock("@/api/wiki", () => ({
   getDiff: vi.fn(),
   saveFile: vi.fn(),
+  getMediaUrl: vi.fn((_mundo: string, path: string) => `/media/${path}`),
 }));
 
 // The diff view is lazy-loaded; a lightweight stub is enough for these
@@ -52,6 +67,7 @@ import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useEntitySearch } from "@/hooks/useEntitySearch";
+import { useImages } from "@/hooks/useImages";
 import { saveFile } from "@/api/wiki";
 import type { Mock } from "vitest";
 
@@ -79,6 +95,14 @@ const mockFileContent = {
   size_bytes: 48,
   modified: "2024-01-15T10:30:00Z",
   extension: ".md",
+};
+
+// A wiki ficha with agent-only YAML frontmatter — must never surface in the
+// editor textarea, the diff, or the viewer, and must be preserved on save.
+const frontmatterFile = {
+  ...mockFileContent,
+  content:
+    "---\ntype: Personaje\ntitle: Anisa\n---\n# Anisa\n\nEste es el cuerpo.",
 };
 
 function renderWikiEditor(initialEntries: string[] = ["/wiki/Vibrantes/lore"]) {
@@ -118,6 +142,14 @@ describe("WikiEditor", () => {
 
     (useEntitySearch as Mock).mockReturnValue({
       results: [],
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    (useImages as Mock).mockReturnValue({
+      images: [],
+      total: 0,
       isLoading: false,
       error: null,
       mutate: vi.fn(),
@@ -369,6 +401,90 @@ describe("WikiEditor", () => {
     expect(screen.getByText(/Guardado/i)).toBeInTheDocument();
   });
 
+  it("hides the YAML frontmatter from the editor textarea", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: frontmatterFile,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", {
+      name: /editor de contenido/i,
+    });
+
+    // Only the body is editable — the YAML never reaches the textarea
+    const value = (textarea as HTMLTextAreaElement).value;
+    expect(value).toBe("# Anisa\n\nEste es el cuerpo.");
+    expect(value).not.toContain("type: Personaje");
+    expect(value).not.toContain("title: Anisa");
+  });
+
+  it("Guardar re-merges the frontmatter with the edited body", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: frontmatterFile,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", {
+      name: /editor de contenido/i,
+    });
+    await user.type(textarea, " editado");
+
+    await user.click(screen.getByRole("button", { name: /guardar/i }));
+
+    // The on-disk file must stay byte-identical: frontmatter block +
+    // edited body, exactly as loaded
+    await waitFor(() => {
+      expect(saveFile).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+        "---\ntype: Personaje\ntitle: Anisa\n---\n# Anisa\n\nEste es el cuerpo. editado",
+      );
+    });
+  });
+
+  it("saves a file without frontmatter unchanged", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", {
+      name: /editor de contenido/i,
+    });
+    await user.type(textarea, " modificado");
+
+    await user.click(screen.getByRole("button", { name: /guardar/i }));
+
+    // No frontmatter → no block injected; the body is saved as-is
+    await waitFor(() => {
+      expect(saveFile).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+        "# Capítulo 1\n\nEste es el contenido del **capítulo 1**. modificado",
+      );
+    });
+  });
+
   it("shows an error banner when saveFile fails", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
@@ -541,5 +657,129 @@ describe("WikiEditor", () => {
     // preview replaced the textarea).
     await user.click(screen.getByRole("option", { name: /kael thornwood/i }));
     expect(insertTextMock).toHaveBeenCalledWith("[[Kael Thornwood]]");
+  });
+
+  // ── Image gallery flow: picker only from the editing toolbar ──
+
+  const mockGalleryImage = {
+    path: "wiki/media/foto.jpg",
+    name: "foto.jpg",
+    size_bytes: 2048,
+    extension: ".jpg",
+  };
+
+  function mockGalleryWithImage() {
+    (useImages as Mock).mockReturnValue({
+      images: [mockGalleryImage],
+      total: 1,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+  }
+
+  it("does not show the Imagen button in view mode", () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    expect(
+      screen.queryByRole("button", { name: /^imagen$/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("Imagen toolbar button opens the image picker in edit mode", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    mockGalleryWithImage();
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    await user.click(screen.getByRole("button", { name: /^imagen$/i }));
+
+    expect(
+      screen.getByRole("dialog", { name: /seleccionar imagen/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("foto.jpg")).toBeInTheDocument();
+  });
+
+  it("selecting an image inserts ![alt](path) at the caret", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    mockGalleryWithImage();
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", {
+      name: /editor de contenido/i,
+    });
+    await user.clear(textarea);
+    await user.type(textarea, "Hola mundo");
+    // Place the caret after "Hola " — the markdown must splice exactly there
+    (textarea as HTMLTextAreaElement).setSelectionRange(5, 5);
+
+    await user.click(screen.getByRole("button", { name: /^imagen$/i }));
+    await user.click(screen.getByRole("button", { name: /foto\.jpg/i }));
+    await user.click(screen.getByRole("button", { name: /^aceptar$/i }));
+
+    expect(textarea).toHaveValue(
+      "Hola ![foto](wiki/media/foto.jpg)mundo",
+    );
+    expect(
+      screen.queryByRole("dialog", { name: /seleccionar imagen/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("inserts image markdown with suffix via liveDiffRef when preview is open", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    mockGalleryWithImage();
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", {
+      name: /editor de contenido/i,
+    });
+    await user.type(textarea, " modificado");
+
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+    expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
+
+    // Open the picker, choose the image, pick "← Izquierda" — the markdown
+    // must go through the live diff's imperative handle with the #left suffix
+    await user.click(screen.getByRole("button", { name: /^imagen$/i }));
+    await user.click(screen.getByRole("button", { name: /foto\.jpg/i }));
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: /alineación/i }),
+      "left",
+    );
+    await user.click(screen.getByRole("button", { name: /^aceptar$/i }));
+
+    expect(insertTextMock).toHaveBeenCalledWith(
+      "![foto](wiki/media/foto.jpg#left)",
+    );
   });
 });

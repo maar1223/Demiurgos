@@ -67,7 +67,7 @@ export function EditorLayout({
   }, [dragging]);
 
   return (
-    <div className="flex min-h-screen flex-col bg-cripta">
+    <div className="flex h-screen supports-[height:100dvh]:h-dvh flex-col overflow-hidden bg-cripta">
       {header}
 
       <div className="relative flex flex-1 overflow-hidden">
@@ -86,8 +86,8 @@ export function EditorLayout({
         <aside
           className={cn(
             "border-r border-filio bg-madero",
-            // Desktop: always visible, fixed width
-            "hidden md:block md:w-[240px] lg:w-[240px]",
+            // Desktop: always visible, fixed width, full viewport height
+            "hidden md:block md:w-[240px] lg:w-[240px] md:overflow-hidden",
             // Mobile: overlay with transition
             "fixed inset-y-0 left-0 z-30 w-[240px] translate-x-0 transition-transform duration-200 ease-in-out md:relative md:inset-auto md:translate-x-0",
             !sidebarOpen && "-translate-x-full md:translate-x-0",
