@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { forwardRef } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { forwardRef, useImperativeHandle } from "react";
 import WikiEditor from "@/pages/WikiEditor";
 
 // Mock all hooks
@@ -18,6 +18,13 @@ vi.mock("@/hooks/useFileContent", () => ({
   useFileContent: vi.fn(),
 }));
 
+// Mock the entity search hook — the real hook debounces 300ms per keystroke,
+// which would slow the wikilink-insertion test; the module mock returns
+// results synchronously.
+vi.mock("@/hooks/useEntitySearch", () => ({
+  useEntitySearch: vi.fn(),
+}));
+
 // Mock the wiki API — the editor calls saveFile (Guardar). getDiff is no
 // longer used by the preview (CodeMirror computes the diff client-side),
 // but the module still exports it — keep the mock for parity.
@@ -26,15 +33,25 @@ vi.mock("@/api/wiki", () => ({
   saveFile: vi.fn(),
 }));
 
-// Mock the CodeMirror merge view — the real component imperatively mounts
-// DOM editors that don't belong in a jsdom test environment.
+// The diff view is lazy-loaded; a lightweight stub is enough for these
+// tests. The real component renders one auto-resized textarea per right
+// line (covered by its own test file); here the imperative handle is what
+// matters — WikiEditor routes wikilink insertion through it while the
+// preview is open. `insertTextMock` is shared via vi.hoisted so the test
+// can assert on it directly (the factory cannot close over module scope).
+const { insertTextMock } = vi.hoisted(() => ({ insertTextMock: vi.fn() }));
+
 vi.mock("@/components/organisms/LiveDiffEditor", () => ({
-  default: forwardRef(() => <div data-testid="live-diff-editor" />),
+  default: forwardRef<unknown, Record<string, never>>((_props, ref) => {
+    useImperativeHandle(ref, () => ({ insertText: insertTextMock }));
+    return <div data-testid="live-diff-editor" />;
+  }),
 }));
 
 import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
+import { useEntitySearch } from "@/hooks/useEntitySearch";
 import { saveFile } from "@/api/wiki";
 import type { Mock } from "vitest";
 
@@ -98,6 +115,13 @@ describe("WikiEditor", () => {
     });
 
     (saveFile as Mock).mockResolvedValue({ success: true, path: "capitulos/cap1.md" });
+
+    (useEntitySearch as Mock).mockReturnValue({
+      results: [],
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
   });
 
   afterEach(() => {
@@ -368,7 +392,7 @@ describe("WikiEditor", () => {
     expect(screen.getByRole("textbox", { name: /editor de contenido/i })).toBeInTheDocument();
   });
 
-  it("Vista previa renders the live diff editor instead of the textarea", async () => {
+  it("Vista previa replaces the textarea with the live diff", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -385,7 +409,8 @@ describe("WikiEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /vista previa/i }));
 
-    // The merge view replaces the textarea — it's the writing surface now
+    // The diff view REPLACES the textarea — the right side of the diff is
+    // the writing surface while the preview is open
     expect(
       await screen.findByTestId("live-diff-editor"),
     ).toBeInTheDocument();
@@ -460,5 +485,61 @@ describe("WikiEditor", () => {
       screen.queryByTestId("live-diff-editor"),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
+  });
+
+  it("inserts a wikilink from the Contexto panel while the preview is open", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    (useEntitySearch as Mock).mockReturnValue({
+      results: [
+        {
+          name: "Kael Thornwood",
+          path: "personajes/kael.md",
+          type: "personaje",
+          title: "Kael Thornwood",
+          description: "",
+          tags: [],
+          link_count: 1,
+          score: 1,
+        },
+      ],
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    // TabBar persists the active tab to sessionStorage under "sidebar-tab" —
+    // reset so the default tab is "asistente" and clicking "Contexto" is
+    // deterministic
+    sessionStorage.clear();
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
+    await user.type(textarea, " modificado");
+
+    // Open the preview — the textarea is replaced by the live diff
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+    expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("textbox", { name: /editor de contenido/i }),
+    ).not.toBeInTheDocument();
+
+    // Switch to the Contexto panel and search for an entity
+    await user.click(screen.getByRole("tab", { name: "Contexto" }));
+    const searchInput = screen.getByRole("textbox", { name: /buscar entidad/i });
+    await user.type(searchInput, "Kael");
+
+    // Click the result — the wikilink must go through the live diff's
+    // imperative handle (regression: it used to be a no-op while the
+    // preview replaced the textarea).
+    await user.click(screen.getByRole("option", { name: /kael thornwood/i }));
+    expect(insertTextMock).toHaveBeenCalledWith("[[Kael Thornwood]]");
   });
 });

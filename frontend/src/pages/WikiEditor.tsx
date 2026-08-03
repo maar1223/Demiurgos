@@ -22,11 +22,14 @@ import { VALID_SECTIONS } from "@/lib/constants";
 import { decodePathSegment, getErrorMessage } from "@/lib/utils";
 import { saveFile } from "@/api/wiki";
 import type { ApiError } from "@/api/types";
-import type { LiveDiffEditorHandle } from "@/components/organisms/LiveDiffEditor";
 
 // CodeMirror is heavy (~300KB) — load the live diff editor only when the
 // preview is actually opened, keeping the initial bundle lean.
 const LiveDiffEditor = lazy(() => import("@/components/organisms/LiveDiffEditor"));
+
+// Type-only import of the imperative handle — erased at runtime, so it does
+// not pull the lazy chunk into the initial bundle.
+import type { LiveDiffEditorHandle } from "@/components/organisms/LiveDiffEditor";
 
 /**
  * Wiki Editor page (`/wiki/:mundo/:section/*path`).
@@ -37,10 +40,13 @@ const LiveDiffEditor = lazy(() => import("@/components/organisms/LiveDiffEditor"
  * - 🟢 Ready: EditorLayout with FileTree sidebar + MarkdownViewer + Breadcrumb
  *
  * Edit mode: "Editar" switches to a textarea. The toolbar offers
- * [Cancelar] [Vista previa] [Guardar]. "Vista previa" swaps the textarea for a
- * live CodeMirror merge view — original on the left (red), editable draft on
- * the right (green), highlighting recomputed client-side on every keystroke.
- * "Guardar" persists via POST /save and exits edit mode.
+ * [Cancelar] [Vista previa] [Guardar]. "Vista previa" swaps the textarea
+ * for a live diff view — original on the left (red, read-only), editable
+ * draft on the right (green): you click a line and type directly in the
+ * diff, and it recomputes on every keystroke. Wikilinks from the Contexto
+ * panel insert at the caret of the focused diff line through the
+ * imperative `insertText` handle (appended at the end when nothing is
+ * focused). "Guardar" persists via POST /save and exits edit mode.
  */
 export default function WikiEditor() {
   const navigate = useNavigate();
@@ -65,7 +71,7 @@ export default function WikiEditor() {
   // Textarea ref for wikilink cursor insertion
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Imperative handle into the merge view (wikilink insertion in preview)
+  // Live diff imperative handle — wikilink insertion while the preview is open
   const liveDiffRef = useRef<LiveDiffEditorHandle>(null);
 
   // Sidebar tab state — persisted in sessionStorage by TabBar
@@ -221,9 +227,10 @@ export default function WikiEditor() {
     setIsEditing((prev) => !prev);
   }, [isEditing, file, editedContent]);
 
-  // Insert a wikilink at the cursor position. In preview mode the merge
-  // view's editor B is the writing surface (imperative handle); otherwise
-  // the plain textarea is used.
+  // Insert a wikilink at the cursor position. While the preview is open the
+  // live diff's side B is the writing surface — the imperative handle
+  // splices the wikilink into the focused diff line (or appends at the end).
+  // Otherwise insert into the textarea at its preserved caret.
   const handleInsertWikilink = useCallback(
     (name: string) => {
       const wikilink = `[[${name}]]`;
@@ -266,7 +273,8 @@ export default function WikiEditor() {
     </div>
   );
 
-  // Editor textarea — used both standalone and in the split's left column
+  // Editor textarea — used standalone; the preview replaces it with the
+  // live diff (side B of the diff is the writing surface while open)
   const editorTextarea = (
     <textarea
       ref={textareaRef}
@@ -474,8 +482,11 @@ export default function WikiEditor() {
         <ErrorBanner message={saveError} className="mb-4" />
       )}
 
-      {/* Content area: live diff preview, editor, or viewer */}
+      {/* Content area: live diff preview, textarea editor, or viewer */}
       {isEditing && editedContent !== null ? (
+        // The preview REPLACES the textarea — the diff's right side is the
+        // writing surface. The textarea unmounts while the preview is open
+        // and remounts (with the preserved draft) when it closes.
         previewOpen ? (
           <Suspense
             fallback={

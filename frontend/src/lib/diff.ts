@@ -7,7 +7,7 @@
  * (hundreds of lines).
  */
 
-export type DiffLineStatus = "same" | "added" | "removed";
+export type DiffLineStatus = "same" | "added" | "removed" | "changed";
 
 export interface DiffRow {
   /** Classification of this row: matched, present only on the right, or only on the left. */
@@ -97,4 +97,51 @@ export function diffLines(a: string[], b: string[]): DiffRow[] {
     }
   }
   return rows;
+}
+
+/**
+ * Post-process diff rows: pair a run of consecutive "removed" rows with the
+ * run of consecutive "added" rows that immediately follows it, emitting one
+ * "changed" row per pair — old text on the left, new text on the right, in
+ * the SAME grid row. Surplus removals (pure deletions) and surplus additions
+ * (pure insertions) keep their original status, so no row is ever dropped.
+ */
+export function mergeChangedRows(rows: DiffRow[]): DiffRow[] {
+  const out: DiffRow[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    if (rows[i].status !== "removed") {
+      out.push(rows[i]);
+      i++;
+      continue;
+    }
+    // Run of consecutive removed rows
+    const removedStart = i;
+    while (i < rows.length && rows[i].status === "removed") i++;
+    const removedEnd = i;
+    // Run of consecutive added rows that immediately follows (may be empty)
+    const addedStart = i;
+    while (i < rows.length && rows[i].status === "added") i++;
+    const addedEnd = i;
+
+    const pairs = Math.min(removedEnd - removedStart, addedEnd - addedStart);
+    for (let p = 0; p < pairs; p++) {
+      out.push({
+        status: "changed",
+        left: rows[removedStart + p].left,
+        right: rows[addedStart + p].right,
+        leftNumber: rows[removedStart + p].leftNumber,
+        rightNumber: rows[addedStart + p].rightNumber,
+      });
+    }
+    // Surplus removals (more deletions than additions)
+    for (let p = pairs; p < removedEnd - removedStart; p++) {
+      out.push(rows[removedStart + p]);
+    }
+    // Surplus additions (more insertions than deletions)
+    for (let p = pairs; p < addedEnd - addedStart; p++) {
+      out.push(rows[addedStart + p]);
+    }
+  }
+  return out;
 }
