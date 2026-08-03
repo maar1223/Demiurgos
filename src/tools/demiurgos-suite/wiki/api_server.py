@@ -417,6 +417,78 @@ async def delete_file(mundo: str, section: str, path: str):
     return {"success": True, "path": path}
 
 
+@app.post("/api/{mundo}/move")
+async def move_path(mundo: str, body: dict):
+    """Move or rename a file or folder to a new mundo-relative path.
+
+    Validates ``from`` and ``to`` independently (S16), requires ``from``
+    to exist (S17) and ``to`` to be free (S18), rejects moving a folder
+    into itself (S19), creates parent dirs and moves recursively (S20).
+    """
+    from_path = body.get("from")
+    to_path = body.get("to")
+    if (
+        not isinstance(from_path, str)
+        or not isinstance(to_path, str)
+        or not from_path.strip()
+        or not to_path.strip()
+    ):
+        raise HTTPException(status_code=400, detail="Se requieren los campos 'from' y 'to'")
+
+    full_from = _resolve_mundo_path(mundo, from_path)
+    if full_from is None:
+        raise HTTPException(status_code=400, detail="Ruta de origen inválida")
+    if not full_from.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    full_to = _resolve_mundo_path(mundo, to_path)
+    if full_to is None:
+        raise HTTPException(status_code=400, detail="Ruta de destino inválida")
+    if full_to.exists():
+        raise HTTPException(status_code=409, detail="Ya existe un archivo o carpeta en esa ubicación")
+    if str(full_to).startswith(str(full_from) + os.sep):
+        raise HTTPException(status_code=400, detail="No se puede mover una carpeta dentro de sí misma")
+
+    try:
+        full_to.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(full_from), str(full_to))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al mover: {e}")
+
+    _graph_indices.pop(mundo, None)
+    return {"success": True, "path": to_path}
+
+
+@app.post("/api/{mundo}/duplicate")
+async def duplicate_path(mundo: str, body: dict):
+    """Duplicate a file with an auto-resolved non-colliding name.
+
+    Files only (S21); the copy name is ``{stem}-copia{ext}`` and then
+    ``{stem}-2{ext}``, ``{stem}-3{ext}``… until free (S22); content is
+    byte-identical via ``shutil.copy2`` (S23).
+    """
+    from_path = body.get("from")
+    if not isinstance(from_path, str) or not from_path.strip():
+        raise HTTPException(status_code=400, detail="Se requiere el campo 'from'")
+
+    full = _resolve_mundo_path(mundo, from_path)
+    if full is None:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    if not full.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    if full.is_dir():
+        raise HTTPException(status_code=422, detail="Solo se pueden duplicar archivos")
+
+    try:
+        new_full = _next_duplicate_name(full)
+        shutil.copy2(str(full), str(new_full))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al duplicar: {e}")
+
+    _graph_indices.pop(mundo, None)
+    return {"success": True, "path": _rel_path(new_full, mundo)}
+
+
 # ---------------------------------------------------------------------------
 # Graph endpoints
 # ---------------------------------------------------------------------------

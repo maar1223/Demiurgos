@@ -294,3 +294,152 @@ class TestErrorUpgrades:
         resp = client.post("/api/test_mundo/lore/save?path=../../x.md", json={"content": "x"})
         assert resp.status_code == 400
         assert "traversal" in resp.json()["detail"].lower()
+
+
+class TestMoveEndpoint:
+    """S15-S20: POST /api/{mundo}/move with independent path validation."""
+
+    def test_rename_same_dir(self, client: TestClient):
+        resp = client.post("/api/test_mundo/move", json={"from": "lore/00_inicio.md", "to": "lore/inicio.md"})
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True, "path": "lore/inicio.md"}
+        assert (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "inicio.md").exists()
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md").exists()
+
+    def test_cross_section_recursive(self, client: TestClient):
+        ciudades = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "ciudades"
+        ciudades.mkdir()
+        (ciudades / "planos").mkdir()
+        (ciudades / "planos" / "x.md").write_text("# X\n", encoding="utf-8")
+
+        resp = client.post("/api/test_mundo/move", json={"from": "lore/ciudades", "to": "personajes/ciudades"})
+        assert resp.status_code == 200
+        moved = api_server.MUNDOS_DIR / "test_mundo" / "personajes" / "ciudades"
+        assert (moved / "planos" / "x.md").read_text(encoding="utf-8") == "# X\n"
+        assert not ciudades.exists()
+
+    def test_into_itself_400(self, client: TestClient):
+        (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "c").mkdir()
+        resp = client.post("/api/test_mundo/move", json={"from": "lore/c", "to": "lore/c/sub"})
+        assert resp.status_code == 400
+        assert "sí misma" in resp.json()["detail"]
+        assert (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "c").is_dir()
+
+    def test_to_exists_409(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo/move",
+            json={"from": "lore/00_inicio.md", "to": "lore/subdir/detalle.md"},
+        )
+        assert resp.status_code == 409
+        assert "ya existe" in resp.json()["detail"].lower()
+        assert (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md").exists()
+
+    def test_from_missing_404(self, client: TestClient):
+        resp = client.post("/api/test_mundo/move", json={"from": "lore/no_existe.md", "to": "lore/x.md"})
+        assert resp.status_code == 404
+
+    def test_traversal_400(self, client: TestClient):
+        resp = client.post("/api/test_mundo/move", json={"from": "../secret.md", "to": "lore/x.md"})
+        assert resp.status_code == 400
+        resp2 = client.post("/api/test_mundo/move", json={"from": "lore/00_inicio.md", "to": "../fuera.md"})
+        assert resp2.status_code == 400
+
+    def test_invalid_section_400(self, client: TestClient):
+        resp = client.post("/api/test_mundo/move", json={"from": "lore/00_inicio.md", "to": "wiki/x.md"})
+        assert resp.status_code == 400
+
+    def test_deep_target_mkdir(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo/move",
+            json={"from": "lore/00_inicio.md", "to": "personajes/carpetas/nueva/x.md"},
+        )
+        assert resp.status_code == 200
+        assert (api_server.MUNDOS_DIR / "test_mundo" / "personajes" / "carpetas" / "nueva" / "x.md").exists()
+
+    def test_destination_referencias_200(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo/move",
+            json={"from": "lore/00_inicio.md", "to": "referencias/notas/x.md"},
+        )
+        assert resp.status_code == 200
+        assert (api_server.MUNDOS_DIR / "test_mundo" / "referencias" / "notas" / "x.md").exists()
+
+    def test_unicode_and_spaces(self, client: TestClient):
+        bosque = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "El Bosque Oscuro"
+        bosque.mkdir()
+        (bosque / "Ñandú.md").write_text("# Ñ\n", encoding="utf-8")
+        resp = client.post(
+            "/api/test_mundo/move",
+            json={"from": "lore/El Bosque Oscuro/Ñandú.md", "to": "lore/El Bosque Oscuro/Renombrado.md"},
+        )
+        assert resp.status_code == 200
+        assert (bosque / "Renombrado.md").exists()
+        assert not (bosque / "Ñandú.md").exists()
+
+    def test_graph_cache_popped(self, client: TestClient):
+        client.get("/api/test_mundo/graph/search?q=inicio")
+        assert "test_mundo" in api_server._graph_indices
+        resp = client.post("/api/test_mundo/move", json={"from": "lore/00_inicio.md", "to": "lore/inicio.md"})
+        assert resp.status_code == 200
+        assert "test_mundo" not in api_server._graph_indices
+
+    def test_missing_fields_400(self, client: TestClient):
+        resp = client.post("/api/test_mundo/move", json={"from": "lore/00_inicio.md"})
+        assert resp.status_code == 400
+
+
+class TestDuplicateEndpoint:
+    """S21-S23: POST /api/{mundo}/duplicate with server-side collision
+    resolution and byte-identical copies."""
+
+    def _lore(self) -> Path:
+        return api_server.MUNDOS_DIR / "test_mundo" / "lore"
+
+    def test_happy_creates_copia_with_identical_bytes(self, client: TestClient):
+        content = "---\ntype: criatura\ntitle: Inicio\n---\n# Inicio\n"
+        (self._lore() / "a.md").write_text(content, encoding="utf-8")
+        resp = client.post("/api/test_mundo/duplicate", json={"from": "lore/a.md"})
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True, "path": "lore/a-copia.md"}
+        # Byte-identical to the source (S23)
+        assert (self._lore() / "a-copia.md").read_bytes() == (self._lore() / "a.md").read_bytes()
+
+    def test_collision_one_uses_suffix_2(self, client: TestClient):
+        content = "# A\n"
+        (self._lore() / "a.md").write_text(content, encoding="utf-8")
+        (self._lore() / "a-copia.md").write_text("exists", encoding="utf-8")
+        resp = client.post("/api/test_mundo/duplicate", json={"from": "lore/a.md"})
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True, "path": "lore/a-2.md"}
+        assert (self._lore() / "a-2.md").read_bytes() == (self._lore() / "a.md").read_bytes()
+
+    def test_collision_two_uses_suffix_3(self, client: TestClient):
+        content = "# A\n"
+        (self._lore() / "a.md").write_text(content, encoding="utf-8")
+        (self._lore() / "a-copia.md").write_text("1", encoding="utf-8")
+        (self._lore() / "a-2.md").write_text("2", encoding="utf-8")
+        resp = client.post("/api/test_mundo/duplicate", json={"from": "lore/a.md"})
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True, "path": "lore/a-3.md"}
+
+    def test_directory_returns_422(self, client: TestClient):
+        (self._lore() / "carpeta").mkdir()
+        resp = client.post("/api/test_mundo/duplicate", json={"from": "lore/carpeta"})
+        assert resp.status_code == 422
+        assert "solo se pueden duplicar archivos" in resp.json()["detail"].lower()
+
+    def test_missing_returns_404(self, client: TestClient):
+        resp = client.post("/api/test_mundo/duplicate", json={"from": "lore/no_existe.md"})
+        assert resp.status_code == 404
+
+    def test_traversal_returns_400(self, client: TestClient):
+        resp = client.post("/api/test_mundo/duplicate", json={"from": "../secret.md"})
+        assert resp.status_code == 400
+
+    def test_graph_cache_popped(self, client: TestClient):
+        client.get("/api/test_mundo/graph/search?q=inicio")
+        assert "test_mundo" in api_server._graph_indices
+        resp = client.post("/api/test_mundo/duplicate", json={"from": "lore/00_inicio.md"})
+        assert resp.status_code == 200
+        assert resp.json()["path"] == "lore/00_inicio-copia.md"
+        assert "test_mundo" not in api_server._graph_indices
