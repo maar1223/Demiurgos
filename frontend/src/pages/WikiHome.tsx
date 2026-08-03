@@ -22,7 +22,7 @@ export default function WikiHome() {
   const { worlds, isLoading, error, mutate } = useWorlds();
 
   const handleWorldClick = (world: WorldInfo) => {
-    navigate(`/wiki/${encodeURIComponent(world.name)}/lore`);
+    navigate(`/wiki/${encodeURIComponent(world.name)}`);
   };
 
   // Total file count across all sections

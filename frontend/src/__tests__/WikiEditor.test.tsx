@@ -223,4 +223,40 @@ describe("WikiEditor", () => {
     // After navigation, the breadcrumb should still show "lore"
     expect(screen.getByText("lore")).toBeInTheDocument();
   });
+
+  it("renders section tabs above the file tree", () => {
+    renderWikiEditor();
+
+    expect(screen.getByRole("tab", { name: "Lore" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Personajes" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Sagas" })).toBeInTheDocument();
+  });
+
+  it("marks the current URL section as the active tab", () => {
+    renderWikiEditor(["/wiki/Vibrantes/personajes"]);
+
+    expect(screen.getByRole("tab", { name: "Personajes" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "Lore" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+  });
+
+  it("navigates to the section root when a tab is clicked", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(screen.getByRole("tab", { name: "Sagas" }));
+
+    // Section change re-invokes the tree hook with the new section
+    // (SWR key includes section → triggers re-fetch)
+    expect(useFileTree).toHaveBeenCalledWith("Vibrantes", "sagas");
+    expect(screen.getByRole("tab", { name: "Sagas" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
 });

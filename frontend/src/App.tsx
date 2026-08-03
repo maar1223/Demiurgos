@@ -1,6 +1,7 @@
 import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import WikiHome from "@/pages/WikiHome";
+import WikiWorld from "@/pages/WikiWorld";
 import WikiEditor from "@/pages/WikiEditor";
 import NotFound from "@/pages/NotFound";
 
@@ -17,12 +18,15 @@ const EntityPage = lazy(() => import("@/pages/EntityPage"));
  * - `/` → redirect to `/wiki`
  * - `/wiki` → Wiki Home page
  * - `/wiki/:mundo/entity/*path` → EntityPage (entity detail with connections)
+ * - `/wiki/:mundo` → WikiWorld (section cards for one world)
  * - `/wiki/:mundo/:section/*` → WikiEditor (file tree + markdown viewer)
  *   - With `?diff=1` → WikiDiff (side-by-side diff)
  * - `*` → 404 NotFound
  *
  * Route ordering is CRITICAL: `entity` MUST come before `:section` wildcard.
  * React Router matches top-down — `:section` would capture `entity` if defined first.
+ * `/wiki/:mundo` (exact match) is ranked more specific than the wildcard routes
+ * by React Router, but is listed before `:section/*` for clarity.
  *
  * The diff route is handled inside WikiEditor/WikiDiff via query param.
  * When the URL contains `?diff=1`, the WikiDiff component renders instead.
@@ -50,6 +54,7 @@ export default function App() {
             </Suspense>
           }
         />
+        <Route path="/wiki/:mundo" element={<WikiWorld />} />
         <Route
           path="/wiki/:mundo/:section/*"
           element={<WikiEditorOrDiff />}

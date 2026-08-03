@@ -11,6 +11,7 @@ import { EntitySearchPanel } from "@/components/organisms/EntitySearchPanel";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { TabBar } from "@/components/molecules/TabBar";
 import type { SidebarTab } from "@/components/molecules/TabBar";
+import { SectionTabs } from "@/components/molecules/SectionTabs";
 import { Breadcrumb } from "@/components/molecules/Breadcrumb";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -134,6 +135,16 @@ export default function WikiEditor() {
       navigate(`/wiki/${encodeURIComponent(mundo)}/${section}/${encodedPath}`);
     },
     [mundo, section, navigate],
+  );
+
+  // Section tab click: navigate to the section root (resets file path).
+  // The tree/content SWR keys include `section`, so both re-fetch on change.
+  const handleSectionSelect = useCallback(
+    (nextSection: string) => {
+      if (!mundo) return;
+      navigate(`/wiki/${encodeURIComponent(mundo)}/${nextSection}`);
+    },
+    [mundo, navigate],
   );
 
   // Navigate to diff page with edited content
@@ -300,14 +311,22 @@ export default function WikiEditor() {
         />
       }
       sidebar={
-        <FileTree
-          nodes={treeNodes}
-          selectedPath={filePath}
-          onSelect={handleFileSelect}
-          isLoading={treeLoading}
-          error={treeError}
-          onRetry={retryTree}
-        />
+        <div className="flex h-full min-h-0 flex-col">
+          <SectionTabs
+            activeSection={section}
+            onSelect={handleSectionSelect}
+          />
+          <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+            <FileTree
+              nodes={treeNodes}
+              selectedPath={filePath}
+              onSelect={handleFileSelect}
+              isLoading={treeLoading}
+              error={treeError}
+              onRetry={retryTree}
+            />
+          </div>
+        </div>
       }
       rightPanel={rightPanelContent}
     >

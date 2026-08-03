@@ -105,7 +105,7 @@ export function EditorLayout({
               <Icon name="close" size={16} />
             </button>
           </div>
-          <div className="overflow-y-auto py-2">{sidebar}</div>
+          <div className="h-full overflow-y-auto py-2">{sidebar}</div>
         </aside>
 
         {/* Mobile backdrop for left sidebar */}

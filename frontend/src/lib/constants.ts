@@ -3,6 +3,12 @@ export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
 export const VALID_SECTIONS = ["lore", "personajes", "sagas"] as const;
 export type Section = (typeof VALID_SECTIONS)[number];
 
+export const SECTION_LABELS: Record<Section, string> = {
+  lore: "Lore",
+  personajes: "Personajes",
+  sagas: "Sagas",
+};
+
 export const ROUTES = {
   HOME: "/wiki",
   ENTITY: "/wiki/:mundo/entity/*path",
