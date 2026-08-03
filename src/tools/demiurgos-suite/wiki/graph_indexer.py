@@ -18,6 +18,12 @@ from typing import Any
 
 import yaml
 
+# Eager import: rank_bm25 pulls in numpy, whose Windows DLL load can stall
+# ~120s when executed lazily inside the MCP event loop (first tool call).
+# Loading it at module import time (startup, before the loop/stdio reader
+# exist) makes first-call latency ~0s. See mcp-tool-call-hang investigation.
+from rank_bm25 import BM25Okapi  # noqa: E402
+
 from .graph_models import EntityDetail, EntityHit
 
 # ---------------------------------------------------------------------------
@@ -554,10 +560,10 @@ class EntityGraphIndex:
                 entity_paths.append(ent["path"])
 
             # Build BM25 index (only if we have search tokens)
+            # rank_bm25 is imported eagerly at module top — loading numpy
+            # lazily here would stall the MCP event loop on first call.
             if has_tokens:
                 try:
-                    from rank_bm25 import BM25Okapi
-
                     bm25 = BM25Okapi(corpus)
                     bm25_scores: list[float] = bm25.get_scores(tokens)
                 except ImportError:
@@ -582,6 +588,10 @@ class EntityGraphIndex:
                                 break
 
                 total_score = prefix_score + bm25_score
+
+                # Skip entities with zero relevance when there are search tokens
+                if has_tokens and total_score <= 0:
+                    continue
 
                 # Apply filters
                 if not self._apply_filters(ent, filters):

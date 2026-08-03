@@ -601,13 +601,13 @@ facción controla un tipo de magia diferente.
         """Query containing overlapping terms matches the educational idea above threshold."""
         ideas = scan_ideas_dir("test_mundo", str(self.tmpdir))
 
-        # Inject mock rank_bm25 into sys.modules so the in-function import succeeds
-        mock_bm25_module = MagicMock()
+        # Patch the module-level reference (rank_bm25 is imported eagerly at
+        # module top; sys.modules injection no longer affects the binding).
         mock_bm25_instance = MagicMock()
         mock_bm25_instance.get_scores.return_value = [0.85, 0.12]
-        mock_bm25_module.BM25Okapi.return_value = mock_bm25_instance
+        mock_bm25_instance_get = MagicMock(return_value=mock_bm25_instance)
 
-        with patch.dict("sys.modules", {"rank_bm25": mock_bm25_module}):
+        with patch("wiki.narrative_utils.BM25Okapi", mock_bm25_instance_get):
             results = search_ideas_bm25("sistema educativo meritocrático", ideas)
 
         self.assertEqual(len(results), 1)

@@ -17,6 +17,11 @@ from typing import Any
 
 import yaml
 
+# Eager import: rank_bm25 pulls in numpy, whose Windows DLL load can stall
+# ~120s when executed lazily inside the MCP event loop (first tool call).
+# Loading at module import time keeps first-call latency ~0s.
+from rank_bm25 import BM25Okapi  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Constants — theme map, claim patterns, conflict taxonomy
 # ---------------------------------------------------------------------------
@@ -579,11 +584,6 @@ def search_ideas_bm25(
     if not ideas or not content:
         return []
 
-    try:
-        from rank_bm25 import BM25Okapi
-    except ImportError:
-        return []
-
     # Build corpus: tokenized frontmatter + body
     corpus: list[list[str]] = []
     for idea in ideas:
@@ -597,6 +597,8 @@ def search_ideas_bm25(
     if not corpus:
         return []
 
+    # rank_bm25 is imported eagerly at module top (numpy DLL load stalls the
+    # MCP event loop if done lazily on first call).
     try:
         tokenized_query = content.lower().split()
         bm25 = BM25Okapi(corpus)
