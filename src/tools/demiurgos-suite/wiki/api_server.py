@@ -187,6 +187,72 @@ async def save_file(mundo: str, section: str, path: str, body: dict):
         return {"error": str(e)}
 
 
+@app.post("/api/{mundo}/{section}/save")
+async def save_file_via_save(mundo: str, section: str, path: str, body: dict):
+    """Save file content — contract-compatible alias for the frontend.
+
+    The frontend calls POST /{mundo}/{section}/save?path=... (wiki.ts
+    saveFile), which was lost with the router.py backend. Same behavior
+    as POST /file; kept as a distinct route so both callers work.
+    """
+    return await save_file(mundo, section, path, body)
+
+
+@app.post("/api/{mundo}/{section}/diff")
+async def diff_preview(mundo: str, section: str, path: str, body: dict):
+    """Line-by-line diff between current file content and proposed content."""
+    full = _resolve_path(mundo, section, path)
+    original_content = ""
+    if full is not None:
+        try:
+            original_content = full.read_text(encoding="utf-8")
+        except Exception:
+            original_content = ""
+
+    new_content = body.get("content", "")
+    diff_lines = _compute_diff(original_content, new_content)
+
+    return {
+        "original_path": path,
+        "original_content": original_content,
+        "new_content": new_content,
+        "diff": diff_lines,
+    }
+
+
+def _compute_diff(original: str, nuevo: str) -> list[dict]:
+    """Line-by-line diff between two texts (same contract as the old
+    storage.compute_diff): entries {type: same|added|removed, text}."""
+    import difflib
+
+    orig_lines = original.splitlines(keepends=True)
+    new_lines = nuevo.splitlines(keepends=True)
+
+    diff_lines: list[dict] = []
+    for line in difflib.unified_diff(orig_lines, new_lines, n=9999):
+        if line.startswith("---") or line.startswith("+++"):
+            continue
+        if line.startswith("@@"):
+            continue
+        if line.startswith("-"):
+            text = line[1:].rstrip("\n")
+            diff_lines.append({"type": "removed", "text": text})
+        elif line.startswith("+"):
+            text = line[1:].rstrip("\n")
+            diff_lines.append({"type": "added", "text": text})
+        else:
+            text = line.rstrip("\n")
+            diff_lines.append({"type": "same", "text": text})
+
+    # Edge case: unified_diff returns empty when files are identical.
+    # Spec S22 requires all lines as type="same" for unchanged files.
+    if not diff_lines and orig_lines:
+        for line in orig_lines:
+            diff_lines.append({"type": "same", "text": line.rstrip("\n")})
+
+    return diff_lines
+
+
 @app.post("/api/{mundo}/{section}/create")
 async def create_file(mundo: str, section: str, path: str, body: dict):
     """Create a new file."""
