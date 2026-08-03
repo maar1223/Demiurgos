@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
@@ -14,11 +14,15 @@ import type { SidebarTab } from "@/components/molecules/TabBar";
 import { SectionTabs } from "@/components/molecules/SectionTabs";
 import { Breadcrumb } from "@/components/molecules/Breadcrumb";
 import { EmptyState } from "@/components/organisms/EmptyState";
+import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { DiffViewer } from "@/components/organisms/DiffViewer";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
 import { VALID_SECTIONS } from "@/lib/constants";
-import { decodePathSegment } from "@/lib/utils";
+import { decodePathSegment, getErrorMessage } from "@/lib/utils";
+import { getDiff, saveFile } from "@/api/wiki";
+import type { ApiError, DiffPreview } from "@/api/types";
 
 /**
  * Wiki Editor page (`/wiki/:mundo/:section/*path`).
@@ -28,8 +32,11 @@ import { decodePathSegment } from "@/lib/utils";
  * - 🟡 Loading world list: Spinner
  * - 🟢 Ready: EditorLayout with FileTree sidebar + MarkdownViewer + Breadcrumb
  *
- * Supports an edit mode: clicking "Editar" switches to a textarea for editing.
- * "Ver diff" navigates to the diff page with the edited content.
+ * Edit mode: "Editar" switches to a textarea. The toolbar offers
+ * [Cancelar] [Vista previa] [Guardar]. "Vista previa" opens a split view —
+ * textarea on the left, live diff preview on the right. "Guardar" (or
+ * "Aceptar cambios" in the split) persists via POST /save and exits edit mode.
+ * No page navigation is involved — the diff renders inline.
  */
 export default function WikiEditor() {
   const navigate = useNavigate();
@@ -43,8 +50,23 @@ export default function WikiEditor() {
   const [isEditing, setIsEditing] = useState(false);
   const [editedContent, setEditedContent] = useState<string | null>(null);
 
+  // Split preview state
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [diffPreview, setDiffPreview] = useState<DiffPreview | null>(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
+
+  // Save state
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+
   // Textarea ref for wikilink cursor insertion
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Debounce + stale-response guards for the live diff preview
+  const previewTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const diffRequestRef = useRef(0);
 
   // Sidebar tab state — persisted in sessionStorage by TabBar
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>(() => {
@@ -86,13 +108,19 @@ export default function WikiEditor() {
   // Content to display/edit
   const currentContent = file?.content ?? "";
 
-  // Initialise edited content when file loads or path changes
-  // We use a ref to track whether we've initialised for this file path
-  const [initialisedPath, setInitialisedPath] = useState<string | null>(null);
-  if (filePath && filePath !== initialisedPath && currentContent) {
-    setEditedContent(currentContent);
-    setInitialisedPath(filePath);
-  }
+  // Initialise edited content when file path actually changes.
+  // MUST use useEffect + useRef, NOT setState during render:
+  // React 18 StrictMode double-invokes the component function, and a
+  // setState during render would overwrite the user's edits with the
+  // original file content. Effect runs AFTER commit, outside StrictMode's
+  // double-invocation path.
+  const prevFilePathRef = useRef<string | undefined>();
+  useEffect(() => {
+    if (filePath && filePath !== prevFilePathRef.current && currentContent) {
+      setEditedContent(currentContent);
+      prevFilePathRef.current = filePath;
+    }
+  }, [filePath, currentContent]);
 
   // Breadcrumb segments
   const breadcrumbSegments = useMemo(() => {
@@ -147,22 +175,89 @@ export default function WikiEditor() {
     [mundo, navigate],
   );
 
-  // Navigate to diff page with edited content
-  const handleViewDiff = useCallback(() => {
+  // Fetch the diff preview for the current edited content. Stale responses
+  // (from a superseded request) are discarded via diffRequestRef.
+  const runDiff = useCallback(async () => {
     if (!mundo || !section || !filePath || editedContent === null) return;
-    navigate(
-      `/wiki/${encodeURIComponent(mundo)}/${section}/${encodePathSegments(filePath)}?diff=1`,
-      { state: { editedContent } },
-    );
-  }, [mundo, section, filePath, editedContent, navigate]);
+    const requestId = ++diffRequestRef.current;
+    setDiffLoading(true);
+    setDiffError(null);
+    try {
+      const preview = await getDiff(mundo, section, filePath, editedContent);
+      if (diffRequestRef.current === requestId) {
+        setDiffPreview(preview);
+      }
+    } catch (err) {
+      if (diffRequestRef.current === requestId) {
+        const apiErr = err as ApiError;
+        setDiffError(getErrorMessage(apiErr.status, apiErr.detail));
+      }
+    } finally {
+      if (diffRequestRef.current === requestId) {
+        setDiffLoading(false);
+      }
+    }
+  }, [mundo, section, filePath, editedContent]);
 
-  // Toggle edit mode
+  // Debounced refetch while the split preview is open: every content change
+  // (or opening the preview) restarts a ~500ms timer before fetching.
+  useEffect(() => {
+    if (!previewOpen) return;
+    setDiffLoading(true);
+    if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+    previewTimeoutRef.current = setTimeout(() => {
+      void runDiff();
+    }, 500);
+    return () => {
+      if (previewTimeoutRef.current) clearTimeout(previewTimeoutRef.current);
+    };
+  }, [previewOpen, editedContent, runDiff]);
+
+  // Auto-clear the "Guardado ✓" feedback after a short delay
+  useEffect(() => {
+    if (!saveSuccess) return;
+    const t = setTimeout(() => setSaveSuccess(false), 2500);
+    return () => clearTimeout(t);
+  }, [saveSuccess]);
+
+  // Save the edited content via POST /save, then exit edit mode.
+  // Used by both the toolbar "Guardar" button and the split's "Aceptar cambios".
+  const handleSave = useCallback(async () => {
+    if (!mundo || !section || !filePath || editedContent === null) return;
+    setIsSaving(true);
+    setSaveError(null);
+    setSaveSuccess(false);
+    try {
+      await saveFile(mundo, section, filePath, editedContent);
+      await retryContent();
+      setPreviewOpen(false);
+      setIsEditing(false);
+      setSaveSuccess(true);
+    } catch (err) {
+      const apiErr = err as ApiError;
+      setSaveError(getErrorMessage(apiErr.status, apiErr.detail));
+    } finally {
+      setIsSaving(false);
+    }
+  }, [mundo, section, filePath, editedContent, retryContent]);
+
+  // Close the split preview, keeping the editor open and the edits intact
+  const handleClosePreview = useCallback(() => {
+    setPreviewOpen(false);
+  }, []);
+
+  // Toggle edit mode — exiting resets preview and transient state
   const handleToggleEdit = useCallback(() => {
     if (isEditing) {
       // Exiting edit mode — reset edited content to original
       if (file) {
         setEditedContent(file.content);
       }
+      setPreviewOpen(false);
+      setDiffPreview(null);
+      setDiffError(null);
+      setSaveError(null);
+      setSaveSuccess(false);
     } else {
       // Entering edit mode — initialise content if needed
       if (editedContent === null && file) {
@@ -209,6 +304,18 @@ export default function WikiEditor() {
         <EntitySearchPanel mundo={mundo!} onInsert={handleInsertWikilink} />
       )}
     </div>
+  );
+
+  // Editor textarea — used both standalone and in the split's left column
+  const editorTextarea = (
+    <textarea
+      ref={textareaRef}
+      value={editedContent ?? ""}
+      onChange={(e) => setEditedContent(e.target.value)}
+      className="min-h-[400px] w-full resize-y rounded-lg border border-filio bg-madero px-4 py-3 font-mono text-body text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+      aria-label="Editor de contenido"
+      spellCheck={false}
+    />
   );
 
   // --- Render states ---
@@ -348,6 +455,11 @@ export default function WikiEditor() {
                 Editando
               </span>
             )}
+            {saveSuccess && (
+              <span className="ml-2 rounded bg-musgo/10 px-2 py-0.5 text-xs text-musgo">
+                Guardado ✓
+              </span>
+            )}
           </span>
           <div className="flex items-center gap-2">
             {isEditing ? (
@@ -356,19 +468,31 @@ export default function WikiEditor() {
                   variant="ghost"
                   size="sm"
                   onClick={handleToggleEdit}
+                  disabled={isSaving}
                 >
                   <Icon name="close" size={14} />
                   Cancelar
                 </Button>
                 {hasChanges && (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleViewDiff}
-                  >
-                    <Icon name="diff" size={14} />
-                    Ver diff
-                  </Button>
+                  <>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setPreviewOpen((prev) => !prev)}
+                    >
+                      <Icon name="diff" size={14} />
+                      Vista previa
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleSave}
+                      disabled={isSaving}
+                    >
+                      <Icon name="save" size={14} />
+                      Guardar
+                    </Button>
+                  </>
                 )}
               </>
             ) : (
@@ -385,16 +509,36 @@ export default function WikiEditor() {
         </div>
       )}
 
-      {/* Content area: editor or viewer */}
+      {/* Save error banner */}
+      {saveError && (
+        <ErrorBanner message={saveError} className="mb-4" />
+      )}
+
+      {/* Content area: split preview, editor, or viewer */}
       {isEditing && editedContent !== null ? (
-        <textarea
-          ref={textareaRef}
-          value={editedContent}
-          onChange={(e) => setEditedContent(e.target.value)}
-          className="min-h-[400px] w-full resize-y rounded-lg border border-filio bg-madero px-4 py-3 font-mono text-body text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
-          aria-label="Editor de contenido"
-          spellCheck={false}
-        />
+        previewOpen ? (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            {/* Left: still-editable textarea */}
+            <div className="max-h-[70vh] overflow-y-auto">
+              {editorTextarea}
+            </div>
+            {/* Right: live diff preview */}
+            <div className="max-h-[70vh] min-w-0 overflow-y-auto">
+              <DiffViewer
+                diff={diffPreview?.diff ?? []}
+                isLoading={diffLoading || isSaving}
+                error={diffError}
+                onRetry={() => void runDiff()}
+                onAccept={handleSave}
+                onReject={handleClosePreview}
+                actionsDisabled={isSaving}
+                rejectLabel="Seguir editando"
+              />
+            </div>
+          </div>
+        ) : (
+          editorTextarea
+        )
       ) : (
         <MarkdownViewer
           content={file?.content ?? null}
@@ -407,11 +551,4 @@ export default function WikiEditor() {
       )}
     </EditorLayout>
   );
-}
-
-/**
- * Encodes a path for use in URLs, preserving forward slashes.
- */
-function encodePathSegments(path: string): string {
-  return path.split("/").map((s) => encodeURIComponent(s)).join("/");
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import WikiEditor from "@/pages/WikiEditor";
@@ -17,9 +17,16 @@ vi.mock("@/hooks/useFileContent", () => ({
   useFileContent: vi.fn(),
 }));
 
+// Mock the wiki API — the editor calls getDiff (split preview) and saveFile (Guardar)
+vi.mock("@/api/wiki", () => ({
+  getDiff: vi.fn(),
+  saveFile: vi.fn(),
+}));
+
 import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
+import { getDiff, saveFile } from "@/api/wiki";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
@@ -46,6 +53,16 @@ const mockFileContent = {
   size_bytes: 48,
   modified: "2024-01-15T10:30:00Z",
   extension: ".md",
+};
+
+const mockDiffPreview = {
+  original_path: "capitulos/cap1.md",
+  original_content: mockFileContent.content,
+  new_content: `${mockFileContent.content} modificado`,
+  diff: [
+    { type: "same", text: "# Capítulo 1" },
+    { type: "added", text: "modificado" },
+  ],
 };
 
 function renderWikiEditor(initialEntries: string[] = ["/wiki/Vibrantes/lore"]) {
@@ -80,6 +97,9 @@ describe("WikiEditor", () => {
       error: null,
       mutate: vi.fn(),
     });
+
+    (getDiff as Mock).mockResolvedValue(mockDiffPreview);
+    (saveFile as Mock).mockResolvedValue({ success: true, path: "capitulos/cap1.md" });
   });
 
   afterEach(() => {
@@ -258,5 +278,200 @@ describe("WikiEditor", () => {
       "aria-selected",
       "true",
     );
+  });
+
+  // ── New edit-flow tests: Guardar / Vista previa split / Aceptar ──
+
+  it("shows toolbar buttons when editing: Cancelar, Vista previa, Guardar", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    // View mode: only "Editar"
+    expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /guardar/i })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
+
+    // No changes yet → only Cancelar
+    expect(screen.getByRole("button", { name: /cancelar/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /vista previa/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /guardar/i })).not.toBeInTheDocument();
+
+    await user.type(textarea, " modificado");
+
+    // With changes → Cancelar + Vista previa + Guardar
+    expect(screen.getByRole("button", { name: /cancelar/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /vista previa/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /guardar/i })).toBeInTheDocument();
+  });
+
+  it("Guardar calls saveFile, exits edit mode and shows success feedback", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
+    await user.type(textarea, " modificado");
+
+    await user.click(screen.getByRole("button", { name: /guardar/i }));
+
+    await waitFor(() => {
+      expect(saveFile).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+        expect.stringContaining("modificado"),
+      );
+    });
+
+    // Edit mode exited → Editar button back, no textarea
+    expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /editor de contenido/i })).not.toBeInTheDocument();
+
+    // Success feedback
+    expect(screen.getByText(/Guardado/i)).toBeInTheDocument();
+  });
+
+  it("shows an error banner when saveFile fails", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    (saveFile as Mock).mockRejectedValue({ status: 500, detail: "Error interno del servidor. Revisá los logs del backend." });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
+    await user.type(textarea, " modificado");
+
+    await user.click(screen.getByRole("button", { name: /guardar/i }));
+
+    // Error banner shown, still editing (edits preserved)
+    expect(await screen.findByText(/Error interno del servidor/i)).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /editor de contenido/i })).toBeInTheDocument();
+  });
+
+  it("Vista previa opens the split: textarea left + diff right", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
+    await user.type(textarea, " modificado");
+
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+
+    // Textarea still present and editable
+    expect(screen.getByRole("textbox", { name: /editor de contenido/i })).toBeInTheDocument();
+
+    // Diff rendered in the right column (debounced fetch, then async render)
+    expect(
+      await screen.findByText("modificado", {}, { timeout: 3000 }),
+    ).toBeInTheDocument();
+
+    // getDiff was called with the current edited content
+    await waitFor(() => {
+      expect(getDiff).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+        expect.stringContaining("modificado"),
+      );
+    });
+  });
+
+  it("Aceptar cambios saves, closes the split and exits edit mode", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
+    await user.type(textarea, " modificado");
+
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+
+    const accept = await screen.findByRole(
+      "button",
+      { name: /aceptar cambios/i },
+      { timeout: 3000 },
+    );
+    await user.click(accept);
+
+    await waitFor(() => {
+      expect(saveFile).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+        expect.stringContaining("modificado"),
+      );
+    });
+
+    // Split closed, edit mode exited
+    expect(screen.queryByRole("button", { name: /aceptar cambios/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /editor de contenido/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
+  });
+
+  it("Seguir editando closes the split without saving", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
+    await user.type(textarea, " modificado");
+
+    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+
+    const reject = await screen.findByRole(
+      "button",
+      { name: /seguir editando/i },
+      { timeout: 3000 },
+    );
+    await user.click(reject);
+
+    // No save happened, split closed, editor still open with edits intact
+    expect(saveFile).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /aceptar cambios/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: /editor de contenido/i })).toBeInTheDocument();
   });
 });

@@ -22,6 +22,10 @@ interface DiffViewerProps {
   actionsDisabled?: boolean;
   /** If true, render single-column (mobile mode) with a toggle. */
   singleColumn?: boolean;
+  /** Custom label for the reject button. */
+  rejectLabel?: string;
+  /** Custom label for the accept button. */
+  acceptLabel?: string;
 }
 
 /**
@@ -49,6 +53,8 @@ export function DiffViewer({
   onRetry,
   actionsDisabled = false,
   singleColumn = false,
+  rejectLabel = "Rechazar cambios",
+  acceptLabel = "Aceptar cambios",
 }: DiffViewerProps) {
   const [mobileView, setMobileView] = useState<"original" | "modified">(
     "modified",
@@ -285,7 +291,7 @@ export function DiffViewer({
           disabled={actionsDisabled || !onReject}
         >
           <Icon name="close" size={14} />
-          Rechazar cambios
+          {rejectLabel}
         </Button>
         <Button
           variant="primary"
@@ -294,7 +300,7 @@ export function DiffViewer({
           disabled={actionsDisabled || !onAccept}
         >
           <Icon name="check" size={14} />
-          Aceptar cambios
+          {acceptLabel}
         </Button>
       </div>
     </div>

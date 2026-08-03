@@ -5,9 +5,6 @@ import WikiWorld from "@/pages/WikiWorld";
 import WikiEditor from "@/pages/WikiEditor";
 import NotFound from "@/pages/NotFound";
 
-/** Lazy-loaded diff page — code-split because it's only used on `?diff=1` */
-const WikiDiff = lazy(() => import("@/pages/WikiDiff"));
-
 /** Lazy-loaded entity page — code-split because it's only used on entity routes */
 const EntityPage = lazy(() => import("@/pages/EntityPage"));
 
@@ -19,20 +16,13 @@ const EntityPage = lazy(() => import("@/pages/EntityPage"));
  * - `/wiki` → Wiki Home page
  * - `/wiki/:mundo/entity/*path` → EntityPage (entity detail with connections)
  * - `/wiki/:mundo` → WikiWorld (section cards for one world)
- * - `/wiki/:mundo/:section/*` → WikiEditor (file tree + markdown viewer)
- *   - With `?diff=1` → WikiDiff (side-by-side diff)
+ * - `/wiki/:mundo/:section/*` → WikiEditor (file tree + markdown viewer + split diff preview)
  * - `*` → 404 NotFound
  *
  * Route ordering is CRITICAL: `entity` MUST come before `:section` wildcard.
  * React Router matches top-down — `:section` would capture `entity` if defined first.
  * `/wiki/:mundo` (exact match) is ranked more specific than the wildcard routes
  * by React Router, but is listed before `:section/*` for clarity.
- *
- * The diff route is handled inside WikiEditor/WikiDiff via query param.
- * When the URL contains `?diff=1`, the WikiDiff component renders instead.
- * Both share the same URL pattern but differ by query param.
- *
- * Per spec R3 (S20-S27): Diff at `/wiki/:mundo/:section/*path?diff=1`
  */
 export default function App() {
   return (
@@ -57,31 +47,10 @@ export default function App() {
         <Route path="/wiki/:mundo" element={<WikiWorld />} />
         <Route
           path="/wiki/:mundo/:section/*"
-          element={<WikiEditorOrDiff />}
+          element={<WikiEditor />}
         />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
   );
-}
-
-/**
- * Decides whether to render WikiEditor or WikiDiff based on `?diff=1`.
- *
- * Both components share the same route pattern. The query parameter
- * `?diff=1` switches from the editor view to the diff view.
- */
-function WikiEditorOrDiff() {
-  const params = new URLSearchParams(window.location.search);
-  const isDiff = params.get("diff") === "1";
-
-  if (isDiff) {
-    return (
-      <Suspense fallback={<div className="flex min-h-screen items-center justify-center bg-cripta"><span className="text-tinta-desvaida">Cargando diff…</span></div>}>
-        <WikiDiff />
-      </Suspense>
-    );
-  }
-
-  return <WikiEditor />;
 }
