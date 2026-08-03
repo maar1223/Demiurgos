@@ -1,9 +1,33 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Compartment } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { MergeView } from "@codemirror/merge";
 import { oneDark } from "@codemirror/theme-one-dark";
-import { basicSetup } from "codemirror";
+
+/**
+ * Safe minimal extensions shared by both sides of the MergeView.
+ *
+ * IMPORTANT: do NOT use the full `basicSetup` from the `codemirror` meta
+ * package inside a MergeView — it bundles gutters/lineNumbers/history that
+ * conflict with the merge view's own gutter and change tracking, which
+ * crashes at runtime (white screen + Vite full reload). Keep only the
+ * extensions that are safe per-side. Editability is applied separately via
+ * a Compartment so it can toggle at runtime.
+ */
+const sideExtensions = () => [
+  lineNumbers(),
+  highlightActiveLine(),
+  drawSelection(),
+  history(),
+  keymap.of([...defaultKeymap, ...historyKeymap]),
+  EditorView.theme({
+    "&": { height: "100%" },
+    ".cm-scroller": { overflow: "auto", fontFamily: "inherit" },
+    ".cm-gutters": { backgroundColor: "transparent" },
+  }),
+  oneDark,
+];
 
 export interface LiveDiffEditorHandle {
   /** Insert text at the current cursor position of editor B (the editable side). */
@@ -72,13 +96,12 @@ export const LiveDiffEditor = forwardRef<
     const view = new MergeView({
       a: {
         doc: original,
-        extensions: [basicSetup, oneDark, EditorView.editable.of(false)],
+        extensions: [...sideExtensions(), EditorView.editable.of(false)],
       },
       b: {
         doc: value,
         extensions: [
-          basicSetup,
-          oneDark,
+          ...sideExtensions(),
           editableCompartmentRef.current.of(EditorView.editable.of(editable)),
           EditorView.contentAttributes.of({ "aria-label": "Editor de contenido" }),
           EditorView.updateListener.of((update) => {
