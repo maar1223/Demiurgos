@@ -124,11 +124,14 @@ async def get_tree(mundo: str, section: str):
                 if entry.name.startswith(".") or entry.name.startswith("_"):
                     continue
                 rel = entry.relative_to(base)
-                if entry.is_file() and entry.suffix == ".md":
+                if entry.is_file() and entry.suffix.lower() in (
+                    ".md", ".txt", ".json",
+                    ".jpg", ".jpeg", ".png", ".gif", ".webp",
+                ):
                     items.append({
                         "name": entry.name,
                         "path": str(rel),
-                        "type": "file",
+                        "is_dir": False,
                     })
                 elif entry.is_dir():
                     children = _build_tree(entry, base)
@@ -136,7 +139,7 @@ async def get_tree(mundo: str, section: str):
                         items.append({
                             "name": entry.name,
                             "path": str(rel),
-                            "type": "directory",
+                            "is_dir": True,
                             "children": children,
                         })
         except PermissionError:
