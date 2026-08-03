@@ -14,9 +14,9 @@ interface CategoryCardProps {
  */
 export function CategoryCard({ world, fileCount, onClick }: CategoryCardProps) {
   const sectionLabels: string[] = [];
-  if (world.has_lore) sectionLabels.push("Lore");
-  if (world.has_personajes) sectionLabels.push("Personajes");
-  if (world.has_sagas) sectionLabels.push("Sagas");
+  if (world.lore_count > 0) sectionLabels.push("Lore");
+  if (world.character_count > 0) sectionLabels.push("Personajes");
+  if (world.saga_count > 0) sectionLabels.push("Sagas");
 
   return (
     <button

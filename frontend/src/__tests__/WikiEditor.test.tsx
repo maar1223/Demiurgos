@@ -23,7 +23,7 @@ import { useFileContent } from "@/hooks/useFileContent";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
-  { name: "Vibrantes", has_lore: true, has_personajes: true, has_sagas: false },
+  { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 10, saga_count: 4 },
 ];
 
 const mockTreeNodes = [

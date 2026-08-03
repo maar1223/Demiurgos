@@ -24,7 +24,11 @@ export type IconName =
   | "avatar"
   | "demiurgos"
   | "check"
-  | "diff";
+  | "diff"
+  | "grip"
+  | "history"
+  | "mic"
+  | "stop";
 
 interface IconProps extends SVGAttributes<SVGSVGElement> {
   name: IconName;
@@ -202,6 +206,33 @@ const ICONS: Record<IconName, React.ReactNode> = {
       <line x1="4" y1="18" x2="14" y2="18" />
       <line x1="17" y1="16" x2="20" y2="19" />
       <line x1="20" y1="16" x2="17" y2="19" />
+    </>
+  ),
+  grip: (
+    <>
+      <circle cx="9" cy="8" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="8" r="1" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="14" r="1" fill="currentColor" stroke="none" />
+      <circle cx="15" cy="14" r="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  history: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </>
+  ),
+  mic: (
+    <>
+      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" y1="19" x2="12" y2="23" />
+      <line x1="8" y1="23" x2="16" y2="23" />
+    </>
+  ),
+  stop: (
+    <>
+      <rect x="6" y="6" width="12" height="12" rx="2" />
     </>
   ),
 };

@@ -5,6 +5,7 @@ import { useBacklinks } from "@/hooks/useBacklinks";
 import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { EntityDetail } from "@/components/organisms/EntityDetail";
+import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { TabBar } from "@/components/molecules/TabBar";
 import type { SidebarTab } from "@/components/molecules/TabBar";
 import { EmptyState } from "@/components/organisms/EmptyState";
@@ -47,6 +48,23 @@ export default function EntityPage() {
 
   // Entity connections for Contexto tab
   const { links, isLoading: linksLoading } = useBacklinks(mundo, entityName);
+
+  // Right panel content — always visible
+  const rightPanelContent = (
+    <div className="flex h-full flex-col">
+      <TabBar onTabChange={setSidebarTab} />
+      {sidebarTab === "asistente" ? (
+        <AIAssistantSidebar mundo={mundo!} />
+      ) : (
+        <ConnectionsPanel
+          mundo={mundo!}
+          entityName={entityName}
+          links={links}
+          isLoading={linksLoading}
+        />
+      )}
+    </div>
+  );
 
   // --- Loading worlds ---
   if (worldsLoading) {
@@ -104,26 +122,8 @@ export default function EntityPage() {
   return (
     <EditorLayout
       header={<Navbar worlds={worlds} currentWorld={mundo} />}
-      sidebar={
-        <div className="flex h-full flex-col">
-          <TabBar onTabChange={setSidebarTab} />
-          {sidebarTab === "asistente" ? (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center">
-              <Icon name="lightbulb" size={24} className="text-sombra" />
-              <p className="text-small text-sombra">
-                Asistente IA — próximamente
-              </p>
-            </div>
-          ) : (
-            <ConnectionsPanel
-              mundo={mundo}
-              entityName={entityName}
-              links={links}
-              isLoading={linksLoading}
-            />
-          )}
-        </div>
-      }
+      sidebar={null}
+      rightPanel={rightPanelContent}
     >
       {!entityName ? (
         <EmptyState

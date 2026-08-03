@@ -25,7 +25,7 @@ describe("apiFetch", () => {
   });
 
   it("parses a successful JSON response", async () => {
-    const data = { name: "vibrantes", has_lore: true };
+    const data = { name: "vibrantes", lore_count: 77 };
     globalThis.fetch = mockFetch({ ok: true, status: 200, body: data });
 
     const result = await apiFetch<typeof data>("/api/worlds");

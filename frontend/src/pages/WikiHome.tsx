@@ -25,14 +25,9 @@ export default function WikiHome() {
     navigate(`/wiki/${encodeURIComponent(world.name)}/lore`);
   };
 
-  // Determine file count for display purposes.
-  // The API doesn't return a direct file count, so sum available sections.
+  // Total file count across all sections
   const getFileCount = (world: WorldInfo): number => {
-    let count = 0;
-    if (world.has_lore) count++;
-    if (world.has_personajes) count++;
-    if (world.has_sagas) count++;
-    return count;
+    return world.lore_count + world.character_count + world.saga_count;
   };
 
   return (

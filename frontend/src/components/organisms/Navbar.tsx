@@ -1,10 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "@/components/atoms/Icon";
-import { Button } from "@/components/atoms/Button";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
 import type { WorldInfo } from "@/api/types";
-import { NAV_LINKS, PLACEHOLDER_TOAST, AI_PLACEHOLDER_TOAST } from "@/lib/constants";
+import { NAV_LINKS, PLACEHOLDER_TOAST } from "@/lib/constants";
 
 interface NavbarProps {
   worlds: WorldInfo[];
@@ -13,7 +12,7 @@ interface NavbarProps {
 }
 
 /**
- * Global navigation header: logo, world selector, nav links, Asistente IA, avatar.
+ * Global navigation header: logo, world selector, nav links, avatar.
  * Renders on all pages. Collapses nav links on mobile.
  */
 export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
@@ -27,10 +26,6 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
     }
     setMobileMenuOpen(false);
     navigate(to);
-  };
-
-  const handleAIClick = () => {
-    alert(AI_PLACEHOLDER_TOAST);
   };
 
   const handleAvatarClick = () => {
@@ -70,25 +65,13 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
           ))}
         </nav>
 
-        {/* Right: World selector, AI button, avatar */}
+        {/* Right: World selector, avatar */}
         <div className="flex items-center gap-2">
-          {/* World selector (extracted to WorldSelector molecule) */}
           <WorldSelector
             worlds={worlds}
             currentWorld={currentWorld}
             onWorldChange={onWorldChange}
           />
-
-          {/* Asistente IA button (desktop) */}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleAIClick}
-            className="hidden md:inline-flex"
-          >
-            <Icon name="lightbulb" size={14} />
-            Asistente IA
-          </Button>
 
           {/* Avatar */}
           <button
@@ -128,15 +111,6 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
                 {link.label}
               </button>
             ))}
-            <hr className="my-2 border-filio" />
-            <button
-              type="button"
-              onClick={handleAIClick}
-              className="flex items-center gap-2 rounded-lg px-3 py-2 text-body text-pergamino hover:bg-piedra"
-            >
-              <Icon name="lightbulb" size={16} />
-              Asistente IA
-            </button>
           </nav>
         </div>
       )}

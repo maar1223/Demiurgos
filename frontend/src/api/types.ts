@@ -1,9 +1,10 @@
 /** Info about a single world returned by GET /api/worlds. */
 export interface WorldInfo {
   name: string;
-  has_lore: boolean;
-  has_personajes: boolean;
-  has_sagas: boolean;
+  path: string;
+  lore_count: number;
+  character_count: number;
+  saga_count: number;
 }
 
 /** A file or directory node in the section tree. */

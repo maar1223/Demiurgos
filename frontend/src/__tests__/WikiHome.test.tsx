@@ -12,15 +12,16 @@ import { useWorlds } from "@/hooks/useWorlds";
 import type { Mock } from "vitest";
 
 const mockWorlds: WorldInfo[] = [
-  { name: "Vibrantes", has_lore: true, has_personajes: true, has_sagas: false },
-  { name: "Sombras", has_lore: true, has_personajes: false, has_sagas: true },
+  { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 10, saga_count: 4 },
+  { name: "Sombras", path: "/sombras", lore_count: 5, character_count: 0, saga_count: 3 },
 ];
 
 interface WorldInfo {
   name: string;
-  has_lore: boolean;
-  has_personajes: boolean;
-  has_sagas: boolean;
+  path: string;
+  lore_count: number;
+  character_count: number;
+  saga_count: number;
 }
 
 function renderWikiHome() {
