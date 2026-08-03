@@ -259,21 +259,21 @@ class TestServerIntegration:
 
         import inspect
 
-        # graph_search(query: str, type: str = "", tag: str = "")
+        # graph_search(query: str, type: str = "", tag: str = "", mundo: str = "")
         sig_search = inspect.signature(graph_search)
-        assert list(sig_search.parameters.keys()) == ["query", "type", "tag"]
+        assert list(sig_search.parameters.keys()) == ["query", "type", "tag", "mundo"]
 
-        # graph_read(entity_path: str)
+        # graph_read(entity_path: str, mundo: str = "")
         sig_read = inspect.signature(graph_read)
-        assert list(sig_read.parameters.keys()) == ["entity_path"]
+        assert list(sig_read.parameters.keys()) == ["entity_path", "mundo"]
 
-        # graph_links(entity_path: str = "", kind: str = "backlinks")
+        # graph_links(entity_path: str = "", kind: str = "backlinks", mundo: str = "")
         sig_links = inspect.signature(graph_links)
-        assert list(sig_links.parameters.keys()) == ["entity_path", "kind"]
+        assert list(sig_links.parameters.keys()) == ["entity_path", "kind", "mundo"]
 
-        # graph_status() — no parameters
+        # graph_status(mundo: str = "")
         sig_status = inspect.signature(graph_status)
-        assert list(sig_status.parameters.keys()) == []
+        assert list(sig_status.parameters.keys()) == ["mundo"]
 
     def test_full_tool_chain_with_mocked_index(self) -> None:
         """All four tools work together with a mocked index — no I/O needed."""
@@ -508,7 +508,8 @@ class TestAutoTag:
         }
         adapter = GraphMCPAdapter(index)
 
-        result = adapter.tool_auto_tag("Rhyz trained Vael in the mountains", "vibrantes")
+        # mundo="" routes to the injected default index (the mock)
+        result = adapter.tool_auto_tag("Rhyz trained Vael in the mountains", "")
 
         assert "entities" in result
         assert "Rhyz" in result["entities"]
@@ -524,7 +525,7 @@ class TestAutoTag:
         adapter = GraphMCPAdapter(index)
 
         result = adapter.tool_auto_tag(
-            "Hubo una gran batalla seguida de una traición inesperada", "vibrantes",
+            "Hubo una gran batalla seguida de una traición inesperada", "",
         )
 
         assert "batalla" in result["themes"]
@@ -537,7 +538,7 @@ class TestAutoTag:
         index.get_entity_names.return_value = {"Rhyz"}
         adapter = GraphMCPAdapter(index)
 
-        result = adapter.tool_auto_tag("", "vibrantes")
+        result = adapter.tool_auto_tag("", "")
 
         assert result["entities"] == []
         assert result["themes"] == []
@@ -548,7 +549,7 @@ class TestAutoTag:
         index.get_entity_names.return_value = set()
         adapter = GraphMCPAdapter(index)
 
-        result = adapter.tool_auto_tag("Una batalla épica entre dos reinos", "vibrantes")
+        result = adapter.tool_auto_tag("Una batalla épica entre dos reinos", "")
 
         assert result["entities"] == []
         assert "batalla" in result["themes"]
@@ -646,10 +647,10 @@ class TestNewServerTools:
         import inspect
 
         sig_ls = inspect.signature(lore_search)
-        assert list(sig_ls.parameters.keys()) == ["query"]
+        assert list(sig_ls.parameters.keys()) == ["query", "mundo"]
 
         sig_lc = inspect.signature(lore_conflicts)
-        assert list(sig_lc.parameters.keys()) == ["entity_path"]
+        assert list(sig_lc.parameters.keys()) == ["entity_path", "mundo"]
 
         sig_lf = inspect.signature(lore_format)
         assert list(sig_lf.parameters.keys()) == ["data"]
@@ -678,3 +679,195 @@ class TestNewServerTools:
         assert params["engram_enabled"].default is True
         assert "engram_cmd" in params
         assert params["engram_cmd"].default == "engram"
+
+
+# =============================================================================
+# Search score filtering — entities with zero relevance are excluded
+# =============================================================================
+
+
+class TestSearchScoreFiltering:
+    """Verify that EntityGraphIndex.search() filters out zero-score results."""
+
+    @staticmethod
+    def _seed_cache(index: EntityGraphIndex, entities: list[dict]) -> None:
+        """Populate the index cache with test entities, bypassing file scan."""
+        with index._lock:
+            index._cache["entities"] = {}
+            for ent in entities:
+                path = ent.get("path", ent["name"])
+                # Ensure required keys exist
+                index._cache["entities"][path] = {
+                    "name": ent["name"],
+                    "type": ent.get("type", "Ficha"),
+                    "path": path,
+                    "title": ent.get("title", ent["name"]),
+                    "description": ent.get("description", ""),
+                    "tags": ent.get("tags", []),
+                    "content": ent.get("content", ""),
+                    "forward_links": ent.get("forward_links", []),
+                    "backlinks": ent.get("backlinks", []),
+                    "relaciones": ent.get("relaciones", []),
+                    "word_count": ent.get("word_count", 0),
+                }
+
+    def test_excludes_zero_score_entities(self) -> None:
+        """Entities with zero relevance are excluded when search tokens exist."""
+        index = EntityGraphIndex()
+        self._seed_cache(
+            index,
+            [
+                {
+                    "name": "Rhyz El Resonante",
+                    "type": "Personaje",
+                    "path": "personajes/rhyz.md",
+                    "title": "Rhyz El Resonante",
+                    "description": "Protagonista de Ekkor.",
+                    "tags": ["protagonista", "stal04"],
+                },
+                {
+                    "name": "Toryn El Mecanico",
+                    "type": "Personaje",
+                    "path": "personajes/toryn.md",
+                    "title": "Toryn El Mecanico",
+                    "description": "Ingeniero de los distritos bajos.",
+                    "tags": ["secundario", "ingeniero"],
+                },
+                {
+                    "name": "Ayagar Fantasma",
+                    "type": "Criatura",
+                    "path": "lore/ayagar_fantasma.md",
+                    "title": "Ayagar Fantasma",
+                    "description": "Criatura etérea sin relación alguna.",
+                    "tags": ["criatura", "fantasma"],
+                },
+                {
+                    "name": "Ekkor",
+                    "type": "Lugar",
+                    "path": "lore/ekkor.md",
+                    "title": "Ekkor",
+                    "description": "La ciudad capital.",
+                    "tags": ["ciudad", "capital"],
+                },
+            ],
+        )
+
+        results = index.search("Rhyz")
+
+        names = [r.name for r in results]
+        # Rhyz → prefix match on name (+10) → kept
+        assert "Rhyz El Resonante" in names
+        # Toryn → description does NOT mention "Rhyz" → score 0 → excluded
+        assert "Toryn El Mecanico" not in names
+        # Ayagar → no mention → excluded
+        assert "Ayagar Fantasma" not in names
+        # Ekkor → no mention → excluded
+        assert "Ekkor" not in names
+        assert len(results) == 1
+
+    def test_all_excluded_returns_empty(self) -> None:
+        """When no entity matches the query, return empty list."""
+        index = EntityGraphIndex()
+        self._seed_cache(
+            index,
+            [
+                {
+                    "name": "Rhyz",
+                    "type": "Personaje",
+                    "path": "personajes/rhyz.md",
+                    "title": "Rhyz",
+                    "description": "Un personaje cualquiera.",
+                    "tags": ["test"],
+                },
+            ],
+        )
+
+        results = index.search("ZzzzInexistente")
+
+        assert results == []
+
+    def test_empty_query_returns_empty(self) -> None:
+        """Empty query with no filters returns empty (fast-return path)."""
+        index = EntityGraphIndex()
+        self._seed_cache(
+            index,
+            [{"name": "X", "path": "x.md"}],
+        )
+
+        results = index.search("")
+
+        assert results == []
+
+    def test_filters_without_query_returns_all_matching(self) -> None:
+        """Filters without search tokens return all type-matching entities."""
+        index = EntityGraphIndex()
+        self._seed_cache(
+            index,
+            [
+                {
+                    "name": "Rhyz",
+                    "type": "Personaje",
+                    "path": "p.md",
+                    "title": "Rhyz",
+                    "description": "...",
+                    "tags": [],
+                },
+                {
+                    "name": "Ayagar",
+                    "type": "Criatura",
+                    "path": "c.md",
+                    "title": "Ayagar",
+                    "description": "...",
+                    "tags": [],
+                },
+                {
+                    "name": "Bira",
+                    "type": "Personaje",
+                    "path": "b.md",
+                    "title": "Bira",
+                    "description": "...",
+                    "tags": [],
+                },
+            ],
+        )
+
+        results = index.search("", filters={"type": "Personaje"})
+
+        names = [r.name for r in results]
+        assert "Rhyz" in names
+        assert "Bira" in names
+        assert "Ayagar" not in names
+        assert len(results) == 2
+
+    def test_bm25_matches_in_larger_corpus(self) -> None:
+        """BM25 matches are kept when the term isn't too common (IDF > 0)."""
+        index = EntityGraphIndex()
+        # 8 entities — "Rhyz" appears in description of only 1 (not the name match)
+        entities = [
+            {
+                "name": f"Entity_{i}",
+                "path": f"e{i}.md",
+                "title": f"Entity {i}",
+                "description": "Sin relación" if i != 3 else "Amigo cercano de Rhyz",
+                "tags": ["test"],
+            }
+            for i in range(8)
+        ]
+        # Replace entity 0 with the prefix match
+        entities[0] = {
+            "name": "Rhyz El Resonante",
+            "path": "rhyz.md",
+            "title": "Rhyz El Resonante",
+            "description": "Protagonista.",
+            "tags": ["protagonista"],
+        }
+        self._seed_cache(index, entities)
+
+        results = index.search("Rhyz")
+        names = [r.name for r in results]
+
+        # Entity_3 mentions "Rhyz" in description → BM25 positive (IDF > 0 in 8-doc corpus)
+        assert "Rhyz El Resonante" in names, "Prefix match should be kept"
+        assert "Entity_3" in names, "BM25 match with IDF > 0 should be kept"
+        # Others don't mention Rhyz → excluded
+        assert len(results) == 2

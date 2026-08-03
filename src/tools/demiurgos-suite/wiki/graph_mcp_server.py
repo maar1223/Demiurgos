@@ -6,16 +6,19 @@ Usage::
     python graph_mcp_server.py --mundo vibrantes --mundos-path mundos
     python graph_mcp_server.py --mundo vibrantes --mundos-path mundos --no-engram
 
-Hermes connects via the demiurgos-mcp profile and gains 9 tools:
-  - graph_search(query, type?, tag?)  → {matches: [...], query}
-  - graph_read(entity_path)           → {entity: {...}, exists: bool}
-  - graph_links(entity_path?, kind)   → {links: [...], kind}
-  - graph_status()                    → {entity_count, dirty, last_build}
-  - lore_search(query)                → {graph_matches, engram_matches}
-  - lore_conflicts(entity_path)       → {conflicts, entity_path}
-  - lore_format(data)                 → str (markdown with [[wikilinks]])
-  - auto_tag(text, mundo)             → {entities, themes}
-  - idea_link(content, mundo)         → {matches, content}
+Hermes connects via the demiurgos-mcp profile and gains 10 tools.
+Every tool accepts an optional ``mundo`` parameter (defaults to the world
+configured at launch) so the UI can query whichever world is active:
+  - graph_search(query, type?, tag?, mundo?)  → {matches: [...], query}
+  - graph_read(entity_path, mundo?)           → {entity: {...}, exists: bool}
+  - graph_links(entity_path?, kind, mundo?)   → {links: [...], kind}
+  - graph_status(mundo?)                      → {entity_count, dirty, last_build}
+  - graph_rebuild(mundo?)                     → {entity_count, rebuilt}
+  - lore_search(query, mundo?)                → {graph_matches, engram_matches}
+  - lore_conflicts(entity_path, mundo?)       → {conflicts, entity_path}
+  - lore_format(data)                         → str (markdown with [[wikilinks]])
+  - auto_tag(text, mundo)                     → {entities, themes}
+  - idea_link(content, mundo)                 → {matches, content}
 """
 
 from __future__ import annotations
@@ -102,11 +105,12 @@ def init(
 
 
 @mcp.tool()
-def graph_search(query: str, type: str = "", tag: str = "") -> dict:
+def graph_search(query: str, type: str = "", tag: str = "", mundo: str = "") -> dict:
     """Search the entity graph by name, title, description, and tags.
 
     Returns matches sorted by relevance score.  Use this tool first to
     locate entities before calling graph_read for full content.
+    ``mundo`` is the world to query (optional; defaults to the configured world).
     """
     filters: dict = {}
     if type:
@@ -114,22 +118,23 @@ def graph_search(query: str, type: str = "", tag: str = "") -> dict:
     if tag:
         filters["tag"] = tag
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
-    return _adapter.tool_search(query, filters)
+    return _adapter.tool_search(query, filters, mundo)
 
 
 @mcp.tool()
-def graph_read(entity_path: str) -> dict:
+def graph_read(entity_path: str, mundo: str = "") -> dict:
     """Read a full entity by its path, including content and all links.
 
     Returns the entity with content, forward_links, backlinks, relaciones,
     and word count.  If the entity does not exist, returns {exists: false}.
+    ``mundo`` is the world to query (optional; defaults to the configured world).
     """
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
-    return _adapter.tool_read(entity_path)
+    return _adapter.tool_read(entity_path, mundo)
 
 
 @mcp.tool()
-def graph_links(entity_path: str = "", kind: str = "backlinks") -> dict:
+def graph_links(entity_path: str = "", kind: str = "backlinks", mundo: str = "") -> dict:
     """Query the link graph for an entity.
 
     kind values:
@@ -139,21 +144,36 @@ def graph_links(entity_path: str = "", kind: str = "backlinks") -> dict:
       - orphans     — entities with no incoming AND no outgoing links
       - hubs        — top 20 entities with the most total links
       - suggest     — entities sharing tags with entity_path but NOT linked
+
+    ``mundo`` is the world to query (optional; defaults to the configured world).
     """
     ep: str | None = entity_path if entity_path else None
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
-    return _adapter.tool_links(ep, kind)
+    return _adapter.tool_links(ep, kind, mundo)
 
 
 @mcp.tool()
-def graph_status() -> dict:
+def graph_status(mundo: str = "") -> dict:
     """Return current index health metrics.
 
     Includes entity_count, dirty flag (unsaved changes since last build),
     and last_build timestamp (ISO 8601).
+    ``mundo`` is the world to query (optional; defaults to the configured world).
     """
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
-    return _adapter.tool_status()
+    return _adapter.tool_status(mundo)
+
+
+@mcp.tool()
+def graph_rebuild(mundo: str = "") -> dict:
+    """Force a full index rebuild from disk. Use when graph_status reports dirty=true
+    or when files have been modified externally and the file watcher missed them.
+
+    Returns the new entity count and build timestamp.
+    ``mundo`` is the world to rebuild (optional; defaults to the configured world).
+    """
+    assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
+    return _adapter.tool_rebuild(mundo)
 
 
 # ---------------------------------------------------------------------------
@@ -162,28 +182,30 @@ def graph_status() -> dict:
 
 
 @mcp.tool()
-def lore_search(query: str) -> dict:
+def lore_search(query: str, mundo: str = "") -> dict:
     """Search both the entity graph and Engram persistent memory.
 
     Returns graph_matches (from the entity index) and engram_matches
     (from Engram memory), each tagged with a source field.
     Use this to find entities and related memories in one call.
+    ``mundo`` is the world to query (optional; defaults to the configured world).
     """
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
-    return _adapter.tool_lore_search(query)
+    return _adapter.tool_lore_search(query, mundo)
 
 
 @mcp.tool()
-def lore_conflicts(entity_path: str) -> dict:
+def lore_conflicts(entity_path: str, mundo: str = "") -> dict:
     """Detect contradictions between an entity's content and Engram memory.
 
     Compares structured claims (dates, status, names, relationships)
     from the entity file against Engram observations. Returns a list of
     conflicts with claim_a, source_a, claim_b, source_b, and conflict_type.
     Empty conflicts list = no contradictions found.
+    ``mundo`` is the world to query (optional; defaults to the configured world).
     """
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
-    return _adapter.tool_lore_conflicts(entity_path)
+    return _adapter.tool_lore_conflicts(entity_path, mundo)
 
 
 @mcp.tool()

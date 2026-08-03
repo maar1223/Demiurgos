@@ -18,6 +18,7 @@ sync-ideas.py) with 15s timeout and graceful fallback.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -50,13 +51,48 @@ class GraphMCPAdapter:
         engram_enabled: bool = True,
         engram_cmd: str = "engram",
     ) -> None:
-        self._index = index
+        self._default_index = index
+        self._indexes: dict[str, EntityGraphIndex] = {}
+        self._indexes_lock = threading.RLock()
         self._mundos_path: Path | None = (
             Path(mundos_path) if mundos_path else None
         )
         self._project = project or "demiurgos"
         self._engram_enabled = engram_enabled
         self._engram_cmd = engram_cmd
+
+    # -------------------------------------------------------------------
+    # Index resolution (per-world lazy build)
+    # -------------------------------------------------------------------
+
+    def _index_for(self, mundo: str) -> EntityGraphIndex:
+        """Resolve the index for a world, building it lazily on first use.
+
+        Empty or whitespace-only ``mundo`` returns the injected default index
+        (backward-compatible path — never builds a new index).  A named world
+        matching the configured project (``self._project``) returns the default
+        index too — it was built for that world at startup and already has its
+        file watcher running.  Only worlds DIFFERENT from the configured one
+        get their own lazily-built ``EntityGraphIndex`` (one watcher per world,
+        never two on the same directory).
+        """
+        mundo = (mundo or "").strip()
+        if not mundo or mundo == self._project:
+            return self._default_index
+
+        with self._indexes_lock:
+            cached = self._indexes.get(mundo)
+            if cached is not None:
+                return cached
+
+            idx = EntityGraphIndex(self._mundos_path)
+            idx.build(mundo)
+            try:
+                idx.start_watch(mundo)
+            except ImportError:
+                pass  # watchdog not installed — live updates disabled
+            self._indexes[mundo] = idx
+            return idx
 
     # -------------------------------------------------------------------
     # Tools
@@ -66,23 +102,26 @@ class GraphMCPAdapter:
         self,
         query: str,
         filters: dict[str, Any] | None = None,
+        mundo: str = "",
     ) -> dict[str, Any]:
         """Search entities by name/title/tags.
 
-        Returns ``{"matches": [...], "query": "..."}``.
+        ``mundo`` is the world to query (optional; defaults to the configured
+        world).  Returns ``{"matches": [...], "query": "..."}``.
         """
-        hits = self._index.search(query, filters)
+        hits = self._index_for(mundo).search(query, filters)
         return {
             "matches": [self._hit_to_dict(h) for h in hits],
             "query": query,
         }
 
-    def tool_read(self, entity_path: str) -> dict[str, Any]:
+    def tool_read(self, entity_path: str, mundo: str = "") -> dict[str, Any]:
         """Read a full entity by path.
 
-        Returns ``{"entity": {...}, "exists": true|false}``.
+        ``mundo`` is the world to query (optional; defaults to the configured
+        world).  Returns ``{"entity": {...}, "exists": true|false}``.
         """
-        detail = self._index.get_entity(entity_path)
+        detail = self._index_for(mundo).get_entity(entity_path)
         if detail is None:
             return {"entity": None, "exists": False, "path": entity_path}
         return {
@@ -95,13 +134,15 @@ class GraphMCPAdapter:
         self,
         entity_path: str | None = None,
         kind: str = "backlinks",
+        mundo: str = "",
     ) -> dict[str, Any]:
-        """Query link graph â€” same kinds as ``EntityGraphIndex.get_links()``.
+        """Query link graph — same kinds as ``EntityGraphIndex.get_links()``.
 
-        Returns ``{"links": [...], "kind": "...", "entity_path": "..."}``.
+        ``mundo`` is the world to query (optional; defaults to the configured
+        world).  Returns ``{"links": [...], "kind": "...", "entity_path": "..."}``.
         """
         try:
-            links = self._index.get_links(entity_path, kind)
+            links = self._index_for(mundo).get_links(entity_path, kind)
         except ValueError as exc:
             return {
                 "links": [],
@@ -115,29 +156,46 @@ class GraphMCPAdapter:
             "entity_path": entity_path,
         }
 
-    def tool_status(self) -> dict[str, Any]:
+    def tool_status(self, mundo: str = "") -> dict[str, Any]:
         """Return current index metrics.
 
-        Returns ``{"entity_count": N, "dirty": bool, "last_build": ISO}``.
+        ``mundo`` is the world to query (optional; defaults to the configured
+        world).  Returns ``{"entity_count": N, "dirty": bool, "last_build": ISO}``.
         """
+        index = self._index_for(mundo)
         return {
-            "entity_count": self._index.entity_count,
-            "dirty": self._index.dirty,
-            "last_build": self._index.last_build,
+            "entity_count": index.entity_count,
+            "dirty": index.dirty,
+            "last_build": index.last_build,
+        }
+
+    def tool_rebuild(self, mundo: str = "") -> dict[str, Any]:
+        """Force a full index rebuild from disk.
+
+        ``mundo`` is the world to rebuild (optional; defaults to the configured
+        world).  Returns ``{"entity_count": N, "rebuilt": True, "last_build": ISO}``.
+        """
+        index = self._index_for(mundo)
+        count = index.build(mundo if mundo else self._project)
+        return {
+            "entity_count": count,
+            "rebuilt": True,
+            "last_build": index.last_build,
         }
 
     # -------------------------------------------------------------------
     # Narrative tools (TG-01 through TG-05)
     # -------------------------------------------------------------------
 
-    def tool_lore_search(self, query: str) -> dict[str, Any]:
+    def tool_lore_search(self, query: str, mundo: str = "") -> dict[str, Any]:
         """Search both the entity graph and Engram memory.
 
-        Returns ``{"graph_matches": [...], "engram_matches": [...], "query": "..."}``.
+        ``mundo`` is the world to query (optional; defaults to the configured
+        world).  Returns ``{"graph_matches": [...], "engram_matches": [...], "query": "..."}``.
         Each match is tagged with ``"source": "graph"|"engram"``.
         """
         # Graph search
-        graph_hits = self._index.search(query)
+        graph_hits = self._index_for(mundo).search(query)
         graph_matches: list[dict[str, Any]] = [
             {
                 "name": h.name,
@@ -157,7 +215,7 @@ class GraphMCPAdapter:
         engram_matches: list[dict[str, Any]] = []
         if self._engram_enabled:
             raw = engram_search(
-                query, self._project, engram_cmd=self._engram_cmd, limit=10,
+                query, mundo or self._project, engram_cmd=self._engram_cmd, limit=10,
             )
             for item in raw:
                 item["source"] = "engram"
@@ -169,14 +227,15 @@ class GraphMCPAdapter:
             "query": query,
         }
 
-    def tool_lore_conflicts(self, entity_path: str) -> dict[str, Any]:
+    def tool_lore_conflicts(self, entity_path: str, mundo: str = "") -> dict[str, Any]:
         """Detect contradictions between entity content and Engram memory.
 
-        Returns ``{"conflicts": [...], "entity_path": "..."}``.
+        ``mundo`` is the world to query (optional; defaults to the configured
+        world).  Returns ``{"conflicts": [...], "entity_path": "..."}``.
         Empty conflicts list means no contradictions found.
         """
         # Get entity from index
-        entity = self._index.get_entity(entity_path)
+        entity = self._index_for(mundo).get_entity(entity_path)
         if entity is None:
             return {"conflicts": [], "entity_path": entity_path, "exists": False}
 
@@ -194,7 +253,7 @@ class GraphMCPAdapter:
 
         # Search Engram for related observations
         engram_hits = engram_search(
-            entity.name, self._project, engram_cmd=self._engram_cmd, limit=5,
+            entity.name, mundo or self._project, engram_cmd=self._engram_cmd, limit=5,
         )
 
         # Get full observation content and extract claims
@@ -230,7 +289,7 @@ class GraphMCPAdapter:
         Entity names are resolved to canonical graph names.
         """
         # Get known entity names from the index
-        known_names = self._index.get_entity_names()
+        known_names = self._index_for(mundo).get_entity_names()
 
         entities = extract_entities(text, known_names)
         themes = extract_themes(text)
@@ -249,7 +308,7 @@ class GraphMCPAdapter:
         Matches include slug, score, and preview (first 80 chars).
         """
         spath = str(self._mundos_path) if self._mundos_path else "mundos"
-        ideas = scan_ideas_dir(mundo, spath)
+        ideas = scan_ideas_dir(mundo or self._project, spath)
         matches = search_ideas_bm25(content, ideas)
 
         return {
