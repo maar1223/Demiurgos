@@ -443,3 +443,88 @@ class TestDuplicateEndpoint:
         assert resp.status_code == 200
         assert resp.json()["path"] == "lore/00_inicio-copia.md"
         assert "test_mundo" not in api_server._graph_indices
+
+
+class TestCovers:
+    """S29-S31: ?covers=true adds portada to file nodes; dirs null; field
+    absent without the param; frontmatter value with body-image fallback."""
+
+    def _world(self) -> Path:
+        return api_server.MUNDOS_DIR / "test_mundo"
+
+    def _setup_media(self) -> Path:
+        media = self._world() / "wiki" / "media"
+        media.mkdir(parents=True)
+        (media / "foto.jpg").write_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 64)
+        return media
+
+    def test_valid_portada(self, client: TestClient):
+        self._setup_media()
+        (self._world() / "lore" / "a.md").write_text(
+            "---\ntype: ficha\nportada: wiki/media/foto.jpg\n---\n# A\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree?covers=true").json()
+        node = next(n for n in tree if n["name"] == "a.md")
+        assert node["portada"] == "wiki/media/foto.jpg"
+
+    def test_quoted_portada_value(self, client: TestClient):
+        self._setup_media()
+        (self._world() / "lore" / "f.md").write_text(
+            '---\nportada: "wiki/media/foto.jpg"\n---\n# F\n', encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree?covers=true").json()
+        node = next(n for n in tree if n["name"] == "f.md")
+        assert node["portada"] == "wiki/media/foto.jpg"
+
+    def test_portada_missing_falls_back_to_body_image(self, client: TestClient):
+        self._setup_media()
+        (self._world() / "lore" / "b.md").write_text(
+            "---\nportada: wiki/media/inexistente.jpg\n---\n# B\n\n![alt](wiki/media/foto.jpg)\n",
+            encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree?covers=true").json()
+        node = next(n for n in tree if n["name"] == "b.md")
+        assert node["portada"] == "wiki/media/foto.jpg"
+
+    def test_body_image_without_portada(self, client: TestClient):
+        self._setup_media()
+        (self._world() / "lore" / "c.md").write_text(
+            "# C\n\n![descripción](wiki/media/foto.jpg)\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree?covers=true").json()
+        node = next(n for n in tree if n["name"] == "c.md")
+        assert node["portada"] == "wiki/media/foto.jpg"
+
+    def test_body_image_strips_fragment_suffix(self, client: TestClient):
+        self._setup_media()
+        (self._world() / "lore" / "d.md").write_text(
+            "# D\n\n![x](wiki/media/foto.jpg#grande)\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree?covers=true").json()
+        node = next(n for n in tree if n["name"] == "d.md")
+        assert node["portada"] == "wiki/media/foto.jpg"
+
+    def test_no_images_returns_null(self, client: TestClient):
+        self._setup_media()
+        (self._world() / "lore" / "e.md").write_text("# E\n\nSin imágenes\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree?covers=true").json()
+        node = next(n for n in tree if n["name"] == "e.md")
+        assert node["portada"] is None
+
+    def test_directory_returns_null(self, client: TestClient):
+        self._setup_media()
+        tree = client.get("/api/test_mundo/lore/tree?covers=true").json()
+        subdir = next(n for n in tree if n["is_dir"])
+        assert subdir["portada"] is None
+
+    def test_covers_false_field_absent(self, client: TestClient):
+        self._setup_media()
+        (self._world() / "lore" / "a.md").write_text(
+            "---\nportada: wiki/media/foto.jpg\n---\n# A\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree").json()
+        node = next(n for n in tree if n["name"] == "a.md")
+        assert "portada" not in node
+
+    def test_covers_in_nested_files(self, client: TestClient):
+        self._setup_media()
+        (self._world() / "lore" / "subdir" / "g.md").write_text(
+            "# G\n\n![x](wiki/media/foto.jpg)\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree?covers=true").json()
+        subdir = next(n for n in tree if n["is_dir"])
+        node = next(n for n in subdir["children"] if n["name"] == "g.md")
+        assert node["portada"] == "wiki/media/foto.jpg"

@@ -208,8 +208,13 @@ def _next_duplicate_name(full: Path) -> Path:
 
 
 @app.get("/api/{mundo}/{section}/tree")
-async def get_tree(mundo: str, section: str):
-    """List files in a section as a tree structure."""
+async def get_tree(mundo: str, section: str, covers: bool = Query(False)):
+    """List files in a section as a tree structure.
+
+    With ``?covers=true`` every file node carries a ``portada`` field
+    (mundo-relative cover path or null); without it the field is absent
+    (S29). Covers are resolved in a single sweep — no per-card requests.
+    """
     if section not in VALID_SECTIONS:
         return []
     mundo_dir = MUNDOS_DIR / mundo
@@ -237,12 +242,15 @@ async def get_tree(mundo: str, section: str):
                 rel = entry.relative_to(base)
                 children = _build_tree(entry, base)
                 if children:  # Only include dirs with files
-                    items.append({
+                    node = {
                         "name": entry.name,
                         "path": str(rel),
                         "is_dir": True,
                         "children": children,
-                    })
+                    }
+                    if covers:
+                        node["portada"] = None
+                    items.append(node)
             for entry in entries:
                 if not entry.is_file():
                     continue
@@ -252,11 +260,14 @@ async def get_tree(mundo: str, section: str):
                 ):
                     continue
                 rel = entry.relative_to(base)
-                items.append({
+                node = {
                     "name": entry.name,
                     "path": str(rel),
                     "is_dir": False,
-                })
+                }
+                if covers:
+                    node["portada"] = _resolve_cover(mundo, entry)
+                items.append(node)
         except PermissionError:
             pass
         return items
