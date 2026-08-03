@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { forwardRef, useImperativeHandle } from "react";
@@ -67,7 +67,7 @@ import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useEntitySearch } from "@/hooks/useEntitySearch";
-import { useImages } from "@/hooks/useImages";
+import { useImages, useImageUpload } from "@/hooks/useImages";
 import { saveFile } from "@/api/wiki";
 import type { Mock } from "vitest";
 
@@ -163,16 +163,70 @@ describe("WikiEditor", () => {
   it("renders the file tree in sidebar", () => {
     renderWikiEditor();
 
-    expect(screen.getByText("capitulos")).toBeInTheDocument();
-    expect(screen.getByText("notas.md")).toBeInTheDocument();
+    // Scope to the sidebar nav — the same names now also appear in the
+    // central section cards
+    const tree = within(
+      screen.getByRole("navigation", { name: "File tree" }),
+    );
+    expect(tree.getByText("capitulos")).toBeInTheDocument();
+    expect(tree.getByText("notas.md")).toBeInTheDocument();
   });
 
-  it("shows 'Seleccioná un archivo' placeholder when no file selected", () => {
+  it("shows section cards instead of the placeholder when no file selected", () => {
     renderWikiEditor();
 
+    // The central area shows visual cards (directory + file) instead of
+    // the old "Seleccioná un archivo" placeholder — the section contents
+    // are browsable directly from the content area
     expect(
-      screen.getByText(/Seleccioná un archivo del panel lateral/i),
+      screen.getByRole("heading", { name: "capitulos" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "notas.md" }),
+    ).toBeInTheDocument();
+    // The directory badge shows the recursive file count
+    expect(screen.getByText("2 archivos")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Seleccioná un archivo del panel lateral/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("navigates into a directory when its card is clicked and shows its children", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    // The directory card heading is unique — the sidebar tree node is a
+    // button with a plain span
+    await user.click(screen.getByRole("heading", { name: "capitulos" }));
+
+    // The central area now shows the directory's children as cards
+    expect(
+      screen.getByRole("heading", { name: "cap1.md" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "cap2.md" }),
+    ).toBeInTheDocument();
+    // "capitulos" survives in the sidebar tree AND the breadcrumb segment
+    expect(screen.getAllByText("capitulos").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("opens a file when its card is clicked", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(screen.getByRole("heading", { name: "notas.md" }));
+
+    // Navigated to the file — the viewer replaces the cards with the
+    // mocked file content
+    expect(screen.getByText("Capítulo 1")).toBeInTheDocument();
+    expect(screen.queryByText("2 archivos")).not.toBeInTheDocument();
   });
 
   it("shows breadcrumb with mundo and section", () => {
@@ -235,7 +289,9 @@ describe("WikiEditor", () => {
 
     renderWikiEditor();
 
-    expect(screen.getByRole("status")).toBeInTheDocument();
+    // Both the sidebar tree and the central cards area show a spinner
+    // while the tree loads
+    expect(screen.getAllByRole("status")).toHaveLength(2);
   });
 
   it("shows error banner when tree fetch fails", () => {
@@ -248,8 +304,13 @@ describe("WikiEditor", () => {
 
     renderWikiEditor();
 
+    // Sidebar tree error banner
     expect(
       screen.getByText(/No se pudo cargar el árbol de archivos/i),
+    ).toBeInTheDocument();
+    // Central cards area error banner
+    expect(
+      screen.getByText(/No se pudo cargar el contenido de la sección/i),
     ).toBeInTheDocument();
   });
 
@@ -263,8 +324,13 @@ describe("WikiEditor", () => {
 
     renderWikiEditor();
 
+    // Sidebar tree empty state
     expect(
       screen.getByText(/Esta sección está vacía/i),
+    ).toBeInTheDocument();
+    // Central cards area empty state
+    expect(
+      screen.getByText("La sección está vacía"),
     ).toBeInTheDocument();
   });
 
@@ -296,6 +362,28 @@ describe("WikiEditor", () => {
 
     // After navigation, the breadcrumb should still show "lore"
     expect(screen.getByText("lore")).toBeInTheDocument();
+  });
+
+  it("navigates to the world page when the world breadcrumb chip is clicked", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/wiki/Vibrantes/lore"]}>
+        <Routes>
+          <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
+          <Route
+            path="/wiki/:mundo"
+            element={<div data-testid="world-page">World page</div>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // The world chip is inside the breadcrumb nav — scope the query so the
+    // Navbar world selector ("Vibrantes") cannot match.
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    await user.click(within(breadcrumb).getByRole("button", { name: "Vibrantes" }));
+
+    expect(screen.getByTestId("world-page")).toBeInTheDocument();
   });
 
   it("renders section tabs above the file tree", () => {
@@ -781,5 +869,138 @@ describe("WikiEditor", () => {
     expect(insertTextMock).toHaveBeenCalledWith(
       "![foto](wiki/media/foto.jpg#left)",
     );
+  });
+
+  // ── Unified file bar + Import Image modal ──
+
+  it("shows 'Importar Imagen' in the file bar and opens the modal", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    // View mode: the bar offers Importar Imagen next to Editar
+    expect(
+      screen.getByRole("button", { name: /importar imagen/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /importar imagen/i }));
+
+    // The modal opens with the DropZone inside
+    expect(
+      screen.getByRole("dialog", { name: /importar imagen/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/arrastrá una imagen o hacé clic para seleccionar/i),
+    ).toBeInTheDocument();
+  });
+
+  it("closes the import modal via the close button and Escape", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /importar imagen/i }));
+
+    // Close button (header X) dismisses the modal
+    await user.click(screen.getByRole("button", { name: "Cerrar" }));
+    expect(
+      screen.queryByRole("dialog", { name: /importar imagen/i }),
+    ).not.toBeInTheDocument();
+
+    // Reopen — Escape dismisses it too
+    await user.click(screen.getByRole("button", { name: /importar imagen/i }));
+    await user.keyboard("{Escape}");
+    expect(
+      screen.queryByRole("dialog", { name: /importar imagen/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the dropzone in the central view without the modal", () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    expect(
+      screen.queryByText(/arrastrá una imagen/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("uploads a dropped image and shows success feedback in the modal", async () => {
+    const uploadMock = vi
+      .fn()
+      .mockResolvedValue({ path: "wiki/media/foto.jpg" });
+    (useImageUpload as Mock).mockReturnValue({
+      upload: uploadMock,
+      isUploading: false,
+      uploadError: null,
+    });
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /importar imagen/i }));
+
+    const file = new File(["img"], "foto.jpg", { type: "image/jpeg" });
+    const fileInput = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    await user.upload(fileInput, file);
+
+    expect(uploadMock).toHaveBeenCalledWith(file);
+    expect(await screen.findByText(/imagen subida ✓/i)).toBeInTheDocument();
+    expect(screen.getByText("foto.jpg")).toBeInTheDocument();
+  });
+
+  it("shows an upload error banner in the modal when the upload fails", async () => {
+    (useImageUpload as Mock).mockReturnValue({
+      upload: vi.fn().mockRejectedValue(new Error("boom")),
+      isUploading: false,
+      uploadError: new Error("boom"),
+    });
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /importar imagen/i }));
+
+    const file = new File(["img"], "foto.jpg", { type: "image/jpeg" });
+    const fileInput = document.querySelector(
+      'input[type="file"]',
+    ) as HTMLInputElement;
+    await user.upload(fileInput, file);
+
+    expect(
+      await screen.findByText(/error al subir imagen: boom/i),
+    ).toBeInTheDocument();
   });
 });

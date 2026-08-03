@@ -8,6 +8,7 @@ import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { FileTree } from "@/components/organisms/FileTree";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
+import { SectionCards, findTreeNode } from "@/components/organisms/SectionCards";
 import { EntitySearchPanel } from "@/components/organisms/EntitySearchPanel";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { TabBar } from "@/components/molecules/TabBar";
@@ -19,8 +20,8 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
-import { DropZone } from "@/components/atoms/DropZone";
 import { ImagePicker } from "@/components/organisms/ImagePicker";
+import { ImportImageModal } from "@/components/organisms/ImportImageModal";
 import { VALID_SECTIONS } from "@/lib/constants";
 import { decodePathSegment, getErrorMessage } from "@/lib/utils";
 import { splitFrontmatter, mergeFrontmatter } from "@/lib/frontmatter";
@@ -85,6 +86,9 @@ export default function WikiEditor() {
 
   // Image picker modal state — reachable only from the editing toolbar
   const [showPicker, setShowPicker] = useState(false);
+
+  // Import image modal state — reachable from the file bar in view mode
+  const [showImportModal, setShowImportModal] = useState(false);
 
   // Image upload (DropZone in view mode) — uploads + revalidates the gallery
   const { upload, isUploading, uploadError } = useImageUpload(mundo ?? "");
@@ -171,10 +175,12 @@ export default function WikiEditor() {
       if (!mundo || !section) return;
 
       if (index === 0) {
-        navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
+        // World chip → world page with the section cards
+        navigate(`/wiki/${encodeURIComponent(mundo)}`);
         return;
       }
       if (index === 1) {
+        // Section chip → section root (embedded section cards)
         navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
         return;
       }
@@ -195,6 +201,19 @@ export default function WikiEditor() {
     },
     [mundo, section, navigate],
   );
+
+  // Resolve the current path against the tree. Directories are browsable —
+  // the central area shows their contents as embedded section cards.
+  const selectedNode = useMemo(
+    () => (filePath ? findTreeNode(treeNodes, filePath) : undefined),
+    [filePath, treeNodes],
+  );
+
+  // Browsing a directory (or the section root) renders visual cards in the
+  // central area instead of the markdown viewer. Files are the only
+  // editable/rendered entities — directories have no content of their own.
+  const browsingDir = !filePath || selectedNode?.is_dir === true;
+  const browsingNodes = selectedNode?.is_dir ? (selectedNode.children ?? []) : treeNodes;
 
   // Section tab click: navigate to the section root (resets file path).
   // The tree/content SWR keys include `section`, so both re-fetch on change.
@@ -478,18 +497,11 @@ export default function WikiEditor() {
       }
       rightPanel={rightPanelContent}
     >
-      {/* Breadcrumb */}
-      <div className="mb-6">
-        <Breadcrumb
-          segments={breadcrumbSegments}
-          onSegmentClick={handleBreadcrumbClick}
-        />
-      </div>
-
-      {/* Toolbar — shown when a file is selected */}
-      {filePath && file && (
-        <div className="mb-4 flex items-center justify-between rounded-lg border border-filio bg-madero px-4 py-2">
-          <span className="text-small text-tinta-desvaida">
+      {/* Unified file bar — always visible so navigation never disappears:
+          file name + badges (left), breadcrumb chips (middle), actions (right) */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-filio bg-madero px-4 py-2">
+        {filePath && file && (
+          <span className="min-w-0 truncate text-small text-tinta-desvaida">
             {file.name}
             {isEditing && (
               <span className="ml-2 rounded bg-llamita/10 px-2 py-0.5 text-xs text-llamita">
@@ -502,7 +514,19 @@ export default function WikiEditor() {
               </span>
             )}
           </span>
-          <div className="flex items-center gap-2">
+        )}
+
+        {/* Breadcrumb chips — left-aligned in the bar */}
+        <div className="flex min-w-0 items-center">
+          <Breadcrumb
+            segments={breadcrumbSegments}
+            onSegmentClick={handleBreadcrumbClick}
+          />
+        </div>
+
+        {/* Actions — only when a file is selected */}
+        {filePath && file && (
+          <div className="ml-auto flex items-center gap-2">
             {isEditing ? (
               <>
                 <Button
@@ -545,47 +569,59 @@ export default function WikiEditor() {
                 )}
               </>
             ) : (
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleToggleEdit}
-              >
-                <Icon name="edit" size={14} />
-                Editar
-              </Button>
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setShowImportModal(true)}
+                >
+                  <Icon name="upload" size={14} />
+                  Importar Imagen
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={handleToggleEdit}
+                >
+                  <Icon name="edit" size={14} />
+                  Editar
+                </Button>
+              </>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Save error banner */}
       {saveError && (
         <ErrorBanner message={saveError} className="mb-4" />
       )}
 
-      {/* Upload error banner */}
-      {uploadError && (
-        <div className="mb-4 rounded-lg border border-sangre/50 bg-sangre/10 px-4 py-2 text-small text-sangre">
-          Error al subir imagen: {uploadError.message}
-        </div>
-      )}
-
-      {/* Upload progress indicator */}
-      {isUploading && (
-        <div className="mb-4 rounded-lg border border-llamita/30 bg-llamita/5 px-4 py-2 text-small text-llamita">
-          Subiendo imagen…
-        </div>
-      )}
-
-      {/* DropZone in view mode — drag & drop an image to upload it */}
-      {filePath && file && !isEditing && (
-        <div className="mb-4">
-          <DropZone onFile={handleFileDrop} />
-        </div>
-      )}
-
-      {/* Content area: live diff preview, textarea editor, or viewer */}
-      {isEditing && editedContent !== null ? (
+      {/* Content area: section cards (no file / directory selected),
+          live diff preview, textarea editor, or viewer */}
+      {browsingDir ? (
+        treeLoading ? (
+          <div className="flex items-center justify-center py-24">
+            <Spinner size="lg" />
+          </div>
+        ) : treeError ? (
+          <div className="px-4 py-8">
+            <ErrorBanner
+              message="No se pudo cargar el contenido de la sección"
+              onRetry={retryTree}
+            />
+          </div>
+        ) : browsingNodes.length === 0 ? (
+          <EmptyState icon="folder" message="La sección está vacía" />
+        ) : (
+          <SectionCards
+            nodes={browsingNodes}
+            mundo={mundo}
+            section={section}
+            onSelect={handleFileSelect}
+          />
+        )
+      ) : isEditing && editedContent !== null ? (
         // The preview REPLACES the textarea — the diff's right side is the
         // writing surface. The textarea unmounts while the preview is open
         // and remounts (with the preserved draft) when it closes.
@@ -627,6 +663,16 @@ export default function WikiEditor() {
             setShowPicker(false);
           }}
           onClose={() => setShowPicker(false)}
+        />
+      )}
+
+      {/* Import image modal — opened from the file bar in view mode */}
+      {showImportModal && (
+        <ImportImageModal
+          onFile={handleFileDrop}
+          isUploading={isUploading}
+          uploadError={uploadError}
+          onClose={() => setShowImportModal(false)}
         />
       )}
     </EditorLayout>

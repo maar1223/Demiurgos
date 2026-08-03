@@ -1,4 +1,5 @@
 import { Icon } from "@/components/atoms/Icon";
+import { cn } from "@/lib/utils";
 
 interface BreadcrumbProps {
   /**
@@ -12,40 +13,59 @@ interface BreadcrumbProps {
   onSegmentClick?: (index: number) => void;
 }
 
+const chipBase =
+  "inline-flex items-center truncate rounded-full border px-2.5 py-0.5 text-xs font-medium transition-colors";
+
 /**
- * Navigation breadcrumb with clickable segments per spec R2 (S17-S18).
+ * Navigation breadcrumb rendered as chip segments (targetitas) per spec
+ * R2 (S17-S18).
  *
- * Each segment is clickable. The last segment is rendered as plain text
- * (current location). A chevron separator is shown between segments.
+ * Each non-last segment is a clickable chip that navigates to that
+ * directory level. The last segment is styled as the active current-file
+ * chip and is not clickable. A chevron separator is shown between chips.
  */
 export function Breadcrumb({ segments, onSegmentClick }: BreadcrumbProps) {
   if (segments.length === 0) return null;
 
   return (
-    <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-small">
+    <nav
+      aria-label="Breadcrumb"
+      className="flex flex-wrap items-center justify-center gap-1.5"
+    >
       {segments.map((segment, index) => {
         const isLast = index === segments.length - 1;
 
         return (
-          <span key={`${index}-${segment}`} className="flex items-center gap-1">
+          <span
+            key={`${index}-${segment}`}
+            className="flex min-w-0 items-center gap-1.5"
+          >
             {/* Separator between segments */}
             {index > 0 && (
               <Icon
                 name="chevron-right"
                 size={12}
-                className="text-sombra shrink-0"
+                className="shrink-0 text-sombra"
               />
             )}
 
             {isLast ? (
-              <span className="truncate text-pergamino max-w-[120px] mobile:max-w-[80px]">
+              <span
+                className={cn(
+                  chipBase,
+                  "max-w-[120px] border-llamita/40 bg-llamita/10 text-llamita mobile:max-w-[80px]",
+                )}
+              >
                 {segment}
               </span>
             ) : (
               <button
                 type="button"
                 onClick={() => onSegmentClick?.(index)}
-                className="truncate text-tinta-desvaida transition-colors hover:text-pergamino max-w-[120px] mobile:max-w-[80px]"
+                className={cn(
+                  chipBase,
+                  "max-w-[120px] border-filio bg-piedra text-tinta-desvaida hover:border-llamita/50 hover:bg-filio hover:text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 mobile:max-w-[80px]",
+                )}
               >
                 {segment}
               </button>
