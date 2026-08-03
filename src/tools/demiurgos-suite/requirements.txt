@@ -1,3 +1,5 @@
 mcp>=1.0.0
 # File watching for live index updates
 watchdog>=4.0.0
+# Image processing for media uploads (JPEG compression + thumbnails)
+Pillow>=10.0.0

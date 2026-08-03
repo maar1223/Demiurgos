@@ -37,6 +37,34 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return TestClient(api_server.app)
 
 
+@pytest.fixture()
+def client_sorted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """TestClient with a world whose tree exercises ordering rules.
+
+    Top level mixes dirs and files with case variations so that only a
+    dirs-first, case-insensitive sort yields the expected order:
+    `alpha/`, `Zeta/`, `Beta.md`, `gamma.md`.
+    """
+    mundos = tmp_path / "mundos"
+    world = mundos / "test_mundo"
+    lore = world / "lore"
+    (lore / "Zeta").mkdir(parents=True)
+    (lore / "Zeta" / "zeta_inner.md").write_text("# Z\n", encoding="utf-8")
+    (lore / "alpha").mkdir()
+    (lore / "alpha" / "aleph").mkdir()
+    (lore / "alpha" / "aleph" / "a1.md").write_text("# A1\n", encoding="utf-8")
+    (lore / "alpha" / "Beta").mkdir()
+    (lore / "alpha" / "Beta" / "b1.md").write_text("# B1\n", encoding="utf-8")
+    (lore / "alpha" / "gamma.md").write_text("# G\n", encoding="utf-8")
+    (lore / "alpha" / "Delta.md").write_text("# D\n", encoding="utf-8")
+    (lore / "Beta.md").write_text("# B\n", encoding="utf-8")
+    (lore / "gamma.md").write_text("# G\n", encoding="utf-8")
+
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", mundos)
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+    return TestClient(api_server.app)
+
+
 class TestTreeContract:
     def test_tree_marks_directories_with_is_dir(self, client: TestClient):
         """Directories must carry is_dir=True so the frontend can expand them."""
@@ -53,6 +81,29 @@ class TestTreeContract:
         tree = client.get("/api/test_mundo/lore/tree").json()
         names = [node["name"] for node in tree]
         assert "00_inicio.md" in names
+
+
+class TestTreeOrdering:
+    def test_dirs_before_files_case_insensitive(self, client_sorted: TestClient):
+        """Directories come first; each group is sorted case-insensitively."""
+        tree = client_sorted.get("/api/test_mundo/lore/tree").json()
+        names = [node["name"] for node in tree]
+        assert names == ["alpha", "Zeta", "Beta.md", "gamma.md"]
+
+    def test_order_applies_recursively(self, client_sorted: TestClient):
+        """Nested directories follow the same dirs-first, case-insensitive rule."""
+        tree = client_sorted.get("/api/test_mundo/lore/tree").json()
+        by_name = {node["name"]: node for node in tree}
+        alpha = by_name["alpha"]
+        inner_names = [node["name"] for node in alpha["children"]]
+        assert inner_names == ["aleph", "Beta", "Delta.md", "gamma.md"]
+
+    def test_dirs_without_files_are_omitted(self, client_sorted: TestClient):
+        """Empty dirs and dirs without included files are still pruned."""
+        (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "vacio").mkdir()
+        tree = client_sorted.get("/api/test_mundo/lore/tree").json()
+        names = [node["name"] for node in tree]
+        assert "vacio" not in names
 
 
 class TestSaveEndpoint:

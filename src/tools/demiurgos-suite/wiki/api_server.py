@@ -1,7 +1,9 @@
 # -*- coding: utf-8 -*-
 """Minimal Demiurgos Wiki API server - serves world list, files, and entity graph."""
 import asyncio
+import io
 import logging
+import mimetypes
 import os
 import sys
 from pathlib import Path
@@ -15,9 +17,12 @@ if str(_SUITE) not in sys.path:
     sys.path.insert(0, str(_SUITE))
 
 import uvicorn
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
+
+from PIL import Image
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
@@ -120,28 +125,41 @@ async def get_tree(mundo: str, section: str):
     def _build_tree(dir_path: Path, base: Path) -> list[dict]:
         items = []
         try:
-            for entry in sorted(dir_path.iterdir()):
-                if entry.name.startswith(".") or entry.name.startswith("_"):
+            # Directories first, then files; each group sorted
+            # alphabetically, case-insensitively (e.g. "alpha" before "Zeta").
+            entries = sorted(
+                (
+                    e for e in dir_path.iterdir()
+                    if not e.name.startswith(".") and not e.name.startswith("_")
+                ),
+                key=lambda e: e.name.lower(),
+            )
+            for entry in entries:
+                if not entry.is_dir():
                     continue
                 rel = entry.relative_to(base)
-                if entry.is_file() and entry.suffix.lower() in (
-                    ".md", ".txt", ".json",
-                    ".jpg", ".jpeg", ".png", ".gif", ".webp",
-                ):
+                children = _build_tree(entry, base)
+                if children:  # Only include dirs with files
                     items.append({
                         "name": entry.name,
                         "path": str(rel),
-                        "is_dir": False,
+                        "is_dir": True,
+                        "children": children,
                     })
-                elif entry.is_dir():
-                    children = _build_tree(entry, base)
-                    if children:  # Only include dirs with files
-                        items.append({
-                            "name": entry.name,
-                            "path": str(rel),
-                            "is_dir": True,
-                            "children": children,
-                        })
+            for entry in entries:
+                if not entry.is_file():
+                    continue
+                if entry.suffix.lower() not in (
+                    ".md", ".txt", ".json",
+                    ".jpg", ".jpeg", ".png", ".gif", ".webp",
+                ):
+                    continue
+                rel = entry.relative_to(base)
+                items.append({
+                    "name": entry.name,
+                    "path": str(rel),
+                    "is_dir": False,
+                })
         except PermissionError:
             pass
         return items
@@ -432,6 +450,327 @@ async def graph_status(mundo: str):
         "link_count": link_count,
         "indexed": node_count > 0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Media endpoints — serve, upload, list, and delete wiki media (images)
+# ---------------------------------------------------------------------------
+
+# Allowed MIME types for upload validation
+ALLOWED_MIME_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+}
+
+# Allowed file extensions
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+
+# Max upload size: 10 MB
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+
+
+class ImageInfo(BaseModel):
+    """Info about a single image file."""
+    path: str
+    name: str
+    size_bytes: int
+    extension: str
+    thumbnail_path: str | None = None
+
+
+class MediaList(BaseModel):
+    """List of all images available in a world."""
+    images: list[ImageInfo]
+    total: int
+
+
+class UploadResponse(BaseModel):
+    """Response after uploading an image."""
+    success: bool
+    path: str
+    size_bytes: int
+    thumbnail_path: str | None = None
+
+
+def _get_media_bases(mundo: str) -> list[Path]:
+    """Return the two allowed media base directories for *mundo*."""
+    mundo_base = MUNDOS_DIR / mundo
+    return [
+        mundo_base / "wiki" / "media",
+        mundo_base / "referencias" / "visuales" / "imagenes",
+    ]
+
+
+def _resolve_media_path(mundo: str, path: str) -> Path | None:
+    """Resolve a media file path with path-traversal protection.
+
+    Accepts *path* in two formats:
+      1. Relative to *mundo* root:   ``wiki/media/foto.jpg``
+      2. Relative to a media base:   ``foto.jpg``
+
+    Checks against both allowed base directories:
+
+        mundos/{mundo}/wiki/media/
+        mundos/{mundo}/referencias/visuales/imagenes/
+
+    Returns the resolved *Path* if valid, or *None* if the path tries to
+    escape the allowed directories.
+
+    The resolver prefers existing files. If no file exists at any valid
+    path it still returns the first structurally valid path so the caller
+    can return a 404 instead of a 400.
+    """
+    mundo_base = MUNDOS_DIR / mundo
+    if not mundo_base.is_dir():
+        return None
+
+    bases = _get_media_bases(mundo)
+
+    # Collect all candidate paths (deduplicated)
+    seen: set[str] = set()
+    candidates: list[Path] = []
+    for base in bases:
+        for p in (mundo_base / path, base / path):
+            resolved = p.resolve()
+            key = str(resolved)
+            if key not in seen:
+                seen.add(key)
+                candidates.append(resolved)
+
+    # Pass 1 — return existing file first (prefer correct base)
+    for full in candidates:
+        for base in bases:
+            base_str = str(base.resolve()) + os.sep
+            if str(full).startswith(base_str) and full.is_file():
+                return full
+
+    # Pass 2 — if no existing file, return first structurally valid path
+    #          (so the caller can raise 404 vs 400)
+    for full in candidates:
+        for base in bases:
+            base_str = str(base.resolve()) + os.sep
+            if str(full).startswith(base_str):
+                return full
+
+    return None
+
+
+def _rel_path(full_path: Path, mundo: str) -> str:
+    """Return a forward-slash path relative to mundos/{mundo}/."""
+    mundo_base = MUNDOS_DIR / mundo
+    return str(full_path.relative_to(mundo_base)).replace("\\", "/")
+
+
+def _validate_image_file(filename: str, content_type: str) -> None:
+    """Validate MIME type and extension. Raises 422 on failure."""
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Tipo de archivo no permitido: '{ext}'. "
+                f"Permitidos: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
+            ),
+        )
+    # Only reject content_type when it is present and invalid
+    if content_type and content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Tipo MIME no permitido: '{content_type}'",
+        )
+
+
+def _sanitize_filename(filename: str) -> str:
+    """Strip path separators and truncate to 255 characters maximum."""
+    name = Path(filename).name  # discards any directory components
+    if not name:
+        name = "uploaded_image"
+    if len(name) > 255:
+        stem = Path(name).stem[:250]
+        ext = Path(name).suffix
+        name = f"{stem}{ext}"
+    return name
+
+
+def compress_image(image_bytes: bytes, quality: int = 85) -> tuple[bytes, str]:
+    """Compress image to JPEG. Never preserves the original format.
+
+    Returns (compressed_bytes, extension) where extension is always '.jpg'.
+    """
+    img = Image.open(io.BytesIO(image_bytes))
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue(), ".jpg"
+
+
+def generate_thumbnail(image_bytes: bytes, width: int = 300) -> bytes:
+    """Generate a JPEG thumbnail with the given max width (aspect ratio kept)."""
+    img = Image.open(io.BytesIO(image_bytes))
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    ratio = width / img.width
+    height = int(img.height * ratio)
+    img = img.resize((width, height), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=75, optimize=True)
+    return buf.getvalue()
+
+
+@app.get("/api/{mundo}/media")
+async def get_media(mundo: str, path: str = Query(..., description="Ruta relativa del archivo")):
+    """Serve an image file from wiki/media/ or referencias/visuales/imagenes/."""
+    full_path = _resolve_media_path(mundo, path)
+    if full_path is None:
+        raise HTTPException(status_code=400, detail="Path traversal detectado")
+    if not full_path.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    media_type, _ = mimetypes.guess_type(str(full_path))
+    if media_type is None:
+        media_type = "application/octet-stream"
+
+    return FileResponse(path=str(full_path), media_type=media_type)
+
+
+@app.post("/api/{mundo}/media/upload", response_model=UploadResponse, status_code=201)
+async def upload_media(
+    mundo: str,
+    file: UploadFile = File(...),
+    overwrite: bool = Query(False, description="Sobrescribir si el archivo ya existe"),
+):
+    """Upload an image file. Compresses to JPEG and generates a thumbnail."""
+    # 1. Read file bytes
+    image_bytes = await file.read()
+
+    # 2. Size cap
+    if len(image_bytes) > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Archivo demasiado grande ({len(image_bytes)} bytes). "
+                "Máximo: 10 MB"
+            ),
+        )
+
+    # 3. MIME / extension validation
+    _validate_image_file(file.filename or "unknown", file.content_type or "")
+
+    # 4. Sanitise filename
+    safe_name = _sanitize_filename(file.filename or "image")
+    stem = Path(safe_name).stem
+
+    # 5. Compress — NEVER save the original
+    compressed_bytes, compressed_ext = compress_image(image_bytes)
+    compressed_name = f"{stem}{compressed_ext}"  # e.g. photo.jpg
+    thumb_name = f"{stem}_thumb{compressed_ext}"  # e.g. photo_thumb.jpg
+
+    # 6. Build target paths
+    save_dir = MUNDOS_DIR / mundo / "wiki" / "media"
+    save_path = save_dir / compressed_name
+    thumb_path = save_dir / thumb_name
+
+    # 7. Conflict check
+    if save_path.exists() and not overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"El archivo '{compressed_name}' ya existe. "
+                "Usa ?overwrite=true para sobrescribir."
+            ),
+        )
+
+    # 8. Write compressed image
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path.write_bytes(compressed_bytes)
+
+    # 9. Generate and write thumbnail
+    thumb_bytes = generate_thumbnail(image_bytes)
+    thumb_path.write_bytes(thumb_bytes)
+
+    return UploadResponse(
+        success=True,
+        path=_rel_path(save_path, mundo),
+        size_bytes=len(compressed_bytes),
+        thumbnail_path=_rel_path(thumb_path, mundo),
+    )
+
+
+@app.get("/api/{mundo}/media/list", response_model=MediaList)
+async def list_media(mundo: str):
+    """List ALL images from wiki/media/ and referencias/visuales/imagenes/."""
+    bases = _get_media_bases(mundo)
+    images: list[ImageInfo] = []
+
+    for base in bases:
+        if not base.is_dir():
+            continue
+        for entry in sorted(base.rglob("*")):
+            if not entry.is_file():
+                continue
+            if entry.suffix.lower() not in ALLOWED_EXTENSIONS:
+                continue
+            stat = entry.stat()
+            images.append(ImageInfo(
+                path=_rel_path(entry, mundo),
+                name=entry.name,
+                size_bytes=stat.st_size,
+                extension=entry.suffix.lower(),
+            ))
+
+    return MediaList(images=images, total=len(images))
+
+
+@app.delete("/api/{mundo}/media")
+async def delete_media(
+    mundo: str,
+    path: str = Query(..., description="Ruta relativa del archivo (desde raíz de mundo o relativa a wiki/media/)"),
+):
+    """Delete an image from wiki/media/ only (referencias is read-only)."""
+    mundo_base = MUNDOS_DIR / mundo
+    wiki_base = (mundo_base / "wiki" / "media").resolve()
+    wiki_str = str(wiki_base) + os.sep
+    ref_base = (mundo_base / "referencias" / "visuales" / "imagenes").resolve()
+    ref_str = str(ref_base) + os.sep
+
+    # Try mundo-relative first, then base-relative
+    candidates = [
+        (mundo_base / path).resolve(),
+        (wiki_base / path).resolve(),
+    ]
+
+    resolved = None
+    for full in candidates:
+        if str(full).startswith(wiki_str):
+            resolved = full
+            break
+
+    if resolved is None:
+        # Check if it points to referencias (→ 403)
+        if any(str(c).startswith(ref_str) for c in candidates):
+            raise HTTPException(
+                status_code=403,
+                detail="No se puede eliminar archivos de referencias/",
+            )
+        raise HTTPException(status_code=400, detail="Path traversal detectado")
+
+    # File existence
+    if not resolved.is_file():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    # Delete the file
+    resolved.unlink()
+
+    # Also delete the associated thumbnail if it exists
+    thumb = resolved.parent / f"{resolved.stem}_thumb{resolved.suffix}"
+    if thumb.is_file():
+        thumb.unlink()
+
+    response_path = _rel_path(resolved, mundo)
+    return {"success": True, "path": response_path}
 
 
 # ---------------------------------------------------------------------------
