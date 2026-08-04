@@ -24,14 +24,16 @@ export default {
         body: ["Inter", "sans-serif"],
       },
       fontSize: {
-        display: ["3rem", { lineHeight: "1.1", fontWeight: "700" }],
-        h1: ["2.5rem", { lineHeight: "1.2", fontWeight: "700" }],
-        h2: ["2rem", { lineHeight: "1.3", fontWeight: "600" }],
-        h3: ["1.5rem", { lineHeight: "1.4", fontWeight: "600" }],
-        h4: ["1.25rem", { lineHeight: "1.4", fontWeight: "600" }],
-        body: ["1rem", { lineHeight: "1.6", fontWeight: "400" }],
-        small: ["0.875rem", { lineHeight: "1.5", fontWeight: "400" }],
-        xs: ["0.75rem", { lineHeight: "1.4", fontWeight: "400" }],
+        // Tool-density type scale (~12% tighter than the previous content
+        // scale): dense UIs read better at 14px body with compact headings.
+        display: ["2.25rem", { lineHeight: "1.1", fontWeight: "700" }], // 36px
+        h1: ["2rem", { lineHeight: "1.2", fontWeight: "700" }], // 32px
+        h2: ["1.625rem", { lineHeight: "1.3", fontWeight: "600" }], // 26px
+        h3: ["1.25rem", { lineHeight: "1.4", fontWeight: "600" }], // 20px
+        h4: ["1.0625rem", { lineHeight: "1.4", fontWeight: "600" }], // 17px
+        body: ["0.875rem", { lineHeight: "1.6", fontWeight: "400" }], // 14px
+        small: ["0.8125rem", { lineHeight: "1.5", fontWeight: "400" }], // 13px
+        xs: ["0.6875rem", { lineHeight: "1.4", fontWeight: "400" }], // 11px
       },
       screens: {
         mobile: { max: "767px" },
