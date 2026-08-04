@@ -45,6 +45,7 @@ _EXCLUDE_DIRS: set[str] = {
     "wiki",
     ".history",
     ".tmp",
+    ".papelera",
 }
 
 _SKIP_PREFIXES: tuple[str, ...] = ("_",)

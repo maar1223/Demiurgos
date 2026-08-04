@@ -5,7 +5,10 @@ import io
 import logging
 import mimetypes
 import os
+import re
+import shutil
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -110,9 +113,108 @@ def _resolve_path(mundo: str, section: str, path: str) -> Path | None:
     return full if full.exists() else None
 
 
+def _resolve_mundo_path(mundo: str, path: str) -> Path | None:
+    """Resolve a mundo-relative path safely (prevent path traversal).
+
+    The first path segment must be a valid section (lore/personajes/sagas/
+    referencias) and the resolved path must stay under ``mundos/{mundo}``.
+    Returns the resolved Path even when it does not exist yet (so callers
+    can distinguish 400 invalid-path from 404 not-found), or None when the
+    path is invalid (traversal, bad section, empty).
+    """
+    mundo_dir = MUNDOS_DIR / mundo
+    if not mundo_dir.is_dir():
+        return None
+    if not path or not path.strip():
+        return None
+    parts = [p for p in Path(path).parts if p not in ("", ".")]
+    if not parts or parts[0] not in VALID_SECTIONS:
+        return None
+    try:
+        full = (mundo_dir / path).resolve()
+    except Exception:
+        return None
+    root = str(mundo_dir.resolve())
+    if not (str(full) == root or str(full).startswith(root + os.sep)):
+        return None
+    return full
+
+
+def _trash_path(mundo: str, section: str, rel_path: str) -> Path:
+    """Build the trash destination for a deleted item.
+
+    Layout: ``mundos/{mundo}/.papelera/{section}/{ts}_{rel_path}`` where
+    ``ts`` is ISO 8601 with milliseconds (anti-collision for rapid
+    same-name deletes), with ``:`` replaced by ``-`` and ``+`` by ``_`` so
+    the name is valid on Windows. Subfolders of *rel_path* are preserved.
+    """
+    ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    ts_safe = ts.replace(":", "-").replace("+", "_")
+    return MUNDOS_DIR / mundo / ".papelera" / section / f"{ts_safe}_{rel_path}"
+
+
+_RE_PORTADA = re.compile(r"^portada:\s*(.+)$", re.MULTILINE)
+_RE_BODY_IMAGE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+
+
+def _resolve_cover(mundo: str, full: Path) -> str | None:
+    """Resolve a cover for a markdown file.
+
+    Reads only the first 8KB of the file (bounded cost). Prefers the
+    ``portada:`` frontmatter value; soft-validates existence through the
+    same media resolver as /media and falls back to the first body image
+    ``![alt](ruta)`` (suffix ``#...`` stripped). Returns the value as
+    written (mundo-relative) or None when no valid image is found.
+    """
+    try:
+        with open(full, "rb") as fh:
+            head = fh.read(8192)
+    except OSError:
+        return None
+    text = head.decode("utf-8", errors="replace")
+
+    m = _RE_PORTADA.search(text)
+    if m:
+        val = m.group(1).strip().strip('"').strip("'")
+        if val:
+            r = _resolve_media_path(mundo, val)
+            if r is not None and r.is_file():
+                return val
+
+    m = _RE_BODY_IMAGE.search(text)
+    if m:
+        val = m.group(1).strip().split("#", 1)[0].strip()
+        if val:
+            r = _resolve_media_path(mundo, val)
+            if r is not None and r.is_file():
+                return val
+    return None
+
+
+def _next_duplicate_name(full: Path) -> Path:
+    """Find the next free duplicate name in *full*'s directory.
+
+    Sequence: ``{stem}-copia{ext}``, then ``{stem}-2{ext}``, ``{stem}-3{ext}``…
+    until a name that does not exist yet.
+    """
+    stem = full.stem
+    ext = full.suffix
+    candidate = full.with_name(f"{stem}-copia{ext}")
+    n = 2
+    while candidate.exists():
+        candidate = full.with_name(f"{stem}-{n}{ext}")
+        n += 1
+    return candidate
+
+
 @app.get("/api/{mundo}/{section}/tree")
-async def get_tree(mundo: str, section: str):
-    """List files in a section as a tree structure."""
+async def get_tree(mundo: str, section: str, covers: bool = Query(False)):
+    """List files in a section as a tree structure.
+
+    With ``?covers=true`` every file node carries a ``portada`` field
+    (mundo-relative cover path or null); without it the field is absent
+    (S29). Covers are resolved in a single sweep — no per-card requests.
+    """
     if section not in VALID_SECTIONS:
         return []
     mundo_dir = MUNDOS_DIR / mundo
@@ -140,12 +242,15 @@ async def get_tree(mundo: str, section: str):
                 rel = entry.relative_to(base)
                 children = _build_tree(entry, base)
                 if children:  # Only include dirs with files
-                    items.append({
+                    node = {
                         "name": entry.name,
                         "path": str(rel),
                         "is_dir": True,
                         "children": children,
-                    })
+                    }
+                    if covers:
+                        node["portada"] = None
+                    items.append(node)
             for entry in entries:
                 if not entry.is_file():
                     continue
@@ -155,11 +260,14 @@ async def get_tree(mundo: str, section: str):
                 ):
                     continue
                 rel = entry.relative_to(base)
-                items.append({
+                node = {
                     "name": entry.name,
                     "path": str(rel),
                     "is_dir": False,
-                })
+                }
+                if covers:
+                    node["portada"] = _resolve_cover(mundo, entry)
+                items.append(node)
         except PermissionError:
             pass
         return items
@@ -190,19 +298,19 @@ async def get_file(mundo: str, section: str, path: str):
 async def save_file(mundo: str, section: str, path: str, body: dict):
     """Save file content."""
     if section not in VALID_SECTIONS:
-        return {"error": "SecciÃƒÂ³n invÃƒÂ¡lida"}
+        raise HTTPException(status_code=400, detail="Sección inválida")
     mundo_dir = MUNDOS_DIR / mundo
     if not mundo_dir.is_dir():
-        return {"error": "Mundo no encontrado"}
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
     full = (mundo_dir / section / path).resolve()
     if not str(full).startswith(str(mundo_dir.resolve())):
-        return {"error": "Path traversal detectado"}
+        raise HTTPException(status_code=400, detail="Path traversal detectado")
     try:
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(body.get("content", ""), encoding="utf-8")
         return {"success": True, "path": path}
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Error al guardar: {e}")
 
 
 @app.post("/api/{mundo}/{section}/save")
@@ -275,34 +383,121 @@ def _compute_diff(original: str, nuevo: str) -> list[dict]:
 async def create_file(mundo: str, section: str, path: str, body: dict):
     """Create a new file."""
     if section not in VALID_SECTIONS:
-        return {"error": "SecciÃƒÂ³n invÃƒÂ¡lida"}
+        raise HTTPException(status_code=400, detail="Sección inválida")
     mundo_dir = MUNDOS_DIR / mundo
     if not mundo_dir.is_dir():
-        return {"error": "Mundo no encontrado"}
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
     full = (mundo_dir / section / path).resolve()
     if not str(full).startswith(str(mundo_dir.resolve())):
-        return {"error": "Path traversal detectado"}
+        raise HTTPException(status_code=400, detail="Path traversal detectado")
     if full.exists():
-        return {"error": "El archivo ya existe"}
+        raise HTTPException(status_code=409, detail="El archivo ya existe")
     try:
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(body.get("content", ""), encoding="utf-8")
         return {"success": True, "path": path}
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Error al crear: {e}")
 
 
 @app.delete("/api/{mundo}/{section}/file")
 async def delete_file(mundo: str, section: str, path: str):
-    """Delete a file."""
-    full = _resolve_path(mundo, section, path)
+    """Move a file or folder to the trash (``mundos/{mundo}/.papelera``).
+
+    Never permanently deletes: ``shutil.move`` (recursive for folders)
+    to ``.papelera/{section}/{ts}_{path}`` preserving relative subfolders.
+    Invalidate the graph cache so the trashed entity disappears from
+    graph/search. No restore in v1.
+    """
+    if section not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección inválida")
+    if not path or not path.strip():
+        raise HTTPException(status_code=400, detail="Ruta vacía")
+    full = _resolve_mundo_path(mundo, f"{section}/{path}")
     if full is None:
-        return {"error": "Archivo no encontrado"}
+        raise HTTPException(status_code=400, detail="Path traversal detectado")
+    if not full.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
     try:
-        full.unlink()
-        return {"success": True, "path": path}
+        dest = _trash_path(mundo, section, path)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(full), str(dest))
     except Exception as e:
-        return {"error": str(e)}
+        raise HTTPException(status_code=500, detail=f"Error al mover a la papelera: {e}")
+    _graph_indices.pop(mundo, None)
+    return {"success": True, "path": path}
+
+
+@app.post("/api/{mundo}/move")
+async def move_path(mundo: str, body: dict):
+    """Move or rename a file or folder to a new mundo-relative path.
+
+    Validates ``from`` and ``to`` independently (S16), requires ``from``
+    to exist (S17) and ``to`` to be free (S18), rejects moving a folder
+    into itself (S19), creates parent dirs and moves recursively (S20).
+    """
+    from_path = body.get("from")
+    to_path = body.get("to")
+    if (
+        not isinstance(from_path, str)
+        or not isinstance(to_path, str)
+        or not from_path.strip()
+        or not to_path.strip()
+    ):
+        raise HTTPException(status_code=400, detail="Se requieren los campos 'from' y 'to'")
+
+    full_from = _resolve_mundo_path(mundo, from_path)
+    if full_from is None:
+        raise HTTPException(status_code=400, detail="Ruta de origen inválida")
+    if not full_from.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    full_to = _resolve_mundo_path(mundo, to_path)
+    if full_to is None:
+        raise HTTPException(status_code=400, detail="Ruta de destino inválida")
+    if full_to.exists():
+        raise HTTPException(status_code=409, detail="Ya existe un archivo o carpeta en esa ubicación")
+    if str(full_to).startswith(str(full_from) + os.sep):
+        raise HTTPException(status_code=400, detail="No se puede mover una carpeta dentro de sí misma")
+
+    try:
+        full_to.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(full_from), str(full_to))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al mover: {e}")
+
+    _graph_indices.pop(mundo, None)
+    return {"success": True, "path": to_path}
+
+
+@app.post("/api/{mundo}/duplicate")
+async def duplicate_path(mundo: str, body: dict):
+    """Duplicate a file with an auto-resolved non-colliding name.
+
+    Files only (S21); the copy name is ``{stem}-copia{ext}`` and then
+    ``{stem}-2{ext}``, ``{stem}-3{ext}``… until free (S22); content is
+    byte-identical via ``shutil.copy2`` (S23).
+    """
+    from_path = body.get("from")
+    if not isinstance(from_path, str) or not from_path.strip():
+        raise HTTPException(status_code=400, detail="Se requiere el campo 'from'")
+
+    full = _resolve_mundo_path(mundo, from_path)
+    if full is None:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    if not full.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    if full.is_dir():
+        raise HTTPException(status_code=422, detail="Solo se pueden duplicar archivos")
+
+    try:
+        new_full = _next_duplicate_name(full)
+        shutil.copy2(str(full), str(new_full))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al duplicar: {e}")
+
+    _graph_indices.pop(mundo, None)
+    return {"success": True, "path": _rel_path(new_full, mundo)}
 
 
 # ---------------------------------------------------------------------------
