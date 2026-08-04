@@ -38,14 +38,20 @@ vi.mock("@/hooks/useImages", () => ({
   useImageDelete: vi.fn(),
 }));
 
-// Mock the wiki API — the editor calls saveFile (Guardar). getDiff is no
+// Mock the wiki API — the editor calls saveFile (Guardar), getDiff is no
 // longer used by the preview (CodeMirror computes the diff client-side),
 // but the module still exports it — keep the mock for parity. getMediaUrl
-// is used by the ImagePicker thumbnails.
+// is used by the ImagePicker thumbnails. moveNode/duplicateFile/
+// getFileContent/createFile/deleteFile back the card ⋯ action flows.
 vi.mock("@/api/wiki", () => ({
   getDiff: vi.fn(),
   saveFile: vi.fn(),
   getMediaUrl: vi.fn((_mundo: string, path: string) => `/media/${path}`),
+  moveNode: vi.fn(),
+  duplicateFile: vi.fn(),
+  getFileContent: vi.fn(),
+  createFile: vi.fn(),
+  deleteFile: vi.fn(),
 }));
 
 // The diff view is lazy-loaded; a lightweight stub is enough for these
@@ -68,7 +74,7 @@ import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useEntitySearch } from "@/hooks/useEntitySearch";
 import { useImages, useImageUpload } from "@/hooks/useImages";
-import { saveFile } from "@/api/wiki";
+import { saveFile, moveNode, duplicateFile, getFileContent, createFile, deleteFile } from "@/api/wiki";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
@@ -139,6 +145,14 @@ describe("WikiEditor", () => {
     });
 
     (saveFile as Mock).mockResolvedValue({ success: true, path: "capitulos/cap1.md" });
+    (moveNode as Mock).mockResolvedValue({ success: true, path: "renombrada.md" });
+    (duplicateFile as Mock).mockResolvedValue({
+      success: true,
+      path: "notas-copia.md",
+    });
+    (getFileContent as Mock).mockResolvedValue(mockFileContent);
+    (createFile as Mock).mockResolvedValue({ success: true, path: "capitulos/cap3.md" });
+    (deleteFile as Mock).mockResolvedValue({ success: true, path: "notas.md" });
 
     (useEntitySearch as Mock).mockReturnValue({
       results: [],
@@ -1001,6 +1015,271 @@ describe("WikiEditor", () => {
 
     expect(
       await screen.findByText(/error al subir imagen: boom/i),
+    ).toBeInTheDocument();
+  });
+
+  // ── Card ⋯ action flows (T16) ───────────────────────────────────────
+
+  it("open: the ⋯ menu 'Abrir' navigates like a card click", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Abrir" }));
+
+    // Navigated to the file — the viewer shows the mocked content
+    expect(await screen.findByText("Capítulo 1")).toBeInTheDocument();
+  });
+
+  it("rename: inline commit calls moveNode with the same-parent path", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Renombrar" }));
+
+    const input = screen.getByRole("textbox", { name: "Nuevo nombre" });
+    expect(input).toHaveValue("notas.md");
+    await user.clear(input);
+    await user.type(input, "renombrada.md{Enter}");
+
+    await waitFor(() => {
+      expect(moveNode).toHaveBeenCalledWith(
+        "Vibrantes",
+        "notas.md",
+        "renombrada.md",
+      );
+    });
+  });
+
+  it("duplicate: ⋯ menu action calls duplicateFile", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Duplicar" }));
+
+    await waitFor(() => {
+      expect(duplicateFile).toHaveBeenCalledWith("Vibrantes", "notas.md");
+    });
+  });
+
+  it("move: modal shows 4 sections and Mover aquí calls moveNode with the dest", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Mover a…" }));
+
+    const dialog = screen.getByRole("dialog", { name: /mover a/i });
+    // 4 destination tabs including referencias (decision (b))
+    expect(
+      within(dialog).getByRole("tab", { name: "Referencias" }),
+    ).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("tab", { name: "Referencias" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Mover aquí" }),
+    );
+
+    await waitFor(() => {
+      expect(moveNode).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore/notas.md",
+        "referencias",
+      );
+    });
+  });
+
+  it("delete: confirmation shows the target name and Cancel aborts (S12)", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Eliminar" }));
+
+    const dialog = screen.getByRole("dialog", { name: /eliminar/i });
+    expect(within(dialog).getByText(/notas\.md/i)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+
+    expect(deleteFile).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("dialog", { name: /eliminar/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("delete: confirming moves the file to the trash", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Eliminar" }));
+
+    await user.click(
+      within(screen.getByRole("dialog", { name: /eliminar/i })).getByRole(
+        "button",
+        { name: /^eliminar$/i },
+      ),
+    );
+
+    await waitFor(() => {
+      expect(deleteFile).toHaveBeenCalledWith("Vibrantes", "lore", "notas.md");
+    });
+    expect(
+      screen.queryByRole("dialog", { name: /eliminar/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("new-file: creates inside the target directory (S10/D7)", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de capitulos" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Nuevo archivo" }));
+
+    const input = screen.getByRole("textbox", { name: "Nombre del archivo…" });
+    await user.type(input, "cap3.md{Enter}");
+
+    await waitFor(() => {
+      expect(createFile).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap3.md",
+      );
+    });
+  });
+
+  it("new-subfolder: creates via the _README placeholder (D7)", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de capitulos" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Nueva subcarpeta" }));
+
+    const input = screen.getByRole("textbox", {
+      name: "Nombre de la subcarpeta…",
+    });
+    await user.type(input, "nueva{Enter}");
+
+    await waitFor(() => {
+      expect(createFile).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/nueva/_README.md",
+      );
+    });
+  });
+
+  it("set-cover: raw picker → getFileContent → saveFile with the portada applied (S32)", async () => {
+    (getFileContent as Mock).mockResolvedValue({
+      path: "notas.md",
+      name: "notas.md",
+      content: "---\ntype: Nota\ntitle: X\n---\nCuerpo",
+      size_bytes: 30,
+      modified: "2024-01-01T00:00:00Z",
+      extension: ".md",
+    });
+    mockGalleryWithImage();
+
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Establecer portada…" }),
+    );
+
+    const picker = screen.getByRole("dialog", { name: /seleccionar imagen/i });
+    // rawMode: no alignment/size dropdowns in cover mode
+    expect(
+      within(picker).queryByRole("combobox", { name: /alineación/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(within(picker).getByRole("button", { name: /foto\.jpg/i }));
+    await user.click(within(picker).getByRole("button", { name: /aceptar/i }));
+
+    await waitFor(() => {
+      expect(getFileContent).toHaveBeenCalledWith("Vibrantes", "lore", "notas.md");
+    });
+    await waitFor(() => {
+      expect(saveFile).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "notas.md",
+        "---\ntype: Nota\ntitle: X\nportada: wiki/media/foto.jpg\n---\nCuerpo",
+      );
+    });
+  });
+
+  it("set-cover failure: detail visible and the tree is NOT refreshed (S34)", async () => {
+    (getFileContent as Mock).mockResolvedValue({
+      path: "notas.md",
+      name: "notas.md",
+      content: "---\ntype: Nota\n---\nCuerpo",
+      size_bytes: 30,
+      modified: "2024-01-01T00:00:00Z",
+      extension: ".md",
+    });
+    (saveFile as Mock).mockRejectedValue({
+      status: 500,
+      detail: "Error interno del servidor. Revisá los logs del backend.",
+    });
+    mockGalleryWithImage();
+    const mutate = vi.fn();
+    (useFileTree as Mock).mockReturnValue({
+      nodes: mockTreeNodes,
+      isLoading: false,
+      error: null,
+      mutate,
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Establecer portada…" }),
+    );
+
+    const picker = screen.getByRole("dialog", { name: /seleccionar imagen/i });
+    await user.click(within(picker).getByRole("button", { name: /foto\.jpg/i }));
+    await user.click(within(picker).getByRole("button", { name: /aceptar/i }));
+
+    // The error surfaces inline (S36); the tree stays untouched (S34)
+    expect(
+      await screen.findByRole("alert"),
+    ).toHaveTextContent(/error interno del servidor/i);
+    expect(mutate).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
     ).toBeInTheDocument();
   });
 });
