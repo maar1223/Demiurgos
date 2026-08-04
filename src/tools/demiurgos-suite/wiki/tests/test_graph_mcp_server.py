@@ -871,3 +871,36 @@ class TestSearchScoreFiltering:
         assert "Entity_3" in names, "BM25 match with IDF > 0 should be kept"
         # Others don't mention Rhyz → excluded
         assert len(results) == 2
+
+    def test_empty_metadata_corpus_does_not_crash(self) -> None:
+        """Entities without title/description/tags must not crash BM25
+        (regression: ZeroDivisionError with avgdl == 0 in BM25Okapi)."""
+        index = EntityGraphIndex()
+        self._seed_cache(
+            index,
+            [
+                {
+                    "name": "Rhyz",
+                    "type": "Personaje",
+                    "path": "personajes/rhyz.md",
+                    "title": "",
+                    "description": "",
+                    "tags": [],
+                },
+                {
+                    "name": "Bira",
+                    "type": "Personaje",
+                    "path": "personajes/bira.md",
+                    "title": "",
+                    "description": "",
+                    "tags": [],
+                },
+            ],
+        )
+
+        results = index.search("Rhyz")
+
+        names = [r.name for r in results]
+        assert "Rhyz" in names, "Name-prefix match must survive an empty corpus"
+        assert "Bira" not in names
+        assert len(results) == 1

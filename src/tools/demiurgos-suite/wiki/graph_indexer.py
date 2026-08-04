@@ -564,10 +564,17 @@ class EntityGraphIndex:
             # rank_bm25 is imported eagerly at module top — loading numpy
             # lazily here would stall the MCP event loop on first call.
             if has_tokens:
-                try:
-                    bm25 = BM25Okapi(corpus)
-                    bm25_scores: list[float] = bm25.get_scores(tokens)
-                except ImportError:
+                if any(corpus):
+                    try:
+                        bm25 = BM25Okapi(corpus)
+                        bm25_scores: list[float] = bm25.get_scores(tokens)
+                    except ImportError:
+                        bm25_scores = [0.0] * len(entities)
+                else:
+                    # Degenerate corpus: every entity lacks indexable
+                    # title/description/tags → BM25Okapi raises
+                    # ZeroDivisionError (empty term frequency dict). Skip BM25
+                    # and keep name-prefix matching (score +10 per token).
                     bm25_scores = [0.0] * len(entities)
             else:
                 bm25_scores = [0.0] * len(entities)
