@@ -104,6 +104,9 @@ export default function WikiEditor() {
   // Import image modal state — reachable from the file bar in view mode
   const [showImportModal, setShowImportModal] = useState(false);
 
+  // Focus mode — hides both side panels for distraction-free editing
+  const [focusMode, setFocusMode] = useState(false);
+
   // ── Card action state (⋯ menu flows) ──────────────────────────────────
   // Cards view (browsingDir) is mutually exclusive with edit mode — the
   // editor only renders SectionCards when no file is selected, so none of
@@ -738,6 +741,7 @@ export default function WikiEditor() {
         </div>
       }
       rightPanel={rightPanelContent}
+      focusMode={focusMode}
     >
       {/* Unified file bar — always visible so navigation never disappears:
           file name + badges (left), breadcrumb chips (middle), actions (right) */}
@@ -766,10 +770,21 @@ export default function WikiEditor() {
           />
         </div>
 
-        {/* Actions — only when a file is selected */}
-        {filePath && file && (
-          <div className="ml-auto flex items-center gap-2">
-            {isEditing ? (
+        {/* Actions — focus toggle always visible, rest only when a file is selected */}
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setFocusMode((prev) => !prev)}
+            title={focusMode ? "Restaurar paneles laterales" : "Modo foco: ocultar paneles"}
+            aria-label={focusMode ? "Restaurar paneles laterales" : "Modo foco: ocultar paneles"}
+            aria-pressed={focusMode}
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-filio bg-cripta text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino"
+          >
+            <Icon name={focusMode ? "minimize" : "expand"} size={14} />
+          </button>
+          {filePath && file && (
+            <>
+              {isEditing ? (
               <>
                 <Button
                   variant="ghost"
@@ -830,8 +845,9 @@ export default function WikiEditor() {
                 </Button>
               </>
             )}
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Save error banner */}

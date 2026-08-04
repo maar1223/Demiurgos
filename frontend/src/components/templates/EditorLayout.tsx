@@ -9,11 +9,25 @@ interface EditorLayoutProps {
   /** Right panel content (Asistente IA / Contexto). When provided, a resizable
    *  right panel is rendered with a draggable divider. */
   rightPanel?: ReactNode;
+  /** Focus mode: hides both side panels (and their dividers). Optional — defaults
+   *  to false so existing pages keep their current layout. */
+  focusMode?: boolean;
 }
 
-const PANEL_MIN = 200;
-const PANEL_MAX = 500;
-const PANEL_DEFAULT = 280;
+const RIGHT_DEFAULT = 280;
+const LEFT_DEFAULT = 240;
+
+/** Proportional panel limits (1/5–2/5 of the viewport width) — computed live so
+ *  drag/resize behavior adapts to the current window size. */
+const panelLimits = () => {
+  const vw = window.innerWidth || 1200;
+  return { min: Math.round(vw * 0.2), max: Math.round(vw * 0.4) };
+};
+
+const clampPanel = (w: number) => {
+  const { min, max } = panelLimits();
+  return Math.min(max, Math.max(min, Math.round(w)));
+};
 
 /**
  * Layout for the Wiki Editor and Entity pages.
@@ -29,30 +43,54 @@ export function EditorLayout({
   sidebar,
   children,
   rightPanel,
+  focusMode = false,
 }: EditorLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
-  const [rightWidth, setRightWidth] = useState(PANEL_DEFAULT);
+  const [rightWidth, setRightWidth] = useState<number>(() =>
+    clampPanel(RIGHT_DEFAULT),
+  );
+  const [leftWidth, setLeftWidth] = useState<number>(() =>
+    clampPanel(LEFT_DEFAULT),
+  );
   const [dragging, setDragging] = useState(false);
-  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const dragRef = useRef<{
+    startX: number;
+    startW: number;
+    side: "left" | "right";
+  } | null>(null);
 
   // Resize drag handlers — only active on desktop (`md:`+)
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
-      dragRef.current = { startX: e.clientX, startW: rightWidth };
+      dragRef.current = { startX: e.clientX, startW: rightWidth, side: "right" };
       setDragging(true);
     },
     [rightWidth],
+  );
+
+  const onMouseDownLeft = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragRef.current = { startX: e.clientX, startW: leftWidth, side: "left" };
+      setDragging(true);
+    },
+    [leftWidth],
   );
 
   useEffect(() => {
     if (!dragging) return;
     const onMove = (e: MouseEvent) => {
       if (!dragRef.current) return;
-      const delta = dragRef.current.startX - e.clientX;
-      const next = Math.min(PANEL_MAX, Math.max(PANEL_MIN, dragRef.current.startW + delta));
-      setRightWidth(next);
+      const { startX, startW, side } = dragRef.current;
+      const next =
+        side === "right"
+          ? startW + (startX - e.clientX)
+          : startW + (e.clientX - startX);
+      const clamped = clampPanel(next);
+      if (side === "right") setRightWidth(clamped);
+      else setLeftWidth(clamped);
     };
     const onUp = () => {
       dragRef.current = null;
@@ -65,6 +103,16 @@ export function EditorLayout({
       document.removeEventListener("mouseup", onUp);
     };
   }, [dragging]);
+
+  // Re-clamp both panel widths when the viewport resizes (proportional limits)
+  useEffect(() => {
+    const onResize = () => {
+      setRightWidth((w) => clampPanel(w));
+      setLeftWidth((w) => clampPanel(w));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   return (
     <div className="flex h-screen supports-[height:100dvh]:h-dvh flex-col overflow-hidden bg-cripta">
@@ -84,10 +132,15 @@ export function EditorLayout({
         </button>
 
         <aside
+          style={{ "--left-w": `${leftWidth}px` } as React.CSSProperties}
           className={cn(
             "border-r border-filio bg-madero",
-            // Desktop: always visible, fixed width, full viewport height
-            "hidden md:block md:w-[240px] lg:w-[240px] md:overflow-hidden",
+            // Desktop: always visible, resizable width, full viewport height.
+            // Focus mode hides the aside at ALL breakpoints (display:none wins
+            // over the mobile overlay positioning — deliberate behavior).
+            focusMode
+              ? "hidden"
+              : "hidden md:block md:w-[var(--left-w,240px)] lg:w-[var(--left-w,240px)] md:overflow-hidden",
             // Mobile: overlay with transition
             "fixed inset-y-0 left-0 z-30 w-[240px] translate-x-0 transition-transform duration-200 ease-in-out md:relative md:inset-auto md:translate-x-0",
             !sidebarOpen && "-translate-x-full md:translate-x-0",
@@ -116,13 +169,38 @@ export function EditorLayout({
           />
         )}
 
+        {/* ── Left divider (desktop: resizable) ─────────────────────────── */}
+        {sidebar && !focusMode && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Redimensionar panel de archivos"
+            tabIndex={0}
+            onMouseDown={onMouseDownLeft}
+            onKeyDown={(e) => {
+              const { min, max } = panelLimits();
+              const step = 40;
+              if (e.key === "ArrowLeft")
+                setLeftWidth((w) => Math.max(min, w - step));
+              if (e.key === "ArrowRight")
+                setLeftWidth((w) => Math.min(max, w + step));
+            }}
+            className={cn(
+              "hidden md:flex w-2 cursor-col-resize items-center justify-center border-r border-filio bg-madero hover:bg-filio active:bg-filio transition-colors",
+              dragging && "bg-filio select-none",
+            )}
+          >
+            <Icon name="grip" size={14} className="text-sombra" />
+          </div>
+        )}
+
         {/* ── Main Content ───────────────────────────────────────────── */}
         <main className="min-w-0 flex-1 overflow-y-auto px-4 py-6 md:px-8 lg:px-12">
           {children}
         </main>
 
         {/* ── Right Panel (desktop: resizable) ────────────────────────── */}
-        {rightPanel && (
+        {rightPanel && !focusMode && (
           <>
             {/* Resize handle — desktop only */}
             <div
@@ -132,9 +210,12 @@ export function EditorLayout({
               tabIndex={0}
               onMouseDown={onMouseDown}
               onKeyDown={(e) => {
+                const { min, max } = panelLimits();
                 const step = 40;
-                if (e.key === "ArrowLeft") setRightWidth((w) => Math.min(PANEL_MAX, w + step));
-                if (e.key === "ArrowRight") setRightWidth((w) => Math.max(PANEL_MIN, w - step));
+                if (e.key === "ArrowLeft")
+                  setRightWidth((w) => Math.min(max, w + step));
+                if (e.key === "ArrowRight")
+                  setRightWidth((w) => Math.max(min, w - step));
               }}
               className={cn(
                 "hidden md:flex",
