@@ -187,6 +187,25 @@ def cmd_add(svc, args) -> None:
     _append_rows(svc, [row])
 
 
+def cmd_mark_delivered(svc, date: str) -> None:
+    """Set Estado=Entregado on every row matching the given date."""
+    result = svc.spreadsheets().values().get(
+        spreadsheetId=SPREADSHEET_ID, range=f"{SHEET_NAME}!A2:F"
+    ).execute()
+    rows = result.get("values", [])
+    updates = 0
+    for i, row in enumerate(rows, start=2):
+        if row and row[0] == date and (len(row) < 6 or row[5] != "Entregado"):
+            svc.spreadsheets().values().update(
+                spreadsheetId=SPREADSHEET_ID,
+                range=f"{SHEET_NAME}!F{i}",
+                valueInputOption="USER_ENTERED",
+                body={"values": [["Entregado"]]},
+            ).execute()
+            updates += 1
+    print(f"Marked {updates} row(s) for {date} as Entregado.")
+
+
 def cmd_read(svc, limit: int) -> None:
     result = svc.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID, range=f"{SHEET_NAME}!A1:G"
@@ -208,6 +227,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
     sub.add_parser("seed")
+    delivered = sub.add_parser("mark-delivered")
+    delivered.add_argument("--date", required=True)
     add = sub.add_parser("add")
     add.add_argument("--date", required=True)
     add.add_argument("--category", required=True)
@@ -231,6 +252,8 @@ def main() -> int:
         cmd_seed(svc)
     elif args.command == "add":
         cmd_add(svc, args)
+    elif args.command == "mark-delivered":
+        cmd_mark_delivered(svc, args.date)
     elif args.command == "read":
         cmd_read(svc, args.limit)
     return 0
