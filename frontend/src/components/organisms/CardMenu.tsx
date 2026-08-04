@@ -122,13 +122,13 @@ export function CardMenu({
         aria-expanded={open}
         onClick={handleTriggerClick}
         className={cn(
-          "flex h-8 w-8 items-center justify-center rounded-md text-plata transition-colors",
-          "hover:bg-piedra hover:text-llamita focus-visible:outline-none",
+          "flex h-6 w-6 items-center justify-center rounded-md bg-llamita text-cripta transition-colors",
+          "hover:bg-llama-alta focus-visible:outline-none",
           "focus-visible:ring-2 focus-visible:ring-llamita/50",
-          open && "bg-piedra text-llamita",
+          open && "bg-llama-alta",
         )}
       >
-        <Icon name="dots" size={16} />
+        <Icon name="dots" size={12} />
       </button>
 
       {open && (
@@ -136,7 +136,7 @@ export function CardMenu({
           role="menu"
           aria-label={`Acciones de ${node.name}`}
           className={cn(
-            "absolute right-0 top-9 z-20 min-w-48 overflow-hidden rounded-lg",
+            "absolute bottom-9 right-0 z-20 min-w-48 overflow-hidden rounded-lg",
             "border border-filio bg-madero shadow-xl",
           )}
         >

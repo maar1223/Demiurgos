@@ -237,8 +237,18 @@ function CardShell({
 }: CardShellProps) {
   return (
     <div className="relative">
-      {/* Sibling ⋯ button — absolutely positioned over the card, never nested */}
-      <div className="absolute right-3 top-3 z-10">
+      {/* Sibling ⋯ button — absolutely positioned on the TITLE line (S1 keeps
+          it outside the card button: a button cannot nest a button). Dirs with
+          a badge sit one line higher than plain files (badge is below the
+          title, so the title line sits ~34px above the card bottom). */}
+      <div
+        className={cn(
+          "absolute right-3 z-10",
+          node.is_dir && node.children !== undefined
+            ? "bottom-[34px]"
+            : "bottom-3",
+        )}
+      >
         <CardMenu
           node={node}
           open={openMenu}
@@ -286,41 +296,42 @@ function CardButton({
     <button
       type="button"
       onClick={() => onSelect(node.path)}
-      className="group flex w-full flex-col gap-3 rounded-xl border border-filio bg-madero p-5 text-left transition-all hover:border-llamita/40 hover:bg-piedra focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 focus-visible:ring-offset-2 focus-visible:ring-offset-cripta"
+      className="group relative flex h-44 w-full flex-col overflow-hidden rounded-xl border border-filio bg-madero text-left transition-all hover:border-llamita/40 hover:bg-piedra focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 focus-visible:ring-offset-2 focus-visible:ring-offset-cripta"
     >
-      {/* Cover area — resolved portada image, icon fallback */}
-      <div className="flex h-32 items-center justify-center overflow-hidden rounded-lg bg-filio/30 transition-colors group-hover:bg-filio/50">
-        {!isDir && node.portada ? (
-          <img
-            src={getMediaUrl(mundo, node.portada)}
-            alt={node.name}
-            className="h-full w-full object-cover"
-            loading="lazy"
-          />
-        ) : (
+      {/* Full-width media area: resolved portada image, or the icon as a
+          large low-opacity backdrop so cover-less cards never look empty */}
+      {!isDir && node.portada ? (
+        <img
+          src={getMediaUrl(mundo, node.portada)}
+          alt={node.name}
+          className="absolute inset-0 h-full w-full object-cover object-[center_25%] transition-transform duration-300 group-hover:scale-105"
+          loading="lazy"
+        />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center">
           <Icon
             name={isDir ? "folder" : fileIconName(node.name)}
-            size={40}
-            className="text-llamita/40"
+            size={56}
+            className="text-llamita/30 transition-colors group-hover:text-llamita/45"
           />
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Name + optional badge */}
-      <div className="flex items-center justify-between gap-2">
-        <h3 className="font-heading text-h4 text-pergamino transition-colors group-hover:text-llamita">
+      {/* Bottom gradient — same veil over image and icon backdrops; gives
+          the name (and the ⋯ replacing the chevron) permanent contrast */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-cripta/95 via-cripta/40 to-transparent" />
+
+      {/* Name + optional badge — stacked so the name always gets full width
+          (pr-7 reserves the title-line ⋯ spot, a sibling of the card) */}
+      <div className="relative mt-auto flex flex-col gap-1 p-3">
+        <h3 className="min-w-0 truncate pr-7 font-heading text-sm text-pergamino transition-colors group-hover:text-llamita">
           {node.name}
         </h3>
         {badge && (
-          <span className="rounded-md bg-filio/30 px-2 py-0.5 text-xs text-tinta-desvaida">
+          <span className="self-start rounded-md bg-cripta/60 px-2 py-0.5 text-xs text-plata">
             {badge}
           </span>
         )}
-      </div>
-
-      {/* Chevron */}
-      <div className="mt-auto flex items-center justify-end text-plata/50 transition-colors group-hover:text-llamita">
-        <Icon name="chevron-right" size={16} />
       </div>
     </button>
   );
