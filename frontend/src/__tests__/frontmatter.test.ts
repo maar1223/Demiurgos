@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   splitFrontmatter,
   mergeFrontmatter,
+  setPortada,
 } from "@/lib/frontmatter";
 
 const WITH_FRONTMATTER =
@@ -133,6 +134,72 @@ describe("mergeFrontmatter", () => {
     // Safety net: EOF-closed block + user appends body → never glue onto "---"
     expect(mergeFrontmatter("---\ntype: X\n---", "cuerpo")).toBe(
       "---\ntype: X\n---\ncuerpo",
+    );
+  });
+});
+
+describe("setPortada", () => {
+  it("S32: inserts a leading block when the file has no frontmatter", () => {
+    const content = "# Anisa\n\nVive en el valle.\n";
+    expect(setPortada(content, "wiki/media/x.jpg")).toBe(
+      "---\nportada: wiki/media/x.jpg\n---\n# Anisa\n\nVive en el valle.\n",
+    );
+  });
+
+  it("replaces an existing portada line, keeping every other key byte-identical", () => {
+    const content =
+      "---\ntype: Personaje\ntitle: Anisa\nportada: wiki/media/vieja.jpg\n---\n# Anisa\n";
+    expect(setPortada(content, "wiki/media/nueva.jpg")).toBe(
+      "---\ntype: Personaje\ntitle: Anisa\nportada: wiki/media/nueva.jpg\n---\n# Anisa\n",
+    );
+  });
+
+  it("inserts the portada line before the closing delimiter when absent", () => {
+    const content = "---\ntype: Personaje\ntitle: Anisa\n---\n# Anisa\n";
+    expect(setPortada(content, "wiki/media/nueva.jpg")).toBe(
+      "---\ntype: Personaje\ntitle: Anisa\nportada: wiki/media/nueva.jpg\n---\n# Anisa\n",
+    );
+  });
+
+  it("preserves CRLF line endings when inserting the portada line", () => {
+    const content = "---\r\ntype: Personaje\r\n---\r\n# Anisa\r\n";
+    expect(setPortada(content, "wiki/media/nueva.jpg")).toBe(
+      "---\r\ntype: Personaje\r\nportada: wiki/media/nueva.jpg\r\n---\r\n# Anisa\r\n",
+    );
+  });
+
+  it("preserves CRLF on an existing portada line", () => {
+    const content = "---\r\ntype: X\r\nportada: wiki/media/vieja.jpg\r\n---\r\ncuerpo";
+    expect(setPortada(content, "wiki/media/nueva.jpg")).toBe(
+      "---\r\ntype: X\r\nportada: wiki/media/nueva.jpg\r\n---\r\ncuerpo",
+    );
+  });
+
+  it("handles a block closed at EOF without a trailing newline", () => {
+    const content = "---\ntype: X\n---";
+    expect(setPortada(content, "wiki/media/nueva.jpg")).toBe(
+      "---\ntype: X\nportada: wiki/media/nueva.jpg\n---",
+    );
+  });
+
+  it("works on an empty frontmatter block", () => {
+    expect(setPortada("---\n---\nbody", "wiki/media/x.jpg")).toBe(
+      "---\nportada: wiki/media/x.jpg\n---\nbody",
+    );
+  });
+
+  it("quotes a path that would break a plain YAML scalar", () => {
+    const content = "---\ntype: X\n---\n";
+    expect(setPortada(content, "wiki/media/El Bosque #1.jpg")).toBe(
+      '---\ntype: X\nportada: "wiki/media/El Bosque #1.jpg"\n---\n',
+    );
+  });
+
+  it("leaves the body untouched", () => {
+    const content =
+      "---\ntitle: X\n---\n# Capítulo\n\n![alt](wiki/media/body.jpg)\n";
+    expect(setPortada(content, "wiki/media/cover.jpg")).toContain(
+      "\n# Capítulo\n\n![alt](wiki/media/body.jpg)\n",
     );
   });
 });

@@ -94,3 +94,75 @@ export function mergeFrontmatter(
     ? frontmatter + body
     : frontmatter + "\n" + body;
 }
+
+// ---------------------------------------------------------------------------
+// setPortada — line-preserving cover edit
+// ---------------------------------------------------------------------------
+
+/**
+ * Splits text into lines keeping each line's terminator (`\r\n`, `\n`, or
+ * nothing at EOF) attached to the line, so a re-join is byte-identical.
+ * Drops the trailing empty match the regex produces at EOF.
+ */
+function splitLinesKeepEnds(text: string): string[] {
+  const lines = text.match(/[^\r\n]*(?:\r\n|\n|$)/g) ?? [];
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+/**
+ * Quotes a YAML scalar value only when needed (spaces, `:`, `#`, quotes…),
+ * leaving plain-safe paths (letters, digits, `_ . / -`) untouched so the
+ * on-disk value stays readable and the backend's quote-stripping read
+ * accepts it either way.
+ */
+function yamlQuote(value: string): string {
+  if (/^[A-Za-z0-9_./-]+$/.test(value)) return value;
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Sets (or inserts) the `portada:` line in the raw file content, preserving
+ * every other byte: the rest of the frontmatter block, the body, and the
+ * block's line endings (CRLF blocks stay CRLF).
+ *
+ * Pattern of `_sync_updated_at_in_file` (backend): edit only the target
+ * line, never rewrite the YAML. Operates on the RAW content (frontmatter
+ * included) — the caller passes the file content from getFileContent.
+ *
+ * - No frontmatter block → a leading `---\nportada: {path}\n---\n` block is
+ *   inserted before the body (S32).
+ * - Existing block: an existing `portada:` line is replaced in place;
+ *   otherwise the new line is inserted right before the closing `---`.
+ */
+export function setPortada(content: string, portadaPath: string): string {
+  const { frontmatter, body } = splitFrontmatter(content);
+
+  if (frontmatter === null) {
+    return `---\nportada: ${yamlQuote(portadaPath)}\n---\n${body}`;
+  }
+
+  const eol = frontmatter.includes("\r\n") ? "\r\n" : "\n";
+  const lines = splitLinesKeepEnds(frontmatter);
+  // The block always ends right after the closing delimiter — the LAST line
+  // is the closing `---` (possibly with trailing spaces and/or at EOF).
+  const closeIdx = lines.length - 1;
+
+  // Look for an existing `portada:` line BEFORE the closing delimiter.
+  let portadaIdx = -1;
+  for (let i = 1; i < closeIdx; i++) {
+    if (/^portada:[ \t]*/.test(lines[i])) {
+      portadaIdx = i;
+      break;
+    }
+  }
+
+  if (portadaIdx >= 0) {
+    const terminator = lines[portadaIdx].match(/(?:\r\n|\n|$)/)?.[0] ?? eol;
+    lines[portadaIdx] = `portada: ${yamlQuote(portadaPath)}${terminator}`;
+  } else {
+    lines.splice(closeIdx, 0, `portada: ${yamlQuote(portadaPath)}${eol}`);
+  }
+
+  return lines.join("") + body;
+}
