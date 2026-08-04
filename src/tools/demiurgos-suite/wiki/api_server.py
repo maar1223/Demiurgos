@@ -1014,6 +1014,8 @@ class ChatRequest(BaseModel):
 class AskRequest(BaseModel):
     prompt: str
     session_id: str = ""
+    section: str = ""
+    file_path: str = ""
 
 @app.post("/api/chat")
 async def chat_endpoint(body: ChatRequest):
@@ -1030,7 +1032,32 @@ async def chat_endpoint(body: ChatRequest):
 @app.post("/api/{mundo}/ai/ask")
 async def ai_ask_endpoint(mundo: str, body: AskRequest):
     """Endpoint for the AI Assistant sidebar."""
-    prompt = f"[Mundo: {mundo}]\n\n{body.prompt}" if mundo else body.prompt
+    parts = [f"[Mundo: {mundo}]"] if mundo else []
+    if body.file_path:
+        title = None
+        resolved = _resolve_path(mundo, body.section, body.file_path)
+        if resolved is not None:
+            try:
+                content = resolved.read_text(encoding="utf-8")
+            except Exception:
+                content = None
+            if content is not None:
+                fm = re.match(r"\A---\r?\n(.*?)\r?\n---", content, re.DOTALL)
+                if fm:
+                    m = re.search(r"(?m)^title:\s*(.+?)\s*$", fm.group(1))
+                    if m:
+                        title = m.group(1).strip().strip('"').strip("'")
+                if not title:
+                    title = Path(body.file_path).stem.replace("_", " ")
+        if title:
+            parts.append(f"[Ficha actual: [[{title}]] — ruta: {body.section}/{body.file_path}]")
+        else:
+            parts.append(f"[Ficha actual: {body.section}/{body.file_path}]")
+    if parts:
+        joined = "\n".join(parts)
+        prompt = f"{joined}\n\n{body.prompt}"
+    else:
+        prompt = body.prompt
     response = await _run_hermes(prompt, session_id=body.session_id)
     logger.info("ai_ask: %s", response[:120])
     return {"response": response}

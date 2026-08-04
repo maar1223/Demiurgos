@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -528,3 +529,32 @@ class TestCovers:
         subdir = next(n for n in tree if n["is_dir"])
         node = next(n for n in subdir["children"] if n["name"] == "g.md")
         assert node["portada"] == "wiki/media/foto.jpg"
+
+
+class TestAiAsk:
+    def test_ai_ask_includes_file_context(self, client: TestClient):
+        """The prompt sent to Hermes carries the wikilink and path of the open file."""
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md"
+        target.write_text("---\ntitle: Inicio\n---\nCuerpo\n", encoding="utf-8")
+        with patch("api_server._run_hermes", new=AsyncMock(return_value="Hola desde Hermes")) as mock_run:
+            resp = client.post(
+                "/api/test_mundo/ai/ask",
+                json={"prompt": "Hola", "section": "lore", "file_path": "00_inicio.md"},
+            )
+        assert resp.status_code == 200
+        sent = mock_run.await_args.args[0]
+        assert "[[Inicio]]" in sent
+        assert "lore/00_inicio.md" in sent
+        assert resp.json()["response"] == "Hola desde Hermes"
+
+    def test_ai_ask_without_file_context(self, client: TestClient):
+        """Without a file_path the prompt only carries the mundo prefix."""
+        with patch("api_server._run_hermes", new=AsyncMock(return_value="ok")) as mock_run:
+            resp = client.post(
+                "/api/test_mundo/ai/ask",
+                json={"prompt": "Hola"},
+            )
+        assert resp.status_code == 200
+        sent = mock_run.await_args.args[0]
+        assert "Ficha actual" not in sent
+        assert "[Mundo: test_mundo]" in sent
