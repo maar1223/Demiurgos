@@ -49,7 +49,11 @@ function saveSessions(sessions: Session[]): void {
  * Sessions are sorted newest-first. Each session has an id, title,
  * and a list of messages.
  */
-export function useAIAssistantSessions(mundo: string) {
+export function useAIAssistantSessions(
+  mundo: string,
+  section?: string,
+  filePath?: string,
+) {
   const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
@@ -135,6 +139,8 @@ export function useAIAssistantSessions(mundo: string) {
             body: JSON.stringify({
               prompt: trimmed,
               session_id: sessionId ?? "",
+              ...(section ? { section } : {}),
+              ...(filePath ? { file_path: filePath } : {}),
             }),
           },
         );
@@ -175,7 +181,7 @@ export function useAIAssistantSessions(mundo: string) {
         setIsSending(false);
       }
     },
-    [activeSessionId, isSending, mundo],
+    [activeSessionId, isSending, mundo, section, filePath],
   );
 
   return {

@@ -4,11 +4,10 @@ import {
   useRef,
   useState,
 } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
+import { MarkdownBody } from "@/components/organisms/MarkdownViewer";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { useWhisper } from "@/hooks/useWhisper";
 
@@ -208,13 +207,13 @@ function ChatScreen({
                 )}
               >
                 {msg.role === "assistant" ? (
-                  <div className="prose prose-invert prose-sm max-w-none [&_pre]:bg-madero [&_pre]:text-xs [&_code]:text-xs [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li>p]:my-0 [&_h1]:text-sm [&_h2]:text-sm [&_h3]:text-xs [&_img]:max-w-full [&_img]:rounded [&_table]:text-xs [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1 [&_blockquote]:text-xs [&_blockquote]:px-2 [&_blockquote]:py-0.5">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {msg.content}
-                    </ReactMarkdown>
-                  </div>
+                  <MarkdownBody
+                    content={msg.content}
+                    mundo={mundo}
+                    className="prose-sm"
+                  />
                 ) : (
-                  <div className="whitespace-pre-wrap break-words">
+                  <div className="whitespace-pre-wrap break-words text-sm">
                     {msg.content}
                   </div>
                 )}
@@ -438,7 +437,7 @@ export function AIAssistantSidebar({
 }: AIAssistantSidebarProps) {
   const [screen, setScreen] = useState<Screen>("chat");
 
-  const sessions = useAIAssistantSessions(mundo);
+  const sessions = useAIAssistantSessions(mundo, section, filePath);
 
   const whisper = useWhisper({
     onTranscribed: useCallback(
