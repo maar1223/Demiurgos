@@ -249,10 +249,10 @@ function ChatScreen({
             onKeyDown={handleKeyDown}
             placeholder="Escribí tu pregunta..."
             rows={2}
-            className="flex-1 resize-none rounded-lg border border-filio bg-cripta px-3 py-2 text-sm text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+            className="min-w-0 flex-1 resize-none rounded-lg border border-filio bg-cripta px-3 py-2 text-sm text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
             disabled={isSending}
           />
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={handleMicClick}
