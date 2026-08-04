@@ -254,4 +254,57 @@ describe("ImagePicker", () => {
 
     expect(onClose).toHaveBeenCalled();
   });
+
+  // ── rawMode (cover selection) ───────────────────────────────────────
+
+  it("rawMode hides the alignment/size dropdowns", () => {
+    render(
+      <ImagePicker
+        mundo="Vibrantes"
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+        rawMode
+      />,
+    );
+
+    expect(
+      screen.queryByRole("combobox", { name: /alineación/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("combobox", { name: /tamaño/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("rawMode emits the BARE path with no #align-size suffix", async () => {
+    const onSelect = vi.fn();
+    render(
+      <ImagePicker
+        mundo="Vibrantes"
+        onSelect={onSelect}
+        onClose={vi.fn()}
+        rawMode
+      />,
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: /foto\.jpg/i }));
+    await user.click(screen.getByRole("button", { name: /aceptar/i }));
+
+    expect(onSelect).toHaveBeenCalledWith("wiki/media/foto.jpg");
+  });
+
+  it("rawMode shows the cover hint text", () => {
+    render(
+      <ImagePicker
+        mundo="Vibrantes"
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+        rawMode
+      />,
+    );
+
+    expect(
+      screen.getByText(/selecciona la imagen que será la portada/i),
+    ).toBeInTheDocument();
+  });
 });
