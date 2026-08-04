@@ -1,11 +1,34 @@
+import { useEffect, useState } from "react";
 import { Icon, type IconName } from "@/components/atoms/Icon";
+import { CardMenu, type CardAction } from "@/components/organisms/CardMenu";
+import { getMediaUrl } from "@/api/wiki";
+import { cn } from "@/lib/utils";
 import type { FileNode } from "@/api/types";
+
+/** Pending "new file / new subfolder" creation inside a directory card. */
+export interface CreateTarget {
+  path: string;
+  kind: "file" | "subfolder";
+}
 
 interface SectionCardsProps {
   nodes: FileNode[];
   mundo: string;
   section: string;
   onSelect: (path: string) => void;
+  onAction?: (action: CardAction, node: FileNode) => void;
+  /** Path of the card whose name is being edited inline (S8). */
+  renamingPath?: string | null;
+  /** S14: node whose request is in flight — its actions stay disabled. */
+  busyPath?: string | null;
+  /** S34/S36: API error detail shown above the grid / inside the open menu. */
+  actionError?: string | null;
+  /** Non-null while the "new file/subfolder" inline input is pending. */
+  createTarget?: CreateTarget | null;
+  onRenameCommit?: (node: FileNode, newName: string) => void;
+  onRenameCancel?: () => void;
+  onCreateCommit?: (name: string) => void;
+  onCreateCancel?: () => void;
 }
 
 /**
@@ -16,49 +39,248 @@ interface SectionCardsProps {
  * contents are browsable without leaving the editor. Directories render
  * first (tree order), then files.
  *
- * Clicking a card calls `onSelect` with the node's path — the parent
- * decides where to navigate. `mundo` and `section` are part of the public
- * props for parity with the standalone section view; navigation itself
- * goes through `onSelect`.
+ * Each card lives in a `div.relative` wrapper: the full-size card button
+ * plus an absolutely-positioned sibling ⋯ (CardMenu) — NEVER nested inside
+ * the card button (S1). The single-open menu state is local (S5) and only
+ * actions bubble up via `onAction` (presentational-pure, D1).
+ *
+ * Rename (S8) and "new file/subfolder" (S10) are inline inputs with LOCAL
+ * validation (empty / path separators / sibling collision) that never fire a
+ * request until valid. Cards render a cover image when `node.portada` is
+ * resolved by the backend (?covers=true) — the image replaces the icon in
+ * the card's 32-unit-tall media area.
  */
-export function SectionCards({ nodes, onSelect }: SectionCardsProps) {
+export function SectionCards({
+  nodes,
+  mundo,
+  onSelect,
+  onAction = () => {},
+  renamingPath = null,
+  busyPath = null,
+  actionError = null,
+  createTarget = null,
+  onRenameCommit,
+  onRenameCancel,
+  onCreateCommit,
+  onCreateCancel,
+}: SectionCardsProps) {
+  // S5: at most one ⋯ menu open at a time — a single path value.
+  const [openMenuPath, setOpenMenuPath] = useState<string | null>(null);
+
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  const [createDraft, setCreateDraft] = useState("");
+  const [createError, setCreateError] = useState<string | null>(null);
+
+  // Seed the rename draft when a new card enters rename mode.
+  useEffect(() => {
+    if (!renamingPath) return;
+    const node = findTreeNode(nodes, renamingPath);
+    setRenameDraft(node?.name ?? "");
+    setRenameError(null);
+  }, [renamingPath, nodes]);
+
+  // Fresh input for every pending creation.
+  useEffect(() => {
+    setCreateDraft("");
+    setCreateError(null);
+  }, [createTarget]);
+
   const dirs = nodes.filter((n) => n.is_dir);
   const files = nodes.filter((n) => !n.is_dir);
 
+  const handleRenameCommit = (node: FileNode) => {
+    const baseError = validateName(renameDraft);
+    if (baseError) {
+      setRenameError(baseError);
+      return;
+    }
+    const trimmed = renameDraft.trim();
+    const collision = nodes.some(
+      (n) =>
+        n.path !== node.path &&
+        n.name.toLowerCase() === trimmed.toLowerCase(),
+    );
+    if (collision) {
+      setRenameError("Ya existe un archivo o carpeta con ese nombre");
+      return;
+    }
+    onRenameCommit?.(node, trimmed);
+  };
+
+  const handleCreateCommit = () => {
+    const baseError = validateName(createDraft);
+    if (baseError) {
+      setCreateError(baseError);
+      return;
+    }
+    const trimmed = createDraft.trim();
+    if (createTarget) {
+      const dirNode = findTreeNode(nodes, createTarget.path);
+      const collision = (dirNode?.children ?? []).some(
+        (n) => n.name.toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (collision) {
+        setCreateError("Ya existe un archivo o carpeta con ese nombre");
+        return;
+      }
+    }
+    onCreateCommit?.(trimmed);
+  };
+
   return (
-    <div className="grid grid-cols-1 gap-4 tablet:grid-cols-2 desktop:grid-cols-3">
-      {dirs.map((dir) => (
-        <DirectoryCard key={dir.path} node={dir} onSelect={onSelect} />
-      ))}
-      {files.map((file) => (
-        <FileCard key={file.path} node={file} onSelect={onSelect} />
-      ))}
+    <div>
+      {/* S34/S36: action errors never break the tree — inline banner above the grid */}
+      {actionError && (
+        <div
+          role="alert"
+          className="mb-4 flex items-start gap-3 rounded-lg border border-sangre/30 bg-sangre/10 p-3 text-small text-sangre"
+        >
+          <Icon name="error" size={16} className="mt-0.5 shrink-0" />
+          <span>{actionError}</span>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 tablet:grid-cols-2 desktop:grid-cols-3">
+        {createTarget && (
+          <CreateCard
+            kind={createTarget.kind}
+            draft={createDraft}
+            error={createError}
+            onChange={setCreateDraft}
+            onCommit={handleCreateCommit}
+            onCancel={() => onCreateCancel?.()}
+          />
+        )}
+
+        {dirs.map((dir) => (
+          <CardShell
+            key={dir.path}
+            node={dir}
+            renaming={renamingPath === dir.path}
+            openMenu={openMenuPath === dir.path}
+            onOpenMenu={(open) => setOpenMenuPath(open ? dir.path : null)}
+            onAction={onAction}
+            busyPath={busyPath}
+            menuError={openMenuPath === dir.path ? actionError : null}
+            renameDraft={renameDraft}
+            renameError={renameError}
+            onRenameChange={setRenameDraft}
+            onRenameCommit={() => handleRenameCommit(dir)}
+            onRenameCancel={() => onRenameCancel?.()}
+            mundo={mundo}
+            onSelect={onSelect}
+          />
+        ))}
+
+        {files.map((file) => (
+          <CardShell
+            key={file.path}
+            node={file}
+            renaming={renamingPath === file.path}
+            openMenu={openMenuPath === file.path}
+            onOpenMenu={(open) => setOpenMenuPath(open ? file.path : null)}
+            onAction={onAction}
+            busyPath={busyPath}
+            menuError={openMenuPath === file.path ? actionError : null}
+            renameDraft={renameDraft}
+            renameError={renameError}
+            onRenameChange={setRenameDraft}
+            onRenameCommit={() => handleRenameCommit(file)}
+            onRenameCancel={() => onRenameCancel?.()}
+            mundo={mundo}
+            onSelect={onSelect}
+          />
+        ))}
+      </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Directory card
+// Card shell — relative wrapper + absolute sibling ⋯ (S1) + card content
 // ---------------------------------------------------------------------------
 
-function DirectoryCard({
+interface CardShellProps {
+  node: FileNode;
+  renaming: boolean;
+  openMenu: boolean;
+  onOpenMenu: (open: boolean) => void;
+  onAction: (action: CardAction, node: FileNode) => void;
+  busyPath: string | null;
+  menuError: string | null;
+  renameDraft: string;
+  renameError: string | null;
+  onRenameChange: (value: string) => void;
+  onRenameCommit: () => void;
+  onRenameCancel: () => void;
+  mundo: string;
+  onSelect: (path: string) => void;
+}
+
+function CardShell({
   node,
+  renaming,
+  openMenu,
+  onOpenMenu,
+  onAction,
+  busyPath,
+  menuError,
+  renameDraft,
+  renameError,
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
+  mundo,
+  onSelect,
+}: CardShellProps) {
+  return (
+    <div className="relative">
+      {/* Sibling ⋯ button — absolutely positioned over the card, never nested */}
+      <div className="absolute right-3 top-3 z-10">
+        <CardMenu
+          node={node}
+          open={openMenu}
+          onOpenChange={onOpenMenu}
+          onAction={onAction}
+          busyPath={busyPath}
+          error={menuError}
+        />
+      </div>
+
+      {renaming ? (
+        <RenameCard
+          node={node}
+          draft={renameDraft}
+          error={renameError}
+          onChange={onRenameChange}
+          onCommit={onRenameCommit}
+          onCancel={onRenameCancel}
+        />
+      ) : (
+        <CardButton node={node} mundo={mundo} onSelect={onSelect} />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Card button (dir or file) with optional cover image
+// ---------------------------------------------------------------------------
+
+function CardButton({
+  node,
+  mundo,
   onSelect,
 }: {
   node: FileNode;
+  mundo: string;
   onSelect: (path: string) => void;
 }) {
-  const fileCount = countFiles(node);
-  const subdirCount = countDirs(node);
-
+  const isDir = node.is_dir;
   const badge =
-    fileCount > 0
-      ? `${fileCount} ${fileCount === 1 ? "archivo" : "archivos"}${
-          subdirCount > 0
-            ? `, ${subdirCount} ${subdirCount === 1 ? "subcarpeta" : "subcarpetas"}`
-            : ""
-        }`
-      : "vacía";
+    !isDir || node.children === undefined ? null : dirBadge(node);
 
   return (
     <button
@@ -66,19 +288,34 @@ function DirectoryCard({
       onClick={() => onSelect(node.path)}
       className="group flex w-full flex-col gap-3 rounded-xl border border-filio bg-madero p-5 text-left transition-all hover:border-llamita/40 hover:bg-piedra focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 focus-visible:ring-offset-2 focus-visible:ring-offset-cripta"
     >
-      {/* Cover area with folder icon */}
-      <div className="flex h-32 items-center justify-center rounded-lg bg-filio/30 transition-colors group-hover:bg-filio/50">
-        <Icon name="folder" size={40} className="text-llamita/40" />
+      {/* Cover area — resolved portada image, icon fallback */}
+      <div className="flex h-32 items-center justify-center overflow-hidden rounded-lg bg-filio/30 transition-colors group-hover:bg-filio/50">
+        {!isDir && node.portada ? (
+          <img
+            src={getMediaUrl(mundo, node.portada)}
+            alt={node.name}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <Icon
+            name={isDir ? "folder" : fileIconName(node.name)}
+            size={40}
+            className="text-llamita/40"
+          />
+        )}
       </div>
 
-      {/* Name + recursive counts */}
+      {/* Name + optional badge */}
       <div className="flex items-center justify-between gap-2">
         <h3 className="font-heading text-h4 text-pergamino transition-colors group-hover:text-llamita">
           {node.name}
         </h3>
-        <span className="rounded-md bg-filio/30 px-2 py-0.5 text-xs text-tinta-desvaida">
-          {badge}
-        </span>
+        {badge && (
+          <span className="rounded-md bg-filio/30 px-2 py-0.5 text-xs text-tinta-desvaida">
+            {badge}
+          </span>
+        )}
       </div>
 
       {/* Chevron */}
@@ -90,45 +327,171 @@ function DirectoryCard({
 }
 
 // ---------------------------------------------------------------------------
-// File card
+// Inline rename card (S8): Enter commits, Escape/blur cancels, local errors
 // ---------------------------------------------------------------------------
 
-function FileCard({
+function RenameCard({
   node,
-  onSelect,
+  draft,
+  error,
+  onChange,
+  onCommit,
+  onCancel,
 }: {
   node: FileNode;
-  onSelect: (path: string) => void;
+  draft: string;
+  error: string | null;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
 }) {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") onCommit();
+    else if (e.key === "Escape") onCancel();
+  };
+
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(node.path)}
-      className="group flex w-full flex-col gap-3 rounded-xl border border-filio bg-madero p-5 text-left transition-all hover:border-llamita/40 hover:bg-piedra focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 focus-visible:ring-offset-2 focus-visible:ring-offset-cripta"
-    >
-      {/* Icon area */}
-      <div className="flex h-32 items-center justify-center rounded-lg bg-filio/30 transition-colors group-hover:bg-filio/50">
-        <Icon name={fileIconName(node.name)} size={40} className="text-llamita/40" />
+    <div className="flex w-full flex-col gap-3 rounded-xl border border-llamita/50 bg-madero p-5">
+      <div className="flex h-32 items-center justify-center rounded-lg bg-filio/30">
+        <Icon
+          name={node.is_dir ? "folder" : fileIconName(node.name)}
+          size={40}
+          className="text-llamita/40"
+        />
       </div>
 
-      {/* Name */}
-      <div className="flex items-center justify-between">
-        <h3 className="font-heading text-h4 text-pergamino transition-colors group-hover:text-llamita">
-          {node.name}
-        </h3>
-      </div>
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={onCancel}
+        autoFocus
+        aria-label="Nuevo nombre"
+        aria-invalid={!!error}
+        className={cn(
+          "w-full rounded-md border bg-piedra px-2 py-1.5 text-small text-pergamino",
+          "focus:outline-none focus:ring-1",
+          error
+            ? "border-sangre/60 focus:border-sangre focus:ring-sangre/50"
+            : "border-filio focus:border-llamita focus:ring-llamita/50",
+        )}
+      />
 
-      {/* Chevron */}
-      <div className="mt-auto flex items-center justify-end text-plata/50 transition-colors group-hover:text-llamita">
+      {error && (
+        <p role="alert" className="text-small text-sangre">
+          {error}
+        </p>
+      )}
+
+      <div className="mt-auto flex items-center justify-end text-plata/50">
         <Icon name="chevron-right" size={16} />
       </div>
-    </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Pending "new file / new subfolder" card (S10): same inline pattern
+// ---------------------------------------------------------------------------
+
+function CreateCard({
+  kind,
+  draft,
+  error,
+  onChange,
+  onCommit,
+  onCancel,
+}: {
+  kind: "file" | "subfolder";
+  draft: string;
+  error: string | null;
+  onChange: (value: string) => void;
+  onCommit: () => void;
+  onCancel: () => void;
+}) {
+  const placeholder =
+    kind === "file" ? "Nombre del archivo…" : "Nombre de la subcarpeta…";
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") onCommit();
+    else if (e.key === "Escape") onCancel();
+  };
+
+  return (
+    <div className="flex w-full flex-col gap-3 rounded-xl border border-dashed border-llamita/40 bg-madero p-5">
+      <div className="flex h-32 items-center justify-center rounded-lg bg-filio/30">
+        <Icon
+          name={kind === "file" ? "file" : "folder"}
+          size={40}
+          className="text-llamita/40"
+        />
+      </div>
+
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={onCancel}
+        autoFocus
+        placeholder={placeholder}
+        aria-label={placeholder}
+        aria-invalid={!!error}
+        className={cn(
+          "w-full rounded-md border bg-piedra px-2 py-1.5 text-small text-pergamino",
+          "focus:outline-none focus:ring-1",
+          error
+            ? "border-sangre/60 focus:border-sangre focus:ring-sangre/50"
+            : "border-filio focus:border-llamita focus:ring-llamita/50",
+        )}
+      />
+
+      {error && (
+        <p role="alert" className="text-small text-sangre">
+          {error}
+        </p>
+      )}
+
+      <div className="mt-auto flex items-center justify-end text-plata/50">
+        <Icon name="chevron-right" size={16} />
+      </div>
+    </div>
   );
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Local name validation (S8/S10): non-empty, no path separators. Collision
+ * with existing siblings is checked by the caller against the current nodes.
+ */
+function validateName(name: string): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return "El nombre no puede estar vacío";
+  if (trimmed.includes("/") || trimmed.includes("\\"))
+    return "El nombre no puede contener '/'";
+  return null;
+}
+
+/**
+ * Recursively counts all files inside a directory node (direct + nested)
+ * and all nested subdirectories, returning the card badge text.
+ */
+function dirBadge(node: FileNode): string {
+  const fileCount = countFiles(node);
+  const subdirCount = countDirs(node);
+  if (fileCount > 0) {
+    return `${fileCount} ${fileCount === 1 ? "archivo" : "archivos"}${
+      subdirCount > 0
+        ? `, ${subdirCount} ${subdirCount === 1 ? "subcarpeta" : "subcarpetas"}`
+        : ""
+    }`;
+  }
+  return "vacía";
+}
 
 /**
  * Recursively counts all files inside a directory node (direct + nested).
