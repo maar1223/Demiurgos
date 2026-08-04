@@ -8,7 +8,14 @@ import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { FileTree } from "@/components/organisms/FileTree";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
-import { SectionCards, findTreeNode } from "@/components/organisms/SectionCards";
+import {
+  SectionCards,
+  findTreeNode,
+  type CreateTarget,
+} from "@/components/organisms/SectionCards";
+import type { CardAction } from "@/components/organisms/CardMenu";
+import { MoveModal } from "@/components/organisms/MoveModal";
+import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { EntitySearchPanel } from "@/components/organisms/EntitySearchPanel";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { TabBar } from "@/components/molecules/TabBar";
@@ -24,9 +31,16 @@ import { ImagePicker } from "@/components/organisms/ImagePicker";
 import { ImportImageModal } from "@/components/organisms/ImportImageModal";
 import { VALID_SECTIONS } from "@/lib/constants";
 import { decodePathSegment, getErrorMessage } from "@/lib/utils";
-import { splitFrontmatter, mergeFrontmatter } from "@/lib/frontmatter";
-import { saveFile } from "@/api/wiki";
-import type { ApiError } from "@/api/types";
+import { splitFrontmatter, mergeFrontmatter, setPortada } from "@/lib/frontmatter";
+import {
+  createFile,
+  deleteFile,
+  duplicateFile,
+  getFileContent,
+  moveNode,
+  saveFile,
+} from "@/api/wiki";
+import type { ApiError, FileNode } from "@/api/types";
 
 // CodeMirror is heavy (~300KB) — load the live diff editor only when the
 // preview is actually opened, keeping the initial bundle lean.
@@ -89,6 +103,23 @@ export default function WikiEditor() {
 
   // Import image modal state — reachable from the file bar in view mode
   const [showImportModal, setShowImportModal] = useState(false);
+
+  // ── Card action state (⋯ menu flows) ──────────────────────────────────
+  // Cards view (browsingDir) is mutually exclusive with edit mode — the
+  // editor only renders SectionCards when no file is selected, so none of
+  // these flows can ever run against an unsaved draft (S33).
+  const [coverTarget, setCoverTarget] = useState<string | null>(null);
+  const [moveSource, setMoveSource] = useState<{
+    section: string;
+    path: string;
+  } | null>(null);
+  const [trashTarget, setTrashTarget] = useState<string | null>(null);
+  const [renamingPath, setRenamingPath] = useState<string | null>(null);
+  const [createTarget, setCreateTarget] = useState<CreateTarget | null>(null);
+  /** Path of the node whose request is in flight — its menu actions disable (S14). */
+  const [busyPath, setBusyPath] = useState<string | null>(null);
+  /** Latest action error (ApiError.detail mapped) — shown inline, tree untouched (S34/S36). */
+  const [actionError, setActionError] = useState<string | null>(null);
 
   // Image upload (DropZone in view mode) — uploads + revalidates the gallery
   const { upload, isUploading, uploadError } = useImageUpload(mundo ?? "");
@@ -200,6 +231,217 @@ export default function WikiEditor() {
       navigate(`/wiki/${encodeURIComponent(mundo)}/${section}/${encodedPath}`);
     },
     [mundo, section, navigate],
+  );
+
+  // ── Card ⋯ action flows (T16) ─────────────────────────────────────────
+  // All mutation handlers follow the same contract (S34/S36): tree/content
+  // state is untouched until the request succeeds (SWR keeps the stale
+  // cache on failure); `busyPath` disables the node's actions while its
+  // request is in flight (S14) and is cleared in `finally`.
+
+  /** Duplicate a file (S21-S23): POST duplicate → refresh tree. */
+  const handleDuplicate = useCallback(
+    async (node: FileNode) => {
+      if (!mundo || !section) return;
+      setBusyPath(node.path);
+      setActionError(null);
+      try {
+        await duplicateFile(mundo, node.path);
+        await retryTree();
+      } catch (err) {
+        const apiErr = err as ApiError;
+        setActionError(getErrorMessage(apiErr.status, apiErr.detail));
+      } finally {
+        setBusyPath(null);
+      }
+    },
+    [mundo, section, retryTree],
+  );
+
+  /**
+   * Rename commit (S8): rename is a same-parent move via POST move (D6).
+   * If the currently open file lives under the renamed path, navigate back
+   * to the section root — it no longer exists at the old location.
+   */
+  const handleRenameCommit = useCallback(
+    async (node: FileNode, newName: string) => {
+      if (!mundo || !section) return;
+      const from = node.path;
+      const parentDir = from.includes("/")
+        ? from.slice(0, from.lastIndexOf("/"))
+        : "";
+      const to = parentDir ? `${parentDir}/${newName}` : newName;
+      setBusyPath(from);
+      setActionError(null);
+      try {
+        await moveNode(mundo, from, to);
+        await retryTree();
+        if (
+          filePath &&
+          (filePath === from || filePath.startsWith(from + "/"))
+        ) {
+          navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
+        }
+      } catch (err) {
+        const apiErr = err as ApiError;
+        setActionError(getErrorMessage(apiErr.status, apiErr.detail));
+      } finally {
+        setBusyPath(null);
+        setRenamingPath(null);
+      }
+    },
+    [mundo, section, filePath, navigate, retryTree],
+  );
+
+  /**
+   * Move confirm (S9): POST move with the mundo-relative destination
+   * (`section` + selected folder). Same open-file navigation guard.
+   */
+  const handleMoveConfirm = useCallback(
+    async (destPath: string) => {
+      if (!mundo || !section || !moveSource) return;
+      const from = `${moveSource.section}/${moveSource.path}`;
+      const movedPath = moveSource.path;
+      setMoveSource(null);
+      setBusyPath(movedPath);
+      setActionError(null);
+      try {
+        await moveNode(mundo, from, destPath);
+        await retryTree();
+        if (
+          filePath &&
+          (filePath === movedPath || filePath.startsWith(movedPath + "/"))
+        ) {
+          navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
+        }
+      } catch (err) {
+        const apiErr = err as ApiError;
+        setActionError(getErrorMessage(apiErr.status, apiErr.detail));
+      } finally {
+        setBusyPath(null);
+      }
+    },
+    [mundo, section, moveSource, filePath, navigate, retryTree],
+  );
+
+  /** Delete confirm (S12): DELETE moves the node to the trash → refresh tree. */
+  const handleTrashConfirm = useCallback(
+    async () => {
+      if (!mundo || !section || !trashTarget) return;
+      const target = trashTarget;
+      setBusyPath(target);
+      setActionError(null);
+      try {
+        await deleteFile(mundo, section, target);
+        setTrashTarget(null);
+        await retryTree();
+        if (
+          filePath &&
+          (filePath === target || filePath.startsWith(target + "/"))
+        ) {
+          navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
+        }
+      } catch (err) {
+        const apiErr = err as ApiError;
+        setActionError(getErrorMessage(apiErr.status, apiErr.detail));
+      } finally {
+        setBusyPath(null);
+      }
+    },
+    [mundo, section, trashTarget, filePath, navigate, retryTree],
+  );
+
+  /**
+   * New file / new subfolder commit (S10, D7): reuse the existing
+   * create_file endpoint; a subfolder is materialized by its invisible
+   * `_README.md` placeholder (create_file writes text, so an empty folder
+   * would fail; `_`-prefixed files stay invisible to tree/graph).
+   */
+  const handleCreateCommit = useCallback(
+    async (name: string) => {
+      if (!mundo || !section || !createTarget) return;
+      const dirPath = createTarget.path;
+      const targetPath =
+        createTarget.kind === "subfolder"
+          ? `${dirPath}/${name}/_README.md`
+          : `${dirPath}/${name}`;
+      setBusyPath(dirPath);
+      setActionError(null);
+      try {
+        await createFile(mundo, section, targetPath);
+        await retryTree();
+      } catch (err) {
+        const apiErr = err as ApiError;
+        setActionError(getErrorMessage(apiErr.status, apiErr.detail));
+      } finally {
+        setBusyPath(null);
+        setCreateTarget(null);
+      }
+    },
+    [mundo, section, createTarget, retryTree],
+  );
+
+  /**
+   * Set cover (S32): getFileContent (raw) → setPortada (line-preserving
+   * frontmatter edit) → saveFile → refresh the tree so the card shows the
+   * new cover. Cards view is mutually exclusive with edit mode (S33), so
+   * there is never an unsaved draft in play here.
+   */
+  const handleCoverSelect = useCallback(
+    async (mediaPath: string) => {
+      if (!mundo || !section || !coverTarget) return;
+      const target = coverTarget;
+      setCoverTarget(null);
+      setBusyPath(target);
+      setActionError(null);
+      try {
+        const file = await getFileContent(mundo, section, target);
+        const updated = setPortada(file.content, mediaPath);
+        await saveFile(mundo, section, target, updated);
+        await retryTree();
+      } catch (err) {
+        const apiErr = err as ApiError;
+        setActionError(getErrorMessage(apiErr.status, apiErr.detail));
+      } finally {
+        setBusyPath(null);
+      }
+    },
+    [mundo, section, coverTarget, retryTree],
+  );
+
+  /** Route a CardMenu action (S7) to its flow. */
+  const handleCardAction = useCallback(
+    (action: CardAction, node: FileNode) => {
+      // Fresh error context for every action; the tree stays untouched.
+      setActionError(null);
+      switch (action) {
+        case "open":
+          handleFileSelect(node.path);
+          break;
+        case "set-cover":
+          setCoverTarget(node.path);
+          break;
+        case "rename":
+          setRenamingPath(node.path);
+          break;
+        case "move":
+          setMoveSource({ section: section!, path: node.path });
+          break;
+        case "duplicate":
+          void handleDuplicate(node);
+          break;
+        case "trash":
+          setTrashTarget(node.path);
+          break;
+        case "new-file":
+          setCreateTarget({ path: node.path, kind: "file" });
+          break;
+        case "new-subfolder":
+          setCreateTarget({ path: node.path, kind: "subfolder" });
+          break;
+      }
+    },
+    [handleFileSelect, handleDuplicate, section],
   );
 
   // Resolve the current path against the tree. Directories are browsable —
@@ -619,6 +861,21 @@ export default function WikiEditor() {
             mundo={mundo}
             section={section}
             onSelect={handleFileSelect}
+            onAction={handleCardAction}
+            renamingPath={renamingPath}
+            busyPath={busyPath}
+            actionError={actionError}
+            createTarget={createTarget}
+            onRenameCommit={handleRenameCommit}
+            onRenameCancel={() => {
+              setRenamingPath(null);
+              setActionError(null);
+            }}
+            onCreateCommit={handleCreateCommit}
+            onCreateCancel={() => {
+              setCreateTarget(null);
+              setActionError(null);
+            }}
           />
         )
       ) : isEditing && editedContent !== null ? (
@@ -673,6 +930,48 @@ export default function WikiEditor() {
           isUploading={isUploading}
           uploadError={uploadError}
           onClose={() => setShowImportModal(false)}
+        />
+      )}
+
+      {/* Move modal — opened from a card ⋯ action (S9) */}
+      {moveSource && (
+        <MoveModal
+          mundo={mundo}
+          source={moveSource}
+          onConfirm={handleMoveConfirm}
+          onClose={() => {
+            setMoveSource(null);
+            setActionError(null);
+          }}
+        />
+      )}
+
+      {/* Delete confirmation (S12) — cancel aborts, confirm moves to trash */}
+      {trashTarget && (
+        <ConfirmDialog
+          title="Eliminar"
+          message={`¿Eliminar "${trashTarget.split("/").pop()}"? Se moverá a la papelera.`}
+          confirmLabel="Eliminar"
+          isBusy={busyPath === trashTarget}
+          error={actionError}
+          onConfirm={handleTrashConfirm}
+          onClose={() => {
+            setTrashTarget(null);
+            setActionError(null);
+          }}
+        />
+      )}
+
+      {/* Set cover picker (S11/S32) — rawMode emits the bare media path */}
+      {coverTarget && (
+        <ImagePicker
+          mundo={mundo}
+          rawMode
+          onSelect={handleCoverSelect}
+          onClose={() => {
+            setCoverTarget(null);
+            setActionError(null);
+          }}
         />
       )}
     </EditorLayout>
