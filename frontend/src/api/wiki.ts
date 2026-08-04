@@ -2,9 +2,11 @@ import { apiFetch } from "@/api/client";
 import { ApiError } from "@/api/types";
 import type {
   DiffPreview,
+  DuplicateResponse,
   FileContent,
   FileNode,
   MediaList,
+  MoveResponse,
   SuccessResponse,
   UploadResponse,
   WorldInfo,
@@ -46,9 +48,12 @@ export async function listWorlds(): Promise<WorldInfo[]> {
 export async function getFileTree(
   mundo: string,
   section: string,
+  opts?: { covers?: boolean },
 ): Promise<FileNode[]> {
+  const params: Record<string, string> = {};
+  if (opts?.covers) params.covers = "true";
   return apiFetch<FileNode[]>(
-    apiUrl(["api", mundo, section, "tree"]),
+    apiUrl(["api", mundo, section, "tree"], params),
   );
 }
 
@@ -121,6 +126,37 @@ export async function deleteFile(
     apiUrl(["api", mundo, section, "file"], { path }),
     { method: "DELETE" },
   );
+}
+
+// ---------------------------------------------------------------------------
+// Move / Duplicate
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/{mundo}/move — rename or move a file/folder.
+ * `from` and `to` are mundo-relative paths with forward slashes
+ * (e.g. `lore/ciudades/planos.md` → `personajes/planos.md`).
+ */
+export async function moveNode(
+  mundo: string,
+  from: string,
+  to: string,
+): Promise<MoveResponse> {
+  return apiFetch<MoveResponse>(apiUrl(["api", mundo, "move"]), {
+    method: "POST",
+    body: JSON.stringify({ from, to }),
+  });
+}
+
+/** POST /api/{mundo}/duplicate — copy a file next to the original with an auto-name. */
+export async function duplicateFile(
+  mundo: string,
+  from: string,
+): Promise<DuplicateResponse> {
+  return apiFetch<DuplicateResponse>(apiUrl(["api", mundo, "duplicate"]), {
+    method: "POST",
+    body: JSON.stringify({ from }),
+  });
 }
 
 // ---------------------------------------------------------------------------

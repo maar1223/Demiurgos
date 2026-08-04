@@ -13,6 +13,12 @@ export interface FileNode {
   path: string;
   is_dir: boolean;
   children?: FileNode[];
+  /**
+   * Mundo-relative cover path (e.g. `wiki/media/x.jpg`).
+   * Only present when the tree was requested with `?covers=true`;
+   * `null` when the file has no resolvable cover (dirs are always null).
+   */
+  portada?: string | null;
 }
 
 /** Content and metadata of a single file. */
@@ -27,6 +33,18 @@ export interface FileContent {
 
 /** Generic success response for save/create/delete. */
 export interface SuccessResponse {
+  success: boolean;
+  path: string;
+}
+
+/** Response from POST /api/{mundo}/move — same shape as SuccessResponse. */
+export interface MoveResponse {
+  success: boolean;
+  path: string;
+}
+
+/** Response from POST /api/{mundo}/duplicate — same shape as SuccessResponse. */
+export interface DuplicateResponse {
   success: boolean;
   path: string;
 }

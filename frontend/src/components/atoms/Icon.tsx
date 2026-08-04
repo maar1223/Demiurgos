@@ -30,7 +30,8 @@ export type IconName =
   | "image"
   | "upload"
   | "mic"
-  | "stop";
+  | "stop"
+  | "dots";
 
 interface IconProps extends SVGAttributes<SVGSVGElement> {
   name: IconName;
@@ -249,6 +250,13 @@ const ICONS: Record<IconName, React.ReactNode> = {
   stop: (
     <>
       <rect x="6" y="6" width="12" height="12" rx="2" />
+    </>
+  ),
+  dots: (
+    <>
+      <circle cx="12" cy="5" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="19" r="1.5" fill="currentColor" stroke="none" />
     </>
   ),
 };
