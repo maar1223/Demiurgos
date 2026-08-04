@@ -9,6 +9,29 @@ export const SECTION_LABELS: Record<Section, string> = {
   sagas: "Sagas",
 };
 
+/**
+ * Sections offered as move destinations in the "Mover a…" modal (decision
+ * (b) of the proposal: `referencias` is a valid backend section and must be
+ * selectable as a destination, even though it is NOT navigable in the
+ * frontend — hence this constant is deliberately SEPARATE from
+ * VALID_SECTIONS, which keeps driving the sidebar tabs and routing.
+ */
+export const MOVE_DESTINATION_SECTIONS = [
+  "lore",
+  "personajes",
+  "sagas",
+  "referencias",
+] as const;
+export type MoveDestinationSection =
+  (typeof MOVE_DESTINATION_SECTIONS)[number];
+
+export const MOVE_DESTINATION_LABELS: Record<MoveDestinationSection, string> = {
+  lore: "Lore",
+  personajes: "Personajes",
+  sagas: "Sagas",
+  referencias: "Referencias",
+};
+
 export const ROUTES = {
   HOME: "/wiki",
   ENTITY: "/wiki/:mundo/entity/*path",

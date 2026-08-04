@@ -31,6 +31,12 @@ interface ImagePickerProps {
   mundo: string;
   onSelect: (path: string) => void;
   onClose: () => void;
+  /**
+   * Cover-selection mode ("Establecer portada…"): hides the alignment/size
+   * dropdowns and emits the BARE path (no `#align-size` suffix), so the
+   * value written to `portada:` is a clean mundo-relative media path.
+   */
+  rawMode?: boolean;
 }
 
 /**
@@ -39,8 +45,16 @@ interface ImagePickerProps {
  * Flow: select an image first, then configure alignment/size via dropdowns,
  * then confirm with Aceptar (emits `onSelect`) or dismiss with Cancelar.
  * Click outside, the close button, or Escape dismisses the modal.
+ *
+ * In `rawMode` the dropdowns are hidden and Aceptar emits the bare path —
+ * used by the "Set cover…" card action (S11/S32).
  */
-export function ImagePicker({ mundo, onSelect, onClose }: ImagePickerProps) {
+export function ImagePicker({
+  mundo,
+  onSelect,
+  onClose,
+  rawMode = false,
+}: ImagePickerProps) {
   const { images, total, isLoading, error, mutate } = useImages(mundo);
   const overlayRef = useRef<HTMLDivElement>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -62,6 +76,11 @@ export function ImagePicker({ mundo, onSelect, onClose }: ImagePickerProps) {
 
   const handleAccept = () => {
     if (!selectedPath) return;
+    // rawMode emits the bare path — no alignment/size suffix (cover value).
+    if (rawMode) {
+      onSelect(selectedPath);
+      return;
+    }
     onSelect(selectedPath + buildImageSuffix(selectedAlign, selectedSize));
   };
 
@@ -178,50 +197,54 @@ export function ImagePicker({ mundo, onSelect, onClose }: ImagePickerProps) {
               </div>
 
               <p className="mt-4 text-small text-tinta-desvaida">
-                Selecciona una imagen y configura su posición.
+                {rawMode
+                  ? "Selecciona la imagen que será la portada."
+                  : "Selecciona una imagen y configura su posición."}
               </p>
 
               {/* Footer: alignment/size dropdowns + actions */}
               <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-filio pt-4">
-                <div className="flex flex-wrap items-center gap-3">
-                  <label className="flex items-center gap-2 text-small text-tinta-desvaida">
-                    Alineación:
-                    <select
-                      value={selectedAlign ?? ""}
-                      onChange={(e) =>
-                        setSelectedAlign(
-                          e.target.value === ""
-                            ? null
-                            : (e.target.value as "left" | "right" | "center"),
-                        )
-                      }
-                      className={selectClasses}
-                    >
-                      <option value="">Automática</option>
-                      <option value="left">← Izquierda</option>
-                      <option value="right">→ Derecha</option>
-                      <option value="center">↔ Centro</option>
-                    </select>
-                  </label>
-                  <label className="flex items-center gap-2 text-small text-tinta-desvaida">
-                    Tamaño:
-                    <select
-                      value={selectedSize ?? ""}
-                      onChange={(e) =>
-                        setSelectedSize(
-                          e.target.value === ""
-                            ? null
-                            : (e.target.value as "sm" | "lg"),
-                        )
-                      }
-                      className={selectClasses}
-                    >
-                      <option value="">Mediana</option>
-                      <option value="sm">Chica</option>
-                      <option value="lg">Grande</option>
-                    </select>
-                  </label>
-                </div>
+                {!rawMode && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="flex items-center gap-2 text-small text-tinta-desvaida">
+                      Alineación:
+                      <select
+                        value={selectedAlign ?? ""}
+                        onChange={(e) =>
+                          setSelectedAlign(
+                            e.target.value === ""
+                              ? null
+                              : (e.target.value as "left" | "right" | "center"),
+                          )
+                        }
+                        className={selectClasses}
+                      >
+                        <option value="">Automática</option>
+                        <option value="left">← Izquierda</option>
+                        <option value="right">→ Derecha</option>
+                        <option value="center">↔ Centro</option>
+                      </select>
+                    </label>
+                    <label className="flex items-center gap-2 text-small text-tinta-desvaida">
+                      Tamaño:
+                      <select
+                        value={selectedSize ?? ""}
+                        onChange={(e) =>
+                          setSelectedSize(
+                            e.target.value === ""
+                              ? null
+                              : (e.target.value as "sm" | "lg"),
+                          )
+                        }
+                        className={selectClasses}
+                      >
+                        <option value="">Mediana</option>
+                        <option value="sm">Chica</option>
+                        <option value="lg">Grande</option>
+                      </select>
+                    </label>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="sm" onClick={onClose}>
