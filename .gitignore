@@ -2,6 +2,8 @@
 # Configuración local con credenciales
 # ============================================================
 .env
+.secrets/
+*.json.credential
 
 # ============================================================
 # Mundos del Autor — contenido narrativo privado
