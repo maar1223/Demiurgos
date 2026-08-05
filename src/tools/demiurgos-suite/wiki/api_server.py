@@ -2,12 +2,14 @@
 """Minimal Demiurgos Wiki API server - serves world list, files, and entity graph."""
 import asyncio
 import io
+import json
 import logging
 import mimetypes
 import os
 import re
 import shutil
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -164,17 +166,67 @@ def _resolve_mundo_path(mundo: str, path: str) -> Path | None:
     return full
 
 
-def _trash_path(mundo: str, section: str, rel_path: str) -> Path:
-    """Build the trash destination for a deleted item.
+# ---------------------------------------------------------------------------
+# Papelera (trash) — v2 per-entry layout
+#
+#   .papelera/{section}/{entry_id12}/meta.json
+#   .papelera/{section}/{entry_id12}/{original_name}
+#
+# Each deleted item lives in its own entry dir named after a 12-hex entry_id.
+# meta.json records provenance (original_path, kind, deleted_at, size) so the
+# entry can be listed, restored, or purged without scanning the original tree.
+# ---------------------------------------------------------------------------
 
-    Layout: ``mundos/{mundo}/.papelera/{section}/{ts}_{rel_path}`` where
-    ``ts`` is ISO 8601 with milliseconds (anti-collision for rapid
-    same-name deletes), with ``:`` replaced by ``-`` and ``+`` by ``_`` so
-    the name is valid on Windows. Subfolders of *rel_path* are preserved.
-    """
-    ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
-    ts_safe = ts.replace(":", "-").replace("+", "_")
-    return MUNDOS_DIR / mundo / ".papelera" / section / f"{ts_safe}_{rel_path}"
+def _trash_root(mundo_dir: Path) -> Path:
+    return mundo_dir / ".papelera"
+
+
+def _trash_section_dir(mundo_dir: Path, section: str) -> Path:
+    if section not in VALID_SECTIONS:
+        raise HTTPException(404, f"Sección inválida: {section}")
+    return _trash_root(mundo_dir) / section
+
+
+def _trash_entry_dir(mundo_dir: Path, section: str, entry_id: str) -> Path:
+    if not re.fullmatch(r"[0-9a-f]{12}", entry_id):
+        raise HTTPException(404, "Entrada no encontrada")
+    d = _trash_section_dir(mundo_dir, section) / entry_id
+    if not d.exists() or not d.is_dir():
+        raise HTTPException(404, "Entrada no encontrada")
+    return d
+
+
+def _write_trash_meta(entry_dir: Path, meta: dict) -> None:
+    (entry_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+
+def _read_trash_meta(entry_dir: Path) -> dict:
+    return json.loads((entry_dir / "meta.json").read_text(encoding="utf-8"))
+
+
+def _list_trash(mundo_dir: Path) -> list[dict]:
+    out = []
+    root = _trash_root(mundo_dir)
+    if not root.exists():
+        return out
+    for section in VALID_SECTIONS:
+        sec_dir = root / section
+        if not sec_dir.is_dir():
+            continue
+        for entry_dir in sorted(sec_dir.iterdir()):
+            if not entry_dir.is_dir():
+                continue
+            meta_file = entry_dir / "meta.json"
+            if not meta_file.exists():
+                continue
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            meta.setdefault("entry_id", entry_dir.name)
+            meta.setdefault("section", section)
+            out.append(meta)
+    return out
 
 
 _RE_PORTADA = re.compile(r"^portada:\s*(.+)$", re.MULTILINE)
@@ -446,9 +498,9 @@ def delete_file(mundo: str, section: str, path: str):
     """Move a file or folder to the trash (``mundos/{mundo}/.papelera``).
 
     Never permanently deletes: ``shutil.move`` (recursive for folders)
-    to ``.papelera/{section}/{ts}_{path}`` preserving relative subfolders.
-    Invalidate the graph cache so the trashed entity disappears from
-    graph/search. No restore in v1.
+    into ``.papelera/{section}/{entry_id12}/`` preserving the item's
+    basename, plus a ``meta.json`` describing the entry. Invalidate the
+    graph cache so the trashed entity disappears from graph/search.
     """
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
@@ -461,14 +513,113 @@ def delete_file(mundo: str, section: str, path: str):
         raise HTTPException(status_code=400, detail="Path traversal detectado")
     if not full.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    mundo_dir = _resolve_mundo_dir(mundo)
+    is_dir = full.is_dir()
+    # size computed BEFORE the move (after moving, the source path no longer
+    # exists): file = its own st_size; dir = total bytes of every file under
+    # the tree (recursively).
+    if is_dir:
+        size = sum(f.stat().st_size for f in full.rglob("*") if f.is_file())
+    else:
+        size = full.stat().st_size
+
     try:
-        dest = _trash_path(mundo, section, path)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(full), str(dest))
+        # 12-hex entry_id; collisions are astronomically unlikely but retry
+        # up to 10 times so we never overwrite a live entry dir.
+        entry_id = None
+        for _ in range(10):
+            candidate = uuid.uuid4().hex[:12]
+            if not (_trash_section_dir(mundo_dir, section) / candidate).exists():
+                entry_id = candidate
+                break
+        if entry_id is None:
+            raise RuntimeError("no free entry_id after 10 attempts")
+        entry_dir = _trash_section_dir(mundo_dir, section) / entry_id
+        entry_dir.mkdir(parents=True, exist_ok=False)
+        shutil.move(str(full), str(entry_dir / full.name))
+        _write_trash_meta(entry_dir, {
+            "entry_id": entry_id,
+            "original_path": path.replace("\\", "/"),
+            "kind": "dir" if is_dir else "file",
+            "deleted_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "size": size,
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al mover a la papelera: {e}")
     _graph_indices.pop(mundo, None)
-    return {"success": True, "path": path}
+    return {"success": True, "path": path, "entry_id": entry_id}
+
+
+@app.get("/api/{mundo}/papelera")
+def list_papelera(mundo: str):
+    """List all trash entries across every section, each with its meta.json."""
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        return {"entries": []}
+    return {"entries": _list_trash(mundo_dir)}
+
+
+@app.post("/api/{mundo}/papelera/restore")
+def restore_papelera(mundo: str, body: dict):
+    """Move a trashed entry back to its original section-relative path.
+
+    Collisions at the destination are resolved with the same duplicate-name
+    convention as /duplicate (``{stem}-copia{ext}``, ``{stem}-2{ext}``…).
+    """
+    entry_id = (body or {}).get("entry_id") or ""
+    section = (body or {}).get("section")
+    if section not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección requerida")
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    entry_dir = _trash_entry_dir(mundo_dir, section, entry_id)
+    meta = _read_trash_meta(entry_dir)
+    original_path = meta.get("original_path")
+    if not isinstance(original_path, str) or not original_path.strip():
+        raise HTTPException(status_code=500, detail="meta.json corrupto: original_path inválido")
+    target = _resolve_mundo_path(mundo, f"{section}/{original_path}")
+    if target is None:
+        raise HTTPException(status_code=500, detail="meta.json corrupto: original_path inválido")
+    src = entry_dir / Path(original_path).name
+    dst = target
+    if dst.exists():
+        dst = _next_duplicate_name(dst)
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        shutil.rmtree(entry_dir, ignore_errors=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al restaurar: {e}")
+    _graph_indices.pop(mundo, None)
+    return {
+        "restored_to": str(dst.relative_to(mundo_dir)).replace("\\", "/"),
+        "entry_id": entry_id,
+    }
+
+
+@app.delete("/api/{mundo}/papelera")
+def purge_papelera(mundo: str, entry_id: str = "", section: str = ""):
+    """Purge one entry (entry_id + section) or the whole trash (no params)."""
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    if not entry_id:
+        root = _trash_root(mundo_dir)
+        count = 0
+        if root.exists():
+            for sec in VALID_SECTIONS:
+                sec_dir = root / sec
+                if sec_dir.is_dir():
+                    count += sum(1 for d in sec_dir.iterdir() if d.is_dir())
+            shutil.rmtree(root, ignore_errors=True)
+        return {"purged": "all", "entries": count}
+    if section not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección requerida para purge individual")
+    entry_dir = _trash_entry_dir(mundo_dir, section, entry_id)
+    shutil.rmtree(entry_dir, ignore_errors=True)
+    return {"purged": entry_id}
 
 
 @app.post("/api/{mundo}/move")

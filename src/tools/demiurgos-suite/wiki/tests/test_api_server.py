@@ -5,9 +5,10 @@ These endpoints were rebuilt in api_server.py and previously had no test
 coverage, which is how the is_dir contract regression survived unnoticed.
 """
 
+import json
+import re
 import sys
 import tempfile
-import time
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -172,20 +173,38 @@ class TestDiffEndpoint:
 
 
 class TestTrashDelete:
-    """S24-S27: delete_file moves to .papelera, never unlinks."""
+    """S24-S27: delete_file moves to .papelera, never unlinks.
+
+    v2 contract: every deleted item lives under
+    ``.papelera/{section}/{entry_id12}/`` with a ``meta.json`` next to the
+    original basename (file or directory tree) — no more ``{ts}_path`` names.
+    """
 
     def _papelera_lore(self) -> Path:
         return api_server.MUNDOS_DIR / "test_mundo" / ".papelera" / "lore"
 
+    def _entry_dir(self, entry_id: str) -> Path:
+        return self._papelera_lore() / entry_id
+
     def test_file_moves_to_papelera(self, client: TestClient):
         resp = client.delete("/api/test_mundo/lore/file?path=00_inicio.md")
         assert resp.status_code == 200
-        assert resp.json()["success"] is True
-        assert self._papelera_lore().is_dir()
-        files = [p for p in self._papelera_lore().iterdir() if p.is_file()]
-        assert len(files) == 1
-        assert files[0].name.endswith("_00_inicio.md")
-        assert files[0].name.startswith("20")  # ISO timestamp prefix
+        body = resp.json()
+        assert body["success"] is True
+        assert re.fullmatch(r"[0-9a-f]{12}", body["entry_id"])
+        entry_dir = self._entry_dir(body["entry_id"])
+        # entry_dir named as 12-hex id, holding meta.json + the original file
+        assert entry_dir.name == body["entry_id"]
+        assert entry_dir.is_dir()
+        assert re.fullmatch(r"[0-9a-f]{12}", entry_dir.name)
+        assert (entry_dir / "meta.json").is_file()
+        assert (entry_dir / "00_inicio.md").read_text(encoding="utf-8").startswith("---")
+        meta = json.loads((entry_dir / "meta.json").read_text(encoding="utf-8"))
+        assert meta["entry_id"] == body["entry_id"]
+        assert meta["original_path"] == "00_inicio.md"
+        assert meta["kind"] == "file"
+        assert meta["deleted_at"].endswith("Z")
+        assert isinstance(meta["size"], int) and meta["size"] > 0
         # Original gone
         assert not (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md").exists()
 
@@ -197,11 +216,14 @@ class TestTrashDelete:
 
         resp = client.delete("/api/test_mundo/lore/file?path=ciudades")
         assert resp.status_code == 200
-
-        moved = [p for p in self._papelera_lore().iterdir() if p.is_dir() and p.name.endswith("_ciudades")]
-        assert len(moved) == 1
-        assert (moved[0] / "alfa.md").read_text(encoding="utf-8") == "# Alfa\n"
-        assert (moved[0] / "beta.md").read_text(encoding="utf-8") == "# Beta\n"
+        entry_dir = self._entry_dir(resp.json()["entry_id"])
+        assert entry_dir.is_dir()
+        # Directory content kept under the moved dir's basename inside entry_dir
+        assert (entry_dir / "ciudades" / "alfa.md").read_text(encoding="utf-8") == "# Alfa\n"
+        assert (entry_dir / "ciudades" / "beta.md").read_text(encoding="utf-8") == "# Beta\n"
+        meta = json.loads((entry_dir / "meta.json").read_text(encoding="utf-8"))
+        assert meta["kind"] == "dir"
+        assert meta["original_path"] == "ciudades"
         assert not ciudades.exists()
 
     def test_subfolders_preserved(self, client: TestClient):
@@ -211,25 +233,30 @@ class TestTrashDelete:
 
         resp = client.delete("/api/test_mundo/lore/file?path=ciudades")
         assert resp.status_code == 200
+        entry_dir = self._entry_dir(resp.json()["entry_id"])
+        # Nested subfolders survive the move under entry_dir/{basename}/...
+        assert (entry_dir / "ciudades" / "planos" / "x.md").read_text(encoding="utf-8") == "# X\n"
+        assert (entry_dir / "meta.json").is_file()
 
-        moved = [p for p in self._papelera_lore().iterdir() if p.is_dir() and p.name.endswith("_ciudades")]
-        assert len(moved) == 1
-        assert (moved[0] / "planos" / "x.md").read_text(encoding="utf-8") == "# X\n"
-
-    def test_rapid_deletes_have_distinct_timestamps(self, client: TestClient):
+    def test_rapid_deletes_get_distinct_entry_ids(self, client: TestClient):
         base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
         (base / "a.md").write_text("# A\n", encoding="utf-8")
         (base / "b.md").write_text("# B\n", encoding="utf-8")
 
-        assert client.delete("/api/test_mundo/lore/file?path=a.md").status_code == 200
-        time.sleep(0.005)
-        assert client.delete("/api/test_mundo/lore/file?path=b.md").status_code == 200
-
+        r1 = client.delete("/api/test_mundo/lore/file?path=a.md")
+        r2 = client.delete("/api/test_mundo/lore/file?path=b.md")
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        e1, e2 = r1.json()["entry_id"], r2.json()["entry_id"]
+        assert e1 != e2
+        assert re.fullmatch(r"[0-9a-f]{12}", e1)
+        assert re.fullmatch(r"[0-9a-f]{12}", e2)
+        for eid in (e1, e2):
+            assert (self._entry_dir(eid) / "meta.json").is_file()
+            assert (self._entry_dir(eid) / "a.md").exists() or (self._entry_dir(eid) / "b.md").exists()
+        # Exactly two entry dirs, each with a valid 12-hex name
         names = sorted(p.name for p in self._papelera_lore().iterdir())
-        assert len(names) == 2
-        assert any(n.endswith("_a.md") for n in names)
-        assert any(n.endswith("_b.md") for n in names)
-        assert names[0] != names[1]
+        assert names == sorted([e1, e2])
 
     def test_tree_no_longer_lists_trashed_file(self, client: TestClient):
         client.delete("/api/test_mundo/lore/file?path=00_inicio.md")
@@ -919,3 +946,156 @@ class TestMundoValidation:
     def test_graph_entity_mundo_traversal_error(self, client: TestClient):
         resp = client.get(f"/api/{self.ENC_DOTS}/graph/entity?name=X")
         assert "error" in resp.json()
+
+
+class TestTrashList:
+    """GET /api/{mundo}/papelera — list trash entries across all sections."""
+
+    def _papelera(self) -> Path:
+        return api_server.MUNDOS_DIR / "test_mundo" / ".papelera"
+
+    def test_list_empty_returns_empty(self, client: TestClient):
+        resp = client.get("/api/test_mundo/papelera")
+        assert resp.status_code == 200
+        assert resp.json() == {"entries": []}
+
+    def test_list_after_delete_shows_entry(self, client: TestClient):
+        client.delete("/api/test_mundo/lore/file?path=00_inicio.md")
+        entries = client.get("/api/test_mundo/papelera").json()["entries"]
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry["original_path"] == "00_inicio.md"
+        assert entry["kind"] == "file"
+        assert entry["deleted_at"].endswith("Z")
+
+    def test_list_includes_section_and_entry_id(self, client: TestClient):
+        client.delete("/api/test_mundo/lore/file?path=00_inicio.md")
+        personajes = api_server.MUNDOS_DIR / "test_mundo" / "personajes"
+        personajes.mkdir(parents=True)
+        (personajes / "p.md").write_text("# P\n", encoding="utf-8")
+        client.delete("/api/test_mundo/personajes/file?path=p.md")
+
+        entries = client.get("/api/test_mundo/papelera").json()["entries"]
+        by_section = {e["section"]: e for e in entries}
+        assert set(by_section) == {"lore", "personajes"}
+        for eid in (by_section["lore"]["entry_id"], by_section["personajes"]["entry_id"]):
+            assert re.fullmatch(r"[0-9a-f]{12}", eid)
+
+    def test_list_excludes_corrupt_meta(self, client: TestClient):
+        client.delete("/api/test_mundo/lore/file?path=00_inicio.md")
+        # Entry dir whose meta.json is not valid JSON must be skipped by the list
+        bogus = self._papelera() / "lore" / "deadbeefdead"
+        bogus.mkdir(parents=True)
+        (bogus / "meta.json").write_text("{not json", encoding="utf-8")
+
+        entries = client.get("/api/test_mundo/papelera").json()["entries"]
+        ids = [e["entry_id"] for e in entries]
+        assert "deadbeefdead" not in ids
+        assert len(entries) == 1
+
+
+class TestTrashRestore:
+    """POST /api/{mundo}/papelera/restore — move an entry back to its path."""
+
+    def _papelera(self) -> Path:
+        return api_server.MUNDOS_DIR / "test_mundo" / ".papelera"
+
+    def test_restore_roundtrip_restores_file(self, client: TestClient):
+        entry_id = client.delete("/api/test_mundo/lore/file?path=00_inicio.md").json()["entry_id"]
+        resp = client.post(
+            "/api/test_mundo/papelera/restore",
+            json={"entry_id": entry_id, "section": "lore"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"restored_to": "lore/00_inicio.md", "entry_id": entry_id}
+        # File back with original content, entry dir gone
+        restored = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md"
+        assert restored.read_text(encoding="utf-8").startswith("---")
+        assert not (self._papelera() / "lore" / entry_id).exists()
+
+    def test_restore_to_dest_collision_dedups(self, client: TestClient):
+        entry_id = client.delete("/api/test_mundo/lore/file?path=00_inicio.md").json()["entry_id"]
+        # Original path reoccupied with different content -> restore dedups
+        (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md").write_text(
+            "nuevo contenido\n", encoding="utf-8")
+
+        resp = client.post(
+            "/api/test_mundo/papelera/restore",
+            json={"entry_id": entry_id, "section": "lore"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["restored_to"] == "lore/00_inicio-copia.md"
+        assert (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio-copia.md").read_text(
+            encoding="utf-8").startswith("---")
+        # Occupier untouched
+        assert (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md").read_text(
+            encoding="utf-8") == "nuevo contenido\n"
+
+    def test_restore_missing_entry_404(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo/papelera/restore",
+            json={"entry_id": "000000000000", "section": "lore"},
+        )
+        assert resp.status_code == 404
+        assert "no encontrada" in resp.json()["detail"].lower()
+
+    def test_restore_missing_section_400(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo/papelera/restore",
+            json={"entry_id": "000000000000", "section": "wiki"},
+        )
+        assert resp.status_code == 400
+        assert "sección requerida" in resp.json()["detail"].lower()
+
+    def test_restore_dir_roundtrip(self, client: TestClient):
+        ciudades = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "ciudades"
+        ciudades.mkdir()
+        (ciudades / "planos").mkdir()
+        (ciudades / "planos" / "x.md").write_text("# X\n", encoding="utf-8")
+        (ciudades / "alfa.md").write_text("# Alfa\n", encoding="utf-8")
+        entry_id = client.delete("/api/test_mundo/lore/file?path=ciudades").json()["entry_id"]
+
+        resp = client.post(
+            "/api/test_mundo/papelera/restore",
+            json={"entry_id": entry_id, "section": "lore"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["restored_to"] == "lore/ciudades"
+        restored = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "ciudades"
+        assert (restored / "planos" / "x.md").read_text(encoding="utf-8") == "# X\n"
+        assert (restored / "alfa.md").read_text(encoding="utf-8") == "# Alfa\n"
+        assert not (self._papelera() / "lore" / entry_id).exists()
+
+
+class TestTrashPurge:
+    """DELETE /api/{mundo}/papelera — remove one entry or empty the whole bin."""
+
+    def _papelera(self) -> Path:
+        return api_server.MUNDOS_DIR / "test_mundo" / ".papelera"
+
+    def test_purge_individual_removes_entry(self, client: TestClient):
+        entry_id = client.delete("/api/test_mundo/lore/file?path=00_inicio.md").json()["entry_id"]
+        resp = client.delete(f"/api/test_mundo/papelera?entry_id={entry_id}&section=lore")
+        assert resp.status_code == 200
+        assert resp.json() == {"purged": entry_id}
+        assert not (self._papelera() / "lore" / entry_id).exists()
+        assert client.get("/api/test_mundo/papelera").json() == {"entries": []}
+
+    def test_purge_missing_entry_404(self, client: TestClient):
+        resp = client.delete("/api/test_mundo/papelera?entry_id=000000000000&section=lore")
+        assert resp.status_code == 404
+        assert "no encontrada" in resp.json()["detail"].lower()
+
+    def test_purge_all_empties_bin(self, client: TestClient):
+        client.delete("/api/test_mundo/lore/file?path=00_inicio.md")
+        client.delete("/api/test_mundo/lore/file?path=subdir/detalle.md")
+        resp = client.delete("/api/test_mundo/papelera")
+        assert resp.status_code == 200
+        assert resp.json() == {"purged": "all", "entries": 2}
+        assert not self._papelera().exists()
+        assert client.get("/api/test_mundo/papelera").json() == {"entries": []}
+
+    def test_purge_all_when_empty_returns_zero(self, client: TestClient):
+        resp = client.delete("/api/test_mundo/papelera")
+        assert resp.status_code == 200
+        assert resp.json() == {"purged": "all", "entries": 0}
