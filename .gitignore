@@ -65,3 +65,13 @@ testsprite_tests\tmp\config.json
 # ============================================================
 frontend/node_modules/
 frontend/dist/
+
+# ============================================================
+# OpenCode Telegram bridge — tooling personal del Autor para
+# programar desde el celular. NO forma parte de Demiurgos:
+# vive solo en local (fuera del repo).
+# ============================================================
+src/tools/opencode-bridge.py
+src/tools/opencode-bridge.log
+start-opencode-bridge.ps1
+start-opencode-serve.ps1
