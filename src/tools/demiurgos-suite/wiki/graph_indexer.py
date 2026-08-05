@@ -145,57 +145,6 @@ class EntityGraphIndex:
         return bool(_RE_HAS_TYPE.search(frontmatter))
 
     @staticmethod
-    def _sync_updated_at_in_file(content: str, filepath: Path) -> str | None:
-        """Update ``updated_at`` in frontmatter to match file mtime.
-
-        Returns new content string if the timestamp changed, or ``None`` if
-        no update was needed (already in sync or not an OKF file).
-        """
-        if not content.startswith("---\n"):
-            return None
-
-        end_match = re.search(r"\n---(\n|$)", content[4:])
-        if end_match is None:
-            return None
-
-        end_pos = 4 + end_match.start()
-        fm_text = content[4:end_pos]
-
-        parsed = yaml.safe_load(fm_text)
-        if not isinstance(parsed, dict) or "type" not in parsed:
-            return None
-
-        try:
-            mtime = filepath.stat().st_mtime
-        except OSError:
-            return None
-        mtime_iso = datetime.fromtimestamp(mtime, tz=timezone.utc).isoformat()
-
-        current = parsed.get("updated_at")
-        if current == mtime_iso:
-            return None
-
-        body = content[end_pos + 4:]
-        new_line = f"updated_at: {mtime_iso}"
-
-        if "updated_at" in parsed:
-            new_fm = re.sub(
-                r"^updated_at:.*$", new_line, fm_text, count=1, flags=re.MULTILINE
-            )
-        else:
-            # Insert before ``generated:`` or at end of frontmatter
-            lines = fm_text.split("\n")
-            insert_at = len(lines)
-            for i, line in enumerate(lines):
-                if line.strip() == "generated:":
-                    insert_at = i
-                    break
-            lines.insert(insert_at, new_line)
-            new_fm = "\n".join(lines)
-
-        return "---\n" + new_fm + "\n---\n" + body
-
-    @staticmethod
     def _extract_wikilinks(body: str) -> list[str]:
         """Extract [[Name]] links from body text."""
         return [m.group(1).strip() for m in _RE_WIKILINK.finditer(body)]
@@ -403,8 +352,7 @@ class EntityGraphIndex:
     def update(self, file_path: str, mundo: str) -> None:
         """Re-read a single file and update its cache entry. Recomputes backlinks.
 
-        Also syncs ``updated_at`` in the file's YAML frontmatter to match
-        the filesystem mtime, so the index always reflects real edits.
+        Read-only: never writes back to the corpus files.
 
         Task 2.8.
         """
@@ -441,14 +389,6 @@ class EntityGraphIndex:
 
             self._recompute_backlinks()
             self._cache["dirty"] = True
-
-        # Sync updated_at in the file's YAML frontmatter
-        try:
-            new_content = self._sync_updated_at_in_file(content, path)
-            if new_content is not None:
-                path.write_text(new_content, encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            pass  # Non-critical â€” cache is updated either way
 
     def start_watch(self, mundo: str) -> None:
         """Start watchdog observer on mundos/{mundo}/{lore,personajes,sagas}.
