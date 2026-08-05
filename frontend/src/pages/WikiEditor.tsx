@@ -856,7 +856,7 @@ export default function WikiEditor() {
               {/* Papelera — restore / purge / empty of deleted entries.
                   Trash management is world-scoped; visible only in the
                   cards view (browsing). The open-ficha bar swaps it for
-                  'Borrar ficha' — the two are mutually exclusive. */}
+                  'Eliminar Ficha' — the two are mutually exclusive. */}
               <Button
                 variant="ghost"
                 size="sm"
@@ -958,7 +958,7 @@ export default function WikiEditor() {
                   onClick={() => setTrashTarget(filePath)}
                 >
                   <Icon name="trash" size={14} />
-                  Borrar ficha
+                  Eliminar Ficha
                 </Button>
               </>
             )}

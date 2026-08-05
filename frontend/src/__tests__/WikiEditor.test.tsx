@@ -1440,7 +1440,7 @@ describe("WikiEditor", () => {
     ).toBeInTheDocument();
   });
 
-  it("file bar: 'Borrar ficha' sends the open ficha to the trash (item 10)", async () => {
+  it("file bar: 'Eliminar Ficha' sends the open ficha to the trash (item 10)", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -1451,7 +1451,7 @@ describe("WikiEditor", () => {
     const user = userEvent.setup();
     renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
 
-    await user.click(screen.getByRole("button", { name: /Borrar ficha/i }));
+    await user.click(screen.getByRole("button", { name: /Eliminar Ficha/i }));
 
     const dialog = screen.getByRole("dialog", { name: /eliminar/i });
     expect(within(dialog).getByText(/cap1\.md/i)).toBeInTheDocument();
@@ -1472,7 +1472,7 @@ describe("WikiEditor", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("file bar: 'Papelera' shows while browsing, 'Borrar ficha' does not (item 10)", () => {
+  it("file bar: 'Papelera' shows while browsing, 'Eliminar Ficha' does not (item 10)", () => {
     renderWikiEditor();
 
     // Cards/browsing view: trash management is reachable, but there is no
@@ -1480,10 +1480,10 @@ describe("WikiEditor", () => {
     expect(
       screen.getByRole("button", { name: /papelera/i }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /borrar ficha/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /eliminar ficha/i })).toBeNull();
   });
 
-  it("file bar: 'Borrar ficha' shows on an open ficha, 'Papelera' does not (item 10)", () => {
+  it("file bar: 'Eliminar Ficha' shows on an open ficha, 'Papelera' does not (item 10)", () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -1496,7 +1496,7 @@ describe("WikiEditor", () => {
     // Open ficha: deleting it is reachable, but the trash-management entry
     // point lives only in the cards view — mutually exclusive.
     expect(
-      screen.getByRole("button", { name: /borrar ficha/i }),
+      screen.getByRole("button", { name: /eliminar ficha/i }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /papelera/i })).toBeNull();
   });
