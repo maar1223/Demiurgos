@@ -246,8 +246,10 @@ describe("WikiEditor", () => {
   it("shows breadcrumb with mundo and section", () => {
     renderWikiEditor();
 
-    // Breadcrumb shows mundo and section names
-    expect(screen.getByText("lore")).toBeInTheDocument();
+    // Breadcrumb shows mundo and section names — scoped to the nav so the
+    // invisible measurement layer (sibling of the nav) cannot match
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByText("lore")).toBeInTheDocument();
   });
 
   it("shows breadcrumb with file path when file is selected", () => {
@@ -260,11 +262,12 @@ describe("WikiEditor", () => {
 
     renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
 
-    expect(screen.getByText("lore")).toBeInTheDocument();
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getByText("lore")).toBeInTheDocument();
     // "capitulos" and "cap1.md" appear both in breadcrumb AND in the
-    // file tree sidebar — use getAllByText for duplicate-safe assertions
-    expect(screen.getAllByText("capitulos").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("cap1.md").length).toBeGreaterThanOrEqual(1);
+    // file tree sidebar — scope to the breadcrumb nav for exact assertions
+    expect(within(breadcrumb).getByText("capitulos")).toBeInTheDocument();
+    expect(within(breadcrumb).getByText("cap1.md")).toBeInTheDocument();
   });
 
   it("renders markdown content when file is selected", () => {
@@ -371,11 +374,12 @@ describe("WikiEditor", () => {
 
     // Click on 'lore' breadcrumb segment — this navigates back
     // to the section root, which triggers a re-render
-    const loreButton = screen.getByText("lore");
+    const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
+    const loreButton = within(breadcrumb).getByText("lore");
     await user.click(loreButton);
 
     // After navigation, the breadcrumb should still show "lore"
-    expect(screen.getByText("lore")).toBeInTheDocument();
+    expect(within(breadcrumb).getByText("lore")).toBeInTheDocument();
   });
 
   it("navigates to the world page when the world breadcrumb chip is clicked", async () => {
@@ -1150,14 +1154,53 @@ describe("WikiEditor", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("new-file: creates inside the target directory (S10/D7)", async () => {
+  it("file bar: new-file button creates at the section root (item 14)", async () => {
     const user = userEvent.setup();
     renderWikiEditor();
 
-    await user.click(
-      screen.getByRole("button", { name: "Acciones de capitulos" }),
-    );
-    await user.click(screen.getByRole("menuitem", { name: "Nuevo archivo" }));
+    await user.click(screen.getByRole("button", { name: "Nuevo archivo" }));
+
+    const input = screen.getByRole("textbox", { name: "Nombre del archivo…" });
+    await user.type(input, "nota2.md{Enter}");
+
+    await waitFor(() => {
+      expect(createFile).toHaveBeenCalledWith("Vibrantes", "lore", "nota2.md");
+    });
+  });
+
+  it("file bar: new-folder button creates via the _README placeholder (item 14)", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(screen.getByRole("button", { name: "Nueva carpeta" }));
+
+    const input = screen.getByRole("textbox", {
+      name: "Nombre de la subcarpeta…",
+    });
+    await user.type(input, "nueva{Enter}");
+
+    await waitFor(() => {
+      expect(createFile).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "nueva/_README.md",
+      );
+    });
+  });
+
+  it("file bar: creation inside an open directory keeps the directory prefix (item 14)", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos"]);
+
+    // File-only actions must not leak into the directory screen
+    expect(
+      screen.queryByRole("button", { name: "Importar Imagen" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Editar" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Nuevo archivo" }));
 
     const input = screen.getByRole("textbox", { name: "Nombre del archivo…" });
     await user.type(input, "cap3.md{Enter}");
@@ -1171,27 +1214,15 @@ describe("WikiEditor", () => {
     });
   });
 
-  it("new-subfolder: creates via the _README placeholder (D7)", async () => {
-    const user = userEvent.setup();
-    renderWikiEditor();
+  it("file bar: creation buttons hide while a file is open (item 14)", () => {
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
 
-    await user.click(
-      screen.getByRole("button", { name: "Acciones de capitulos" }),
-    );
-    await user.click(screen.getByRole("menuitem", { name: "Nueva subcarpeta" }));
-
-    const input = screen.getByRole("textbox", {
-      name: "Nombre de la subcarpeta…",
-    });
-    await user.type(input, "nueva{Enter}");
-
-    await waitFor(() => {
-      expect(createFile).toHaveBeenCalledWith(
-        "Vibrantes",
-        "lore",
-        "capitulos/nueva/_README.md",
-      );
-    });
+    expect(
+      screen.queryByRole("button", { name: "Nuevo archivo" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Nueva carpeta" }),
+    ).not.toBeInTheDocument();
   });
 
   it("set-cover: raw picker → getFileContent → saveFile with the portada applied (S32)", async () => {

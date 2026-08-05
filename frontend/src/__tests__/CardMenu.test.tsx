@@ -81,18 +81,21 @@ describe("CardMenu", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("S3/S14: directory menu swaps creation actions and hides Duplicate", () => {
+  it("S3/S14: directory menu excludes creation actions and Duplicate", () => {
     renderMenu(dirNode, { open: true });
 
     expect(screen.getByRole("menuitem", { name: "Abrir" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("menuitem", { name: "Nuevo archivo" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("menuitem", { name: "Nueva subcarpeta" }),
-    ).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Renombrar" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Eliminar" })).toBeInTheDocument();
+
+    // Creation actions moved to the file bar (item 14) — a card menu would
+    // suggest "create inside this card", which is not how directory scope works
+    expect(
+      screen.queryByRole("menuitem", { name: "Nuevo archivo" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Nueva subcarpeta" }),
+    ).not.toBeInTheDocument();
 
     // S14: folders have no Duplicate / Set cover
     expect(

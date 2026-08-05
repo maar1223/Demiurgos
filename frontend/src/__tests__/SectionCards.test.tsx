@@ -160,10 +160,9 @@ describe("SectionCards", () => {
     await user.click(
       screen.getByRole("button", { name: "Acciones de capitulos" }),
     );
-    // Directory menu: New file/New subfolder, NO Duplicate
-    expect(
-      screen.getByRole("menuitem", { name: "Nuevo archivo" }),
-    ).toBeInTheDocument();
+    // Directory menu: Open/Rename/Delete only (creation moved to the file
+    // bar), no Duplicate
+    expect(screen.getAllByRole("menuitem")).toHaveLength(3);
     expect(
       screen.queryByRole("menuitem", { name: "Duplicar" }),
     ).not.toBeInTheDocument();
@@ -172,16 +171,14 @@ describe("SectionCards", () => {
     await user.click(
       screen.getByRole("button", { name: "Acciones de notas.md" }),
     );
-    expect(
-      screen.queryByRole("menuitem", { name: "Nuevo archivo" }),
-    ).not.toBeInTheDocument();
-    // File menu: Duplicate present, NO New file (S3/S14)
+    // File menu: full set (6 items), so no directory menu is left open
+    expect(screen.getAllByRole("menuitem")).toHaveLength(6);
     expect(
       screen.getByRole("menuitem", { name: "Duplicar" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("menuitem", { name: "Nuevo archivo" }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("menuitem", { name: "Establecer portada…" }),
+    ).toBeInTheDocument();
   });
 
   it("S6: Escape closes the open menu", async () => {
@@ -261,7 +258,7 @@ describe("SectionCards", () => {
       screen.getByRole("button", { name: "Acciones de capitulos" }),
     );
     expect(
-      screen.getByRole("menuitem", { name: "Nuevo archivo" }),
+      screen.getByRole("menuitem", { name: "Renombrar" }),
     ).toBeEnabled();
   });
 

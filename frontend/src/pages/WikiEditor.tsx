@@ -359,15 +359,18 @@ export default function WikiEditor() {
    * create_file endpoint; a subfolder is materialized by its invisible
    * `_README.md` placeholder (create_file writes text, so an empty folder
    * would fail; `_`-prefixed files stay invisible to tree/graph).
+   * `createTarget.path` is the directory being browsed — empty at the
+   * section root, so the target path is built without a prefix there.
    */
   const handleCreateCommit = useCallback(
     async (name: string) => {
       if (!mundo || !section || !createTarget) return;
       const dirPath = createTarget.path;
+      const base = dirPath ? `${dirPath}/` : "";
       const targetPath =
         createTarget.kind === "subfolder"
-          ? `${dirPath}/${name}/_README.md`
-          : `${dirPath}/${name}`;
+          ? `${base}${name}/_README.md`
+          : `${base}${name}`;
       setBusyPath(dirPath);
       setActionError(null);
       try {
@@ -435,12 +438,6 @@ export default function WikiEditor() {
           break;
         case "trash":
           setTrashTarget(node.path);
-          break;
-        case "new-file":
-          setCreateTarget({ path: node.path, kind: "file" });
-          break;
-        case "new-subfolder":
-          setCreateTarget({ path: node.path, kind: "subfolder" });
           break;
       }
     },
@@ -770,8 +767,43 @@ export default function WikiEditor() {
           />
         </div>
 
-        {/* Actions — focus toggle always visible, rest only when a file is selected */}
+        {/* Actions — creation buttons (browsing only) + focus toggle, rest only with a file selected */}
         <div className="ml-auto flex items-center gap-2">
+          {/* Creation lives in the file bar, NOT in the card ⋯ menu: a card
+              menu suggests "create inside this card", which is not how the
+              directory scope works. Visible only while browsing (no open
+              file); the target is the directory being viewed — the section
+              root when no directory is open. */}
+          {browsingDir && (
+            <>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  setCreateTarget({
+                    path: selectedNode?.is_dir ? filePath! : "",
+                    kind: "file",
+                  })
+                }
+              >
+                <Icon name="file" size={14} />
+                Nuevo archivo
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  setCreateTarget({
+                    path: selectedNode?.is_dir ? filePath! : "",
+                    kind: "subfolder",
+                  })
+                }
+              >
+                <Icon name="folder" size={14} />
+                Nueva carpeta
+              </Button>
+            </>
+          )}
           <button
             type="button"
             onClick={() => setFocusMode((prev) => !prev)}
@@ -782,7 +814,12 @@ export default function WikiEditor() {
           >
             <Icon name={focusMode ? "minimize" : "expand"} size={14} />
           </button>
-          {filePath && file && (
+          {/* Edit/import actions are file-only: they make no sense outside
+              the file screen (browsing a directory has no draft to edit and
+              no content to attach images to). Guarded by !browsingDir, not
+              just filePath && file — the content hook may resolve a value
+              for directory paths, which would leak the buttons elsewhere. */}
+          {!browsingDir && filePath && file && (
             <>
               {isEditing ? (
               <>

@@ -13,9 +13,7 @@ export type CardAction =
   | "rename"
   | "move"
   | "duplicate"
-  | "trash"
-  | "new-file"
-  | "new-subfolder";
+  | "trash";
 
 interface CardMenuItem {
   action: CardAction;
@@ -32,11 +30,13 @@ const FILE_ACTIONS: CardMenuItem[] = [
   { action: "trash", label: "Eliminar" },
 ];
 
-/** Folder actions (S3/S14): Open, New file, New subfolder, Rename, Delete. */
+/**
+ * Folder actions (S3/S14): Open, Rename, Delete. Creation actions moved to
+ * the file bar ("Nuevo archivo" / "Nueva carpeta") — a card menu suggests
+ * "create inside this card", which is not how the directory scope works.
+ */
 const DIR_ACTIONS: CardMenuItem[] = [
   { action: "open", label: "Abrir" },
-  { action: "new-file", label: "Nuevo archivo" },
-  { action: "new-subfolder", label: "Nueva subcarpeta" },
   { action: "rename", label: "Renombrar" },
   { action: "trash", label: "Eliminar" },
 ];
