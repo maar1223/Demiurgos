@@ -1439,4 +1439,36 @@ describe("WikiEditor", () => {
       screen.getByRole("button", { name: "Acciones de notas.md" }),
     ).toBeInTheDocument();
   });
+
+  it("file bar: 'Borrar ficha' sends the open ficha to the trash (item 10)", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /Borrar ficha/i }));
+
+    const dialog = screen.getByRole("dialog", { name: /eliminar/i });
+    expect(within(dialog).getByText(/cap1\.md/i)).toBeInTheDocument();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: /^eliminar$/i }),
+    );
+
+    await waitFor(() => {
+      expect(deleteFile).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+      );
+    });
+    expect(
+      screen.queryByRole("dialog", { name: /eliminar/i }),
+    ).not.toBeInTheDocument();
+  });
 });

@@ -362,7 +362,23 @@ export default function WikiEditor() {
           filePath &&
           (filePath === target || filePath.startsWith(target + "/"))
         ) {
-          navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
+          // Item 10: land on the folder that contained the deleted node —
+          // same parentDir pattern as handleRenameCommit — instead of the
+          // section root. Empty parentDir falls back to the section root.
+          const parentDir = target.includes("/")
+            ? target.slice(0, target.lastIndexOf("/"))
+            : "";
+          const encodedParent = parentDir
+            ? parentDir
+                .split("/")
+                .map((s) => encodeURIComponent(s))
+                .join("/")
+            : "";
+          navigate(
+            encodedParent
+              ? `/wiki/${encodeURIComponent(mundo)}/${section}/${encodedParent}`
+              : `/wiki/${encodeURIComponent(mundo)}/${section}`,
+          );
         }
       } catch (err) {
         const apiErr = err as ApiError;
@@ -929,6 +945,14 @@ export default function WikiEditor() {
                 >
                   <Icon name="edit" size={14} />
                   Editar
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setTrashTarget(filePath)}
+                >
+                  <Icon name="trash" size={14} />
+                  Borrar ficha
                 </Button>
               </>
             )}
