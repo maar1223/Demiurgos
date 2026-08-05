@@ -3,6 +3,7 @@ import { ApiError } from "@/api/types";
 import type {
   DiffPreview,
   DuplicateResponse,
+  FichaStatus,
   FileContent,
   FileNode,
   MediaList,
@@ -157,6 +158,30 @@ export async function duplicateFile(
     method: "POST",
     body: JSON.stringify({ from }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/{mundo}/{section}/status — rewrite ONLY the frontmatter
+ * `status:` line (Borrador → draft, Canon → stable). Instant and
+ * independent of the save flow.
+ */
+export async function setStatus(
+  mundo: string,
+  section: string,
+  path: string,
+  status: FichaStatus,
+): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(
+    apiUrl(["api", mundo, section, "status"]),
+    {
+      method: "POST",
+      body: JSON.stringify({ path, status }),
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

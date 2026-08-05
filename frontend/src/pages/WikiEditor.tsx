@@ -22,6 +22,7 @@ import { TabBar } from "@/components/molecules/TabBar";
 import type { SidebarTab } from "@/components/molecules/TabBar";
 import { SectionTabs } from "@/components/molecules/SectionTabs";
 import { Breadcrumb } from "@/components/molecules/Breadcrumb";
+import { StatusBadge } from "@/components/molecules/StatusBadge";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -31,7 +32,12 @@ import { ImagePicker } from "@/components/organisms/ImagePicker";
 import { ImportImageModal } from "@/components/organisms/ImportImageModal";
 import { VALID_SECTIONS } from "@/lib/constants";
 import { decodePathSegment, getErrorMessage } from "@/lib/utils";
-import { splitFrontmatter, mergeFrontmatter, setPortada } from "@/lib/frontmatter";
+import {
+  splitFrontmatter,
+  mergeFrontmatter,
+  setPortada,
+  parseFrontmatterStatus,
+} from "@/lib/frontmatter";
 import {
   createFile,
   deleteFile,
@@ -39,8 +45,9 @@ import {
   getFileContent,
   moveNode,
   saveFile,
+  setStatus,
 } from "@/api/wiki";
-import type { ApiError, FileNode } from "@/api/types";
+import type { ApiError, FichaStatus, FileNode } from "@/api/types";
 
 // CodeMirror is heavy (~300KB) — load the live diff editor only when the
 // preview is actually opened, keeping the initial bundle lean.
@@ -171,6 +178,15 @@ export default function WikiEditor() {
   // edits) and re-merged on save to keep the on-disk file byte-identical.
   const { frontmatter, body } = useMemo(
     () => splitFrontmatter(file?.content ?? ""),
+    [file?.content],
+  );
+
+  // OKF status shown in the file-bar chip — parsed from the frontmatter of
+  // the OPEN file. Files without a `status:` field default to Canon
+  // (stable), coherent with OKF fichas. After a mutation the content is
+  // revalidated so the chip always reflects the on-disk truth.
+  const fichaStatus: FichaStatus = useMemo(
+    () => parseFrontmatterStatus(file?.content ?? "") ?? "stable",
     [file?.content],
   );
 
@@ -494,6 +510,21 @@ export default function WikiEditor() {
     }
   }, [mundo, section, filePath, frontmatter, editedContent, retryContent]);
 
+  /**
+   * Set OKF status (Borrador/Canon): a dedicated POST rewrites ONLY the
+   * frontmatter — instant and independent of the save gate. The content is
+   * revalidated on success so the chip reflects the on-disk truth (same
+   * contract as the card flows: state untouched until the request succeeds).
+   */
+  const handleStatusChange = useCallback(
+    async (next: FichaStatus) => {
+      if (!mundo || !section || !filePath) return;
+      await setStatus(mundo, section, filePath, next);
+      await retryContent();
+    },
+    [mundo, section, filePath, retryContent],
+  );
+
   // Toggle edit mode — exiting resets preview and transient state
   const handleToggleEdit = useCallback(() => {
     if (isEditing) {
@@ -803,6 +834,15 @@ export default function WikiEditor() {
                 Nueva carpeta
               </Button>
             </>
+          )}
+          {/* Status chip — file-only: it describes the open ficha's
+              frontmatter, so it never renders on cards/browsing screens.
+              Sits before the focus button in the right zone. */}
+          {!browsingDir && filePath && file && (
+            <StatusBadge
+              status={fichaStatus}
+              onStatusChange={handleStatusChange}
+            />
           )}
           <button
             type="button"

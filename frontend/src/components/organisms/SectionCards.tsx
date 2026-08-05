@@ -329,7 +329,7 @@ function CardButton({
       {/* Name + optional badge — stacked so the name always gets full width
           (pr-7 reserves the title-line ⋯ spot, a sibling of the card) */}
       <div className="relative mt-auto flex flex-col gap-1 p-3">
-        <h3 className="min-w-0 truncate pr-7 font-heading text-sm text-pergamino transition-colors group-hover:text-llamita">
+        <h3 className="min-w-0 truncate pr-7 font-heading text-body text-pergamino transition-colors group-hover:text-llamita">
           {node.name}
         </h3>
         {badge && (

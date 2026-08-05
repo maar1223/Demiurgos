@@ -14,6 +14,13 @@ export interface FileNode {
   is_dir: boolean;
   children?: FileNode[];
   /**
+   * OKF ficha status (draft|stable) parsed from the file's leading
+   * frontmatter. Present ONLY when the backend knows a valid status —
+   * unknown values (e.g. the idea-bank `synced`) and directories never
+   * carry the field.
+   */
+  status?: FichaStatus;
+  /**
    * Mundo-relative cover path (e.g. `wiki/media/x.jpg`).
    * Only present when the tree was requested with `?covers=true`;
    * `null` when the file has no resolvable cover (dirs are always null).
@@ -36,6 +43,9 @@ export interface SuccessResponse {
   success: boolean;
   path: string;
 }
+
+/** OKF ficha status — UI maps Borrador → draft, Canon → stable. */
+export type FichaStatus = "draft" | "stable";
 
 /** Response from POST /api/{mundo}/move — same shape as SuccessResponse. */
 export interface MoveResponse {

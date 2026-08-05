@@ -15,6 +15,8 @@
  * untouched as body and `mergeFrontmatter(null, body)` returns the body.
  */
 
+import type { FichaStatus } from "@/api/types";
+
 export interface SplitFrontmatterResult {
   /**
    * The FULL raw frontmatter block INCLUDING delimiters, e.g.
@@ -119,6 +121,30 @@ function splitLinesKeepEnds(text: string): string[] {
 function yamlQuote(value: string): string {
   if (/^[A-Za-z0-9_./-]+$/.test(value)) return value;
   return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+// ---------------------------------------------------------------------------
+// Status — OKF ficha status (Borrador → draft, Canon → stable)
+// ---------------------------------------------------------------------------
+
+/** `status:` line inside the frontmatter block (value may be quoted). */
+const STATUS_LINE_PATTERN = /^[ \t]*status:[ \t]*["']?([A-Za-z0-9_-]+)/m;
+
+/**
+ * Extracts the OKF `status:` value from a file's LEADING frontmatter block.
+ * Returns `null` when the field is absent or holds an unknown value — the
+ * UI then defaults to Canon (stable). Legacy `status:` blocks in the BODY
+ * (e.g. `---\nstatus: draft\n---` in Pert.md) are never inspected: the
+ * regex runs only over the block returned by `splitFrontmatter`.
+ */
+export function parseFrontmatterStatus(content: string): FichaStatus | null {
+  const { frontmatter } = splitFrontmatter(content);
+  if (!frontmatter) return null;
+  const match = STATUS_LINE_PATTERN.exec(frontmatter);
+  if (!match) return null;
+  const value = match[1];
+  if (value === "draft" || value === "stable") return value;
+  return null;
 }
 
 /**

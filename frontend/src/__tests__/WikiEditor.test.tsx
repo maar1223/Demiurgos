@@ -43,6 +43,7 @@ vi.mock("@/hooks/useImages", () => ({
 // but the module still exports it — keep the mock for parity. getMediaUrl
 // is used by the ImagePicker thumbnails. moveNode/duplicateFile/
 // getFileContent/createFile/deleteFile back the card ⋯ action flows.
+// setStatus backs the file-bar status chip (item 14).
 vi.mock("@/api/wiki", () => ({
   getDiff: vi.fn(),
   saveFile: vi.fn(),
@@ -52,6 +53,7 @@ vi.mock("@/api/wiki", () => ({
   getFileContent: vi.fn(),
   createFile: vi.fn(),
   deleteFile: vi.fn(),
+  setStatus: vi.fn(),
 }));
 
 // The diff view is lazy-loaded; a lightweight stub is enough for these
@@ -74,7 +76,7 @@ import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useEntitySearch } from "@/hooks/useEntitySearch";
 import { useImages, useImageUpload } from "@/hooks/useImages";
-import { saveFile, moveNode, duplicateFile, getFileContent, createFile, deleteFile } from "@/api/wiki";
+import { saveFile, moveNode, duplicateFile, getFileContent, createFile, deleteFile, setStatus } from "@/api/wiki";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
@@ -145,6 +147,7 @@ describe("WikiEditor", () => {
     });
 
     (saveFile as Mock).mockResolvedValue({ success: true, path: "capitulos/cap1.md" });
+    (setStatus as Mock).mockResolvedValue({ success: true, path: "capitulos/cap1.md" });
     (moveNode as Mock).mockResolvedValue({ success: true, path: "renombrada.md" });
     (duplicateFile as Mock).mockResolvedValue({
       success: true,
@@ -1223,6 +1226,125 @@ describe("WikiEditor", () => {
     expect(
       screen.queryByRole("button", { name: "Nueva carpeta" }),
     ).not.toBeInTheDocument();
+  });
+
+  // ── Status chip (item 14): Borrador/Canon badge in the file bar ──
+
+  // A wiki ficha whose frontmatter carries the OKF draft status
+  const draftFile = {
+    ...mockFileContent,
+    content:
+      "---\ntype: Personaje\ntitle: Anisa\nstatus: draft\n---\n# Anisa\n\nCuerpo.",
+  };
+
+  function mockOpenFile(file = mockFileContent) {
+    (useFileContent as Mock).mockReturnValue({
+      file,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+  }
+
+  it("status chip: hidden while browsing (no file open)", () => {
+    renderWikiEditor();
+
+    expect(
+      screen.queryByRole("button", { name: /estado:/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("status chip: hidden on directory screens", () => {
+    mockOpenFile();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos"]);
+
+    expect(
+      screen.queryByRole("button", { name: /estado:/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("status chip: shows Canon by default for files without a status field", () => {
+    mockOpenFile();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    expect(
+      screen.getByRole("button", { name: "Estado: Canon" }),
+    ).toBeInTheDocument();
+  });
+
+  it("status chip: shows Borrador when the ficha frontmatter is draft", () => {
+    mockOpenFile(draftFile);
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    expect(
+      screen.getByRole("button", { name: "Estado: Borrador" }),
+    ).toBeInTheDocument();
+  });
+
+  it("status chip: selecting a status calls setStatus and revalidates the content", async () => {
+    const mutate = vi.fn();
+    (useFileContent as Mock).mockReturnValue({
+      file: draftFile,
+      isLoading: false,
+      error: null,
+      mutate,
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(
+      screen.getByRole("button", { name: "Estado: Borrador" }),
+    );
+    await user.click(
+      within(screen.getByRole("menu")).getByRole("menuitemradio", {
+        name: /canon/i,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(setStatus).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+        "stable",
+      );
+    });
+    expect(mutate).toHaveBeenCalled();
+  });
+
+  it("status chip: failed mutation shows the error and keeps the chip unchanged", async () => {
+    (setStatus as Mock).mockRejectedValue({
+      status: 500,
+      detail: "Error interno del servidor. Revisá los logs del backend.",
+    });
+    mockOpenFile();
+    const mutate = vi.fn();
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate,
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: "Estado: Canon" }));
+    await user.click(
+      within(screen.getByRole("menu")).getByRole("menuitemradio", {
+        name: /borrador/i,
+      }),
+    );
+
+    expect(
+      await screen.findByRole("alert"),
+    ).toHaveTextContent(/error interno del servidor/i);
+    // Chip unchanged and content NOT revalidated (state untouched on failure)
+    expect(
+      screen.getByRole("button", { name: "Estado: Canon" }),
+    ).toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled();
   });
 
   it("set-cover: raw picker → getFileContent → saveFile with the portada applied (S32)", async () => {

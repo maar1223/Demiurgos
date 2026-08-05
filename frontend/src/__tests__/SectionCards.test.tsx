@@ -5,7 +5,7 @@ import {
   SectionCards,
   fileIconName,
 } from "@/components/organisms/SectionCards";
-import type { FileNode } from "@/api/types";
+import type { FichaStatus, FileNode } from "@/api/types";
 
 // SectionCards renders cover <img> via getMediaUrl when a node carries a
 // portada — mock the URL builder so no network is hit.
@@ -293,6 +293,109 @@ describe("SectionCards", () => {
 
     expect(
       screen.queryByRole("img", { name: "sin-portada.md" }),
+    ).not.toBeInTheDocument();
+  });
+
+  // ── Status dot (item 14 follow-up) ────────────────────────────────
+
+  it("shows the draft dot with amber dashed classes and its tooltip", () => {
+    renderCards({
+      cardNodes: [
+        { name: "borrador.md", path: "borrador.md", is_dir: false, status: "draft" },
+      ],
+    });
+
+    // Dot: top-right corner of the card, readable via aria-label (the
+    // native `title` tooltip was removed in favour of the instant CSS one)
+    const dot = screen.getByLabelText("Borrador");
+    expect(dot).toHaveClass(
+      "border-dashed",
+      "border-amber-400/50",
+      "bg-amber-400/10",
+      "h-3",
+      "w-3",
+      "rounded-full",
+      "border-2",
+    );
+    const wrapper = dot.parentElement;
+    expect(wrapper).toHaveClass("top-3", "right-3", "absolute");
+
+    // Instant CSS tooltip: hidden by default, plain text for screen readers
+    const tooltip = screen.getByText("Borrador");
+    expect(tooltip).toHaveAttribute("aria-hidden", "true");
+    expect(tooltip).toHaveClass(
+      "opacity-0",
+      "pointer-events-none",
+      "whitespace-nowrap",
+    );
+    expect(wrapper).toHaveClass("group");
+  });
+
+  it("shows the stable dot with emerald solid classes and its tooltip", () => {
+    renderCards({
+      cardNodes: [
+        { name: "canon.md", path: "canon.md", is_dir: false, status: "stable" },
+      ],
+    });
+
+    const dot = screen.getByLabelText("Canon");
+    expect(dot).toHaveClass(
+      "border-solid",
+      "border-emerald-500/60",
+      "bg-emerald-500/15",
+      "h-3",
+      "w-3",
+      "rounded-full",
+      "border-2",
+    );
+    const wrapper = dot.parentElement;
+    expect(wrapper).toHaveClass("top-3", "right-3", "absolute");
+
+    const tooltip = screen.getByText("Canon");
+    expect(tooltip).toHaveAttribute("aria-hidden", "true");
+    expect(tooltip).toHaveClass(
+      "opacity-0",
+      "pointer-events-none",
+      "whitespace-nowrap",
+    );
+    expect(wrapper).toHaveClass("group");
+  });
+
+  it("shows no dot when the status is missing or unknown", () => {
+    renderCards({
+      cardNodes: [
+        { name: "sin-status.md", path: "sin-status.md", is_dir: false },
+        {
+          name: "synced.md",
+          path: "synced.md",
+          is_dir: false,
+          status: "synced" as FichaStatus,
+        },
+      ],
+    });
+
+    expect(
+      screen.queryByLabelText(/borrador|canon/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("never shows a dot for directories", () => {
+    renderCards({
+      cardNodes: [
+        {
+          name: "carpeta",
+          path: "carpeta",
+          is_dir: true,
+          children: [],
+          // The backend never sends status on dirs — the guard must hold
+          // even if a stale payload carries it.
+          status: "stable" as FichaStatus,
+        },
+      ],
+    });
+
+    expect(
+      screen.queryByLabelText(/borrador|canon/i),
     ).not.toBeInTheDocument();
   });
 
