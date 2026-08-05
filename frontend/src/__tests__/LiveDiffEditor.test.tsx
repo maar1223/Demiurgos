@@ -102,4 +102,115 @@ describe("LiveDiffEditor", () => {
 
     expect(onChange).toHaveBeenCalledWith("linea uno\nlinea dos\nlinea tres fin");
   });
+
+  describe("rendering", () => {
+    const LINE_ONE = "uno";
+    const LINE_TWO = "dos";
+    const LINE_THREE = "tres";
+
+    it("shows 'Sin diferencias' for an empty diff", () => {
+      render(<LiveDiffEditor original="" value="" onChange={vi.fn()} />);
+
+      expect(screen.getByText("Sin diferencias")).toBeInTheDocument();
+      expect(screen.queryByLabelText(/Editar línea/)).not.toBeInTheDocument();
+    });
+
+    it("renders the read-only and edited column headers", () => {
+      render(
+        <LiveDiffEditor
+          original={LINE_ONE}
+          value={LINE_ONE}
+          onChange={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByText("Original · solo lectura")).toBeInTheDocument();
+      expect(
+        screen.getByText("Editado · hacé clic y escribí"),
+      ).toBeInTheDocument();
+    });
+
+    it("renders unchanged rows with neutral cells", () => {
+      render(
+        <LiveDiffEditor
+          original={LINE_ONE}
+          value={LINE_ONE}
+          onChange={vi.fn()}
+        />,
+      );
+
+      // The line appears twice: the read-only left cell and the editable
+      // right textarea — both must be neutral (no diff highlight)
+      const [leftCell, rightCell] = screen.getAllByText(LINE_ONE);
+      expect(leftCell.tagName).toBe("DIV");
+      expect(leftCell).toHaveClass("border-transparent");
+      expect(rightCell.tagName).toBe("TEXTAREA");
+      expect(rightCell).toHaveClass("border-transparent", "bg-transparent");
+    });
+
+    it("highlights added lines green and numbers the right gutter", () => {
+      const original = [LINE_ONE, LINE_TWO, LINE_THREE].join("\n");
+      const value = original + "\ncuatro";
+
+      render(
+        <LiveDiffEditor original={original} value={value} onChange={vi.fn()} />,
+      );
+
+      // The added line is editable with the green highlight
+      const textarea = screen.getByLabelText("Editar línea 4");
+      expect(textarea).toHaveClass("border-musgo", "bg-musgo/30");
+      // Right gutter shows the added line number
+      expect(screen.getByText("4")).toBeInTheDocument();
+    });
+
+    it("highlights removed lines red with no editable counterpart", () => {
+      const original = [LINE_ONE, "borrada", LINE_THREE].join("\n");
+      const value = [LINE_ONE, LINE_THREE].join("\n");
+
+      render(
+        <LiveDiffEditor original={original} value={value} onChange={vi.fn()} />,
+      );
+
+      const removed = screen.getByText("borrada");
+      expect(removed).toHaveClass("border-sangre", "bg-sangre/30");
+      // Only the two surviving lines are editable
+      expect(screen.queryAllByLabelText(/Editar línea/)).toHaveLength(2);
+      // Left gutter keeps the removed line number; the right gutter of the
+      // same row is empty and the following row re-numbers to 2 — both "2"s
+      // prove the row alignment
+      expect(screen.getAllByText("2")).toHaveLength(2);
+    });
+
+    it("renders changed lines as old text (red) on the left and new text (green) on the right", () => {
+      const original = [LINE_ONE, "vieja", LINE_THREE].join("\n");
+      const value = [LINE_ONE, "nueva", LINE_THREE].join("\n");
+
+      render(
+        <LiveDiffEditor original={original} value={value} onChange={vi.fn()} />,
+      );
+
+      expect(screen.getByText("vieja")).toHaveClass(
+        "border-sangre",
+        "bg-sangre/30",
+      );
+      const textarea = screen.getByLabelText("Editar línea 2");
+      expect(textarea).toHaveValue("nueva");
+      expect(textarea).toHaveClass("border-musgo", "bg-musgo/30");
+      // Both gutters are numbered 2 — old and new line share the grid row
+      expect(screen.getAllByText("2")).toHaveLength(2);
+    });
+
+    it("escapes raw HTML in line content (no script execution)", () => {
+      const xss = "<script>alert('xss')</script>";
+      const { container } = render(
+        <LiveDiffEditor original={xss} value={xss} onChange={vi.fn()} />,
+      );
+
+      // Rendered as plain text (left cell), never as an injected element
+      expect(
+        screen.getAllByText(xss).some((el) => el.tagName === "DIV"),
+      ).toBe(true);
+      expect(container.querySelector("script")).toBeNull();
+    });
+  });
 });
