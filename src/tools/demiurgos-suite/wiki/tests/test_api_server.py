@@ -41,6 +41,18 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture()
+def jpeg_bytes() -> bytes:
+    """Minimal valid JPEG payload (survives PIL round-trip in uploads)."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), "red").save(buf, "JPEG")
+    return buf.getvalue()
+
+
+@pytest.fixture()
 def client_sorted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """TestClient with a world whose tree exercises ordering rules.
 
@@ -531,6 +543,194 @@ class TestCovers:
         assert node["portada"] == "wiki/media/foto.jpg"
 
 
+class TestTreeStatus:
+    """Item 14 follow-up: tree nodes expose the OKF frontmatter ``status``
+    (draft|stable) — only known values, only for files, only from the
+    leading frontmatter block (legacy body blocks never count)."""
+
+    def _lore(self) -> Path:
+        return api_server.MUNDOS_DIR / "test_mundo" / "lore"
+
+    def _node(self, tree: list, name: str) -> dict:
+        return next(n for n in tree if n["name"] == name)
+
+    def test_file_with_draft_status(self, client: TestClient):
+        (self._lore() / "d.md").write_text(
+            "---\ntype: ficha\nstatus: draft\n---\n# D\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree").json()
+        assert self._node(tree, "d.md")["status"] == "draft"
+
+    def test_file_with_stable_status(self, client: TestClient):
+        (self._lore() / "s.md").write_text(
+            "---\nstatus: stable\n---\n# S\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree").json()
+        assert self._node(tree, "s.md")["status"] == "stable"
+
+    def test_quoted_status_value(self, client: TestClient):
+        (self._lore() / "q.md").write_text(
+            '---\nstatus: "draft"\n---\n# Q\n', encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree").json()
+        assert self._node(tree, "q.md")["status"] == "draft"
+
+    def test_crlf_frontmatter_status(self, client: TestClient):
+        (self._lore() / "crlf.md").write_bytes(
+            "---\r\nstatus: draft\r\n---\r\n# CRLF\r\n".encode("utf-8"))
+        tree = client.get("/api/test_mundo/lore/tree").json()
+        assert self._node(tree, "crlf.md")["status"] == "draft"
+
+    def test_missing_status_field_absent(self, client: TestClient):
+        (self._lore() / "plain.md").write_text("# Sin frontmatter\n", encoding="utf-8")
+        (self._lore() / "fm.md").write_text(
+            "---\ntype: ficha\n---\n# FM\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree").json()
+        for name in ("plain.md", "fm.md"):
+            assert "status" not in self._node(tree, name)
+
+    def test_unknown_status_field_absent(self, client: TestClient):
+        (self._lore() / "synced.md").write_text(
+            '---\nstatus: "synced"\n---\n# SY\n', encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree").json()
+        assert "status" not in self._node(tree, "synced.md")
+
+    def test_legacy_body_blocks_are_ignored(self, client: TestClient):
+        (self._lore() / "pert.md").write_text(
+            "# Titulo\n\n---\nstatus: stable\n---\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree").json()
+        assert "status" not in self._node(tree, "pert.md")
+
+    def test_directories_never_carry_status(self, client: TestClient):
+        tree = client.get("/api/test_mundo/lore/tree").json()
+        for node in tree:
+            if node["is_dir"]:
+                assert "status" not in node
+
+    def test_status_survives_covers_param(self, client: TestClient):
+        (self._lore() / "c.md").write_text(
+            "---\nstatus: stable\n---\n# C\n", encoding="utf-8")
+        tree = client.get("/api/test_mundo/lore/tree?covers=true").json()
+        node = self._node(tree, "c.md")
+        assert node["status"] == "stable"
+        assert "portada" in node
+
+
+class TestStatusEndpoint:
+    """Item 14: POST /api/{mundo}/{section}/status rewrites ONLY the
+    frontmatter `status:` line — CRLF-safe, never touching legacy body
+    blocks (Pert.md regression)."""
+
+    def _lore(self) -> Path:
+        return api_server.MUNDOS_DIR / "test_mundo" / "lore"
+
+    def test_updates_status_and_preserves_crlf_bytes(self, client: TestClient):
+        content = "---\r\ntype: Personaje\r\ntitle: X\r\nstatus: draft\r\n---\r\n# Cuerpo\r\n"
+        (self._lore() / "ficha.md").write_bytes(content.encode("utf-8"))
+        resp = client.post(
+            "/api/test_mundo/lore/status",
+            json={"path": "ficha.md", "status": "stable"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"success": True, "path": "lore/ficha.md", "status": "stable"}
+        # CRLF preserved byte-for-byte except the status line value
+        expected = content.replace("status: draft\r\n", "status: stable\r\n")
+        assert (self._lore() / "ficha.md").read_bytes() == expected.encode("utf-8")
+
+    def test_legacy_body_block_untouched(self, client: TestClient):
+        """Pert.md shape: `status` in the frontmatter AND a legacy
+        `---\nstatus: draft\n---` block in the body — only the first block
+        is rewritten."""
+        content = (
+            "---\ntype: Personaje\ntitle: Pert\nstatus: stable\n---\n\n"
+            "---\nstatus: draft\n---\n\nCuerpo\n"
+        )
+        (self._lore() / "pert.md").write_text(content, encoding="utf-8")
+        resp = client.post(
+            "/api/test_mundo/lore/status",
+            json={"path": "pert.md", "status": "draft"},
+        )
+        assert resp.status_code == 200
+        saved = (self._lore() / "pert.md").read_text(encoding="utf-8")
+        # Frontmatter updated, legacy body block untouched
+        assert saved == content.replace("status: stable\n", "status: draft\n", 1)
+        assert saved.count("status: draft") == 2
+
+    def test_legacy_body_block_untouched_crlf(self, client: TestClient):
+        content = (
+            "---\r\ntype: Personaje\r\ntitle: Pert\r\nstatus: stable\r\n---\r\n\r\n"
+            "---\r\nstatus: draft\r\n---\r\n\r\nCuerpo\r\n"
+        )
+        (self._lore() / "pert.md").write_bytes(content.encode("utf-8"))
+        resp = client.post(
+            "/api/test_mundo/lore/status",
+            json={"path": "pert.md", "status": "stable"},
+        )
+        assert resp.status_code == 200
+        saved = (self._lore() / "pert.md").read_bytes()
+        assert saved.count(b"status: stable") == 1
+        assert saved.count(b"status: draft") == 1  # legacy block untouched
+        assert b"\r\n" in saved
+
+    def test_inserts_status_line_when_field_missing(self, client: TestClient):
+        content = "---\ntype: Nota\ntitle: X\n---\nCuerpo"
+        (self._lore() / "nota.md").write_text(content, encoding="utf-8")
+        resp = client.post(
+            "/api/test_mundo/lore/status",
+            json={"path": "nota.md", "status": "draft"},
+        )
+        assert resp.status_code == 200
+        saved = (self._lore() / "nota.md").read_text(encoding="utf-8")
+        assert saved == "---\ntype: Nota\ntitle: X\nstatus: draft\n---\nCuerpo"
+
+    def test_no_frontmatter_inserts_leading_block(self, client: TestClient):
+        (self._lore() / "plain.md").write_text("# Plain\n", encoding="utf-8")
+        resp = client.post(
+            "/api/test_mundo/lore/status",
+            json={"path": "plain.md", "status": "draft"},
+        )
+        assert resp.status_code == 200
+        saved = (self._lore() / "plain.md").read_text(encoding="utf-8")
+        assert saved == "---\nstatus: draft\n---\n# Plain\n"
+
+    def test_invalid_status_returns_422(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo/lore/status",
+            json={"path": "00_inicio.md", "status": "published"},
+        )
+        assert resp.status_code == 422
+        assert "estado inválido" in resp.json()["detail"].lower()
+        # File untouched
+        saved = (self._lore() / "00_inicio.md").read_text(encoding="utf-8")
+        assert "status:" not in saved
+
+    def test_missing_file_returns_404(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo/lore/status",
+            json={"path": "no_existe.md", "status": "draft"},
+        )
+        assert resp.status_code == 404
+        assert "no encontrado" in resp.json()["detail"].lower()
+
+    def test_missing_mundo_returns_404(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo_fantasma/lore/status",
+            json={"path": "a.md", "status": "draft"},
+        )
+        assert resp.status_code == 404
+
+    def test_traversal_returns_400(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo/lore/status",
+            json={"path": "../../secrets.md", "status": "draft"},
+        )
+        assert resp.status_code == 400
+
+    def test_missing_path_field_returns_400(self, client: TestClient):
+        resp = client.post(
+            "/api/test_mundo/lore/status",
+            json={"status": "draft"},
+        )
+        assert resp.status_code == 400
+
+
 class TestAiAsk:
     def test_ai_ask_includes_file_context(self, client: TestClient):
         """The prompt sent to Hermes carries the wikilink and path of the open file."""
@@ -558,3 +758,164 @@ class TestAiAsk:
         sent = mock_run.await_args.args[0]
         assert "Ficha actual" not in sent
         assert "[Mundo: test_mundo]" in sent
+
+
+class TestMundoValidation:
+    """Audit 07-30 (item 13): every endpoint taking {mundo} must reject
+    worlds that do not exist and block mundo-level traversal.
+
+    ``%2e%2e`` is URL-encoded ``..`` — plain ``/api/../...`` is normalized
+    away by clients, but encoded dots reach the endpoint verbatim, so the
+    server must validate the mundo param itself. Established patterns:
+    mutations raise 404 "Mundo no encontrado"; GET/list endpoints keep
+    their soft-empty contract.
+    """
+
+    ENC_DOTS = "%2e%2e"
+
+    def _tmp_root(self) -> Path:
+        return api_server.MUNDOS_DIR.parent
+
+    # -- world existence: GET/list keep their soft contract ------------------
+
+    def test_tree_missing_mundo_returns_empty(self, client: TestClient):
+        assert client.get("/api/mundo_fantasma/lore/tree").json() == []
+
+    def test_get_file_missing_mundo_soft_error(self, client: TestClient):
+        resp = client.get("/api/mundo_fantasma/lore/file?path=a.md")
+        assert resp.status_code == 200
+        assert "error" in resp.json()
+
+    def test_list_media_missing_mundo_empty(self, client: TestClient):
+        resp = client.get("/api/mundo_fantasma/media/list")
+        assert resp.json() == {"images": [], "total": 0}
+
+    def test_graph_search_missing_mundo_empty(self, client: TestClient):
+        assert client.get("/api/mundo_fantasma/graph/search?q=a").json() == []
+
+    def test_graph_status_missing_mundo_zeroed(self, client: TestClient):
+        assert client.get("/api/mundo_fantasma/graph/status").json() == {
+            "node_count": 0,
+            "link_count": 0,
+            "indexed": False,
+        }
+
+    # -- world existence: mutations raise 404 --------------------------------
+
+    def test_diff_missing_mundo_404(self, client: TestClient):
+        resp = client.post("/api/mundo_fantasma/lore/diff?path=a.md", json={"content": "x"})
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Mundo no encontrado"
+
+    def test_diff_invalid_section_400(self, client: TestClient):
+        resp = client.post("/api/test_mundo/wiki/diff?path=a.md", json={"content": "x"})
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Sección inválida"
+
+    def test_delete_missing_mundo_404(self, client: TestClient):
+        resp = client.delete("/api/mundo_fantasma/lore/file?path=a.md")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Mundo no encontrado"
+
+    def test_move_missing_mundo_404(self, client: TestClient):
+        resp = client.post("/api/mundo_fantasma/move", json={"from": "lore/a.md", "to": "lore/b.md"})
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Mundo no encontrado"
+
+    def test_duplicate_missing_mundo_404(self, client: TestClient):
+        resp = client.post("/api/mundo_fantasma/duplicate", json={"from": "lore/a.md"})
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Mundo no encontrado"
+
+    def test_upload_missing_mundo_404_never_creates_world(
+        self, client: TestClient, jpeg_bytes: bytes
+    ):
+        resp = client.post(
+            "/api/mundo_fantasma/media/upload",
+            files={"file": ("x.jpg", jpeg_bytes, "image/jpeg")},
+        )
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Mundo no encontrado"
+        assert not (api_server.MUNDOS_DIR / "mundo_fantasma").exists()
+
+    def test_delete_media_missing_mundo_404(self, client: TestClient):
+        resp = client.delete("/api/mundo_fantasma/media?path=wiki/media/x.jpg")
+        assert resp.status_code == 404
+        assert resp.json()["detail"] == "Mundo no encontrado"
+
+    # -- mundo-level traversal (%2e%2e = '..') --------------------------------
+
+    def test_tree_mundo_traversal_empty_never_leaks(self, client: TestClient):
+        outside = self._tmp_root() / "lore"
+        outside.mkdir(exist_ok=True)
+        (outside / "secreto.md").write_text("# SECRETO\n", encoding="utf-8")
+        resp = client.get(f"/api/{self.ENC_DOTS}/lore/tree")
+        assert resp.status_code == 200
+        assert all(n["name"] != "secreto.md" for n in resp.json())
+
+    def test_save_mundo_traversal_404_never_writes(self, client: TestClient):
+        outside = self._tmp_root() / "lore"
+        outside.mkdir(exist_ok=True)
+        resp = client.post(
+            f"/api/{self.ENC_DOTS}/lore/save?path=pwned.md", json={"content": "x"}
+        )
+        assert resp.status_code == 404
+        assert not (outside / "pwned.md").exists()
+
+    def test_create_mundo_traversal_404_never_writes(self, client: TestClient):
+        resp = client.post(
+            f"/api/{self.ENC_DOTS}/lore/create?path=pwned.md", json={"content": "x"}
+        )
+        assert resp.status_code == 404
+        assert not (self._tmp_root() / "lore" / "pwned.md").exists()
+
+    def test_status_mundo_traversal_404_never_rewrites(self, client: TestClient):
+        outside = self._tmp_root() / "lore"
+        outside.mkdir(exist_ok=True)
+        (outside / "secreto.md").write_text("# SECRETO\n", encoding="utf-8")
+        resp = client.post(
+            f"/api/{self.ENC_DOTS}/lore/status",
+            json={"path": "secreto.md", "status": "stable"},
+        )
+        assert resp.status_code == 404
+        saved = (outside / "secreto.md").read_text(encoding="utf-8")
+        assert "status:" not in saved
+
+    def test_delete_mundo_traversal_404_never_moves(self, client: TestClient):
+        outside = self._tmp_root() / "lore"
+        outside.mkdir(exist_ok=True)
+        (outside / "secreto.md").write_text("# SECRETO\n", encoding="utf-8")
+        resp = client.delete(f"/api/{self.ENC_DOTS}/lore/file?path=secreto.md")
+        assert resp.status_code == 404
+        assert (outside / "secreto.md").exists()
+
+    def test_upload_mundo_traversal_404_never_writes(
+        self, client: TestClient, jpeg_bytes: bytes
+    ):
+        resp = client.post(
+            f"/api/{self.ENC_DOTS}/media/upload",
+            files={"file": ("y.jpg", jpeg_bytes, "image/jpeg")},
+        )
+        assert resp.status_code == 404
+        assert not (self._tmp_root() / "wiki" / "media" / "y.jpg").exists()
+
+    def test_delete_media_mundo_traversal_404_never_deletes(
+        self, client: TestClient, jpeg_bytes: bytes
+    ):
+        outside = self._tmp_root() / "wiki" / "media"
+        outside.mkdir(parents=True, exist_ok=True)
+        (outside / "z.jpg").write_bytes(jpeg_bytes)
+        resp = client.delete(f"/api/{self.ENC_DOTS}/media?path=wiki/media/z.jpg")
+        assert resp.status_code == 404
+        assert (outside / "z.jpg").exists()
+
+    def test_get_media_mundo_traversal_400(self, client: TestClient):
+        resp = client.get(f"/api/{self.ENC_DOTS}/media?path=wiki/media/foto.jpg")
+        assert resp.status_code == 400
+
+    def test_graph_search_mundo_traversal_empty(self, client: TestClient):
+        assert client.get(f"/api/{self.ENC_DOTS}/graph/search?q=a").json() == []
+
+    def test_graph_entity_mundo_traversal_error(self, client: TestClient):
+        resp = client.get(f"/api/{self.ENC_DOTS}/graph/entity?name=X")
+        assert "error" in resp.json()

@@ -72,6 +72,30 @@ def _list_worlds() -> list[dict]:
     return worlds
 
 
+def _resolve_mundo_dir(mundo: str) -> Path | None:
+    """Resolve *mundo* to its root directory under ``mundos/``.
+
+    A valid world is a direct child of ``MUNDOS_DIR`` that exists and
+    passes the same visibility rules as ``_list_worlds`` (not hidden,
+    not ``_``-prefixed, not ``Ideas``). Returns None when *mundo* is
+    missing, a traversal attempt (``..``, separators, absolute paths,
+    drive letters), or not a real world — callers map None to their
+    established contract (404 for mutations, soft-empty for lists).
+    """
+    if not isinstance(mundo, str) or not mundo:
+        return None
+    if Path(mundo).name != mundo:  # separators / absolute paths / dot segments
+        return None
+    if mundo.startswith((".", "_")) or mundo == "Ideas":
+        return None
+    mundo_dir = (MUNDOS_DIR / mundo).resolve()
+    if not mundo_dir.is_dir():
+        return None
+    if mundo_dir.parent != MUNDOS_DIR.resolve():
+        return None
+    return mundo_dir
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -98,15 +122,15 @@ VALID_SECTIONS = {"lore", "personajes", "sagas", "referencias"}
 
 def _resolve_path(mundo: str, section: str, path: str) -> Path | None:
     """Resolve a file path safely (prevent path traversal)."""
-    mundo_dir = MUNDOS_DIR / mundo
-    if not mundo_dir.is_dir():
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
         return None
     if section not in VALID_SECTIONS:
         return None
     # Prevent path traversal
     try:
         full = (mundo_dir / section / path).resolve()
-        if not str(full).startswith(str(mundo_dir.resolve())):
+        if not str(full).startswith(str(mundo_dir)):
             return None
     except Exception:
         return None
@@ -122,8 +146,8 @@ def _resolve_mundo_path(mundo: str, path: str) -> Path | None:
     can distinguish 400 invalid-path from 404 not-found), or None when the
     path is invalid (traversal, bad section, empty).
     """
-    mundo_dir = MUNDOS_DIR / mundo
-    if not mundo_dir.is_dir():
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
         return None
     if not path or not path.strip():
         return None
@@ -134,7 +158,7 @@ def _resolve_mundo_path(mundo: str, path: str) -> Path | None:
         full = (mundo_dir / path).resolve()
     except Exception:
         return None
-    root = str(mundo_dir.resolve())
+    root = str(mundo_dir)
     if not (str(full) == root or str(full).startswith(root + os.sep)):
         return None
     return full
@@ -157,6 +181,16 @@ _RE_PORTADA = re.compile(r"^portada:\s*(.+)$", re.MULTILINE)
 _RE_BODY_IMAGE = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
 
 
+def _read_head(full: Path) -> str | None:
+    """First 8KB of a file decoded as text (bounded read cost)."""
+    try:
+        with open(full, "rb") as fh:
+            head = fh.read(8192)
+    except OSError:
+        return None
+    return head.decode("utf-8", errors="replace")
+
+
 def _resolve_cover(mundo: str, full: Path) -> str | None:
     """Resolve a cover for a markdown file.
 
@@ -166,12 +200,9 @@ def _resolve_cover(mundo: str, full: Path) -> str | None:
     ``![alt](ruta)`` (suffix ``#...`` stripped). Returns the value as
     written (mundo-relative) or None when no valid image is found.
     """
-    try:
-        with open(full, "rb") as fh:
-            head = fh.read(8192)
-    except OSError:
+    text = _read_head(full)
+    if text is None:
         return None
-    text = head.decode("utf-8", errors="replace")
 
     m = _RE_PORTADA.search(text)
     if m:
@@ -214,11 +245,14 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
     With ``?covers=true`` every file node carries a ``portada`` field
     (mundo-relative cover path or null); without it the field is absent
     (S29). Covers are resolved in a single sweep — no per-card requests.
+    Every file node also carries a ``status`` field (draft|stable) when
+    the file's leading frontmatter declares a known OKF ficha status;
+    the field is omitted for unknown values and for directories.
     """
     if section not in VALID_SECTIONS:
         return []
-    mundo_dir = MUNDOS_DIR / mundo
-    if not mundo_dir.is_dir():
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
         return []
     section_dir = mundo_dir / section
     if not section_dir.is_dir():
@@ -265,6 +299,9 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
                     "path": str(rel),
                     "is_dir": False,
                 }
+                status = _file_status(entry)
+                if status is not None:
+                    node["status"] = status
                 if covers:
                     node["portada"] = _resolve_cover(mundo, entry)
                 items.append(node)
@@ -299,8 +336,8 @@ def save_file(mundo: str, section: str, path: str, body: dict):
     """Save file content."""
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
-    mundo_dir = MUNDOS_DIR / mundo
-    if not mundo_dir.is_dir():
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
         raise HTTPException(status_code=404, detail="Mundo no encontrado")
     full = (mundo_dir / section / path).resolve()
     if not str(full).startswith(str(mundo_dir.resolve())):
@@ -327,6 +364,10 @@ def save_file_via_save(mundo: str, section: str, path: str, body: dict):
 @app.post("/api/{mundo}/{section}/diff")
 def diff_preview(mundo: str, section: str, path: str, body: dict):
     """Line-by-line diff between current file content and proposed content."""
+    if section not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección inválida")
+    if _resolve_mundo_dir(mundo) is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
     full = _resolve_path(mundo, section, path)
     original_content = ""
     if full is not None:
@@ -384,8 +425,8 @@ def create_file(mundo: str, section: str, path: str, body: dict):
     """Create a new file."""
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
-    mundo_dir = MUNDOS_DIR / mundo
-    if not mundo_dir.is_dir():
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
         raise HTTPException(status_code=404, detail="Mundo no encontrado")
     full = (mundo_dir / section / path).resolve()
     if not str(full).startswith(str(mundo_dir.resolve())):
@@ -411,6 +452,8 @@ def delete_file(mundo: str, section: str, path: str):
     """
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
+    if _resolve_mundo_dir(mundo) is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
     if not path or not path.strip():
         raise HTTPException(status_code=400, detail="Ruta vacía")
     full = _resolve_mundo_path(mundo, f"{section}/{path}")
@@ -445,6 +488,9 @@ def move_path(mundo: str, body: dict):
         or not to_path.strip()
     ):
         raise HTTPException(status_code=400, detail="Se requieren los campos 'from' y 'to'")
+
+    if _resolve_mundo_dir(mundo) is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
 
     full_from = _resolve_mundo_path(mundo, from_path)
     if full_from is None:
@@ -482,6 +528,9 @@ def duplicate_path(mundo: str, body: dict):
     if not isinstance(from_path, str) or not from_path.strip():
         raise HTTPException(status_code=400, detail="Se requiere el campo 'from'")
 
+    if _resolve_mundo_dir(mundo) is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+
     full = _resolve_mundo_path(mundo, from_path)
     if full is None:
         raise HTTPException(status_code=400, detail="Ruta inválida")
@@ -501,6 +550,115 @@ def duplicate_path(mundo: str, body: dict):
 
 
 # ---------------------------------------------------------------------------
+# Ficha status (OKF frontmatter) endpoint
+# ---------------------------------------------------------------------------
+
+# OKF `status:` values found in fichas (grep `^status:` over mundos/): fichas
+# use `draft` or `stable`; `synced` exists ONLY in idea-bank files (Ideas/,
+# referencias/visuales/, quoted `"synced"`) and is not a ficha status.
+VALID_FICHA_STATUSES = {"draft", "stable"}
+
+_RE_FRONTMATTER = re.compile(r"^---\r?\n([\s\S]*?)^---[ \t]*(?=\r?\n|$)", re.MULTILINE)
+_RE_FM_STATUS_LINE = re.compile(r"^(?P<indent>[ \t]*)status:[ \t]*[^\r\n]*(?P<term>\r?\n|$)", re.MULTILINE)
+
+
+def _file_status(full: Path) -> str | None:
+    """OKF ``status:`` of a file's leading frontmatter block.
+
+    Reads only the 8KB head (same bound as ``_resolve_cover``) and parses
+    ONLY the first frontmatter block — legacy ``---`` blocks in the body
+    never count (same criterion as ``_set_frontmatter_status``). Returns
+    the value only when it is a known ficha status (draft|stable):
+    anything else (absent, ``synced``, garbage) yields None so the tree
+    never lies about a file's state.
+    """
+    text = _read_head(full)
+    if text is None:
+        return None
+    m = _RE_FRONTMATTER.match(text)
+    if m is None:
+        return None
+    line_match = _RE_FM_STATUS_LINE.search(m.group(1))
+    if line_match is None:
+        return None
+    value = line_match.group(0).split(":", 1)[1].strip().strip('"').strip("'")
+    return value if value in VALID_FICHA_STATUSES else None
+
+
+def _set_frontmatter_status(content: str, status: str) -> str:
+    """Rewrite ONLY the ``status:`` line of the leading frontmatter block.
+
+    Byte-preserving for everything else: CRLF line endings, the rest of the
+    frontmatter, and the body — including any legacy ``---`` blocks in it
+    (e.g. ``personajes/Pert.md`` carries ``---\nstatus: draft\n---`` in the
+    body, which must never be touched). Mirrors the setPortada pattern:
+    edit the target line in place, insert it before the closing ``---`` when
+    the field is absent, or prepend a whole block when the file has no
+    frontmatter at all.
+    """
+    m = _RE_FRONTMATTER.match(content)
+    if m is None:
+        return f"---\nstatus: {status}\n---\n{content}"
+
+    inner = m.group(1)
+    line_match = _RE_FM_STATUS_LINE.search(inner)
+    if line_match is None:
+        # No status line → insert right before the closing delimiter,
+        # using the block's own line endings (setPortada pattern).
+        eol = "\r\n" if "\r\n" in inner else "\n"
+        updated_inner = inner + f"status: {status}{eol}"
+    else:
+        new_line = f"{line_match.group('indent')}status: {status}{line_match.group('term')}"
+        updated_inner = (
+            inner[: line_match.start()]
+            + new_line
+            + inner[line_match.end():]
+        )
+
+    return content[: m.start(1)] + updated_inner + content[m.end(1):]
+
+
+@app.post("/api/{mundo}/{section}/status")
+def set_file_status(mundo: str, section: str, body: dict):
+    """Set the OKF ``status:`` of a ficha's frontmatter block (draft|stable).
+
+    Instantly rewrites ONLY the frontmatter — independent of any save flow,
+    the body and legacy blocks are never touched, and CRLF fichas stay CRLF.
+    """
+    if section not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección inválida")
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    path = body.get("path")
+    if not isinstance(path, str) or not path.strip():
+        raise HTTPException(status_code=400, detail="Se requiere el campo 'path'")
+    status = body.get("status")
+    if status not in VALID_FICHA_STATUSES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Estado inválido: '{status}'. Válidos: draft, stable",
+        )
+    full = _resolve_mundo_path(mundo, f"{section}/{path}")
+    if full is None:
+        raise HTTPException(status_code=400, detail="Path traversal detectado")
+    if not full.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    try:
+        # newline="" keeps \r\n byte-exact on Windows (Path.read_text would
+        # normalize them through universal newlines).
+        with open(full, "r", encoding="utf-8", newline="") as fh:
+            content = fh.read()
+        updated = _set_frontmatter_status(content, status)
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write(updated)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar el estado: {e}")
+    _graph_indices.pop(mundo, None)
+    return {"success": True, "path": f"{section}/{path}", "status": status}
+
+
+# ---------------------------------------------------------------------------
 # Graph endpoints
 # ---------------------------------------------------------------------------
 
@@ -510,8 +668,7 @@ _graph_indices: dict[str, "EntityGraphIndex"] = {}
 
 def _get_graph(mundo: str) -> "EntityGraphIndex | None":
     """Get or build the entity graph index for a world. Returns None if world missing."""
-    mundo_dir = MUNDOS_DIR / mundo
-    if not mundo_dir.is_dir():
+    if _resolve_mundo_dir(mundo) is None:
         return None
 
     if mundo not in _graph_indices:
@@ -717,8 +874,8 @@ def _resolve_media_path(mundo: str, path: str) -> Path | None:
     path it still returns the first structurally valid path so the caller
     can return a 404 instead of a 400.
     """
-    mundo_base = MUNDOS_DIR / mundo
-    if not mundo_base.is_dir():
+    mundo_base = _resolve_mundo_dir(mundo)
+    if mundo_base is None:
         return None
 
     bases = _get_media_bases(mundo)
@@ -838,6 +995,9 @@ async def upload_media(
     overwrite: bool = Query(False, description="Sobrescribir si el archivo ya existe"),
 ):
     """Upload an image file. Compresses to JPEG and generates a thumbnail."""
+    if _resolve_mundo_dir(mundo) is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+
     # 1. Read file bytes
     image_bytes = await file.read()
 
@@ -897,6 +1057,8 @@ async def upload_media(
 @app.get("/api/{mundo}/media/list", response_model=MediaList)
 def list_media(mundo: str):
     """List ALL images from wiki/media/ and referencias/visuales/imagenes/."""
+    if _resolve_mundo_dir(mundo) is None:
+        return MediaList(images=[], total=0)
     bases = _get_media_bases(mundo)
     images: list[ImageInfo] = []
 
@@ -925,7 +1087,9 @@ def delete_media(
     path: str = Query(..., description="Ruta relativa del archivo (desde raíz de mundo o relativa a wiki/media/)"),
 ):
     """Delete an image from wiki/media/ only (referencias is read-only)."""
-    mundo_base = MUNDOS_DIR / mundo
+    mundo_base = _resolve_mundo_dir(mundo)
+    if mundo_base is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
     wiki_base = (mundo_base / "wiki" / "media").resolve()
     wiki_str = str(wiki_base) + os.sep
     ref_base = (mundo_base / "referencias" / "visuales" / "imagenes").resolve()
