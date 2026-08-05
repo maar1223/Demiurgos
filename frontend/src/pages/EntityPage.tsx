@@ -220,7 +220,7 @@ function ConnectionsPanel({
                 />
                 <span className="flex-1 truncate">{displayName}</span>
                 {link.kind && (
-                  <span className="flex-shrink-0 rounded bg-piedra px-1.5 py-0.5 text-[10px] text-sombra uppercase">
+                  <span className="flex-shrink-0 rounded bg-piedra px-1.5 py-0.5 text-xs text-sombra uppercase">
                     {link.kind}
                   </span>
                 )}

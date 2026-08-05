@@ -5,6 +5,9 @@
 @layer base {
   html {
     @apply bg-cripta text-pergamino;
+    /* Tool-density root baseline: 15px ≈ 93.75% of the 16px browser default;
+       all rem tokens/spacing scale from here. */
+    font-size: 15px;
     scrollbar-color: #3A3229 #0A0907;
     scrollbar-width: thin;
   }

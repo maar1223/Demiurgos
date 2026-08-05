@@ -143,10 +143,10 @@ function ChatScreen({
             <Icon name="lightbulb" size={14} />
           </button>
           <div className="min-w-0">
-            <h2 className="text-sm font-medium text-pergamino truncate">
+            <h2 className="text-body font-medium text-pergamino truncate">
               Asistente IA
             </h2>
-            <p className="text-[11px] text-tinta-desvaida truncate">{mundo}</p>
+            <p className="text-xs text-tinta-desvaida truncate">{mundo}</p>
           </div>
         </div>
         <button
@@ -167,7 +167,7 @@ function ChatScreen({
             <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-llamita/10 text-llamita">
               <Icon name="lightbulb" size={24} />
             </div>
-            <h3 className="mb-1 text-sm font-medium text-pergamino">
+            <h3 className="mb-1 text-body font-medium text-pergamino">
               Preguntame sobre tu mundo
             </h3>
             <p className="mb-4 text-xs text-tinta-desvaida max-w-[200px]">
@@ -180,7 +180,7 @@ function ChatScreen({
                   key={suggestion}
                   type="button"
                   onClick={() => handleSuggestion(suggestion)}
-                  className="rounded-md border border-filio bg-cripta px-2.5 py-1 text-[11px] text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino"
+                  className="rounded-md border border-filio bg-cripta px-2.5 py-1 text-xs text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino"
                 >
                   {suggestion}
                 </button>
@@ -200,7 +200,7 @@ function ChatScreen({
             >
               <div
                 className={cn(
-                  "max-w-[85%] rounded-lg px-3 py-2 text-sm leading-relaxed overflow-hidden",
+                  "max-w-[85%] rounded-lg px-3 py-2 text-body leading-relaxed overflow-hidden",
                   msg.role === "user"
                     ? "bg-llamita text-cripta"
                     : "bg-cripta text-pergamino",
@@ -213,7 +213,7 @@ function ChatScreen({
                     className="prose-sm"
                   />
                 ) : (
-                  <div className="whitespace-pre-wrap break-words text-sm">
+                  <div className="whitespace-pre-wrap break-words text-body">
                     {msg.content}
                   </div>
                 )}
@@ -248,7 +248,7 @@ function ChatScreen({
             onKeyDown={handleKeyDown}
             placeholder="Escribí tu pregunta..."
             rows={2}
-            className="min-w-0 flex-1 resize-none rounded-lg border border-filio bg-cripta px-3 py-2 text-sm text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+            className="min-w-0 flex-1 resize-none rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
             disabled={isSending}
           />
           <div className="flex shrink-0 items-center gap-1">
@@ -297,7 +297,7 @@ function ChatScreen({
             </button>
           </div>
         </div>
-        <p className="mt-1 text-[11px] text-sombra">
+        <p className="mt-1 text-xs text-sombra">
           Enter para enviar · Shift+Enter para nueva línea
         </p>
       </div>
@@ -349,7 +349,7 @@ function HistoryScreen({
           <div className="flex h-7 w-7 items-center justify-center rounded-md text-llamita shrink-0">
             <Icon name="history" size={16} />
           </div>
-          <h2 className="text-sm font-medium text-pergamino truncate">
+          <h2 className="text-body font-medium text-pergamino truncate">
             Historial
           </h2>
         </div>
@@ -394,12 +394,12 @@ function HistoryScreen({
                   <p className="text-xs font-medium truncate">
                     {session.title}
                   </p>
-                  <p className="text-[10px] text-inherit opacity-50 mt-0.5">
+                  <p className="text-xs text-inherit opacity-50 mt-0.5">
                     {session.messages.length} mensaje
                     {session.messages.length !== 1 ? "s" : ""}
                   </p>
                 </div>
-                <span className="text-[10px] text-inherit opacity-40 shrink-0">
+                <span className="text-xs text-inherit opacity-40 shrink-0">
                   {formatDate(session.createdAt)}
                 </span>
               </button>
@@ -409,7 +409,7 @@ function HistoryScreen({
       </div>
 
       <div className="border-t border-filio px-4 py-2 shrink-0">
-        <p className="text-[10px] text-sombra text-center">
+        <p className="text-xs text-sombra text-center">
           Mostrando {sessions.length} sesion
           {sessions.length !== 1 ? "es" : ""} ·{" "}
           {totalMessages} mensaje{totalMessages !== 1 ? "s" : ""} en total
