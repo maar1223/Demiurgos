@@ -3,6 +3,7 @@ import { Icon, type IconName } from "@/components/atoms/Icon";
 import { CardMenu, type CardAction } from "@/components/organisms/CardMenu";
 import { getMediaUrl } from "@/api/wiki";
 import { cn } from "@/lib/utils";
+import { STATUS_META } from "@/lib/status";
 import type { FileNode } from "@/api/types";
 
 /** Pending "new file / new subfolder" creation inside a directory card. */
@@ -291,6 +292,10 @@ function CardButton({
   const isDir = node.is_dir;
   const badge =
     !isDir || node.children === undefined ? null : dirBadge(node);
+  // Status dot: only for files with a KNOWN status — the backend omits the
+  // field for unknown values (ideas "synced", no frontmatter) and dirs, and
+  // the guard here keeps the card from ever lying even on a stale payload.
+  const statusMeta = !isDir && node.status ? STATUS_META[node.status] : null;
 
   return (
     <button
@@ -333,6 +338,32 @@ function CardButton({
           </span>
         )}
       </div>
+
+      {/* Status dot (item 14 follow-up): tiny circle in the card's top-right
+          corner, over the media area, using the exact STATUS_META tokens of
+          the file-bar chip. A pure-CSS tooltip (no native `title` — that one
+          takes ~1s) appears instantly on hover: the wrapper's `group` class
+          is the closest one, so `group-hover` fires when the dot itself is
+          hovered, not the whole card. The dot keeps an aria-label for screen
+          readers; the bubble is a visual duplicate (aria-hidden) and never
+          affects the card button's accessible name. */}
+      {statusMeta && (
+        <span className="group absolute right-3 top-3">
+          <span
+            aria-label={statusMeta.label}
+            className={cn(
+              "block h-3 w-3 rounded-full border-2",
+              statusMeta.dotClass,
+            )}
+          />
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute right-0 top-full z-20 mt-1.5 whitespace-nowrap rounded-md border border-filio bg-madero px-2 py-1 text-xs text-pergamino opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100"
+          >
+            {statusMeta.label}
+          </span>
+        </span>
+      )}
     </button>
   );
 }
