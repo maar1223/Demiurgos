@@ -77,7 +77,7 @@ def _list_worlds() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 @app.get("/api/worlds")
-async def get_worlds():
+def get_worlds():
     """List all available narrative worlds."""
     worlds = _list_worlds()
     logger.info("GET /api/worlds -> %d worlds", len(worlds))
@@ -85,7 +85,7 @@ async def get_worlds():
 
 
 @app.get("/health")
-async def health():
+def health():
     return {"status": "ok", "worlds_available": bool(_list_worlds())}
 
 
@@ -208,7 +208,7 @@ def _next_duplicate_name(full: Path) -> Path:
 
 
 @app.get("/api/{mundo}/{section}/tree")
-async def get_tree(mundo: str, section: str, covers: bool = Query(False)):
+def get_tree(mundo: str, section: str, covers: bool = Query(False)):
     """List files in a section as a tree structure.
 
     With ``?covers=true`` every file node carries a ``portada`` field
@@ -278,7 +278,7 @@ async def get_tree(mundo: str, section: str, covers: bool = Query(False)):
 
 
 @app.get("/api/{mundo}/{section}/file")
-async def get_file(mundo: str, section: str, path: str):
+def get_file(mundo: str, section: str, path: str):
     """Read a file's content."""
     full = _resolve_path(mundo, section, path)
     if full is None:
@@ -295,7 +295,7 @@ async def get_file(mundo: str, section: str, path: str):
 
 
 @app.post("/api/{mundo}/{section}/file")
-async def save_file(mundo: str, section: str, path: str, body: dict):
+def save_file(mundo: str, section: str, path: str, body: dict):
     """Save file content."""
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
@@ -314,18 +314,18 @@ async def save_file(mundo: str, section: str, path: str, body: dict):
 
 
 @app.post("/api/{mundo}/{section}/save")
-async def save_file_via_save(mundo: str, section: str, path: str, body: dict):
+def save_file_via_save(mundo: str, section: str, path: str, body: dict):
     """Save file content — contract-compatible alias for the frontend.
 
     The frontend calls POST /{mundo}/{section}/save?path=... (wiki.ts
     saveFile), which was lost with the router.py backend. Same behavior
     as POST /file; kept as a distinct route so both callers work.
     """
-    return await save_file(mundo, section, path, body)
+    return save_file(mundo, section, path, body)
 
 
 @app.post("/api/{mundo}/{section}/diff")
-async def diff_preview(mundo: str, section: str, path: str, body: dict):
+def diff_preview(mundo: str, section: str, path: str, body: dict):
     """Line-by-line diff between current file content and proposed content."""
     full = _resolve_path(mundo, section, path)
     original_content = ""
@@ -380,7 +380,7 @@ def _compute_diff(original: str, nuevo: str) -> list[dict]:
 
 
 @app.post("/api/{mundo}/{section}/create")
-async def create_file(mundo: str, section: str, path: str, body: dict):
+def create_file(mundo: str, section: str, path: str, body: dict):
     """Create a new file."""
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
@@ -401,7 +401,7 @@ async def create_file(mundo: str, section: str, path: str, body: dict):
 
 
 @app.delete("/api/{mundo}/{section}/file")
-async def delete_file(mundo: str, section: str, path: str):
+def delete_file(mundo: str, section: str, path: str):
     """Move a file or folder to the trash (``mundos/{mundo}/.papelera``).
 
     Never permanently deletes: ``shutil.move`` (recursive for folders)
@@ -429,7 +429,7 @@ async def delete_file(mundo: str, section: str, path: str):
 
 
 @app.post("/api/{mundo}/move")
-async def move_path(mundo: str, body: dict):
+def move_path(mundo: str, body: dict):
     """Move or rename a file or folder to a new mundo-relative path.
 
     Validates ``from`` and ``to`` independently (S16), requires ``from``
@@ -471,7 +471,7 @@ async def move_path(mundo: str, body: dict):
 
 
 @app.post("/api/{mundo}/duplicate")
-async def duplicate_path(mundo: str, body: dict):
+def duplicate_path(mundo: str, body: dict):
     """Duplicate a file with an auto-resolved non-colliding name.
 
     Files only (S21); the copy name is ``{stem}-copia{ext}`` and then
@@ -539,7 +539,7 @@ def _resolve_entity_path(idx: "EntityGraphIndex", name: str) -> str | None:
 
 
 @app.get("/api/{mundo}/graph/search")
-async def graph_search(
+def graph_search(
     mundo: str,
     q: str = Query(default="", description="Search query"),
     type: str | None = Query(default=None, description="Filter by entity type"),
@@ -570,7 +570,7 @@ async def graph_search(
 
 
 @app.get("/api/{mundo}/graph/entity")
-async def graph_entity(
+def graph_entity(
     mundo: str,
     name: str = Query(..., description="Entity display name"),
 ):
@@ -599,7 +599,7 @@ async def graph_entity(
 
 
 @app.get("/api/{mundo}/graph/links")
-async def graph_links(
+def graph_links(
     mundo: str,
     name: str | None = Query(default=None, description="Entity display name"),
     kind: str = Query(default="forward", description="Link kind: forward, backlinks, hubs, etc."),
@@ -626,7 +626,7 @@ async def graph_links(
 
 
 @app.get("/api/{mundo}/graph/status")
-async def graph_status(mundo: str):
+def graph_status(mundo: str):
     """Get graph indexing status and stats."""
     idx = _get_graph(mundo)
     if idx is None:
@@ -816,7 +816,7 @@ def generate_thumbnail(image_bytes: bytes, width: int = 300) -> bytes:
 
 
 @app.get("/api/{mundo}/media")
-async def get_media(mundo: str, path: str = Query(..., description="Ruta relativa del archivo")):
+def get_media(mundo: str, path: str = Query(..., description="Ruta relativa del archivo")):
     """Serve an image file from wiki/media/ or referencias/visuales/imagenes/."""
     full_path = _resolve_media_path(mundo, path)
     if full_path is None:
@@ -895,7 +895,7 @@ async def upload_media(
 
 
 @app.get("/api/{mundo}/media/list", response_model=MediaList)
-async def list_media(mundo: str):
+def list_media(mundo: str):
     """List ALL images from wiki/media/ and referencias/visuales/imagenes/."""
     bases = _get_media_bases(mundo)
     images: list[ImageInfo] = []
@@ -920,7 +920,7 @@ async def list_media(mundo: str):
 
 
 @app.delete("/api/{mundo}/media")
-async def delete_media(
+def delete_media(
     mundo: str,
     path: str = Query(..., description="Ruta relativa del archivo (desde raíz de mundo o relativa a wiki/media/)"),
 ):
