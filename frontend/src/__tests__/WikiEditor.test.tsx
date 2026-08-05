@@ -1471,4 +1471,33 @@ describe("WikiEditor", () => {
       screen.queryByRole("dialog", { name: /eliminar/i }),
     ).not.toBeInTheDocument();
   });
+
+  it("file bar: 'Papelera' shows while browsing, 'Borrar ficha' does not (item 10)", () => {
+    renderWikiEditor();
+
+    // Cards/browsing view: trash management is reachable, but there is no
+    // open ficha to delete — the two buttons are mutually exclusive.
+    expect(
+      screen.getByRole("button", { name: /papelera/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /borrar ficha/i })).toBeNull();
+  });
+
+  it("file bar: 'Borrar ficha' shows on an open ficha, 'Papelera' does not (item 10)", () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    // Open ficha: deleting it is reachable, but the trash-management entry
+    // point lives only in the cards view — mutually exclusive.
+    expect(
+      screen.getByRole("button", { name: /borrar ficha/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /papelera/i })).toBeNull();
+  });
 });

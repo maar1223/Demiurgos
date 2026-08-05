@@ -853,6 +853,18 @@ export default function WikiEditor() {
                 <Icon name="folder" size={14} />
                 Nueva carpeta
               </Button>
+              {/* Papelera — restore / purge / empty of deleted entries.
+                  Trash management is world-scoped; visible only in the
+                  cards view (browsing). The open-ficha bar swaps it for
+                  'Borrar ficha' — the two are mutually exclusive. */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setTrashOpen(true)}
+              >
+                <Icon name="trash" size={14} />
+                Papelera
+              </Button>
             </>
           )}
           {/* Status chip — file-only: it describes the open ficha's
@@ -864,12 +876,6 @@ export default function WikiEditor() {
               onStatusChange={handleStatusChange}
             />
           )}
-          {/* Papelera — restore / purge / empty of deleted entries. World-
-              scoped (not per-file), so it is always visible in the bar. */}
-          <Button variant="ghost" size="sm" onClick={() => setTrashOpen(true)}>
-            <Icon name="trash" size={14} />
-            Papelera
-          </Button>
           <button
             type="button"
             onClick={() => setFocusMode((prev) => !prev)}
