@@ -18,6 +18,7 @@ import { MoveModal } from "@/components/organisms/MoveModal";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { EntitySearchPanel } from "@/components/organisms/EntitySearchPanel";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
+import { PapeleraPanel } from "@/components/organisms/PapeleraPanel";
 import { TabBar } from "@/components/molecules/TabBar";
 import type { SidebarTab } from "@/components/molecules/TabBar";
 import { SectionTabs } from "@/components/molecules/SectionTabs";
@@ -113,6 +114,9 @@ export default function WikiEditor() {
 
   // Focus mode — hides both side panels for distraction-free editing
   const [focusMode, setFocusMode] = useState(false);
+
+  // Papelera (trash) panel — restore / purge / empty of deleted entries
+  const [trashOpen, setTrashOpen] = useState(false);
 
   // ── Card action state (⋯ menu flows) ──────────────────────────────────
   // Cards view (browsingDir) is mutually exclusive with edit mode — the
@@ -844,6 +848,12 @@ export default function WikiEditor() {
               onStatusChange={handleStatusChange}
             />
           )}
+          {/* Papelera — restore / purge / empty of deleted entries. World-
+              scoped (not per-file), so it is always visible in the bar. */}
+          <Button variant="ghost" size="sm" onClick={() => setTrashOpen(true)}>
+            <Icon name="trash" size={14} />
+            Papelera
+          </Button>
           <button
             type="button"
             onClick={() => setFocusMode((prev) => !prev)}
@@ -1065,6 +1075,19 @@ export default function WikiEditor() {
             setCoverTarget(null);
             setActionError(null);
           }}
+        />
+      )}
+
+      {/* Papelera — restore / purge / empty (trash v2). Always mounted,
+          `open` gates visibility; a successful restore revalidates the tree
+          so restored files reappear in the sidebar immediately. */}
+      {mundo && (
+        <PapeleraPanel
+          mundo={mundo}
+          open={trashOpen}
+          onClose={() => setTrashOpen(false)}
+          onRestored={retryTree}
+          onPurged={retryTree}
         />
       )}
     </EditorLayout>

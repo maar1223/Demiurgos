@@ -54,6 +54,10 @@ vi.mock("@/api/wiki", () => ({
   createFile: vi.fn(),
   deleteFile: vi.fn(),
   setStatus: vi.fn(),
+  listTrash: vi.fn(),
+  restoreFromTrash: vi.fn(),
+  purgeTrashItem: vi.fn(),
+  emptyTrash: vi.fn(),
 }));
 
 // The diff view is lazy-loaded; a lightweight stub is enough for these

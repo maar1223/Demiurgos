@@ -141,6 +141,26 @@ export interface UploadResponse {
   thumbnail_path?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Papelera (Trash)
+// ---------------------------------------------------------------------------
+
+/** A single entry in a world's trash (papelera). */
+export interface TrashEntry {
+  entry_id: string;
+  section: string;
+  original_path: string;
+  kind: "file" | "dir";
+  deleted_at: string; // ISO 8601
+  size: number; // bytes
+}
+
+/** Response from DELETE /api/{mundo}/papelera — emptying the whole trash. */
+export interface EmptyTrashResponse {
+  purged: "all";
+  entries: number;
+}
+
 /** Structured API error. */
 export class ApiError extends Error {
   constructor(

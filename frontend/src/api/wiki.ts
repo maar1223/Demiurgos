@@ -3,12 +3,14 @@ import { ApiError } from "@/api/types";
 import type {
   DiffPreview,
   DuplicateResponse,
+  EmptyTrashResponse,
   FichaStatus,
   FileContent,
   FileNode,
   MediaList,
   MoveResponse,
   SuccessResponse,
+  TrashEntry,
   UploadResponse,
   WorldInfo,
 } from "@/api/types";
@@ -273,4 +275,50 @@ export function getMediaUrl(mundo: string, path: string): string {
   const encodedMundo = encodeURIComponent(mundo);
   const encodedPath = encodeURIComponent(path);
   return `${API_BASE_URL}/api/${encodedMundo}/media?path=${encodedPath}`;
+}
+
+// ---------------------------------------------------------------------------
+// Papelera (Trash)
+// ---------------------------------------------------------------------------
+
+/** GET /api/{mundo}/papelera — list every trashed entry in a world. */
+export async function listTrash(mundo: string): Promise<TrashEntry[]> {
+  const res = await apiFetch<{ entries: TrashEntry[] }>(
+    apiUrl(["api", mundo, "papelera"]),
+  );
+  return res.entries;
+}
+
+/** POST /api/{mundo}/papelera/restore — move a trashed entry back to its original path. */
+export async function restoreFromTrash(
+  mundo: string,
+  entry_id: string,
+  section: string,
+): Promise<{ restored_to: string }> {
+  return apiFetch<{ restored_to: string }>(
+    apiUrl(["api", mundo, "papelera", "restore"]),
+    {
+      method: "POST",
+      body: JSON.stringify({ entry_id, section }),
+    },
+  );
+}
+
+/** DELETE /api/{mundo}/papelera?entry_id=&section= — permanently purge a single entry. */
+export async function purgeTrashItem(
+  mundo: string,
+  entry_id: string,
+  section: string,
+): Promise<void> {
+  await apiFetch(
+    apiUrl(["api", mundo, "papelera"], { entry_id, section }),
+    { method: "DELETE" },
+  );
+}
+
+/** DELETE /api/{mundo}/papelera — permanently empty the whole trash. */
+export async function emptyTrash(mundo: string): Promise<EmptyTrashResponse> {
+  return apiFetch<EmptyTrashResponse>(apiUrl(["api", mundo, "papelera"]), {
+    method: "DELETE",
+  });
 }
