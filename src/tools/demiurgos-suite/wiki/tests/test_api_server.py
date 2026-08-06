@@ -9,6 +9,7 @@ import json
 import re
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -1099,3 +1100,94 @@ class TestTrashPurge:
         resp = client.delete("/api/test_mundo/papelera")
         assert resp.status_code == 200
         assert resp.json() == {"purged": "all", "entries": 0}
+
+
+class TestTrashTTL:
+    """Item 8 Phase 1: lazy TTL purge (30 days) triggered by GET /papelera.
+
+    Boundary: an entry is expired when ``deleted_at < now - 30d`` (strictly
+    less). Equal to the threshold → kept. Malformed/missing meta.json is
+    skipped, never crashes the purge nor the list.
+    """
+
+    def _papelera(self) -> Path:
+        return api_server.MUNDOS_DIR / "test_mundo" / ".papelera"
+
+    def _patch_deleted_at(self, entry_dir: Path, deleted_at: datetime) -> None:
+        """Rewrite meta.json's deleted_at as ISO-8601 UTC ending in 'Z'."""
+        meta_path = entry_dir / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["deleted_at"] = deleted_at.isoformat().replace("+00:00", "Z")
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+    def test_ttl_purges_expired_on_list(self, client: TestClient):
+        """deleted_at 31 days ago → purged before the list is returned."""
+        entry_id = client.delete("/api/test_mundo/lore/file?path=00_inicio.md").json()["entry_id"]
+        entry_dir = self._papelera() / "lore" / entry_id
+        self._patch_deleted_at(entry_dir, datetime.now(timezone.utc) - timedelta(days=31))
+
+        resp = client.get("/api/test_mundo/papelera")
+        ids = [e["entry_id"] for e in resp.json()["entries"]]
+        assert entry_id not in ids
+        assert not entry_dir.exists()
+        assert resp.json().get("purged") == 1
+
+    def test_ttl_preserves_fresh_on_list(self, client: TestClient):
+        """deleted_at = now (default delete flow) → kept."""
+        entry_id = client.delete("/api/test_mundo/lore/file?path=00_inicio.md").json()["entry_id"]
+        entry_dir = self._papelera() / "lore" / entry_id
+
+        resp = client.get("/api/test_mundo/papelera")
+        ids = [e["entry_id"] for e in resp.json()["entries"]]
+        assert entry_id in ids
+        assert entry_dir.exists()
+        assert resp.json().get("purged") is None
+
+    def test_ttl_boundary_exactly_30_days(self, client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        """Boundary (MANDATORY): deleted_at == now - 30d exactly is KEPT.
+
+        Expired means ``deleted_at < threshold`` (strictly). At exactly 30
+        days the entry survives; at 30 days + 1 second it is purged. Time
+        is frozen so the purge threshold matches the written value exactly,
+        making the equality branch deterministic.
+        """
+        frozen = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+
+        class _FrozenDateTime(api_server.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return frozen
+
+        monkeypatch.setattr(api_server, "datetime", _FrozenDateTime)
+
+        entry_id = client.delete("/api/test_mundo/lore/file?path=00_inicio.md").json()["entry_id"]
+        entry_dir = self._papelera() / "lore" / entry_id
+        self._patch_deleted_at(entry_dir, frozen - timedelta(days=30))
+
+        resp = client.get("/api/test_mundo/papelera")
+        ids = [e["entry_id"] for e in resp.json()["entries"]]
+        assert entry_id in ids
+        assert entry_dir.exists()
+        assert resp.json().get("purged") is None
+
+    def test_ttl_malformed_meta_skipped(self, client: TestClient):
+        """Unreadable meta.json → entry skipped (kept), no crash, nothing purged."""
+        entry_id = client.delete("/api/test_mundo/lore/file?path=00_inicio.md").json()["entry_id"]
+        entry_dir = self._papelera() / "lore" / entry_id
+        (entry_dir / "meta.json").write_text("{not json", encoding="utf-8")
+
+        resp = client.get("/api/test_mundo/papelera")
+        assert resp.status_code == 200
+        assert entry_dir.exists()
+        assert resp.json().get("purged") is None
+
+    def test_ttl_missing_meta_skipped(self, client: TestClient):
+        """Entry dir with NO meta.json → skipped (kept), no crash."""
+        entry_id = client.delete("/api/test_mundo/lore/file?path=00_inicio.md").json()["entry_id"]
+        entry_dir = self._papelera() / "lore" / entry_id
+        (entry_dir / "meta.json").unlink()
+
+        resp = client.get("/api/test_mundo/papelera")
+        assert resp.status_code == 200
+        assert entry_dir.exists()
+        assert resp.json().get("purged") is None

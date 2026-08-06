@@ -609,6 +609,18 @@ export default function WikiEditor() {
     [mundo, navigate],
   );
 
+  /**
+   * Auto-purge feedback from the trash panel — the lazy 30-day TTL purge
+   * result (GET /papelera) surfaces as a toast, mirroring the move-success
+   * pattern. Stable so the panel's fetch effect is not re-triggered.
+   */
+  const handleTtlPurged = useCallback((count: number) => {
+    setToast({
+      message: `${count} expired entries auto-purged (30-day TTL).`,
+      kind: "success",
+    });
+  }, []);
+
   // Auto-clear the "Guardado ✓" feedback after a short delay
   useEffect(() => {
     if (!saveSuccess) return;
@@ -1256,6 +1268,7 @@ export default function WikiEditor() {
           onClose={() => setTrashOpen(false)}
           onRestored={retryTree}
           onPurged={retryTree}
+          onTtlPurged={handleTtlPurged}
         />
       )}
 

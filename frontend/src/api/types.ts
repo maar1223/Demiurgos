@@ -155,6 +155,21 @@ export interface TrashEntry {
   size: number; // bytes
 }
 
+/**
+ * Response from GET /api/{mundo}/papelera — the trash list plus the count of
+ * expired entries the lazy 30-day TTL purge removed on this call.
+ */
+export interface TrashListResponse {
+  entries: TrashEntry[];
+  /**
+   * Expired entries auto-purged by the 30-day TTL. OPTIONAL in the response:
+   * the backend omits it when zero entries were purged (preserves the
+   * byte-identical `{"entries": []}` empty contract) — consumers must
+   * normalize with `?? 0`.
+   */
+  purged?: number;
+}
+
 /** Response from DELETE /api/{mundo}/papelera — emptying the whole trash. */
 export interface EmptyTrashResponse {
   purged: "all";

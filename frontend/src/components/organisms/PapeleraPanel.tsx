@@ -21,6 +21,11 @@ interface PapeleraPanelProps {
   onRestored: () => void;
   /** Called after a successful purge/empty — parent refreshes the tree. */
   onPurged: () => void;
+  /**
+   * Called with the count of expired entries the lazy 30-day TTL purge
+   * removed on this fetch — parent surfaces it as a non-blocking notice.
+   */
+  onTtlPurged: (count: number) => void;
 }
 
 const MONTHS = [
@@ -64,6 +69,7 @@ export function PapeleraPanel({
   onClose,
   onRestored,
   onPurged,
+  onTtlPurged,
 }: PapeleraPanelProps) {
   const [entries, setEntries] = useState<TrashEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -78,14 +84,19 @@ export function PapeleraPanel({
     setIsLoading(true);
     setError(null);
     try {
-      setEntries(await listTrash(mundo));
+      const { entries, purged } = await listTrash(mundo);
+      setEntries(entries);
+      // The TTL purge runs lazily server-side on every GET /papelera — when
+      // it removed expired entries, surface the count to the Author. purged
+      // is normalized to 0 by listTrash when the field is absent.
+      if (purged > 0) onTtlPurged(purged);
     } catch (err) {
       const apiErr = err as ApiError;
       setError(getErrorMessage(apiErr.status, apiErr.detail));
     } finally {
       setIsLoading(false);
     }
-  }, [mundo]);
+  }, [mundo, onTtlPurged]);
 
   // Fetch the fresh list every time the panel opens (stale entries from a
   // previous session must never linger).

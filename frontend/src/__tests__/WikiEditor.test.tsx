@@ -80,7 +80,7 @@ import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useEntitySearch } from "@/hooks/useEntitySearch";
 import { useImages, useImageUpload } from "@/hooks/useImages";
-import { saveFile, moveNode, duplicateFile, getFileContent, createFile, deleteFile, setStatus } from "@/api/wiki";
+import { saveFile, moveNode, duplicateFile, getFileContent, createFile, deleteFile, setStatus, listTrash } from "@/api/wiki";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
@@ -1631,4 +1631,50 @@ describe("WikiEditor", () => {
     expect(screen.queryByRole("button", { name: /papelera/i })).toBeNull();
   });
 
+  // ── Papelera TTL (item 8): lazy 30-day purge surfaced as a toast ──
+
+  it("Papelera: TTL purge result surfaces as a toast when listTrash returns purged > 0", async () => {
+    (listTrash as Mock).mockResolvedValue({
+      entries: [
+        {
+          entry_id: "e1",
+          section: "lore",
+          original_path: "lore/old.md",
+          kind: "file",
+          deleted_at: "2026-01-01T10:00:00Z",
+          size: 128,
+        },
+      ],
+      purged: 3,
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(screen.getByRole("button", { name: /papelera/i }));
+
+    // The lazy TTL purge (GET /papelera) removed 3 expired entries — the
+    // panel surfaces the count through the editor's toast.
+    expect(
+      await screen.findByText("3 expired entries auto-purged (30-day TTL)."),
+    ).toBeInTheDocument();
+  });
+
+  it("Papelera: no TTL toast when listTrash reports purged 0", async () => {
+    (listTrash as Mock).mockResolvedValue({
+      entries: [],
+      purged: 0,
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(screen.getByRole("button", { name: /papelera/i }));
+
+    // The panel loads the (empty) list normally — no purge, no toast.
+    expect(
+      await screen.findByText("La papelera está vacía"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/auto-purged/i)).not.toBeInTheDocument();
+  });
 });

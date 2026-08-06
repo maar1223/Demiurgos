@@ -11,6 +11,7 @@ import type {
   MoveResponse,
   SuccessResponse,
   TrashEntry,
+  TrashListResponse,
   UploadResponse,
   WorldInfo,
 } from "@/api/types";
@@ -282,11 +283,15 @@ export function getMediaUrl(mundo: string, path: string): string {
 // ---------------------------------------------------------------------------
 
 /** GET /api/{mundo}/papelera — list every trashed entry in a world. */
-export async function listTrash(mundo: string): Promise<TrashEntry[]> {
-  const res = await apiFetch<{ entries: TrashEntry[] }>(
+export async function listTrash(
+  mundo: string,
+): Promise<{ entries: TrashEntry[]; purged: number }> {
+  const res = await apiFetch<TrashListResponse>(
     apiUrl(["api", mundo, "papelera"]),
   );
-  return res.entries;
+  // `purged` is OPTIONAL — the backend omits it when the lazy 30-day TTL
+  // purge removed nothing (keeps the empty envelope byte-identical).
+  return { entries: res.entries, purged: res.purged ?? 0 };
 }
 
 /** POST /api/{mundo}/papelera/restore — move a trashed entry back to its original path. */

@@ -10,7 +10,7 @@ import re
 import shutil
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -204,6 +204,56 @@ def _read_trash_meta(entry_dir: Path) -> dict:
     return json.loads((entry_dir / "meta.json").read_text(encoding="utf-8"))
 
 
+def _purge_expired_trash_entries(mundo_dir: Path, max_age_days: int = 30) -> int:
+    """Permanently delete trash entries older than ``max_age_days`` days.
+
+    Lazy TTL: run on read (GET /papelera), never on delete/restore. An
+    entry is expired when ``deleted_at`` is STRICTLY older than
+    ``now - max_age_days``; an entry equal to the threshold survives —
+    at exactly 30 days it is kept, at 30 days + 1 second it is purged.
+
+    Malformed entries (no meta.json, unreadable JSON, missing or
+    unparseable ``deleted_at``, non-text values, naive datetimes) are
+    skipped and KEPT: a corrupt entry never crashes the purge nor gets
+    silently destroyed. Returns the number of entries permanently purged.
+    """
+    threshold = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    purged = 0
+    root = _trash_root(mundo_dir)
+    if not root.exists():
+        return 0
+    for section in VALID_SECTIONS:
+        sec_dir = root / section
+        if not sec_dir.is_dir():
+            continue
+        for entry_dir in sec_dir.iterdir():
+            if not entry_dir.is_dir():
+                continue
+            meta_file = entry_dir / "meta.json"
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                raw = meta["deleted_at"]
+                if not isinstance(raw, str):
+                    raise ValueError("deleted_at no es texto")
+                # Normalize ISO-8601 UTC 'Z' suffix for fromisoformat.
+                if raw.endswith("Z"):
+                    raw = raw[:-1] + "+00:00"
+                deleted_at = datetime.fromisoformat(raw)
+                if deleted_at.tzinfo is None:
+                    raise ValueError("deleted_at sin zona horaria")
+            except Exception as exc:
+                logger.warning(
+                    "Papelera TTL: meta inválida en %s (%s) — se conserva",
+                    entry_dir,
+                    exc,
+                )
+                continue
+            if deleted_at < threshold:
+                shutil.rmtree(entry_dir, ignore_errors=True)
+                purged += 1
+    return purged
+
+
 def _list_trash(mundo_dir: Path) -> list[dict]:
     out = []
     root = _trash_root(mundo_dir)
@@ -330,7 +380,7 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
                 if children:  # Only include dirs with files
                     node = {
                         "name": entry.name,
-                        "path": str(rel),
+                        "path": str(rel).replace("\\", "/"),
                         "is_dir": True,
                         "children": children,
                     }
@@ -348,7 +398,7 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
                 rel = entry.relative_to(base)
                 node = {
                     "name": entry.name,
-                    "path": str(rel),
+                    "path": str(rel).replace("\\", "/"),
                     "is_dir": False,
                 }
                 status = _file_status(entry)
@@ -553,11 +603,23 @@ def delete_file(mundo: str, section: str, path: str):
 
 @app.get("/api/{mundo}/papelera")
 def list_papelera(mundo: str):
-    """List all trash entries across every section, each with its meta.json."""
+    """List all trash entries across every section, each with its meta.json.
+
+    Lazy TTL: expired entries (deleted_at strictly older than 30 days) are
+    purged on read, before the survivors are listed. The response keeps
+    today's envelope (``{"entries": [...]}``); ``purged`` is included only
+    when at least one entry was removed, so the zero-case contract stays
+    byte-identical.
+    """
     mundo_dir = _resolve_mundo_dir(mundo)
     if mundo_dir is None:
         return {"entries": []}
-    return {"entries": _list_trash(mundo_dir)}
+    purged = _purge_expired_trash_entries(mundo_dir)
+    resp = {"entries": _list_trash(mundo_dir)}
+    if purged:
+        resp["purged"] = purged
+        logger.info("Papelera TTL: %d entradas expiradas purgadas en %s", purged, mundo)
+    return resp
 
 
 @app.post("/api/{mundo}/papelera/restore")
