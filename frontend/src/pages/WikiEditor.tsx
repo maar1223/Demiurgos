@@ -956,7 +956,7 @@ export default function WikiEditor() {
     >
       {/* Unified file bar — always visible so navigation never disappears:
           file name + badges (left), breadcrumb chips (middle), actions (right) */}
-      <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-filio bg-madero px-4 py-2">
+      <div className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-filio bg-madero px-4 py-2">
         {filePath && file && (
           <span className="min-w-0 truncate text-small text-tinta-desvaida">
             {file.name}
