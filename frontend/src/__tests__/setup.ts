@@ -1,4 +1,16 @@
 import "@testing-library/jest-dom/vitest";
+import { vi } from "vitest";
+
+/**
+ * jsdom does not implement window.print — calling it throws
+ * "Not implemented: window.print". The export-to-PDF flow
+ * (ExportPdfDialog) relies on it, so a shared spy keeps it callable in
+ * tests; tests assert on it directly (reset per test via vi.clearAllMocks).
+ */
+Object.defineProperty(window, "print", {
+  writable: true,
+  value: vi.fn(),
+});
 
 /**
  * jsdom does not implement the DataTransfer constructor, which the drag &

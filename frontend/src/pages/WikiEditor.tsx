@@ -16,6 +16,7 @@ import {
 import type { CardAction } from "@/components/organisms/CardMenu";
 import { MoveModal } from "@/components/organisms/MoveModal";
 import { MoveToSectionDialog } from "@/components/organisms/MoveToSectionDialog";
+import { ExportPdfDialog } from "@/components/organisms/ExportPdfDialog";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { Toast } from "@/components/atoms/Toast";
 import { EntitySearchPanel } from "@/components/organisms/EntitySearchPanel";
@@ -167,6 +168,11 @@ export default function WikiEditor() {
   /** Path of the node that briefly highlights (fade-slide-in) after a move. */
   const [movedPath, setMovedPath] = useState<string | null>(null);
   const [trashTarget, setTrashTarget] = useState<string | null>(null);
+  /** "Exportar Ficha a PDF" dialog target — content + basename of the open ficha. */
+  const [exportTarget, setExportTarget] = useState<{
+    content: string;
+    fileName: string;
+  } | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [createTarget, setCreateTarget] = useState<CreateTarget | null>(null);
   /** Path of the node whose request is in flight — its menu actions disable (S14). */
@@ -1061,6 +1067,23 @@ export default function WikiEditor() {
                     type="button"
                     role="menuitem"
                     onClick={() => {
+                      setExportTarget({
+                        content: file?.content ?? "",
+                        fileName: filePath.split("/").pop() ?? "",
+                      });
+                      setOptionsOpen(false);
+                    }}
+                    className="block w-full px-3 py-2 text-left text-small text-pergamino transition-colors hover:bg-piedra hover:text-llamita focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Icon name="file" size={14} className="shrink-0 text-sombra" />
+                      Exportar Ficha a PDF
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
                       setTrashTarget(filePath);
                       setOptionsOpen(false);
                     }}
@@ -1299,6 +1322,19 @@ export default function WikiEditor() {
             setTrashTarget(null);
             setActionError(null);
           }}
+        />
+      )}
+
+      {/* Export to PDF dialog — opened from the ⋯ options menu. Renders the
+          ficha body (frontmatter stripped) into a hidden print portal and
+          opens the browser print dialog; no server round-trip. */}
+      {exportTarget && (
+        <ExportPdfDialog
+          open={!!exportTarget}
+          onClose={() => setExportTarget(null)}
+          content={exportTarget.content}
+          fileName={exportTarget.fileName}
+          mundo={mundo ?? ""}
         />
       )}
 

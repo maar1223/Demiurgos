@@ -1637,6 +1637,38 @@ describe("WikiEditor", () => {
     expect(screen.queryByRole("button", { name: /papelera/i })).toBeNull();
   });
 
+  it("file bar: ⋯ menu exposes 'Exportar Ficha a PDF' on an open ficha", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    // The ⋯ options dropdown (file bar) lists the PDF export before the
+    // destructive 'Eliminar Ficha' item.
+    await user.click(screen.getByRole("button", { name: /opciones de ficha/i }));
+    const menu = screen.getByRole("menu", { name: /opciones de ficha/i });
+    expect(
+      within(menu).getByRole("menuitem", { name: "Exportar Ficha a PDF" }),
+    ).toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Eliminar Ficha" }),
+    ).toBeInTheDocument();
+
+    // Selecting it opens the export dialog.
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Exportar Ficha a PDF" }),
+    );
+
+    expect(
+      screen.getByRole("dialog", { name: /exportar ficha a pdf/i }),
+    ).toBeInTheDocument();
+  });
+
   // ── Papelera TTL (item 8): lazy 30-day purge surfaced as a toast ──
 
   it("Papelera: TTL purge result surfaces as a toast when listTrash returns purged > 0", async () => {

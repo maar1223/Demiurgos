@@ -100,3 +100,172 @@
     background: #4A4035;
   }
 }
+
+/*
+ * Print styles for "Exportar Ficha a PDF" (window.print flow).
+ *
+ * The app (including the export dialog) lives inside #root and is hidden
+ * entirely; the ficha body rendered by ExportPdfDialog into #print-root
+ * (a portal on document.body, OUTSIDE #root) is the only printed content.
+ * The palette tokens referenced here are the hex values from
+ * tailwind.config.js (cripta / pergamino / llamita / …) — there are no
+ * --color-* CSS variables in this stylesheet, so the values are literal.
+ */
+/* NOTE (dev/export-pdf-pending-visual-fix): the @media print block below
+   was iterated multiple times to fix (1) dark theme rendering as white,
+   (2) missing per-page margins, (3) dark bg not covering the empty
+   bottom of the last page, and (4) orphaned headings at page bottoms.
+   The fixes rely on `print-color-adjust: exact` and moving the dark
+   background to `html[data-print-theme="dark"]` (propagates to the page
+   canvas via the root element). The Author has NOT yet verified the
+   result in a real browser print preview — jsdom cannot simulate
+   @media print. When resuming: verify in Chrome/Firefox, then iterate
+   if any of the 4 symptoms reappear. See Engram topic
+   dev/export-pdf-pending-visual-fix for full diagnostic. */
+@media print {
+    /* The @page margin is the ONLY thing that repeats on every printed
+       page (page 1, page 2, the last page — all get 1.5cm of breathing
+       room). Element padding cannot do this: CSS suppresses top padding
+       after a page break and bottom padding before one, so a padded
+       #print-root only looks right on page 1. */
+    @page {
+      margin: 1.5cm;
+    }
+
+    /* The root element's background propagates to the page canvas and
+       covers the full sheet — including the @page margin area and the
+       empty bottom of a short last page. `print-color-adjust: exact`
+       forces browsers to render it (they otherwise drop bg in print).
+       The theme is mirrored onto <html> by ExportPdfDialog before
+       window.print() (a parent selector is impossible, so a child
+       attribute on #print-root cannot drive the root background). */
+    html {
+      background: #FFFFFF !important;
+      print-color-adjust: exact;
+    }
+
+    html[data-print-theme="dark"] {
+      background: #0A0907 !important;
+      print-color-adjust: exact;
+    }
+
+    html[data-print-theme="light"] {
+      background: #FFFFFF !important;
+    }
+
+    #root {
+      display: none !important;
+      margin: 0 !important;
+      padding: 0 !important;
+    }
+
+    /* The print root no longer owns the sheet background (that moved to
+       `html` above) — it only lays out the ficha content inside the
+       @page margin. print-color-adjust stays as belt-and-suspenders so
+       nested boxes keep their bg in print. */
+    #print-root {
+      display: block !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      orphans: 3;
+      widows: 3;
+    }
+
+    /* Dark theme — pergamino text on the full-sheet cripta background
+       painted by html[data-print-theme="dark"]. */
+    #print-root[data-theme="dark"] {
+      color: #DED5C7 !important;
+    }
+
+    /* Light theme — ink on paper. MarkdownBody applies `prose prose-invert`
+       unconditionally, so the prose color tokens are overridden here
+       (higher specificity) to the light variants. */
+    #print-root[data-theme="light"] {
+      color: #1A1A1A !important;
+    }
+
+    #print-root[data-theme="light"] .prose {
+      --tw-prose-body: #1A1A1A;
+      --tw-prose-headings: #111111;
+      --tw-prose-links: #1A56DB;
+      --tw-prose-bold: #1A1A1A;
+      --tw-prose-code: #111827;
+      --tw-prose-quotes: #374151;
+      --tw-prose-quote-borders: #D1D5DB;
+      --tw-prose-hr: #D1D5DB;
+      --tw-prose-th-borders: #D1D5DB;
+      --tw-prose-td-borders: #E5E7EB;
+      --tw-prose-pre-bg: #1F2937;
+      --tw-prose-pre-code: #F3F4F6;
+    }
+
+    /* Wiki images keep their alignment/size suffix classes; cap overflow
+       so a large image can never spill past the printable page. */
+    #print-root img {
+      max-width: 100%;
+      height: auto;
+    }
+
+    /* Headings must NEVER sit at the bottom of a page with their content
+       starting on the next page. Three enforcement layers because
+       browser support varies:
+
+       1. `break-after: avoid` on the heading — no page break between
+          the heading and the following block.
+       2. `break-inside: avoid` on the heading itself — the heading box
+          can't split across pages (defensive; rare but possible).
+       3. `break-inside: avoid` on the NEXT sibling block (p, ul, ol,
+          table, blockquote) when it immediately follows a heading —
+          this is the real guarantee that "### Formación" can't land
+          as the last line of a page with its paragraph on the next.
+
+       If a heading would land near the page bottom and its following
+       block can't fit, the whole group jumps to the next page. */
+    #print-root h1,
+    #print-root h2,
+    #print-root h3,
+    #print-root h4 {
+      break-after: avoid !important;
+      break-inside: avoid !important;
+      page-break-after: avoid !important;
+      page-break-inside: avoid !important;
+    }
+
+    /* Keep heading + following block together when possible: target
+       paragraphs, lists, tables, blockquotes immediately after a
+       heading. This combination is what pushes "### Formación" to
+       the next page instead of leaving it orphaned. */
+    #print-root h1 + p,
+    #print-root h2 + p,
+    #print-root h3 + p,
+    #print-root h4 + p,
+    #print-root h1 + ul,
+    #print-root h2 + ul,
+    #print-root h3 + ul,
+    #print-root h4 + ul,
+    #print-root h1 + ol,
+    #print-root h2 + ol,
+    #print-root h3 + ol,
+    #print-root h4 + ol,
+    #print-root h1 + table,
+    #print-root h2 + table,
+    #print-root h3 + table,
+    #print-root h4 + table,
+    #print-root h1 + blockquote,
+    #print-root h2 + blockquote,
+    #print-root h3 + blockquote,
+    #print-root h4 + blockquote {
+      break-before: avoid !important;
+      page-break-before: avoid !important;
+    }
+
+    #print-root table,
+    #print-root img,
+    #print-root blockquote,
+    #print-root pre {
+      break-inside: avoid !important;
+      page-break-inside: avoid !important;
+    }
+  }
