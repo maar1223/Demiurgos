@@ -1,10 +1,17 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { FileTreeNode } from "@/components/molecules/FileTreeNode";
 import { Icon } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
+import {
+  canDropToTreeBackground,
+  readDragPayload,
+  type DragPayload,
+  type DragState,
+  type DropDnd,
+} from "@/lib/dnd";
 import type { FileNode } from "@/api/types";
 
 interface FileTreeProps {
@@ -14,6 +21,10 @@ interface FileTreeProps {
   isLoading?: boolean;
   error?: Error | null;
   onRetry?: () => void;
+  /** Same-section move via drag & drop: from/to are section-relative paths. */
+  onMove?: (from: string, to: string) => void;
+  /** Path of the node that should briefly highlight after a move. */
+  movedPath?: string | null;
 }
 
 /**
@@ -69,12 +80,85 @@ export function FileTree({
   isLoading = false,
   error = null,
   onRetry,
+  onMove,
+  movedPath = null,
 }: FileTreeProps) {
   const [query, setQuery] = useState("");
   const filteredNodes = useMemo(
     () => filterFileTree(nodes, query),
     [nodes, query],
   );
+
+  // ── Drag & drop state (same-section moves) ──────────────────────────
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [absorbing, setAbsorbing] = useState<string | null>(null);
+  const absorbTimer = useRef<number | null>(null);
+
+  const handleDragStart = useCallback((payload: DragPayload) => {
+    setDrag({ path: payload.path, is_dir: payload.is_dir, target: null });
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDrag(null);
+  }, []);
+
+  const handleTargetEnter = useCallback((path: string, valid: boolean) => {
+    setDrag((prev) =>
+      prev ? { ...prev, target: { path, valid } } : prev,
+    );
+  }, []);
+
+  // Absorption animation (~150ms) BEFORE the actual move: the node shrinks
+  // into the target, then onMove fires and the tree refreshes.
+  const handleDropMove = useCallback(
+    (from: string, to: string) => {
+      setDrag(null);
+      setAbsorbing(from);
+      if (absorbTimer.current) window.clearTimeout(absorbTimer.current);
+      absorbTimer.current = window.setTimeout(() => {
+        setAbsorbing(null);
+        onMove?.(from, to);
+      }, 150);
+    },
+    [onMove],
+  );
+
+  // Panel background = "move to section root" target. Only events that
+  // never hit a node reach these handlers (nodes stop propagation).
+  const handleBackgroundDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      const dragged = readDragPayload(e.dataTransfer);
+      if (!dragged) return;
+      setDrag((prev) =>
+        prev
+          ? { ...prev, target: { path: "", valid: canDropToTreeBackground(dragged) } }
+          : prev,
+      );
+    },
+    [],
+  );
+
+  const handleBackgroundDragOver = useCallback((e: React.DragEvent) => {
+    if (drag) e.preventDefault();
+  }, [drag]);
+
+  const handleBackgroundDrop = useCallback(
+    (e: React.DragEvent) => {
+      const dragged = readDragPayload(e.dataTransfer);
+      if (!dragged || !canDropToTreeBackground(dragged)) return;
+      e.preventDefault();
+      handleDropMove(dragged.path, dragged.path.split("/").pop() ?? "");
+    },
+    [handleDropMove],
+  );
+
+  const dnd: DropDnd = {
+    drag,
+    onDragStart: handleDragStart,
+    onDragEnd: handleDragEnd,
+    onTargetEnter: handleTargetEnter,
+    onDropMove: handleDropMove,
+  };
 
   if (isLoading) {
     return (
@@ -107,7 +191,12 @@ export function FileTree({
   const hasQuery = query.length > 0;
 
   return (
-    <div>
+    <div
+      data-testid="file-tree-drop-area"
+      onDragEnter={handleBackgroundDragEnter}
+      onDragOver={handleBackgroundDragOver}
+      onDrop={handleBackgroundDrop}
+    >
       {/* Search input */}
       <div className="px-3 py-2">
         <div className="relative">
@@ -158,6 +247,9 @@ export function FileTree({
                 node={node}
                 selectedPath={selectedPath}
                 onSelect={onSelect}
+                dnd={dnd}
+                absorbingPath={absorbing}
+                movedPath={movedPath}
               />
             ))}
           </ul>

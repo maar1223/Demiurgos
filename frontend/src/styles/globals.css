@@ -66,6 +66,22 @@
     scrollbar-width: thin;
   }
 
+  /* Quick fade + slide entrance for freshly-moved nodes and toasts
+     (~180ms ease-out, consistent with the DnD feedback timing). */
+  @keyframes fade-slide-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .fade-slide-in {
+    animation: fade-slide-in 180ms ease-out both;
+  }
+
   .scrollbar-thin::-webkit-scrollbar {
     width: 6px;
     height: 6px;

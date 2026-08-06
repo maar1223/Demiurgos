@@ -15,7 +15,9 @@ import {
 } from "@/components/organisms/SectionCards";
 import type { CardAction } from "@/components/organisms/CardMenu";
 import { MoveModal } from "@/components/organisms/MoveModal";
+import { MoveToSectionDialog } from "@/components/organisms/MoveToSectionDialog";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
+import { Toast } from "@/components/atoms/Toast";
 import { EntitySearchPanel } from "@/components/organisms/EntitySearchPanel";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { PapeleraPanel } from "@/components/organisms/PapeleraPanel";
@@ -31,8 +33,10 @@ import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
 import { ImagePicker } from "@/components/organisms/ImagePicker";
 import { ImportImageModal } from "@/components/organisms/ImportImageModal";
-import { VALID_SECTIONS } from "@/lib/constants";
+import { VALID_SECTIONS, SECTION_LABELS, MOVE_DESTINATION_LABELS } from "@/lib/constants";
+import type { MoveDestinationSection, Section } from "@/lib/constants";
 import { decodePathSegment, getErrorMessage } from "@/lib/utils";
+import { parentPath } from "@/lib/dnd";
 import {
   splitFrontmatter,
   mergeFrontmatter,
@@ -127,6 +131,18 @@ export default function WikiEditor() {
     section: string;
     path: string;
   } | null>(null);
+  /** "Mover a sección…" dialog target (cross-section move, no undo). */
+  const [moveSectionTarget, setMoveSectionTarget] = useState<{
+    section: string;
+    path: string;
+  } | null>(null);
+  /** Transient move feedback — auto-cleared after a short delay. */
+  const [toast, setToast] = useState<{
+    message: string;
+    kind: "success" | "error";
+  } | null>(null);
+  /** Path of the node that briefly highlights (fade-slide-in) after a move. */
+  const [movedPath, setMovedPath] = useState<string | null>(null);
   const [trashTarget, setTrashTarget] = useState<string | null>(null);
   const [renamingPath, setRenamingPath] = useState<string | null>(null);
   const [createTarget, setCreateTarget] = useState<CreateTarget | null>(null);
@@ -317,19 +333,32 @@ export default function WikiEditor() {
   );
 
   /**
-   * Move confirm (S9): POST move with the mundo-relative destination
-   * (`section` + selected folder). Same open-file navigation guard.
+   * Move confirm (S9): POST move with the mundo-relative destination.
+   * `destPath` is a destination DIRECTORY (section root or section/folder,
+   * as MoveModal emits) — the source basename is appended so the backend
+   * receives the final target path (e.g. `lore/ciudades/Cultura.md`).
+   * Moving to the folder the node already lives in is a no-op.
    */
   const handleMoveConfirm = useCallback(
     async (destPath: string) => {
       if (!mundo || !section || !moveSource) return;
       const from = `${moveSource.section}/${moveSource.path}`;
       const movedPath = moveSource.path;
+      const name = moveSource.path.split("/").pop() ?? "";
+      const to = `${destPath}/${name}`;
+      if (to === from) {
+        setMoveSource(null);
+        setToast({
+          message: "El archivo ya está en esa carpeta",
+          kind: "success",
+        });
+        return;
+      }
       setMoveSource(null);
       setBusyPath(movedPath);
       setActionError(null);
       try {
-        await moveNode(mundo, from, destPath);
+        await moveNode(mundo, from, to);
         await retryTree();
         if (
           filePath &&
@@ -345,6 +374,80 @@ export default function WikiEditor() {
       }
     },
     [mundo, section, moveSource, filePath, navigate, retryTree],
+  );
+
+  /**
+   * Drag & drop move (tree + cards, same section): from/to are
+   * section-relative paths; the world-relative form is `${section}/{path}`.
+   * The destination is a FULL path (folder + name) — the move endpoint
+   * treats `to` as the target location and rejects existing destinations.
+   * On success: tree refresh, success toast, brief highlight of the node in
+   * its new position, and the open-file navigation guard.
+   */
+  const handleDropMove = useCallback(
+    async (from: string, to: string) => {
+      if (!mundo || !section) return;
+      setBusyPath(from);
+      setActionError(null);
+      try {
+        await moveNode(mundo, `${section}/${from}`, `${section}/${to}`);
+        await retryTree();
+        const parent = parentPath(to);
+        const targetLabel = parent
+          ? `${parent}/`
+          : `${SECTION_LABELS[section as Section]}/`;
+        setToast({ message: `Movido a ${targetLabel}`, kind: "success" });
+        setMovedPath(to);
+        if (
+          filePath &&
+          (filePath === from || filePath.startsWith(from + "/"))
+        ) {
+          navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
+        }
+      } catch (err) {
+        const apiErr = err as ApiError;
+        const message = getErrorMessage(apiErr.status, apiErr.detail);
+        setActionError(message);
+        setToast({ message, kind: "error" });
+      } finally {
+        setBusyPath(null);
+      }
+    },
+    [mundo, section, filePath, navigate, retryTree],
+  );
+
+  /**
+   * Cross-section move confirm (⋯ menu "Mover a sección…"): the relative
+   * path is preserved inside the destination section. Irreversible — the
+   * dialog warns before this handler can run.
+   */
+  const handleMoveToSectionConfirm = useCallback(
+    async (destSection: MoveDestinationSection) => {
+      if (!mundo || !section || !moveSectionTarget) return;
+      const { path } = moveSectionTarget;
+      setMoveSectionTarget(null);
+      setBusyPath(path);
+      setActionError(null);
+      try {
+        await moveNode(mundo, `${section}/${path}`, `${destSection}/${path}`);
+        await retryTree();
+        setToast({
+          message: `Movido a ${MOVE_DESTINATION_LABELS[destSection]}/`,
+          kind: "success",
+        });
+        if (filePath && (filePath === path || filePath.startsWith(path + "/"))) {
+          navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
+        }
+      } catch (err) {
+        const apiErr = err as ApiError;
+        const message = getErrorMessage(apiErr.status, apiErr.detail);
+        setActionError(message);
+        setToast({ message, kind: "error" });
+      } finally {
+        setBusyPath(null);
+      }
+    },
+    [mundo, section, moveSectionTarget, filePath, navigate, retryTree],
   );
 
   /** Delete confirm (S12): DELETE moves the node to the trash → refresh tree. */
@@ -469,6 +572,9 @@ export default function WikiEditor() {
         case "move":
           setMoveSource({ section: section!, path: node.path });
           break;
+        case "move-section":
+          setMoveSectionTarget({ section: section!, path: node.path });
+          break;
         case "duplicate":
           void handleDuplicate(node);
           break;
@@ -509,6 +615,20 @@ export default function WikiEditor() {
     const t = setTimeout(() => setSaveSuccess(false), 2500);
     return () => clearTimeout(t);
   }, [saveSuccess]);
+
+  // Auto-clear the move toast after a short delay
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // Auto-clear the post-move highlight once the entrance animation plays
+  useEffect(() => {
+    if (!movedPath) return;
+    const t = setTimeout(() => setMovedPath(null), 600);
+    return () => clearTimeout(t);
+  }, [movedPath]);
 
   // Save the edited content via POST /save, then exit edit mode.
   const handleSave = useCallback(async () => {
@@ -784,6 +904,8 @@ export default function WikiEditor() {
               isLoading={treeLoading}
               error={treeError}
               onRetry={retryTree}
+              onMove={handleDropMove}
+              movedPath={movedPath}
             />
           </div>
         </div>
@@ -999,6 +1121,9 @@ export default function WikiEditor() {
             busyPath={busyPath}
             actionError={actionError}
             createTarget={createTarget}
+            onMove={handleDropMove}
+            browsingDirPath={selectedNode?.is_dir ? filePath! : ""}
+            movedPath={movedPath}
             onRenameCommit={handleRenameCommit}
             onRenameCancel={() => {
               setRenamingPath(null);
@@ -1079,6 +1204,19 @@ export default function WikiEditor() {
         />
       )}
 
+      {/* Move to section dialog — opened from a card ⋯ action. Cross-section
+          moves are irreversible; the dialog warns before confirming. */}
+      {moveSectionTarget && (
+        <MoveToSectionDialog
+          source={moveSectionTarget}
+          onConfirm={handleMoveToSectionConfirm}
+          onClose={() => {
+            setMoveSectionTarget(null);
+            setActionError(null);
+          }}
+        />
+      )}
+
       {/* Delete confirmation (S12) — cancel aborts, confirm moves to trash */}
       {trashTarget && (
         <ConfirmDialog
@@ -1120,6 +1258,9 @@ export default function WikiEditor() {
           onPurged={retryTree}
         />
       )}
+
+      {/* Move feedback toast — success (llamita) or error (sangre) */}
+      {toast && <Toast message={toast.message} kind={toast.kind} />}
     </EditorLayout>
   );
 }

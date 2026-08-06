@@ -1,1 +1,41 @@
 import "@testing-library/jest-dom/vitest";
+
+/**
+ * jsdom does not implement the DataTransfer constructor, which the drag &
+ * drop flows (FileTree / SectionCards) rely on. This minimal spec-shaped
+ * stub lets tests carry a payload between dragStart and drop events.
+ */
+class DataTransferStub {
+  private store = new Map<string, string>();
+  dropEffect = "none";
+  effectAllowed = "none";
+  files = [] as unknown as FileList;
+  items = [] as unknown as DataTransferItemList;
+
+  get types(): string[] {
+    return Array.from(this.store.keys());
+  }
+
+  setData(type: string, value: string): void {
+    this.store.set(type.toLowerCase(), value);
+  }
+
+  getData(type: string): string {
+    return this.store.get(type.toLowerCase()) ?? "";
+  }
+
+  clearData(type?: string): void {
+    if (type) {
+      this.store.delete(type.toLowerCase());
+    } else {
+      this.store.clear();
+    }
+  }
+
+  setDragImage(_image: Element, _x: number, _y: number): void {}
+}
+
+Object.defineProperty(globalThis, "DataTransfer", {
+  writable: true,
+  value: DataTransferStub,
+});

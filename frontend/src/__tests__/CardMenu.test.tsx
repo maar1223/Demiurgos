@@ -69,6 +69,9 @@ describe("CardMenu", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Renombrar" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Mover a…" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Mover a sección…" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Duplicar" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Eliminar" })).toBeInTheDocument();
 
@@ -81,12 +84,32 @@ describe("CardMenu", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("Mover a sección… emits the move-section action", async () => {
+    const user = userEvent.setup();
+    const { onAction } = renderMenu(fileNode, { open: true });
+
+    await user.click(
+      screen.getByRole("menuitem", { name: "Mover a sección…" }),
+    );
+
+    expect(onAction).toHaveBeenCalledWith("move-section", fileNode);
+  });
+
   it("S3/S14: directory menu excludes creation actions and Duplicate", () => {
     renderMenu(dirNode, { open: true });
 
     expect(screen.getByRole("menuitem", { name: "Abrir" })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Renombrar" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Mover a sección…" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: "Eliminar" })).toBeInTheDocument();
+
+    // Folders cannot move within the same section via the menu (no "Mover a…"
+    // — same-section moves are drag & drop only for folders)
+    expect(
+      screen.queryByRole("menuitem", { name: "Mover a…" }),
+    ).not.toBeInTheDocument();
 
     // Creation actions moved to the file bar (item 14) — a card menu would
     // suggest "create inside this card", which is not how directory scope works

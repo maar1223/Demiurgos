@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { forwardRef, useImperativeHandle } from "react";
@@ -1109,12 +1109,142 @@ describe("WikiEditor", () => {
     );
 
     await waitFor(() => {
+      // The modal emits a destination DIRECTORY; the handler appends the
+      // source basename so the backend gets the final target path.
       expect(moveNode).toHaveBeenCalledWith(
         "Vibrantes",
         "lore/notas.md",
-        "referencias",
+        "referencias/notas.md",
       );
     });
+  });
+
+  it("move: confirming a same-folder destination is a no-op (no 409)", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Mover a…" }));
+
+    const dialog = screen.getByRole("dialog", { name: /mover a/i });
+    // Root of the current section == the file's current folder → no-op.
+    await user.click(within(dialog).getByRole("tab", { name: "Lore" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Mover aquí" }),
+    );
+
+    expect(moveNode).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText(/ya está en esa carpeta/i),
+    ).toBeInTheDocument();
+  });
+
+  it("Mover a sección…: dialog lists sections, confirms → cross-section moveNode", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Mover a sección…" }));
+
+    const dialog = screen.getByRole("dialog", { name: /mover a sección/i });
+    // Current section (Lore) is excluded; the rest are offered
+    expect(within(dialog).queryByRole("radio", { name: "Lore" })).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("radio", { name: "Personajes" }),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("radio", { name: "Sagas" })).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("radio", { name: "Referencias" }),
+    ).toBeInTheDocument();
+    // Irreversibility warning is visible
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      /no se puede deshacer/i,
+    );
+    // Confirm stays disabled until a section is chosen
+    expect(
+      within(dialog).getByRole("button", { name: "Confirmar" }),
+    ).toBeDisabled();
+
+    await user.click(within(dialog).getByRole("radio", { name: "Personajes" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: "Confirmar" }),
+    );
+
+    await waitFor(() => {
+      expect(moveNode).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore/notas.md",
+        "personajes/notas.md",
+      );
+    });
+    // Success toast names the destination section
+    expect(await screen.findByText(/Movido a Personajes\//)).toBeInTheDocument();
+  });
+
+  it("Mover a sección…: Cancelar closes without calling moveNode", async () => {
+    const user = userEvent.setup();
+    renderWikiEditor();
+
+    await user.click(
+      screen.getByRole("button", { name: "Acciones de notas.md" }),
+    );
+    await user.click(screen.getByRole("menuitem", { name: "Mover a sección…" }));
+
+    const dialog = screen.getByRole("dialog", { name: /mover a sección/i });
+    await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+
+    expect(moveNode).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("dialog", { name: /mover a sección/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("tree drag & drop: dropping a node onto a folder calls moveNode and toasts", async () => {
+    renderWikiEditor();
+
+    const tree = within(
+      screen.getByRole("navigation", { name: "File tree" }),
+    );
+
+    const dt = new DataTransfer();
+    fireEvent.dragStart(tree.getByRole("button", { name: "notas.md" }), {
+      dataTransfer: dt,
+    });
+    fireEvent.drop(tree.getByRole("button", { name: "capitulos" }), {
+      dataTransfer: dt,
+    });
+
+    // Absorption animation (~150ms) precedes the move request
+    await waitFor(() => {
+      expect(moveNode).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore/notas.md",
+        "lore/capitulos/notas.md",
+      );
+    });
+    expect(await screen.findByText(/Movido a capitulos\//)).toBeInTheDocument();
+  });
+
+  it("tree drag & drop: dropping onto a file node does nothing", async () => {
+    renderWikiEditor();
+
+    const tree = within(
+      screen.getByRole("navigation", { name: "File tree" }),
+    );
+
+    const dt = new DataTransfer();
+    fireEvent.dragStart(tree.getByRole("button", { name: "capitulos" }), {
+      dataTransfer: dt,
+    });
+    fireEvent.drop(tree.getByRole("button", { name: "notas.md" }), {
+      dataTransfer: dt,
+    });
+
+    expect(moveNode).not.toHaveBeenCalled();
   });
 
   it("delete: confirmation shows the target name and Cancel aborts (S12)", async () => {
@@ -1500,4 +1630,5 @@ describe("WikiEditor", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /papelera/i })).toBeNull();
   });
+
 });

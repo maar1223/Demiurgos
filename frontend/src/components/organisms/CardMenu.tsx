@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Icon } from "@/components/atoms/Icon";
+import { Icon, type IconName } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
 import type { FileNode } from "@/api/types";
 
@@ -12,32 +12,37 @@ export type CardAction =
   | "set-cover"
   | "rename"
   | "move"
+  | "move-section"
   | "duplicate"
   | "trash";
 
 interface CardMenuItem {
   action: CardAction;
   label: string;
+  icon?: IconName;
 }
 
-/** File actions (S3): Open, Set cover…, Rename, Move to…, Duplicate, Delete. */
+/** File actions (S3): Open, Set cover…, Rename, Move to…, Move to section…, Duplicate, Delete. */
 const FILE_ACTIONS: CardMenuItem[] = [
   { action: "open", label: "Abrir" },
   { action: "set-cover", label: "Establecer portada…" },
   { action: "rename", label: "Renombrar" },
   { action: "move", label: "Mover a…" },
+  { action: "move-section", label: "Mover a sección…", icon: "corner-up-right" },
   { action: "duplicate", label: "Duplicar" },
   { action: "trash", label: "Eliminar" },
 ];
 
 /**
- * Folder actions (S3/S14): Open, Rename, Delete. Creation actions moved to
- * the file bar ("Nuevo archivo" / "Nueva carpeta") — a card menu suggests
- * "create inside this card", which is not how the directory scope works.
+ * Folder actions (S3/S14): Open, Rename, Move to section…, Delete. Creation
+ * actions moved to the file bar ("Nuevo archivo" / "Nueva carpeta") — a card
+ * menu suggests "create inside this card", which is not how the directory
+ * scope works.
  */
 const DIR_ACTIONS: CardMenuItem[] = [
   { action: "open", label: "Abrir" },
   { action: "rename", label: "Renombrar" },
+  { action: "move-section", label: "Mover a sección…", icon: "corner-up-right" },
   { action: "trash", label: "Eliminar" },
 ];
 
@@ -148,7 +153,7 @@ export function CardMenu({
               {error}
             </div>
           )}
-          {actions.map(({ action, label }) => (
+          {actions.map(({ action, label, icon }) => (
             <button
               key={action}
               type="button"
@@ -162,7 +167,12 @@ export function CardMenu({
                 "disabled:cursor-not-allowed disabled:opacity-40",
               )}
             >
-              {label}
+              <span className="flex items-center gap-2">
+                {icon && (
+                  <Icon name={icon} size={14} className="shrink-0 text-sombra" />
+                )}
+                {label}
+              </span>
             </button>
           ))}
         </div>

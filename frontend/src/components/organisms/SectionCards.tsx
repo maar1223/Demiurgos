@@ -1,9 +1,20 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/atoms/Icon";
 import { CardMenu, type CardAction } from "@/components/organisms/CardMenu";
 import { getMediaUrl } from "@/api/wiki";
 import { cn } from "@/lib/utils";
 import { STATUS_META } from "@/lib/status";
+import {
+  canDropToGridBackground,
+  isFolderDropValid,
+  joinPath,
+  parentPath,
+  readDragPayload,
+  setDragPayload,
+  type DragPayload,
+  type DragState,
+  type DropDnd,
+} from "@/lib/dnd";
 import type { FileNode } from "@/api/types";
 
 /** Pending "new file / new subfolder" creation inside a directory card. */
@@ -26,6 +37,12 @@ interface SectionCardsProps {
   actionError?: string | null;
   /** Non-null while the "new file/subfolder" inline input is pending. */
   createTarget?: CreateTarget | null;
+  /** Same-section move via drag & drop: from/to are section-relative paths. */
+  onMove?: (from: string, to: string) => void;
+  /** Section-relative path of the directory being browsed ("" = section root). */
+  browsingDirPath?: string;
+  /** Path of the node that should briefly highlight after a move. */
+  movedPath?: string | null;
   onRenameCommit?: (node: FileNode, newName: string) => void;
   onRenameCancel?: () => void;
   onCreateCommit?: (name: string) => void;
@@ -60,6 +77,9 @@ export function SectionCards({
   busyPath = null,
   actionError = null,
   createTarget = null,
+  onMove,
+  browsingDirPath = "",
+  movedPath = null,
   onRenameCommit,
   onRenameCancel,
   onCreateCommit,
@@ -73,6 +93,82 @@ export function SectionCards({
 
   const [createDraft, setCreateDraft] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+
+  // ── Drag & drop state (same-section moves) ──────────────────────────
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [absorbing, setAbsorbing] = useState<string | null>(null);
+  const absorbTimer = useRef<number | null>(null);
+
+  const handleDragStart = useCallback((payload: DragPayload) => {
+    setDrag({ path: payload.path, is_dir: payload.is_dir, target: null });
+  }, []);
+
+  const handleDragEnd = useCallback(() => {
+    setDrag(null);
+  }, []);
+
+  const handleTargetEnter = useCallback((path: string, valid: boolean) => {
+    setDrag((prev) =>
+      prev ? { ...prev, target: { path, valid } } : prev,
+    );
+  }, []);
+
+  // Absorption animation (~150ms) BEFORE the actual move: the card shrinks
+  // into the target, then onMove fires and the grid refreshes.
+  const handleDropMove = useCallback(
+    (from: string, to: string) => {
+      setDrag(null);
+      setAbsorbing(from);
+      if (absorbTimer.current) window.clearTimeout(absorbTimer.current);
+      absorbTimer.current = window.setTimeout(() => {
+        setAbsorbing(null);
+        onMove?.(from, to);
+      }, 150);
+    },
+    [onMove],
+  );
+
+  // Grid background = "move one level up" (into the parent of the browsed
+  // directory). Only events that never hit a card reach these handlers
+  // (cards stop propagation).
+  const handleBackgroundDragEnter = useCallback(
+    (e: React.DragEvent) => {
+      const dragged = readDragPayload(e.dataTransfer);
+      if (!dragged) return;
+      const valid = canDropToGridBackground(dragged, browsingDirPath);
+      setDrag((prev) =>
+        prev ? { ...prev, target: { path: "", valid } } : prev,
+      );
+    },
+    [browsingDirPath],
+  );
+
+  const handleBackgroundDragOver = useCallback((e: React.DragEvent) => {
+    if (drag) e.preventDefault();
+  }, [drag]);
+
+  const handleBackgroundDrop = useCallback(
+    (e: React.DragEvent) => {
+      const dragged = readDragPayload(e.dataTransfer);
+      if (!dragged || !canDropToGridBackground(dragged, browsingDirPath)) {
+        return;
+      }
+      e.preventDefault();
+      const name = dragged.path.split("/").pop() ?? "";
+      handleDropMove(dragged.path, joinPath(parentPath(browsingDirPath), name));
+    },
+    [browsingDirPath, handleDropMove],
+  );
+
+  const dnd: DropDnd = {
+    drag,
+    onDragStart: handleDragStart,
+    onDragEnd: handleDragEnd,
+    onTargetEnter: handleTargetEnter,
+    onDropMove: handleDropMove,
+  };
+
+  const backgroundIsTarget = drag?.target?.path === "" && drag.target.valid;
 
   // Seed the rename draft when a new card enters rename mode.
   useEffect(() => {
@@ -131,7 +227,7 @@ export function SectionCards({
   };
 
   return (
-    <div>
+    <div className="relative">
       {/* S34/S36: action errors never break the tree — inline banner above the grid */}
       {actionError && (
         <div
@@ -143,57 +239,79 @@ export function SectionCards({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 tablet:grid-cols-2 desktop:grid-cols-3">
-        {createTarget && (
-          <CreateCard
-            kind={createTarget.kind}
-            draft={createDraft}
-            error={createError}
-            onChange={setCreateDraft}
-            onCommit={handleCreateCommit}
-            onCancel={() => onCreateCancel?.()}
-          />
+      <div
+        data-testid="section-cards-drop-area"
+        onDragEnter={handleBackgroundDragEnter}
+        onDragOver={handleBackgroundDragOver}
+        onDrop={handleBackgroundDrop}
+      >
+        {/* "Up one level" drop feedback — dashed llamita veil over the grid */}
+        {backgroundIsTarget && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-llamita/60 bg-llamita/5">
+            <span className="rounded-md bg-cripta/80 px-3 py-1 text-small text-llamita">
+              Subir un nivel
+            </span>
+          </div>
         )}
 
-        {dirs.map((dir) => (
-          <CardShell
-            key={dir.path}
-            node={dir}
-            renaming={renamingPath === dir.path}
-            openMenu={openMenuPath === dir.path}
-            onOpenMenu={(open) => setOpenMenuPath(open ? dir.path : null)}
-            onAction={onAction}
-            busyPath={busyPath}
-            menuError={openMenuPath === dir.path ? actionError : null}
-            renameDraft={renameDraft}
-            renameError={renameError}
-            onRenameChange={setRenameDraft}
-            onRenameCommit={() => handleRenameCommit(dir)}
-            onRenameCancel={() => onRenameCancel?.()}
-            mundo={mundo}
-            onSelect={onSelect}
-          />
-        ))}
+        <div className="grid grid-cols-1 gap-4 tablet:grid-cols-2 desktop:grid-cols-3">
+          {createTarget && (
+            <CreateCard
+              kind={createTarget.kind}
+              draft={createDraft}
+              error={createError}
+              onChange={setCreateDraft}
+              onCommit={handleCreateCommit}
+              onCancel={() => onCreateCancel?.()}
+            />
+          )}
 
-        {files.map((file) => (
-          <CardShell
-            key={file.path}
-            node={file}
-            renaming={renamingPath === file.path}
-            openMenu={openMenuPath === file.path}
-            onOpenMenu={(open) => setOpenMenuPath(open ? file.path : null)}
-            onAction={onAction}
-            busyPath={busyPath}
-            menuError={openMenuPath === file.path ? actionError : null}
-            renameDraft={renameDraft}
-            renameError={renameError}
-            onRenameChange={setRenameDraft}
-            onRenameCommit={() => handleRenameCommit(file)}
-            onRenameCancel={() => onRenameCancel?.()}
-            mundo={mundo}
-            onSelect={onSelect}
-          />
-        ))}
+          {dirs.map((dir) => (
+            <CardShell
+              key={dir.path}
+              node={dir}
+              renaming={renamingPath === dir.path}
+              openMenu={openMenuPath === dir.path}
+              onOpenMenu={(open) => setOpenMenuPath(open ? dir.path : null)}
+              onAction={onAction}
+              busyPath={busyPath}
+              menuError={openMenuPath === dir.path ? actionError : null}
+              renameDraft={renameDraft}
+              renameError={renameError}
+              onRenameChange={setRenameDraft}
+              onRenameCommit={() => handleRenameCommit(dir)}
+              onRenameCancel={() => onRenameCancel?.()}
+              mundo={mundo}
+              onSelect={onSelect}
+              dnd={dnd}
+              absorbingPath={absorbing}
+              movedPath={movedPath}
+            />
+          ))}
+
+          {files.map((file) => (
+            <CardShell
+              key={file.path}
+              node={file}
+              renaming={renamingPath === file.path}
+              openMenu={openMenuPath === file.path}
+              onOpenMenu={(open) => setOpenMenuPath(open ? file.path : null)}
+              onAction={onAction}
+              busyPath={busyPath}
+              menuError={openMenuPath === file.path ? actionError : null}
+              renameDraft={renameDraft}
+              renameError={renameError}
+              onRenameChange={setRenameDraft}
+              onRenameCommit={() => handleRenameCommit(file)}
+              onRenameCancel={() => onRenameCancel?.()}
+              mundo={mundo}
+              onSelect={onSelect}
+              dnd={dnd}
+              absorbingPath={absorbing}
+              movedPath={movedPath}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -218,6 +336,9 @@ interface CardShellProps {
   onRenameCancel: () => void;
   mundo: string;
   onSelect: (path: string) => void;
+  dnd?: DropDnd;
+  absorbingPath?: string | null;
+  movedPath?: string | null;
 }
 
 function CardShell({
@@ -235,6 +356,9 @@ function CardShell({
   onRenameCancel,
   mundo,
   onSelect,
+  dnd,
+  absorbingPath = null,
+  movedPath = null,
 }: CardShellProps) {
   return (
     <div className="relative">
@@ -270,7 +394,15 @@ function CardShell({
           onCancel={onRenameCancel}
         />
       ) : (
-        <CardButton node={node} mundo={mundo} onSelect={onSelect} />
+        <CardButton
+          node={node}
+          mundo={mundo}
+          onSelect={onSelect}
+          dnd={dnd}
+          absorbingPath={absorbingPath}
+          movedPath={movedPath}
+          busyPath={busyPath}
+        />
       )}
     </div>
   );
@@ -284,10 +416,18 @@ function CardButton({
   node,
   mundo,
   onSelect,
+  dnd,
+  absorbingPath = null,
+  movedPath = null,
+  busyPath = null,
 }: {
   node: FileNode;
   mundo: string;
   onSelect: (path: string) => void;
+  dnd?: DropDnd;
+  absorbingPath?: string | null;
+  movedPath?: string | null;
+  busyPath?: string | null;
 }) {
   const isDir = node.is_dir;
   const badge =
@@ -297,12 +437,83 @@ function CardButton({
   // the guard here keeps the card from ever lying even on a stale payload.
   const statusMeta = !isDir && node.status ? STATUS_META[node.status] : null;
 
+  // ── Drag & drop feedback ───────────────────────────────────────────
+  const isDragSource = dnd?.drag?.path === node.path;
+  const isDropTarget = dnd?.drag?.target?.path === node.path;
+  const targetValid = isDropTarget && !!dnd?.drag?.target?.valid;
+  // Reddish tint on the dragged card while hovering an INVALID target.
+  const invalidHover =
+    isDragSource && !!dnd?.drag?.target && !dnd.drag.target.valid;
+  const isAbsorbing = absorbingPath === node.path;
+  const isBusy = busyPath === node.path;
+
+  const handleDragStart = (e: React.DragEvent) => {
+    if (!dnd) return;
+    setDragPayload(e.dataTransfer, { path: node.path, is_dir: node.is_dir });
+    e.dataTransfer.effectAllowed = "move";
+    dnd.onDragStart({ path: node.path, is_dir: node.is_dir });
+  };
+
+  const handleDragEnd = () => {
+    dnd?.onDragEnd();
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    if (!dnd?.drag) return;
+    e.stopPropagation();
+    // File cards are never valid targets — hovering them still reports an
+    // invalid target so the ghost shows the sangre tint.
+    const valid = node.is_dir && isFolderDropValid(dnd.drag, node.path);
+    dnd.onTargetEnter(node.path, valid);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!dnd?.drag) return;
+    // Swallow drags on file cards too: the drop must fire HERE (as a no-op)
+    // instead of bubbling to the grid background ("up one level").
+    e.stopPropagation();
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    if (!dnd?.drag) return;
+    e.stopPropagation();
+    e.preventDefault();
+    if (!node.is_dir) return;
+    const dragged = readDragPayload(e.dataTransfer);
+    if (!dragged || !isFolderDropValid(dragged, node.path)) return;
+    const name = dragged.path.split("/").pop() ?? "";
+    dnd.onDropMove(dragged.path, joinPath(node.path, name));
+  };
+
   return (
     <button
       type="button"
       onClick={() => onSelect(node.path)}
-      className="group relative flex h-44 w-full flex-col overflow-hidden rounded-xl border border-filio bg-madero text-left transition-all hover:border-llamita/40 hover:bg-piedra focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 focus-visible:ring-offset-2 focus-visible:ring-offset-cripta"
+      draggable={!!dnd}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+      className={cn(
+        "group relative flex h-44 w-full flex-col overflow-hidden rounded-xl border border-filio bg-madero text-left transition-all hover:border-llamita/40 hover:bg-piedra focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 focus-visible:ring-offset-2 focus-visible:ring-offset-cripta",
+        // Drag feedback: dimmed source, sangre tint on invalid hover,
+        // llamita ring + slight grow on a valid folder target.
+        isDragSource && "cursor-grabbing opacity-50 shadow-lg",
+        invalidHover && "ring-2 ring-sangre/50",
+        targetValid && "scale-[1.03] bg-piedra ring-2 ring-llamita",
+        isAbsorbing && "scale-75 opacity-0",
+        movedPath === node.path && "fade-slide-in",
+        isBusy && "opacity-60",
+      )}
     >
+      {/* In-flight move feedback: dimmed card + small spinner overlay */}
+      {isBusy && (
+        <span className="absolute inset-0 z-10 flex items-center justify-center bg-cripta/40">
+          <Icon name="spinner" size={24} className="animate-spin text-llamita" />
+        </span>
+      )}
       {/* Full-width media area: resolved portada image, or the icon as a
           large low-opacity backdrop so cover-less cards never look empty */}
       {!isDir && node.portada ? (

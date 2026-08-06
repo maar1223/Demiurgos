@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
   SectionCards,
@@ -45,6 +45,8 @@ interface RenderCardsOptions {
   busyPath?: string | null;
   actionError?: string | null;
   createTarget?: { path: string; kind: "file" | "subfolder" } | null;
+  onMove?: ReturnType<typeof vi.fn>;
+  browsingDirPath?: string;
   onRenameCommit?: ReturnType<typeof vi.fn>;
   onRenameCancel?: ReturnType<typeof vi.fn>;
   onCreateCommit?: ReturnType<typeof vi.fn>;
@@ -60,6 +62,8 @@ function renderCards(options: RenderCardsOptions = {}) {
     busyPath = null,
     actionError = null,
     createTarget = null,
+    onMove = vi.fn(),
+    browsingDirPath = "",
     onRenameCommit = vi.fn(),
     onRenameCancel = vi.fn(),
     onCreateCommit = vi.fn(),
@@ -77,6 +81,8 @@ function renderCards(options: RenderCardsOptions = {}) {
       busyPath={busyPath}
       actionError={actionError}
       createTarget={createTarget}
+      onMove={onMove}
+      browsingDirPath={browsingDirPath}
       onRenameCommit={onRenameCommit}
       onRenameCancel={onRenameCancel}
       onCreateCommit={onCreateCommit}
@@ -86,11 +92,19 @@ function renderCards(options: RenderCardsOptions = {}) {
   return {
     onSelect,
     onAction,
+    onMove,
     onRenameCommit,
     onRenameCancel,
     onCreateCommit,
     onCreateCancel,
   };
+}
+
+/** Starts a drag of the given card and returns the shared DataTransfer. */
+function startDrag(source: HTMLElement): DataTransfer {
+  const dt = new DataTransfer();
+  fireEvent.dragStart(source, { dataTransfer: dt });
+  return dt;
 }
 
 describe("SectionCards", () => {
@@ -160,9 +174,9 @@ describe("SectionCards", () => {
     await user.click(
       screen.getByRole("button", { name: "Acciones de capitulos" }),
     );
-    // Directory menu: Open/Rename/Delete only (creation moved to the file
-    // bar), no Duplicate
-    expect(screen.getAllByRole("menuitem")).toHaveLength(3);
+    // Directory menu: Open/Rename/Move to section/Delete only (creation
+    // moved to the file bar), no Duplicate
+    expect(screen.getAllByRole("menuitem")).toHaveLength(4);
     expect(
       screen.queryByRole("menuitem", { name: "Duplicar" }),
     ).not.toBeInTheDocument();
@@ -171,8 +185,8 @@ describe("SectionCards", () => {
     await user.click(
       screen.getByRole("button", { name: "Acciones de notas.md" }),
     );
-    // File menu: full set (6 items), so no directory menu is left open
-    expect(screen.getAllByRole("menuitem")).toHaveLength(6);
+    // File menu: full set (7 items), so no directory menu is left open
+    expect(screen.getAllByRole("menuitem")).toHaveLength(7);
     expect(
       screen.getByRole("menuitem", { name: "Duplicar" }),
     ).toBeInTheDocument();
@@ -266,6 +280,110 @@ describe("SectionCards", () => {
     renderCards({ actionError: "El archivo ya existe" });
 
     expect(screen.getByRole("alert")).toHaveTextContent(/el archivo ya existe/i);
+  });
+
+  // ── Drag & drop (same-section moves) ────────────────────────────────
+
+  it("drops a file card onto a folder card → onMove into that folder", async () => {
+    const { onMove } = renderCards();
+    const dt = startDrag(
+      screen.getByRole("button", { name: /^notas\.md$/ }),
+    );
+
+    fireEvent.drop(
+      screen.getByRole("button", { name: /^capitulos/ }),
+      { dataTransfer: dt },
+    );
+
+    // Absorption animation (~150ms) precedes the actual move
+    await waitFor(() => {
+      expect(onMove).toHaveBeenCalledWith("notas.md", "capitulos/notas.md");
+    });
+  });
+
+  it("drops a directory card onto a sibling folder card", async () => {
+    const { onMove } = renderCards({
+      cardNodes: [
+        { name: "a", path: "a", is_dir: true, children: [] },
+        { name: "b", path: "b", is_dir: true, children: [] },
+      ],
+    });
+    const dt = startDrag(screen.getByRole("button", { name: /^a( vacía)?$/ }));
+
+    fireEvent.drop(screen.getByRole("button", { name: /^b( vacía)?$/ }), {
+      dataTransfer: dt,
+    });
+
+    await waitFor(() => {
+      expect(onMove).toHaveBeenCalledWith("a", "b/a");
+    });
+  });
+
+  it("dropping onto a file card does nothing", async () => {
+    const { onMove } = renderCards();
+    const dt = startDrag(
+      screen.getByRole("button", { name: /^notas\.md$/ }),
+    );
+
+    fireEvent.drop(screen.getByRole("button", { name: "foto.png" }), {
+      dataTransfer: dt,
+    });
+
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
+  it("dropping a folder onto itself does nothing", async () => {
+    const { onMove } = renderCards();
+    const dt = startDrag(screen.getByRole("button", { name: /^capitulos/ }));
+
+    fireEvent.drop(screen.getByRole("button", { name: /^capitulos/ }), {
+      dataTransfer: dt,
+    });
+
+    expect(onMove).not.toHaveBeenCalled();
+  });
+
+  it("grid background while browsing a subdir → onMove one level up", async () => {
+    const { onMove } = renderCards({ browsingDirPath: "capitulos" });
+    const dt = startDrag(
+      screen.getByRole("button", { name: /^notas\.md$/ }),
+    );
+
+    fireEvent.drop(screen.getByTestId("section-cards-drop-area"), {
+      dataTransfer: dt,
+    });
+
+    await waitFor(() => {
+      expect(onMove).toHaveBeenCalledWith("notas.md", "notas.md");
+    });
+  });
+
+  it("grid background while browsing a nested subdir → parent folder target", async () => {
+    const { onMove } = renderCards({ browsingDirPath: "capitulos/viejos" });
+    const dt = startDrag(
+      screen.getByRole("button", { name: /^notas\.md$/ }),
+    );
+
+    fireEvent.drop(screen.getByTestId("section-cards-drop-area"), {
+      dataTransfer: dt,
+    });
+
+    await waitFor(() => {
+      expect(onMove).toHaveBeenCalledWith("notas.md", "capitulos/notas.md");
+    });
+  });
+
+  it("grid background at the section root is not a valid target", async () => {
+    const { onMove } = renderCards({ browsingDirPath: "" });
+    const dt = startDrag(
+      screen.getByRole("button", { name: /^notas\.md$/ }),
+    );
+
+    fireEvent.drop(screen.getByTestId("section-cards-drop-area"), {
+      dataTransfer: dt,
+    });
+
+    expect(onMove).not.toHaveBeenCalled();
   });
 
   // ── Cover rendering ────────────────────────────────────────────────
