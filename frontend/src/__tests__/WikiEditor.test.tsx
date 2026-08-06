@@ -1581,7 +1581,9 @@ describe("WikiEditor", () => {
     const user = userEvent.setup();
     renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
 
-    await user.click(screen.getByRole("button", { name: /Eliminar Ficha/i }));
+    // 'Eliminar Ficha' lives inside the ⋯ options dropdown (file bar).
+    await user.click(screen.getByRole("button", { name: /opciones de ficha/i }));
+    await user.click(screen.getByRole("menuitem", { name: /eliminar ficha/i }));
 
     const dialog = screen.getByRole("dialog", { name: /eliminar/i });
     expect(within(dialog).getByText(/cap1\.md/i)).toBeInTheDocument();
@@ -1606,11 +1608,14 @@ describe("WikiEditor", () => {
     renderWikiEditor();
 
     // Cards/browsing view: trash management is reachable, but there is no
-    // open ficha to delete — the two buttons are mutually exclusive.
+    // open ficha to delete — the two are mutually exclusive. The ⋯ options
+    // dropdown (houses 'Eliminar Ficha') only renders on an open ficha.
     expect(
       screen.getByRole("button", { name: /papelera/i }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /eliminar ficha/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /opciones de ficha/i }),
+    ).toBeNull();
   });
 
   it("file bar: 'Eliminar Ficha' shows on an open ficha, 'Papelera' does not (item 10)", () => {
@@ -1623,10 +1628,11 @@ describe("WikiEditor", () => {
 
     renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
 
-    // Open ficha: deleting it is reachable, but the trash-management entry
-    // point lives only in the cards view — mutually exclusive.
+    // Open ficha: the ⋯ options dropdown is reachable (houses 'Eliminar
+    // Ficha'), but the trash-management entry point lives only in the
+    // cards view — mutually exclusive.
     expect(
-      screen.getByRole("button", { name: /eliminar ficha/i }),
+      screen.getByRole("button", { name: /opciones de ficha/i }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /papelera/i })).toBeNull();
   });

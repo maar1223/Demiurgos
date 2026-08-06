@@ -122,6 +122,29 @@ export default function WikiEditor() {
   // Papelera (trash) panel — restore / purge / empty of deleted entries
   const [trashOpen, setTrashOpen] = useState(false);
 
+  // File-bar options dropdown (⋯) for ficha-level actions like delete.
+  // Controlled open state + ref for the outside-click/Escape close pattern
+  // (mirrors CardMenu). Sits between the status chip and the focus button.
+  const [optionsOpen, setOptionsOpen] = useState(false);
+  const optionsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!optionsOpen) return;
+    const handleMousedown = (e: MouseEvent) => {
+      if (optionsRef.current && !optionsRef.current.contains(e.target as Node)) {
+        setOptionsOpen(false);
+      }
+    };
+    const handleKeydown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOptionsOpen(false);
+    };
+    document.addEventListener("mousedown", handleMousedown);
+    document.addEventListener("keydown", handleKeydown);
+    return () => {
+      document.removeEventListener("mousedown", handleMousedown);
+      document.removeEventListener("keydown", handleKeydown);
+    };
+  }, [optionsOpen]);
+
   // ── Card action state (⋯ menu flows) ──────────────────────────────────
   // Cards view (browsingDir) is mutually exclusive with edit mode — the
   // editor only renders SectionCards when no file is selected, so none of
@@ -1010,6 +1033,48 @@ export default function WikiEditor() {
               onStatusChange={handleStatusChange}
             />
           )}
+          {/* File-bar options dropdown (⋯) — ficha-level actions. Sits right
+              after the status chip and before the focus button so
+              Edit/Import actions stay at the far right of the bar (the
+              Author's first intent on an open ficha is to edit, not to
+              delete). Visible only when a ficha is open and the editor
+              is NOT in edit mode. */}
+          {!browsingDir && filePath && file && !isEditing && (
+            <div ref={optionsRef} className="relative inline-block">
+              <button
+                type="button"
+                aria-label="Opciones de ficha"
+                aria-haspopup="menu"
+                aria-expanded={optionsOpen}
+                onClick={() => setOptionsOpen((o) => !o)}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-filio bg-cripta text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino"
+              >
+                <Icon name="dots" size={14} />
+              </button>
+              {optionsOpen && (
+                <div
+                  role="menu"
+                  aria-label="Opciones de ficha"
+                  className="absolute top-full right-0 z-20 min-w-48 overflow-hidden rounded-lg border border-filio bg-madero shadow-xl"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      setTrashTarget(filePath);
+                      setOptionsOpen(false);
+                    }}
+                    className="block w-full px-3 py-2 text-left text-small text-pergamino transition-colors hover:bg-piedra hover:text-llamita focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Icon name="trash" size={14} className="shrink-0 text-sombra" />
+                      Eliminar Ficha
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
           <button
             type="button"
             onClick={() => setFocusMode((prev) => !prev)}
@@ -1085,14 +1150,6 @@ export default function WikiEditor() {
                 >
                   <Icon name="edit" size={14} />
                   Editar
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setTrashTarget(filePath)}
-                >
-                  <Icon name="trash" size={14} />
-                  Eliminar Ficha
                 </Button>
               </>
             )}
