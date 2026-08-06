@@ -119,7 +119,7 @@ def health():
 # File tree & content endpoints
 # ---------------------------------------------------------------------------
 
-VALID_SECTIONS = {"lore", "personajes", "sagas", "referencias"}
+VALID_SECTIONS = {"lore", "personajes", "sagas", "referencias", "media"}
 
 
 def _resolve_path(mundo: str, section: str, path: str) -> Path | None:
@@ -143,10 +143,11 @@ def _resolve_mundo_path(mundo: str, path: str) -> Path | None:
     """Resolve a mundo-relative path safely (prevent path traversal).
 
     The first path segment must be a valid section (lore/personajes/sagas/
-    referencias) and the resolved path must stay under ``mundos/{mundo}``.
-    Returns the resolved Path even when it does not exist yet (so callers
-    can distinguish 400 invalid-path from 404 not-found), or None when the
-    path is invalid (traversal, bad section, empty).
+    referencias/media) and the resolved path must stay under
+    ``mundos/{mundo}``. Returns the resolved Path even when it does not
+    exist yet (so callers can distinguish 400 invalid-path from 404
+    not-found), or None when the path is invalid (traversal, bad section,
+    empty).
     """
     mundo_dir = _resolve_mundo_dir(mundo)
     if mundo_dir is None:
@@ -641,9 +642,23 @@ def restore_papelera(mundo: str, body: dict):
     original_path = meta.get("original_path")
     if not isinstance(original_path, str) or not original_path.strip():
         raise HTTPException(status_code=500, detail="meta.json corrupto: original_path inválido")
-    target = _resolve_mundo_path(mundo, f"{section}/{original_path}")
-    if target is None:
-        raise HTTPException(status_code=500, detail="meta.json corrupto: original_path inválido")
+    if section == "media":
+        # Media entries store original_path canonically as mundo-relative
+        # ("wiki/media/foto.jpg" or "referencias/visuales/imagenes/y.png").
+        # Validate it stays inside one of the media bases, then rebuild the
+        # exact original target (the file was moved to trash, so it does not
+        # exist yet — _resolve_media_path's structural Pass 2 confirms it is
+        # a legit media path without requiring the file to exist).
+        if _resolve_media_path(mundo, original_path) is None:
+            raise HTTPException(status_code=500, detail="meta.json corrupto: original_path inválido")
+        target = (mundo_dir / original_path).resolve()
+        media_prefixes = [str(b.resolve()) + os.sep for b in _get_media_bases(mundo)]
+        if not any(str(target).startswith(p) for p in media_prefixes):
+            raise HTTPException(status_code=500, detail="meta.json corrupto: original_path inválido")
+    else:
+        target = _resolve_mundo_path(mundo, f"{section}/{original_path}")
+        if target is None:
+            raise HTTPException(status_code=500, detail="meta.json corrupto: original_path inválido")
     src = entry_dir / Path(original_path).name
     dst = target
     if dst.exists():
@@ -651,6 +666,13 @@ def restore_papelera(mundo: str, body: dict):
     try:
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(src), str(dst))
+        if section == "media":
+            # The thumbnail travels as a unit: move it to the same target
+            # parent, matching the (possibly deduplicated) restored name.
+            thumb = entry_dir / f"{Path(original_path).stem}_thumb{Path(original_path).suffix}"
+            if thumb.is_file():
+                thumb_dst = dst.with_name(f"{dst.stem}_thumb{dst.suffix}")
+                shutil.move(str(thumb), str(thumb_dst))
         shutil.rmtree(entry_dir, ignore_errors=True)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al restaurar: {e}")
@@ -1299,49 +1321,72 @@ def delete_media(
     mundo: str,
     path: str = Query(..., description="Ruta relativa del archivo (desde raíz de mundo o relativa a wiki/media/)"),
 ):
-    """Delete an image from wiki/media/ only (referencias is read-only)."""
+    """Move an image to the trash (``.papelera/media/{entry_id12}/``).
+
+    Images from BOTH media bases (``wiki/media/`` and
+    ``referencias/visuales/imagenes/``) are trashed as a single ``media``
+    section; the thumbnail (``{stem}_thumb{suffix}``) travels with the main
+    image as a unit. Never permanently deletes — restore or TTL purge
+    reclaims the entry.
+    """
     mundo_base = _resolve_mundo_dir(mundo)
     if mundo_base is None:
         raise HTTPException(status_code=404, detail="Mundo no encontrado")
-    wiki_base = (mundo_base / "wiki" / "media").resolve()
-    wiki_str = str(wiki_base) + os.sep
-    ref_base = (mundo_base / "referencias" / "visuales" / "imagenes").resolve()
-    ref_str = str(ref_base) + os.sep
+    bases = _get_media_bases(mundo)
+    base_prefixes = [str(b.resolve()) + os.sep for b in bases]
 
-    # Try mundo-relative first, then base-relative
-    candidates = [
-        (mundo_base / path).resolve(),
-        (wiki_base / path).resolve(),
-    ]
+    # Try mundo-relative first, then base-relative, for every media base
+    candidates = [(mundo_base / path).resolve()]
+    for base in bases:
+        candidates.append((base / path).resolve())
 
     resolved = None
     for full in candidates:
-        if str(full).startswith(wiki_str):
+        if any(str(full).startswith(prefix) for prefix in base_prefixes):
             resolved = full
             break
 
     if resolved is None:
-        # Check if it points to referencias (→ 403)
-        if any(str(c).startswith(ref_str) for c in candidates):
-            raise HTTPException(
-                status_code=403,
-                detail="No se puede eliminar archivos de referencias/",
-            )
         raise HTTPException(status_code=400, detail="Path traversal detectado")
 
     # File existence
     if not resolved.is_file():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
 
-    # Delete the file
-    resolved.unlink()
-
-    # Also delete the associated thumbnail if it exists
-    thumb = resolved.parent / f"{resolved.stem}_thumb{resolved.suffix}"
-    if thumb.is_file():
-        thumb.unlink()
-
     response_path = _rel_path(resolved, mundo)
+    # size computed BEFORE the move (after moving, the source path no longer exists)
+    size = resolved.stat().st_size
+
+    try:
+        # 12-hex entry_id; collisions are astronomically unlikely but retry
+        # up to 10 times so we never overwrite a live entry dir.
+        entry_id = None
+        for _ in range(10):
+            candidate = uuid.uuid4().hex[:12]
+            if not (_trash_section_dir(mundo_base, "media") / candidate).exists():
+                entry_id = candidate
+                break
+        if entry_id is None:
+            raise RuntimeError("no free entry_id after 10 attempts")
+        entry_dir = _trash_section_dir(mundo_base, "media") / entry_id
+        entry_dir.mkdir(parents=True, exist_ok=False)
+        shutil.move(str(resolved), str(entry_dir / resolved.name))
+
+        # Move the thumbnail as a unit if it exists
+        thumb = resolved.parent / f"{resolved.stem}_thumb{resolved.suffix}"
+        if thumb.is_file():
+            shutil.move(str(thumb), str(entry_dir / thumb.name))
+
+        _write_trash_meta(entry_dir, {
+            "entry_id": entry_id,
+            "original_path": response_path,
+            "kind": "file",
+            "deleted_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "size": size,
+        })
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al mover a la papelera: {e}")
+    _graph_indices.pop(mundo, None)
     return {"success": True, "path": response_path}
 
 

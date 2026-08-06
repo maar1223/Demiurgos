@@ -1,16 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Media endpoint tests — serve, upload, list, and delete wiki images.
+"""Media endpoint tests — serve, upload, list, and trash wiki images.
 
 Covered:
 - GET  /api/{mundo}/media?path=       — serve from wiki/media/ and referencias/
 - POST /api/{mundo}/media/upload      — JPEG compression + thumbnail generation
 - GET  /api/{mundo}/media/list        — recursive union of both media bases
-- DELETE /api/{mundo}/media?path=     — wiki/media only, 403 on referencias
+- DELETE /api/{mundo}/media?path=     — trash from BOTH bases (media section);
+                                        thumbnail travels as a unit
 """
 
 import io
+import json
+import re
 import sys
 import urllib.parse
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -251,14 +255,6 @@ class TestDeleteMedia:
         assert resp.status_code == 400
         assert "Path traversal" in resp.json()["detail"]
 
-    def test_delete_referencias_forbidden_403(self, client: TestClient):
-        resp = client.delete(
-            "/api/test/media",
-            params={"path": "../../referencias/visuales/imagenes/ref.png"},
-        )
-        assert resp.status_code == 403
-        assert "referencias" in resp.json()["detail"].lower()
-
     def test_delete_also_removes_thumbnail(self, client: TestClient):
         client.post(
             "/api/test/media/upload",
@@ -272,3 +268,174 @@ class TestDeleteMedia:
 
         listed = client.get("/api/test/media/list").json()
         assert not any("con_thumb_thumb" in img["path"] for img in listed["images"])
+
+
+class TestTrashMedia:
+    """DELETE /media now trashes images to the Papelera (media section).
+
+    Both media bases (wiki/media/ and referencias/visuales/imagenes/) share
+    one synthetic ``media`` trash section; the thumbnail travels with the
+    main image as a unit and never appears as its own entry.
+    """
+
+    def _papelera_media(self) -> Path:
+        return api_server.MUNDOS_DIR / "test" / ".papelera" / "media"
+
+    def _entry_dirs(self) -> list[Path]:
+        root = self._papelera_media()
+        if not root.is_dir():
+            return []
+        return sorted(d for d in root.iterdir() if d.is_dir())
+
+    def _upload(self, client: TestClient, name: str) -> None:
+        resp = client.post(
+            "/api/test/media/upload",
+            files={"file": (name, _make_test_image(), "image/jpeg")},
+        )
+        assert resp.status_code == 201
+
+    def test_delete_wiki_media_goes_to_papelera(self, client: TestClient):
+        resp = client.delete("/api/test/media", params={"path": "wiki/media/test.jpg"})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        original = api_server.MUNDOS_DIR / "test" / "wiki" / "media" / "test.jpg"
+        assert not original.exists()
+
+        entry_dirs = self._entry_dirs()
+        assert len(entry_dirs) == 1
+        entry_dir = entry_dirs[0]
+        assert re.fullmatch(r"[0-9a-f]{12}", entry_dir.name)
+        assert (entry_dir / "test.jpg").exists()
+        meta = json.loads((entry_dir / "meta.json").read_text(encoding="utf-8"))
+        assert meta["original_path"].startswith("wiki/media/")
+        assert meta["deleted_at"].endswith("Z")
+
+    def test_delete_referencias_media_goes_to_papelera(self, client: TestClient):
+        resp = client.delete(
+            "/api/test/media",
+            params={"path": "referencias/visuales/imagenes/ref.png"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+
+        original = api_server.MUNDOS_DIR / "test" / "referencias" / "visuales" / "imagenes" / "ref.png"
+        assert not original.exists()
+
+        entry_dirs = self._entry_dirs()
+        assert len(entry_dirs) == 1
+        entry_dir = entry_dirs[0]
+        assert (entry_dir / "ref.png").exists()
+        meta = json.loads((entry_dir / "meta.json").read_text(encoding="utf-8"))
+        assert meta["original_path"].startswith("referencias/visuales/imagenes/")
+
+    def test_delete_media_also_moves_thumbnail(self, client: TestClient):
+        self._upload(client, "unidad.jpg")
+        resp = client.delete("/api/test/media", params={"path": "wiki/media/unidad.jpg"})
+        assert resp.status_code == 200
+
+        media = api_server.MUNDOS_DIR / "test" / "wiki" / "media"
+        assert not (media / "unidad.jpg").exists()
+        assert not (media / "unidad_thumb.jpg").exists()
+
+        entry_dir = self._entry_dirs()[0]
+        names = {p.name for p in entry_dir.iterdir()}
+        assert "unidad.jpg" in names
+        assert "unidad_thumb.jpg" in names
+
+    def test_restore_media_from_papelera(self, client: TestClient):
+        self._upload(client, "volver.jpg")
+        client.delete("/api/test/media", params={"path": "wiki/media/volver.jpg"})
+        entry_id = self._entry_dirs()[0].name
+
+        resp = client.post(
+            "/api/test/papelera/restore",
+            json={"entry_id": entry_id, "section": "media"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["restored_to"] == "wiki/media/volver.jpg"
+
+        media = api_server.MUNDOS_DIR / "test" / "wiki" / "media"
+        assert (media / "volver.jpg").exists()
+        assert (media / "volver_thumb.jpg").exists()
+        assert not (self._papelera_media() / entry_id).exists()
+
+    def test_restore_referencias_media_from_papelera(self, client: TestClient):
+        resp = client.delete(
+            "/api/test/media",
+            params={"path": "referencias/visuales/imagenes/ref.png"},
+        )
+        assert resp.status_code == 200
+        entry_id = self._entry_dirs()[0].name
+
+        resp = client.post(
+            "/api/test/papelera/restore",
+            json={"entry_id": entry_id, "section": "media"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["restored_to"] == "referencias/visuales/imagenes/ref.png"
+
+        original = api_server.MUNDOS_DIR / "test" / "referencias" / "visuales" / "imagenes" / "ref.png"
+        assert original.exists()
+        assert not (self._papelera_media() / entry_id).exists()
+
+    def test_list_papelera_includes_media_and_hides_thumbnail(self, client: TestClient):
+        self._upload(client, "unica.jpg")
+        client.delete("/api/test/media", params={"path": "wiki/media/unica.jpg"})
+
+        resp = client.get("/api/test/papelera")
+        assert resp.status_code == 200
+        entries = resp.json()["entries"]
+        assert len(entries) == 1
+        entry = entries[0]
+        assert entry["section"] == "media"
+        assert entry["kind"] == "file"
+        assert entry["original_path"].startswith("wiki/media/")
+        assert not any("_thumb" in e["original_path"] for e in entries)
+
+    def test_ttl_purge_media(self, client: TestClient):
+        client.delete("/api/test/media", params={"path": "wiki/media/test.jpg"})
+        entry_dir = self._entry_dirs()[0]
+        meta_path = entry_dir / "meta.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["deleted_at"] = (datetime.now(timezone.utc) - timedelta(days=31)).isoformat().replace("+00:00", "Z")
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+        resp = client.get("/api/test/papelera")
+        assert resp.status_code == 200
+        assert not entry_dir.exists()
+        assert resp.json().get("purged") == 1
+
+    def test_restore_media_collision_renames(self, client: TestClient):
+        self._upload(client, "choque.jpg")
+        client.delete("/api/test/media", params={"path": "wiki/media/choque.jpg"})
+        # Re-upload the same name — occupies the original target path
+        self._upload(client, "choque.jpg")
+        entry_id = self._entry_dirs()[0].name
+
+        resp = client.post(
+            "/api/test/papelera/restore",
+            json={"entry_id": entry_id, "section": "media"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["restored_to"] == "wiki/media/choque-copia.jpg"
+
+        media = api_server.MUNDOS_DIR / "test" / "wiki" / "media"
+        assert (media / "choque.jpg").exists()
+        assert (media / "choque-copia.jpg").exists()
+        assert (media / "choque-copia_thumb.jpg").exists()
+        assert not (self._papelera_media() / entry_id).exists()
+
+    def test_delete_media_missing_thumb_ok(self, client: TestClient):
+        media = api_server.MUNDOS_DIR / "test" / "wiki" / "media"
+        (media / "sinthumb.png").write_bytes(b"fake png")
+
+        resp = client.delete("/api/test/media", params={"path": "wiki/media/sinthumb.png"})
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        assert not (media / "sinthumb.png").exists()
+
+        entry_dir = self._entry_dirs()[0]
+        assert (entry_dir / "sinthumb.png").exists()
+        meta = json.loads((entry_dir / "meta.json").read_text(encoding="utf-8"))
+        assert meta["original_path"] == "wiki/media/sinthumb.png"
