@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
-import { cn } from "@/lib/utils";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import { MarkdownBody } from "@/components/organisms/MarkdownViewer";
 
@@ -17,11 +16,9 @@ interface ExportPdfDialogProps {
   mundo: string;
 }
 
-type PrintTheme = "light" | "dark";
-
 /**
- * "Exportar Ficha a PDF" dialog (⋯ menu flow): pick a theme (Claro/Oscuro)
- * and export the ficha through the browser's native print dialog.
+ * "Exportar Ficha a PDF" dialog (⋯ menu flow): exports the ficha through the
+ * browser's native print dialog using the light print presentation.
  *
  * Zero-dependency design: "Exportar" renders the ficha body (frontmatter
  * stripped, via the shared `MarkdownBody`) into a hidden `#print-root`
@@ -43,7 +40,6 @@ export function ExportPdfDialog({
   fileName,
   mundo,
 }: ExportPdfDialogProps) {
-  const [theme, setTheme] = useState<PrintTheme>("light");
   const [printing, setPrinting] = useState(false);
 
   // Latest onClose in a ref — the print effect runs once per `printing`
@@ -76,14 +72,7 @@ export function ExportPdfDialog({
     const originalTitle = document.title;
     document.title = `${fileNameWithoutExt} — ${mundo}`;
 
-    // The print CSS paints the full sheet background on <html>. CSS cannot
-    // condition a parent's background on a child's attribute (#print-root's
-    // own data-theme can't propagate up to its ancestor), so mirror the
-    // theme onto documentElement for the print window and clean up after.
-    document.documentElement.setAttribute("data-print-theme", theme);
-
     const restore = () => {
-      document.documentElement.removeAttribute("data-print-theme");
       document.title = originalTitle;
       setPrinting(false);
       onCloseRef.current();
@@ -148,45 +137,6 @@ export function ExportPdfDialog({
               </span>{" "}
               a PDF desde el diálogo de impresión del navegador.
             </p>
-
-            {/* Theme toggle — Claro/Oscuro two-button toggle, not a dropdown */}
-            <div className="mt-4">
-              <span className="text-small text-tinta-desvaida">Tema</span>
-              <div
-                role="group"
-                aria-label="Tema de la ficha"
-                className="mt-1 flex gap-1 rounded-lg border border-filio bg-cripta p-1"
-              >
-                <button
-                  type="button"
-                  aria-pressed={theme === "light"}
-                  onClick={() => setTheme("light")}
-                  className={cn(
-                    "flex-1 rounded-md px-3 py-1.5 text-small transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
-                    theme === "light"
-                      ? "bg-piedra text-pergamino"
-                      : "text-tinta-desvaida hover:text-pergamino",
-                  )}
-                >
-                  Claro
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={theme === "dark"}
-                  onClick={() => setTheme("dark")}
-                  className={cn(
-                    "flex-1 rounded-md px-3 py-1.5 text-small transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
-                    theme === "dark"
-                      ? "bg-piedra text-pergamino"
-                      : "text-tinta-desvaida hover:text-pergamino",
-                  )}
-                >
-                  Oscuro
-                </button>
-              </div>
-            </div>
           </div>
 
           {/* Footer */}
@@ -207,19 +157,14 @@ export function ExportPdfDialog({
 
       {/* Print container — portal to document.body, OUTSIDE #root so the
           print CSS can hide the entire app and show only the ficha. Hidden
-          on screen (`hidden`), forced to display by the @media print block. */}
+          on screen (`hidden`), forced to display by the @media print block.
+          Always renders the light print presentation (ink on paper). */}
       {printing &&
         createPortal(
           <div
             id="print-root"
             data-testid="print-root"
-            data-theme={theme}
-            className={cn(
-              "hidden",
-              theme === "dark"
-                ? "bg-cripta text-pergamino"
-                : "bg-white text-neutral-900",
-            )}
+            className="hidden bg-white text-neutral-900"
           >
             <MarkdownBody content={body} mundo={mundo} />
           </div>,

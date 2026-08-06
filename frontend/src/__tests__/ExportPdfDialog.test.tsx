@@ -39,24 +39,30 @@ describe("ExportPdfDialog", () => {
     expect(screen.queryByText("cap1.md")).not.toBeInTheDocument();
   });
 
-  it("theme toggle switches between Claro and Oscuro", async () => {
+  it("does not expose a theme toggle", () => {
+    renderDialog();
+
+    expect(
+      screen.queryByRole("button", { name: "Claro" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Oscuro" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Tema de la ficha" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the print root with the light presentation", async () => {
     const user = userEvent.setup();
     renderDialog();
 
-    // Default theme is Claro (light)
     await user.click(screen.getByRole("button", { name: "Exportar" }));
-    expect(screen.getByTestId("print-root")).toHaveAttribute(
-      "data-theme",
-      "light",
-    );
 
-    // Switching to Oscuro re-renders the print root with the dark theme
-    await user.click(screen.getByRole("button", { name: "Oscuro" }));
-    await user.click(screen.getByRole("button", { name: "Exportar" }));
-    expect(screen.getByTestId("print-root")).toHaveAttribute(
-      "data-theme",
-      "dark",
-    );
+    const printRoot = screen.getByTestId("print-root");
+    expect(printRoot).not.toHaveAttribute("data-theme");
+    expect(printRoot).toHaveClass("bg-white");
+    expect(printRoot).toHaveClass("text-neutral-900");
   });
 
   it("Exportar button calls window.print", async () => {
@@ -104,42 +110,13 @@ describe("ExportPdfDialog", () => {
     // default "Save as PDF" filename is sensible.
     expect(document.title).toBe("cap1 — Vibrantes");
 
-    // The theme is mirrored onto <html> so the print CSS can paint the
-    // full sheet background (default theme here is Claro / light).
-    expect(
-      document.documentElement.getAttribute("data-print-theme"),
-    ).toBe("light");
-
     // Simulate the browser firing afterprint once the print dialog closes.
     act(() => {
       window.onafterprint?.(new Event("afterprint"));
     });
 
     expect(document.title).toBe(originalTitle);
-    expect(
-      document.documentElement.getAttribute("data-print-theme"),
-    ).toBeNull();
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(window.onafterprint).toBeNull();
-  });
-
-  it("mirrors the Oscuro theme onto documentElement for the print window", async () => {
-    const user = userEvent.setup();
-    renderDialog();
-
-    await user.click(screen.getByRole("button", { name: "Oscuro" }));
-    await user.click(screen.getByRole("button", { name: "Exportar" }));
-
-    expect(
-      document.documentElement.getAttribute("data-print-theme"),
-    ).toBe("dark");
-
-    act(() => {
-      window.onafterprint?.(new Event("afterprint"));
-    });
-
-    expect(
-      document.documentElement.getAttribute("data-print-theme"),
-    ).toBeNull();
   });
 });

@@ -111,17 +111,6 @@
  * tailwind.config.js (cripta / pergamino / llamita / …) — there are no
  * --color-* CSS variables in this stylesheet, so the values are literal.
  */
-/* NOTE (dev/export-pdf-pending-visual-fix): the @media print block below
-   was iterated multiple times to fix (1) dark theme rendering as white,
-   (2) missing per-page margins, (3) dark bg not covering the empty
-   bottom of the last page, and (4) orphaned headings at page bottoms.
-   The fixes rely on `print-color-adjust: exact` and moving the dark
-   background to `html[data-print-theme="dark"]` (propagates to the page
-   canvas via the root element). The Author has NOT yet verified the
-   result in a real browser print preview — jsdom cannot simulate
-   @media print. When resuming: verify in Chrome/Firefox, then iterate
-   if any of the 4 symptoms reappear. See Engram topic
-   dev/export-pdf-pending-visual-fix for full diagnostic. */
 @media print {
     /* The @page margin is the ONLY thing that repeats on every printed
        page (page 1, page 2, the last page — all get 1.5cm of breathing
@@ -136,21 +125,10 @@
        covers the full sheet — including the @page margin area and the
        empty bottom of a short last page. `print-color-adjust: exact`
        forces browsers to render it (they otherwise drop bg in print).
-       The theme is mirrored onto <html> by ExportPdfDialog before
-       window.print() (a parent selector is impossible, so a child
-       attribute on #print-root cannot drive the root background). */
+       The export always uses the light print presentation. */
     html {
       background: #FFFFFF !important;
       print-color-adjust: exact;
-    }
-
-    html[data-print-theme="dark"] {
-      background: #0A0907 !important;
-      print-color-adjust: exact;
-    }
-
-    html[data-print-theme="light"] {
-      background: #FFFFFF !important;
     }
 
     #root {
@@ -159,7 +137,7 @@
       padding: 0 !important;
     }
 
-    /* The print root no longer owns the sheet background (that moved to
+    /* The print root does not own the sheet background (that lives on
        `html` above) — it only lays out the ficha content inside the
        @page margin. print-color-adjust stays as belt-and-suspenders so
        nested boxes keep their bg in print. */
@@ -173,20 +151,14 @@
       widows: 3;
     }
 
-    /* Dark theme — pergamino text on the full-sheet cripta background
-       painted by html[data-print-theme="dark"]. */
-    #print-root[data-theme="dark"] {
-      color: #DED5C7 !important;
-    }
-
-    /* Light theme — ink on paper. MarkdownBody applies `prose prose-invert`
-       unconditionally, so the prose color tokens are overridden here
-       (higher specificity) to the light variants. */
-    #print-root[data-theme="light"] {
+    /* Light presentation — ink on paper. MarkdownBody applies
+       `prose prose-invert` unconditionally, so the prose color tokens are
+       overridden here (higher specificity) to the light variants. */
+    #print-root {
       color: #1A1A1A !important;
     }
 
-    #print-root[data-theme="light"] .prose {
+    #print-root .prose {
       --tw-prose-body: #1A1A1A;
       --tw-prose-headings: #111111;
       --tw-prose-links: #1A56DB;
