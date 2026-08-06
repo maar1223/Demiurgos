@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { useImages } from "@/hooks/useImages";
+import { useImages, useImageDelete } from "@/hooks/useImages";
 import { getMediaUrl } from "@/api/wiki";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Button } from "@/components/atoms/Button";
+import { Toast } from "@/components/atoms/Toast";
+import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { cn } from "@/lib/utils";
 
 export type Align = "left" | "right" | "center" | null;
@@ -46,6 +48,10 @@ interface ImagePickerProps {
  * then confirm with Aceptar (emits `onSelect`) or dismiss with Cancelar.
  * Click outside, the close button, or Escape dismisses the modal.
  *
+ * Deleting: the SELECTED thumbnail shows a trash button; clicking it opens a
+ * ConfirmDialog and confirming sends the image + thumbnail to the world's
+ * papelera (`useImageDelete.remove`), then refreshes the grid via SWR mutate.
+ *
  * In `rawMode` the dropdowns are hidden and Aceptar emits the bare path —
  * used by the "Set cover…" card action (S11/S32).
  */
@@ -56,19 +62,34 @@ export function ImagePicker({
   rawMode = false,
 }: ImagePickerProps) {
   const { images, total, isLoading, error, mutate } = useImages(mundo);
+  const { remove } = useImageDelete(mundo);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const deleteTimerRef = useRef<number | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedAlign, setSelectedAlign] = useState<"left" | "right" | "center" | null>(null);
   const [selectedSize, setSelectedSize] = useState<"sm" | "lg" | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deletedMessage, setDeletedMessage] = useState<string | null>(null);
 
-  // Close on Escape key
+  // Close on Escape key (ignored while the delete confirmation is open —
+  // the dialog handles Escape itself, so it closes before the picker).
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && !deleteTarget) onClose();
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+  }, [onClose, deleteTarget]);
+
+  // Clear the success-toast timer on unmount so it never fires on a
+  // stale component between tests.
+  useEffect(() => {
+    return () => {
+      if (deleteTimerRef.current) window.clearTimeout(deleteTimerRef.current);
+    };
+  }, []);
 
   const handleOverlayClick = (e: React.MouseEvent) => {
     if (e.target === overlayRef.current) onClose();
@@ -84,6 +105,44 @@ export function ImagePicker({
     onSelect(selectedPath + buildImageSuffix(selectedAlign, selectedSize));
   };
 
+  const openDeleteDialog = (path: string) => {
+    setDeleteTarget(path);
+    setDeleteError(null);
+  };
+
+  const closeDeleteDialog = () => {
+    setDeleteTarget(null);
+    setDeleteError(null);
+  };
+
+  const showDeleteSuccess = () => {
+    setDeletedMessage("Imagen eliminada");
+    if (deleteTimerRef.current) window.clearTimeout(deleteTimerRef.current);
+    deleteTimerRef.current = window.setTimeout(
+      () => setDeletedMessage(null),
+      2500,
+    );
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    setDeleteError(null);
+    try {
+      await remove(deleteTarget);
+      closeDeleteDialog();
+      // Clear the stale selection — the deleted image is gone from the grid.
+      setSelectedPath(null);
+      showDeleteSuccess();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "No se pudo eliminar la imagen.";
+      setDeleteError(message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const formatSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -95,18 +154,19 @@ export function ImagePicker({
     "transition-colors focus:border-llamita focus:outline-none focus:ring-2 focus:ring-llamita/50";
 
   return (
-    <div
-      ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
-      onClick={handleOverlayClick}
-    >
+    <>
       <div
-        className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-xl border border-filio bg-madero shadow-2xl"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="image-picker-title"
+        ref={overlayRef}
+        className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
+        onClick={handleOverlayClick}
       >
+        <div
+          className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-xl border border-filio bg-madero shadow-2xl"
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="image-picker-title"
+        >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-filio px-6 py-4">
           <h2
@@ -158,40 +218,54 @@ export function ImagePicker({
                 {images.map((img) => {
                   const isSelected = img.path === selectedPath;
                   return (
-                    <button
-                      key={img.path}
-                      type="button"
-                      aria-pressed={isSelected}
-                      onClick={() => setSelectedPath(img.path)}
-                      className={cn(
-                        "group flex flex-col overflow-hidden rounded-lg border bg-piedra transition-all hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
-                        isSelected
-                          ? "border-llamita ring-2 ring-llamita/50"
-                          : "border-filio hover:border-llamita/50",
+                    <div key={img.path} className="relative w-full">
+                      <button
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => setSelectedPath(img.path)}
+                        className={cn(
+                          "group flex w-full flex-col overflow-hidden rounded-lg border bg-piedra transition-all hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
+                          isSelected
+                            ? "border-llamita ring-2 ring-llamita/50"
+                            : "border-filio hover:border-llamita/50",
+                        )}
+                      >
+                        {/* Thumbnail */}
+                        <div className="aspect-[4/3] w-full overflow-hidden bg-cripta">
+                          <img
+                            src={getMediaUrl(
+                              mundo,
+                              img.thumbnail_path ?? img.path,
+                            )}
+                            alt={img.name}
+                            className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                            loading="lazy"
+                          />
+                        </div>
+                        {/* Info */}
+                        <div className="px-2 py-2 text-left">
+                          <p className="truncate text-small text-pergamino">
+                            {img.name}
+                          </p>
+                          <p className="text-xs text-tinta-desvaida">
+                            {formatSize(img.size_bytes)}
+                          </p>
+                        </div>
+                      </button>
+                      {/* Delete affordance — only on the selected image, so a
+                          first click never destroys anything by accident. */}
+                      {isSelected && (
+                        <button
+                          type="button"
+                          aria-label={`Eliminar ${img.name}`}
+                          title={`Eliminar ${img.name}`}
+                          onClick={() => openDeleteDialog(img.path)}
+                          className="absolute right-2 top-2 rounded-md bg-cripta/80 p-1.5 text-plata shadow-md backdrop-blur-sm transition-colors hover:bg-sangre hover:text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50"
+                        >
+                          <Icon name="trash" size={16} />
+                        </button>
                       )}
-                    >
-                      {/* Thumbnail */}
-                      <div className="aspect-[4/3] w-full overflow-hidden bg-cripta">
-                        <img
-                          src={getMediaUrl(
-                            mundo,
-                            img.thumbnail_path ?? img.path,
-                          )}
-                          alt={img.name}
-                          className="h-full w-full object-cover transition-transform group-hover:scale-105"
-                          loading="lazy"
-                        />
-                      </div>
-                      {/* Info */}
-                      <div className="px-2 py-2 text-left">
-                        <p className="truncate text-small text-pergamino">
-                          {img.name}
-                        </p>
-                        <p className="text-xs text-tinta-desvaida">
-                          {formatSize(img.size_bytes)}
-                        </p>
-                      </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>
@@ -265,5 +339,22 @@ export function ImagePicker({
         </div>
       </div>
     </div>
+
+    {/* Delete confirmation (S12 pattern) — cancel aborts, confirm moves
+        the image + thumbnail to the world's papelera via the API. */}
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Eliminar"
+          message={`¿Eliminar "${deleteTarget.split("/").pop()}"? Se moverá a la papelera.`}
+          confirmLabel="Eliminar"
+          isBusy={isDeleting}
+          error={deleteError}
+          onConfirm={handleConfirmDelete}
+          onClose={closeDeleteDialog}
+        />
+      )}
+
+      {deletedMessage && <Toast message={deletedMessage} kind="success" />}
+    </>
   );
 }

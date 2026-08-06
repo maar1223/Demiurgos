@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ImagePicker } from "@/components/organisms/ImagePicker";
 
@@ -7,6 +7,7 @@ import { ImagePicker } from "@/components/organisms/ImagePicker";
 // from the network.
 vi.mock("@/hooks/useImages", () => ({
   useImages: vi.fn(),
+  useImageDelete: vi.fn(),
 }));
 
 vi.mock("@/api/wiki", () => ({
@@ -16,7 +17,7 @@ vi.mock("@/api/wiki", () => ({
   ),
 }));
 
-import { useImages } from "@/hooks/useImages";
+import { useImages, useImageDelete } from "@/hooks/useImages";
 import type { Mock } from "vitest";
 
 const mockImages = [
@@ -45,16 +46,22 @@ function mockGallery(overrides: Record<string, unknown> = {}) {
   });
 }
 
+function mockDelete(remove: Mock = vi.fn().mockResolvedValue({ success: true })) {
+  (useImageDelete as Mock).mockReturnValue({ remove });
+  return remove;
+}
+
 function renderPicker(onSelect = vi.fn(), onClose = vi.fn()) {
-  render(
+  const view = render(
     <ImagePicker mundo="Vibrantes" onSelect={onSelect} onClose={onClose} />,
   );
-  return { onSelect, onClose };
+  return { onSelect, onClose, rerender: view.rerender };
 }
 
 describe("ImagePicker", () => {
   beforeEach(() => {
     mockGallery();
+    mockDelete();
   });
 
   it("renders the image grid from the useImages mock", () => {
@@ -253,6 +260,141 @@ describe("ImagePicker", () => {
     await user.click(overlay as HTMLElement);
 
     expect(onClose).toHaveBeenCalled();
+  });
+
+  // ── delete flow ────────────────────────────────────────────────────────
+
+  it("shows the delete button only on the selected image", async () => {
+    const user = userEvent.setup();
+    renderPicker();
+
+    // Nothing to delete until an image is selected.
+    expect(
+      screen.queryByRole("button", { name: /eliminar/i }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /foto\.jpg/i }));
+
+    expect(
+      screen.getByRole("button", { name: "Eliminar foto.jpg" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Eliminar retrato.png" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: /eliminar/i })).toHaveLength(1);
+
+    // Switching the selection moves the delete button to the new image.
+    await user.click(screen.getByRole("button", { name: /retrato\.png/i }));
+
+    expect(
+      screen.getByRole("button", { name: "Eliminar retrato.png" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Eliminar foto.jpg" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clicking delete opens the confirmation dialog with the image name", async () => {
+    const user = userEvent.setup();
+    renderPicker();
+
+    await user.click(screen.getByRole("button", { name: /foto\.jpg/i }));
+    await user.click(screen.getByRole("button", { name: "Eliminar foto.jpg" }));
+
+    const dialog = screen.getByRole("dialog", { name: /eliminar/i });
+    expect(dialog).toHaveTextContent(
+      /¿Eliminar "foto\.jpg"\? Se moverá a la papelera\./,
+    );
+    expect(
+      within(dialog).getByRole("button", { name: "Eliminar" }),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", { name: "Cancelar" }),
+    ).toBeInTheDocument();
+  });
+
+  it("confirming delete calls remove with the path and refreshes the list", async () => {
+    const user = userEvent.setup();
+    const remove = mockDelete(
+      vi.fn().mockResolvedValue({ success: true, path: "wiki/media/foto.jpg" }),
+    );
+    const { rerender } = renderPicker();
+
+    await user.click(screen.getByRole("button", { name: /foto\.jpg/i }));
+    await user.click(screen.getByRole("button", { name: "Eliminar foto.jpg" }));
+    await user.click(screen.getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() => expect(remove).toHaveBeenCalledTimes(1));
+    expect(remove).toHaveBeenCalledWith("wiki/media/foto.jpg");
+
+    // Success feedback shows while the picker stays open.
+    await waitFor(() =>
+      expect(screen.getByText("Imagen eliminada")).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("dialog", { name: /eliminar/i })).not.toBeInTheDocument();
+
+    // Simulate the SWR mutate re-fetch: the deleted image drops out.
+    (useImages as Mock).mockReturnValue({
+      images: [mockImages[1]],
+      total: 1,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    rerender(
+      <ImagePicker
+        mundo="Vibrantes"
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByText("foto.jpg")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("retrato.png")).toBeInTheDocument();
+  });
+
+  it("cancelar closes the dialog without deleting anything", async () => {
+    const user = userEvent.setup();
+    const remove = mockDelete(vi.fn());
+    renderPicker();
+
+    await user.click(screen.getByRole("button", { name: /foto\.jpg/i }));
+    await user.click(screen.getByRole("button", { name: "Eliminar foto.jpg" }));
+    const dialog = screen.getByRole("dialog", { name: /eliminar/i });
+    expect(dialog).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+
+    expect(remove).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("dialog", { name: /eliminar/i }),
+    ).not.toBeInTheDocument();
+    // The image is still in the grid and still selected.
+    expect(screen.getByText("foto.jpg")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Eliminar foto.jpg" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the delete error inside the dialog and keeps it open", async () => {
+    const user = userEvent.setup();
+    mockDelete(vi.fn().mockRejectedValue(new Error("No autorizado")));
+    renderPicker();
+
+    await user.click(screen.getByRole("button", { name: /foto\.jpg/i }));
+    await user.click(screen.getByRole("button", { name: "Eliminar foto.jpg" }));
+    await user.click(screen.getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(/no autorizado/i),
+    );
+    // The dialog stays open so the user can retry or cancel.
+    expect(
+      screen.getByRole("dialog", { name: /eliminar/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Eliminar" })).toBeInTheDocument();
   });
 
   // ── rawMode (cover selection) ───────────────────────────────────────

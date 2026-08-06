@@ -35,7 +35,9 @@ vi.mock("@/hooks/useImages", () => ({
     isUploading: false,
     uploadError: null,
   }),
-  useImageDelete: vi.fn(),
+  useImageDelete: vi.fn().mockReturnValue({
+    remove: vi.fn(),
+  }),
 }));
 
 // Mock the wiki API — the editor calls saveFile (Guardar), getDiff is no
