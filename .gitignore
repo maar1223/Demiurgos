@@ -16,6 +16,7 @@ _archivo_produccion/
 # Estado local de Demiurgos (tracking de arcos narrativos)
 # ============================================================
 .demiurgos-estado.*
+.demiurgos-sync/
 .env.backup
 
 # ============================================================
