@@ -6,9 +6,14 @@ import { Navbar } from "@/components/organisms/Navbar";
 import {
   NAV_LINKS,
   PLACEHOLDER_TOAST,
-  PROFILE_PLACEHOLDER_TOAST,
 } from "@/lib/constants";
 import type { WorldInfo } from "@/api/types";
+import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
+import type { Mock } from "vitest";
+
+vi.mock("@/hooks/useLocalDevAuth", () => ({
+  useLocalDevAuth: vi.fn(),
+}));
 
 const worlds: WorldInfo[] = [
   {
@@ -50,11 +55,7 @@ function renderNavbar(
   );
 }
 
-/**
- * The avatar and mobile-menu-toggle buttons have no accessible name (their
- * icons are aria-hidden) — with the mobile menu closed the button order is:
- * logo, the NAV_LINKS buttons, world selector, avatar, toggle.
- */
+/** The mobile-menu-toggle is the only unnamed button when the menu is closed. */
 function unnamedButtons() {
   return screen.getAllByRole("button");
 }
@@ -62,6 +63,18 @@ function unnamedButtons() {
 describe("Navbar", () => {
   beforeEach(() => {
     vi.spyOn(window, "alert").mockImplementation(() => {});
+    (useLocalDevAuth as Mock).mockReturnValue({
+      status: {
+        mode: "disabled",
+        enabled: false,
+        authenticated: false,
+        label: null,
+      },
+      isLoading: false,
+      error: null,
+      start: vi.fn(),
+      logout: vi.fn(),
+    });
   });
 
   afterEach(() => {
@@ -118,14 +131,42 @@ describe("Navbar", () => {
     expect(screen.getByTestId("path")).toHaveTextContent("/wiki");
   });
 
-  it("clicking the avatar shows the profile placeholder alert", async () => {
+  it("clicking the avatar opens the local session control", async () => {
     const user = userEvent.setup();
     renderNavbar({ worlds });
 
-    const buttons = unnamedButtons();
-    await user.click(buttons[buttons.length - 2]);
+    await user.click(screen.getByRole("button", { name: "Perfil" }));
 
-    expect(window.alert).toHaveBeenCalledWith(PROFILE_PLACEHOLDER_TOAST);
+    expect(screen.getByRole("dialog", { name: "Perfil" })).toBeInTheDocument();
+    expect(screen.getByText(/Autenticación local desactivada/i)).toBeInTheDocument();
+  });
+
+  it("starts the explicit local session from the profile control", async () => {
+    const user = userEvent.setup();
+    const start = vi.fn().mockResolvedValue({
+      mode: "local-dev",
+      enabled: true,
+      authenticated: true,
+      label: "Local development user",
+    });
+    (useLocalDevAuth as Mock).mockReturnValue({
+      status: {
+        mode: "local-dev",
+        enabled: true,
+        authenticated: false,
+        label: null,
+      },
+      isLoading: false,
+      error: null,
+      start,
+      logout: vi.fn(),
+    });
+
+    renderNavbar({ worlds });
+    await user.click(screen.getByRole("button", { name: "Perfil" }));
+    await user.click(screen.getByRole("button", { name: "Iniciar sesión local" }));
+
+    expect(start).toHaveBeenCalledOnce();
   });
 
   it("world selector opens and reports the selection via onWorldChange", async () => {

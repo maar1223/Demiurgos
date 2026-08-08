@@ -40,15 +40,40 @@ vi.mock("@/hooks/useImages", () => ({
   }),
 }));
 
-// Mock the wiki API — the editor calls saveFile (Guardar), getDiff is no
-// longer used by the preview (CodeMirror computes the diff client-side),
-// but the module still exports it — keep the mock for parity. getMediaUrl
+vi.mock("@/components/organisms/AIAssistantSidebar", () => ({
+  AIAssistantSidebar: ({
+    onProposeEdit,
+  }: {
+    onProposeEdit?: (request: { prompt: string; sessionId: string }) => void;
+  }) => onProposeEdit ? (
+    <button
+      type="button"
+      onClick={() => onProposeEdit({
+        prompt: "Improve the opening",
+        sessionId: "assistant-session",
+      })}
+    >
+      Proponer edición
+    </button>
+  ) : null,
+}));
+
+// Mock the wiki API — secure review writes are asserted separately from the
+// legacy metadata/card flows. getDiff is no longer used by the preview
+// (CodeMirror computes the diff client-side), but the module still exports it.
+// getMediaUrl
 // is used by the ImagePicker thumbnails. moveNode/duplicateFile/
 // getFileContent/createFile/deleteFile back the card ⋯ action flows.
 // setStatus backs the file-bar status chip (item 14).
 vi.mock("@/api/wiki", () => ({
   getDiff: vi.fn(),
   saveFile: vi.fn(),
+  saveFileConfirmed: vi.fn(),
+  createFileConfirmed: vi.fn(),
+  requestConfirmation: vi.fn(),
+  suggestEdit: vi.fn(),
+  listHistory: vi.fn(),
+  restoreFile: vi.fn(),
   getMediaUrl: vi.fn((_mundo: string, path: string) => `/media/${path}`),
   moveNode: vi.fn(),
   duplicateFile: vi.fn(),
@@ -82,7 +107,21 @@ import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useEntitySearch } from "@/hooks/useEntitySearch";
 import { useImages, useImageUpload } from "@/hooks/useImages";
-import { saveFile, moveNode, duplicateFile, getFileContent, createFile, deleteFile, setStatus, listTrash } from "@/api/wiki";
+import {
+  saveFile,
+  saveFileConfirmed,
+  createFileConfirmed,
+  requestConfirmation,
+  suggestEdit,
+  listHistory,
+  moveNode,
+  duplicateFile,
+  getFileContent,
+  createFile,
+  deleteFile,
+  setStatus,
+  listTrash,
+} from "@/api/wiki";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
@@ -109,6 +148,7 @@ const mockFileContent = {
   size_bytes: 48,
   modified: "2024-01-15T10:30:00Z",
   extension: ".md",
+  revision: "base-revision",
 };
 
 // A wiki ficha with agent-only YAML frontmatter — must never surface in the
@@ -153,6 +193,23 @@ describe("WikiEditor", () => {
     });
 
     (saveFile as Mock).mockResolvedValue({ success: true, path: "capitulos/cap1.md" });
+    (saveFileConfirmed as Mock).mockResolvedValue({ success: true, path: "capitulos/cap1.md" });
+    (createFileConfirmed as Mock).mockResolvedValue({ success: true, path: "capitulos/cap3.md" });
+    (requestConfirmation as Mock).mockResolvedValue({
+      token: "confirmation-token",
+      expires_at: "2026-08-08T00:00:00Z",
+      proposed_digest: "proposed-digest",
+    });
+    (suggestEdit as Mock).mockResolvedValue({
+      proposal: null,
+      attempts: 3,
+      outcome: "fallback",
+      message: "No proposal",
+    });
+    (listHistory as Mock).mockResolvedValue({
+      target: "lore/capitulos/cap1.md",
+      entries: [],
+    });
     (setStatus as Mock).mockResolvedValue({ success: true, path: "capitulos/cap1.md" });
     (moveNode as Mock).mockResolvedValue({ success: true, path: "renombrada.md" });
     (duplicateFile as Mock).mockResolvedValue({
@@ -449,9 +506,9 @@ describe("WikiEditor", () => {
     );
   });
 
-  // ── New edit-flow tests: Guardar / Vista previa live diff / Guardar ──
+  // ── Secure review-flow tests: draft / LiveDiffEditor / accept-reject ──
 
-  it("shows toolbar buttons when editing: Cancelar, Vista previa, Guardar", async () => {
+  it("shows review controls when editing", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -476,13 +533,13 @@ describe("WikiEditor", () => {
 
     await user.type(textarea, " modificado");
 
-    // With changes → Cancelar + Vista previa + Guardar
+    // With changes → Cancelar + Vista previa + Revisar cambios
     expect(screen.getByRole("button", { name: /cancelar/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /vista previa/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /guardar/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /revisar cambios/i })).toBeInTheDocument();
   });
 
-  it("Guardar calls saveFile, exits edit mode and shows success feedback", async () => {
+  it("accepting a manual review uses confirmation and the secure save only", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -497,16 +554,32 @@ describe("WikiEditor", () => {
     const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
     await user.type(textarea, " modificado");
 
-    await user.click(screen.getByRole("button", { name: /guardar/i }));
+    await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
+    await screen.findByTestId("live-diff-editor");
+    await user.click(screen.getByRole("button", { name: "Accept" }));
 
     await waitFor(() => {
-      expect(saveFile).toHaveBeenCalledWith(
+      expect(requestConfirmation).toHaveBeenCalledWith(
         "Vibrantes",
         "lore",
         "capitulos/cap1.md",
-        expect.stringContaining("modificado"),
+        expect.objectContaining({
+          kind: "edit",
+          base_revision: "base-revision",
+          proposed_content: expect.stringContaining("modificado"),
+        }),
+      );
+      expect(saveFileConfirmed).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+        expect.objectContaining({
+          content: expect.stringContaining("modificado"),
+          token: "confirmation-token",
+        }),
       );
     });
+    expect(saveFile).not.toHaveBeenCalled();
 
     // Edit mode exited → Editar button back, no textarea
     expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
@@ -539,7 +612,7 @@ describe("WikiEditor", () => {
     expect(value).not.toContain("title: Anisa");
   });
 
-  it("Guardar re-merges the frontmatter with the edited body", async () => {
+  it("manual review re-merges the frontmatter before confirmation", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: frontmatterFile,
       isLoading: false,
@@ -556,16 +629,20 @@ describe("WikiEditor", () => {
     });
     await user.type(textarea, " editado");
 
-    await user.click(screen.getByRole("button", { name: /guardar/i }));
+    await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
+    await screen.findByTestId("live-diff-editor");
+    await user.click(screen.getByRole("button", { name: "Accept" }));
 
     // The on-disk file must stay byte-identical: frontmatter block +
     // edited body, exactly as loaded
     await waitFor(() => {
-      expect(saveFile).toHaveBeenCalledWith(
+      expect(saveFileConfirmed).toHaveBeenCalledWith(
         "Vibrantes",
         "lore",
         "capitulos/cap1.md",
-        "---\ntype: Personaje\ntitle: Anisa\n---\n# Anisa\n\nEste es el cuerpo. editado",
+        expect.objectContaining({
+          content: "---\ntype: Personaje\ntitle: Anisa\n---\n# Anisa\n\nEste es el cuerpo. editado",
+        }),
       );
     });
   });
@@ -587,27 +664,31 @@ describe("WikiEditor", () => {
     });
     await user.type(textarea, " modificado");
 
-    await user.click(screen.getByRole("button", { name: /guardar/i }));
+    await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
+    await screen.findByTestId("live-diff-editor");
+    await user.click(screen.getByRole("button", { name: "Accept" }));
 
     // No frontmatter → no block injected; the body is saved as-is
     await waitFor(() => {
-      expect(saveFile).toHaveBeenCalledWith(
+      expect(saveFileConfirmed).toHaveBeenCalledWith(
         "Vibrantes",
         "lore",
         "capitulos/cap1.md",
-        "# Capítulo 1\n\nEste es el contenido del **capítulo 1**. modificado",
+        expect.objectContaining({
+          content: "# Capítulo 1\n\nEste es el contenido del **capítulo 1**. modificado",
+        }),
       );
     });
   });
 
-  it("shows an error banner when saveFile fails", async () => {
+  it("shows an error banner when the secure save fails", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
       error: null,
       mutate: vi.fn(),
     });
-    (saveFile as Mock).mockRejectedValue({ status: 500, detail: "Error interno del servidor. Revisá los logs del backend." });
+    (saveFileConfirmed as Mock).mockRejectedValue({ status: 500, detail: "Error interno del servidor. Revisá los logs del backend." });
 
     const user = userEvent.setup();
     renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
@@ -616,7 +697,9 @@ describe("WikiEditor", () => {
     const textarea = screen.getByRole("textbox", { name: /editor de contenido/i });
     await user.type(textarea, " modificado");
 
-    await user.click(screen.getByRole("button", { name: /guardar/i }));
+    await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
+    await screen.findByTestId("live-diff-editor");
+    await user.click(screen.getByRole("button", { name: "Accept" }));
 
     // Error banner shown, still editing (edits preserved)
     expect(await screen.findByText(/Error interno del servidor/i)).toBeInTheDocument();
@@ -650,7 +733,7 @@ describe("WikiEditor", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("Vista previa toggles closed without saving, edits preserved", async () => {
+  it("rejecting a review closes the diff without any write", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -668,21 +751,18 @@ describe("WikiEditor", () => {
     await user.click(screen.getByRole("button", { name: /vista previa/i }));
     expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
 
-    // Clicking Vista previa again closes the merge view — no save happened,
-    // and the edits survive back in the textarea
-    await user.click(screen.getByRole("button", { name: /vista previa/i }));
+    await user.click(screen.getByRole("button", { name: "Reject" }));
 
     expect(saveFile).not.toHaveBeenCalled();
+    expect(saveFileConfirmed).not.toHaveBeenCalled();
+    expect(requestConfirmation).not.toHaveBeenCalled();
     expect(
       screen.queryByTestId("live-diff-editor"),
     ).not.toBeInTheDocument();
-    const backToTextarea = screen.getByRole("textbox", {
-      name: /editor de contenido/i,
-    });
-    expect(backToTextarea).toHaveValue(`${mockFileContent.content} modificado`);
+    expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
   });
 
-  it("Guardar works while the live diff preview is open", async () => {
+  it("accepting from the live diff exits edit mode", async () => {
     (useFileContent as Mock).mockReturnValue({
       file: mockFileContent,
       isLoading: false,
@@ -700,14 +780,14 @@ describe("WikiEditor", () => {
     await user.click(screen.getByRole("button", { name: /vista previa/i }));
     expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /guardar/i }));
+    await user.click(screen.getByRole("button", { name: "Accept" }));
 
     await waitFor(() => {
-      expect(saveFile).toHaveBeenCalledWith(
+      expect(saveFileConfirmed).toHaveBeenCalledWith(
         "Vibrantes",
         "lore",
         "capitulos/cap1.md",
-        expect.stringContaining("modificado"),
+        expect.objectContaining({ content: expect.stringContaining("modificado") }),
       );
     });
 
@@ -716,6 +796,90 @@ describe("WikiEditor", () => {
       screen.queryByTestId("live-diff-editor"),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
+  });
+
+  it("routes an AI proposal to the same diff and accept/reject surface", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    (suggestEdit as Mock).mockResolvedValue({
+      proposal: {
+        proposal_id: "ai-proposal",
+        target: "lore/capitulos/cap1.md",
+        base_revision: "base-revision",
+        proposed_content: "# AI revised",
+        proposed_digest: "ai-digest",
+        rationale: "Improve the opening",
+        is_new_file: false,
+      },
+      attempts: 1,
+      outcome: "proposal",
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: "Proponer edición" }));
+
+    expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Accept" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    expect(saveFile).not.toHaveBeenCalled();
+    expect(saveFileConfirmed).not.toHaveBeenCalled();
+    expect(suggestEdit).toHaveBeenCalledWith("Vibrantes", {
+      section: "lore",
+      path: "capitulos/cap1.md",
+      prompt: "Improve the opening",
+      session_id: "assistant-session",
+    });
+    expect(screen.queryByRole("textbox", { name: "AI edit prompt" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "AI suggestion" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+    expect(requestConfirmation).not.toHaveBeenCalled();
+    expect(saveFile).not.toHaveBeenCalled();
+    expect(saveFileConfirmed).not.toHaveBeenCalled();
+  });
+
+  it("reloads and requires a fresh review after a stale 409", async () => {
+    const mutate = vi.fn().mockResolvedValue({
+      ...mockFileContent,
+      content: "# Fresh content",
+      revision: "fresh-revision",
+    });
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      revision: "base-revision",
+      isLoading: false,
+      error: null,
+      mutate,
+    });
+    (saveFileConfirmed as Mock).mockRejectedValue({
+      status: 409,
+      detail: "base_revision desactualizado",
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    await user.type(
+      screen.getByRole("textbox", { name: /editor de contenido/i }),
+      " changed",
+    );
+    await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
+    await screen.findByTestId("live-diff-editor");
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+
+    expect(await screen.findByText(/file changed.*review/i)).toBeInTheDocument();
+    expect(mutate).toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: /editor de contenido/i })).toHaveValue(
+      "# Fresh content",
+    );
+    expect(screen.queryByTestId("live-diff-editor")).not.toBeInTheDocument();
   });
 
   it("inserts a wikilink from the Contexto panel while the preview is open", async () => {
@@ -1293,7 +1457,7 @@ describe("WikiEditor", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("file bar: new-file button creates at the section root (item 14)", async () => {
+  it("new-file creation is reviewed and rejection leaves it absent", async () => {
     const user = userEvent.setup();
     renderWikiEditor();
 
@@ -1302,12 +1466,18 @@ describe("WikiEditor", () => {
     const input = screen.getByRole("textbox", { name: "Nombre del archivo…" });
     await user.type(input, "nota2.md{Enter}");
 
-    await waitFor(() => {
-      expect(createFile).toHaveBeenCalledWith("Vibrantes", "lore", "nota2.md");
-    });
+    expect(createFile).not.toHaveBeenCalled();
+    expect(createFileConfirmed).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /revisar creación/i }));
+    await screen.findByTestId("live-diff-editor");
+    await user.click(screen.getByRole("button", { name: "Reject" }));
+
+    expect(createFile).not.toHaveBeenCalled();
+    expect(createFileConfirmed).not.toHaveBeenCalled();
+    expect(requestConfirmation).not.toHaveBeenCalled();
   });
 
-  it("file bar: new-folder button creates via the _README placeholder (item 14)", async () => {
+  it("new-folder creation uses the secure confirmation contract", async () => {
     const user = userEvent.setup();
     renderWikiEditor();
 
@@ -1318,16 +1488,28 @@ describe("WikiEditor", () => {
     });
     await user.type(input, "nueva{Enter}");
 
+    await user.click(screen.getByRole("button", { name: /revisar creación/i }));
+    await screen.findByTestId("live-diff-editor");
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+
     await waitFor(() => {
-      expect(createFile).toHaveBeenCalledWith(
+      expect(requestConfirmation).toHaveBeenCalledWith(
         "Vibrantes",
         "lore",
         "nueva/_README.md",
+        expect.objectContaining({ kind: "new" }),
+      );
+      expect(createFileConfirmed).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "nueva/_README.md",
+        expect.objectContaining({ token: "confirmation-token" }),
       );
     });
+    expect(createFile).not.toHaveBeenCalled();
   });
 
-  it("file bar: creation inside an open directory keeps the directory prefix (item 14)", async () => {
+  it("secure creation inside an open directory keeps the directory prefix", async () => {
     const user = userEvent.setup();
     renderWikiEditor(["/wiki/Vibrantes/lore/capitulos"]);
 
@@ -1344,13 +1526,19 @@ describe("WikiEditor", () => {
     const input = screen.getByRole("textbox", { name: "Nombre del archivo…" });
     await user.type(input, "cap3.md{Enter}");
 
+    await user.click(screen.getByRole("button", { name: /revisar creación/i }));
+    await screen.findByTestId("live-diff-editor");
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+
     await waitFor(() => {
-      expect(createFile).toHaveBeenCalledWith(
+      expect(createFileConfirmed).toHaveBeenCalledWith(
         "Vibrantes",
         "lore",
         "capitulos/cap3.md",
+        expect.any(Object),
       );
     });
+    expect(createFile).not.toHaveBeenCalled();
   });
 
   it("file bar: creation buttons hide while a file is open (item 14)", () => {

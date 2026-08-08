@@ -10,7 +10,13 @@
 # so running this script twice never spawns duplicate processes.
 #
 # Run:  powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1
+# Apply current .env auth mode to an existing API only with explicit confirmation:
+# Run:  powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1 -RestartApi
 # ---------------------------------------------------------------------------
+
+param(
+    [switch]$RestartApi
+)
 
 $ErrorActionPreference = "Continue"
 
@@ -22,11 +28,15 @@ $frontendPort = 5173
 $apiUrl    = "http://localhost:$apiPort/health"
 $frontendUrl = "http://localhost:$frontendPort"
 
+. (Join-Path $root "scripts\import-auth-mode.ps1")
+$authMode = Set-DemiurgosAuthModeFromDotEnv -ProjectRoot $root
+
 Write-Host ""
 Write-Host "======================================" -ForegroundColor Cyan
 Write-Host "  Demiurgos - stack launcher" -ForegroundColor Cyan
 Write-Host "======================================" -ForegroundColor Cyan
 Write-Host ""
+Write-Host "Auth mode configurado para la API: $authMode" -ForegroundColor DarkCyan
 
 # --- Helper: is a TCP port already listening? ---------------------------------
 function Test-PortListening([int]$port) {
@@ -40,6 +50,51 @@ function Start-ServiceWindow([string]$title, [string]$command) {
     Write-Host "  [OK]  $title lanzado en ventana propia." -ForegroundColor Green
 }
 
+function Get-ApiListenerPids {
+    @(
+        Get-NetTCPConnection -LocalPort $apiPort -State Listen -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.OwningProcess } |
+            Sort-Object -Unique
+    )
+}
+
+function Stop-ApiForExplicitRestart {
+    $ownerPids = @(Get-ApiListenerPids)
+    if ($ownerPids.Count -eq 0) {
+        return $true
+    }
+    if ($ownerPids.Count -ne 1) {
+        Write-Host "  [!!]  No se reinicia: hay varios procesos escuchando en $apiPort." -ForegroundColor Red
+        return $false
+    }
+
+    $ownerPid = [int]$ownerPids[0]
+    $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
+    $commandLine = if ($processInfo) { [string]$processInfo.CommandLine } else { "" }
+    if ([string]::IsNullOrWhiteSpace($commandLine) -or
+        $commandLine -notmatch '(?i)(api_server:app|api_server\.py|start-api\.ps1)') {
+        Write-Host "  [!!]  No se reinicia: el proceso de $apiPort no se identifico como la API de Demiurgos." -ForegroundColor Red
+        return $false
+    }
+
+    Write-Host "  [!!]  Reinicio solicitado: se detendra el proceso API identificado (PID $ownerPid)." -ForegroundColor Yellow
+    $confirmation = Read-Host "Escribe RESTART para confirmar; cualquier otra cosa cancela"
+    if ($confirmation -cne "RESTART") {
+        Write-Host "  [OK]  Reinicio cancelado; el proceso existente queda intacto." -ForegroundColor Green
+        return $false
+    }
+
+    Stop-Process -Id $ownerPid -ErrorAction Stop
+    for ($i = 0; $i -lt 20 -and (Test-PortListening $apiPort); $i++) {
+        Start-Sleep -Milliseconds 250
+    }
+    if (Test-PortListening $apiPort) {
+        Write-Host "  [!!]  La API no libero el puerto $apiPort; no se inicia otra instancia." -ForegroundColor Red
+        return $false
+    }
+    return $true
+}
+
 # --- 1. Hermes Gateway ----------------------------------------------------------
 Write-Host "[1/4] Hermes Gateway ($gatewayPort)..." -ForegroundColor Yellow
 if (Test-PortListening $gatewayPort) {
@@ -51,7 +106,14 @@ if (Test-PortListening $gatewayPort) {
 # --- 2. Wiki API -----------------------------------------------------------------
 Write-Host "[2/4] Wiki API ($apiPort)..." -ForegroundColor Yellow
 if (Test-PortListening $apiPort) {
-    Write-Host "  [OK]  Ya esta escuchando en el puerto $apiPort - sin cambios." -ForegroundColor Green
+    if ($RestartApi -and (Stop-ApiForExplicitRestart)) {
+        Write-Host "  [OK]  API anterior detenida de forma explicita; se inicia con el modo $authMode." -ForegroundColor Green
+        $env:PYTHONPATH = "src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite"
+        Start-ServiceWindow "API" "Set-Location '$root'; `$env:PYTHONPATH='src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite'; python -m uvicorn api_server:app --host 127.0.0.1 --port 8000 --log-level info"
+    } else {
+        Write-Host "  [OK]  Ya esta escuchando en el puerto $apiPort - sin cambios; conserva su entorno anterior." -ForegroundColor Green
+        Write-Host "        Usa -RestartApi y confirma RESTART para aplicar el .env actual." -ForegroundColor DarkYellow
+    }
 } else {
     $env:PYTHONPATH = "src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite"
     Start-ServiceWindow "API" "Set-Location '$root'; `$env:PYTHONPATH='src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite'; python -m uvicorn api_server:app --host 127.0.0.1 --port 8000 --log-level info"

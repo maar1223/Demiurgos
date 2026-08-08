@@ -4,11 +4,19 @@ import type {
   DiffPreview,
   DuplicateResponse,
   EmptyTrashResponse,
+  EditConfirmation,
+  EditConfirmationRequest,
+  EditSuggestionRequest,
+  EditSuggestionResponse,
   FichaStatus,
   FileContent,
   FileNode,
+  HistoryListResponse,
+  LocalDevSessionStatus,
   MediaList,
   MoveResponse,
+  ConfirmedEditRequest,
+  RestoreFileRequest,
   SuccessResponse,
   TrashEntry,
   TrashListResponse,
@@ -16,6 +24,34 @@ import type {
   WorldInfo,
 } from "@/api/types";
 import { API_BASE_URL } from "@/lib/constants";
+
+// ---------------------------------------------------------------------------
+// Local development authentication
+// ---------------------------------------------------------------------------
+
+/** GET /api/auth/local-dev/session — inspect the local session status. */
+export function getLocalDevSession(): Promise<LocalDevSessionStatus> {
+  return apiFetch<LocalDevSessionStatus>(
+    apiUrl(["api", "auth", "local-dev", "session"]),
+    { credentials: "same-origin" },
+  );
+}
+
+/** POST /api/auth/local-dev/session — start a server-issued local session. */
+export function startLocalDevSession(): Promise<LocalDevSessionStatus> {
+  return apiFetch<LocalDevSessionStatus>(
+    apiUrl(["api", "auth", "local-dev", "session"]),
+    { method: "POST", credentials: "same-origin" },
+  );
+}
+
+/** DELETE /api/auth/local-dev/session — clear the local session cookie. */
+export function logoutLocalDevSession(): Promise<LocalDevSessionStatus> {
+  return apiFetch<LocalDevSessionStatus>(
+    apiUrl(["api", "auth", "local-dev", "session"]),
+    { method: "DELETE", credentials: "same-origin" },
+  );
+}
 
 /**
  * Builds a URL from segments and query params.
@@ -73,6 +109,99 @@ export async function getFileContent(
 ): Promise<FileContent> {
   return apiFetch<FileContent>(
     apiUrl(["api", mundo, section, "file"], { path }),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Secure editing
+// ---------------------------------------------------------------------------
+
+/** POST /api/{mundo}/ai/edit-suggest — request a validated diskless proposal. */
+export async function suggestEdit(
+  mundo: string,
+  request: EditSuggestionRequest,
+): Promise<EditSuggestionResponse> {
+  return apiFetch<EditSuggestionResponse>(
+    apiUrl(["api", mundo, "ai", "edit-suggest"]),
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+/**
+ * POST /api/{mundo}/{section}/edit-confirmation?path= — issue a single-use
+ * confirmation proof for a reviewed candidate.
+ */
+export async function requestConfirmation(
+  mundo: string,
+  section: string,
+  path: string,
+  request: EditConfirmationRequest,
+): Promise<EditConfirmation> {
+  return apiFetch<EditConfirmation>(
+    apiUrl(["api", mundo, section, "edit-confirmation"], { path }),
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+/** POST /api/{mundo}/{section}/save?path= — persist an existing reviewed edit. */
+export async function saveFileConfirmed(
+  mundo: string,
+  section: string,
+  path: string,
+  request: ConfirmedEditRequest,
+): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(
+    apiUrl(["api", mundo, section, "save"], { path }),
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+/** POST /api/{mundo}/{section}/create?path= — create a reviewed new file. */
+export async function createFileConfirmed(
+  mundo: string,
+  section: string,
+  path: string,
+  request: ConfirmedEditRequest,
+): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(
+    apiUrl(["api", mundo, section, "create"], { path }),
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
+  );
+}
+
+/** GET /api/{mundo}/history?path= — list valid snapshots newest first. */
+export async function listHistory(
+  mundo: string,
+  path: string,
+): Promise<HistoryListResponse> {
+  return apiFetch<HistoryListResponse>(
+    apiUrl(["api", mundo, "history"], { path }),
+  );
+}
+
+/** POST /api/{mundo}/history/restore — restore through the gated pipeline. */
+export async function restoreFile(
+  mundo: string,
+  request: RestoreFileRequest,
+): Promise<SuccessResponse> {
+  return apiFetch<SuccessResponse>(
+    apiUrl(["api", mundo, "history", "restore"]),
+    {
+      method: "POST",
+      body: JSON.stringify(request),
+    },
   );
 }
 

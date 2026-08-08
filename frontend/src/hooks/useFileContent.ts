@@ -33,6 +33,7 @@ export function useFileContent(
 
   return {
     file: data ?? null,
+    revision: data?.revision ?? null,
     isLoading,
     isValidating,
     error,

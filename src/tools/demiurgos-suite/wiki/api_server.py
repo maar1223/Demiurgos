@@ -1,14 +1,18 @@
 # -*- coding: utf-8 -*-
 """Minimal Demiurgos Wiki API server - serves world list, files, and entity graph."""
 import asyncio
+import base64
+import hashlib
 import io
 import json
 import logging
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import sys
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,7 +26,7 @@ if str(_SUITE) not in sys.path:
     sys.path.insert(0, str(_SUITE))
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -121,20 +125,26 @@ def health():
 
 VALID_SECTIONS = {"lore", "personajes", "sagas", "referencias", "media"}
 
+# Internal bookkeeping directories that must never be reachable as content
+# targets: ``.papelera`` (trash) and ``.history`` (edit snapshots). Both are
+# gitignored and managed exclusively by the server.
+_INTERNAL_DIRS = {".papelera", ".history"}
+
 
 def _resolve_path(mundo: str, section: str, path: str) -> Path | None:
-    """Resolve a file path safely (prevent path traversal)."""
-    mundo_dir = _resolve_mundo_dir(mundo)
-    if mundo_dir is None:
-        return None
+    """Resolve a section-relative file path safely (prevent path traversal).
+
+    Thin convenience over ``_resolve_mundo_path`` for section-style routes:
+    the section is validated first, then every world/section/path rule from
+    the centralized resolver applies (canonical containment, symlink escape
+    rejection, internal-dir denial, section membership after normalization).
+    Returns the resolved Path only when the file exists, or None on any
+    failure.
+    """
     if section not in VALID_SECTIONS:
         return None
-    # Prevent path traversal
-    try:
-        full = (mundo_dir / section / path).resolve()
-        if not str(full).startswith(str(mundo_dir)):
-            return None
-    except Exception:
+    full = _resolve_mundo_path(mundo, f"{section}/{path}")
+    if full is None:
         return None
     return full if full.exists() else None
 
@@ -144,10 +154,15 @@ def _resolve_mundo_path(mundo: str, path: str) -> Path | None:
 
     The first path segment must be a valid section (lore/personajes/sagas/
     referencias/media) and the resolved path must stay under
-    ``mundos/{mundo}``. Returns the resolved Path even when it does not
-    exist yet (so callers can distinguish 400 invalid-path from 404
-    not-found), or None when the path is invalid (traversal, bad section,
-    empty).
+    ``mundos/{mundo}`` — checked canonically against the resolved root plus a
+    path separator, so sibling-world names (``mundos/mundo2/...``) can never
+    be mistaken for children of ``mundos/mundo``. The resolved target must
+    still sit inside a declared section and must not land in an internal
+    directory (``.papelera``/``.history``). Symlink escapes are rejected
+    because ``.resolve()`` follows them and the containment check then fails.
+    Returns the resolved Path even when it does not exist yet (so callers can
+    distinguish 400 invalid-path from 404 not-found), or None when the path
+    is invalid (traversal, bad section, internal target, empty).
     """
     mundo_dir = _resolve_mundo_dir(mundo)
     if mundo_dir is None:
@@ -164,7 +179,247 @@ def _resolve_mundo_path(mundo: str, path: str) -> Path | None:
     root = str(mundo_dir)
     if not (str(full) == root or str(full).startswith(root + os.sep)):
         return None
+    try:
+        rel_parts = full.relative_to(mundo_dir).parts
+    except ValueError:
+        return None
+    if not rel_parts or rel_parts[0] not in VALID_SECTIONS:
+        return None
+    if any(p in _INTERNAL_DIRS for p in rel_parts):
+        return None
     return full
+
+
+# ---------------------------------------------------------------------------
+# EditPrincipal seam — trusted editing identity (Slice 1A)
+#
+# Every gated write (confirmation, save, create, restore) must be bound to a
+# principal resolved from trusted deployment auth/session middleware. The only
+# provider in this bounded slice is explicitly enabled local development auth;
+# production and the default configuration remain fail-closed. Caller-supplied
+# identity (headers, body fields) is forgeable and MUST never be promoted to a
+# principal here. The seam remains the single plug point for deployments.
+# ---------------------------------------------------------------------------
+
+
+class EditPrincipal:
+    """Opaque, trusted identity for editing operations.
+
+    Carries only an internal identifier (session/user handle supplied by
+    trusted middleware) plus an optional human label for logs. The id is
+    never exposed to clients as a credential — logs reference it opaquely.
+    """
+
+    __slots__ = ("id", "label")
+
+    def __init__(self, principal_id: str, label: str = ""):
+        if not isinstance(principal_id, str) or not principal_id.strip():
+            raise ValueError("EditPrincipal requires a non-empty principal id")
+        self.id = principal_id
+        self.label = label
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<EditPrincipal {self.id!r}>"
+
+
+_LOCAL_AUTH_MODE = "local-dev"
+_LOCAL_SESSION_COOKIE = "demiurgos_local_session"
+_LOCAL_SESSION_TTL = timedelta(hours=8)
+_local_sessions: dict[str, dict] = {}
+_local_session_lock = threading.Lock()
+
+
+def _auth_mode() -> str:
+    """Read auth mode at request time so local tests can isolate configuration."""
+    return os.environ.get("DEMIURGOS_AUTH_MODE", "disabled").strip().lower()
+
+
+def _is_loopback_request(request: Request | None) -> bool:
+    """Use the socket peer only; Host and forwarded headers are untrusted."""
+    if request is None or request.client is None:
+        return False
+    return request.client.host in {"127.0.0.1", "::1"}
+
+
+def _local_auth_enabled() -> bool:
+    return _auth_mode() == _LOCAL_AUTH_MODE
+
+
+def _prune_local_sessions(now: datetime | None = None) -> None:
+    current = now or datetime.now(timezone.utc)
+    for token_hash in [
+        key for key, record in _local_sessions.items()
+        if record["expires_at"] <= current
+    ]:
+        _local_sessions.pop(token_hash, None)
+
+
+def _local_session_for_request(request: Request | None) -> dict | None:
+    if not _local_auth_enabled() or not _is_loopback_request(request):
+        return None
+    token = request.cookies.get(_LOCAL_SESSION_COOKIE) if request else None
+    if not token:
+        return None
+    now = datetime.now(timezone.utc)
+    token_hash = _hash_token(token)
+    with _local_session_lock:
+        _prune_local_sessions(now)
+        return _local_sessions.get(token_hash)
+
+
+def _local_status(request: Request) -> dict:
+    enabled = _local_auth_enabled()
+    if enabled and not _is_loopback_request(request):
+        raise HTTPException(status_code=403, detail="Local development auth requires loopback")
+    session = _local_session_for_request(request) if enabled else None
+    return {
+        "mode": _auth_mode(),
+        "enabled": enabled,
+        "authenticated": session is not None,
+        "label": session["label"] if session else None,
+    }
+
+
+@app.get("/api/auth/local-dev/session")
+def local_dev_session_status(request: Request):
+    """Return local development auth status without exposing session material."""
+    return _local_status(request)
+
+
+@app.post("/api/auth/local-dev/session")
+def local_dev_session_start(request: Request, response: Response):
+    """Start an explicit loopback-only local development session."""
+    if not _local_auth_enabled():
+        raise HTTPException(status_code=403, detail="Local development auth is disabled")
+    if not _is_loopback_request(request):
+        raise HTTPException(status_code=403, detail="Local development auth requires loopback")
+
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    session = {
+        "principal_id": f"local-dev-session-{secrets.token_hex(16)}",
+        "label": "Local development user",
+        "expires_at": now + _LOCAL_SESSION_TTL,
+    }
+    with _local_session_lock:
+        _prune_local_sessions(now)
+        _local_sessions[_hash_token(token)] = session
+    response.set_cookie(
+        _LOCAL_SESSION_COOKIE,
+        token,
+        max_age=int(_LOCAL_SESSION_TTL.total_seconds()),
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        path="/",
+    )
+    return {
+        "mode": _LOCAL_AUTH_MODE,
+        "enabled": True,
+        "authenticated": True,
+        "label": session["label"],
+    }
+
+
+@app.delete("/api/auth/local-dev/session")
+def local_dev_session_logout(request: Request, response: Response):
+    """Clear the current local development session and its browser cookie."""
+    if _local_auth_enabled() and not _is_loopback_request(request):
+        raise HTTPException(status_code=403, detail="Local development auth requires loopback")
+    token = request.cookies.get(_LOCAL_SESSION_COOKIE)
+    if token:
+        with _local_session_lock:
+            _local_sessions.pop(_hash_token(token), None)
+    response.delete_cookie(_LOCAL_SESSION_COOKIE, path="/", samesite="lax")
+    return _local_status(request)
+
+
+def _resolve_principal(request=None) -> EditPrincipal | None:
+    """Resolve the trusted edit principal for a request.
+
+    Local development auth is the only built-in provider. It requires the
+    explicit ``DEMIURGOS_AUTH_MODE=local-dev`` setting, a loopback socket peer,
+    and a server-issued HttpOnly session cookie. Until those conditions hold,
+    every gated write fails closed. This function MUST NOT trust caller-
+    supplied identity: request headers and body fields are forgeable and are
+    deliberately ignored.
+    """
+    session = _local_session_for_request(request)
+    if session is None:
+        return None
+    return EditPrincipal(session["principal_id"], label=session["label"])
+
+
+# ---------------------------------------------------------------------------
+# Confirmation store — server-verified single-use proofs (Slices 1B and PR 3)
+# Hashed, short-TTL, single-use tokens bound to principal/target/kind/
+# edit_id/base+proposed digests. In-memory; restart invalidates outstanding
+# confirmations (fail closed). The atomic replace, per-target lock, and
+# snapshot seam used by the write pipeline live below
+# (_target_lock_for / history helpers / _snapshot_before_write / _atomic_write).
+# ---------------------------------------------------------------------------
+
+_CONFIRM_TTL_SECONDS = 600
+
+# token_hash -> bound write attributes (principal/target/kind/edit_id/digests)
+_confirmation_store: dict[str, dict] = {}
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _prune_expired_confirmations() -> None:
+    now = datetime.now(timezone.utc)
+    for h in [h for h, r in _confirmation_store.items() if r["expires_at"] <= now]:
+        _confirmation_store.pop(h, None)
+
+
+def _issue_confirmation(principal, target_key, kind, edit_id, base_digest,
+                        proposed_digest, history_id=None):
+    _prune_expired_confirmations()
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=_CONFIRM_TTL_SECONDS)
+    _confirmation_store[_hash_token(token)] = {
+        "principal_id": principal.id,
+        "target_key": target_key,
+        "kind": kind,
+        "edit_id": edit_id,
+        "base_digest": base_digest,
+        "proposed_digest": proposed_digest,
+        "history_id": history_id,
+        "expires_at": expires_at,
+    }
+    return token, expires_at
+
+
+def _redeem_confirmation(principal, target_key, kind, edit_id, proposed_digest,
+                         token, history_id=None) -> bool:
+    """Consume a token; True only when every bound attribute matches and it
+    is unexpired. Any mismatch, replay, or expiry consumes it (single use)."""
+    if not token:
+        return False
+    record = _confirmation_store.pop(_hash_token(token), None)
+    if record is None:
+        return False
+    if datetime.now(timezone.utc) > record["expires_at"]:
+        return False
+    return (
+        record["principal_id"] == principal.id
+        and record["target_key"] == target_key
+        and record["kind"] == kind
+        and record["edit_id"] == edit_id
+        and record["proposed_digest"] == proposed_digest
+        and record.get("history_id") == history_id
+    )
+
+
+def _target_key(mundo: str, section: str, path: str) -> str:
+    return f"{mundo}::{section}::{path.replace(chr(92), '/')}"
+
+
+def _digest_of(full: Path) -> str:
+    return hashlib.sha256(full.read_bytes()).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +674,12 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
 
 @app.get("/api/{mundo}/{section}/file")
 def get_file(mundo: str, section: str, path: str):
-    """Read a file's content."""
+    """Read a file's content plus its revision.
+
+    ``revision`` is the SHA-256 of the file's exact bytes on disk (raw
+    bytes, not the newline-normalized text), so editors can detect stale
+    bases before confirming a write.
+    """
     full = _resolve_path(mundo, section, path)
     if full is None:
         return {"error": "Archivo no encontrado", "path": path}
@@ -429,39 +689,446 @@ def get_file(mundo: str, section: str, path: str):
             "path": path,
             "content": content,
             "size": len(content),
+            "revision": hashlib.sha256(full.read_bytes()).hexdigest(),
         }
     except Exception as e:
         return {"error": str(e), "path": path}
 
 
-@app.post("/api/{mundo}/{section}/file")
-def save_file(mundo: str, section: str, path: str, body: dict):
-    """Save file content."""
+# ---------------------------------------------------------------------------
+# Atomic replacement + per-target lock + snapshot seam (Slices 1C and PR 3)
+#
+# The gated write pipeline serializes per resolved target: the on-disk base
+# recheck, the pre-write snapshot hook, and the replacement all run under
+# one lock, so a concurrent writer can never slip a change between the
+# digest check and os.replace (TOCTOU-safe). Replacement writes a unique
+# same-directory temp file and atomically renames it over the target;
+# cleanup on failure guarantees rejected/crashed writes leave no strays.
+# ---------------------------------------------------------------------------
+
+_target_locks: dict[str, threading.Lock] = {}
+_target_lock_guard = threading.Lock()
+
+
+def _target_lock_for(full: Path) -> threading.Lock:
+    """Return the per-target lock for a resolved path (created on demand)."""
+    key = str(full)
+    with _target_lock_guard:
+        return _target_locks.setdefault(key, threading.Lock())
+
+
+_HISTORY_MAX_SNAPSHOTS = 20
+_HISTORY_MAX_AGE = timedelta(days=30)
+_HISTORY_VERSION = 1
+_HISTORY_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+_HISTORY_FIELDS = frozenset({
+    "version", "snapshot_id", "target", "created_at", "content_b64",
+    "content_digest", "size",
+})
+
+
+def _history_world_and_target(full: Path) -> tuple[Path, str]:
+    """Return the authorized world root and canonical mundo-relative target."""
+    resolved = full.resolve()
+    mundos_root = MUNDOS_DIR.resolve()
+    if not mundos_root.is_dir():
+        raise ValueError("history root is unavailable")
+    for mundo_dir in mundos_root.iterdir():
+        if not mundo_dir.is_dir():
+            continue
+        try:
+            relative = resolved.relative_to(mundo_dir.resolve())
+        except ValueError:
+            continue
+        if len(relative.parts) < 2 or relative.parts[0] not in VALID_SECTIONS:
+            continue
+        return mundo_dir.resolve(), relative.as_posix()
+    raise ValueError("history target is outside an authorized world")
+
+
+def _history_bucket(full: Path) -> tuple[Path, str]:
+    """Return the private bucket for one canonical target."""
+    mundo_dir, target = _history_world_and_target(full)
+    bucket_id = hashlib.sha256(target.encode("utf-8")).hexdigest()
+    history_root = mundo_dir / ".history"
+    bucket = history_root / bucket_id
+    if history_root.is_symlink() or bucket.is_symlink():
+        raise ValueError("history storage is unsafe")
+    return bucket, target
+
+
+def _parse_history_time(value) -> datetime:
+    """Parse an aware UTC-compatible history timestamp."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("invalid history timestamp")
+    raw = value[:-1] + "+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(raw)
+    if parsed.tzinfo is None:
+        raise ValueError("history timestamp has no timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _read_history_record(entry_path: Path, expected_target: str,
+                         *, allow_expired: bool = False) -> dict | None:
+    """Read and strictly validate one snapshot without repairing it."""
+    if (
+        entry_path.is_symlink()
+        or not entry_path.is_file()
+        or not _HISTORY_ID_RE.fullmatch(entry_path.stem)
+    ):
+        return None
+    try:
+        record = json.loads(entry_path.read_text(encoding="utf-8"))
+        if not isinstance(record, dict) or set(record) != _HISTORY_FIELDS:
+            return None
+        snapshot_id = record["snapshot_id"]
+        if (
+            type(record["version"]) is not int
+            or record["version"] != _HISTORY_VERSION
+            or not isinstance(snapshot_id, str)
+            or not _HISTORY_ID_RE.fullmatch(snapshot_id)
+            or snapshot_id != entry_path.stem
+            or record["target"] != expected_target
+        ):
+            return None
+        created_at = _parse_history_time(record["created_at"])
+        now = datetime.now(timezone.utc)
+        if created_at > now:
+            return None
+        expired = created_at < now - _HISTORY_MAX_AGE
+        if expired and not allow_expired:
+            return None
+        encoded = record["content_b64"]
+        if not isinstance(encoded, str):
+            return None
+        content_bytes = base64.b64decode(encoded.encode("ascii"), validate=True)
+        digest = record["content_digest"]
+        if (
+            not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or hashlib.sha256(content_bytes).hexdigest() != digest
+        ):
+            return None
+        if type(record["size"]) is not int or record["size"] != len(content_bytes):
+            return None
+        content = content_bytes.decode("utf-8")
+    except (OSError, ValueError, TypeError, UnicodeEncodeError,
+            UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return {
+        "snapshot_id": snapshot_id,
+        "target": expected_target,
+        "created_at": created_at,
+        "content": content,
+        "content_digest": digest,
+        "size": len(content_bytes),
+        "path": entry_path,
+        "expired": expired,
+    }
+
+
+def _history_entry_response(record: dict) -> dict:
+    """Build the public, authorized representation of a valid snapshot."""
+    return {
+        "id": record["snapshot_id"],
+        "snapshot_id": record["snapshot_id"],
+        "target": record["target"],
+        "created_at": record["created_at"].isoformat().replace("+00:00", "Z"),
+        "content": record["content"],
+        "revision": record["content_digest"],
+        "size": record["size"],
+    }
+
+
+def _list_history_records(full: Path) -> list[dict]:
+    """List only valid, unexpired records for the exact target, newest first."""
+    bucket, target = _history_bucket(full)
+    if not bucket.is_dir():
+        return []
+    records = []
+    for entry_path in bucket.iterdir():
+        record = _read_history_record(entry_path, target)
+        if record is not None:
+            records.append(record)
+    records.sort(key=lambda item: (item["created_at"], item["snapshot_id"]), reverse=True)
+    return records
+
+
+def _load_history_entry(full: Path, snapshot_id: str) -> dict | None:
+    """Load one snapshot only when its identifier and target both match."""
+    if not isinstance(snapshot_id, str) or not _HISTORY_ID_RE.fullmatch(snapshot_id):
+        return None
+    bucket, target = _history_bucket(full)
+    return _read_history_record(bucket / f"{snapshot_id}.json", target)
+
+
+def _write_history_snapshot(content_bytes: bytes, target: str, bucket: Path,
+                            snapshot_id: str) -> None:
+    """Atomically create one snapshot record."""
+    bucket.mkdir(parents=True, exist_ok=True)
+    created_at = datetime.now(timezone.utc)
+    record = {
+        "version": _HISTORY_VERSION,
+        "snapshot_id": snapshot_id,
+        "target": target,
+        "created_at": created_at.isoformat().replace("+00:00", "Z"),
+        "content_b64": base64.b64encode(content_bytes).decode("ascii"),
+        "content_digest": hashlib.sha256(content_bytes).hexdigest(),
+        "size": len(content_bytes),
+    }
+    destination = bucket / f"{snapshot_id}.json"
+    temporary = bucket / f".{snapshot_id}.{uuid.uuid4().hex}.tmp"
+    try:
+        temporary.write_text(json.dumps(record, sort_keys=True), encoding="utf-8")
+        os.replace(str(temporary), str(destination))
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def _prune_history(full: Path) -> None:
+    """Remove valid expired records and valid records beyond the 20-item cap."""
+    bucket, target = _history_bucket(full)
+    if not bucket.is_dir():
+        return
+    valid = []
+    for entry_path in bucket.iterdir():
+        record = _read_history_record(entry_path, target, allow_expired=True)
+        if record is None:
+            continue
+        if record["expired"]:
+            entry_path.unlink()
+            continue
+        valid.append(record)
+    valid.sort(key=lambda item: (item["created_at"], item["snapshot_id"]), reverse=True)
+    for record in valid[_HISTORY_MAX_SNAPSHOTS:]:
+        record["path"].unlink()
+
+
+def _snapshot_before_write(full: Path) -> None:
+    """Persist the exact pre-write bytes for the authorized target."""
+    if not full.is_file():
+        raise ValueError("snapshot target is not a file")
+    bucket, target = _history_bucket(full)
+    content_bytes = full.read_bytes()
+    _write_history_snapshot(content_bytes, target, bucket, uuid.uuid4().hex)
+    _prune_history(full)
+
+
+def _atomic_write(full: Path, content: str) -> None:
+    """Replace *full* atomically from a same-directory temp file.
+
+    Writes ``.{name}.{uuid}.tmp`` next to the target (same filesystem, so
+    ``os.replace`` is atomic) and renames it over the target. The temp is
+    removed on any failure so a rejected/crashed write never leaves stray
+    files behind.
+    """
+    tmp = full.with_name(f".{full.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as handle:
+            handle.write(content)
+        os.replace(str(tmp), str(full))
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _write_content(mundo: str, section: str, path: str, body: dict,
+                   request: Request, kind: str):
+    """Shared gated persistence for edit, create, and restore operations.
+
+    Fails closed without a trusted principal and a valid single-use token;
+    the on-disk digest is re-checked under the per-target lock (409
+    stale_base) and the write is an atomic same-directory replace.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
-    mundo_dir = _resolve_mundo_dir(mundo)
-    if mundo_dir is None:
+    if _resolve_mundo_dir(mundo) is None:
         raise HTTPException(status_code=404, detail="Mundo no encontrado")
-    full = (mundo_dir / section / path).resolve()
-    if not str(full).startswith(str(mundo_dir.resolve())):
+    full = _resolve_mundo_path(mundo, f"{section}/{path}")
+    if full is None:
         raise HTTPException(status_code=400, detail="Path traversal detectado")
+    if kind in ("edit", "restore"):
+        if not full.exists():
+            raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    elif full.exists():
+        raise HTTPException(status_code=409, detail="El archivo ya existe")
+    content, edit_id = body.get("content"), body.get("edit_id")
+    token, proposed_digest = body.get("token"), body.get("proposed_digest")
+    base_revision = body.get("base_revision")
+    if not isinstance(content, str) or not isinstance(edit_id, str) or not edit_id.strip():
+        raise HTTPException(status_code=400, detail="content y edit_id requeridos")
+    if not isinstance(token, str) or not token.strip():
+        raise HTTPException(status_code=400, detail="token requerido")
+    if not isinstance(proposed_digest, str) or len(proposed_digest) != 64:
+        raise HTTPException(status_code=400, detail="proposed_digest requerido")
+    if kind in ("edit", "restore") and (not isinstance(base_revision, str) or len(base_revision) != 64):
+        raise HTTPException(status_code=400, detail="base_revision requerido")
+    if hashlib.sha256(content.encode("utf-8")).hexdigest() != proposed_digest:
+        raise HTTPException(status_code=403, detail="Confirmation inválida")
+    history_id = body.get("snapshot_id") if kind == "restore" else None
+    if kind == "restore":
+        record = _load_history_entry(full, history_id)
+        if record is None or record["content"] != content:
+            raise HTTPException(status_code=403, detail="History entry invalid")
+        if record["content_digest"] != proposed_digest:
+            raise HTTPException(status_code=403, detail="History entry invalid")
+    if not _redeem_confirmation(principal, _target_key(mundo, section, path), kind,
+                                edit_id, proposed_digest, token, history_id):
+        raise HTTPException(status_code=403, detail="Confirmation inválida")
+    # Per-target lock: base recheck, snapshot hook, and replacement run
+    # atomically with respect to other writers of the same resolved target.
+    with _target_lock_for(full):
+        if kind in ("edit", "restore"):
+            if not full.exists() or _digest_of(full) != base_revision:
+                raise HTTPException(status_code=409, detail="base_revision desactualizado")
+        elif full.exists():
+            raise HTTPException(status_code=409, detail="El archivo ya existe")
+        try:
+            if kind in ("edit", "restore"):
+                # Snapshot every replacement, including restore, before the
+                # atomic replace so the current version remains recoverable.
+                _snapshot_before_write(full)
+            full.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write(full, content)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error al guardar: {e}")
+    return {"success": True, "path": path}
+
+
+def _resolve_history_target(mundo: str, path: str) -> tuple[Path, str]:
+    """Resolve a canonical mundo-relative history target."""
+    if not isinstance(path, str) or not path.strip():
+        raise HTTPException(status_code=400, detail="History path required")
+    normalized = path.replace("\\", "/")
+    parts = Path(normalized).parts
+    if len(parts) < 2 or parts[0] not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Invalid history path")
+    full = _resolve_mundo_path(mundo, normalized)
+    if full is None:
+        raise HTTPException(status_code=400, detail="Path traversal detected")
+    if not full.is_file():
+        raise HTTPException(status_code=404, detail="File not found")
     try:
-        full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_text(body.get("content", ""), encoding="utf-8")
-        return {"success": True, "path": path}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al guardar: {e}")
+        _, target = _history_bucket(full)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid history target")
+    return full, target
+
+
+@app.get("/api/{mundo}/history")
+def list_history(mundo: str, request: Request,
+                 path: str = Query(..., description="Canonical mundo-relative file path")):
+    """List valid snapshots for one authorized file, newest first."""
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    full, target = _resolve_history_target(mundo, path)
+    entries = [_history_entry_response(record) for record in _list_history_records(full)]
+    return {"target": target, "entries": entries}
+
+
+@app.post("/api/{mundo}/{section}/edit-confirmation")
+def edit_confirmation(mundo: str, section: str, path: str, body: dict, request: Request):
+    """Issue a single-use confirmation token for a reviewed edit.
+
+    Requires a trusted principal; existing-file edits must claim the current
+    on-disk digest (409 stale_base). Returns token, expiry, proposed digest.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    if section not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección inválida")
+    kind = body.get("kind", "edit")
+    if kind not in ("edit", "new", "restore"):
+        raise HTTPException(status_code=400, detail="kind inválido")
+    edit_id = body.get("edit_id")
+    base_revision, proposed_content = body.get("base_revision"), body.get("proposed_content")
+    if not isinstance(edit_id, str) or not edit_id.strip():
+        raise HTTPException(status_code=400, detail="edit_id requerido")
+    full = _resolve_mundo_path(mundo, f"{section}/{path}")
+    if full is None:
+        raise HTTPException(status_code=400, detail="Path traversal detectado")
+    history_id = body.get("snapshot_id") if kind == "restore" else None
+    if kind == "restore":
+        record = _load_history_entry(full, history_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="History entry not found")
+        if proposed_content is not None and proposed_content != record["content"]:
+            raise HTTPException(status_code=400, detail="History content mismatch")
+        proposed_content = record["content"]
+    elif not isinstance(proposed_content, str):
+        raise HTTPException(status_code=400, detail="proposed_content requerido")
+    if kind in ("edit", "restore"):
+        if not full.exists():
+            raise HTTPException(status_code=404, detail="Archivo no encontrado")
+        if not isinstance(base_revision, str) or len(base_revision) != 64:
+            raise HTTPException(status_code=400, detail="base_revision requerido")
+        if _digest_of(full) != base_revision:
+            raise HTTPException(status_code=409, detail="base_revision desactualizado")
+    else:
+        if full.exists():
+            raise HTTPException(status_code=409, detail="El archivo ya existe")
+        base_revision = ""  # a new file has no base digest to bind
+    proposed_digest = hashlib.sha256(proposed_content.encode("utf-8")).hexdigest()
+    token, expires_at = _issue_confirmation(
+        principal, _target_key(mundo, section, path), kind,
+        edit_id, base_revision, proposed_digest, history_id)
+    return {"token": token, "expires_at": expires_at.isoformat(),
+            "proposed_digest": proposed_digest}
+
+
+@app.post("/api/{mundo}/history/restore")
+def restore_history(mundo: str, body: dict, request: Request):
+    """Restore a valid snapshot through the existing gated write pipeline."""
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    body = body or {}
+    full, target = _resolve_history_target(mundo, body.get("path"))
+    snapshot_id = body.get("snapshot_id") or body.get("id")
+    record = _load_history_entry(full, snapshot_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="History entry not found")
+    supplied_content = body.get("content")
+    if supplied_content is not None and supplied_content != record["content"]:
+        raise HTTPException(status_code=400, detail="History content mismatch")
+    section, relative_path = target.split("/", 1)
+    payload = dict(body)
+    payload.update({
+        "content": record["content"],
+        "snapshot_id": snapshot_id,
+        "proposed_digest": record["content_digest"],
+    })
+    return _write_content(
+        mundo, section, relative_path, payload, request, kind="restore"
+    )
+
+
+@app.post("/api/{mundo}/{section}/file")
+def save_file(mundo: str, section: str, path: str, body: dict, request: Request):
+    """Save an existing file — gated by a valid confirmation token."""
+    return _write_content(mundo, section, path, body, request, kind="edit")
 
 
 @app.post("/api/{mundo}/{section}/save")
-def save_file_via_save(mundo: str, section: str, path: str, body: dict):
-    """Save file content — contract-compatible alias for the frontend.
+def save_file_via_save(mundo: str, section: str, path: str, body: dict, request: Request):
+    """Save an existing file — contract-compatible alias for the frontend.
 
-    The frontend calls POST /{mundo}/{section}/save?path=... (wiki.ts
-    saveFile), which was lost with the router.py backend. Same behavior
-    as POST /file; kept as a distinct route so both callers work.
+    Same gated behavior as POST /file; kept as a distinct route so both
+    callers work.
     """
-    return save_file(mundo, section, path, body)
+    return _write_content(mundo, section, path, body, request, kind="edit")
+
+
+@app.post("/api/{mundo}/{section}/create")
+def create_file(mundo: str, section: str, path: str, body: dict, request: Request):
+    """Create a new file — gated by a ``kind=new`` confirmation token."""
+    return _write_content(mundo, section, path, body, request, kind="new")
 
 
 @app.post("/api/{mundo}/{section}/diff")
@@ -521,27 +1188,6 @@ def _compute_diff(original: str, nuevo: str) -> list[dict]:
             diff_lines.append({"type": "same", "text": line.rstrip("\n")})
 
     return diff_lines
-
-
-@app.post("/api/{mundo}/{section}/create")
-def create_file(mundo: str, section: str, path: str, body: dict):
-    """Create a new file."""
-    if section not in VALID_SECTIONS:
-        raise HTTPException(status_code=400, detail="Sección inválida")
-    mundo_dir = _resolve_mundo_dir(mundo)
-    if mundo_dir is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
-    full = (mundo_dir / section / path).resolve()
-    if not str(full).startswith(str(mundo_dir.resolve())):
-        raise HTTPException(status_code=400, detail="Path traversal detectado")
-    if full.exists():
-        raise HTTPException(status_code=409, detail="El archivo ya existe")
-    try:
-        full.parent.mkdir(parents=True, exist_ok=True)
-        full.write_text(body.get("content", ""), encoding="utf-8")
-        return {"success": True, "path": path}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error al crear: {e}")
 
 
 @app.delete("/api/{mundo}/{section}/file")
@@ -1517,6 +2163,212 @@ async def _run_hermes(prompt: str, session_id: str = "") -> str:
     except Exception as exc:
         logger.exception("Hermes GW CRASH: %s", exc)
         return f"Error: {exc}"
+
+
+# ---------------------------------------------------------------------------
+# AI edit proposals — diskless Hermes suggestions with bounded retry (PR 2)
+#
+# POST /api/{mundo}/ai/edit-suggest turns a user request into a validated
+# proposal for an existing or new Markdown target. Hermes is reached ONLY
+# through the chat-completions gateway (_run_hermes), which has no disk-write
+# surface, and the endpoint itself performs zero persistence: it reads the
+# authorized target, calls the gateway, validates the structured reply, and
+# returns the proposal for the later confirmation-gated write (slice 1B).
+# Structured output is validated strictly before exposure; unparseable,
+# schema-invalid, or transient replies retry up to a hard cap of exactly 3
+# total attempts (initial + 2 retries). On exhaustion the caller receives a
+# safe, actionable fallback and diagnostics record only the attempt count,
+# validation category, and opaque principal — never content, raw tokens, or
+# secrets.
+# ---------------------------------------------------------------------------
+
+_AI_PROPOSAL_MAX_ATTEMPTS = 3
+_MAX_PROPOSAL_CONTENT = 2 * 1024 * 1024  # 2 MiB sane upper bound for proposals
+
+
+def _extract_proposal_json(raw: str) -> dict | None:
+    """Parse a Hermes reply into a dict, tolerating one JSON code fence.
+
+    Returns None when the reply is not JSON or not a JSON object, so callers
+    treat it as a malformed (retryable) response. A fenced block is the most
+    common Hermes deviation: strip the leading/trailing ``` lines first.
+    """
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    try:
+        data = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _validate_proposal_payload(data: dict, requested_target: str,
+                               base_revision: str, is_new_file: bool):
+    """Strictly validate a parsed Hermes proposal payload.
+
+    Returns ``(None, proposal)`` when contract-valid, else ``(category, None)``.
+    Every schema/scope violation maps to the retryable ``malformed`` category:
+    missing/wrong-typed fields, a target differing from the requested one
+    (Hermes must never select targets), a base revision that does not match
+    the current on-disk digest, or a new-file flag inconsistent with the
+    resolved target. The server computes ``proposed_digest`` itself from the
+    accepted content — a Hermes-supplied digest is never trusted.
+    """
+    proposal_id = data.get("proposal_id")
+    target = data.get("target")
+    content = data.get("content")
+    rationale = data.get("rationale")
+    new_flag = data.get("is_new_file")
+    if not isinstance(proposal_id, str) or not proposal_id.strip() or len(proposal_id) > 128:
+        return "malformed", None
+    if not isinstance(target, str) or target.replace("\\", "/") != requested_target:
+        return "malformed", None
+    if not isinstance(content, str) or not content.strip() or len(content) > _MAX_PROPOSAL_CONTENT:
+        return "malformed", None
+    if not isinstance(rationale, str) or not rationale.strip():
+        return "malformed", None
+    if not isinstance(new_flag, bool) or new_flag != is_new_file:
+        return "malformed", None
+    hermes_base = data.get("base_revision")
+    if is_new_file:
+        if hermes_base not in (None, ""):
+            return "malformed", None
+    elif hermes_base != base_revision:
+        return "malformed", None
+    return None, {
+        "proposal_id": proposal_id.strip(),
+        "target": requested_target,
+        "base_revision": base_revision,
+        "content": content,
+        "proposed_digest": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "rationale": rationale.strip(),
+        "is_new_file": is_new_file,
+    }
+
+
+def _build_proposal_prompt(section: str, path: str, is_new_file: bool,
+                           base_revision: str, current_content: str,
+                           user_prompt: str) -> str:
+    """Build the strict-JSON instruction sent to Hermes.
+
+    Pins the target, base revision, and new-file status so the validator can
+    cross-check every one of them; Hermes is told to echo them unchanged
+    inside the single JSON object it must return.
+    """
+    target = f"{section}/{path}"
+    if is_new_file:
+        context = (
+            f"Target is a NEW Markdown file that does not exist yet: {target}. "
+            'The field "base_revision" MUST be "" (empty string).'
+        )
+        current = "There is no current content for this target."
+    else:
+        context = (
+            f"Target is an EXISTING Markdown file: {target}. "
+            f'Its current base revision is "{base_revision}".'
+        )
+        current = f"Current content follows.\n\n{current_content}"
+    return (
+        "You propose an edit to a Markdown file in the Demiurgos narrative "
+        "wiki. Respond with ONLY one JSON object — no markdown fences, no "
+        'prose. The object MUST contain exactly these fields: "proposal_id" '
+        "(a short unique id string), \"target\" (the exact target path given "
+        'below, unchanged), "base_revision" (the exact base revision given '
+        'below, unchanged), "content" (the COMPLETE proposed Markdown '
+        'content), "rationale" (a short reason for the edit), "is_new_file" '
+        "(a boolean matching the target status below).\n"
+        f"User request: {user_prompt}\n"
+        f"{context}\n{current}"
+    )
+
+
+@app.post("/api/{mundo}/ai/edit-suggest")
+async def ai_edit_suggest(mundo: str, body: dict, request: Request):
+    """Produce a validated, diskless Hermes edit proposal for a Markdown target.
+
+    Accepts ``{section, path, prompt, session_id}`` and reads ONLY the
+    authorized target (existing content for context, or new-target status).
+    Returns ``{proposal, attempts, outcome}`` where ``proposal`` carries
+    proposal_id, target, base_revision, proposed Markdown, server-computed
+    proposed_digest, rationale, and is_new_file. Exactly 3 total Hermes
+    attempts max (initial + 2 retries), retrying only malformed/schema-invalid
+    or transient replies; on exhaustion a safe fallback is returned and
+    nothing is persisted.
+    """
+    body = body or {}
+    section = body.get("section")
+    path = body.get("path")
+    prompt = body.get("prompt")
+    session_id = body.get("session_id") or ""
+    principal = _resolve_principal(request)
+    if not isinstance(section, str) or section not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección inválida")
+    if not isinstance(path, str) or not path.strip():
+        raise HTTPException(status_code=400, detail="path requerido")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise HTTPException(status_code=400, detail="prompt requerido")
+    if _resolve_mundo_dir(mundo) is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    full = _resolve_mundo_path(mundo, f"{section}/{path}")
+    if full is None:
+        raise HTTPException(status_code=400, detail="Path traversal detectado")
+    if full.exists() and not full.is_file():
+        raise HTTPException(status_code=400, detail="Objetivo inválido")
+    is_new_file = not full.exists()
+    base_revision = ""
+    current_content = ""
+    if not is_new_file:
+        try:
+            base_revision = _digest_of(full)
+            current_content = full.read_text(encoding="utf-8")
+        except Exception:
+            raise HTTPException(status_code=400, detail="Objetivo inválido")
+
+    target = f"{section}/{path}".replace("\\", "/")
+    proposal = None
+    attempts = 0
+    category = "malformed"
+    for attempt in range(1, _AI_PROPOSAL_MAX_ATTEMPTS + 1):
+        attempts = attempt
+        try:
+            raw = await _run_hermes(
+                _build_proposal_prompt(section, path, is_new_file,
+                                       base_revision, current_content, prompt),
+                session_id=session_id)
+        except Exception:
+            category = "transient"
+            continue
+        data = _extract_proposal_json(raw)
+        if data is None:
+            category = "transient" if raw.startswith("Error:") else "malformed"
+            continue
+        category, proposal = _validate_proposal_payload(
+            data, target, base_revision, is_new_file)
+        if proposal is not None:
+            break
+
+    outcome = "proposal" if proposal is not None else "fallback"
+    principal_id = principal.id if principal is not None else "-"
+    logger.info(
+        "ai/edit-suggest: mundo=%s target=%s attempts=%d category=%s outcome=%s principal=%s",
+        mundo, target, attempts, category or "valid", outcome, principal_id)
+    if proposal is None:
+        return {
+            "proposal": None,
+            "attempts": attempts,
+            "outcome": "fallback",
+            "fallback_action": "manual-edit-or-chat",
+            "message": ("No se pudo generar una propuesta válida. "
+                        "Edita el archivo manualmente o consulta al asistente."),
+        }
+    return {"proposal": proposal, "attempts": attempts, "outcome": "proposal"}
+
 
 # ---------------------------------------------------------------------------
 # Entry point

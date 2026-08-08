@@ -20,8 +20,12 @@ import { ExportPdfDialog } from "@/components/organisms/ExportPdfDialog";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { Toast } from "@/components/atoms/Toast";
 import { EntitySearchPanel } from "@/components/organisms/EntitySearchPanel";
-import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
+import {
+  AIAssistantSidebar,
+  type AssistantEditRequest,
+} from "@/components/organisms/AIAssistantSidebar";
 import { PapeleraPanel } from "@/components/organisms/PapeleraPanel";
+import { HistoryPanel } from "@/components/organisms/HistoryPanel";
 import { TabBar } from "@/components/molecules/TabBar";
 import type { SidebarTab } from "@/components/molecules/TabBar";
 import { SectionTabs } from "@/components/molecules/SectionTabs";
@@ -45,15 +49,23 @@ import {
   parseFrontmatterStatus,
 } from "@/lib/frontmatter";
 import {
-  createFile,
+  createFileConfirmed,
   deleteFile,
   duplicateFile,
   getFileContent,
   moveNode,
   saveFile,
+  saveFileConfirmed,
   setStatus,
 } from "@/api/wiki";
-import type { ApiError, FichaStatus, FileNode } from "@/api/types";
+import type {
+  ApiError,
+  EditProposal,
+  FichaStatus,
+  FileNode,
+  FileContent,
+} from "@/api/types";
+import { useEditReview } from "@/hooks/useEditReview";
 
 // CodeMirror is heavy (~300KB) — load the live diff editor only when the
 // preview is actually opened, keeping the initial bundle lean.
@@ -104,6 +116,10 @@ export default function WikiEditor() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [pendingNewFile, setPendingNewFile] = useState<{ path: string } | null>(
+    null,
+  );
 
   // Textarea ref for wikilink cursor insertion
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -193,6 +209,7 @@ export default function WikiEditor() {
 
   // Decode the path from URL encoding
   const filePath = splatPath ? decodePathSegment(splatPath) : undefined;
+  const reviewPath = pendingNewFile?.path ?? filePath;
 
   // Validate section
   const sectionValid = section && VALID_SECTIONS.includes(section as typeof VALID_SECTIONS[number]);
@@ -211,6 +228,7 @@ export default function WikiEditor() {
   // File content for the markdown viewer
   const {
     file,
+    revision,
     isLoading: contentLoading,
     error: contentError,
     mutate: retryContent,
@@ -219,6 +237,12 @@ export default function WikiEditor() {
     sectionValid ? section : undefined,
     filePath,
   );
+
+  const review = useEditReview({
+    mundo,
+    section: sectionValid ? section : undefined,
+    path: reviewPath,
+  });
 
   // Content to display/edit — the YAML frontmatter is agent-only metadata
   // and is hidden from every user-facing surface (editor, diff, viewer).
@@ -241,6 +265,7 @@ export default function WikiEditor() {
 
   // Baseline body — used for change detection and as the diff `original`
   const currentContent = body;
+  const baseRevision = revision ?? file?.revision ?? null;
 
   // Initialise edited content when file path actually changes.
   // MUST use useEffect + useRef, NOT setState during render:
@@ -539,20 +564,14 @@ export default function WikiEditor() {
         createTarget.kind === "subfolder"
           ? `${base}${name}/_README.md`
           : `${base}${name}`;
-      setBusyPath(dirPath);
       setActionError(null);
-      try {
-        await createFile(mundo, section, targetPath);
-        await retryTree();
-      } catch (err) {
-        const apiErr = err as ApiError;
-        setActionError(getErrorMessage(apiErr.status, apiErr.detail));
-      } finally {
-        setBusyPath(null);
-        setCreateTarget(null);
-      }
+      setCreateTarget(null);
+      setPendingNewFile({ path: targetPath });
+      setEditedContent("");
+      setPreviewOpen(false);
+      setIsEditing(true);
     },
-    [mundo, section, createTarget, retryTree],
+    [createTarget, mundo, section],
   );
 
   /**
@@ -625,7 +644,7 @@ export default function WikiEditor() {
   // Browsing a directory (or the section root) renders visual cards in the
   // central area instead of the markdown viewer. Files are the only
   // editable/rendered entities — directories have no content of their own.
-  const browsingDir = !filePath || selectedNode?.is_dir === true;
+  const browsingDir = !pendingNewFile && (!filePath || selectedNode?.is_dir === true);
   const browsingNodes = selectedNode?.is_dir ? (selectedNode.children ?? []) : treeNodes;
 
   // Section tab click: navigate to the section root (resets file path).
@@ -671,25 +690,133 @@ export default function WikiEditor() {
     return () => clearTimeout(t);
   }, [movedPath]);
 
-  // Save the edited content via POST /save, then exit edit mode.
-  const handleSave = useCallback(async () => {
-    if (!mundo || !section || !filePath || editedContent === null) return;
+  const startReview = useCallback(
+    (proposal: EditProposal) => {
+      review.startReview(proposal);
+      setPreviewOpen(true);
+    },
+    [review],
+  );
+
+  // Manual drafts and new files enter the same review surface before any write.
+  const handleSave = useCallback(() => {
+    if (!mundo || !section || (!filePath && !pendingNewFile) || editedContent === null) {
+      return;
+    }
+    const target = pendingNewFile?.path ?? filePath!;
+    const proposedContent = pendingNewFile
+      ? editedContent
+      : mergeFrontmatter(frontmatter, editedContent);
+    startReview({
+      proposal_id: `manual-${Date.now()}`,
+      target: `${section}/${target}`,
+      base_revision: pendingNewFile ? "" : baseRevision ?? "",
+      proposed_content: proposedContent,
+      proposed_digest: "",
+      rationale: pendingNewFile ? "Create a new Markdown file" : "Review manual changes",
+      is_new_file: pendingNewFile !== null,
+    });
+    setSaveError(null);
+  }, [baseRevision, editedContent, filePath, frontmatter, mundo, pendingNewFile, section, startReview]);
+
+  const handleReviewContentChange = useCallback(
+    (nextContent: string) => {
+      setEditedContent(nextContent);
+      if (review.proposal && review.status === "reviewing") {
+        review.updateProposal({
+          ...review.proposal,
+          proposed_content: pendingNewFile
+            ? nextContent
+            : mergeFrontmatter(frontmatter, nextContent),
+        });
+      }
+    },
+    [frontmatter, pendingNewFile, review],
+  );
+
+  const handleAssistantEditProposal = useCallback(async ({
+    prompt,
+    sessionId,
+  }: AssistantEditRequest) => {
+    if (!filePath) return;
+    setSaveError(null);
+    try {
+      const response = await review.suggest(prompt, sessionId);
+      if (!response.proposal) {
+        setSaveError(response.message ?? "The assistant could not produce a proposal. Use manual editing or chat.");
+        return;
+      }
+      const { body: suggestedBody } = splitFrontmatter(response.proposal.proposed_content);
+      setEditedContent(suggestedBody);
+      setIsEditing(true);
+      setPreviewOpen(true);
+    } catch (error) {
+      const apiError = error as ApiError;
+      setSaveError(getErrorMessage(apiError.status, apiError.detail));
+    }
+  }, [filePath, review]);
+
+  const handleRejectReview = useCallback(() => {
+    review.reject();
+    setPendingNewFile(null);
+    setEditedContent(null);
+    setPreviewOpen(false);
+    setIsEditing(false);
+    setSaveError(null);
+  }, [review]);
+
+  const handleAcceptReview = useCallback(async () => {
+    if (!mundo || !section || !review.proposal || !reviewPath) return;
+    const proposal = review.proposal;
+    const kind = proposal.is_new_file ? "new" : "edit";
     setIsSaving(true);
     setSaveError(null);
     setSaveSuccess(false);
     try {
-      await saveFile(mundo, section, filePath, mergeFrontmatter(frontmatter, editedContent));
-      await retryContent();
+      const confirmation = await review.requestConfirmation(proposal.proposal_id, kind);
+      const request = {
+        content: proposal.proposed_content,
+        base_revision: proposal.base_revision || undefined,
+        proposed_digest: confirmation.proposed_digest,
+        edit_id: proposal.proposal_id,
+        token: confirmation.token,
+      };
+      if (proposal.is_new_file) {
+        await createFileConfirmed(mundo, section, reviewPath, request);
+        await retryTree();
+      } else {
+        await saveFileConfirmed(mundo, section, reviewPath, request);
+        await retryContent();
+      }
+      review.reset();
+      setPendingNewFile(null);
       setPreviewOpen(false);
       setIsEditing(false);
+      setEditedContent(null);
       setSaveSuccess(true);
-    } catch (err) {
-      const apiErr = err as ApiError;
-      setSaveError(getErrorMessage(apiErr.status, apiErr.detail));
+    } catch (error) {
+      const apiError = error as ApiError;
+      if (apiError.status === 409) {
+        const refreshed = await retryContent();
+        const refreshedFile = refreshed as FileContent | undefined;
+        const nextBody = refreshedFile?.content !== undefined
+          ? splitFrontmatter(refreshedFile.content).body
+          : currentContent;
+        review.reset();
+        setEditedContent(nextBody);
+        setPreviewOpen(false);
+        setIsEditing(true);
+        setSaveError("The file changed while it was under review. It was reloaded; review the changes again.");
+      } else {
+        review.reset();
+        setPreviewOpen(false);
+        setIsEditing(true);
+        setSaveError(getErrorMessage(apiError.status, apiError.detail));
+      }
     } finally {
       setIsSaving(false);
     }
-  }, [mundo, section, filePath, frontmatter, editedContent, retryContent]);
+  }, [currentContent, mundo, retryContent, retryTree, review, reviewPath, section]);
 
   /**
    * Set OKF status (Borrador/Canon): a dedicated POST rewrites ONLY the
@@ -709,6 +836,10 @@ export default function WikiEditor() {
   // Toggle edit mode — exiting resets preview and transient state
   const handleToggleEdit = useCallback(() => {
     if (isEditing) {
+      if (pendingNewFile) {
+        handleRejectReview();
+        return;
+      }
       // Exiting edit mode — reset edited content to original body
       if (file) {
         setEditedContent(currentContent);
@@ -723,7 +854,7 @@ export default function WikiEditor() {
       }
     }
     setIsEditing((prev) => !prev);
-  }, [isEditing, file, editedContent, currentContent]);
+  }, [currentContent, editedContent, file, handleRejectReview, isEditing, pendingNewFile]);
 
   // Insert a wikilink at the cursor position. While the preview is open the
   // live diff's side B is the writing surface — the imperative handle
@@ -811,7 +942,12 @@ export default function WikiEditor() {
     <div className="flex h-full flex-col">
       <TabBar onTabChange={setSidebarTab} />
       {sidebarTab === "asistente" ? (
-        <AIAssistantSidebar mundo={mundo!} section={section} filePath={filePath} />
+        <AIAssistantSidebar
+          mundo={mundo!}
+          section={section}
+          filePath={filePath}
+          onProposeEdit={handleAssistantEditProposal}
+        />
       ) : (
         <EntitySearchPanel mundo={mundo!} onInsert={handleInsertWikilink} />
       )}
@@ -957,7 +1093,14 @@ export default function WikiEditor() {
       {/* Unified file bar — always visible so navigation never disappears:
           file name + badges (left), breadcrumb chips (middle), actions (right) */}
       <div className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-filio bg-madero px-4 py-2">
-        {filePath && file && (
+        {pendingNewFile ? (
+          <span className="min-w-0 truncate text-small text-tinta-desvaida">
+            {pendingNewFile.path}
+            <span className="ml-2 rounded bg-llamita/10 px-2 py-0.5 text-xs text-llamita">
+              New file review
+            </span>
+          </span>
+        ) : filePath && file ? (
           <span className="min-w-0 truncate text-small text-tinta-desvaida">
             {file.name}
             {isEditing && (
@@ -971,7 +1114,7 @@ export default function WikiEditor() {
               </span>
             )}
           </span>
-        )}
+        ) : null}
 
         {/* Breadcrumb chips — left-aligned in the bar */}
         <div className="flex min-w-0 items-center">
@@ -1113,6 +1256,28 @@ export default function WikiEditor() {
               no content to attach images to). Guarded by !browsingDir, not
               just filePath && file — the content hook may resolve a value
               for directory paths, which would leak the buttons elsewhere. */}
+          {pendingNewFile && isEditing && (
+            <>
+              {!previewOpen && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={handleSave}
+                  disabled={isSaving}
+                >
+                  Revisar creación
+                </Button>
+              )}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleToggleEdit}
+                disabled={isSaving}
+              >
+                Cancelar
+              </Button>
+            </>
+          )}
           {!browsingDir && filePath && file && (
             <>
               {isEditing ? (
@@ -1139,25 +1304,34 @@ export default function WikiEditor() {
                     <Button
                       variant="secondary"
                       size="sm"
-                      onClick={() => setPreviewOpen((prev) => !prev)}
+                      onClick={handleSave}
                     >
                       <Icon name="diff" size={14} />
                       Vista previa
                     </Button>
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={handleSave}
-                      disabled={isSaving}
-                    >
-                      <Icon name="save" size={14} />
-                      Guardar
-                    </Button>
+                    {!previewOpen && (
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={handleSave}
+                        disabled={isSaving}
+                      >
+                        <Icon name="save" size={14} />
+                        Revisar cambios
+                      </Button>
+                    )}
                   </>
                 )}
               </>
-            ) : (
+              ) : (
               <>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  History
+                </Button>
                 <Button
                   variant="primary"
                   size="sm"
@@ -1233,20 +1407,46 @@ export default function WikiEditor() {
         // writing surface. The textarea unmounts while the preview is open
         // and remounts (with the preserved draft) when it closes.
         previewOpen ? (
-          <Suspense
-            fallback={
-              <div className="flex h-[70vh] items-center justify-center rounded-lg border border-filio bg-madero">
-                <Spinner size="lg" />
+          <>
+            <Suspense
+              fallback={
+                <div className="flex h-[70vh] items-center justify-center rounded-lg border border-filio bg-madero">
+                  <Spinner size="lg" />
+                </div>
+              }
+            >
+              <LiveDiffEditor
+                ref={liveDiffRef}
+                original={currentContent}
+                value={editedContent}
+                onChange={handleReviewContentChange}
+              />
+            </Suspense>
+            {review.status === "reviewing" && (
+              <div
+                className="mt-4 flex items-center justify-end gap-2"
+                role="group"
+                aria-label="Review actions"
+              >
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleRejectReview}
+                  disabled={isSaving || review.isLoading}
+                >
+                  Reject
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void handleAcceptReview()}
+                  disabled={isSaving || review.isLoading}
+                >
+                  Accept
+                </Button>
               </div>
-            }
-          >
-            <LiveDiffEditor
-              ref={liveDiffRef}
-              original={currentContent}
-              value={editedContent}
-              onChange={setEditedContent}
-            />
-          </Suspense>
+            )}
+          </>
         ) : (
           editorTextarea
         )
@@ -1362,6 +1562,19 @@ export default function WikiEditor() {
           onRestored={retryTree}
           onPurged={retryTree}
           onTtlPurged={handleTtlPurged}
+        />
+      )}
+
+      {historyOpen && filePath && file && section && (
+        <HistoryPanel
+          mundo={mundo}
+          section={section}
+          path={filePath}
+          currentRevision={revision}
+          currentContent={file.content}
+          open={historyOpen}
+          onClose={() => setHistoryOpen(false)}
+          onRestored={retryContent}
         />
       )}
 

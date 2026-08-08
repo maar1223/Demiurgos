@@ -15,10 +15,16 @@ import { useWhisper } from "@/hooks/useWhisper";
 /*  Types & Constants                                                  */
 /* ------------------------------------------------------------------ */
 
+export interface AssistantEditRequest {
+  prompt: string;
+  sessionId: string;
+}
+
 interface AIAssistantSidebarProps {
   mundo: string;
   section?: string;
   filePath?: string;
+  onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
 }
 
 type Screen = "chat" | "history";
@@ -63,6 +69,7 @@ interface ChatScreenProps {
   whisperStopRecording: () => void;
   whisperError: string | null;
   onHistoryClick: () => void;
+  onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
 }
 
 function ChatScreen({
@@ -80,6 +87,7 @@ function ChatScreen({
   whisperStopRecording,
   whisperError,
   onHistoryClick,
+  onProposeEdit,
 }: ChatScreenProps) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -126,6 +134,41 @@ function ChatScreen({
   }, [whisperIsRecording, whisperIsTranscribing, whisperStartRecording, whisperStopRecording]);
 
   const messages = activeSession?.messages ?? [];
+  const latestUserPrompt = [...messages]
+    .reverse()
+    .find((message) => message.role === "user")?.content.trim();
+  const canProposeEdit = Boolean(
+    onProposeEdit &&
+      section &&
+      filePath &&
+      activeSession?.id &&
+      latestUserPrompt &&
+      !isSending,
+  );
+  const proposeEditDisabledReason = !section || !filePath
+    ? "Abrí un archivo para proponer una edición."
+    : !latestUserPrompt
+      ? "Escribí y enviá una solicitud al asistente primero."
+      : isSending
+        ? "Esperá a que termine la respuesta del asistente."
+        : "Proponer una edición usando la última solicitud enviada.";
+
+  const handleProposeEdit = useCallback(() => {
+    if (
+      !onProposeEdit ||
+      !section ||
+      !filePath ||
+      !activeSession?.id ||
+      !latestUserPrompt ||
+      isSending
+    ) {
+      return;
+    }
+    void onProposeEdit({
+      prompt: latestUserPrompt,
+      sessionId: activeSession.id,
+    });
+  }, [activeSession?.id, filePath, isSending, latestUserPrompt, onProposeEdit, section]);
 
   return (
     <>
@@ -297,6 +340,22 @@ function ChatScreen({
             </button>
           </div>
         </div>
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={handleProposeEdit}
+            disabled={!canProposeEdit}
+            title={proposeEditDisabledReason}
+            aria-label="Proponer edición"
+            className="flex items-center gap-1.5 rounded-md border border-filio px-2.5 py-1.5 text-xs text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Icon name="edit" size={13} />
+            Proponer edición
+          </button>
+          {!canProposeEdit && (
+            <span className="text-xs text-sombra">{proposeEditDisabledReason}</span>
+          )}
+        </div>
         <p className="mt-1 text-xs text-sombra">
           Enter para enviar · Shift+Enter para nueva línea
         </p>
@@ -434,6 +493,7 @@ export function AIAssistantSidebar({
   mundo,
   section,
   filePath,
+  onProposeEdit,
 }: AIAssistantSidebarProps) {
   const [screen, setScreen] = useState<Screen>("chat");
 
@@ -470,6 +530,7 @@ export function AIAssistantSidebar({
           whisperStopRecording={whisper.stopRecording}
           whisperError={whisper.error}
           onHistoryClick={switchToHistory}
+          onProposeEdit={onProposeEdit}
         />
       ) : (
         <HistoryScreen

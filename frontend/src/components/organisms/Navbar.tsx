@@ -4,6 +4,7 @@ import { Icon } from "@/components/atoms/Icon";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
 import type { WorldInfo } from "@/api/types";
 import { NAV_LINKS, PLACEHOLDER_TOAST } from "@/lib/constants";
+import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
 
 interface NavbarProps {
   worlds: WorldInfo[];
@@ -18,6 +19,11 @@ interface NavbarProps {
 export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
   const navigate = useNavigate();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [sessionActionLoading, setSessionActionLoading] = useState(false);
+  const [sessionActionError, setSessionActionError] = useState<string | null>(null);
+  const { status, isLoading: sessionLoading, error: sessionError, start, logout } =
+    useLocalDevAuth(profileOpen);
 
   const handleNavClick = (to: string, active: boolean) => {
     if (!active) {
@@ -29,7 +35,26 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
   };
 
   const handleAvatarClick = () => {
-    alert("Perfil — próximamente");
+    setProfileOpen((open) => !open);
+    setSessionActionError(null);
+  };
+
+  const handleSessionAction = async () => {
+    setSessionActionLoading(true);
+    setSessionActionError(null);
+    try {
+      if (status?.authenticated) {
+        await logout();
+      } else {
+        await start();
+      }
+    } catch (cause: unknown) {
+      setSessionActionError(
+        cause instanceof Error ? cause.message : "No se pudo actualizar la sesión local",
+      );
+    } finally {
+      setSessionActionLoading(false);
+    }
   };
 
   return (
@@ -77,6 +102,7 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
           <button
             type="button"
             onClick={handleAvatarClick}
+            aria-label="Perfil"
             className="flex h-8 w-8 items-center justify-center rounded-full bg-filio text-plata transition-colors hover:bg-piedra hover:text-pergamino"
           >
             <Icon name="avatar" size={18} />
@@ -92,6 +118,66 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
           </button>
         </div>
       </div>
+
+      {profileOpen && (
+        <div
+          role="dialog"
+          aria-label="Perfil"
+          className="absolute right-4 top-16 z-50 w-72 rounded-lg border border-filio bg-madero p-4 shadow-xl"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-heading text-body text-pergamino">Sesión de edición</h2>
+            <span className="text-small text-tinta-desvaida">Local</span>
+          </div>
+
+          {sessionLoading && (
+            <p className="mt-3 text-small text-tinta-desvaida">Comprobando sesión local...</p>
+          )}
+
+          {sessionError && (
+            <p className="mt-3 text-small text-sangre">{sessionError.message}</p>
+          )}
+
+          {!sessionLoading && !sessionError && status?.authenticated && (
+            <>
+              <p className="mt-3 text-small text-musgo">Sesión local activa</p>
+              <p className="mt-1 text-small text-tinta-desvaida">{status.label}</p>
+              <button
+                type="button"
+                onClick={() => void handleSessionAction()}
+                disabled={sessionActionLoading}
+                className="mt-3 w-full rounded-lg bg-piedra px-3 py-2 text-small text-pergamino hover:bg-filio disabled:opacity-60"
+              >
+                {sessionActionLoading ? "Cerrando..." : "Cerrar sesión local"}
+              </button>
+            </>
+          )}
+
+          {!sessionLoading && !sessionError && status && !status.authenticated && status.enabled && (
+            <>
+              <p className="mt-3 text-small text-tinta-desvaida">Sesión local no iniciada.</p>
+              <button
+                type="button"
+                onClick={() => void handleSessionAction()}
+                disabled={sessionActionLoading}
+                className="mt-3 w-full rounded-lg bg-llamita px-3 py-2 text-small text-cripta hover:bg-llama-alta disabled:opacity-60"
+              >
+                {sessionActionLoading ? "Iniciando..." : "Iniciar sesión local"}
+              </button>
+            </>
+          )}
+
+          {!sessionLoading && !sessionError && status && !status.enabled && (
+            <p className="mt-3 text-small text-tinta-desvaida">
+              Autenticación local desactivada. Activa DEMIURGOS_AUTH_MODE=local-dev para probar la edición.
+            </p>
+          )}
+
+          {sessionActionError && (
+            <p className="mt-3 text-small text-sangre">{sessionActionError}</p>
+          )}
+        </div>
+      )}
 
       {/* Mobile nav menu */}
       {mobileMenuOpen && (
