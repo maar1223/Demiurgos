@@ -77,13 +77,13 @@ for text and vision, each with their own model, endpoint, and API key:
 # Text (entity extraction, story writing)
 DEMIURGOS_TEXT_PROVIDER=opencode-go
 DEMIURGOS_TEXT_ENDPOINT=https://opencode.ai/zen/go/v1
-DEMIURGOS_TEXT_MODEL=deepseek-v4-flash
+DEMIURGOS_TEXT_MODEL=gpt-5.6-luna
 DEMIURGOS_TEXT_API_KEY_ENV=OPENCODE_GO_API_KEY
 
 # Vision (image analysis, generation)
 DEMIURGOS_VISION_PROVIDER=opencode-go
 DEMIURGOS_VISION_ENDPOINT=https://opencode.ai/zen/go/v1
-DEMIURGOS_VISION_MODEL=qwen3.6-plus
+DEMIURGOS_VISION_MODEL=gpt-5.6-luna
 DEMIURGOS_VISION_API_KEY_ENV=OPENCODE_GO_API_KEY
 ```
 
@@ -105,7 +105,7 @@ Demiurgos/
 │   └── ...
 ├── plantillas/                       ← Universal narrative catalogs
 ├── src/tools/sync_lore/     ← Lore indexing pipeline (35 tests)
-├── src/tools/sync-ideas.py ← Idea bank sync (Telegram → Sheets)
+├── src/tools/idea_capture/ ← Native Hermes idea capture (legacy sync is archived/retired)
 ├── scripts/               ← Utility scripts
 └── install.sh             ← One-command installer
 ```

@@ -1,0 +1,26 @@
+# Native Hermes Telegram ingress policy. Groups are deny-by-default.
+#
+# FAIL-CLOSED: empty allowlists reject EVERY update. Authorize explicitly:
+#
+#   private_chat_ids: [123456789]            # owner chat ids
+#   approved_groups:                          # group chat id -> approved senders
+#     987654321: [123456789, 555000111]
+#
+# Loaded by src/tools/idea_capture/config.py (load_policy). The `serve`
+# entrypoint refuses to start while both lists are empty; `smoke` validates
+# parsing but runs with a synthetic test policy only.
+private_chat_ids: [<telegram-id>]
+approved_groups:
+  {}
+# Native Hermes identity binding. Do not infer user_id from chat_id.
+# Example: [{platform: telegram, chat_id: 123, user_id: 456, profile: default}]
+authorized_bindings:
+  - platform: telegram
+    chat_id: <telegram-id>
+    user_id: <telegram-id>
+    profile: default
+limits:
+  image_mb: 20
+  audio_mb: 50
+  audio_minutes: 5
+  raw_retention_days: 30

@@ -16,6 +16,10 @@ export type EditReviewStatus =
   | "confirmed"
   | "rejected";
 
+export type EditProposalUpdate =
+  | EditProposal
+  | ((current: EditProposal) => EditProposal);
+
 export interface UseEditReviewOptions {
   mundo: string | undefined;
   section: string | undefined;
@@ -33,7 +37,7 @@ export interface UseEditReviewResult {
     sessionId?: string,
   ) => Promise<EditSuggestionResponse>;
   startReview: (proposal: EditProposal) => void;
-  updateProposal: (proposal: EditProposal) => void;
+  updateProposal: (proposal: EditProposalUpdate) => void;
   requestConfirmation: (
     editId: string,
     kind?: EditKind,
@@ -93,8 +97,13 @@ export function useEditReview({
     setStatus("reviewing");
   }, []);
 
-  const updateProposal = useCallback((nextProposal: EditProposal) => {
-    setProposal(nextProposal);
+  const updateProposal = useCallback((nextProposal: EditProposalUpdate) => {
+    setProposal((current) => {
+      if (!current) return current;
+      return typeof nextProposal === "function"
+        ? nextProposal(current)
+        : nextProposal;
+    });
     setConfirmation(null);
     setError(null);
     setStatus("reviewing");

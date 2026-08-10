@@ -27,6 +27,7 @@ $apiPort     = 8000
 $frontendPort = 5173
 $apiUrl    = "http://localhost:$apiPort/health"
 $frontendUrl = "http://localhost:$frontendPort"
+$hermesHealthUrl = "http://localhost:$gatewayPort/health"
 
 . (Join-Path $root "scripts\import-auth-mode.ps1")
 $authMode = Set-DemiurgosAuthModeFromDotEnv -ProjectRoot $root
@@ -41,6 +42,13 @@ Write-Host "Auth mode configurado para la API: $authMode" -ForegroundColor DarkC
 # --- Helper: is a TCP port already listening? ---------------------------------
 function Test-PortListening([int]$port) {
     return [bool](Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
+}
+
+function Test-HermesHealthy {
+    try {
+        $response = Invoke-WebRequest -Uri $hermesHealthUrl -UseBasicParsing -TimeoutSec 2
+        return $response.StatusCode -eq 200
+    } catch { return $false }
 }
 
 # --- Helper: start a detached PowerShell window that stays open for logs -------
@@ -98,9 +106,13 @@ function Stop-ApiForExplicitRestart {
 # --- 1. Hermes Gateway ----------------------------------------------------------
 Write-Host "[1/4] Hermes Gateway ($gatewayPort)..." -ForegroundColor Yellow
 if (Test-PortListening $gatewayPort) {
-    Write-Host "  [OK]  Ya esta escuchando en el puerto $gatewayPort - sin cambios." -ForegroundColor Green
+    if (Test-HermesHealthy) {
+        Write-Host "  [OK]  Hermes saludable en el puerto $gatewayPort - sin cambios." -ForegroundColor Green
+    } else {
+        Write-Host "  [!!]  Hermes escucha pero no esta saludable; no se inicia una segunda instancia." -ForegroundColor Red
+    }
 } else {
-    Start-ServiceWindow "Gateway" "& '$hermes' gateway run -v"
+    Start-ServiceWindow "Gateway" "Set-Location '$root'; `$env:DEMIURGOS_ROOT='$root'; `$env:HERMES_ENABLE_PROJECT_PLUGINS='1'; & '$hermes' plugins enable demiurgos-idea-capture *> `$null; if (`$LASTEXITCODE -ne 0) { throw 'Could not enable the Demiurgos Hermes project plugin.' }; & '$hermes' gateway run -v"
 }
 
 # --- 2. Wiki API -----------------------------------------------------------------

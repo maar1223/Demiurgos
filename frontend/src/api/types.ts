@@ -57,6 +57,159 @@ export interface LocalDevSessionStatus {
   label: string | null;
 }
 
+// ---------------------------------------------------------------------------
+// Idea capture configuration (Profile → Integraciones → Captura de ideas)
+// ---------------------------------------------------------------------------
+
+/** Media/retention limits persisted in config/idea-capture.yaml. */
+export interface IdeaCaptureLimits {
+  image_mb: number;
+  audio_mb: number;
+  audio_minutes: number;
+  raw_retention_days: number;
+}
+
+/** Single-user idea-capture configuration (config/idea-capture.yaml). */
+export interface IdeaCaptureConfig {
+  /** Owner private chat ids. Empty list = fail closed (reject everything). */
+  private_chat_ids: number[];
+  /** Group chat id → approved sender ids. Empty mapping = fail closed. */
+  approved_groups: Record<string, number[]>;
+  /** World used by the serve command; empty when not chosen yet. */
+  active_world: string;
+  limits: IdeaCaptureLimits;
+}
+
+/** Exact serve command for the current local runtime + readiness gates. */
+export interface IdeaCaptureServeStatus {
+  command: string;
+  runnable: boolean;
+  blocked_reasons: string[];
+}
+
+/** Full panel status from GET /api/idea-capture/status. */
+export interface IdeaCaptureStatus {
+  config: IdeaCaptureConfig;
+  /** Whether TELEGRAM_BOT_TOKEN is configured — the token itself is never
+   *  returned by the API (server-side .env storage). */
+  has_token: boolean;
+  validation: { ok: boolean; errors: string[] };
+  serve: IdeaCaptureServeStatus;
+  worlds: string[];
+  limitations: string[];
+}
+
+/** Result of setting/clearing the bot token — never contains the token. */
+export interface TokenStatus {
+  has_token: boolean;
+}
+
+/** A discoverable Telegram chat candidate. The numeric id is an INTERNAL
+ *  selection value — the UI shows the human-readable title/type and never
+ *  asks the user to type or copy the id. */
+export interface ChatCandidate {
+  id: number;
+  /** Telegram chat type: private | group | supergroup. */
+  type: string;
+  /** UI category: private chats are directly authorizable; groups need an
+   *  explicit sender list + confirmation (fail-closed). */
+  kind: "private" | "group";
+  title: string;
+}
+
+/** Result of POST /api/idea-capture/chats/discover. Never carries message
+ *  content; ids are internal selection values only. */
+export interface ChatDiscoveryResult {
+  ok: boolean;
+  candidates: ChatCandidate[];
+  /** Friendly guidance shown when there are no candidates yet. */
+  message: string;
+}
+
+/** Full panel status after authorizing a discovered chat, plus the friendly
+ *  confirmation message. */
+export interface IdeaCaptureAuthorizeResult extends IdeaCaptureStatus {
+  message: string;
+}
+
+/** Server-owned model option for the Wiki assistant. */
+export interface AssistantModelOption {
+  id: string;
+  label: string;
+  capability: "multimodal" | "text-only" | "unknown";
+  pricing: { input?: number; output?: number } | null;
+}
+
+/** Presence/configuration metadata for the active Hermes assistant profile. */
+export interface AssistantSettingsStatus {
+  provider: string;
+  base_url: string;
+  model: string;
+  model_metadata: AssistantModelOption;
+  key_configured: boolean;
+  models: AssistantModelOption[];
+  active_profile: string;
+  revision: number;
+  runtime_state: "active" | "pending-reload" | "saved-not-active";
+}
+
+export interface AssistantConnectionInput {
+  provider: string;
+  base_url?: string;
+  /** Write-only; never store this value in React state or response types. */
+  api_key: string;
+}
+
+export interface AssistantValidationResult {
+  outcome: "validated" | "failed";
+  category: string;
+  provider: string;
+  message?: string;
+}
+
+export interface AssistantDiscoveryResult extends Omit<AssistantValidationResult, "outcome"> {
+  outcome: "discovered" | "failed";
+  models: AssistantModelOption[];
+}
+
+export interface SaveAssistantConfigurationInput extends AssistantConnectionInput {
+  model?: AssistantModelOption;
+  manual_model_id?: string;
+  revision?: number;
+  unknown_ack?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Assistant activity evidence
+// ---------------------------------------------------------------------------
+
+export type AssistantActivityItemStatus = "running" | "succeeded" | "failed";
+export type AssistantActivityTerminalStatus = "succeeded" | "failed" | "unknown";
+
+export interface AssistantActivityItem {
+  item_id: string;
+  operation: "Search world" | "Read world";
+  status: AssistantActivityItemStatus;
+  path?: string;
+  warning?: string;
+}
+
+export type AssistantActivityEvent =
+  | ({ kind: "activity"; request_id: string } & AssistantActivityItem)
+  | { kind: "answer"; request_id: string; response: string }
+  | {
+      kind: "terminal";
+      request_id: string;
+      status: AssistantActivityTerminalStatus;
+      warning?: string;
+    };
+
+export interface AssistantActivityEvidence {
+  sources: string[];
+  warnings: string[];
+  status: "confirmed" | "incomplete" | "neutral";
+}
+
 /** OKF ficha status — UI maps Borrador → draft, Canon → stable. */
 export type FichaStatus = "draft" | "stable";
 
@@ -271,12 +424,16 @@ export interface EmptyTrashResponse {
   entries: number;
 }
 
-/** Structured API error. */
+/** Structured API error. `code` (when present) is a stable machine-readable
+ *  remediation key from the backend (e.g. `webhook_conflict` for the
+ *  Telegram webhook/getUpdates conflict) so the UI can render specific
+ *  guidance instead of a bare message. */
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
     public detail?: string,
+    public code?: string,
   ) {
     super(message);
     this.name = "ApiError";

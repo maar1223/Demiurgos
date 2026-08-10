@@ -24,6 +24,22 @@ function formatDate(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+/** Compact relative label ("2 hours ago") for recent snapshots; returns "" for
+ *  older ones where the absolute timestamp in the primary label is clearer. */
+function formatRelativeTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const elapsedSeconds = Math.round((date.getTime() - Date.now()) / 1000);
+  if (elapsedSeconds > -45) return "just now";
+  const minutes = Math.round(-elapsedSeconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  if (days <= 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return "";
+}
+
 function isCurrentVersion(
   entry: HistoryEntry,
   currentRevision: string | null,
@@ -46,7 +62,11 @@ export function HistoryPanel({
   onClose,
   onRestored,
 }: HistoryPanelProps) {
-  const history = useFileHistory(mundo, path);
+  // History endpoints resolve a canonical mundo-relative target
+  // (`personajes/Pert.md`), while the section-scoped review pipeline
+  // consumes the section-relative `path` (`Pert.md`).
+  const historyPath = section ? `${section}/${path}` : path;
+  const history = useFileHistory(mundo, historyPath);
   const review = useEditReview({ mundo, section, path });
   const [restoreTarget, setRestoreTarget] = useState<HistoryEntry | null>(null);
   const [pendingRestore, setPendingRestore] = useState<{
@@ -107,7 +127,7 @@ export function HistoryPanel({
           target.snapshot_id,
         );
         await history.restore({
-          path,
+          path: historyPath,
           snapshot_id: target.snapshot_id,
           content: target.content,
           base_revision: proposal.base_revision,
@@ -130,7 +150,7 @@ export function HistoryPanel({
         review.reset();
       }
     })();
-  }, [history, onRestored, path, pendingRestore, review]);
+  }, [history, onRestored, historyPath, pendingRestore, review]);
 
   if (!open) return null;
 
@@ -176,6 +196,7 @@ export function HistoryPanel({
             <ul className="flex flex-col gap-2">
               {entries.map((entry) => {
                 const current = isCurrentVersion(entry, currentRevision, currentContent);
+                const relative = formatRelativeTime(entry.created_at);
                 return (
                   <li
                     key={entry.snapshot_id}
@@ -183,11 +204,13 @@ export function HistoryPanel({
                   >
                     <Icon name="history" size={18} className="shrink-0 text-plata" />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate font-mono text-small text-pergamino">
-                        {entry.snapshot_id}
+                      <p className="truncate text-small text-pergamino">
+                        Version saved on {formatDate(entry.created_at)}
                       </p>
                       <p className="text-xs text-tinta-desvaida">
-                        {formatDate(entry.created_at)} · {entry.size} bytes
+                        {relative
+                          ? `Saved ${relative} · ${entry.size} bytes`
+                          : `${entry.size} bytes`}
                       </p>
                     </div>
                     {current ? (

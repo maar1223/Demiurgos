@@ -67,7 +67,7 @@ KNOWN_PROVIDERS: list[dict] = [
         "id": "opencode-go",
         "name": "OpenCode Go",
         "default_endpoint": "https://opencode.ai/zen/go/v1",
-        "default_text_model": "deepseek-v4-flash",
+        "default_text_model": "gpt-5.6-luna",
         "supports_vision": True,
     },
     {
@@ -138,6 +138,7 @@ MODEL_VISION: dict[str, dict[str, bool]] = {
         "llama3.2-vision": True,
     },
     "opencode-go": {
+        "gpt-5.6-luna": True,
         "deepseek-v4-flash": False,
         "deepseek-v4-pro": False,
         "deepseek-v4-lite": False,

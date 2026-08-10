@@ -96,9 +96,24 @@ vi.mock("@/api/wiki", () => ({
 const { insertTextMock } = vi.hoisted(() => ({ insertTextMock: vi.fn() }));
 
 vi.mock("@/components/organisms/LiveDiffEditor", () => ({
-  default: forwardRef<unknown, Record<string, never>>((_props, ref) => {
+  default: forwardRef<
+    unknown,
+    {
+      original?: string;
+      value: string;
+      onChange: (value: string) => void;
+    }
+  >(({ value, onChange }, ref) => {
     useImperativeHandle(ref, () => ({ insertText: insertTextMock }));
-    return <div data-testid="live-diff-editor" />;
+    return (
+      <div data-testid="live-diff-editor">
+        <textarea
+          aria-label="Diff editor content"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </div>
+    );
   }),
 }));
 
@@ -796,6 +811,54 @@ describe("WikiEditor", () => {
       screen.queryByTestId("live-diff-editor"),
     ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /editar/i })).toBeInTheDocument();
+  });
+
+  it("includes manual diff edits in the confirmation and save requests", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /editar/i }));
+    await user.type(
+      screen.getByRole("textbox", { name: /editor de contenido/i }),
+      " initial",
+    );
+    await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
+
+    const diffEditor = await screen.findByRole("textbox", {
+      name: "Diff editor content",
+    });
+    await user.clear(diffEditor);
+    await user.type(diffEditor, "Manual edit from diff");
+
+    // The controlled diff must retain the edit until the user accepts it.
+    expect(diffEditor).toHaveValue("Manual edit from diff");
+    await user.click(screen.getByRole("button", { name: "Accept" }));
+
+    await waitFor(() => {
+      expect(requestConfirmation).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+        expect.objectContaining({
+          proposed_content: "Manual edit from diff",
+        }),
+      );
+      expect(saveFileConfirmed).toHaveBeenCalledWith(
+        "Vibrantes",
+        "lore",
+        "capitulos/cap1.md",
+        expect.objectContaining({
+          content: "Manual edit from diff",
+        }),
+      );
+    });
   });
 
   it("routes an AI proposal to the same diff and accept/reject surface", async () => {
@@ -1856,6 +1919,41 @@ describe("WikiEditor", () => {
 
     expect(
       screen.getByRole("dialog", { name: /exportar ficha a pdf/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("file bar: ⋯ menu exposes 'History' on an open ficha and opens the panel", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    // The standalone History toolbar button was folded into the ⋯ options
+    // dropdown — it no longer renders directly in the file bar.
+    expect(
+      screen.queryByRole("button", { name: "History" }),
+    ).not.toBeInTheDocument();
+
+    // The ⋯ options dropdown lists History before the destructive
+    // 'Eliminar Ficha' item, alongside the other ficha-level actions.
+    await user.click(screen.getByRole("button", { name: /opciones de ficha/i }));
+    const menu = screen.getByRole("menu", { name: /opciones de ficha/i });
+    expect(
+      within(menu).getByRole("menuitem", { name: "History" }),
+    ).toBeInTheDocument();
+    expect(
+      within(menu).getByRole("menuitem", { name: "Eliminar Ficha" }),
+    ).toBeInTheDocument();
+
+    // Selecting it opens the history panel (same `historyOpen` gate as before).
+    await user.click(within(menu).getByRole("menuitem", { name: "History" }));
+    expect(
+      screen.getByRole("dialog", { name: /file history/i }),
     ).toBeInTheDocument();
   });
 

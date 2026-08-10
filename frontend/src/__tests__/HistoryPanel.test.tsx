@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import HistoryPanel from "@/components/organisms/HistoryPanel";
@@ -114,6 +114,10 @@ describe("HistoryPanel", () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders loading, error, and empty states", () => {
     const { unmount } = renderPanel({ isLoading: true });
     expect(screen.getAllByRole("status").length).toBeGreaterThan(0);
@@ -128,18 +132,47 @@ describe("HistoryPanel", () => {
   });
 
   it("orders snapshots newest-first and protects the current version", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-07T21:00:00Z"));
     renderPanel();
 
     const list = screen.getByRole("list");
     const rows = within(list).getAllByRole("listitem");
     expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringContaining("snapshot-current"),
-      expect.stringContaining("snapshot-middle"),
-      expect.stringContaining("snapshot-old"),
+      expect.stringContaining("Saved 1 hour ago"),
+      expect.stringContaining("Saved 2 hours ago"),
+      expect.stringContaining("Saved 3 hours ago"),
     ]);
     expect(within(rows[0]).getByText("Current version")).toBeInTheDocument();
     expect(within(rows[0]).queryByRole("button", { name: "Restore" })).toBeNull();
     expect(within(rows[2]).getByRole("button", { name: "Restore" })).toBeInTheDocument();
+  });
+
+  it("labels snapshots with the saved-on timestamp, never the raw hash", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-07T21:00:00Z"));
+    renderPanel();
+
+    const list = screen.getByRole("list");
+    const rows = within(list).getAllByRole("listitem");
+
+    // The raw snapshot hash is never rendered as a label in the panel.
+    expect(screen.queryByText(/snapshot-/)).not.toBeInTheDocument();
+    expect(rows[0]).not.toHaveTextContent("snapshot-current");
+
+    // The primary label is the localized save timestamp.
+    expect(rows[0]).toHaveTextContent("Version saved on");
+
+    // Relative time and size are retained as human-readable metadata.
+    expect(rows[0]).toHaveTextContent("Saved 1 hour ago · 9 bytes");
+    expect(rows[2]).toHaveTextContent("Saved 3 hours ago · 6 bytes");
+  });
+
+  it("requests history with the canonical mundo-relative target", () => {
+    renderPanel();
+    // The history API resolves a mundo-relative path with the section prefix
+    // (`lore/chapter.md`), not the section-relative `path` prop (`chapter.md`).
+    expect(useFileHistory).toHaveBeenCalledWith("vibrantes", "lore/chapter.md");
   });
 
   it("confirms restore and uses only the gated restore contract", async () => {
@@ -165,7 +198,7 @@ describe("HistoryPanel", () => {
         }),
       );
       expect(restore).toHaveBeenCalledWith({
-        path: "chapter.md",
+        path: "lore/chapter.md",
         snapshot_id: "snapshot-old",
         content: "# Old",
         base_revision: "current-revision",

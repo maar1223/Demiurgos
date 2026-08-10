@@ -176,6 +176,17 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
           {sessionActionError && (
             <p className="mt-3 text-small text-sangre">{sessionActionError}</p>
           )}
+
+          <button
+            type="button"
+            onClick={() => {
+              setProfileOpen(false);
+              navigate("/perfil");
+            }}
+            className="mt-3 w-full rounded-lg bg-piedra px-3 py-2 text-small text-pergamino hover:bg-filio"
+          >
+            Perfil completo
+          </button>
         </div>
       )}
 

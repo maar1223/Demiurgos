@@ -1,11 +1,11 @@
 ---
-description: Manage the Banco de Ideas — capture, browse, search, sync, and promote narrative ideas
+description: Manage the Banco de Ideas — capture, browse, search, process, and promote narrative ideas
 agent: Demiurgos-Orchestrator
 ---
 
 /narrative-idea — Banco de Ideas command hub.
 
-USAGE: /narrative-idea <capture|browse|search|sync|promote> [args...]
+USAGE: /narrative-idea <capture|browse|search|process|promote> [args...]
 
 SUBCOMMANDS:
 
@@ -23,10 +23,10 @@ SUBCOMMANDS:
     Search ideas by content keywords or tag values.
     Example: /narrative-idea search "Daest"
 
-  sync [--dry-run]
-    Pull unprocessed rows from Google Sheets, transcribe voice notes, write to Ideas/.
-    Dry-run: preview only, no file writes.
-    Example: /narrative-idea sync --dry-run
+  process [<capture-id>]
+    Inspect or advance native Hermes captures through the durable worker.
+    Raw input is retained on retryable or terminal failure.
+    Example: /narrative-idea process
 
   promote <slug>
     Promote an idea for arc use — hands off to narrative-propose.

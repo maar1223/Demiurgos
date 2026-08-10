@@ -722,16 +722,16 @@ export default function WikiEditor() {
   const handleReviewContentChange = useCallback(
     (nextContent: string) => {
       setEditedContent(nextContent);
-      if (review.proposal && review.status === "reviewing") {
-        review.updateProposal({
-          ...review.proposal,
+      if (review.status === "reviewing") {
+        review.updateProposal((proposal) => ({
+          ...proposal,
           proposed_content: pendingNewFile
             ? nextContent
             : mergeFrontmatter(frontmatter, nextContent),
-        });
+        }));
       }
     },
-    [frontmatter, pendingNewFile, review],
+    [frontmatter, pendingNewFile, review.status, review.updateProposal],
   );
 
   const handleAssistantEditProposal = useCallback(async ({
@@ -1227,6 +1227,20 @@ export default function WikiEditor() {
                     type="button"
                     role="menuitem"
                     onClick={() => {
+                      setHistoryOpen(true);
+                      setOptionsOpen(false);
+                    }}
+                    className="block w-full px-3 py-2 text-left text-small text-pergamino transition-colors hover:bg-piedra hover:text-llamita focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Icon name="history" size={14} className="shrink-0 text-sombra" />
+                      History
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
                       setTrashTarget(filePath);
                       setOptionsOpen(false);
                     }}
@@ -1325,13 +1339,6 @@ export default function WikiEditor() {
               </>
               ) : (
               <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setHistoryOpen(true)}
-                >
-                  History
-                </Button>
                 <Button
                   variant="primary"
                   size="sm"

@@ -6,6 +6,7 @@ coverage, which is how the is_dir contract regression survived unnoticed.
 """
 
 import base64
+import asyncio
 import hashlib
 import json
 import logging
@@ -29,6 +30,23 @@ for _p in (str(_WIKI), str(_SUITE)):
         sys.path.insert(0, _p)
 
 import api_server  # noqa: E402
+from assistant_activity import assess_hermes_capabilities  # noqa: E402
+
+
+def _activity_capability():
+    return assess_hermes_capabilities(
+        {
+            "object": "hermes.api_server.capabilities",
+            "platform": "hermes-agent",
+            "features": {
+                "run_submission": True,
+                "run_status": True,
+                "run_events_sse": True,
+                "run_stop": True,
+                "tool_progress_events": True,
+            },
+        }
+    )
 
 
 @pytest.fixture()
@@ -841,6 +859,127 @@ class TestAiAsk:
         sent = mock_run.await_args.args[0]
         assert "Ficha actual" not in sent
         assert "[Mundo: test_mundo]" in sent
+
+    def test_activity_route_returns_sanitized_correlated_sse(self, client: TestClient, monkeypatch):
+        class FakeAdapter:
+            available = True
+            capability = _activity_capability()
+
+            def __init__(self):
+                self.cancelled = []
+                self.request_id = ""
+
+            def start(self, request):
+                assert request.request_id
+                assert request.prompt == "[Mundo: test_mundo]\n\nHola"
+                self.request_id = request.request_id
+                return "run-1"
+
+            async def events(self, run_id):
+                assert run_id == "run-1"
+                yield {
+                    "event": "tool.started", "run_id": run_id, "tool": "graph_read",
+                }
+                yield {
+                    "event": "tool.completed", "run_id": run_id, "tool": "graph_read",
+                    "error": False,
+                }
+                yield {
+                    "event": "run.completed", "run_id": run_id, "output": "safe answer",
+                }
+
+            def cancel(self, run_id):
+                self.cancelled.append(run_id)
+
+        adapter = FakeAdapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+        response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        assert "event: activity" in response.text
+        assert '"response": "safe answer"' in response.text
+        assert '"request_id": "activity-' in response.text
+        assert '"path"' not in response.text
+        assert "run-1" not in response.text
+
+    @pytest.mark.parametrize("status", [404, 501, 503])
+    def test_activity_route_unavailable_is_neutral_fallback(
+        self, client: TestClient, monkeypatch, status: int
+    ):
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", None)
+
+        response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "detail": "Assistant activity is unavailable",
+            "code": "activity_unavailable",
+            "reason_code": "file_evidence_contract_unverified",
+        }
+
+    def test_activity_pre_acceptance_failure_does_not_leak_provider_error(
+        self, client: TestClient, monkeypatch
+    ):
+        class FailingAdapter:
+            available = True
+            capability = _activity_capability()
+
+            def start(self, request):
+                raise RuntimeError("credential=secret /absolute/provider/path")
+
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", FailingAdapter())
+        response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
+
+        assert response.status_code == 503
+        assert response.json() == {
+            "detail": "Assistant activity is unavailable",
+            "code": "activity_unavailable",
+            "reason_code": "provider_activity_unavailable",
+        }
+
+    def test_activity_partial_failure_preserves_answer_and_cancels_on_timeout(
+        self, client: TestClient, monkeypatch
+    ):
+        class PartialAdapter:
+            available = True
+            capability = _activity_capability()
+
+            def __init__(self):
+                self.cancelled = []
+                self.request_id = ""
+
+            def start(self, request):
+                self.request_id = request.request_id
+                return "run-1"
+
+            async def events(self, run_id):
+                yield {
+                    "event": "message.delta", "run_id": run_id,
+                    "delta": "preserve this answer",
+                }
+                await asyncio.sleep(0.05)
+                yield {"event": "run.completed", "run_id": run_id, "output": "preserve this answer"}
+
+            def cancel(self, run_id):
+                self.cancelled.append(run_id)
+
+        adapter = PartialAdapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+        monkeypatch.setattr(api_server, "ACTIVITY_EVENT_TIMEOUT_SECONDS", 0.01)
+        response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
+
+        assert response.status_code == 200
+        assert '"response": "preserve this answer"' in response.text
+        assert '"status": "unknown"' in response.text
+        assert adapter.cancelled == ["run-1"]
+
+    def test_legacy_ai_ask_contract_is_unchanged(self, client: TestClient):
+        with patch("api_server._run_hermes", new=AsyncMock(return_value="legacy answer")):
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Hola"})
+
+        assert response.status_code == 200
+        assert response.json() == {"response": "legacy answer"}
 
 
 class TestMundoValidation:
@@ -2084,6 +2223,18 @@ class TestHistoryRestore:
         assert traversal.status_code == 400
         assert target.read_bytes() == before
         assert outside.read_text(encoding="utf-8") == "SECRET\n"
+
+    def test_history_requires_section_prefixed_path(
+            self, client: TestClient, monkeypatch):
+        """Frontend boundary: a section-relative path (`00_inicio.md`) is
+        rejected; only the canonical mundo-relative form (`lore/00_inicio.md`)
+        is accepted."""
+        _principal(monkeypatch)
+        relative = client.get("/api/test_mundo/history?path=00_inicio.md")
+        assert relative.status_code == 400
+        assert relative.json()["detail"] == "Invalid history path"
+        canonical = client.get("/api/test_mundo/history?path=lore/00_inicio.md")
+        assert canonical.status_code == 200, canonical.text
 
     def test_restore_snapshots_current_content_before_replacement(
             self, client: TestClient, monkeypatch):

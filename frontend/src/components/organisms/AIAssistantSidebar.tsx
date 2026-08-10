@@ -8,6 +8,10 @@ import { cn } from "@/lib/utils";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { MarkdownBody } from "@/components/organisms/MarkdownViewer";
+import {
+  INCOMPLETE_EVIDENCE_WARNING,
+  NEUTRAL_EVIDENCE_WARNING,
+} from "@/api/assistantActivity";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { useWhisper } from "@/hooks/useWhisper";
 
@@ -36,6 +40,47 @@ const SUGGESTIONS = [
   "Contame sobre Ekkor",
 ];
 
+const SAFE_SOURCE_ROOTS = new Set([
+  "lore",
+  "personajes",
+  "sagas",
+  "referencias",
+  "media",
+]);
+const SAFE_ACTIVITY_WARNINGS = new Set([
+  INCOMPLETE_EVIDENCE_WARNING,
+  NEUTRAL_EVIDENCE_WARNING,
+]);
+
+// Keep the activity/evidence integration intact, but hide its presentation
+// until the provider exposes reliable structured consulted-file evidence.
+const ACTIVITY_EVIDENCE_UI_ENABLED = false;
+
+function isSafeEvidencePath(value: string): boolean {
+  if (!value || value.includes("\\") || value.startsWith("/")) return false;
+  const parts = value.split("/");
+  return (
+    SAFE_SOURCE_ROOTS.has(parts[0]) &&
+    parts.every((part) => part && part !== "." && part !== ".." && !part.startsWith("."))
+  );
+}
+
+function safeActivityWarning(value: string | undefined): string | null {
+  return value && SAFE_ACTIVITY_WARNINGS.has(value) ? value : null;
+}
+
+function activityStatusLabel(status: "running" | "succeeded" | "failed"): string {
+  if (status === "running") return "En curso";
+  if (status === "succeeded") return "Confirmado";
+  return "Falló";
+}
+
+function activityOperationLabel(operation: "Search world" | "Read world"): string {
+  if (operation === "Search world") return "Search world";
+  if (operation === "Read world") return "Read world";
+  return "World activity";
+}
+
 /* ------------------------------------------------------------------ */
 /*  Date helper                                                        */
 /* ------------------------------------------------------------------ */
@@ -61,6 +106,8 @@ interface ChatScreenProps {
   activeSession: ReturnType<typeof useAIAssistantSessions>["activeSession"];
   isSending: boolean;
   error: string | null;
+  activity: ReturnType<typeof useAIAssistantSessions>["activity"];
+  evidence: ReturnType<typeof useAIAssistantSessions>["evidence"];
   sendMessage: (prompt: string) => void;
   whisperStatus: ReturnType<typeof useWhisper>["status"];
   whisperIsRecording: boolean;
@@ -72,6 +119,98 @@ interface ChatScreenProps {
   onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
 }
 
+interface ActivityEvidenceProps {
+  activity: ReturnType<typeof useAIAssistantSessions>["activity"];
+  evidence: ReturnType<typeof useAIAssistantSessions>["evidence"];
+  isSending: boolean;
+}
+
+function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidenceProps) {
+  const [sourcesOpen, setSourcesOpen] = useState(false);
+  const sources = evidence.sources.filter(isSafeEvidencePath);
+  const warnings = Array.from(
+    new Set([
+      ...evidence.warnings.map(safeActivityWarning),
+      ...activity.items.map((item) => safeActivityWarning(item.warning)),
+    ]),
+  ).filter((warning): warning is string => Boolean(warning));
+
+  return (
+    <section
+      aria-label="Actividad y evidencia"
+      className="mb-3 rounded-lg border border-filio bg-cripta/70 px-3 py-2.5 text-xs"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="font-medium text-pergamino">Actividad y evidencia</h3>
+        {activity.status === "running" && (
+          <span className="text-llamita">Consultando fuentes</span>
+        )}
+      </div>
+
+      {activity.items.length > 0 && (
+        <ul aria-label="Actividad del asistente" className="mt-2 space-y-1.5">
+          {activity.items.map((item) => (
+            <li key={item.item_id} className="flex items-center justify-between gap-2">
+              <span className="text-tinta-desvaida">
+                {activityOperationLabel(item.operation)}
+              </span>
+              <span
+                className={cn(
+                  item.status === "failed" ? "text-sangre" : "text-tinta-desvaida",
+                )}
+              >
+                {activityStatusLabel(item.status)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {warnings.length > 0 && (
+        <div role="alert" className="mt-2 text-sangre">
+          {warnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </div>
+      )}
+
+      {sources.length > 0 ? (
+        <div className="mt-2 border-t border-filio pt-2">
+          <button
+            type="button"
+            aria-expanded={sourcesOpen}
+            onClick={() => setSourcesOpen((open) => !open)}
+            className="text-left text-tinta-desvaida hover:text-pergamino"
+          >
+            Fuentes confirmadas ({sources.length})
+          </button>
+          {sourcesOpen && (
+            <ul className="mt-1.5 space-y-1 pl-3 text-tinta-desvaida">
+              {sources.map((source) => (
+                <li key={source} className="break-words">
+                  {source}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : (
+        <p className="mt-2 border-t border-filio pt-2 text-tinta-desvaida">
+          {activity.availability === "unavailable"
+            ? activity.availabilityReason === "file_evidence_contract_unverified"
+              ? "Hermes no expone un contrato verificable de archivos consultados; no se muestran fuentes sin evidencia."
+              : "La actividad de consulta no está disponible; no se muestran fuentes sin evidencia verificable."
+            : isSending
+              ? "La actividad de fuentes se mostrará si el canal seguro está disponible."
+            : activity.status === "running"
+              ? "Esperando eventos de consulta verificados..."
+              : "No hay fuentes del mundo confirmadas."}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function ChatScreen({
   mundo,
   section,
@@ -79,6 +218,8 @@ function ChatScreen({
   activeSession,
   isSending,
   error,
+  activity,
+  evidence,
   sendMessage,
   whisperStatus,
   whisperIsRecording,
@@ -152,6 +293,13 @@ function ChatScreen({
       : isSending
         ? "Esperá a que termine la respuesta del asistente."
         : "Proponer una edición usando la última solicitud enviada.";
+  const hasAssistantAnswer = messages.some((message) => message.role === "assistant");
+  const showActivityEvidence =
+    isSending ||
+    hasAssistantAnswer ||
+    activity.accepted ||
+    activity.items.length > 0 ||
+    evidence.status !== "neutral";
 
   const handleProposeEdit = useCallback(() => {
     if (
@@ -270,6 +418,10 @@ function ChatScreen({
                 <Spinner size="sm" />
               </div>
             </div>
+          )}
+
+          {ACTIVITY_EVIDENCE_UI_ENABLED && showActivityEvidence && (
+            <ActivityEvidence activity={activity} evidence={evidence} isSending={isSending} />
           )}
 
           <div ref={messagesEndRef} />
@@ -522,6 +674,8 @@ export function AIAssistantSidebar({
           activeSession={sessions.activeSession}
           isSending={sessions.isSending}
           error={sessions.error}
+          activity={sessions.activity}
+          evidence={sessions.evidence}
           sendMessage={sessions.sendMessage}
           whisperStatus={whisper.status}
           whisperIsRecording={whisper.isRecording}

@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import io
+import inspect
 import json
 import logging
 import mimetypes
@@ -28,10 +29,17 @@ if str(_SUITE) not in sys.path:
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from PIL import Image
+
+from assistant_activity import (
+    ActivityTranslator,
+    HermesActivityRequest,
+    HermesRunsActivityAdapter,
+    TerminalEvent,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
@@ -2059,6 +2067,15 @@ _GATEWAY_URL = os.getenv("HERMES_GATEWAY_URL", "http://127.0.0.1:8642/v1/chat/co
 _GATEWAY_KEY = os.getenv("HERMES_GATEWAY_KEY") or _load_project_env("HERMES_GATEWAY_KEY")
 _GATEWAY_TIMEOUT = int(os.getenv("HERMES_GATEWAY_TIMEOUT", "300"))
 
+# The adapter probes Hermes before the first activity request. Tests replace
+# this seam with a fake adapter; unsupported or unreachable providers remain a
+# neutral fallback and never receive a run submission.
+ACTIVITY_ADAPTER = None
+ACTIVITY_EVENT_TIMEOUT_SECONDS = 30.0
+ACTIVITY_CLEANUP_TIMEOUT_SECONDS = 1.0
+ACTIVITY_UNAVAILABLE_REASON = "file_evidence_contract_unverified"
+ACTIVITY_PROVIDER_FAILURE_REASON = "provider_activity_unavailable"
+
 _hermes_client: httpx.AsyncClient | None = None
 
 
@@ -2073,6 +2090,20 @@ def _get_hermes_client() -> httpx.AsyncClient:
             timeout=httpx.Timeout(_GATEWAY_TIMEOUT, connect=10.0),
         )
     return _hermes_client
+
+
+def _hermes_api_base(url: str) -> str:
+    suffix = "/v1/chat/completions"
+    if url.rstrip("/").endswith(suffix):
+        return url.rstrip("/")[: -len("/chat/completions")]
+    return url.rstrip("/")
+
+
+ACTIVITY_ADAPTER = HermesRunsActivityAdapter(
+    _hermes_api_base(_GATEWAY_URL),
+    api_key=_GATEWAY_KEY,
+    client_provider=_get_hermes_client,
+)
 
 class ChatRequest(BaseModel):
     messages: list[dict]
@@ -2100,6 +2131,13 @@ async def chat_endpoint(body: ChatRequest):
 @app.post("/api/{mundo}/ai/ask")
 async def ai_ask_endpoint(mundo: str, body: AskRequest):
     """Endpoint for the AI Assistant sidebar."""
+    prompt = _build_ai_ask_prompt(mundo, body)
+    response = await _run_hermes(prompt, session_id=body.session_id)
+    logger.info("ai_ask: %s", response[:120])
+    return {"response": response}
+
+
+def _build_ai_ask_prompt(mundo: str, body: AskRequest) -> str:
     parts = [f"[Mundo: {mundo}]"] if mundo else []
     if body.file_path:
         title = None
@@ -2123,12 +2161,170 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest):
             parts.append(f"[Ficha actual: {body.section}/{body.file_path}]")
     if parts:
         joined = "\n".join(parts)
-        prompt = f"{joined}\n\n{body.prompt}"
-    else:
-        prompt = body.prompt
-    response = await _run_hermes(prompt, session_id=body.session_id)
-    logger.info("ai_ask: %s", response[:120])
-    return {"response": response}
+        return f"{joined}\n\n{body.prompt}"
+    return body.prompt
+
+
+def _activity_unavailable(reason_code: str = ACTIVITY_UNAVAILABLE_REASON) -> JSONResponse:
+    if reason_code not in {
+        ACTIVITY_UNAVAILABLE_REASON,
+        ACTIVITY_PROVIDER_FAILURE_REASON,
+    }:
+        reason_code = ACTIVITY_PROVIDER_FAILURE_REASON
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Assistant activity is unavailable",
+            "code": "activity_unavailable",
+            "reason_code": reason_code,
+        },
+    )
+
+
+def _sse_event(payload: dict[str, str]) -> str:
+    event_name = payload["kind"]
+    return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+
+
+async def _cancel_activity(adapter: object, run_id: str) -> None:
+    cancel = getattr(adapter, "cancel", None)
+    if not callable(cancel):
+        return
+    try:
+        result = cancel(run_id)
+        if inspect.isawaitable(result):
+            await asyncio.wait_for(result, timeout=ACTIVITY_CLEANUP_TIMEOUT_SECONDS)
+    except Exception:
+        # Cleanup failures are intentionally not exposed to the client.
+        logger.warning("assistant activity cleanup failed (%s)", type(adapter).__name__)
+
+
+@app.post("/api/{mundo}/ai/ask/activity")
+async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Request):
+    """Opt-in, fixture-gated SSE activity boundary.
+
+    The legacy endpoint above remains the compatibility path. This boundary
+    starts no provider run unless an admitted adapter and stream are present.
+    """
+    world_root = _resolve_mundo_dir(mundo)
+    adapter = ACTIVITY_ADAPTER
+    if world_root is None or adapter is None:
+        return _activity_unavailable()
+    try:
+        probe = getattr(adapter, "probe", None)
+        if callable(probe):
+            result = probe()
+            if inspect.isawaitable(result):
+                await result
+        if not bool(getattr(adapter, "available")):
+            capability = getattr(adapter, "capability", None)
+            reason = getattr(capability, "reason", ACTIVITY_UNAVAILABLE_REASON)
+            return _activity_unavailable(reason)
+        capability = getattr(adapter, "capability")
+        events = getattr(adapter, "events")
+        if not callable(events):
+            return _activity_unavailable(ACTIVITY_PROVIDER_FAILURE_REASON)
+    except Exception:
+        return _activity_unavailable(ACTIVITY_PROVIDER_FAILURE_REASON)
+
+    request_id = f"activity-{uuid.uuid4().hex}"
+    activity_request = HermesActivityRequest(
+        request_id=request_id,
+        prompt=_build_ai_ask_prompt(mundo, body),
+        session_id=body.session_id,
+    )
+    try:
+        run_id = adapter.start(activity_request)
+        if inspect.isawaitable(run_id):
+            run_id = await run_id
+        translator = ActivityTranslator(
+            capability=capability,
+            request_id=request_id,
+            run_id=run_id,
+            session_id=activity_request.session_id,
+            world_root=world_root,
+        )
+    except Exception:
+        return _activity_unavailable(ACTIVITY_PROVIDER_FAILURE_REASON)
+
+    async def stream():
+        completed = False
+        disconnected = False
+        try:
+            source = events(run_id)
+            if inspect.isawaitable(source):
+                source = await source
+            if hasattr(source, "__aiter__"):
+                iterator = source.__aiter__()
+                while True:
+                    if await request.is_disconnected():
+                        disconnected = True
+                        break
+                    try:
+                        raw_event = await asyncio.wait_for(
+                            iterator.__anext__(), timeout=ACTIVITY_EVENT_TIMEOUT_SECONDS
+                        )
+                    except StopAsyncIteration:
+                        break
+                    for event in translator.translate(raw_event):
+                        if isinstance(event, TerminalEvent):
+                            completed = True
+                        yield _sse_event(event.as_dict())
+            else:
+                for raw_event in source:
+                    if await request.is_disconnected():
+                        disconnected = True
+                        break
+                    for event in translator.translate(raw_event):
+                        if isinstance(event, TerminalEvent):
+                            completed = True
+                        yield _sse_event(event.as_dict())
+            if not disconnected and not completed:
+                status = getattr(adapter, "status", None)
+                if callable(status):
+                    status_payload = status(run_id)
+                    if inspect.isawaitable(status_payload):
+                        status_payload = await status_payload
+                    if isinstance(status_payload, dict):
+                        run_status = status_payload.get("status")
+                        if run_status == "completed":
+                            raw_status = {
+                                "event": "run.completed",
+                                "run_id": run_id,
+                                "output": status_payload.get("output"),
+                            }
+                            for event in translator.translate(raw_status):
+                                if isinstance(event, TerminalEvent):
+                                    completed = True
+                                yield _sse_event(event.as_dict())
+                        elif run_status in {"failed", "cancelled"}:
+                            raw_status = {"event": f"run.{run_status}", "run_id": run_id}
+                            for event in translator.translate(raw_status):
+                                if isinstance(event, TerminalEvent):
+                                    completed = True
+                                yield _sse_event(event.as_dict())
+            if not disconnected and not completed:
+                for event in translator.finalize():
+                    yield _sse_event(event.as_dict())
+        except asyncio.CancelledError:
+            disconnected = True
+            raise
+        except Exception:
+            if not disconnected:
+                for event in translator.finalize():
+                    yield _sse_event(event.as_dict())
+        finally:
+            if not completed:
+                await _cancel_activity(adapter, run_id)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Assistant-Activity-Request-Id": request_id,
+        },
+    )
 
 async def _run_hermes(prompt: str, session_id: str = "") -> str:
     """Send prompt to Hermes Gateway via HTTP (OpenAI-compatible chat completions)."""
@@ -2138,6 +2334,8 @@ async def _run_hermes(prompt: str, session_id: str = "") -> str:
     try:
         client = _get_hermes_client()
         payload = {
+            # Hermes resolves the active profile's model.default on the next
+            # request. Do not pass a browser-controlled model override here.
             "model": "hermes-agent",
             "messages": [{"role": "user", "content": prompt}],
         }
@@ -2368,6 +2566,35 @@ async def ai_edit_suggest(mundo: str, body: dict, request: Request):
                         "Edita el archivo manualmente o consulta al asistente."),
         }
     return {"proposal": proposal, "attempts": attempts, "outcome": "proposal"}
+
+
+# ---------------------------------------------------------------------------
+# Idea capture configuration panel — Profile → Integraciones → Captura de ideas
+#
+# Temporary MVP: single-user, local-auth-protected config for the native
+# Hermes/Telegram ingress (config/idea-capture.yaml) plus server-side storage
+# of TELEGRAM_BOT_TOKEN in .env. The router resolves the principal through a
+# call-time lambda so deployments and tests can swap _resolve_principal.
+# ---------------------------------------------------------------------------
+
+from idea_capture_ui import create_idea_capture_router  # noqa: E402
+from assistant_settings import create_assistant_settings_router  # noqa: E402
+
+# Assistant settings routes accept transient credentials only on authenticated
+# write requests and return metadata-only status payloads. Configuration saves
+# report Active, Pending restart/reload, or Saved-not-active; this API server
+# does not own Hermes or start, stop, reload, or restart any process.
+app.include_router(
+    create_idea_capture_router(
+        require_principal=lambda request: _resolve_principal(request),
+    ),
+)
+
+app.include_router(
+    create_assistant_settings_router(
+        require_principal=lambda request: _resolve_principal(request),
+    ),
+)
 
 
 # ---------------------------------------------------------------------------

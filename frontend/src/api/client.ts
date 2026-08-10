@@ -33,9 +33,13 @@ export async function apiFetch<T>(
 
     if (!response.ok) {
       let detail: string | undefined;
+      let code: string | undefined;
       try {
         const body = await response.json();
         detail = body.detail;
+        if (typeof body.code === "string") {
+          code = body.code;
+        }
       } catch {
         // ignore parse errors on error responses
       }
@@ -44,6 +48,7 @@ export async function apiFetch<T>(
         response.status,
         detail ?? `HTTP ${response.status}`,
         detail,
+        code,
       );
     }
 

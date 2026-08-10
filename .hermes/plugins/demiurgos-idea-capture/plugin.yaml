@@ -1,0 +1,5 @@
+name: demiurgos-idea-capture
+version: 1.0.0
+description: "Native Hermes-owned Demiurgos idea capture handler."
+author: Demiurgos
+kind: standalone

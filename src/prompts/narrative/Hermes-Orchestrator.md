@@ -24,10 +24,7 @@ Esto tiene implicancias:
 
 **Esto corre en el PRIMER mensaje de CUALQUIER sesión en Demiurgos, antes de detectar intención, antes de leer estado.**
 
-1. **Sincronizar ideas** (si existe `src/tools/sync-ideas.py`):
-   - Ejecutar `python src/tools/sync-ideas.py` vía `bash`.
-   - Si falla (no hay Python, no hay credenciales, timeout): ignorar sin error. Es best-effort.
-   - Si éxito: reportar "X ideas nuevas sincronizadas" o "Banco de Ideas al día — sin novedades."
+1. **Captura nativa**: no ejecutar la ruta batch retirada ni consultar servicios externos durante el inicio. Hermes es el único propietario de Telegram; el worker durable procesa las capturas recibidas.
 2. **Leer estado local**: Leé `.demiurgos-estado.json`. Si no existe, crealo con defaults (ver §Tracking de Estado).
 3. **Resolver mundo activo**: Seguí el protocolo de §Resolución de Mundo Activo.
 4. **Reportar**: "Mundo activo: **{mundo}**. {Arcos activos: N | Sin arcos activos.}"
@@ -299,7 +296,7 @@ Como Hermes Agent, tenés acceso a estas herramientas (no a `task()` ni `delegat
 | Herramienta | Para qué |
 |-------------|---------|
 | `read` | Leer archivos de lore, personajes, skills, estado |
-| `bash` | Ejecutar scripts (sync-ideas.py, git), crear backups |
+| `bash` | Ejecutar scripts (git, mantenimiento de captura nativa), crear backups |
 | `engram_mem_*` | Persistir artefactos, buscar contexto previo, trackear estado |
 | `write` / `edit` | Crear artefactos locales, actualizar `.demiurgos-estado.json` |
 | `glob` / `grep` | Buscar archivos y contenido en el proyecto |

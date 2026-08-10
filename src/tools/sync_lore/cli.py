@@ -20,10 +20,10 @@ from .schemas import ProviderConfig
 # ---------------------------------------------------------------------------
 
 DEFAULT_ENDPOINT = "https://opencode.ai/zen/go/v1"
-DEFAULT_MODEL = "deepseek-v4-flash"
+DEFAULT_MODEL = "gpt-5.6-luna"
 DEFAULT_TIMEOUT = 60
 DEFAULT_API_KEY_ENV = "OPENCODE_GO_API_KEY"
-DEFAULT_VISION_MODEL = "qwen3.6-plus"
+DEFAULT_VISION_MODEL = "gpt-5.6-luna"
 DEFAULT_VISION_TIMEOUT = 120
 DEFAULT_MODE = "text"
 DEFAULT_OUTPUT = "./output"

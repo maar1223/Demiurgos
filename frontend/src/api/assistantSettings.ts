@@ -1,0 +1,57 @@
+import { apiFetch } from "@/api/client";
+import type {
+  AssistantConnectionInput,
+  AssistantDiscoveryResult,
+  AssistantSettingsStatus,
+  AssistantValidationResult,
+  SaveAssistantConfigurationInput,
+} from "@/api/types";
+
+const CREDENTIALS = { credentials: "same-origin" as const };
+
+/**
+ * Assistant settings status is metadata-only: the write-only key is accepted
+ * in request payloads but never returned, stored in frontend state, or logged.
+ * Saves return Active, Pending restart/reload, or Saved-not-active; the API
+ * reports that state but does not control Hermes or any process lifecycle.
+ */
+export function getAssistantSettings(): Promise<AssistantSettingsStatus> {
+  return apiFetch<AssistantSettingsStatus>("/api/profile/assistant", CREDENTIALS);
+}
+
+export function validateAssistantConnection(
+  input: AssistantConnectionInput,
+): Promise<AssistantValidationResult> {
+  return apiFetch<AssistantValidationResult>("/api/profile/assistant/connection/validate", {
+    method: "POST",
+    body: JSON.stringify(input),
+    ...CREDENTIALS,
+  });
+}
+
+export function discoverAssistantModels(
+  input: AssistantConnectionInput,
+): Promise<AssistantDiscoveryResult> {
+  return apiFetch<AssistantDiscoveryResult>("/api/profile/assistant/models/discover", {
+    method: "POST",
+    body: JSON.stringify(input),
+    ...CREDENTIALS,
+  });
+}
+
+export function saveAssistantConfiguration(
+  input: SaveAssistantConfigurationInput,
+): Promise<AssistantSettingsStatus> {
+  return apiFetch<AssistantSettingsStatus>("/api/profile/assistant/configuration", {
+    method: "PUT",
+    body: JSON.stringify(input),
+    ...CREDENTIALS,
+  });
+}
+
+export function clearAssistantKey(): Promise<AssistantSettingsStatus> {
+  return apiFetch<AssistantSettingsStatus>("/api/profile/assistant/configuration/key", {
+    method: "DELETE",
+    ...CREDENTIALS,
+  });
+}

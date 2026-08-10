@@ -54,7 +54,7 @@ class TestBuildConfigDefaults(unittest.TestCase):
         provider_config, runtime_opts = cli.build_config(args)
         self.assertEqual(provider_config.provider, "opencode-go")
         self.assertEqual(provider_config.endpoint, "https://opencode.ai/zen/go/v1")
-        self.assertEqual(provider_config.model, "deepseek-v4-flash")
+        self.assertEqual(provider_config.model, "gpt-5.6-luna")
         self.assertEqual(provider_config.timeout, 60)
         self.assertEqual(provider_config.api_key_env, "OPENCODE_GO_API_KEY")
         self.assertEqual(runtime_opts["workers"], 5)

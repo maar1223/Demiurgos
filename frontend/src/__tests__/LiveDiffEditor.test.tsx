@@ -1,10 +1,36 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { createRef } from "react";
+import { createRef, useState } from "react";
+import type { Ref } from "react";
 import LiveDiffEditor, {
   type LiveDiffEditorHandle,
 } from "@/components/organisms/LiveDiffEditor";
+
+/**
+ * Controlled harness: holds `value` in local state exactly like WikiEditor
+ * does, so split/join/insertText go through the full diff recompute instead
+ * of ending at a bare onChange spy. This also lets tests observe the caret
+ * restoration (focus + selection) the pending-caret mechanism performs after
+ * a re-render.
+ */
+function StatefulHarness({
+  original,
+  editorRef,
+}: {
+  original: string;
+  editorRef?: Ref<LiveDiffEditorHandle>;
+}) {
+  const [value, setValue] = useState(original);
+  return (
+    <LiveDiffEditor
+      original={original}
+      value={value}
+      onChange={setValue}
+      ref={editorRef}
+    />
+  );
+}
 
 describe("LiveDiffEditor", () => {
   it("typing in side B replaces the line in the document", async () => {
@@ -101,6 +127,78 @@ describe("LiveDiffEditor", () => {
     });
 
     expect(onChange).toHaveBeenCalledWith("linea uno\nlinea dos\nlinea tres fin");
+  });
+
+  describe("controlled editing (caret restoration + live recompute)", () => {
+    it("Enter split restores focus and caret to the new line", () => {
+      const original = "linea uno\nlinea dos\nlinea tres";
+
+      render(<StatefulHarness original={original} />);
+
+      const ta = screen.getByLabelText("Editar línea 2") as HTMLTextAreaElement;
+      ta.setSelectionRange(5, 5);
+      fireEvent.keyDown(ta, { key: "Enter" });
+
+      const newLine = screen.getByLabelText("Editar línea 3") as HTMLTextAreaElement;
+      expect(newLine).toHaveValue(" dos");
+      expect(newLine).toHaveFocus();
+      expect(newLine.selectionStart).toBe(0);
+    });
+
+    it("Backspace at column 0 joins lines and restores the caret at the join point", () => {
+      const original = "linea uno\nlinea dos\nlinea tres";
+
+      render(<StatefulHarness original={original} />);
+
+      const ta = screen.getByLabelText("Editar línea 3") as HTMLTextAreaElement;
+      ta.setSelectionRange(0, 0);
+      fireEvent.keyDown(ta, { key: "Backspace" });
+
+      const joined = screen.getByLabelText("Editar línea 2") as HTMLTextAreaElement;
+      expect(joined).toHaveValue("linea doslinea tres");
+      expect(joined).toHaveFocus();
+      expect(joined.selectionStart).toBe("linea doslinea tres".length);
+    });
+
+    it("editing a line recomputes the diff highlight in place", () => {
+      const original = "linea uno\nlinea dos\nlinea tres";
+
+      render(<StatefulHarness original={original} />);
+
+      const ta = screen.getByLabelText("Editar línea 2") as HTMLTextAreaElement;
+      fireEvent.change(ta, { target: { value: "linea dos!" } });
+
+      // The old text now shows as removed (left) and the new text as added
+      // (right) on the SAME row — recomputed from the props, not a stale snapshot
+      expect(screen.getByText("linea dos", { selector: "div" })).toHaveClass(
+        "border-sangre",
+        "bg-sangre/30",
+      );
+      const edited = screen.getByLabelText("Editar línea 2") as HTMLTextAreaElement;
+      expect(edited).toHaveValue("linea dos!");
+      expect(edited).toHaveClass("border-musgo", "bg-musgo/30");
+    });
+
+    it("insertText replaces the current selection of the focused line", () => {
+      const original = "linea uno\nlinea dos\nlinea tres";
+      const ref = createRef<LiveDiffEditorHandle>();
+
+      render(<StatefulHarness original={original} editorRef={ref} />);
+
+      const ta = screen.getByLabelText("Editar línea 2") as HTMLTextAreaElement;
+      fireEvent.focus(ta);
+      ta.setSelectionRange(6, 9); // selects "dos"
+
+      act(() => {
+        ref.current?.insertText("[[X]]");
+      });
+
+      const updated = screen.getByLabelText("Editar línea 2") as HTMLTextAreaElement;
+      expect(updated).toHaveValue("linea [[X]]");
+      expect(updated).toHaveFocus();
+      expect(updated.selectionStart).toBe(11);
+      expect(updated.selectionEnd).toBe(11);
+    });
   });
 
   describe("rendering", () => {

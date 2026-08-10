@@ -169,6 +169,16 @@ describe("Navbar", () => {
     expect(start).toHaveBeenCalledOnce();
   });
 
+  it("profile dropdown links to the full profile page at /perfil", async () => {
+    const user = userEvent.setup();
+    renderNavbar({ worlds });
+
+    await user.click(screen.getByRole("button", { name: "Perfil" }));
+    await user.click(screen.getByRole("button", { name: "Perfil completo" }));
+
+    expect(screen.getByTestId("path")).toHaveTextContent("/perfil");
+  });
+
   it("world selector opens and reports the selection via onWorldChange", async () => {
     const user = userEvent.setup();
     const onWorldChange = vi.fn();
