@@ -41,11 +41,18 @@ from assistant_activity import (
     TerminalEvent,
 )
 from guided_character_protocol import (
+    Capabilities,
     ErrorCode,
+    GuidedRequest,
+    GuidedSessionStore,
+    Outcome,
     PROTOCOL_VERSION,
     SessionState,
     StructuredError,
+    continue_session,
 )
+from guided_character_domain import route_new_character_intent
+from guided_character_persistence import ReindexCoordinator
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
@@ -389,6 +396,16 @@ class GuidedIndexRetryRequest(BaseModel):
     base_revision: int
 
 
+# The adapter is deliberately capability-admitted and injectable.  Production
+# wiring can provide the typed provider without making the legacy chat route a
+# guided-character authority.
+_GUIDED_SESSIONS = GuidedSessionStore()
+_GUIDED_PROVIDER = None
+_GUIDED_CAPABILITIES: Capabilities | None = None
+_GUIDED_REINDEX = ReindexCoordinator(MUNDOS_DIR, lambda world: _get_graph(world))
+_GUIDED_INDEX_REQUESTS: dict[str, tuple[str, str, str]] = {}
+
+
 def _guided_public_state(state: SessionState) -> dict:
     """Serialize only the frontend-compatible, non-provenance session view."""
     return {
@@ -411,7 +428,12 @@ def _guided_public_state(state: SessionState) -> dict:
             "unresolved_references": state.candidate.unresolved_references,
             "conflicts": state.candidate.conflicts,
         },
-        "proposal": None,
+        "proposal": next((
+            {"key": key, "label": key.replace("_", " ").title(),
+             "value": str(value.get("value", value)) if isinstance(value, dict) else str(value),
+             **({"rationale": str(value["rationale"])} if isinstance(value, dict) and "rationale" in value else {})}
+            for key, value in state.candidate.proposals.items()
+        ), None),
     }
 
 
@@ -447,34 +469,137 @@ def _guided_route_unavailable(request: Request) -> JSONResponse:
     ))
 
 
+def _guided_principal(request: Request) -> tuple[EditPrincipal | None, JSONResponse | None]:
+    principal = _resolve_principal(request)
+    if principal is None:
+        return None, _guided_error_response(StructuredError(
+            ErrorCode.UNAUTHORIZED, "Authentication required.", False,
+        ))
+    return principal, None
+
+
+def _guided_result(response, state: SessionState | None):
+    if response.error:
+        return _guided_error_response(response.error)
+    if state is None:
+        return _guided_error_response(StructuredError(
+            ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    return _guided_public_state(state)
+
+
+async def _guided_continue(
+    mundo: str, session_id: str, revision: int, author_input: str,
+    principal: EditPrincipal,
+):
+    request = GuidedRequest(
+        PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
+        revision, principal.id, author_input,
+    )
+    response, state = await continue_session(
+        _GUIDED_SESSIONS, _GUIDED_PROVIDER, request, _GUIDED_CAPABILITIES,
+    )
+    return _guided_result(response, state)
+
+
 @app.get("/api/{mundo}/guided-character/session/{session_id}")
 def recover_guided_character(mundo: str, session_id: str, request: Request):
-    return _guided_route_unavailable(request)
+    principal, error = _guided_principal(request)
+    if error:
+        return error
+    state = _GUIDED_SESSIONS.recover(session_id, principal.id)
+    if state is None:
+        return _guided_error_response(StructuredError(ErrorCode.UNAUTHORIZED, "The session is unavailable.", False))
+    if state.world != mundo:
+        return _guided_error_response(StructuredError(ErrorCode.UNAUTHORIZED, "The session is unavailable.", False))
+    return _guided_public_state(state)
 
 
 @app.post("/api/{mundo}/guided-character/session")
-def start_guided_character(mundo: str, body: GuidedStartRequest, request: Request):
-    return _guided_route_unavailable(request)
+async def start_guided_character(mundo: str, body: GuidedStartRequest, request: Request):
+    principal, error = _guided_principal(request)
+    if error:
+        return error
+    if _GUIDED_PROVIDER is None or _GUIDED_CAPABILITIES is None or not _GUIDED_CAPABILITIES.admitted():
+        return _guided_error_response(StructuredError(
+            ErrorCode.CAPABILITY_UNAVAILABLE,
+            "Guided character creation is unavailable.", True,
+        ))
+    if _resolve_mundo_dir(mundo) is None:
+        return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "The world is unavailable.", False))
+    intent = route_new_character_intent(body.author_input)
+    if not intent.is_new_character:
+        return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "New-character intent is required.", False))
+    session_id = f"guided-{uuid.uuid4().hex}"
+    _GUIDED_SESSIONS.create(session_id, mundo, principal.id)
+    return await _guided_continue(mundo, session_id, 0, body.author_input, principal)
 
 
 @app.post("/api/{mundo}/guided-character/turn")
-def continue_guided_character(mundo: str, body: GuidedTurnRequest, request: Request):
-    return _guided_route_unavailable(request)
+async def continue_guided_character(mundo: str, body: GuidedTurnRequest, request: Request):
+    principal, error = _guided_principal(request)
+    if error:
+        return error
+    state = _GUIDED_SESSIONS.recover(body.session_id, principal.id)
+    if state is None or state.world != mundo:
+        return _guided_error_response(StructuredError(ErrorCode.UNAUTHORIZED, "The session is unavailable.", False))
+    if state.revision != body.base_revision:
+        return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    return await _guided_continue(mundo, body.session_id, body.base_revision, body.author_input, principal)
 
 
 @app.post("/api/{mundo}/guided-character/proposal/accept")
 def accept_guided_character_proposal(mundo: str, body: GuidedProposalRequest, request: Request):
-    return _guided_route_unavailable(request)
+    principal, error = _guided_principal(request)
+    if error:
+        return error
+    try:
+        state = _GUIDED_SESSIONS.accept_proposal(
+            body.session_id, principal.id, body.base_revision, body.key,
+        )
+    except KeyError:
+        return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "The proposal is unavailable.", False))
+    if state is None:
+        return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    return _guided_public_state(state)
 
 
 @app.post("/api/{mundo}/guided-character/proposal/reject")
 def reject_guided_character_proposal(mundo: str, body: GuidedProposalRequest, request: Request):
-    return _guided_route_unavailable(request)
+    principal, error = _guided_principal(request)
+    if error:
+        return error
+    try:
+        state = _GUIDED_SESSIONS.reject_proposal(
+            body.session_id, principal.id, body.base_revision, body.key,
+        )
+    except KeyError:
+        return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "The proposal is unavailable.", False))
+    if state is None:
+        return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    return _guided_public_state(state)
 
 
 @app.post("/api/{mundo}/guided-character/index/retry")
 def retry_guided_character_index(mundo: str, body: GuidedIndexRetryRequest, request: Request):
-    return _guided_route_unavailable(request)
+    principal, error = _guided_principal(request)
+    if error:
+        return error
+    state = _GUIDED_SESSIONS.recover(body.session_id, principal.id)
+    if state is None or state.world != mundo:
+        return _guided_error_response(StructuredError(ErrorCode.UNAUTHORIZED, "The session is unavailable.", False))
+    if state.revision != body.base_revision:
+        return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    record = _GUIDED_INDEX_REQUESTS.get(body.session_id)
+    if record is None:
+        return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "No persisted character is awaiting indexing.", False))
+    operation_id, target, digest = record
+    result = _GUIDED_REINDEX.reconcile(
+        operation_id=operation_id, mundo=mundo, target=target, content_digest=digest,
+    )
+    payload = _guided_public_state(state)
+    payload.update({"index_status": result.index_status, "retryable": result.retryable, "message": result.message})
+    return payload
 
 
 # ---------------------------------------------------------------------------

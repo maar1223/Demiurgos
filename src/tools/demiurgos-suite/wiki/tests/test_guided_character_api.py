@@ -11,7 +11,9 @@ if str(_WIKI) not in sys.path:
 
 import api_server  # noqa: E402
 from guided_character_protocol import (  # noqa: E402
+    Capabilities,
     CandidateState,
+    GuidedSessionStore,
     ErrorCode,
     MessageType,
     SessionState,
@@ -85,3 +87,42 @@ def test_public_state_envelope_excludes_backend_provenance() -> None:
     }
     assert "provenance" not in payload["candidate"]
     assert payload["messages"] == [{"role": "assistant", "content": "What drives them?"}]
+
+
+def test_authenticated_adapter_commits_delta_and_accepts_one_proposal(monkeypatch) -> None:
+    async def provider(request, _token):
+        return {
+            "protocol_version": request.protocol_version,
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "delta",
+            "delta": {"desire": "freedom"},
+            "provenance": ["provider:run-1"],
+        }
+
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities("guided-character-v1", True, True, True, 8000))
+
+    response = client.post("/api/vibrantes/guided-character/session", json={"author_input": "Create a character"})
+    assert response.status_code == 200
+    session = response.json()
+    assert session["revision"] == 1
+    assert session["candidate"]["proposals"]["desire"]["certainty"] == "proposed"
+    accepted = client.post("/api/vibrantes/guided-character/proposal/accept", json={
+        "session_id": session["session_id"], "base_revision": 1, "key": "desire",
+    })
+    assert accepted.status_code == 200
+    assert accepted.json()["candidate"]["accepted_canon"]["desire"]["certainty"] == "accepted"
+
+
+def test_adapter_rejects_stale_transition_without_mutation(monkeypatch) -> None:
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    state = api_server._GUIDED_SESSIONS.create("guided-1", "vibrantes", "author-1")
+    response = client.post("/api/vibrantes/guided-character/proposal/accept", json={
+        "session_id": state.session_id, "base_revision": 1, "key": "desire",
+    })
+    assert response.status_code == 409
+    assert api_server._GUIDED_SESSIONS.recover("guided-1", "author-1").revision == 0
