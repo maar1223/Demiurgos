@@ -40,6 +40,12 @@ from assistant_activity import (
     HermesRunsActivityAdapter,
     TerminalEvent,
 )
+from guided_character_protocol import (
+    ErrorCode,
+    PROTOCOL_VERSION,
+    SessionState,
+    StructuredError,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
@@ -356,6 +362,119 @@ def _resolve_principal(request=None) -> EditPrincipal | None:
     if session is None:
         return None
     return EditPrincipal(session["principal_id"], label=session["label"])
+
+
+# ---------------------------------------------------------------------------
+# Guided character route contracts (PR5-A)
+# ---------------------------------------------------------------------------
+
+class GuidedStartRequest(BaseModel):
+    author_input: str
+
+
+class GuidedTurnRequest(BaseModel):
+    session_id: str
+    base_revision: int
+    author_input: str
+
+
+class GuidedProposalRequest(BaseModel):
+    session_id: str
+    base_revision: int
+    key: str
+
+
+class GuidedIndexRetryRequest(BaseModel):
+    session_id: str
+    base_revision: int
+
+
+def _guided_public_state(state: SessionState) -> dict:
+    """Serialize only the frontend-compatible, non-provenance session view."""
+    return {
+        "protocol_version": PROTOCOL_VERSION,
+        "session_id": state.session_id,
+        "world": state.world,
+        "phase": state.phase,
+        "revision": state.revision,
+        "pending_question": state.pending_question,
+        "messages": [
+            {
+                "role": "author" if message.message_type.value == "author_input" else "assistant",
+                "content": str(message.content.get("question", message.content.get("text", ""))),
+            }
+            for message in state.messages
+        ],
+        "candidate": {
+            "accepted_canon": state.candidate.accepted_canon,
+            "proposals": state.candidate.proposals,
+            "unresolved_references": state.candidate.unresolved_references,
+            "conflicts": state.candidate.conflicts,
+        },
+        "proposal": None,
+    }
+
+
+_GUIDED_ERROR_STATUS = {
+    ErrorCode.INVALID_INPUT: 422,
+    ErrorCode.UNAUTHORIZED: 401,
+    ErrorCode.REVISION_CONFLICT: 409,
+    ErrorCode.CAPABILITY_UNAVAILABLE: 503,
+    ErrorCode.PROVIDER_UNAVAILABLE: 503,
+    ErrorCode.TIMEOUT: 504,
+    ErrorCode.CANCELLED: 499,
+    ErrorCode.MALFORMED_OUTPUT: 502,
+    ErrorCode.INTERNAL: 500,
+}
+
+
+def _guided_error_response(error: StructuredError) -> JSONResponse:
+    return JSONResponse(
+        status_code=_GUIDED_ERROR_STATUS.get(error.code, 500),
+        content={"detail": error.message, **error.as_dict()},
+    )
+
+
+def _guided_route_unavailable(request: Request) -> JSONResponse:
+    if _resolve_principal(request) is None:
+        return _guided_error_response(StructuredError(
+            ErrorCode.UNAUTHORIZED, "Authentication required.", False,
+        ))
+    return _guided_error_response(StructuredError(
+        ErrorCode.CAPABILITY_UNAVAILABLE,
+        "Guided character creation is unavailable.",
+        True,
+    ))
+
+
+@app.get("/api/{mundo}/guided-character/session/{session_id}")
+def recover_guided_character(mundo: str, session_id: str, request: Request):
+    return _guided_route_unavailable(request)
+
+
+@app.post("/api/{mundo}/guided-character/session")
+def start_guided_character(mundo: str, body: GuidedStartRequest, request: Request):
+    return _guided_route_unavailable(request)
+
+
+@app.post("/api/{mundo}/guided-character/turn")
+def continue_guided_character(mundo: str, body: GuidedTurnRequest, request: Request):
+    return _guided_route_unavailable(request)
+
+
+@app.post("/api/{mundo}/guided-character/proposal/accept")
+def accept_guided_character_proposal(mundo: str, body: GuidedProposalRequest, request: Request):
+    return _guided_route_unavailable(request)
+
+
+@app.post("/api/{mundo}/guided-character/proposal/reject")
+def reject_guided_character_proposal(mundo: str, body: GuidedProposalRequest, request: Request):
+    return _guided_route_unavailable(request)
+
+
+@app.post("/api/{mundo}/guided-character/index/retry")
+def retry_guided_character_index(mundo: str, body: GuidedIndexRetryRequest, request: Request):
+    return _guided_route_unavailable(request)
 
 
 # ---------------------------------------------------------------------------
