@@ -210,6 +210,48 @@ export interface AssistantActivityEvidence {
   status: "confirmed" | "incomplete" | "neutral";
 }
 
+// ---------------------------------------------------------------------------
+// Guided character creation
+// ---------------------------------------------------------------------------
+
+export type GuidedCharacterPhase = "conversation" | "review" | "complete";
+export type GuidedCharacterIndexStatus = "indexed" | "pending" | "failed" | "dirty";
+
+export interface GuidedCharacterMessage {
+  role: "author" | "assistant";
+  content: string;
+}
+
+/** Public candidate data. Provider provenance is intentionally not typed here. */
+export interface GuidedCharacterCandidate {
+  accepted_canon: Record<string, unknown>;
+  proposals: Record<string, unknown>;
+  unresolved_references: unknown[];
+  conflicts: unknown[];
+}
+
+export interface GuidedCharacterProposal {
+  key: string;
+  label: string;
+  value: string;
+  rationale?: string;
+}
+
+export interface GuidedCharacterSession {
+  protocol_version: string;
+  session_id: string;
+  world: string;
+  phase: GuidedCharacterPhase;
+  revision: number;
+  pending_question: string | null;
+  messages: GuidedCharacterMessage[];
+  candidate: GuidedCharacterCandidate;
+  proposal: GuidedCharacterProposal | null;
+  index_status?: GuidedCharacterIndexStatus;
+  retryable?: boolean;
+  message?: string;
+}
+
 /** OKF ficha status — UI maps Borrador → draft, Canon → stable. */
 export type FichaStatus = "draft" | "stable";
 

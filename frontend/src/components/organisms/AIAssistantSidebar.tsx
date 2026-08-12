@@ -14,6 +14,7 @@ import {
 } from "@/api/assistantActivity";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { useWhisper } from "@/hooks/useWhisper";
+import { GuidedCharacterPanel } from "@/components/organisms/GuidedCharacterPanel";
 
 /* ------------------------------------------------------------------ */
 /*  Types & Constants                                                  */
@@ -648,7 +649,6 @@ export function AIAssistantSidebar({
   onProposeEdit,
 }: AIAssistantSidebarProps) {
   const [screen, setScreen] = useState<Screen>("chat");
-
   const sessions = useAIAssistantSessions(mundo, section, filePath);
 
   const whisper = useWhisper({
@@ -663,6 +663,10 @@ export function AIAssistantSidebar({
 
   const switchToChat = useCallback(() => setScreen("chat"), []);
   const switchToHistory = useCallback(() => setScreen("history"), []);
+
+  if (section === "personajes" && !filePath) {
+    return <GuidedCharacterPanel world={mundo} />;
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
