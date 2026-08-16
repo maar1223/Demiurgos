@@ -5,8 +5,8 @@
 | Campo | Valor |
 |---|---|
 | Estado | Constitución de arquitectura (fuente de verdad global) |
-| Versión del documento | 1.1 |
-| Fecha | 2026-08-15 |
+| Versión del documento | 1.2 |
+| Fecha | 2026-08-16 |
 | Autor | Demiurgos (orquestación) |
 | Idioma | Español neutro (prosa técnica) |
 | Alcance | Plataforma completa: frontend, backend, Hermes, almacenamiento, grafo, indexado, workflows, memoria y UI |
@@ -75,6 +75,7 @@ El **Autor** es el usuario de la plataforma: escribe intenciones y respuestas en
 | **Divulgación progresiva** | Primero lo esencial, después lo profundo; una pregunta a la vez; opciones solo cuando ayudan (máx. 5) | `[DECISIÓN CERRADA]` |
 | **Memoria persistente** | Engram es memoria obligatoria; sin ella el flujo de co-creación se detiene y reporta el error | `[DECISIÓN CERRADA]` |
 | **Metodología como contenido** | Las metodologías creativas (qué preguntar, cómo explorar) son contenido editable del Autor (skills), no lógica incrustada en el servidor | `[DECISIÓN CERRADA]` |
+| **Co-creación asistida** | En la creación de skills, Hermes conversa y **redacta la propuesta**; el backend valida/compila y protege el kernel; el Autor aprueba la publicación. Hermes no escribe ni decide canon | `[DECISIÓN CERRADA]` |
 
 ---
 
@@ -145,8 +146,8 @@ El **Autor** es el usuario de la plataforma: escribe intenciones y respuestas en
 |---|---|---|---|
 | **Autor** | Expresar intención, responder, aprobar/rechazar cada propuesta y el diff final | Única fuente de hechos canónicos; aprueba cada escritura | `[ACTUAL]` |
 | **Frontend** | Renderizar chat/fases/propuestas/diff/biblioteca; enviar turnos; recuperar sesión | Ninguna: solo emite acciones mapeadas a API; `localStorage` es pista de recuperación, el backend es autoritativo | `[ACTUAL]` |
-| **Backend (policy/sesión)** | Grafo (search/read/links), sesión/revisión, candidate state, propuesta/diff, autorización, persistencia gated, indexado, gate semántico, fail-closed | Único dueño de la escritura gated; ningún otro actor delega esta autoridad | `[ACTUAL]` |
-| **Hermes (proveedor)** | Voz conversacional, interpretación semántica, propuestas/deltas en envelope JSON estricto | **NUNCA** escribe, no otorga permisos, no toca grafo/filesystem como autoridad | `[ACTUAL]` |
+| **Backend (policy/sesión)** | Grafo (search/read/links), sesión/revisión, candidate state, propuesta/diff, autorización, persistencia gated, indexado, gate semántico, fail-closed | Único dueño de la escritura gated; ningún otro actor delega esta autoridad; **no redacta síntesis creativas ni decide relaciones** (las propone Hermes; las aprueba el Autor) | `[ACTUAL]` |
+| **Hermes (proveedor)** | Voz conversacional, **determinación de la intención semántica**, propuestas/deltas y redacción de la propuesta de co-creación en envelope JSON estricto | **NUNCA** escribe, no otorga permisos, no toca grafo/filesystem como autoridad, no decide canon | `[ACTUAL]` |
 | **Grafo/índice** | Resolver entidades, enlaces, evidencia; reindexación | Solo índice; nunca autor de canon | `[ACTUAL]` |
 | **Almacenamiento** | Archivos del mundo + papelera + snapshots de historial | Solo vía rutas gated del backend | `[ACTUAL]` |
 | **Skills** | Metodologías de creación (contenido editable del Autor) | Ninguna por sí mismas: ejecutan dentro de rieles del kernel | `[OBJETIVO]` |
@@ -170,6 +171,7 @@ El **Autor** es el usuario de la plataforma: escribe intenciones y respuestas en
 | **Aceptado / propuesto / desconocido / conflictuado** | Estados de certeza de un dato de candidato: `accepted_canon` (solo transición del Autor), `proposals`, `unknowns/rumors`, `conflicts`, `unresolved_references` | `[ACTUAL]` |
 | **Sesión** | Unidad de interacción guiada, ligada a `authorization_binding` y con revisión optimista (`revision`) | `[ACTUAL]` |
 | **Skill** | Metodología de creación versionada que gobierna un flujo guiado; contenido editable del Autor | `[ACTUAL — artefacto estático] / [OBJETIVO — biblioteca]` |
+| **Skill Madre** | Capacidad protegida **instalada obligatoriamente con Demiurgos**: no editable ni eliminable desde el Taller de Herramientas, se actualiza solo mediante **releases oficiales** y sirve para **co-crear nuevas skills** | `[DECISIÓN CERRADA — G13]` |
 | **Versión** | Snapshot inmutable de una skill publicada | `[OBJETIVO]` |
 | **Propuesta (proposal)** | Dato o ficha propuesta, diskless, hasta aprobación explícita | `[ACTUAL]` |
 | **Diff** | Comparación entre contenido vigente y propuesto; ligado a digest SHA-256 y token de un solo uso | `[ACTUAL]` |
@@ -224,6 +226,8 @@ Etiquetas de estado: `[ACTUAL]` = verificado hoy; `[OBJETIVO]` = acordado, pendi
 - **NO otorga permisos**: cualquier clave de autoridad (`target`, `digest`, `revision`, `authority`, `reference`, `acceptance`, `accepted_canon`, `authorization`) dentro de un envelope invalida el envelope completo (fail-closed).
 - **NO puede saltarse las compuertas del servidor**: la persistencia, el diff y la autorización se resuelven íntegramente en rutas backend que Hermes no selecciona ni controla.
 - **Sí es el intérprete semántico y la voz**: la intención natural se convierte en estado solo a través del prompt del gate semántico; la clasificación léxica es secundaria y solo se consulta tras un envelope semántico válido.
+- **`[DECISIÓN CERRADA]` Intención semántica**: el Autor se expresa libremente y **Hermes determina la intención semántica**. El backend valida el envelope, resuelve referencias y ensambla contexto verificable, pero **no redacta síntesis narrativas ni decide/inventa relaciones**.
+- **`[DECISIÓN CERRADA]` Co-creación de skills**: Hermes conversa y redacta la propuesta; Demiurgos valida/compila y protege el kernel; el Autor aprueba la publicación. Hermes no escribe ni decide canon (ver G13).
 
 ---
 
@@ -250,6 +254,7 @@ Etiquetas de estado: `[ACTUAL]` = verificado hoy; `[OBJETIVO]` = acordado, pendi
 - Los **proveedores de IA son no confiables y acotados**: envelopes estrictamente validados, contexto server-verificado, fail-closed sin fallback léxico autónomo. `[DECISIÓN CERRADA]`
 - La **metodología creativa es contenido**, no código: los rieles de seguridad (kernel) son del servidor; la guía creativa vive en skills editables. `[DECISIÓN CERRADA]`
 - **Progressive disclosure** en toda superficie: esencial primero, detalle después. `[DECISIÓN CERRADA]`
+- La **activación de skills no modifica `AGENTS.md`**; el orquestador narrativo permanece como artefacto estático, nunca como contrato reescrito dinámicamente. `[DECISIÓN CERRADA]`
 - Copia visible **localizada** (`DEMIURGOS_LANGUAGE`) y que **nunca exponga términos internos** de proveedor. `[ACTUAL]`
 
 ### 7.2 Testing
@@ -339,6 +344,7 @@ Estas decisiones pertenecen a la **plataforma completa** (no a la iniciativa de 
 | **G10** | Alcance del MVP | **[DECISIÓN CERRADA]** El MVP entrega solo el **Core**: Taller de Herramientas + Taller de Mundo. Los 6 módulos de pago (Visuales, Planificación, Rol, Escritor, GameDesigner, Publicación) van después |
 | **G11** | Onboarding y respaldo | **[DECISIÓN CERRADA]** El onboarding configura idioma, modelos LLM e importar/crear mundo; Google+rclone es **no bloqueante**; rclone crea el **árbol espejo por taller**; hay **sync 30 s tras editar** y **restauración Google→Demiurgos** |
 | **G12** | Exportar vs publicar | **[DECISIÓN CERRADA]** "Exportar ficha a PDF" permanece en el **Core** (datos/backup). El **Taller de Publicación** completo es módulo de pago con **perfiles por módulo**. Se distingue **exportar** (datos/backup) de **publicar** (artefactos) |
+| **G13** | Skill Madre (capacidad protegida) | **[DECISIÓN CERRADA]** Capacidad protegida **instalada obligatoriamente con Demiurgos**: no editable ni eliminable desde el Taller de Herramientas, se actualiza solo mediante **releases oficiales** y sirve para **co-crear nuevas skills**. Contrato en 10.5; el ciclo de vida de la biblioteca gestionada por el Autor vive en la iniciativa |
 
 ### 10.1 Contrato de la decisión G2 `[DECISIÓN CERRADA]`
 
@@ -381,6 +387,14 @@ La autenticación no debe depender de que el Autor recuerde abrir manualmente el
 - **Cobros agnósticos de proveedor**: los cobros pueden servirse desde cualquier proveedor (p. ej. Stripe o Binance, ambos futuros) sin acoplar la arquitectura a uno; los **descuentos se calculan en Demiurgos**, no en el proveedor.
 - **Skool no es autoridad de acceso, identidad ni escritura**: solo canal de comunidad, descuentos por antigüedad y (en el futuro) entitlement de actualización; nunca concede permisos locales.
 
+### 10.5 Contrato de la decisión G13 — Skill Madre `[DECISIÓN CERRADA]`
+
+- **Instalación obligatoria**: la Skill Madre se instala junto con Demiurgos como parte del Core; no requiere activación del Autor.
+- **Protección**: no es editable ni eliminable desde el Taller de Herramientas; no pertenece a la biblioteca gestionada por el Autor ni puede ser reemplazada por un borrador.
+- **Actualización solo por releases**: sus cambios llegan exclusivamente mediante **releases oficiales** de la plataforma; no se actualiza vía importación de paquetes (ver iniciativa, 16.b).
+- **Propósito**: co-crear nuevas skills junto al Autor; el flujo de co-creación y su UX viven en la iniciativa (sección 9).
+- **Co-creación**: Hermes conversa y redacta la propuesta; el backend valida/compila y protege el kernel; el Autor aprueba la publicación. Hermes no escribe ni decide canon (sección 5).
+
 ---
 
 ## 11. Definition of ready para SDD/tools futuros
@@ -401,7 +415,7 @@ Un SDD o herramienta de esta plataforma **solo** puede comenzar cuando se cumpla
 
 | Documento | Rol | Relación |
 |---|---|---|
-| `docs/architecture/skill-library-and-guided-character-creation.md` | Contrato de la iniciativa **biblioteca de skills + creación guiada de personajes** | Subordinado a este documento; define su alcance, ciclo de vida, flujo guiado, decisiones 16.x |
+| `docs/architecture/skill-library-and-guided-character-creation.md` | Contrato de la iniciativa **biblioteca de skills + creación guiada de personajes** | Subordinado a este documento; define su alcance, ciclo de vida, flujo guiado, decisiones 16.x y aplica la gobernanza de la Skill Madre (G13) sin duplicarla |
 | `AGENTS.md` | Orquestador narrativo (rol dentro de la plataforma) | Define el subsistema de fases narrativas y sus límites de escritura |
 | `README.md` | Visión y estructura del proyecto | Fuente de referencia, no reemplaza estos contratos |
 | `Agente_Maestro.md` | Reglas maestras de la IA en co-creación | Complementa los principios del canon |

@@ -5,8 +5,8 @@
 | Campo | Valor |
 |---|---|
 | Estado | Contrato de iniciativa (revisado — decisiones sincronizadas) |
-| Versión del documento | 2.1 |
-| Fecha | 2026-08-15 |
+| Versión del documento | 2.2 |
+| Fecha | 2026-08-16 |
 | Autor | Demiurgos (orquestación) |
 | Idioma | Español neutro (prosa técnica) |
 | Alcance | INICIATIVA (subsistema): **Taller de Herramientas** (metodologías/skills, plantillas y catálogos), compilador/validador, ciclo de vida, import/export/cuarentena/Skool y flujo guiado de personaje nuevo. El resto de la plataforma está cubierto por la constitución global |
@@ -44,6 +44,8 @@
 3. Hermes es el **proveedor conversacional**: voz, interpretación semántica y propuestas creativas. Hermes **nunca** escribe, no otorga permisos y no puede saltarse las compuertas del servidor. `[DECISIÓN CERRADA]`
 4. La creación guiada usa el principio **40/60** (sección 11): 40% rieles del sistema, 60% construcción de mundo adaptativa. `[DECISIÓN CERRADA]`
 
+**Referencias a decisiones globales (sin duplicarlas):** la **co-creación** (Hermes conversa/redacta, el backend valida/compila/protege, el Autor aprueba) y la **intención semántica** (Hermes la determina; el backend valida el envelope, resuelve referencias y ensambla contexto, pero no redacta síntesis narrativas ni decide relaciones) son decisiones globales de la constitución (secciones 2.3 y 5). La **Skill Madre** es una capacidad protegida global (constitución, G13 y 10.5) que se usa para co-crear nuevas skills; este documento regula solo la **biblioteca gestionada por el Autor** y la referencia.
+
 **[ACTUAL]** Hoy el repositorio tiene un protocolo guiado funcional (`guided-character-v1`) que usa prompts de proveedor **hardcodeados** en `guided_character_provider.py` y `semantic_intent.py`, y skills como archivos Markdown estáticos consumidos por Hermes como herramientas. **El runtime actual NO carga dinámicamente las skills**; el puente skill→runtime (compilador/adaptador) es exactamente lo que falta y es el objeto de la sección 8.
 
 **[OBJETIVO]** El estado objetivo es: el Autor publica/activa/edita skills; el compilador valida y compila cada skill a un **contrato de runtime**; el runtime ejecuta la skill activa dentro de las invariantes del system kernel. Un SDD futuro debe construir la biblioteca y el compilador **sin tocar** las invariantes de seguridad ya implementadas.
@@ -76,6 +78,8 @@
 
 **[DECISIÓN CERRADA]** La interfaz presenta este subsistema como **Taller de Herramientas**, la primera sección del Navbar y la base instrumental de los talleres creativos. El **Taller de Herramientas forma parte del Core gratuito del MVP** junto al Taller de Mundo (constitución, G10); en el Navbar solo se muestran los talleres disponibles y los módulos de pago futuros aparecen como teaser "Próximamente". Dentro contiene las **Metodologías**: métodos que permiten al Autor **crear, editar, publicar (versiones inmutables), activar, importar/exportar, compartir y eliminar** formas de trabajo para dar forma a mundos existentes; “Skill” permanece como nombre técnico del paquete.
 
+**`[DECISIÓN CERRADA]`** La **Skill Madre** (capacidad protegida instalada con Demiurgos, constitución G13) **no pertenece a la biblioteca gestionada por el Autor**: no es editable ni eliminable desde este Taller y se actualiza solo mediante **releases oficiales**; se referencia aquí únicamente para delimitar el alcance (ver 9, co-creación).
+
 ### 3.2 Kernel del sistema vs metodología de usuario — frontera exacta
 
 | Capa | Propiedad | Qué contiene | Quién lo edita | Efecto en runtime |
@@ -85,6 +89,13 @@
 | **Metodología de usuario** | Autor | Guía creativa, estrategia de preguntas, exploración, tono, anclas, política de completitud | El Autor | Determina la guía creativa **dentro** de los rieles del kernel |
 
 **[DECISIÓN CERRADA]** La frontera exacta es: **el usuario edita la metodología; el kernel decide la seguridad.** Una skill jamás puede alterar autorización, persistencia, gates, digests, tokens, indexado, ni la resolución de grafo. Cualquier declaración de la skill que pretenda conceder permisos es ignorada (las capacidades son descriptivas, nunca autorizantes).
+
+### 3.3 Árbol de skills y scoping por sesión
+
+- **`[DECISIÓN CERRADA]`** Las skills se organizan por **Taller/capacidad** (árbol), no como una lista plana global.
+- **`[OBJETIVO]`** Hermes puede estar presente en cada Taller como asistente de esa capacidad (posibilidad/objetivo; no hay cierre explícito).
+- **`[DECISIÓN CERRADA]`** Cada sesión recibe **solo el alcance** de su Taller: la Skill activa, su versión, el mundo y el contexto autorizado. **Nunca recibe el árbol completo** a la vez.
+- **`[DECISIÓN CERRADA]`** Los cruces entre Talleres requieren un **handoff explícito**; no se asume contexto de otro Taller.
 
 ---
 
@@ -120,7 +131,7 @@
 | **Autor/Usuario** | Escribir intención en lenguaje natural; responder preguntas; aceptar/rechazar cada propuesta; aprobar el diff final; gestionar skills (crear/editar/publicar/activar/importar/exportar/eliminar) | Aprobar por otro medio que no sea la UI; saltarse confirmaciones | El Autor es la única fuente de hechos canónicos (certeza/provenance) |
 | **Frontend UI** | Mostrar chat, fases, preguntas, propuestas, diff, acciones de revisión; enviar turnos; recuperar sesión; gestión de biblioteca/editor/versiones/papelera | Renderizar provenance interna ni rutas del grafo; inventar acciones no mapeadas a API | `[ACTUAL]` el panel muestra fases `confirmation/conversation/review/complete`; `localStorage` es solo pista de recuperación, el backend es autoritativo |
 | **Backend Demiurgos (frontera de policy/sesión)** | Resolución de grafo (search→read→links), sesión/revisión, candidate state, propuesta/diff, autorización, persistencia, indexado, gate semántico, envelope de decisión, fail-closed | Delegar autoridad de escritura a Hermes o a la skill | Es el **único** dueño de estas capacidades (sección 5.2) |
-| **Hermes (proveedor conversacional)** | Voz conversacional; interpretación semántica (`allow/clarify/require_confirmation/proposal_ready/blocked`); proponer deltas y preguntas en envelope JSON estricto | Escribir archivos; tocar el grafo como autoridad; otorgar permisos; reclamar aceptación del Autor; exponer provenance interna/rutas; inventar hechos canónicos; consultar grafo, serializar ficha, calcular digest, emitir tokens, persistir Engram o indexar | Tratado como proveedor no confiable y acotado |
+| **Hermes (proveedor conversacional)** | Voz conversacional; determinación de la intención semántica (`allow/clarify/require_confirmation/proposal_ready/blocked`); proponer deltas, preguntas y redactar la propuesta de co-creación en envelope JSON estricto | Escribir archivos; tocar el grafo como autoridad; otorgar permisos; reclamar aceptación del Autor; exponer provenance interna/rutas; inventar hechos canónicos; consultar grafo, serializar ficha, calcular digest, emitir tokens, persistir Engram o indexar | Tratado como proveedor no confiable y acotado; no escribe ni decide canon |
 | **Importador/compilador/validador de skills** | Validar manifest; compilar Markdown fuente → contrato runtime; chequear compatibilidad/dependencias; aislar importaciones en cuarentena | Ejecutar efectos colaterales; activar sin validación; aceptar paquetes malformados | `[ACTUAL]` — `methodology_compiler.py`/`methodology_library.py`/`methodology_trust.py` implementados (sección 8) |
 | **Comunidad/API Skool** | Compartir paquetes `.zip` entre usuarios y, en el futuro, autorizar el entitlement para descargar releases de software | Distribuir software directamente; ejercer autoridad de activación; inyectar contenido no validado | `[OBJETIVO]` — entitlement de actualizaciones según 16.g |
 
@@ -228,9 +239,9 @@ borrador <── editar <── desactivar ◄── pin de sesión (snapshot)  
 | `create` | Solo borradores nuevos. `id` único (colisión de slug falla). |
 | `draft → validate` | El compilador valida manifest + Markdown fuente; si falla, vuelve a borrador con motivos. |
 | `validate → publish` | Produce la **versión publicada inmutable**; nunca más editable. Incrementa la versión y registra fecha/hora, usuario y cambios aprobados. |
-| `publish → activate` | La versión publicada se activa para un mundo concreto y gobierna sus nuevos flujos guiados. |
-| `activate → session pin` | Al iniciar una sesión guiada se captura el **snapshot de sesión** de la versión activa + rieles del kernel. La sesión **fija metodología+versión**: aplicar un cambio en la metodología o la versión exige iniciar una nueva sesión; las sesiones en vuelo siguen con su snapshot original. |
-| `deactivate` | La versión deja de gobernar nuevos flujos; las sesiones en vuelo siguen con su snapshot. |
+| `publish → activate` | La versión publicada se activa para un mundo concreto y gobierna sus nuevos flujos guiados. El backend selecciona la **Skill activa por mundo** tras el handoff semántico y **antes de la primera llamada guiada** `[DECISIÓN CERRADA]`. |
+| `activate → session pin` | Al iniciar una sesión guiada se captura el **snapshot de sesión** de la versión activa + rieles del kernel: `workshop + world + skill_id + skill_version + contrato compilado` `[DECISIÓN CERRADA]`. La sesión **fija metodología+versión**: aplicar un cambio en la metodología o la versión exige iniciar una nueva sesión; las sesiones en vuelo siguen con su snapshot original. |
+| `deactivate` | La versión deja de gobernar **nuevas** sesiones; conserva la **versión e historial**, pero impide nuevas sesiones. Las sesiones en vuelo conservan su snapshot y pueden terminar `[DECISIÓN CERRADA]`. |
 | `rollback` | Revertir la versión activa a una versión publicada anterior (nunca a un borrador). |
 | `soft delete / trash` | Mover a papelera; reversible; TTL 30 días `[PROPUESTO — siguiendo el precedente de papelera del wiki]`. |
 | `permanent delete` | Irreversible; bloqueada mientras existan sesiones/snapshots activos que la referencien. |
@@ -288,6 +299,7 @@ Un componente **importador/compilador/validador** que: (1) valide manifest, (2) 
 |---|---|---|
 | Biblioteca | `[OBJETIVO]` | Lista de skills (nombre, versión, estado, fuente), filtros, activación visible |
 | Editor de skill | `[OBJETIVO]` | Edición de borradores (manifest + Markdown fuente) con vista previa del contrato compilado |
+| Creación asistida (co-creación) | `[DECISIÓN CERRADA]` | La creación de una skill es un flujo **asistido por Hermes** (chat de co-creación), **no** un formulario técnico de Skill ID/Markdown como flujo principal; con revisión del borrador, validación visible y aprobación explícita del Autor |
 | Importar/Exportar | `[OBJETIVO]` | Import → cuarentena → revisión; export de versiones publicadas |
 | Activar/Desactivar | `[OBJETIVO]` | Selección de versión activa (ámbito según 16.b) |
 | Versiones/Diff/Rollback | `[OBJETIVO]` | Ver historial de versiones publicadas, diff entre ellas, rollback |
@@ -309,6 +321,11 @@ Un componente **importador/compilador/validador** que: (1) valide manifest, (2) 
 - Versiones: tabla de versiones publicadas; diff seleccionable; botón rollback.
 - Papelera: lista de skills eliminadas; restaurar o borrado permanente.
 
+**Creación asistida por Hermes (co-creación)** `[DECISIÓN CERRADA]`:
+1. El Autor describe la skill en lenguaje natural; Hermes conversa y **redacta la propuesta** de borrador (manifest + contenido).
+2. El backend valida/compila el borrador y presenta la **validación visible** (manifest, contrato compilado, errores).
+3. El Autor **revisa el borrador** y ajusta o aprueba; solo la **aprobación explícita** publica la versión. El formulario técnico de Skill ID/Markdown queda como herramienta secundaria, nunca como flujo principal.
+
 **Import/export/Skool** `[OBJETIVO]`:
 - Import: subir paquete → aparece en cuarentena con aviso → revisar/validar → publicar.
 - Export: elegir versión → generar paquete.
@@ -326,7 +343,7 @@ El flujo completo implementa el principio **40/60** (sección 11). Los números 
 |---|---|---|---|---|
 | 0 | **Intento/objetivo** | Backend (gate semántico) | kernel | El Autor expresa la intención. `SemanticIntentProvider` decide `allow/clarify/require_confirmation/proposal_ready/blocked`. Solo tras un envelope válido el routing léxico deriva la política. `[ACTUAL]` |
 | 1 | **Ambigüedad de ficha activa** | Backend | kernel | Si hay una ficha activa como contexto, el sistema confirma si el destino es el personaje NUEVO o una edición. La ficha activa es **contexto, no objetivo** (sección 10.3). `[ACTUAL — contrato del skill]` |
-| 2 | **Confirmación de referencia nombrada** | Backend | kernel | Para referencias de relación (p. ej. "la esposa de Rhyz"), se resuelve la referencia UNA vez por el grafo (search→read→links); `requires_confirmation` inicia fase `confirmation` con pregunta explícita de confirmación antes de preguntas guiadas. `[ACTUAL — resolve_named_reference; defecto conocido: "esposa" en la primera sesión]` |
+| 2 | **Confirmación de referencia nombrada** | Backend | kernel | Para referencias de relación (p. ej. "la esposa de Rhyz"), se resuelve la referencia UNA vez por el grafo (search→read→links); `requires_confirmation` inicia fase `confirmation` con pregunta explícita de confirmación antes de preguntas guiadas. La semántica de la relación (semilla del Autor vs interpretación de Hermes) queda definida en 10.6 `[DECISIÓN CERRADA]`. `[ACTUAL — resolve_named_reference; defecto conocido: "esposa" en la primera sesión]` |
 | 3 | **Confirmación de personaje relacionado** | Backend | kernel | El Autor confirma (sí/no/clarifica) el inicio de la propuesta de un personaje nuevo relacionado. Negar → fase `complete` sin escrituras (abandono/cambio de opinión). `[ACTUAL]` |
 | 4 | **Semilla** | Backend + Hermes | 60% | Se conserva la semilla (deseo/tensión/mundo expresados) como `proposals`, nunca como canon. |
 | 5 | **Rol y profundidad** | Hermes (guiado por kernel) | 60% | Rol narrativo y profundidad deseados, conversacional, **sin rangos fijos** (el legacy 7/12/18 queda fuera). `[ACTUAL — contrato del skill]` |
@@ -371,6 +388,13 @@ Los demás ejemplos (detalle que profundiza el mundo, hecho vs hipótesis, refer
 - Todo dato del candidato se etiqueta: `accepted` (solo transición del Autor), `proposed`, `unknown`, `conflicted`. `[ACTUAL]`
 - La provenance registra el origen (`graph:search:...`, `graph:read:...`, `hermes:run:...`, `rejected:{key}`) y **nunca se expone al Autor ni a Hermes como clave de autoridad**. `[ACTUAL]`
 - Las referencias no resueltas/ambiguas y los conflictos se **retienen**; no se resuelven en silencio ni se crean archivos. `[ACTUAL]`
+
+### 10.6 Relaciones propuestas vs semilla del Autor `[DECISIÓN CERRADA]`
+
+- Una relación (p. ej. `esposa de Toryn`) o un atributo relacional (p. ej. `fallecida`) es **semilla del Autor** o **interpretación propuesta por Hermes** durante la exploración.
+- Demiurgos solo **resuelve/verifica la referencia** (p. ej. Toryn) por el grafo; **no decide ni confirma la relación**.
+- La relación permanece en la partición **`proposals`** (o como aclaración pendiente) hasta la **aprobación explícita del Autor**; nunca se promueve a canon automáticamente.
+- Crear un personaje **relacionado** es una **rama/contexto de la Skill general de creación de personajes**, no una Skill separada (ver árbol/scoping, 3.3).
 
 ---
 
@@ -469,6 +493,10 @@ Los estados `require_confirmation`/`proposal_ready` son reales **solo** cuando l
 
 - Toda versión publicada es **inmutable**; las sesiones referencian versiones publicadas, nunca borradores. `[OBJETIVO]`
 - Cada sesión guiada captura un **snapshot de sesión** (versión de skill + rieles del kernel) al iniciar; republicaciones posteriores no alteran sesiones en vuelo. La sesión **fija metodología+versión** y **aplicar un cambio exige iniciar una nueva sesión**. `[DECISIÓN CERRADA]`
+- **`[DECISIÓN CERRADA]`** Activar una **versión nueva** de la Skill requiere una **nueva conversación** en el Asistente IA del Taller de Mundo; las sesiones anteriores **no** la utilizan.
+- **`[DECISIÓN CERRADA]`** Desactivar una Skill conserva la **versión e historial**, pero impide **nuevas sesiones**; las sesiones existentes conservan su snapshot y pueden terminar.
+- **`[DECISIÓN CERRADA]`** La activación **no modifica `AGENTS.md`**; el backend nunca lo reescribe dinámicamente (ver constitución, 7.1).
+- **`[DECISIÓN CERRADA]`** El contrato compilado deriva de **fuente + manifest** y se **proyecta de forma compacta por turno** a Hermes; no se reenvía Markdown crudo ni se confía en la memoria implícita del proveedor.
 - Toda mutación de sesión exige `authorization_binding` correcto **y** revisión vigente. `[ACTUAL — GuidedSessionStore]`
 - El estado de sesión autoritativo vive en el backend; `localStorage` del frontend es solo una pista de recuperación. `[ACTUAL]`
 - Un mismo `world` no comparte sesiones entre principales distintos. `[ACTUAL — principal.id binding]`
@@ -521,8 +549,9 @@ Los estados `require_confirmation`/`proposal_ready` son reales **solo** cuando l
 - **C7.** La UX es un chat normal con handoff interno; no un wizard de campos.
 - **C8.** El gate semántico (Hermes) es la frontera de intención; sin fallback léxico autónomo como autoridad.
 - **C9.** La constitución global prevalece sobre este documento; este documento no duplica la definición global (sección 0).
+- **C10.** La co-creación, la intención semántica y la **Skill Madre** son decisiones globales de la constitución (secciones 2.3, 5, G13/10.5); esta iniciativa las referencia sin duplicarlas y regula solo la **biblioteca gestionada por el Autor**.
 
-### 16.2 Decisiones 16.a–16.g (todas cerradas; solo quedan residuos propuestos o fuera de iniciativa)
+### 16.2 Decisiones 16.a–16.l (todas cerradas; solo quedan residuos propuestos o fuera de iniciativa)
 
 | ID | Decisión | Opciones/Propuesta | Depende de |
 |---|---|---|---|
@@ -533,12 +562,17 @@ Los estados `require_confirmation`/`proposal_ready` son reales **solo** cuando l
 | **16.e** | Ediciones y versionado | **[DECISIÓN CERRADA]** Toda edición publicada crea una nueva versión inmutable (V1, V2…), con fecha/hora y usuario que la editó; las sesiones fijan su snapshot | Ciclo de vida |
 | **16.f** | Política de anclas mínimas | **[DECISIÓN CERRADA]** La completitud se define por tipo de entidad/entrada; cada tipo tendrá un contrato de mínimos extensible, no una lista universal. En OKF v1 se implementa **personaje primero** (constitución, G1) | Manifest/seguridad |
 | **16.g** | Skool como canal de comunidad y descuentos | **[DECISIÓN CERRADA en producto]** Los usuarios comparten skills `.zip` en la comunidad; Skool no distribuye software ni concede entitlements de módulos. Los módulos se compran una sola vez; inicialmente el Autor verifica manualmente por chat privado la membresía/antigüedad y envía el enlace Stripe con el descuento correspondiente. La comunidad recibe descuentos escalonados por antigüedad (más de 3, 6 y 9 meses) y el descuento máximo por membresía anual; una futura automatización puede reemplazar el paso manual. Quedan fuera de esta iniciativa los porcentajes exactos, la política de antigüedad acumulada/continua y las actualizaciones posteriores | Plataforma/Skool |
+| **16.h** | Relaciones propuestas en creación guiada | **[DECISIÓN CERRADA]** `esposa de Toryn` / `fallecida` son **semilla del Autor** o **interpretación propuesta por Hermes**; Demiurgos solo resuelve/verifica la referencia y mantiene la relación como **propuesta** hasta aprobación; crear personajes relacionados es rama/contexto de la skill general, no una skill separada (sección 10.6) | Flujo guiado |
+| **16.i** | Árbol y scoping por Taller | **[DECISIÓN CERRADA]** Skills organizadas por Taller/capacidad; cada sesión recibe solo su alcance (Taller, skill activa, versión, mundo, contexto autorizado), nunca el árbol completo; cruces entre Talleres requieren **handoff explícito**. Hermes presente en cada Taller queda `[OBJETIVO]` (sección 3.3) | Biblioteca |
+| **16.j** | Activación de la skill activa | **[DECISIÓN CERRADA]** El backend selecciona la skill activa por mundo tras el handoff semántico y **antes de la primera llamada guiada**; snapshot `workshop + world + skill_id + skill_version + contrato compilado`; **no modifica `AGENTS.md`**; el contrato compilado se proyecta **compacto por turno** (secciones 7.2, 14.1, 16.3) | Ciclo de vida/runtime |
+| **16.k** | Versiones y desactivación | **[DECISIÓN CERRADA]** Publicada inmutable; cambios crean nueva versión. Activar una versión nueva exige **nueva conversación** en el Asistente IA del Taller de Mundo. Desactivar conserva versión/historial pero impide **nuevas sesiones**; las sesiones existentes conservan su snapshot y pueden terminar (sección 14.1) | Ciclo de vida |
+| **16.l** | UX del Taller de Herramientas | **[DECISIÓN CERRADA]** La creación de skills es **asistida por Hermes** (co-creación), no un formulario técnico de Skill ID/Markdown como flujo principal; con revisión del borrador, validación visible y aprobación explícita del Autor (sección 9) | Frontend |
 
 ### 16.3 Decisión de diseño sobre el snapshot de sesión
 
-**[DECISIÓN CERRADA]** La sesión guiada **fija metodología+versión** al iniciarse y **aplicar un cambio exige iniciar una nueva sesión**; republicaciones posteriores no alteran sesiones en vuelo (secciones 7.2 y 14.1).
+**[DECISIÓN CERRADA]** La sesión guiada **fija metodología+versión** al iniciarse y **aplicar un cambio exige iniciar una nueva sesión**; republicaciones posteriores no alteran sesiones en vuelo (secciones 7.2 y 14.1). El snapshot de activación incluye **Taller (`workshop`) + mundo (`world`) + `skill_id` + `skill_version` + contrato compilado**, y el backend lo crea tras el handoff semántico y **antes de la primera llamada guiada** (decisión 16.j).
 
-`[PROPUESTO]` Los campos internos del snapshot se registran como propuesta técnica para que un SDD futuro no los invente distinto: `{skill_id, skill_version, contract_compiled_digest, kernel_policy_digest}`. El detalle de esos campos **no es contrato** hasta la aprobación del SDD.
+`[PROPUESTO]` Los campos internos del snapshot se registran como propuesta técnica para que un SDD futuro no los invente distinto: `{workshop, world, skill_id, skill_version, contract_compiled_digest, kernel_policy_digest}`. El detalle de esos campos **no es contrato** hasta la aprobación del SDD.
 
 ---
 
