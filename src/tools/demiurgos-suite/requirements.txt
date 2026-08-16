@@ -1,4 +1,6 @@
 mcp>=1.0.0
+# Deterministic BM25 search used by the entity graph index
+rank_bm25>=0.2.2,<0.3.0
 # File watching for live index updates
 watchdog>=4.0.0
 # Image processing for media uploads (JPEG compression + thumbnails)

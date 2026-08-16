@@ -36,23 +36,54 @@ from PIL import Image
 
 from assistant_activity import (
     ActivityTranslator,
+    AnswerEvent,
     HermesActivityRequest,
     HermesRunsActivityAdapter,
+    SemanticDecisionEvent,
     TerminalEvent,
 )
 from guided_character_protocol import (
     Capabilities,
     ErrorCode,
     GuidedRequest,
+    GuidedResponse,
     GuidedSessionStore,
+    MethodologySnapshot,
     Outcome,
     PROTOCOL_VERSION,
     SessionState,
     StructuredError,
     continue_session,
 )
-from guided_character_domain import route_new_character_intent
+from guided_character_domain import (
+    FichaValidationError,
+    extract_related_goal,
+    named_reference_name,
+    resolve_named_reference,
+    route_new_character_intent,
+    confirmation_decision,
+    serialize_ficha,
+)
 from guided_character_persistence import ReindexCoordinator
+from guided_character_provider import HermesGuidedProvider, guided_capabilities
+from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
+from demiurgos_language import resolve_ui_language
+from methodology_library import (
+    AlreadyPublishedError,
+    MethodologyLibrary,
+    NotPublishedError,
+    ValidationError,
+)
+from methodology_trust import QuarantineStore
+from semantic_intent import (
+    CONTINUATION_STATES,
+    SELF_CONTAINED_SEMANTIC_STATES,
+    SemanticContext,
+    SemanticIntentProvider,
+    SemanticResult,
+    action_for_state,
+    unavailable_copy,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
@@ -138,6 +169,16 @@ def get_worlds():
 @app.get("/health")
 def health():
     return {"status": "ok", "worlds_available": bool(_list_worlds())}
+
+
+@app.get("/api/config")
+def get_app_config():
+    """Non-sensitive global runtime metadata for the frontend.
+
+    Exposes only the normalized UI language (``DEMIURGOS_LANGUAGE`` from the
+    project ``.env`` or the environment); never secrets or paths.
+    """
+    return {"language": _configured_language()}
 
 
 # ---------------------------------------------------------------------------
@@ -396,14 +437,122 @@ class GuidedIndexRetryRequest(BaseModel):
     base_revision: int
 
 
-# The adapter is deliberately capability-admitted and injectable.  Production
-# wiring can provide the typed provider without making the legacy chat route a
-# guided-character authority.
-_GUIDED_SESSIONS = GuidedSessionStore()
+class GuidedSerializeRequest(BaseModel):
+    session_id: str
+    base_revision: int
+    slug: str | None = None
+    title: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Methodology library contracts (Taller de Herramientas)
+# ---------------------------------------------------------------------------
+
+class MethodologyDraftRequest(BaseModel):
+    skill_id: str
+    version: str
+    name: str
+    source: str
+    description: str = ""
+    phases: list[str] = []
+    language: str | None = None
+
+
+class MethodologyActivateRequest(BaseModel):
+    world: str
+    skill_id: str
+    version: str
+
+
+class MethodologyRollbackRequest(BaseModel):
+    world: str
+
+
+# The provider is capability-admitted and separate from the legacy chat route.
+# The durable SQLite store is the default: without ``DEMIURGOS_GUIDED_SESSIONS_DB``
+# it resolves to the stable repo-local ``<repo>/data/guided-sessions.sqlite3``
+# (see ``default_db_path``), so sessions survive a restart for the 30-day TTL.
+# The env var remains an explicit override; ``:memory:`` is only reachable by
+# passing it directly. Every session pins the active methodology/version
+# snapshot at creation.
+_GUIDED_SESSIONS_DB = os.environ.get("DEMIURGOS_GUIDED_SESSIONS_DB")
+_GUIDED_SESSIONS = DurableGuidedSessionStore(db_path=_GUIDED_SESSIONS_DB)
 _GUIDED_PROVIDER = None
 _GUIDED_CAPABILITIES: Capabilities | None = None
+_GUIDED_PROBE_LOCK = asyncio.Lock()
+# Active methodology/version pin. Phase 3 wires this to the compiled
+# methodology library; until then the builtin guided-character contract is
+# active. A session pinned to a different version fails closed on resume.
+_BUILTIN_METHODOLOGY_VERSION = "builtin"
+_ACTIVE_METHODOLOGY_VERSION: str | None = _BUILTIN_METHODOLOGY_VERSION
+# Server-owned methodology library + mandatory-quarantine trust store. Both
+# are created lazily so tests and callers can swap roots per process.
+_METHODOLOGY_LIBRARY: MethodologyLibrary | None = None
+_METHODOLOGY_QUARANTINE: QuarantineStore | None = None
+
+
+def _methodology_library() -> MethodologyLibrary:
+    global _METHODOLOGY_LIBRARY
+    if _METHODOLOGY_LIBRARY is None:
+        _METHODOLOGY_LIBRARY = MethodologyLibrary(
+            PROJECT_ROOT / "data" / "methodology" / "library.json"
+        )
+    return _METHODOLOGY_LIBRARY
+
+
+def _methodology_quarantine() -> QuarantineStore:
+    global _METHODOLOGY_QUARANTINE
+    if _METHODOLOGY_QUARANTINE is None:
+        _METHODOLOGY_QUARANTINE = QuarantineStore(
+            PROJECT_ROOT / "data" / "methodology" / "quarantine"
+        )
+    return _METHODOLOGY_QUARANTINE
+
+
+def _active_methodology_version(world: str) -> str | None:
+    """Active methodology version for a world.
+
+    A published version explicitly activated for the world wins; otherwise the
+    builtin pin applies. Only NEW sessions consult this; existing sessions
+    keep their pinned snapshot and fail closed when it no longer matches.
+    """
+    activation = _methodology_library().active_for(world)
+    if activation is not None:
+        return activation.version
+    return _ACTIVE_METHODOLOGY_VERSION
+
+
+def _active_methodology_snapshot(world: str) -> MethodologySnapshot:
+    """Pin the currently active methodology/version at session creation."""
+    activation = _methodology_library().active_for(world)
+    if activation is not None:
+        return MethodologySnapshot(
+            skill_id=activation.skill_id,
+            skill_version=activation.version,
+            compiled_contract_digest=activation.digest,
+        )
+    active = _ACTIVE_METHODOLOGY_VERSION or _BUILTIN_METHODOLOGY_VERSION
+    return MethodologySnapshot(
+        skill_id="guided-character-v1",
+        skill_version=active,
+        compiled_contract_digest=None,
+    )
+# Semantic routing seam: the mandatory Hermes-first semantic gate. Wired to a
+# SemanticIntentProvider(ACTIVITY_ADAPTER) below, after the runs adapter exists.
+# No lexical/plain-chat fallback exists; unavailable/invalid/exhausted Hermes
+# results fail closed as ``blocked`` with localized safe copy. The type is kept
+# Optional because tests replace the seam with fakes.
+_SEMANTIC_PROVIDER: SemanticIntentProvider | None = None
 _GUIDED_REINDEX = ReindexCoordinator(MUNDOS_DIR, lambda world: _get_graph(world))
 _GUIDED_INDEX_REQUESTS: dict[str, tuple[str, str, str]] = {}
+# Review records are diskless until the existing confirmed create route succeeds.
+_GUIDED_PENDING_PROPOSALS: dict[str, dict[str, str | int]] = {}
+
+
+def _invalidate_guided_proposal(session_id: str) -> None:
+    for edit_id, record in list(_GUIDED_PENDING_PROPOSALS.items()):
+        if record.get("session_id") == session_id:
+            _GUIDED_PENDING_PROPOSALS.pop(edit_id, None)
 
 
 def _guided_public_state(state: SessionState) -> dict:
@@ -413,6 +562,8 @@ def _guided_public_state(state: SessionState) -> dict:
         "session_id": state.session_id,
         "world": state.world,
         "phase": state.phase,
+        "mode": state.mode,
+        "depth": state.depth,
         "revision": state.revision,
         "pending_question": state.pending_question,
         "messages": [
@@ -434,6 +585,13 @@ def _guided_public_state(state: SessionState) -> dict:
              **({"rationale": str(value["rationale"])} if isinstance(value, dict) and "rationale" in value else {})}
             for key, value in state.candidate.proposals.items()
         ), None),
+        "reference": {
+            "name": state.reference_name,
+            "verified": bool(state.reference_context),
+            "context": state.reference_context,
+            "source": "canonical-graph" if state.reference_context else None,
+            "goal": state.relation_goal or None,
+        },
     }
 
 
@@ -488,18 +646,114 @@ def _guided_result(response, state: SessionState | None):
     return _guided_public_state(state)
 
 
+def _guided_methodology_block(state: SessionState) -> JSONResponse | None:
+    """Fail closed when the pinned methodology/version no longer matches.
+
+    Applying a methodology change MUST require a brand-new session: resuming an
+    old session whose snapshot version differs from the active one is rejected
+    without any mutation.
+    """
+    snapshot = _GUIDED_SESSIONS.methodology_snapshot(state.session_id, state.authorization_binding)
+    if snapshot is None or snapshot.skill_version is None:
+        return None
+    active = _active_methodology_version(state.world)
+    if active is not None and snapshot.skill_version != active:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT,
+            "The methodology version has changed; start a new session.",
+            False,
+        ))
+    return None
+
+
+def _guided_revalidation_block(session_id: str, principal_id: str) -> JSONResponse | None:
+    """Fail closed when a durable-restart pending proposal needs revalidation."""
+    if _GUIDED_SESSIONS.requires_revalidation(session_id, principal_id):
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT,
+            "The pending proposal requires revalidation before it can be serialized; continue the session.",
+            True,
+        ))
+    return None
+
+
 async def _guided_continue(
     mundo: str, session_id: str, revision: int, author_input: str,
-    principal: EditPrincipal,
+    principal: EditPrincipal, reference_context: str = "", reference_name: str | None = None,
 ):
+    state = _GUIDED_SESSIONS.recover(session_id, principal.id)
+    if state is not None and state.phase == "complete":
+        return _guided_public_state(state)
+    if state is not None:
+        methodology_block = _guided_methodology_block(state)
+        if methodology_block is not None:
+            return methodology_block
+    if state is not None and state.world == mundo and state.reference_context:
+        reference_context = state.reference_context
+        reference_name = state.reference_name
+    if state is not None and state.phase == "confirmation":
+        decision = confirmation_decision(author_input)
+        if decision is None:
+            next_state = _GUIDED_SESSIONS.resolve_confirmation(
+                session_id, principal.id, revision, None,
+                _guided_confirmation_text("ambiguous"),
+            )
+            return _guided_public_state(next_state) if next_state else _guided_error_response(
+                StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True)
+            )
+        next_state = _GUIDED_SESSIONS.resolve_confirmation(
+            session_id, principal.id, revision, decision,
+            _guided_confirmation_text("decline") if decision is False else "",
+        )
+        if next_state is None:
+            return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+        if decision is False:
+            return _guided_public_state(next_state)
+        revision = next_state.revision
+        author_input = next_state.confirmation_input
+    mode = state.mode if state is not None else "full"
+    depth = state.depth if state is not None else "standard"
+    relation_goal = state.relation_goal if state is not None else ""
+    methodology: str | None = None
+    if state is not None:
+        snapshot = _GUIDED_SESSIONS.methodology_snapshot(state.session_id, principal.id)
+        if snapshot is not None and snapshot.skill_version:
+            methodology = f"{snapshot.skill_id or 'guided-character'}:{snapshot.skill_version}"
     request = GuidedRequest(
         PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
-        revision, principal.id, author_input,
+        revision, principal.id, author_input, reference_context=reference_context,
+        reference_name=reference_name,
+        relation_goal=relation_goal,
+        guided_mode=mode,
+        question_depth=depth,
+        methodology=methodology,
     )
     response, state = await continue_session(
         _GUIDED_SESSIONS, _GUIDED_PROVIDER, request, _GUIDED_CAPABILITIES,
     )
+    if state is not None:
+        _invalidate_guided_proposal(session_id)
     return _guided_result(response, state)
+
+
+async def _probe_guided_capabilities() -> Capabilities | None:
+    """Probe Hermes once; concurrent requests share the fail-closed result."""
+    global _GUIDED_CAPABILITIES
+    if _GUIDED_CAPABILITIES is not None:
+        return _GUIDED_CAPABILITIES
+    async with _GUIDED_PROBE_LOCK:
+        if _GUIDED_CAPABILITIES is not None:
+            return _GUIDED_CAPABILITIES
+        provider = _GUIDED_PROVIDER
+        probe = getattr(provider, "probe", None)
+        if not callable(probe):
+            return None
+        try:
+            assessment = await probe()
+            _GUIDED_CAPABILITIES = guided_capabilities(assessment)
+        except Exception:
+            _GUIDED_CAPABILITIES = None
+        return _GUIDED_CAPABILITIES
 
 
 @app.get("/api/{mundo}/guided-character/session/{session_id}")
@@ -512,31 +766,90 @@ def recover_guided_character(mundo: str, session_id: str, request: Request):
         return _guided_error_response(StructuredError(ErrorCode.UNAUTHORIZED, "The session is unavailable.", False))
     if state.world != mundo:
         return _guided_error_response(StructuredError(ErrorCode.UNAUTHORIZED, "The session is unavailable.", False))
+    methodology_block = _guided_methodology_block(state)
+    if methodology_block is not None:
+        return methodology_block
     return _guided_public_state(state)
 
 
 @app.post("/api/{mundo}/guided-character/session")
 async def start_guided_character(mundo: str, body: GuidedStartRequest, request: Request):
+    """Start a guarded guided character session (Hermes-first).
+
+    The mandatory semantic gate interprets the creation message BEFORE any
+    Demiurgos intent classifier or action: ``route_new_character_intent``
+    derives guided policy only after a validated Hermes decision. Unavailable,
+    invalid, unwired, or exhausted Hermes fails closed with the localized safe
+    blocked envelope and zero session, proposal, or write.
+    """
     principal, error = _guided_principal(request)
     if error:
         return error
-    if _GUIDED_PROVIDER is None or _GUIDED_CAPABILITIES is None or not _GUIDED_CAPABILITIES.admitted():
+    if _GUIDED_PROVIDER is None:
+        return _guided_error_response(StructuredError(
+            ErrorCode.CAPABILITY_UNAVAILABLE,
+            "Guided character creation is unavailable.", True,
+        ))
+    capabilities = await _probe_guided_capabilities()
+    if capabilities is None or not capabilities.admitted():
         return _guided_error_response(StructuredError(
             ErrorCode.CAPABILITY_UNAVAILABLE,
             "Guided character creation is unavailable.", True,
         ))
     if _resolve_mundo_dir(mundo) is None:
         return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "The world is unavailable.", False))
-    intent = route_new_character_intent(body.author_input)
+    # Resolve the named reference ONCE; the semantic gate and the guarded
+    # session both reuse this single graph read (no double query).
+    reference_context, graph_unavailable, reference_name = _named_reference_context(mundo, body.author_input)
+    if graph_unavailable:
+        return _guided_error_response(StructuredError(
+            ErrorCode.CAPABILITY_UNAVAILABLE,
+            "The named character reference is unavailable.", True,
+        ))
+    has_reference = reference_name is not None and not graph_unavailable
+    context = SemanticContext(
+        mundo=mundo or None,
+        reference=reference_name if has_reference else None,
+        graph=reference_context if has_reference else None,
+    )
+    result = await _semantic_gate(mundo, body.author_input, context=context)
+    if result.decision is None:
+        logger.info(
+            "guided start: no validated Hermes decision (unavailable=%s attempts=%s); fail closed",
+            result.unavailable, result.attempts,
+        )
+        return result.as_dict()
+    intent = route_new_character_intent(body.author_input, allow_descriptive_seed=True)
     if not intent.is_new_character:
         return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "New-character intent is required.", False))
     session_id = f"guided-{uuid.uuid4().hex}"
-    _GUIDED_SESSIONS.create(session_id, mundo, principal.id)
-    return await _guided_continue(mundo, session_id, 0, body.author_input, principal)
+    relation_goal = extract_related_goal(body.author_input, reference_name=reference_name).summary
+    _GUIDED_SESSIONS.create(
+        session_id, mundo, principal.id,
+        reference_context=reference_context, reference_name=reference_name,
+        relation_goal=relation_goal, mode=intent.mode, depth=intent.depth,
+        methodology_snapshot=_active_methodology_snapshot(mundo),
+    )
+    if intent.requires_confirmation:
+        confirmed = _GUIDED_SESSIONS.begin_confirmation(
+            session_id, principal.id, body.author_input,
+            _guided_confirmation_text("start"),
+        )
+        return _guided_public_state(confirmed or state)
+    return await _guided_continue(
+        mundo, session_id, 0, body.author_input, principal, reference_context, reference_name,
+    )
 
 
 @app.post("/api/{mundo}/guided-character/turn")
 async def continue_guided_character(mundo: str, body: GuidedTurnRequest, request: Request):
+    """Continue a guarded guided session (Hermes-first).
+
+    The mandatory semantic gate interprets the turn message (including typed
+    confirmation responses) BEFORE the guarded confirmation policy or guided
+    provider runs. Unavailable Hermes fails closed with the localized safe
+    blocked envelope and zero session mutation, proposal, or write.
+    """
     principal, error = _guided_principal(request)
     if error:
         return error
@@ -545,6 +858,19 @@ async def continue_guided_character(mundo: str, body: GuidedTurnRequest, request
         return _guided_error_response(StructuredError(ErrorCode.UNAUTHORIZED, "The session is unavailable.", False))
     if state.revision != body.base_revision:
         return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    has_reference = state.reference_name is not None
+    context = SemanticContext(
+        mundo=mundo or None,
+        reference=state.reference_name if has_reference else None,
+        graph=state.reference_context if has_reference else None,
+    )
+    result = await _semantic_gate(mundo, body.author_input, context=context)
+    if result.decision is None:
+        logger.info(
+            "guided turn: no validated Hermes decision (unavailable=%s attempts=%s); fail closed",
+            result.unavailable, result.attempts,
+        )
+        return result.as_dict()
     return await _guided_continue(mundo, body.session_id, body.base_revision, body.author_input, principal)
 
 
@@ -553,6 +879,12 @@ def accept_guided_character_proposal(mundo: str, body: GuidedProposalRequest, re
     principal, error = _guided_principal(request)
     if error:
         return error
+    session = _GUIDED_SESSIONS.recover(body.session_id, principal.id)
+    if session is None:
+        return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    methodology_block = _guided_methodology_block(session)
+    if methodology_block is not None:
+        return methodology_block
     try:
         state = _GUIDED_SESSIONS.accept_proposal(
             body.session_id, principal.id, body.base_revision, body.key,
@@ -561,6 +893,7 @@ def accept_guided_character_proposal(mundo: str, body: GuidedProposalRequest, re
         return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "The proposal is unavailable.", False))
     if state is None:
         return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    _invalidate_guided_proposal(body.session_id)
     return _guided_public_state(state)
 
 
@@ -569,6 +902,12 @@ def reject_guided_character_proposal(mundo: str, body: GuidedProposalRequest, re
     principal, error = _guided_principal(request)
     if error:
         return error
+    session = _GUIDED_SESSIONS.recover(body.session_id, principal.id)
+    if session is None:
+        return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    methodology_block = _guided_methodology_block(session)
+    if methodology_block is not None:
+        return methodology_block
     try:
         state = _GUIDED_SESSIONS.reject_proposal(
             body.session_id, principal.id, body.base_revision, body.key,
@@ -577,7 +916,51 @@ def reject_guided_character_proposal(mundo: str, body: GuidedProposalRequest, re
         return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, "The proposal is unavailable.", False))
     if state is None:
         return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    _invalidate_guided_proposal(body.session_id)
     return _guided_public_state(state)
+
+
+@app.post("/api/{mundo}/guided-character/proposal/serialize")
+def serialize_guided_character(mundo: str, body: GuidedSerializeRequest, request: Request):
+    """Create a diskless, revision-bound new-file proposal for the review UI."""
+    principal, error = _guided_principal(request)
+    if error:
+        return error
+    state = _GUIDED_SESSIONS.recover(body.session_id, principal.id)
+    if state is None or state.world != mundo:
+        return _guided_error_response(StructuredError(ErrorCode.UNAUTHORIZED, "The session is unavailable.", False))
+    if state.revision != body.base_revision:
+        return _guided_error_response(StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True))
+    methodology_block = _guided_methodology_block(state)
+    if methodology_block is not None:
+        return methodology_block
+    revalidation_block = _guided_revalidation_block(body.session_id, principal.id)
+    if revalidation_block is not None:
+        return revalidation_block
+    slug = body.slug or f"guided-{body.session_id.removeprefix('guided-')[-12:]}"
+    title = body.title or "Guided Character"
+    world_dir = _resolve_mundo_dir(mundo)
+    existing_targets = set()
+    if world_dir is not None and (world_dir / "personajes").is_dir():
+        existing_targets = {f"personajes/{path.name}" for path in (world_dir / "personajes").glob("*.md")}
+    try:
+        proposal = serialize_ficha(state.candidate, world=mundo, slug=slug, title=title, existing_targets=existing_targets)
+    except FichaValidationError as exc:
+        return _guided_error_response(StructuredError(ErrorCode.INVALID_INPUT, str(exc), False))
+    digest = hashlib.sha256(proposal.content.encode("utf-8")).hexdigest()
+    edit_id = f"guided-proposal-{uuid.uuid4().hex}"
+    _GUIDED_PENDING_PROPOSALS[edit_id] = {
+        "edit_id": edit_id, "principal_id": principal.id, "session_id": state.session_id,
+        "guided_revision": state.revision, "target": proposal.target,
+        "content": proposal.content, "digest": digest,
+    }
+    return {
+        "proposal_id": edit_id, "target": proposal.target, "base_revision": "",
+        "proposed_content": proposal.content, "proposed_digest": digest,
+        "rationale": "Review the guided character before creating the file.",
+        "is_new_file": True, "guided_session_id": state.session_id,
+        "guided_revision": state.revision,
+    }
 
 
 @app.post("/api/{mundo}/guided-character/index/retry")
@@ -1380,7 +1763,31 @@ def save_file_via_save(mundo: str, section: str, path: str, body: dict, request:
 @app.post("/api/{mundo}/{section}/create")
 def create_file(mundo: str, section: str, path: str, body: dict, request: Request):
     """Create a new file — gated by a ``kind=new`` confirmation token."""
-    return _write_content(mundo, section, path, body, request, kind="new")
+    pending = _GUIDED_PENDING_PROPOSALS.get(body.get("edit_id"))
+    if pending is not None:
+        principal = _resolve_principal(request)
+        target = f"{section}/{path}"
+        digest = hashlib.sha256(body.get("content", "").encode("utf-8")).hexdigest()
+        if (principal is None or pending["principal_id"] != principal.id
+                or pending["target"] != target or pending["content"] != body.get("content")
+                or pending["digest"] != digest or body.get("proposed_digest") != digest):
+            raise HTTPException(status_code=409, detail="Guided proposal is stale or altered")
+    result = _write_content(mundo, section, path, body, request, kind="new")
+    if pending is not None:
+        full = _resolve_mundo_path(mundo, f"{section}/{path}")
+        if full is None or not full.is_file() or _digest_of(full) != pending["digest"]:
+            raise HTTPException(status_code=500, detail="Persisted guided content failed digest verification")
+        session_id = str(pending["session_id"])
+        operation_id = f"guided-create-{pending['edit_id']}" if "edit_id" in pending else f"guided-create-{body['edit_id']}"
+        _GUIDED_INDEX_REQUESTS[session_id] = (operation_id, str(pending["target"]), str(pending["digest"]))
+        result = dict(result)
+        reconciliation = _GUIDED_REINDEX.reconcile(
+            operation_id=operation_id, mundo=mundo,
+            target=str(pending["target"]), content_digest=str(pending["digest"]),
+        )
+        result.update({"index_status": reconciliation.index_status, "retryable": reconciliation.retryable,
+                       "message": reconciliation.message})
+    return result
 
 
 @app.post("/api/{mundo}/{section}/diff")
@@ -1814,6 +2221,23 @@ def _get_graph(mundo: str) -> "EntityGraphIndex | None":
         _graph_indices[mundo] = idx
 
     return _graph_indices[mundo]
+
+
+class _GuidedGraphReader:
+    """Expose the canonical graph index through the diskless guided seam."""
+
+    def __init__(self, index: "EntityGraphIndex") -> None:
+        self._index = index
+
+    def search(self, query: str) -> list[dict]:
+        return [vars(hit) for hit in self._index.search(query)]
+
+    def read(self, entity_path: str) -> dict | None:
+        entity = self._index.get_entity(entity_path)
+        return vars(entity) if entity is not None else None
+
+    def links(self, entity_path: str, kind: str) -> list[dict]:
+        return self._index.get_links(entity_path, kind)
 
 
 def _resolve_entity_path(idx: "EntityGraphIndex", name: str) -> str | None:
@@ -2307,6 +2731,11 @@ def _load_project_env(name: str) -> str:
     return ""
 
 
+def _configured_language() -> str:
+    """Normalized global UI language (``DEMIURGOS_LANGUAGE``), safe fallback."""
+    return resolve_ui_language(env_file=PROJECT_ROOT / ".env", environ=os.environ)
+
+
 _GATEWAY_URL = os.getenv("HERMES_GATEWAY_URL", "http://127.0.0.1:8642/v1/chat/completions")
 _GATEWAY_KEY = os.getenv("HERMES_GATEWAY_KEY") or _load_project_env("HERMES_GATEWAY_KEY")
 _GATEWAY_TIMEOUT = int(os.getenv("HERMES_GATEWAY_TIMEOUT", "300"))
@@ -2348,6 +2777,12 @@ ACTIVITY_ADAPTER = HermesRunsActivityAdapter(
     api_key=_GATEWAY_KEY,
     client_provider=_get_hermes_client,
 )
+_GUIDED_PROVIDER = HermesGuidedProvider(ACTIVITY_ADAPTER)
+# Mandatory semantic gate: Hermes-first interpretation over the runs adapter.
+# Unavailable/invalid/exhausted Hermes results fail closed as ``blocked`` with
+# localized safe copy and NO lexical/plain-chat fallback. Entry-handler
+# reordering ahead of this seam is PR 2; wiring alone keeps the seam live.
+_SEMANTIC_PROVIDER = SemanticIntentProvider(ACTIVITY_ADAPTER)
 
 class ChatRequest(BaseModel):
     messages: list[dict]
@@ -2359,30 +2794,470 @@ class AskRequest(BaseModel):
     session_id: str = ""
     section: str = ""
     file_path: str = ""
+    guided_session_id: str = ""
+    guided_revision: int | None = None
 
 @app.post("/api/chat")
 async def chat_endpoint(body: ChatRequest):
-    """Send messages to Hermes Agent and return the response."""
-    # Send ONLY the latest user message. Session continuity is handled by the
-    # gateway via X-Hermes-Session-Id (opt-in), so we never re-send history
-    # as prompt text — that bloats the context window every turn.
+    """Hermes-first compatible chat surface.
+
+    Every user message is interpreted by the mandatory semantic gate. A valid
+    decision returns the semantic envelope plus the compatibility
+    ``content=response`` key. Unavailable, invalid, unwired, or exhausted
+    Hermes returns the same HTTP-200 blocked envelope used by ``/ai/ask``:
+    localized safe copy, zero action or write, and never raw provider/HTTP/
+    timeout/quota/credential/model/gateway text.
+    """
     user_msg = body.messages[-1]["content"] if body.messages else ""
-    if body.mundo:
-        user_msg = f"[Mundo: {body.mundo}]\n\n{user_msg}"
-    result = await _run_hermes(user_msg, session_id=body.session_id)
-    return {"content": result}
+    mundo = body.mundo if _resolve_mundo_dir(body.mundo) is not None else ""
+    result = await _semantic_gate(mundo, user_msg, session_id=body.session_id)
+    payload = result.as_dict()
+    if result.decision is not None:
+        payload["content"] = result.decision.response
+    return payload
+
 
 @app.post("/api/{mundo}/ai/ask")
-async def ai_ask_endpoint(mundo: str, body: AskRequest):
-    """Endpoint for the AI Assistant sidebar."""
-    prompt = _build_ai_ask_prompt(mundo, body)
-    response = await _run_hermes(prompt, session_id=body.session_id)
-    logger.info("ai_ask: %s", response[:120])
-    return {"response": response}
+async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
+    """Endpoint for the AI Assistant sidebar (Hermes-first).
+
+    The mandatory semantic gate interprets every user message BEFORE any
+    Demiurgos intent classifier or action. Demiurgos then applies policy to the
+    validated decision: guarded guided-session continuation and typed
+    confirmation, plus the auth/canon/digest/revision/approval guards. There is
+    no lexical-first path and no plain-chat fallback: unavailable, invalid,
+    unwired, or exhausted Hermes fails closed with the safe blocked envelope
+    and zero action, session, proposal, or write.
+    """
+    # Pre-flight guards (NOT intent classifiers): guided-session continuation
+    # requires an authenticated principal, a live world, and the current
+    # revision before Hermes interprets. They keep guarded policy grounded and
+    # never decide intent.
+    if body.guided_session_id or body.guided_revision is not None:
+        principal = _resolve_principal(request)
+        if principal is None:
+            return _guided_error_response(StructuredError(
+                ErrorCode.UNAUTHORIZED, "Authentication required.", False,
+            ))
+        if _resolve_mundo_dir(mundo) is None:
+            return _guided_error_response(StructuredError(
+                ErrorCode.INVALID_INPUT, "The world is unavailable.", False,
+            ))
+        state = _GUIDED_SESSIONS.recover(body.guided_session_id, principal.id)
+        if state is None or state.world != mundo:
+            return _guided_error_response(StructuredError(
+                ErrorCode.UNAUTHORIZED, "The guided session is unavailable.", False,
+            ))
+        if state.revision != body.guided_revision:
+            return _guided_error_response(StructuredError(
+                ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+            ))
+    # Mandatory Hermes semantic gate (decides with bounded authorized context).
+    # The named-reference resolution is performed ONCE per request and reused by
+    # the guarded continuation, so the graph is never queried twice.
+    ficha = _active_ficha_context(mundo, body)
+    context, reference_context, reference_name, graph_unavailable = _semantic_context(
+        mundo, body.prompt, ficha=ficha,
+    )
+    result = await _semantic_gate(
+        mundo, body.prompt,
+        session_id=body.session_id,
+        context=context,
+    )
+    if result.decision is None:
+        logger.info(
+            "ai_ask: no validated Hermes decision (unavailable=%s attempts=%s); fail closed",
+            result.unavailable, result.attempts,
+        )
+        return result.as_dict()
+    # Demiurgos policy against the validated decision:
+    # 1. Active guarded guided session -> continuation policy (typed
+    #    confirmation, next turn) applied only after Hermes interpretation.
+    if body.guided_session_id or body.guided_revision is not None:
+        guided = await _internal_guided_turn(mundo, body, request)
+        if guided is not None:
+            return guided
+    # 2. Self-contained decisions answer directly with Hermes' voice.
+    if result.decision.state in SELF_CONTAINED_SEMANTIC_STATES:
+        logger.info(
+            "ai_ask: semantic state=%s attempts=%s",
+            result.decision.state, result.attempts,
+        )
+        return result.as_dict()
+    # 3. require_confirmation/proposal_ready route through the guarded
+    #    single-run machinery (the same run supplied the continuation).
+    return await _semantic_guided_continuation(
+        mundo, body, request, result,
+        reference_context=reference_context,
+        reference_name=reference_name,
+        graph_unavailable=graph_unavailable,
+    )
 
 
-def _build_ai_ask_prompt(mundo: str, body: AskRequest) -> str:
-    parts = [f"[Mundo: {mundo}]"] if mundo else []
+def _semantic_context(
+    mundo: str, prompt: str, ficha: str | None = None,
+) -> tuple[SemanticContext, str, str | None, bool]:
+    """Bounded authorized context plus the server-side named-reference result.
+
+    Returns ``(context, reference_context, reference_name, graph_unavailable)``.
+    Only server-owned read-only evidence is admitted: the active mundo, the
+    authorized open-ficha content, the resolved named reference, and the
+    graph-derived reference context. Credentials, filesystem/write authority,
+    provider authority, and raw secrets never reach the decision input. The
+    resolution tuple lets the guarded continuation reuse the SAME graph read
+    instead of re-querying it.
+    """
+    reference_context, graph_unavailable, reference_name = _named_reference_context(mundo, prompt)
+    has_reference = reference_name is not None and not graph_unavailable
+    context = SemanticContext(
+        mundo=mundo or None,
+        ficha=(ficha or "") or None,
+        reference=reference_name if has_reference else None,
+        graph=reference_context if has_reference else None,
+    )
+    return context, reference_context, reference_name, graph_unavailable
+
+
+async def _semantic_gate(
+    mundo: str, prompt: str, *, session_id: str = "",
+    ficha: str | None = None, context: SemanticContext | None = None,
+    request_id: str | None = None,
+) -> SemanticResult:
+    """Mandatory Hermes-first semantic gate shared by every assistant surface.
+
+    Runs BEFORE any Demiurgos intent classifier or action. An unwired provider
+    fails closed as ``unavailable``; unavailable/invalid/malformed/exhausted
+    Hermes yields a blocked ``SemanticResult`` with zero action, session,
+    proposal, or write. ``decide`` is the only semantic interpretation
+    boundary and always receives the bounded authorized context.
+    """
+    provider = _SEMANTIC_PROVIDER
+    if provider is None:
+        return SemanticResult(
+            decision=None,
+            attempts=0,
+            request_id=request_id or f"semantic-{uuid.uuid4().hex}",
+            session_id=session_id or None,
+            unavailable=True,
+        )
+    if context is None:
+        context, _, _, _ = _semantic_context(mundo, prompt, ficha=ficha)
+    return await provider.decide(
+        prompt,
+        request_id=request_id or f"semantic-{uuid.uuid4().hex}",
+        session_id=session_id or None,
+        context=context,
+    )
+
+
+def _semantic_blocked_result(result: SemanticResult) -> dict:
+    """Fail a semantic outcome closed to a write-free blocked envelope."""
+    return SemanticResult(
+        decision=None,
+        attempts=result.attempts,
+        request_id=result.request_id,
+        session_id=result.session_id,
+    ).as_dict()
+
+
+async def _semantic_guided_continuation(
+    mundo: str, body: AskRequest, request: Request, result: SemanticResult,
+    *, reference_context: str = "", reference_name: str | None = None,
+    graph_unavailable: bool = False,
+) -> dict:
+    """Back require_confirmation/proposal_ready with the guarded guided machinery.
+
+    One Hermes run supplied the semantic decision AND the typed continuation
+    (confirmation question or bounded candidate delta). No second Hermes run is
+    started: the session is created through ``_GUIDED_SESSIONS`` and the
+    proposal is serialized server-side with a server-owned slug, target, and
+    digest. The named-reference resolution was already performed once by the
+    semantic gate and is reused here. Every failure path returns a fail-closed
+    blocked envelope.
+    """
+    decision = result.decision
+    if decision is None or decision.continuation is None:
+        logger.info(
+            "ai_ask: semantic state=%s has no backed continuation; fail closed to blocked",
+            decision.state if decision is not None else "unknown",
+        )
+        return _semantic_blocked_result(result)
+    principal = _resolve_principal(request)
+    if principal is None:
+        logger.info("ai_ask: semantic guided continuation requires auth; fail closed to blocked")
+        return _semantic_blocked_result(result)
+    if _resolve_mundo_dir(mundo) is None:
+        logger.info("ai_ask: semantic guided continuation world unavailable; fail closed to blocked")
+        return _semantic_blocked_result(result)
+    if graph_unavailable:
+        logger.info("ai_ask: semantic guided continuation graph unavailable; fail closed to blocked")
+        return _semantic_blocked_result(result)
+    session_id = f"guided-{uuid.uuid4().hex}"
+    relation_goal = extract_related_goal(body.prompt, reference_name=reference_name).summary
+    try:
+        _GUIDED_SESSIONS.create(
+            session_id, mundo, principal.id,
+            reference_context=reference_context, reference_name=reference_name,
+            relation_goal=relation_goal,
+            methodology_snapshot=_active_methodology_snapshot(mundo),
+        )
+        if decision.state == "require_confirmation":
+            return _semantic_confirmation_continuation(
+                body, result, decision, principal, session_id,
+            )
+        return await _semantic_proposal_continuation(
+            mundo, body, result, decision, principal, session_id,
+            reference_context, reference_name,
+        )
+    except Exception:
+        logger.warning("ai_ask: semantic guided continuation failed safely", exc_info=True)
+        return _semantic_blocked_result(result)
+
+
+def _semantic_confirmation_continuation(
+    body: AskRequest, result: SemanticResult, decision, principal, session_id: str,
+) -> dict:
+    """Begin the guarded confirmation transition with the run's own question."""
+    question = decision.continuation.question or _guided_confirmation_text("start")
+    confirmed = _GUIDED_SESSIONS.begin_confirmation(
+        session_id, principal.id, body.prompt, question,
+    )
+    if confirmed is None:
+        logger.info("ai_ask: semantic confirmation transition rejected; fail closed to blocked")
+        return _semantic_blocked_result(result)
+    return {
+        "state": "require_confirmation",
+        "action": action_for_state("require_confirmation"),
+        "response": question,
+        "request_id": result.request_id,
+        "attempts": result.attempts,
+        "fallback": False,
+        "guided": True,
+        "session_id": session_id,
+        "guided_session_id": session_id,
+        "guided_revision": confirmed.revision,
+        "guided_state": _guided_public_state(confirmed),
+    }
+
+
+async def _semantic_proposal_continuation(
+    mundo: str, body: AskRequest, result: SemanticResult, decision,
+    principal, session_id: str, reference_context: str, reference_name: str | None,
+) -> dict:
+    """Commit the run's candidate delta and expose a server-owned diskless proposal.
+
+    The same server-authoritative completeness gate that guards the provider
+    path applies here: a ``proposal_ready`` delta is never a trusted
+    completeness claim. Until the candidate carries the minimum required
+    identity data, the run's delta is converted into exactly one focused
+    question and the guided session keeps asking one question per turn.
+    """
+    from guided_character_domain import candidate_minimum_complete, next_required_question
+    delta = dict(decision.continuation.delta)
+    commit_request = GuidedRequest(
+        PROTOCOL_VERSION, f"guided-{uuid.uuid4().hex}", session_id, mundo,
+        0, principal.id, body.prompt,
+        reference_context=reference_context, reference_name=reference_name,
+        relation_goal=extract_related_goal(body.prompt, reference_name=reference_name).summary,
+        guided_mode="full", question_depth="standard",
+    )
+    current = _GUIDED_SESSIONS.recover(session_id, principal.id)
+    if current is not None and not candidate_minimum_complete(current.candidate, delta=delta):
+        question = next_required_question(current.candidate, delta=delta)
+        question_response = GuidedResponse(
+            PROTOCOL_VERSION, commit_request.request_id, commit_request.session_id,
+            commit_request.base_revision, Outcome.QUESTION,
+            provenance=(f"semantic:run:{result.request_id}",), question=question,
+        )
+        state = _GUIDED_SESSIONS.commit(commit_request, question_response)
+        if state is None:
+            logger.info("ai_ask: semantic question commit rejected; fail closed to blocked")
+            return _semantic_blocked_result(result)
+        return {
+            "response": question,
+            "request_id": result.request_id,
+            "attempts": result.attempts,
+            "fallback": False,
+            "guided": True,
+            "session_id": session_id,
+            "guided_session_id": session_id,
+            "guided_revision": state.revision,
+            "guided_state": _guided_public_state(state),
+        }
+    commit_response = GuidedResponse(
+        PROTOCOL_VERSION, commit_request.request_id, commit_request.session_id,
+        commit_request.base_revision, Outcome.DELTA,
+        provenance=(f"semantic:run:{result.request_id}",),
+        delta=dict(decision.continuation.delta),
+    )
+    state = _GUIDED_SESSIONS.commit(commit_request, commit_response)
+    if state is None:
+        logger.info("ai_ask: semantic proposal commit rejected; fail closed to blocked")
+        return _semantic_blocked_result(result)
+    slug = _guided_character_slug(state) or f"guided-{session_id.removeprefix('guided-')[-12:]}"
+    title = _guided_character_title(state) or "Guided Character"
+    world_dir = _resolve_mundo_dir(mundo)
+    existing_targets: set[str] = set()
+    if world_dir is not None and (world_dir / "personajes").is_dir():
+        existing_targets = {f"personajes/{path.name}" for path in (world_dir / "personajes").glob("*.md")}
+    try:
+        proposal = serialize_ficha(
+            state.candidate, world=mundo, slug=slug, title=title,
+            existing_targets=existing_targets,
+        )
+    except FichaValidationError:
+        logger.info("ai_ask: semantic proposal serialization rejected; fail closed to blocked")
+        return _semantic_blocked_result(result)
+    digest = hashlib.sha256(proposal.content.encode("utf-8")).hexdigest()
+    edit_id = f"guided-proposal-{uuid.uuid4().hex}"
+    _GUIDED_PENDING_PROPOSALS[edit_id] = {
+        "edit_id": edit_id, "principal_id": principal.id, "session_id": session_id,
+        "guided_revision": state.revision, "target": proposal.target,
+        "content": proposal.content, "digest": digest,
+    }
+    return {
+        "state": "proposal_ready",
+        "action": action_for_state("proposal_ready"),
+        "response": decision.response,
+        "request_id": result.request_id,
+        "attempts": result.attempts,
+        "fallback": False,
+        "guided": True,
+        "session_id": session_id,
+        "proposal_id": edit_id,
+        "target": proposal.target,
+        "base_revision": str(state.revision),
+        "proposed_content": proposal.content,
+        "proposed_digest": digest,
+        "rationale": "Review the guided character before creating the file.",
+        "is_new_file": True,
+        "guided_session_id": session_id,
+        "guided_revision": state.revision,
+        "guided_state": _guided_public_state(state),
+    }
+
+
+def _candidate_proposal_value(state, key: str):
+    """Read one proposed candidate field (proposed partition, never canon)."""
+    item = state.candidate.proposals.get(key)
+    if isinstance(item, dict) and "value" in item:
+        return item["value"]
+    return item
+
+
+def _guided_character_slug(state) -> str | None:
+    """Derive the server-owned target slug from the candidate, never provider authority."""
+    for key in ("name", "nombre", "title"):
+        value = _candidate_proposal_value(state, key)
+        if isinstance(value, str) and value.strip():
+            slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
+            if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", slug):
+                return slug
+    return None
+
+
+def _guided_character_title(state) -> str | None:
+    value = _candidate_proposal_value(state, "name") or _candidate_proposal_value(state, "nombre")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+async def _internal_guided_turn(mundo: str, body: AskRequest, request: Request):
+    """Demiurgos guided-session continuation policy, applied only AFTER a
+    validated Hermes interpretation of the same message.
+
+    This never starts a session from lexical intent and never runs a factual
+    shortcut: Hermes already interpreted the message, and the guarded state
+    machine below only advances an existing, authenticated session (typed
+    confirmation or the next guided turn).
+    """
+    principal = _resolve_principal(request)
+    if principal is None or not (body.guided_session_id and body.guided_revision is not None):
+        return _guided_error_response(StructuredError(
+            ErrorCode.UNAUTHORIZED, "The guided session is unavailable.", False,
+        ))
+    state = _GUIDED_SESSIONS.recover(body.guided_session_id, principal.id)
+    if state is None or state.world != mundo:
+        return _guided_error_response(StructuredError(
+            ErrorCode.UNAUTHORIZED, "The guided session is unavailable.", False,
+        ))
+    if state.revision != body.guided_revision:
+        return _guided_error_response(StructuredError(
+            ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    result = await _guided_continue(
+        mundo, body.guided_session_id, body.guided_revision, body.prompt,
+        principal,
+        reference_context=state.reference_context or "",
+        reference_name=state.reference_name,
+    )
+    if isinstance(result, dict) and "session_id" in result:
+        result["response"] = _guided_response_text(result)
+        result["guided_session_id"] = result["session_id"]
+        result["guided_revision"] = result["revision"]
+        result["guided_state"] = result.copy()
+    return result
+
+
+def _guided_response_text(payload: dict) -> str:
+    messages = payload.get("messages", [])
+    for message in reversed(messages):
+        if message.get("role") == "assistant" and message.get("content"):
+            return str(message["content"])
+    return str(payload.get("pending_question") or "")
+
+
+def _active_ficha_context(mundo: str, body: AskRequest) -> str:
+    if not body.file_path:
+        return ""
+    resolved = _resolve_path(mundo, body.section, body.file_path)
+    if resolved is None or not resolved.is_file():
+        return ""
+    try:
+        return resolved.read_text(encoding="utf-8")[:4_000]
+    except Exception:
+        return ""
+
+
+def _named_reference_context(mundo: str, prompt: str) -> tuple[str, bool, str | None]:
+    """Resolve an explicit related-entity name without selecting arbitrary hits."""
+    name = named_reference_name(prompt)
+    if name is None:
+        return "", False, None
+    try:
+        index = _get_graph(mundo)
+        if index is None:
+            return "", True, None
+        reader = index if all(callable(getattr(index, method, None)) for method in ("search", "read", "links")) else _GuidedGraphReader(index)
+        reference = resolve_named_reference(reader, prompt)
+    except Exception:
+        logger.warning("guided named-reference resolution failed", exc_info=True)
+        return "", True, None
+    if reference is None:
+        return "", False, None
+    if reference.unresolved:
+        detail = "has multiple graph matches" if reference.ambiguous else "was not found in the graph"
+        return (
+            f'The named reference "{reference.name}" {detail}. '
+            "Do not infer facts; ask the author to clarify the reference.",
+            False, None,
+        )
+    return reference.context[:4_000], False, reference.name
+
+
+def _build_ai_ask_prompt(
+    mundo: str, body: AskRequest, ficha_context: str | None = None,
+    reference_name: str | None = None,
+) -> str:
+    parts = [
+        "[Visible response guidance: Answer directly in 1-3 short paragraphs or bullets. "
+        "Ask at most one question at a time. Use the verified context silently, answer only "
+        "the relevant point, and do not repeat the full ficha or internal context. Expand only "
+        "when requested. Keep factual answers grounded in the provided evidence.]",
+    ]
+    if mundo:
+        parts.insert(0, f"[Mundo: {mundo}]")
     if body.file_path:
         title = None
         resolved = _resolve_path(mundo, body.section, body.file_path)
@@ -2403,10 +3278,37 @@ def _build_ai_ask_prompt(mundo: str, body: AskRequest) -> str:
             parts.append(f"[Ficha actual: [[{title}]] — ruta: {body.section}/{body.file_path}]")
         else:
             parts.append(f"[Ficha actual: {body.section}/{body.file_path}]")
+        if ficha_context:
+            parts.append(f"[Contenido verificado de la ficha actual:\n{ficha_context}\n]")
+    elif ficha_context and reference_name:
+        parts.append(
+            f"[Contexto verificado de la referencia [[{reference_name}]]:\n"
+            f"{ficha_context}\n"
+            "Responde solo con estos hechos verificados. Si la respuesta no está en la evidencia, "
+            "indica que se desconoce y no inventes detalles.\n]"
+        )
     if parts:
         joined = "\n".join(parts)
         return f"{joined}\n\n{body.prompt}"
     return body.prompt
+
+
+def _guided_confirmation_text(kind: str) -> str:
+    texts = {
+        "start": {
+            "en": "I can prepare a guided proposal for this related character. Start the questions? (yes/no)",
+            "es": "Puedo preparar una propuesta guiada para este personaje relacionado. ¿Comenzamos las preguntas? (sí/no)",
+        },
+        "ambiguous": {
+            "en": "Please answer yes to start the guided character proposal, or no to cancel.",
+            "es": "Por favor, responde sí para comenzar la propuesta guiada del personaje o no para cancelarla.",
+        },
+        "decline": {
+            "en": "No character proposal was started.",
+            "es": "No se inició ninguna propuesta de personaje.",
+        },
+    }
+    return texts[kind][_configured_language()]
 
 
 def _activity_unavailable(reason_code: str = ACTIVITY_UNAVAILABLE_REASON) -> JSONResponse:
@@ -2430,6 +3332,53 @@ def _sse_event(payload: dict[str, str]) -> str:
     return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
 
 
+def _semantic_decision_event(result: SemanticResult) -> SemanticDecisionEvent:
+    """Build the additive authoritative SSE event from a validated decision.
+
+    The continuation (when present) is serialized from the validated typed
+    continuation only — never from raw provider output — so it stays bounded
+    and free of authority claims. ``None`` is emitted when no continuation
+    exists or the outcome is fail-closed.
+    """
+    continuation: dict[str, Any] | None = None
+    if result.decision is not None and result.decision.continuation is not None:
+        continuation = {"outcome": result.decision.continuation.outcome}
+        if result.decision.continuation.question is not None:
+            continuation["question"] = result.decision.continuation.question
+        if result.decision.continuation.delta is not None:
+            continuation["delta"] = dict(result.decision.continuation.delta)
+    return SemanticDecisionEvent(
+        request_id=result.request_id,
+        state=result.state,
+        action=result.action,
+        unavailable=result.unavailable,
+        continuation=continuation,
+    )
+
+
+async def _fail_closed_activity_stream(result: SemanticResult):
+    """Emit the ordered fail-closed activity stream over HTTP 200.
+
+    ``semantic_decision`` (authoritative) precedes the compatible safe-copy
+    ``answer`` and final ``terminal`` events. No classifier, action, session,
+    proposal, or write ever occurs on this path.
+    """
+    yield _sse_event(_semantic_decision_event(result).as_dict())
+    yield _sse_event(AnswerEvent(result.request_id, result.response).as_dict())
+    yield _sse_event(TerminalEvent(result.request_id, "failed").as_dict())
+
+
+def _fail_closed_activity_response(result: SemanticResult, request_id: str) -> StreamingResponse:
+    return StreamingResponse(
+        _fail_closed_activity_stream(result),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Assistant-Activity-Request-Id": request_id,
+        },
+    )
+
+
 async def _cancel_activity(adapter: object, run_id: str) -> None:
     cancel = getattr(adapter, "cancel", None)
     if not callable(cancel):
@@ -2445,33 +3394,80 @@ async def _cancel_activity(adapter: object, run_id: str) -> None:
 
 @app.post("/api/{mundo}/ai/ask/activity")
 async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Request):
-    """Opt-in, fixture-gated SSE activity boundary.
+    """Semantic-first SSE activity boundary.
 
-    The legacy endpoint above remains the compatibility path. This boundary
-    starts no provider run unless an admitted adapter and stream are present.
+    The mandatory semantic gate interprets the user message FIRST (Hermes-first
+    authority). A validated decision is emitted as the authoritative
+    ``semantic_decision`` event BEFORE any compatible ``activity``/``answer``/
+    ``terminal`` event; ``terminal`` remains final and legacy clients may ignore
+    the additive event. Unavailable/invalid/unwired/exhausted Hermes fails
+    closed over HTTP 200 with the ordered blocked stream and zero classifier,
+    action, session, proposal, or write. Guided semantic decisions hand off to
+    the guided path (503) without any lexical classifier.
     """
+    # Pre-flight non-classifier guards: active guided sessions stream through
+    # the normal assistant path so activity never double-runs Hermes.
+    if body.guided_session_id or body.guided_revision is not None:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "Assistant activity is unavailable",
+                "code": "guided_handoff",
+                "reason_code": "guided_handoff",
+            },
+        )
     world_root = _resolve_mundo_dir(mundo)
-    adapter = ACTIVITY_ADAPTER
-    if world_root is None or adapter is None:
+    if world_root is None:
         return _activity_unavailable()
+
+    # Mandatory Hermes semantic interpretation FIRST with bounded authorized
+    # context. No classifier, action, session, proposal, or write precedes the
+    # validated decision.
+    request_id = f"activity-{uuid.uuid4().hex}"
+    context, _, _, _ = _semantic_context(mundo, body.prompt)
+    result = await _semantic_gate(
+        mundo, body.prompt,
+        session_id=body.session_id,
+        context=context,
+        request_id=request_id,
+    )
+    decision = result.decision
+    if decision is not None and decision.state in CONTINUATION_STATES:
+        # Hermes decided guided work: hand off to the guided path. The handoff
+        # follows the validated semantic state, never a lexical classifier.
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "Assistant activity is unavailable",
+                "code": "guided_handoff",
+                "reason_code": "guided_handoff",
+            },
+        )
+    if decision is None:
+        # No validated decision -> fail closed to the ordered blocked stream.
+        return _fail_closed_activity_response(result, request_id)
+
+    # Admitted adapter + stream guards (not classifiers) after the decision.
+    adapter = ACTIVITY_ADAPTER
+    if adapter is None:
+        return _fail_closed_activity_response(result, request_id)
     try:
         probe = getattr(adapter, "probe", None)
         if callable(probe):
-            result = probe()
-            if inspect.isawaitable(result):
-                await result
+            probe_result = probe()
+            if inspect.isawaitable(probe_result):
+                await probe_result
         if not bool(getattr(adapter, "available")):
             capability = getattr(adapter, "capability", None)
             reason = getattr(capability, "reason", ACTIVITY_UNAVAILABLE_REASON)
-            return _activity_unavailable(reason)
+            return _fail_closed_activity_response(result, request_id)
         capability = getattr(adapter, "capability")
         events = getattr(adapter, "events")
         if not callable(events):
-            return _activity_unavailable(ACTIVITY_PROVIDER_FAILURE_REASON)
+            return _fail_closed_activity_response(result, request_id)
     except Exception:
-        return _activity_unavailable(ACTIVITY_PROVIDER_FAILURE_REASON)
+        return _fail_closed_activity_response(result, request_id)
 
-    request_id = f"activity-{uuid.uuid4().hex}"
     activity_request = HermesActivityRequest(
         request_id=request_id,
         prompt=_build_ai_ask_prompt(mundo, body),
@@ -2489,9 +3485,12 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             world_root=world_root,
         )
     except Exception:
-        return _activity_unavailable(ACTIVITY_PROVIDER_FAILURE_REASON)
+        return _fail_closed_activity_response(result, request_id)
 
     async def stream():
+        # The additive authoritative semantic event comes first; compatible
+        # evidence (activity/answer/terminal) follows and terminal stays final.
+        yield _sse_event(_semantic_decision_event(result).as_dict())
         completed = False
         disconnected = False
         try:
@@ -2571,7 +3570,12 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     )
 
 async def _run_hermes(prompt: str, session_id: str = "") -> str:
-    """Send prompt to Hermes Gateway via HTTP (OpenAI-compatible chat completions)."""
+    """Send prompt to Hermes Gateway via HTTP (OpenAI-compatible chat completions).
+
+    Failures return the localized safe unavailable copy — never raw provider,
+    HTTP, timeout, quota, credential, model, or gateway text — so no caller can
+    surface technical detail to a user. Logs keep the full diagnostic detail.
+    """
     import time
     t0 = time.monotonic()
     logger.info("Hermes GW START len=%d session=%s preview=%r", len(prompt), session_id or "-", prompt[:120].replace("\n", " "))
@@ -2591,20 +3595,20 @@ async def _run_hermes(prompt: str, session_id: str = "") -> str:
         elapsed = time.monotonic() - t0
         if resp.status_code != 200:
             logger.error("Hermes GW HTTP %d %.1fs: %s", resp.status_code, elapsed, resp.text[:500])
-            return f"Error: HTTP {resp.status_code}"
+            return unavailable_copy()
         data = resp.json()
         content = data.get("choices", [{}])[0].get("message", {}).get("content", "") if "choices" in data else str(data)
         logger.info("Hermes GW DONE %.1fs len=%d preview=%r", elapsed, len(content), content[:200].replace("\n", " "))
-        return content or "Error: empty response"
+        return content or unavailable_copy()
     except httpx.ConnectError:
         logger.error("Hermes GW UNREACHABLE — is gateway running on %s?", _GATEWAY_URL)
-        return "Error: Hermes Gateway no responde. ¿Está corriendo `hermes gateway run`?"
+        return unavailable_copy()
     except httpx.TimeoutException:
         logger.error("Hermes GW TIMEOUT after %.1fs", time.monotonic() - t0)
-        return f"Error: timeout ({_GATEWAY_TIMEOUT}s)"
+        return unavailable_copy()
     except Exception as exc:
         logger.exception("Hermes GW CRASH: %s", exc)
-        return f"Error: {exc}"
+        return unavailable_copy()
 
 
 # ---------------------------------------------------------------------------
@@ -2839,6 +3843,164 @@ app.include_router(
         require_principal=lambda request: _resolve_principal(request),
     ),
 )
+
+
+# ---------------------------------------------------------------------------
+# Methodology library — Taller de Herramientas
+#
+# Publish an editable draft into an immutable version, activate it by world,
+# and roll back. Activation only governs NEW guided sessions: existing
+# sessions keep their pinned snapshot and fail closed on resume when the
+# world's active version changed. Imports stay quarantined until the Author
+# manually trusts the package; nothing activates automatically.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/methodologies/status")
+def methodologies_status(request: Request):
+    """Library status: published versions, per-world activations, drafts."""
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    library = _methodology_library()
+    published = [
+        {
+            "skill_id": item.skill_id,
+            "version": item.version,
+            "name": item.name,
+            "description": item.description,
+            "digest": item.digest,
+            "published_at": item.published_at,
+        }
+        for item in library.list_published()
+    ]
+    activations = {}
+    for world in _known_worlds():
+        activation = library.active_for(world)
+        if activation is not None:
+            activations[world] = {
+                "world": activation.world,
+                "skill_id": activation.skill_id,
+                "version": activation.version,
+                "digest": activation.digest,
+                "activated_at": activation.activated_at,
+            }
+    drafts = [
+        {
+            "draft_id": draft.draft_id,
+            "skill_id": draft.skill_id,
+            "version": draft.version,
+            "name": draft.name,
+            "source": draft.source,
+            "description": draft.description,
+            "updated_at": draft.updated_at,
+        }
+        for draft in library.list_drafts()
+    ]
+    return {"published": published, "activations": activations, "drafts": drafts}
+
+
+def _known_worlds() -> list[str]:
+    return [entry.name for entry in sorted(MUNDOS_DIR.iterdir()) if entry.is_dir()
+            and not entry.name.startswith((".", "_")) and entry.name != "Ideas"]
+
+
+@app.post("/api/methodologies/drafts")
+def methodologies_create_draft(body: MethodologyDraftRequest, request: Request):
+    """Create an editable draft. The compiler validates it on publish."""
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    library = _methodology_library()
+    draft_id = library.create_draft(
+        skill_id=body.skill_id,
+        version=body.version,
+        name=body.name,
+        source=body.source,
+        description=body.description,
+        phases=tuple(body.phases or []),
+        language=body.language,
+    )
+    draft = library.get_draft(draft_id)
+    assert draft is not None
+    return {
+        "draft_id": draft.draft_id,
+        "skill_id": draft.skill_id,
+        "version": draft.version,
+        "name": draft.name,
+        "source": draft.source,
+        "description": draft.description,
+        "updated_at": draft.updated_at,
+    }
+
+
+@app.post("/api/methodologies/drafts/{draft_id}/publish")
+def methodologies_publish(draft_id: str, request: Request):
+    """Compile and publish an immutable methodology version."""
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    library = _methodology_library()
+    try:
+        published = library.publish(draft_id)
+    except ValidationError as exc:
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "validation_error",
+        })
+    except AlreadyPublishedError as exc:
+        return JSONResponse(status_code=409, content={
+            "detail": str(exc), "code": "already_published",
+        })
+    return {
+        "skill_id": published.skill_id,
+        "version": published.version,
+        "name": published.name,
+        "description": published.description,
+        "digest": published.digest,
+        "published_at": published.published_at,
+    }
+
+
+@app.post("/api/methodologies/activate")
+def methodologies_activate(body: MethodologyActivateRequest, request: Request):
+    """Pin a published methodology version to a world (new sessions only)."""
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if _resolve_mundo_dir(body.world) is None:
+        return JSONResponse(status_code=404, content={"detail": "Mundo no encontrado"})
+    library = _methodology_library()
+    try:
+        activation = library.activate(body.world, body.skill_id, body.version)
+    except NotPublishedError as exc:
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "not_published",
+        })
+    return {
+        "world": activation.world,
+        "skill_id": activation.skill_id,
+        "version": activation.version,
+        "digest": activation.digest,
+        "activated_at": activation.activated_at,
+    }
+
+
+@app.post("/api/methodologies/rollback")
+def methodologies_rollback(body: MethodologyRollbackRequest, request: Request):
+    """Roll back a world's active methodology to its previous version."""
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    library = _methodology_library()
+    activation = library.rollback(body.world)
+    if activation is None:
+        return {"world": body.world, "skill_id": None, "version": None, "digest": None, "activated_at": None}
+    return {
+        "world": activation.world,
+        "skill_id": activation.skill_id,
+        "version": activation.version,
+        "digest": activation.digest,
+        "activated_at": activation.activated_at,
+    }
 
 
 # ---------------------------------------------------------------------------

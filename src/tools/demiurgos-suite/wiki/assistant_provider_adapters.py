@@ -27,8 +27,13 @@ class ProviderCandidate:
     api_key: str
 
 
+def default_base_url(provider: str) -> str | None:
+    """Return the server-owned endpoint for providers with a fixed default."""
+    return _DEFAULT_ENDPOINTS.get(provider)
+
+
 def _endpoint(provider: str, raw: Any) -> str | None:
-    value = _DEFAULT_ENDPOINTS.get(provider, raw if provider == "compatible" else None)
+    value = default_base_url(provider) or (raw if provider == "compatible" else None)
     if not isinstance(value, str):
         return None
     parsed = urlsplit(value.strip())

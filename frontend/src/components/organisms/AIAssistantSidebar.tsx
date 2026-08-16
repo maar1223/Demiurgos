@@ -13,8 +13,10 @@ import {
   NEUTRAL_EVIDENCE_WARNING,
 } from "@/api/assistantActivity";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { semanticBlockedText } from "@/lib/semanticIntent";
+import type { EditProposal } from "@/api/types";
 import { useWhisper } from "@/hooks/useWhisper";
-import { GuidedCharacterPanel } from "@/components/organisms/GuidedCharacterPanel";
 
 /* ------------------------------------------------------------------ */
 /*  Types & Constants                                                  */
@@ -30,6 +32,7 @@ interface AIAssistantSidebarProps {
   section?: string;
   filePath?: string;
   onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
+  onGuidedReview?: (proposal: EditProposal) => void | Promise<void>;
 }
 
 type Screen = "chat" | "history";
@@ -118,6 +121,9 @@ interface ChatScreenProps {
   whisperError: string | null;
   onHistoryClick: () => void;
   onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
+  resolveGuidedProposal: (accept: boolean) => Promise<void>;
+  requestGuidedReview?: () => Promise<EditProposal | null>;
+  onGuidedReview?: (proposal: EditProposal) => void | Promise<void>;
 }
 
 interface ActivityEvidenceProps {
@@ -230,6 +236,9 @@ function ChatScreen({
   whisperError,
   onHistoryClick,
   onProposeEdit,
+  onGuidedReview,
+  resolveGuidedProposal,
+  requestGuidedReview,
 }: ChatScreenProps) {
   const [input, setInput] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -276,6 +285,9 @@ function ChatScreen({
   }, [whisperIsRecording, whisperIsTranscribing, whisperStartRecording, whisperStopRecording]);
 
   const messages = activeSession?.messages ?? [];
+  const confirmationPending = activeSession?.guided?.phase === "confirmation";
+  const appLanguage = useAppLanguage();
+  const isSpanish = appLanguage === "es";
   const latestUserPrompt = [...messages]
     .reverse()
     .find((message) => message.role === "user")?.content.trim();
@@ -295,6 +307,14 @@ function ChatScreen({
         ? "Esperá a que termine la respuesta del asistente."
         : "Proponer una edición usando la última solicitud enviada.";
   const hasAssistantAnswer = messages.some((message) => message.role === "assistant");
+  const hasGuidedCandidate = Boolean(
+    activeSession?.guided && (
+      Object.keys(activeSession.guided.candidate.proposals).length > 0 ||
+      Object.keys(activeSession.guided.candidate.accepted_canon).length > 0 ||
+      activeSession.guided.phase === "review" ||
+      activeSession.guided.phase === "complete"
+    ),
+  );
   const showActivityEvidence =
     isSending ||
     hasAssistantAnswer ||
@@ -319,6 +339,17 @@ function ChatScreen({
     });
   }, [activeSession?.id, filePath, isSending, latestUserPrompt, onProposeEdit, section]);
 
+  const handleGuidedReview = useCallback(async () => {
+    if (!onGuidedReview || isSending) return;
+    if (activeSession?.pendingReview) {
+      await onGuidedReview(activeSession.pendingReview);
+      return;
+    }
+    if (!requestGuidedReview || !activeSession?.guided) return;
+    const proposal = await requestGuidedReview();
+    if (proposal) await onGuidedReview(proposal);
+  }, [activeSession?.guided, activeSession?.pendingReview, isSending, onGuidedReview, requestGuidedReview]);
+
   return (
     <>
       {/* Header */}
@@ -327,7 +358,7 @@ function ChatScreen({
           <button
             type="button"
             onClick={handleLightbulb}
-            disabled={isSending}
+            disabled={confirmationPending || isSending}
             className="flex h-7 w-7 items-center justify-center rounded-md text-tinta-desvaida hover:text-pergamino hover:bg-piedra transition-colors shrink-0 disabled:opacity-40"
             title="Ideas para esta sección"
             aria-label="Ideas para esta sección"
@@ -382,7 +413,7 @@ function ChatScreen({
         )}
 
         <div className="space-y-3">
-          {messages.map((msg, i) => (
+           {messages.map((msg, i) => (
             <div
               key={i}
               className={cn(
@@ -411,7 +442,66 @@ function ChatScreen({
                 )}
               </div>
             </div>
-          ))}
+           ))}
+
+           {confirmationPending && (
+             <section
+               aria-labelledby="guided-confirmation-title"
+               className="rounded-lg border border-llamita/40 bg-llamita/10 px-3 py-3 text-sm text-pergamino"
+             >
+               <h3 id="guided-confirmation-title" className="font-medium">
+                 {isSpanish ? "Confirmación necesaria" : "Confirmation needed"}
+               </h3>
+               <p className="mt-1 text-xs leading-relaxed text-tinta-desvaida">
+                 {isSpanish
+                   ? "Si elegís No, no comenzará ninguna propuesta guiada ni se creará una candidata o ficha. La sesión se cancelará y cerrará; podés iniciar una nueva solicitud más adelante."
+                   : "If you choose No, no guided proposal will start and no candidate or character sheet will be created. The session will be cancelled and closed; you can start a new request later."}
+               </p>
+               <div className="mt-3 flex flex-wrap gap-2">
+                 <button
+                   type="button"
+                   onClick={() => void sendMessage(isSpanish ? "sí" : "yes")}
+                   disabled={isSending}
+                   className="rounded-md bg-llamita px-3 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta disabled:cursor-not-allowed disabled:opacity-50"
+                 >
+                   {isSpanish ? "Sí, comenzar" : "Yes, start"}
+                 </button>
+                 <button
+                   type="button"
+                   onClick={() => void sendMessage("no")}
+                   disabled={isSending}
+                   className="rounded-md border border-filio px-3 py-1.5 text-xs text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino disabled:cursor-not-allowed disabled:opacity-50"
+                 >
+                   {isSpanish ? "No, cancelar" : "No, cancel"}
+                 </button>
+               </div>
+             </section>
+           )}
+
+           {activeSession?.guided?.proposal && (
+            <div className="rounded-lg border border-filio bg-cripta px-3 py-2 text-sm text-pergamino">
+              <p className="text-xs text-tinta-desvaida">
+                {isSpanish ? "Detalle sugerido" : "Suggested detail"}
+              </p>
+              <p className="mt-1">{activeSession.guided.proposal.label}: {activeSession.guided.proposal.value}</p>
+              <div className="mt-3 flex gap-2">
+                <button type="button" onClick={() => void resolveGuidedProposal(false)} disabled={isSending} className="rounded-md border border-filio px-2.5 py-1.5 text-xs text-tinta-desvaida disabled:opacity-50">{isSpanish ? "Rechazar" : "Reject"}</button>
+                <button type="button" onClick={() => void resolveGuidedProposal(true)} disabled={isSending} className="rounded-md bg-llamita px-2.5 py-1.5 text-xs text-cripta disabled:opacity-50">{isSpanish ? "Aceptar" : "Accept"}</button>
+              </div>
+            </div>
+          )}
+
+          {(hasGuidedCandidate || Boolean(activeSession?.pendingReview)) && onGuidedReview && !isSending && (
+            <button
+              type="button"
+              onClick={() => void handleGuidedReview()}
+              aria-label={isSpanish ? "Revisar y aprobar el diff del personaje" : "Review and approve character diff"}
+              className="flex w-full items-center gap-2 rounded-lg border border-llamita/50 bg-llamita/10 px-3 py-2 text-left text-sm font-medium text-pergamino transition-colors hover:border-llamita hover:bg-llamita/20 focus:outline-none focus:ring-2 focus:ring-llamita/60 active:bg-llamita/25 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Icon name="edit" size={16} />
+              <span>{isSpanish ? "Revisar y aprobar el diff del personaje" : "Review and approve character diff"}</span>
+            </button>
+          )}
 
           {isSending && (
             <div className="flex justify-start">
@@ -435,6 +525,16 @@ function ChatScreen({
         </div>
       )}
 
+      {activity.blocked && !isSending && (
+        <div
+          role="alert"
+          aria-label={isSpanish ? "Asistente no disponible" : "Assistant unavailable"}
+          className="mx-4 mb-2 rounded-md border border-llamita/30 bg-llamita/10 px-3 py-1.5 text-xs leading-relaxed text-pergamino"
+        >
+          {semanticBlockedText(isSpanish ? "es" : "en")}
+        </div>
+      )}
+
       {/* Input area */}
       <div className="border-t border-filio px-4 py-3 shrink-0">
         <div className="flex items-end gap-2">
@@ -445,13 +545,13 @@ function ChatScreen({
             placeholder="Escribí tu pregunta..."
             rows={2}
             className="min-w-0 flex-1 resize-none rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
-            disabled={isSending}
+            disabled={confirmationPending || isSending}
           />
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
               onClick={handleMicClick}
-              disabled={whisperIsTranscribing}
+              disabled={confirmationPending || whisperIsTranscribing}
               className={cn(
                 "flex h-9 w-9 items-center justify-center rounded-lg transition-colors shrink-0",
                 whisperStatus === "recording"
@@ -481,7 +581,7 @@ function ChatScreen({
             <button
               type="button"
               onClick={handleSend}
-              disabled={isSending || !input.trim()}
+              disabled={confirmationPending || isSending || !input.trim()}
               className="flex h-9 w-9 items-center justify-center rounded-lg bg-llamita text-cripta hover:bg-llama-alta disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
               aria-label="Enviar"
             >
@@ -647,6 +747,7 @@ export function AIAssistantSidebar({
   section,
   filePath,
   onProposeEdit,
+  onGuidedReview,
 }: AIAssistantSidebarProps) {
   const [screen, setScreen] = useState<Screen>("chat");
   const sessions = useAIAssistantSessions(mundo, section, filePath);
@@ -663,10 +764,6 @@ export function AIAssistantSidebar({
 
   const switchToChat = useCallback(() => setScreen("chat"), []);
   const switchToHistory = useCallback(() => setScreen("history"), []);
-
-  if (section === "personajes" && !filePath) {
-    return <GuidedCharacterPanel world={mundo} />;
-  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -689,6 +786,9 @@ export function AIAssistantSidebar({
           whisperError={whisper.error}
           onHistoryClick={switchToHistory}
           onProposeEdit={onProposeEdit}
+          onGuidedReview={onGuidedReview}
+          resolveGuidedProposal={sessions.resolveGuidedProposal}
+          requestGuidedReview={sessions.requestGuidedReview}
         />
       ) : (
         <HistoryScreen

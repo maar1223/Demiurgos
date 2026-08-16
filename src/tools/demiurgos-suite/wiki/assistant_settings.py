@@ -23,12 +23,17 @@ import uuid
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
-from assistant_provider_adapters import ProviderRegistry, candidate_from_payload, normalize_model
+from assistant_provider_adapters import (
+    ProviderRegistry,
+    candidate_from_payload,
+    default_base_url,
+    normalize_model,
+)
 from hermes_runtime import HermesRuntimeSeam
 
 
 _PROVIDER = "opencode-go"
-_BASE_URL = "https://opencode.ai/zen/go/v1"
+_BASE_URL = default_base_url(_PROVIDER) or ""
 _API_KEY_ENV = "OPENCODE_GO_API_KEY"
 _PROVIDER_KEY_ENV = {
     "opencode-go": "OPENCODE_GO_API_KEY",
@@ -221,7 +226,12 @@ def _status_from_config(paths: HermesProfilePaths, data: dict[str, Any]) -> Assi
     normalized = data.get("assistant_settings")
     normalized = normalized if isinstance(normalized, dict) else {}
     provider = str(normalized.get("provider") or model.get("provider") or "")
-    base_url = str(normalized.get("base_url") or model.get("base_url") or "")
+    base_url = str(
+        normalized.get("base_url")
+        or model.get("base_url")
+        or default_base_url(provider)
+        or ""
+    )
     model_id = str(normalized.get("model_id") or model.get("default") or "")
     revision = normalized.get("revision", 0)
     try:

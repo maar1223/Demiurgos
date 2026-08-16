@@ -27,6 +27,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 import config  # noqa: E402
+import backup as backup_mod  # noqa: E402
 from i18n import get_language_name, register_with_jinja, t  # noqa: E402
 
 # --- Logging ---------------------------------------------------------------
@@ -537,9 +538,15 @@ async def wizard_back_5(request: Request) -> HTMLResponse:
     sess = sessions[sid]
     backup = sess.get("backup", {})
     ctx = _wizard_ctx(sess)
+    rclone_detected = backup_mod.rclone_available()
     ctx.update({
         "backup_enabled": backup.get("enabled", False),
-        "rclone_detected": shutil.which("rclone") is not None,
+        "rclone_detected": rclone_detected,
+        "backup_status": _backup_status(rclone_detected, backup.get("enabled", False)),
+        "backup_remote": backup.get("remote", ""),
+        "backup_sync_seconds": backup.get("sync_seconds", 30),
+        "backup_workshops": backup.get("workshops", []),
+        "workshop_options": backup_mod.WORKSHOP_OPTIONS,
     })
     response = _wizard_response(request, "screen_backup.html", ctx, 5)
     _attach_session(response, sid)
@@ -800,6 +807,19 @@ async def wizard_post_chats(request: Request) -> HTMLResponse:
     return response
 
 
+def _backup_status(rclone_detected: bool, enabled: bool) -> str:
+    """Map backup availability to a wizard-facing state.
+
+    ``unavailable``/``pending`` keep the Core usable: the wizard never blocks
+    on a missing Google+rclone stack.
+    """
+    if not enabled:
+        return "disabled"
+    if not rclone_detected:
+        return "pending"
+    return "configured"
+
+
 @app.post("/wizard/5", response_class=HTMLResponse)
 async def wizard_post_backup(request: Request) -> HTMLResponse:
     """Screen 5 → 6: process backup config, advance to summary."""
@@ -817,11 +837,27 @@ async def wizard_post_backup(request: Request) -> HTMLResponse:
         sess["backup"] = {"skipped": True, "enabled": False}
         logger.info("Wizard: backup skipped")
     else:
+        enabled = form_data.get("backup_enabled") == "on"
+        workshops = [
+            name for name in backup_mod.WORKSHOP_OPTIONS
+            if form_data.get(f"backup_workshop_{name}") == "on"
+        ]
+        remote = (form_data.get("backup_remote") or "").strip()
+        try:
+            sync_seconds = int(form_data.get("backup_sync_seconds") or "30")
+        except (TypeError, ValueError):
+            sync_seconds = 30
         sess["backup"] = {
             "skipped": False,
-            "enabled": form_data.get("backup_enabled") == "on",
-            "interval": (form_data.get("backup_interval") or "daily").strip(),
+            "enabled": enabled,
+            "remote": remote,
+            "workshops": workshops,
+            "sync_seconds": sync_seconds,
         }
+        logger.info(
+            "Wizard: backup enabled=%s remote=%s workshops=%s sync=%ss",
+            enabled, remote or "(default)", workshops, sync_seconds,
+        )
 
     # --- Build summary context from session ---
     lang_code = sess.get("language", "en")
@@ -850,6 +886,13 @@ async def wizard_post_backup(request: Request) -> HTMLResponse:
         "backup_enabled": (
             not backup.get("skipped", False) and backup.get("enabled", False)
         ),
+        "backup_status": _backup_status(
+            backup_mod.rclone_available(), backup.get("enabled", False)
+        ),
+        "backup_workshops": [
+            t(lang_code, f"backup_workshop_{name}")
+            for name in (backup.get("workshops") or [])
+        ],
     })
 
     response = templates.TemplateResponse(request, "screen_summary.html", ctx)
@@ -955,9 +998,13 @@ async def wizard_finish(request: Request) -> HTMLResponse:
             optional_lines.append(f"DEMIURGOS_CHAT_PROVIDERS={providers_str}")
 
         if not backup.get("skipped"):
-            optional_lines.append(
-                f"DEMIURGOS_BACKUP_ENABLED={'true' if backup.get('enabled') else 'false'}"
-            )
+            backup_config = {
+                "enabled": backup.get("enabled", False),
+                "remote": backup.get("remote", ""),
+                "workshops": backup.get("workshops", []),
+                "sync_seconds": backup.get("sync_seconds", 30),
+            }
+            config.write_backup_config(ENV_PATH, backup_config)
 
         if optional_lines:
             try:
@@ -1059,6 +1106,78 @@ async def wizard_vision_toggle(request: Request) -> HTMLResponse:
             "current_vision_api_key": ai.get("vision_api_key", ""),
             "current_vision_model": ai.get("vision_model", ""),
             "vision_models": [],
+        },
+    )
+
+
+# ===========================================================================
+# Routes — backup status & restore (optional Google+rclone)
+# ===========================================================================
+
+
+@app.get("/backup/status")
+async def backup_status(request: Request) -> dict:
+    """Non-blocking backup availability status (JSON).
+
+    Never blocks Core: a missing rclone returns ``state: "unavailable"``.
+    Exposes only booleans/strings — no secrets or paths.
+    """
+    enabled_raw = os.environ.get("DEMIURGOS_BACKUP_ENABLED", "")
+    enabled = enabled_raw.lower() == "true"
+    rclone_detected = backup_mod.rclone_available()
+    return {
+        "state": _backup_status(rclone_detected, enabled),
+        "rclone_available": rclone_detected,
+    }
+
+
+@app.post("/backup/restore", response_class=HTMLResponse)
+async def backup_restore(request: Request) -> HTMLResponse:
+    """Restore a selected workshop mirror Google → Demiurgos.
+
+    The restore is atomic and reports an explicit success/conflict/error
+    state; an unavailable rclone returns a pending fragment instead of
+    blocking the request.
+    """
+    try:
+        form_data = await request.form()
+    except Exception:
+        return _error_fragment(request, "Datos inválidos")
+
+    workshop = (form_data.get("workshop") or "").strip()
+    spec = backup_mod.DEFAULT_WORKSHOPS.get(workshop)
+    if spec is None:
+        return _error_fragment(request, f"Taller desconocido: {workshop}")
+
+    remote_ref = f"{_PROJECT_ROOT}/{spec['remote']}"
+    target = _PROJECT_ROOT / spec["local"]
+
+    if not backup_mod.rclone_available():
+        return templates.TemplateResponse(
+            request,
+            "_backup_restore_result.html",
+            context={
+                "state": "pending",
+                "workshop": workshop,
+                "detail": "rclone no disponible — Core sigue utilizable",
+            },
+        )
+
+    manager = backup_mod.RestoreManager(
+        binary="rclone",
+        root=str(_PROJECT_ROOT),
+        remote=remote_ref,
+        timeout=30.0,
+    )
+    status = manager.restore(source_relative="", target=target)
+
+    return templates.TemplateResponse(
+        request,
+        "_backup_restore_result.html",
+        context={
+            "state": status.state,
+            "workshop": workshop,
+            "detail": status.detail,
         },
     )
 

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import WikiHome from "@/pages/WikiHome";
+import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
 
 // Mock useWorlds entirely
 vi.mock("@/hooks/useWorlds", () => ({
@@ -27,7 +28,13 @@ interface WorldInfo {
 function renderWikiHome() {
   return render(
     <MemoryRouter initialEntries={["/wiki"]}>
-      <WikiHome />
+      <Routes>
+        <Route path="/wiki" element={<WikiHome />} />
+        <Route
+          path="/wiki/:mundo"
+          element={<div data-testid="world-route">world</div>}
+        />
+      </Routes>
     </MemoryRouter>,
   );
 }
@@ -95,5 +102,20 @@ describe("WikiHome", () => {
   it("renders navbar with world selector", () => {
     renderWikiHome();
     expect(screen.getByText("Mundos")).toBeInTheDocument();
+  });
+
+  it("redirects to the active world when one is persisted", () => {
+    localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
+    renderWikiHome();
+
+    expect(screen.getByTestId("world-route")).toBeInTheDocument();
+  });
+
+  it("does not redirect to a stale world that no longer exists", () => {
+    localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Ghost");
+    renderWikiHome();
+
+    expect(screen.getByText("Vibrantes")).toBeInTheDocument();
+    expect(screen.queryByTestId("world-route")).not.toBeInTheDocument();
   });
 });

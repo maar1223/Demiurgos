@@ -15,13 +15,16 @@ if str(_WIKI) not in sys.path:
 from guided_character_protocol import (  # noqa: E402
     Capabilities,
     CancellationToken,
+    DEFAULT_DEADLINE_MS,
     ErrorCode,
     GuidedRequest,
     GuidedSessionStore,
     Outcome,
     PROTOCOL_VERSION,
     continue_session,
+    MessageType,
     invoke_bounded,
+    MAX_DEADLINE_MS,
 )
 
 
@@ -30,7 +33,7 @@ def request(revision: int = 0, auth: str = "author-1") -> GuidedRequest:
 
 
 def capabilities() -> Capabilities:
-    return Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+    return Capabilities(PROTOCOL_VERSION, True, True, True, MAX_DEADLINE_MS)
 
 
 async def provider_response(req: GuidedRequest, _token: CancellationToken) -> dict:
@@ -42,6 +45,13 @@ def test_capabilities_require_exact_guided_contract() -> None:
     assert Capabilities.from_payload({"protocol_version": "other"}) is None
     assert capabilities().admitted()
     assert not Capabilities(PROTOCOL_VERSION, True, False, True, 8_000).admitted()
+
+
+def test_default_deadline_uses_allowed_maximum_without_widening_validation() -> None:
+    assert request().deadline_ms == MAX_DEADLINE_MS == DEFAULT_DEADLINE_MS == 30_000
+    invalid = GuidedRequest(**{**request().__dict__, "deadline_ms": MAX_DEADLINE_MS + 1})
+    error = invalid.validate()
+    assert error and error.code is ErrorCode.INVALID_INPUT
 
 
 def test_stale_or_wrong_authorization_does_not_mutate_state() -> None:
@@ -69,6 +79,89 @@ def test_valid_response_commits_as_proposal_and_recovers_after_reload() -> None:
         recovered = store.recover("session-1", "author-1")
         assert recovered and recovered.pending_question == "What drives them?"
         assert recovered.messages[0].message_type.value == "assistant_response"
+
+    asyncio.run(scenario())
+
+
+def test_relation_goal_is_persisted_in_state_and_survives_commit() -> None:
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create("session-1", "nec", "author-1", relation_goal="New character: brother of Rhyz")
+        recovered = store.recover("session-1", "author-1")
+        assert recovered and recovered.relation_goal == "New character: brother of Rhyz"
+        goal_request = GuidedRequest(**{
+            **request().__dict__, "relation_goal": "New character: brother of Rhyz",
+        })
+        response, state = await continue_session(store, provider_response, goal_request, capabilities())
+        assert response.outcome is Outcome.QUESTION
+        assert state and state.relation_goal == "New character: brother of Rhyz"
+        assert store.recover("session-1", "author-1").relation_goal == "New character: brother of Rhyz"  # type: ignore[union-attr]
+
+    asyncio.run(scenario())
+
+
+def test_relation_goal_budget_is_enforced_at_creation() -> None:
+    store = GuidedSessionStore()
+    with pytest.raises(ValueError):
+        store.create("session-1", "nec", "author-1", relation_goal="x" * 4_001)
+
+
+def test_confirmation_is_server_owned_and_does_not_create_candidate() -> None:
+    store = GuidedSessionStore()
+    store.create("session-1", "nec", "author-1")
+    state = store.begin_confirmation("session-1", "author-1", "Create Rhyz's wife", "Start? (yes/no)")
+    assert state and state.phase == "confirmation" and state.revision == 1
+    assert state.candidate.proposals == {}
+    assert state.messages[0].message_type is MessageType.AUTHOR_INPUT
+
+
+def delta_provider(payload: dict) -> Callable[..., Awaitable[object]]:
+    async def provider(req: GuidedRequest, _token: CancellationToken) -> dict:
+        return {"protocol_version": PROTOCOL_VERSION, "request_id": req.request_id,
+                "session_id": req.session_id, "outcome": "delta", "delta": dict(payload)}
+    return provider
+
+
+def test_full_mode_incomplete_delta_is_converted_to_one_focused_question() -> None:
+    """Vague backstory data must keep asking one focused question, never a proposal."""
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create("session-1", "nec", "author-1")
+        provider = delta_provider({"relation": "brother of Rhyz", "age": "~30", "scene": "a storm at sea"})
+        response, state = await continue_session(store, provider, request(), capabilities())
+        assert response.outcome is Outcome.QUESTION
+        assert response.question and response.question.count("?") == 1
+        assert state and state.pending_question == response.question
+        assert state.candidate.proposals == {}
+        assert state.candidate.accepted_canon == {}
+
+    asyncio.run(scenario())
+
+
+def test_full_mode_delta_with_identity_and_desire_commits_as_proposal() -> None:
+    """A complete candidate still reaches the proposal through the same gate."""
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create("session-1", "nec", "author-1")
+        provider = delta_provider({"name": "Pert", "desire": "freedom"})
+        response, state = await continue_session(store, provider, request(), capabilities())
+        assert response.outcome is Outcome.DELTA
+        assert state and "name" in state.candidate.proposals
+        assert "desire" in state.candidate.proposals
+
+    asyncio.run(scenario())
+
+
+def test_fast_mode_incomplete_delta_proceeds_with_assumptions() -> None:
+    """Fast mode proceeds with marked assumptions and is not gated."""
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create("session-1", "nec", "author-1", mode="fast", depth="fundamental")
+        provider = delta_provider({"desire": "freedom"})
+        fast_request = GuidedRequest(**{**request().__dict__, "guided_mode": "fast", "question_depth": "fundamental"})
+        response, state = await continue_session(store, provider, fast_request, capabilities())
+        assert response.outcome is Outcome.DELTA
+        assert state and "desire" in state.candidate.proposals
 
     asyncio.run(scenario())
 

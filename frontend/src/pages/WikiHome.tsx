@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
+import { useCurrentWorld } from "@/hooks/useCurrentWorld";
 import { Navbar } from "@/components/organisms/Navbar";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import { CategoryCard } from "@/components/molecules/CategoryCard";
@@ -12,6 +14,7 @@ import type { WorldInfo } from "@/api/types";
  * Wiki Home page (`/wiki`).
  *
  * States:
+ * - 🔀 Active world: redirects to `/wiki/:mundo`
  * - 🟡 Loading: spinner centered on page
  * - 🔴 Error: ErrorBanner with retry
  * - 🟢 Empty: EmptyState with message
@@ -20,6 +23,16 @@ import type { WorldInfo } from "@/api/types";
 export default function WikiHome() {
   const navigate = useNavigate();
   const { worlds, isLoading, error, mutate } = useWorlds();
+  const { world: activeWorld } = useCurrentWorld();
+
+  const activeWorldExists = Boolean(
+    activeWorld && worlds.some((w) => w.name === activeWorld),
+  );
+
+  useEffect(() => {
+    if (!activeWorld || !activeWorldExists) return;
+    navigate(`/wiki/${encodeURIComponent(activeWorld)}`, { replace: true });
+  }, [activeWorld, activeWorldExists, navigate]);
 
   const handleWorldClick = (world: WorldInfo) => {
     navigate(`/wiki/${encodeURIComponent(world.name)}`);

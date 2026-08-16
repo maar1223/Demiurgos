@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { Navbar } from "@/components/organisms/Navbar";
@@ -7,6 +7,7 @@ import {
   NAV_LINKS,
   PLACEHOLDER_TOAST,
 } from "@/lib/constants";
+import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
 import type { WorldInfo } from "@/api/types";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
 import type { Mock } from "vitest";
@@ -22,6 +23,13 @@ const worlds: WorldInfo[] = [
     lore_count: 77,
     character_count: 10,
     saga_count: 4,
+  },
+  {
+    name: "Sombras",
+    path: "/sombras",
+    lore_count: 5,
+    character_count: 0,
+    saga_count: 3,
   },
 ];
 
@@ -60,6 +68,15 @@ function unnamedButtons() {
   return screen.getAllByRole("button");
 }
 
+// Core-only workshop contract: only Taller de Mundo / Taller de Herramientas
+// are available; everything else is a non-actionable "Próximamente" teaser.
+const availableLinks = NAV_LINKS.filter(
+  (link) => link.availability === "available",
+);
+const teaserLinks = NAV_LINKS.filter(
+  (link) => link.availability === "teaser",
+);
+
 describe("Navbar", () => {
   beforeEach(() => {
     vi.spyOn(window, "alert").mockImplementation(() => {});
@@ -94,32 +111,63 @@ describe("Navbar", () => {
     expect(screen.getByRole("button", { name: "Mundos" })).toBeInTheDocument();
   });
 
+  it("makes every available Core nav link navigate to its workshop", async () => {
+    const user = userEvent.setup();
+    renderNavbar({ worlds });
+
+    for (const link of availableLinks) {
+      await user.click(screen.getByRole("button", { name: link.label }));
+      expect(screen.getByTestId("path")).toHaveTextContent(link.to);
+    }
+  });
+
+  it("keeps the generic teaser non-actionable: alert and no navigation", async () => {
+    const user = userEvent.setup();
+    renderNavbar({ worlds });
+
+    expect(teaserLinks.length).toBe(1);
+    await user.click(screen.getByRole("button", { name: "Próximamente" }));
+
+    expect(window.alert).toHaveBeenCalledWith(PLACEHOLDER_TOAST);
+    expect(screen.getByTestId("path")).toHaveTextContent("/start");
+  });
+
+  it("shows exactly one non-actionable Próximamente teaser next to the Core workshops", () => {
+    renderNavbar({ worlds });
+
+    expect(
+      screen.getAllByRole("button", { name: "Próximamente" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Taller de Mundo" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Taller de Herramientas" }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides legacy narrative phases and Taller de Publicación while unavailable", () => {
+    renderNavbar({ worlds });
+
+    for (const label of [
+      "Personajes",
+      "Escritura",
+      "Planificar",
+      "Revisar",
+      "Taller de Publicación",
+    ]) {
+      expect(
+        screen.queryByRole("button", { name: label }),
+      ).not.toBeInTheDocument();
+    }
+  });
+
   it("shows the current world name in the world selector", () => {
     renderNavbar({ worlds, currentWorld: "Vibrantes" });
 
     expect(
       screen.getByRole("button", { name: "Vibrantes" }),
     ).toBeInTheDocument();
-  });
-
-  it("inactive nav links show the placeholder alert and do NOT navigate", async () => {
-    const user = userEvent.setup();
-    renderNavbar({ worlds });
-
-    await user.click(screen.getByRole("button", { name: "Personajes" }));
-
-    expect(window.alert).toHaveBeenCalledWith(PLACEHOLDER_TOAST);
-    expect(screen.getByTestId("path")).toHaveTextContent("/start");
-  });
-
-  it("the active Wiki link navigates to /wiki", async () => {
-    const user = userEvent.setup();
-    renderNavbar({ worlds });
-
-    await user.click(screen.getByRole("button", { name: "Wiki" }));
-
-    expect(screen.getByTestId("path")).toHaveTextContent("/wiki");
-    expect(window.alert).not.toHaveBeenCalled();
   });
 
   it("clicking the logo navigates to /wiki", async () => {
@@ -179,29 +227,71 @@ describe("Navbar", () => {
     expect(screen.getByTestId("path")).toHaveTextContent("/perfil");
   });
 
-  it("world selector opens and reports the selection via onWorldChange", async () => {
+  it("world selector opens and reports the selection via onWorldChange after confirming", async () => {
     const user = userEvent.setup();
     const onWorldChange = vi.fn();
     renderNavbar({ worlds, onWorldChange });
 
     await user.click(screen.getByRole("button", { name: "Mundos" }));
     await user.click(screen.getByRole("option", { name: "Vibrantes" }));
+    await user.click(screen.getByRole("button", { name: "Cambiar" }));
 
     expect(onWorldChange).toHaveBeenCalledWith("Vibrantes");
     // Dropdown closed after selection
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
   });
 
-  it("world selector falls back to navigation when onWorldChange is omitted", async () => {
+  it("world selector asks for confirmation and does not navigate", async () => {
     const user = userEvent.setup();
     renderNavbar({ worlds });
 
     await user.click(screen.getByRole("button", { name: "Mundos" }));
     await user.click(screen.getByRole("option", { name: "Vibrantes" }));
 
-    expect(screen.getByTestId("path")).toHaveTextContent(
-      "/wiki/Vibrantes/lore",
-    );
+    // Confirmation before any persistence — and no navigation away
+    expect(
+      screen.getByRole("dialog", { name: /cambiar mundo activo/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("path")).toHaveTextContent("/start");
+
+    await user.click(screen.getByRole("button", { name: "Cambiar" }));
+
+    expect(localStorage.getItem(ACTIVE_WORLD_STORAGE_KEY)).toBe("Vibrantes");
+    expect(screen.getByTestId("path")).toHaveTextContent("/start");
+  });
+
+  it("world selector cancel keeps the previous world and persists nothing", async () => {
+    localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
+    const user = userEvent.setup();
+    renderNavbar({ worlds });
+
+    await user.click(screen.getByRole("button", { name: "Vibrantes" }));
+    await user.click(screen.getByRole("option", { name: "Sombras" }));
+
+    const dialog = screen.getByRole("dialog", { name: /cambiar mundo activo/i });
+    await user.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+
+    expect(localStorage.getItem(ACTIVE_WORLD_STORAGE_KEY)).toBe("Vibrantes");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("Taller de Mundo navigates to the active world when one exists", async () => {
+    localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
+    const user = userEvent.setup();
+    renderNavbar({ worlds });
+
+    await user.click(screen.getByRole("button", { name: "Taller de Mundo" }));
+
+    expect(screen.getByTestId("path")).toHaveTextContent("/wiki/Vibrantes");
+  });
+
+  it("Taller de Mundo still leads to the workshop when no world is active", async () => {
+    const user = userEvent.setup();
+    renderNavbar({ worlds });
+
+    await user.click(screen.getByRole("button", { name: "Taller de Mundo" }));
+
+    expect(screen.getByTestId("path")).toHaveTextContent("/taller-mundo");
   });
 
   it("shows 'No hay mundos' when the world list is empty", async () => {
@@ -222,37 +312,37 @@ describe("Navbar", () => {
 
     // Desktop nav + mobile menu
     expect(
-      screen.getAllByRole("button", { name: "Revisar" }),
+      screen.getAllByRole("button", { name: "Taller de Mundo" }),
     ).toHaveLength(2);
   });
 
-  it("mobile active link navigates and closes the menu", async () => {
+  it("mobile available link navigates and closes the menu", async () => {
     const user = userEvent.setup();
     renderNavbar({ worlds });
 
     const buttons = unnamedButtons();
     await user.click(buttons[buttons.length - 1]);
-    await user.click(screen.getAllByRole("button", { name: "Wiki" })[1]);
+    await user.click(screen.getAllByRole("button", { name: "Taller de Mundo" })[1]);
 
-    expect(screen.getByTestId("path")).toHaveTextContent("/wiki");
+    expect(screen.getByTestId("path")).toHaveTextContent("/taller-mundo");
     // Menu closed → only the desktop nav link remains
     expect(
-      screen.getAllByRole("button", { name: "Revisar" }),
+      screen.getAllByRole("button", { name: "Taller de Mundo" }),
     ).toHaveLength(1);
   });
 
-  it("mobile inactive link alerts and keeps the menu open", async () => {
+  it("mobile teaser link alerts and keeps the menu open", async () => {
     const user = userEvent.setup();
     renderNavbar({ worlds });
 
     const buttons = unnamedButtons();
     await user.click(buttons[buttons.length - 1]);
-    await user.click(screen.getAllByRole("button", { name: "Personajes" })[1]);
+    await user.click(screen.getAllByRole("button", { name: "Próximamente" })[1]);
 
     expect(window.alert).toHaveBeenCalledWith(PLACEHOLDER_TOAST);
-    // handleNavClick returns before closing the menu for inactive links
+    // handleNavClick returns before closing the menu for teaser links
     expect(
-      screen.getAllByRole("button", { name: "Personajes" }),
+      screen.getAllByRole("button", { name: "Próximamente" }),
     ).toHaveLength(2);
   });
 });

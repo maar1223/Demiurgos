@@ -58,6 +58,19 @@ export interface LocalDevSessionStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Global runtime configuration (GET /api/config)
+// ---------------------------------------------------------------------------
+
+/** Normalized UI language code from the backend (DEMIURGOS_LANGUAGE). */
+export type AppLanguage = "es" | "en";
+
+/** Non-sensitive global runtime metadata exposed by GET /api/config. */
+export interface AppConfig {
+  /** Normalized UI copy language: "es" or "en". */
+  language: AppLanguage;
+}
+
+// ---------------------------------------------------------------------------
 // Idea capture configuration (Profile → Integraciones → Captura de ideas)
 // ---------------------------------------------------------------------------
 
@@ -197,6 +210,7 @@ export interface AssistantActivityItem {
 export type AssistantActivityEvent =
   | ({ kind: "activity"; request_id: string } & AssistantActivityItem)
   | { kind: "answer"; request_id: string; response: string }
+  | SemanticDecisionEvent
   | {
       kind: "terminal";
       request_id: string;
@@ -214,7 +228,9 @@ export interface AssistantActivityEvidence {
 // Guided character creation
 // ---------------------------------------------------------------------------
 
-export type GuidedCharacterPhase = "conversation" | "review" | "complete";
+export type GuidedCharacterPhase = "confirmation" | "conversation" | "review" | "complete";
+export type GuidedCharacterMode = "full" | "fast";
+export type GuidedCharacterDepth = "standard" | "fundamental";
 export type GuidedCharacterIndexStatus = "indexed" | "pending" | "failed" | "dirty";
 
 export interface GuidedCharacterMessage {
@@ -242,6 +258,8 @@ export interface GuidedCharacterSession {
   session_id: string;
   world: string;
   phase: GuidedCharacterPhase;
+  mode: GuidedCharacterMode;
+  depth: GuidedCharacterDepth;
   revision: number;
   pending_question: string | null;
   messages: GuidedCharacterMessage[];
@@ -250,6 +268,13 @@ export interface GuidedCharacterSession {
   index_status?: GuidedCharacterIndexStatus;
   retryable?: boolean;
   message?: string;
+  reference?: {
+    name: string | null;
+    verified: boolean;
+    context: string;
+    source: string | null;
+    goal?: string | null;
+  };
 }
 
 /** OKF ficha status — UI maps Borrador → draft, Canon → stable. */
@@ -296,7 +321,101 @@ export interface EditProposal {
   proposed_digest: string;
   rationale: string;
   is_new_file: boolean;
+  guided_session_id?: string;
+  guided_revision?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Semantic intent decisions
+// ---------------------------------------------------------------------------
+
+/**
+ * Server-validated semantic decision states emitted by the semantic seam.
+ * The server is the authority: the client maps exactly these states and never
+ * invents or infers others.
+ */
+export type SemanticDecisionState =
+  | "allow"
+  | "clarify"
+  | "require_confirmation"
+  | "proposal_ready"
+  | "blocked";
+
+/** Server-derived action for a semantic decision envelope. */
+export type SemanticDecisionAction =
+  | "answer"
+  | "ask_question"
+  | "request_confirmation"
+  | "show_proposal"
+  | "blocked_explanation";
+
+/**
+ * Typed single-run continuation carried by the additive `semantic_decision`
+ * SSE event. Mirrors the server-validated `SemanticContinuation`: `question`
+ * backs `require_confirmation`, `delta` backs `proposal_ready`. Proposed data
+ * only — the server re-derives targets, digests, and revisions.
+ */
+export type SemanticDecisionContinuation =
+  | { outcome: "question"; question: string }
+  | { outcome: "delta"; delta: Record<string, unknown> };
+
+/**
+ * The additive authoritative SSE event emitted by
+ * `/api/{mundo}/ai/ask/activity` BEFORE any compatible `answer`/`terminal`
+ * event. `state`, `action`, and `unavailable` are server-derived; consumers
+ * MUST use this event for permission/state decisions and never infer them
+ * from answer text. Legacy clients may ignore the additive event.
+ */
+export interface SemanticDecisionEvent {
+  kind: "semantic_decision";
+  request_id: string;
+  state: SemanticDecisionState;
+  action: SemanticDecisionAction;
+  unavailable: boolean;
+  continuation: SemanticDecisionContinuation | null;
+}
+
+/**
+ * Decision envelope emitted by POST /api/{mundo}/ai/ask when the semantic
+ * seam is active. The self-contained envelope (`allow`/`clarify`/`blocked`)
+ * carries `state`, `response`, `action`, `request_id`, `attempts`, and
+ * `unavailable`; the guided continuation envelopes
+ * (`require_confirmation`/`proposal_ready`) add `fallback`, `guided`,
+ * `session_id`, `guided_session_id`, `guided_revision`, `guided_state`, and
+ * (for `proposal_ready`) the server-owned proposal fields.
+ */
+export interface SemanticDecisionEnvelope {
+  state: SemanticDecisionState;
+  response: string;
+  action: SemanticDecisionAction;
+  request_id: string;
+  attempts: number;
+  /** Present on the self-contained envelope; absent on guided continuations. */
+  unavailable?: boolean;
+  /** Present only on guided continuation envelopes; never a fallback path. */
+  fallback?: boolean;
+  guided?: boolean;
+  session_id?: string;
+  reference?: string;
+  guided_session_id?: string;
+  guided_revision?: number;
+  guided_state?: GuidedCharacterSession;
+  proposal_id?: string;
+  target?: string;
+  base_revision?: string;
+  proposed_content?: string;
+  proposed_digest?: string;
+  rationale?: string;
+  is_new_file?: boolean;
+}
+
+/**
+ * Everything POST /api/{mundo}/ai/ask may return: a legacy chat answer, a
+ * guided handoff envelope, or a semantic decision envelope.
+ */
+export type AiAskResponse =
+  | { response: string; guided_state?: GuidedCharacterSession }
+  | SemanticDecisionEnvelope;
 
 /** Request body for POST /api/{mundo}/ai/edit-suggest. */
 export interface EditSuggestionRequest {
@@ -464,6 +583,56 @@ export interface TrashListResponse {
 export interface EmptyTrashResponse {
   purged: "all";
   entries: number;
+}
+
+// ---------------------------------------------------------------------------
+// Methodology library (Taller de Herramientas)
+// ---------------------------------------------------------------------------
+
+/** A published, immutable methodology version. */
+export interface PublishedMethodology {
+  skill_id: string;
+  version: string;
+  name: string;
+  description: string;
+  digest: string;
+  published_at: string;
+}
+
+/** The compiled methodology/version pinned to one world. */
+export interface MethodologyActivation {
+  world: string;
+  skill_id: string;
+  version: string;
+  digest: string;
+  activated_at: string;
+}
+
+/** A editable methodology draft. */
+export interface MethodologyDraft {
+  draft_id: string;
+  skill_id: string;
+  version: string;
+  name: string;
+  source: string;
+  description: string;
+  updated_at: string;
+}
+
+/** Library status from GET /api/methodologies/status. */
+export interface MethodologyStatus {
+  published: PublishedMethodology[];
+  activations: Record<string, MethodologyActivation>;
+  drafts: MethodologyDraft[];
+}
+
+/** Input for creating a methodology draft. */
+export interface MethodologyDraftInput {
+  skill_id: string;
+  version: string;
+  name: string;
+  source: string;
+  description?: string;
 }
 
 /** Structured API error. `code` (when present) is a stable machine-readable

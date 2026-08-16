@@ -42,6 +42,7 @@ import { VALID_SECTIONS, SECTION_LABELS, MOVE_DESTINATION_LABELS } from "@/lib/c
 import type { MoveDestinationSection, Section } from "@/lib/constants";
 import { decodePathSegment, getErrorMessage } from "@/lib/utils";
 import { parentPath } from "@/lib/dnd";
+import { getCurrentWorld, setCurrentWorld } from "@/lib/currentWorld";
 import {
   splitFrontmatter,
   mergeFrontmatter,
@@ -216,6 +217,17 @@ export default function WikiEditor() {
 
   // Worlds (for Navbar world selector and world validation)
   const { worlds, isLoading: worldsLoading } = useWorlds();
+
+  // World not found (loaded worlds, but this one doesn't exist)
+  const worldExists = worlds.some((w) => w.name === mundo);
+
+  // Opening a valid route marks `mundo` as the active world (same-tab
+  // localStorage) without navigating back.
+  useEffect(() => {
+    if (mundo && worldExists && getCurrentWorld() !== mundo) {
+      setCurrentWorld(mundo);
+    }
+  }, [mundo, worldExists]);
 
   // File tree for the sidebar
   const {
@@ -756,6 +768,22 @@ export default function WikiEditor() {
     }
   }, [filePath, review]);
 
+  const handleGuidedReview = useCallback(async (proposal: EditProposal) => {
+    if (!mundo || !section || !proposal.is_new_file) return;
+    const prefix = `${section}/`;
+    if (!proposal.target.startsWith(prefix)) {
+      setSaveError("The guided proposal target is outside the current section.");
+      return;
+    }
+    const path = proposal.target.slice(prefix.length);
+    setPendingNewFile({ path });
+    setEditedContent(proposal.proposed_content);
+    setIsEditing(true);
+    setPreviewOpen(true);
+    review.startReview(proposal);
+    setSaveError(null);
+  }, [mundo, review, section]);
+
   const handleRejectReview = useCallback(() => {
     review.reject();
     setPendingNewFile(null);
@@ -947,6 +975,7 @@ export default function WikiEditor() {
           section={section}
           filePath={filePath}
           onProposeEdit={handleAssistantEditProposal}
+          onGuidedReview={handleGuidedReview}
         />
       ) : (
         <EntitySearchPanel mundo={mundo!} onInsert={handleInsertWikilink} />
@@ -1011,9 +1040,6 @@ export default function WikiEditor() {
       </EditorLayout>
     );
   }
-
-  // World not found (loaded worlds, but this one doesn't exist)
-  const worldExists = worlds.some((w) => w.name === mundo);
 
   // Has issues that prevent rendering
   if (!mundo || !section) {

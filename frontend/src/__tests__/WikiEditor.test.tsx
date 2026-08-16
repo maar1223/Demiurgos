@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { forwardRef, useImperativeHandle } from "react";
 import WikiEditor from "@/pages/WikiEditor";
+import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
 
 // Mock all hooks
 vi.mock("@/hooks/useWorlds", () => ({
@@ -377,6 +378,18 @@ describe("WikiEditor", () => {
     expect(screen.getByText(/Mundo no encontrado/i)).toBeInTheDocument();
   });
 
+  it("marks the visited world as the active world", () => {
+    renderWikiEditor();
+
+    expect(localStorage.getItem(ACTIVE_WORLD_STORAGE_KEY)).toBe("Vibrantes");
+  });
+
+  it("does not mark an unknown world as active", () => {
+    renderWikiEditor(["/wiki/UnknownWorld/lore"]);
+
+    expect(localStorage.getItem(ACTIVE_WORLD_STORAGE_KEY)).toBeNull();
+  });
+
   it("shows loading spinner when tree is loading", () => {
     (useFileTree as Mock).mockReturnValue({
       nodes: [],
@@ -438,8 +451,10 @@ describe("WikiEditor", () => {
     // "Vibrantes" appears both in the breadcrumb AND the world selector
     // — use getAllByText for duplicate-safe assertions
     expect(screen.getAllByText("Vibrantes").length).toBeGreaterThanOrEqual(1);
-    // Navbar should also show the Wiki nav link
-    expect(screen.getByText("Wiki")).toBeInTheDocument();
+    // Navbar should also show the Taller de Mundo nav link
+    expect(
+      screen.getByRole("button", { name: "Taller de Mundo" }),
+    ).toBeInTheDocument();
   });
 
   it("has breadcrumb segment clickable", async () => {

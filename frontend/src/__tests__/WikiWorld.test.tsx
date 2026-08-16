@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom";
 import WikiWorld from "@/pages/WikiWorld";
+import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
 
 // Mock useWorlds entirely
 vi.mock("@/hooks/useWorlds", () => ({
@@ -101,5 +102,17 @@ describe("WikiWorld", () => {
     renderWikiWorld("/wiki/UnknownWorld");
 
     expect(screen.getByText(/Mundo no encontrado/i)).toBeInTheDocument();
+  });
+
+  it("marks the visited world as the active world", () => {
+    renderWikiWorld();
+
+    expect(localStorage.getItem(ACTIVE_WORLD_STORAGE_KEY)).toBe("Vibrantes");
+  });
+
+  it("does not mark an unknown world as active", () => {
+    renderWikiWorld("/wiki/UnknownWorld");
+
+    expect(localStorage.getItem(ACTIVE_WORLD_STORAGE_KEY)).toBeNull();
   });
 });

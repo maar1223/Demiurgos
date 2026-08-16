@@ -31,6 +31,9 @@ for _p in (str(_WIKI), str(_SUITE)):
 
 import api_server  # noqa: E402
 from assistant_activity import assess_hermes_capabilities  # noqa: E402
+import guided_session_store  # noqa: E402
+from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore  # noqa: E402
+from guided_session_store import SESSION_TTL  # noqa: E402
 
 
 def _activity_capability():
@@ -49,6 +52,23 @@ def _activity_capability():
     )
 
 
+def _parse_sse(text: str) -> list[dict]:
+    """Parse ``event: <kind>`` / ``data: <json>`` records in stream order."""
+    records = []
+    event_name: str | None = None
+    data_lines: list[str] = []
+    for line in text.splitlines():
+        if line.startswith("event: "):
+            event_name = line[len("event: "):]
+        elif line.startswith("data: "):
+            data_lines.append(line[len("data: "):])
+        elif line == "" and event_name is not None:
+            records.append(json.loads("\n".join(data_lines)))
+            event_name = None
+            data_lines = []
+    return records
+
+
 @pytest.fixture()
 def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """TestClient with a temp mundos dir and a sample world."""
@@ -62,12 +82,44 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(api_server, "MUNDOS_DIR", mundos)
     monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    # Hermes-first contract: unwired semantic provider fails closed. Tests that
+    # exercise /ai/ask or /api/chat wire a fake provider explicitly.
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
     api_server._graph_indices.clear()
     api_server._confirmation_store.clear()
+    api_server._GUIDED_PENDING_PROPOSALS.clear()
+    api_server._GUIDED_INDEX_REQUESTS.clear()
+    api_server._METHODOLOGY_LIBRARY = None
+    api_server._METHODOLOGY_QUARANTINE = None
     with api_server._local_session_lock:
         api_server._local_sessions.clear()
     api_server._target_locks.clear()
     return TestClient(api_server.app, client=("127.0.0.1", 50000))
+
+
+@pytest.mark.parametrize("language,expected", [
+    ("es", "es"),
+    ("es-ar", "es"),
+    ("es-es", "es"),
+    ("en", "en"),
+])
+def test_config_endpoint_exposes_normalized_language(client: TestClient, monkeypatch, language, expected):
+    monkeypatch.setenv("DEMIURGOS_LANGUAGE", language)
+    response = client.get("/api/config")
+    assert response.status_code == 200
+    assert response.json() == {"language": expected}
+
+
+def test_config_endpoint_reads_project_env_file_with_safe_fallback(client: TestClient, monkeypatch, tmp_path):
+    monkeypatch.delenv("DEMIURGOS_LANGUAGE", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("DEMIURGOS_LANGUAGE=en\n", encoding="utf-8")
+    response = client.get("/api/config")
+    assert response.json() == {"language": "en"}
+
+    env_file.write_text("SOME_SECRET=top-secret\n", encoding="utf-8")
+    response = client.get("/api/config")
+    assert response.json() == {"language": "es"}
 
 
 @pytest.fixture()
@@ -833,32 +885,713 @@ class TestStatusEndpoint:
 
 
 class TestAiAsk:
-    def test_ai_ask_includes_file_context(self, client: TestClient):
-        """The prompt sent to Hermes carries the wikilink and path of the open file."""
+    def test_natural_character_message_handoffs_to_guided_session(self, client: TestClient, monkeypatch):
+        """Hermes-first: a natural character message becomes a guarded guided
+        session only through a validated require_confirmation decision."""
+        _principal(monkeypatch)
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
+        runs = _SemanticRuns(_continuation_semantic_payload("require_confirmation"))
+        _wire_semantic_provider(monkeypatch, runs)
+
+        response = client.post(
+            "/api/test_mundo/ai/ask",
+            json={"prompt": "Un guerrero de las sombras", "session_id": "chat-1"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["state"] == "require_confirmation"
+        assert payload["guided_session_id"].startswith("guided-")
+        assert payload["guided_revision"] == 1
+        assert payload["guided_state"]["phase"] == "confirmation"
+        assert payload["guided_state"]["session_id"] == payload["guided_session_id"]
+        assert runs.starts == 1
+
+    def test_subsequent_guided_turn_keeps_session_and_revision(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch, "author-1")
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
+        runs = _SemanticRuns(
+            _continuation_semantic_payload("require_confirmation"),
+            _semantic_payload("allow"),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+        first = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Quiero crear un personaje", "session_id": "chat-1",
+        }).json()
+
+        second = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Busca la libertad", "session_id": "chat-1",
+            "guided_session_id": first["guided_session_id"],
+            "guided_revision": first["guided_revision"],
+        })
+
+        assert second.status_code == 200
+        assert second.json()["guided_session_id"] == first["guided_session_id"]
+        assert second.json()["guided_revision"] == first["guided_revision"] + 1
+        assert runs.starts == 2
+
+    def test_guided_turn_receives_bounded_active_ficha_context(self, client: TestClient, monkeypatch):
+        """The authorized open ficha reaches Hermes as bounded context."""
+        target = api_server.MUNDOS_DIR / "test_mundo" / "personajes" / "rhyz.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("---\ntitle: Rhyz\n---\nRhyz is a patient tactician.\n", encoding="utf-8")
+        runs = _SemanticRuns(_continuation_semantic_payload("require_confirmation"))
+        _wire_semantic_provider(monkeypatch, runs)
+        _principal(monkeypatch)
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
+
+        response = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Me gustaria crear un nuevo personaje",
+            "section": "personajes", "file_path": "rhyz.md",
+        })
+
+        assert response.status_code == 200
+        prompt = runs.requests[0].prompt
+        assert "Rhyz is a patient tactician." in prompt
+        assert "personajes/rhyz.md" not in prompt
+        assert runs.starts == 1
+
+    def test_folder_character_reference_uses_canonical_graph_evidence(self, client: TestClient, monkeypatch):
+        class Graph:
+            def __init__(self):
+                self.calls = []
+
+            def search(self, query):
+                self.calls.append(("search", query))
+                return [{"name": "Rhyz", "path": "personajes/rhyz.md"}]
+
+            def read(self, path):
+                self.calls.append(("read", path))
+                return {"name": "Rhyz", "type": "Personaje", "content": "Patient tactician."}
+
+            def links(self, path, kind):
+                self.calls.append(("links", kind))
+                return []
+
+        graph = Graph()
+        seen = []
+
+        async def provider(request, _token):
+            seen.append(request.reference_context)
+            return {
+                "protocol_version": request.protocol_version,
+                "request_id": request.request_id,
+                "session_id": request.session_id,
+                "outcome": "question",
+                "question": "What makes this sibling distinct?",
+            }
+
+        _principal(monkeypatch)
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: graph)
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        runs = _SemanticRuns(
+            _continuation_semantic_payload("require_confirmation"),
+            _semantic_payload("allow"),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+        response = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "quiero crear un hermano de Rhyz",
+            "section": "personajes",
+        })
+
+        assert response.status_code == 200
+        payload = response.json()
+        # Hermes decides require_confirmation; the canonical graph evidence is
+        # gathered ONCE server-side and bound to the guarded session.
+        assert payload["state"] == "require_confirmation"
+        assert payload["guided_state"]["phase"] == "confirmation"
+        assert payload["guided_revision"] == 1
+        assert payload["guided_state"]["candidate"]["proposals"] == {}
+        assert payload["guided_state"]["candidate"]["accepted_canon"] == {}
+        assert seen == []
+        # The canonical graph evidence is gathered at routing time and bound to
+        # the session, but only reaches the provider after explicit confirmation.
+        assert graph.calls == [("search", "Rhyz"), ("read", "personajes/rhyz.md"), ("links", "forward"), ("links", "backlinks")]
+        state = api_server._GUIDED_SESSIONS.recover(payload["guided_session_id"], "tester")
+        assert state is not None
+        assert state.reference_name == "Rhyz"
+        assert "Patient tactician." in state.reference_context
+
+        confirmed = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "sí",
+            "session_id": "chat-1",
+            "guided_session_id": payload["guided_session_id"],
+            "guided_revision": payload["guided_revision"],
+        })
+
+        assert confirmed.status_code == 200
+        confirmed_payload = confirmed.json()
+        assert confirmed_payload["guided_state"]["phase"] == "conversation"
+        assert confirmed_payload["guided_revision"] == payload["guided_revision"] + 2
+        assert len(seen) == 1
+        assert "Patient tactician." in seen[0]
+        assert "personajes/rhyz.md" not in seen[0]
+
+    def test_folder_reference_factual_turn_preserves_guided_state(self, client: TestClient, monkeypatch):
+        class Graph:
+            def search(self, query):
+                assert query == "Rhyz"
+                return [{"name": "Rhyz", "path": "personajes/rhyz.md"}]
+
+            def read(self, path):
+                assert path == "personajes/rhyz.md"
+                return {"name": "Rhyz", "type": "Personaje", "content": "Patient tactician."}
+
+            def links(self, _path, _kind):
+                return []
+
+        guided_calls = []
+
+        async def provider(request, _token):
+            guided_calls.append(request)
+            return {
+                "protocol_version": request.protocol_version,
+                "request_id": request.request_id,
+                "session_id": request.session_id,
+                "outcome": "question",
+                "question": f"Guided question {request.base_revision + 1}",
+            }
+
+        _principal(monkeypatch, "author-1")
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: Graph())
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        runs = _SemanticRuns(
+            _continuation_semantic_payload("require_confirmation"),
+            _semantic_payload("allow"),
+            _semantic_payload("allow"),
+            _semantic_payload("allow"),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+
+        first = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "quiero crear al hermano de Rhyz",
+            "section": "personajes",
+            "session_id": "chat-1",
+        }).json()
+        assert first["guided_state"]["phase"] == "confirmation"
+        assert first["guided_revision"] == 1
+        assert guided_calls == []
+
+        # The factual shortcut is gone: a non-confirmation message during the
+        # confirmation phase is interpreted by Hermes first, then the guarded
+        # confirmation simply re-prompts without running the guided provider or
+        # a plain-chat call, so the guided state stays safe.
+        factual = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "me puedes indicar cual es el papel que cumple Rhyz?",
+            "section": "personajes",
+            "session_id": "chat-1",
+            "guided_session_id": first["guided_session_id"],
+            "guided_revision": first["guided_revision"],
+        })
+
+        assert factual.status_code == 200
+        factual_payload = factual.json()
+        assert factual_payload["guided_session_id"] == first["guided_session_id"]
+        assert factual_payload["guided_state"]["phase"] == "confirmation"
+        assert guided_calls == []
+        assert runs.starts == 2
+
+        confirmed = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "sí",
+            "section": "personajes",
+            "session_id": "chat-1",
+            "guided_session_id": first["guided_session_id"],
+            "guided_revision": factual_payload["guided_revision"],
+        })
+
+        assert confirmed.status_code == 200
+        confirmed_payload = confirmed.json()
+        # Only after explicit confirmation does the guided provider run, carrying
+        # the canonical reference revision-bound into the conversation.
+        assert confirmed_payload["guided_state"]["phase"] == "conversation"
+        assert len(guided_calls) == 1
+        assert guided_calls[0].base_revision == factual_payload["guided_revision"] + 1
+        assert guided_calls[0].reference_name == "Rhyz"
+        assert "Patient tactician." in guided_calls[0].reference_context
+
+        resumed = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Su deseo es proteger a su hermana",
+            "section": "personajes",
+            "session_id": "chat-1",
+            "guided_session_id": first["guided_session_id"],
+            "guided_revision": confirmed_payload["guided_revision"],
+        })
+
+        assert resumed.status_code == 200
+        assert resumed.json()["guided_session_id"] == first["guided_session_id"]
+        assert resumed.json()["guided_revision"] == confirmed_payload["guided_revision"] + 1
+        assert len(guided_calls) == 2
+        assert guided_calls[1].base_revision == confirmed_payload["guided_revision"]
+
+    def test_missing_or_ambiguous_folder_reference_stays_uncertain(self, client: TestClient, monkeypatch):
+        class Graph:
+            def __init__(self, matches):
+                self.matches = matches
+
+            def search(self, _query):
+                return self.matches
+
+            def read(self, _path):
+                raise AssertionError("ambiguous or missing references must not be read")
+
+            def links(self, _path, _kind):
+                raise AssertionError("ambiguous or missing references must not explore links")
+
+        seen = []
+
+        async def provider(request, _token):
+            seen.append(request.reference_context)
+            return {
+                "protocol_version": request.protocol_version,
+                "request_id": request.request_id,
+                "session_id": request.session_id,
+                "outcome": "question",
+                "question": "Which existing character do you mean?",
+            }
+
+        _principal(monkeypatch)
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        runs = _SemanticRuns(
+            _continuation_semantic_payload("require_confirmation"),
+            _semantic_payload("allow"),
+            _continuation_semantic_payload("require_confirmation"),
+            _semantic_payload("allow"),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+        for matches, expected in (
+            ([], "was not found"),
+            ([{"name": "Rhyz", "path": "personajes/a.md"}, {"name": "Rhyz", "path": "personajes/b.md"}], "multiple graph matches"),
+        ):
+            monkeypatch.setattr(api_server, "_get_graph", lambda _world, matches=matches: Graph(matches))
+            before = len(seen)
+            response = client.post("/api/test_mundo/ai/ask", json={
+                "prompt": "quiero crear un hermano de Rhyz",
+                "section": "personajes",
+            })
+            assert response.status_code == 200
+            payload = response.json()
+            # Confirmation-first: the unresolved/ambiguous reference enters
+            # confirmation and the provider does not run before explicit
+            # confirmation, so no facts are invented prematurely.
+            assert payload["state"] == "require_confirmation"
+            assert payload["guided_state"]["phase"] == "confirmation"
+            assert payload["guided_revision"] == 1
+            assert len(seen) == before
+            # The uncertainty is retained in the session (never read/linked) and
+            # reaches the provider only after confirmation to ask for clarification.
+            state = api_server._GUIDED_SESSIONS.recover(payload["guided_session_id"], "tester")
+            assert state is not None
+            assert expected in state.reference_context
+            assert "personajes/" not in state.reference_context
+
+            confirmed = client.post("/api/test_mundo/ai/ask", json={
+                "prompt": "sí",
+                "guided_session_id": payload["guided_session_id"],
+                "guided_revision": payload["guided_revision"],
+            })
+            assert confirmed.status_code == 200
+            assert len(seen) == before + 1
+            assert expected in seen[-1]
+            assert "personajes/" not in seen[-1]
+
+    def test_named_reference_graph_failure_fails_closed_without_session_mutation(self, client: TestClient, monkeypatch):
+        async def provider(_request, _token):
+            raise AssertionError("provider must not run when the graph is unavailable")
+
+        _principal(monkeypatch)
+        sessions = api_server.GuidedSessionStore()
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: (_ for _ in ()).throw(RuntimeError("index unavailable")))
+        runs = _SemanticRuns(_continuation_semantic_payload("require_confirmation"))
+        _wire_semantic_provider(monkeypatch, runs)
+
+        response = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "quiero crear un hermano de Rhyz",
+            "section": "personajes",
+        })
+
+        # Hermes decided require_confirmation, but the guarded continuation
+        # cannot be backed without graph evidence: fail closed to blocked with
+        # zero session mutation.
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "blocked"
+        assert envelope["action"] == "blocked_explanation"
+        assert "proposal" not in envelope and "digest" not in envelope
+        assert not sessions._sessions
+
+class TestGuidedSessionDurability:
+    """Phase 2 (2.4): durable resume, pending-proposal revalidation,
+    methodology change → new session, and legacy in-memory fail-closed."""
+
+    def _delta_provider(self):
+        async def provider(request, _token):
+            return {
+                "protocol_version": "guided-character-v1",
+                "request_id": request.request_id,
+                "session_id": request.session_id,
+                "outcome": "delta",
+                "delta": {"name": "Pert", "desire": "freedom"},
+            }
+
+        return provider
+
+    def _wire(self, monkeypatch, store, provider=None, semantic_payloads=()):
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
+        if provider is not None:
+            monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+            monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+                "guided-character-v1", True, True, True, 30000,
+            ))
+        if semantic_payloads:
+            _wire_semantic_provider(monkeypatch, _SemanticRuns(*semantic_payloads))
+
+    def test_resume_under_30_days_survives_durable_restart(self, client: TestClient, monkeypatch, tmp_path):
+        assert SESSION_TTL.days == 30
+        db = tmp_path / "guided.sqlite3"
+        provider = self._delta_provider()
+        self._wire(monkeypatch, DurableGuidedSessionStore(db), provider=provider,
+                   semantic_payloads=[_semantic_payload("allow"), _semantic_payload("allow")])
+        _principal(monkeypatch, "author-1")
+
+        started = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Pert",
+        })
+        assert started.status_code == 200
+        payload = started.json()
+        sid, revision = payload["session_id"], payload["revision"]
+        assert payload["candidate"]["proposals"]
+
+        # Durable restart: a fresh store over the same file has no
+        # in-process state, yet the session is recoverable.
+        DurableGuidedSessionStore(db).close()
+        self._wire(monkeypatch, DurableGuidedSessionStore(db))
+        resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
+        assert resumed.status_code == 200
+        assert resumed.json()["session_id"] == sid
+        assert resumed.json()["revision"] == revision
+
+    def test_pending_proposal_requires_revalidation_after_restart(self, client: TestClient, monkeypatch, tmp_path):
+        db = tmp_path / "guided.sqlite3"
+        provider = self._delta_provider()
+        self._wire(monkeypatch, DurableGuidedSessionStore(db), provider=provider,
+                   semantic_payloads=[_semantic_payload("allow"), _semantic_payload("allow")])
+        _principal(monkeypatch, "author-1")
+
+        started = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Pert",
+        }).json()
+        sid, revision = started["session_id"], started["revision"]
+
+        before = client.post("/api/test_mundo/guided-character/proposal/serialize", json={
+            "session_id": sid, "base_revision": revision,
+        })
+        assert before.status_code == 200
+
+        DurableGuidedSessionStore(db).close()
+        self._wire(monkeypatch, DurableGuidedSessionStore(db), provider=provider,
+                   semantic_payloads=[_semantic_payload("allow")])
+        resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
+        assert resumed.status_code == 200
+
+        # The recovered pending proposal is NOT inherited: serialization is
+        # refused until a fresh turn revalidates it.
+        blocked = client.post("/api/test_mundo/guided-character/proposal/serialize", json={
+            "session_id": sid, "base_revision": revision,
+        })
+        assert blocked.status_code == 422
+        assert "revalidation" in blocked.json()["message"]
+
+        revalidated = client.post("/api/test_mundo/guided-character/turn", json={
+            "session_id": sid, "base_revision": revision,
+            "author_input": "Su deseo es la libertad",
+        })
+        assert revalidated.status_code == 200
+        fresh_revision = revalidated.json()["revision"]
+
+        fresh = client.post("/api/test_mundo/guided-character/proposal/serialize", json={
+            "session_id": sid, "base_revision": fresh_revision,
+        })
+        assert fresh.status_code == 200
+        assert fresh.json()["proposal_id"].startswith("guided-proposal-")
+
+    def test_methodology_change_requires_a_new_session(self, client: TestClient, monkeypatch, tmp_path):
+        db = tmp_path / "guided.sqlite3"
+        store = DurableGuidedSessionStore(db)
+        provider = self._delta_provider()
+        self._wire(monkeypatch, store, provider=provider,
+                   semantic_payloads=[_semantic_payload("allow"), _semantic_payload("allow"),
+                                      _semantic_payload("allow")])
+        _principal(monkeypatch, "author-1")
+
+        started = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Pert",
+        }).json()
+        sid, revision = started["session_id"], started["revision"]
+
+        monkeypatch.setattr(api_server, "_ACTIVE_METHODOLOGY_VERSION", "custom-v2")
+        resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
+        assert resumed.status_code == 422
+        assert "methodology version has changed" in resumed.json()["message"]
+
+        turned = client.post("/api/test_mundo/guided-character/turn", json={
+            "session_id": sid, "base_revision": revision,
+            "author_input": "Su deseo es la libertad",
+        })
+        assert turned.status_code == 422
+        assert "methodology version has changed" in turned.json()["message"]
+
+        # A brand-new session under the new version works and pins it.
+        fresh = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Mar",
+        })
+        assert fresh.status_code == 200
+        snapshot = store.methodology_snapshot(fresh.json()["session_id"], "author-1")
+        assert snapshot is not None
+        assert snapshot.skill_version == "custom-v2"
+
+    def test_legacy_in_memory_sessions_fail_closed_without_migration(self, client: TestClient, monkeypatch, tmp_path):
+        _principal(monkeypatch, "author-1")
+        legacy = api_server.GuidedSessionStore()
+        legacy.create("guided-legacy-1", "test_mundo", "author-1")
+
+        durable = DurableGuidedSessionStore(tmp_path / "fresh.sqlite3")
+        self._wire(monkeypatch, durable)
+        response = client.get("/api/test_mundo/guided-character/session/guided-legacy-1")
+        assert response.status_code == 401
+        assert response.json()["code"] == "unauthorized"
+        assert durable.recover("guided-legacy-1", "author-1") is None
+        assert durable.discard_expired() == 0
+
+    def test_default_configuration_recovers_after_durable_restart(self, client: TestClient, monkeypatch, tmp_path):
+        """The default configuration (no ``db_path``, no env var) is durable:
+        two stores wired over the same resolved default file recover the
+        session after a restart, and the resolved path is the repo-local
+        ``data/guided-sessions.sqlite3`` default, not ``:memory:``."""
+        default = tmp_path / "data" / "guided-sessions.sqlite3"
+        monkeypatch.setattr(guided_session_store, "default_db_path", lambda: default)
+        provider = self._delta_provider()
+
+        store = DurableGuidedSessionStore()
+        assert store._db_path == str(default)  # noqa: SLF001
+        assert default.exists()
+        self._wire(monkeypatch, store, provider=provider,
+                   semantic_payloads=[_semantic_payload("allow"), _semantic_payload("allow")])
+        _principal(monkeypatch, "author-1")
+
+        started = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Pert",
+        })
+        assert started.status_code == 200
+        payload = started.json()
+        sid, revision = payload["session_id"], payload["revision"]
+        assert payload["candidate"]["proposals"]
+
+        store.close()
+        self._wire(monkeypatch, DurableGuidedSessionStore())
+        resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
+        assert resumed.status_code == 200
+        assert resumed.json()["session_id"] == sid
+        assert resumed.json()["revision"] == revision
+
+    def test_factual_ficha_question_answers_via_hermes_without_factual_shortcut(self, client: TestClient, monkeypatch):
+        target = api_server.MUNDOS_DIR / "test_mundo" / "personajes" / "rhyz.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("---\ntitle: Rhyz\n---\nRhyz is patient.\n", encoding="utf-8")
+        calls = []
+
+        async def provider(request, _token):
+            calls.append(request.author_input)
+            return {
+                "protocol_version": request.protocol_version,
+                "request_id": request.request_id,
+                "session_id": request.session_id,
+                "outcome": "question",
+                "question": f"Guided question {request.base_revision + 1}",
+            }
+
+        _principal(monkeypatch, "author-1")
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
+        runs = _SemanticRuns(
+            _continuation_semantic_payload("require_confirmation"),
+            _semantic_payload("allow"),
+            _semantic_payload("allow"),
+            _semantic_payload("allow"),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+        context = {"section": "personajes", "file_path": "rhyz.md", "session_id": "chat-1"}
+        first = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Quiero crear un personaje", **context,
+        }).json()
+        with patch("api_server._run_hermes", new=AsyncMock()) as normal:
+            factual = client.post("/api/test_mundo/ai/ask", json={
+                "prompt": "Recuérdame cómo es Rhyz", **context,
+                "guided_session_id": first["guided_session_id"],
+                "guided_revision": first["guided_revision"],
+            })
+        assert factual.status_code == 200
+        # Hermes interpreted the factual message; the guarded confirmation just
+        # re-prompts (no factual shortcut, no plain-chat fallback).
+        assert factual.json()["guided_session_id"] == first["guided_session_id"]
+        assert factual.json()["guided_revision"] == first["guided_revision"] + 1
+        normal.assert_not_awaited()
+
+        confirmed = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "sí", **context,
+            "guided_session_id": first["guided_session_id"],
+            "guided_revision": factual.json()["guided_revision"],
+        })
+        assert confirmed.status_code == 200
+        assert confirmed.json()["guided_state"]["phase"] == "conversation"
+        assert confirmed.json()["guided_revision"] == factual.json()["guided_revision"] + 2
+        assert calls == ["Quiero crear un personaje"]
+
+        resumed = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Su deseo es proteger a su hermana", **context,
+            "guided_session_id": first["guided_session_id"],
+            "guided_revision": confirmed.json()["guided_revision"],
+        })
+        assert resumed.status_code == 200
+        assert resumed.json()["guided_session_id"] == first["guided_session_id"]
+        assert resumed.json()["guided_revision"] == confirmed.json()["guided_revision"] + 1
+        assert calls == ["Quiero crear un personaje", "Su deseo es proteger a su hermana"]
+
+    def test_factual_question_with_missing_ficha_context_stays_safe_without_mutation(
+        self, client: TestClient, monkeypatch,
+    ):
+        calls = []
+
+        async def provider(request, _token):
+            calls.append(request.author_input)
+            return {
+                "protocol_version": request.protocol_version,
+                "request_id": request.request_id,
+                "session_id": request.session_id,
+                "outcome": "question",
+                "question": "What drives them?",
+            }
+
+        _principal(monkeypatch, "author-1")
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
+        runs = _SemanticRuns(
+            _continuation_semantic_payload("require_confirmation"),
+            _semantic_payload("allow"),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+        first = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Quiero crear un personaje", "session_id": "chat-1",
+        }).json()
+
+        response = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Recuérdame cómo es Rhyz", "session_id": "chat-1",
+            "section": "personajes", "file_path": "missing.md",
+            "guided_session_id": first["guided_session_id"],
+            "guided_revision": first["guided_revision"],
+        })
+
+        # No factual shortcut exists: the message is interpreted by Hermes and
+        # the guarded confirmation re-prompts. Zero provider calls, no mutation.
+        assert response.status_code == 200
+        assert response.json()["guided_session_id"] == first["guided_session_id"]
+        assert response.json()["guided_revision"] == first["guided_revision"] + 1
+        state = api_server._GUIDED_SESSIONS.recover(first["guided_session_id"], "author-1")
+        assert state is not None
+        assert calls == []
+
+    def test_guided_turn_requires_authentication_without_mutation(self, client: TestClient, monkeypatch):
+        sessions = api_server.GuidedSessionStore()
+        state = sessions.create("guided-auth", "test_mundo", "author-1")
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
+        monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: None)
+
+        response = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Continúa", "guided_session_id": state.session_id,
+            "guided_revision": state.revision,
+        })
+
+        assert response.status_code == 401
+        recovered = sessions.recover(state.session_id, "author-1")
+        assert recovered is not None
+        assert recovered.revision == 0
+
+    def test_explicit_edit_request_stays_outside_guided_handoff(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        with patch("api_server._run_hermes", new=AsyncMock(return_value="ordinary edit answer")) as mock_run:
+            response = client.post(
+                "/api/test_mundo/ai/ask",
+                json={"prompt": "Editar el personaje Aria"},
+            )
+
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "allow"
+        assert envelope["response"] == "Hermes semantic answer."
+        assert runs.starts == 1
+        mock_run.assert_not_awaited()
+
+    def test_ai_ask_includes_file_context(self, client: TestClient, monkeypatch):
+        """The bounded open-ficha content reaches the semantic decision input."""
         target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md"
         target.write_text("---\ntitle: Inicio\n---\nCuerpo\n", encoding="utf-8")
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
         with patch("api_server._run_hermes", new=AsyncMock(return_value="Hola desde Hermes")) as mock_run:
             resp = client.post(
                 "/api/test_mundo/ai/ask",
                 json={"prompt": "Hola", "section": "lore", "file_path": "00_inicio.md"},
             )
         assert resp.status_code == 200
-        sent = mock_run.await_args.args[0]
-        assert "[[Inicio]]" in sent
-        assert "lore/00_inicio.md" in sent
-        assert resp.json()["response"] == "Hola desde Hermes"
+        sent = runs.requests[0].prompt
+        assert "Cuerpo" in sent
+        assert "lore/00_inicio.md" not in sent
+        assert resp.json()["state"] == "allow"
+        mock_run.assert_not_awaited()
 
-    def test_ai_ask_without_file_context(self, client: TestClient):
-        """Without a file_path the prompt only carries the mundo prefix."""
+    def test_ai_ask_without_file_context(self, client: TestClient, monkeypatch):
+        """Without a file_path no ficha context reaches Hermes."""
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
         with patch("api_server._run_hermes", new=AsyncMock(return_value="ok")) as mock_run:
             resp = client.post(
                 "/api/test_mundo/ai/ask",
                 json={"prompt": "Hola"},
             )
         assert resp.status_code == 200
-        sent = mock_run.await_args.args[0]
-        assert "Ficha actual" not in sent
-        assert "[Mundo: test_mundo]" in sent
+        sent = runs.requests[0].prompt
+        assert '"ficha"' not in sent
+        assert "test_mundo" in sent
+        mock_run.assert_not_awaited()
 
     def test_activity_route_returns_sanitized_correlated_sse(self, client: TestClient, monkeypatch):
         class FakeAdapter:
@@ -871,7 +1604,9 @@ class TestAiAsk:
 
             def start(self, request):
                 assert request.request_id
-                assert request.prompt == "[Mundo: test_mundo]\n\nHola"
+                assert request.prompt.startswith("[Mundo: test_mundo]\n")
+                assert "1-3 short paragraphs or bullets" in request.prompt
+                assert request.prompt.endswith("\n\nHola")
                 self.request_id = request.request_id
                 return "run-1"
 
@@ -892,31 +1627,56 @@ class TestAiAsk:
                 self.cancelled.append(run_id)
 
         adapter = FakeAdapter()
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
         monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
         response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
 
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/event-stream")
+        events = _parse_sse(response.text)
+        kinds = [event["kind"] for event in events]
+        assert kinds[0] == "semantic_decision"
+        assert events[0]["state"] == "allow"
+        assert events[0]["action"] == "answer"
+        assert events[0]["unavailable"] is False
+        assert "activity" in kinds
+        assert kinds[-1] == "terminal"
         assert "event: activity" in response.text
         assert '"response": "safe answer"' in response.text
         assert '"request_id": "activity-' in response.text
         assert '"path"' not in response.text
         assert "run-1" not in response.text
+        assert runs.starts == 1
 
-    @pytest.mark.parametrize("status", [404, 501, 503])
     def test_activity_route_unavailable_is_neutral_fallback(
-        self, client: TestClient, monkeypatch, status: int
+        self, client: TestClient, monkeypatch
     ):
+        """Unavailable (unwired) Hermes fails closed: HTTP 200 with the ordered
+        blocked semantic stream, safe copy, and zero classifier/action/write."""
         monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", None)
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
 
-        response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
-
-        assert response.status_code == 503
-        assert response.json() == {
-            "detail": "Assistant activity is unavailable",
-            "code": "activity_unavailable",
-            "reason_code": "file_evidence_contract_unverified",
-        }
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = _parse_sse(response.text)
+        kinds = [event["kind"] for event in events]
+        assert kinds[0] == "semantic_decision"
+        assert kinds[-1] == "terminal"
+        decision = events[0]
+        assert decision["state"] == "blocked"
+        assert decision["action"] == "blocked_explanation"
+        assert decision["unavailable"] is True
+        answer = next(event for event in events if event["kind"] == "answer")
+        assert answer["response"].startswith("El Asistente IA no pudo")
+        terminal = events[-1]
+        assert terminal["status"] == "failed"
+        legacy.assert_not_awaited()
+        lowered = response.text.lower()
+        for term in ("hermes", "provider", "gateway", "http", "timeout", "quota",
+                     "credits", "credential", "model", "error:"):
+            assert term not in lowered
 
     def test_activity_pre_acceptance_failure_does_not_leak_provider_error(
         self, client: TestClient, monkeypatch
@@ -928,15 +1688,22 @@ class TestAiAsk:
             def start(self, request):
                 raise RuntimeError("credential=secret /absolute/provider/path")
 
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
         monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", FailingAdapter())
         response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
 
-        assert response.status_code == 503
-        assert response.json() == {
-            "detail": "Assistant activity is unavailable",
-            "code": "activity_unavailable",
-            "reason_code": "provider_activity_unavailable",
-        }
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = _parse_sse(response.text)
+        kinds = [event["kind"] for event in events]
+        assert kinds[0] == "semantic_decision"
+        assert events[0]["state"] == "allow"
+        assert kinds[-1] == "terminal"
+        assert events[-1]["status"] == "failed"
+        assert "credential=secret" not in response.text
+        assert "/absolute/provider/path" not in response.text
+        assert runs.starts == 1
 
     def test_activity_partial_failure_preserves_answer_and_cancels_on_timeout(
         self, client: TestClient, monkeypatch
@@ -964,22 +1731,797 @@ class TestAiAsk:
             def cancel(self, run_id):
                 self.cancelled.append(run_id)
 
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
         adapter = PartialAdapter()
         monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
         monkeypatch.setattr(api_server, "ACTIVITY_EVENT_TIMEOUT_SECONDS", 0.01)
         response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
 
         assert response.status_code == 200
+        events = _parse_sse(response.text)
+        kinds = [event["kind"] for event in events]
+        assert kinds[0] == "semantic_decision"
+        assert kinds[-1] == "terminal"
         assert '"response": "preserve this answer"' in response.text
         assert '"status": "unknown"' in response.text
         assert adapter.cancelled == ["run-1"]
+        assert runs.starts == 1
 
-    def test_legacy_ai_ask_contract_is_unchanged(self, client: TestClient):
+    def test_unwired_ai_ask_fails_closed_without_legacy_chat(self, client: TestClient):
         with patch("api_server._run_hermes", new=AsyncMock(return_value="legacy answer")):
             response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Hola"})
 
         assert response.status_code == 200
-        assert response.json() == {"response": "legacy answer"}
+        envelope = response.json()
+        assert envelope["state"] == "blocked"
+        assert envelope["unavailable"] is True
+        assert envelope["response"] != "legacy answer"
+        assert envelope["response"].startswith("El Asistente IA no pudo")
+
+
+class _SemanticRuns:
+    """Minimal runs adapter shape consumed by SemanticIntentProvider."""
+
+    def __init__(self, *payloads):
+        self._payloads = list(payloads)
+        self.starts = 0
+        self.requests = []
+
+    async def start(self, request):
+        self.starts += 1
+        self.requests.append(request)
+        return f"run-{self.starts}"
+
+    async def events(self, run_id):
+        if self._payloads:
+            payload = self._payloads.pop(0)
+        else:
+            payload = None
+        yield {"event": "run.completed", "run_id": run_id, "output": payload}
+
+
+def _semantic_payload(state="allow", **overrides):
+    payload = {
+        "state": state,
+        "response": "Hermes semantic answer.",
+        "request_id": "request-1",
+        "session_id": "chat-1",
+        "guided": True,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _continuation_semantic_payload(state="proposal_ready", **overrides):
+    """Single-run envelope: semantic decision + typed guided continuation."""
+    payload = {
+        "state": state,
+        "response": "Hermes semantic answer.",
+        "request_id": "request-1",
+        "session_id": "chat-1",
+        "guided": True,
+        "continuation": {
+            "outcome": "question" if state == "require_confirmation" else "delta",
+            "question": "¿Creo este personaje?" if state == "require_confirmation" else None,
+            "delta": None if state == "require_confirmation" else {"name": "Rhyz's Wife", "desire": "freedom"},
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _wire_semantic_provider(monkeypatch, runs, **provider_kwargs):
+    provider = api_server.SemanticIntentProvider(runs, **provider_kwargs)
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", provider)
+    return provider
+
+
+class TestMethodologyApi:
+    """Phase 3 (3.5): publish/activate wiring — only NEW sessions use the
+    change; existing sessions pinned to a different version fail closed."""
+
+    def _draft_payload(self):
+        return {
+            "skill_id": "guided-character-v1",
+            "version": "1.2.0",
+            "name": "Guided character methodology",
+            "source": "## Construcción segura\n\nHaz preguntas de a una.\n",
+        }
+
+    def _publish_and_activate(self, client: TestClient):
+        draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
+        assert draft.status_code == 200, draft.text
+        draft_id = draft.json()["draft_id"]
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 200, published.text
+        assert published.json()["digest"]
+        activated = client.post("/api/methodologies/activate", json={
+            "world": "test_mundo", "skill_id": "guided-character-v1", "version": "1.2.0",
+        })
+        assert activated.status_code == 200, activated.text
+        return activated.json()
+
+    def test_status_lists_published_and_activations(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch, "author-1")
+        self._publish_and_activate(client)
+        status = client.get("/api/methodologies/status")
+        assert status.status_code == 200
+        payload = status.json()
+        assert len(payload["published"]) == 1
+        assert payload["published"][0]["version"] == "1.2.0"
+        assert payload["activations"]["test_mundo"]["version"] == "1.2.0"
+
+    def test_new_session_after_activation_pins_library_version(self, client: TestClient, monkeypatch, tmp_path):
+        """Activating a published version makes NEW sessions pin it."""
+        db = tmp_path / "guided.sqlite3"
+        store = DurableGuidedSessionStore(db)
+        provider = _delta_guided_provider()
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        _wire_semantic_provider(monkeypatch, _SemanticRuns(
+            _semantic_payload("allow"), _semantic_payload("allow"), _semantic_payload("allow"),
+        ))
+        _principal(monkeypatch, "author-1")
+
+        self._publish_and_activate(client)
+        started = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Pert",
+        })
+        assert started.status_code == 200
+        snapshot = store.methodology_snapshot(started.json()["session_id"], "author-1")
+        assert snapshot is not None
+        assert snapshot.skill_version == "1.2.0"
+        assert snapshot.compiled_contract_digest is not None
+
+    def test_existing_session_fails_closed_after_activation(self, client: TestClient, monkeypatch, tmp_path):
+        """A session created BEFORE activation keeps its pinned version and is
+        refused on resume/turn once the world's active version changed."""
+        db = tmp_path / "guided.sqlite3"
+        store = DurableGuidedSessionStore(db)
+        provider = _delta_guided_provider()
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        _wire_semantic_provider(monkeypatch, _SemanticRuns(
+            _semantic_payload("allow"), _semantic_payload("allow"), _semantic_payload("allow"),
+        ))
+        _principal(monkeypatch, "author-1")
+
+        # Session pinned to the builtin contract before any activation.
+        started = client.post("/api/test_mundo/guided-character/session", json={
+            "author_input": "Crear un personaje nuevo llamado Pert",
+        })
+        assert started.status_code == 200
+        sid, revision = started.json()["session_id"], started.json()["revision"]
+        assert store.methodology_snapshot(sid, "author-1").skill_version == "builtin"
+
+        self._publish_and_activate(client)
+        resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")
+        assert resumed.status_code == 422
+        assert "methodology version has changed" in resumed.json()["message"]
+        turned = client.post("/api/test_mundo/guided-character/turn", json={
+            "session_id": sid, "base_revision": revision,
+            "author_input": "Su deseo es la libertad",
+        })
+        assert turned.status_code == 422
+
+    def test_authority_claiming_draft_fails_compile_on_publish(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch, "author-1")
+        draft = client.post("/api/methodologies/drafts", json={
+            "skill_id": "guided-character-v1",
+            "version": "1.0.0",
+            "name": "Unsafe",
+            "source": "## Malo\n\n#!demiurgos-authority\n",
+        })
+        assert draft.status_code == 200
+        draft_id = draft.json()["draft_id"]
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 422
+        assert published.json()["code"] == "validation_error"
+
+    def test_activate_requires_published_version(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch, "author-1")
+        activated = client.post("/api/methodologies/activate", json={
+            "world": "test_mundo", "skill_id": "guided-character-v1", "version": "9.9.9",
+        })
+        assert activated.status_code == 422
+        assert activated.json()["code"] == "not_published"
+
+    def test_mutations_require_authentication(self, client: TestClient):
+        unauthenticated = client.post("/api/methodologies/drafts", json=self._draft_payload())
+        assert unauthenticated.status_code == 401
+
+
+def _delta_guided_provider():
+    async def provider(request, _token):
+        return {
+            "protocol_version": "guided-character-v1",
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "delta",
+            "delta": {"name": "Pert", "desire": "freedom"},
+        }
+
+    return provider
+
+
+class TestSemanticRouting:
+    """PR 2 (Hermes-first): the mandatory semantic gate runs BEFORE any
+    Demiurgos classifier or action on every assistant surface.
+
+    No lexical-first path and no plain-chat fallback exist: unwired,
+    unavailable, invalid, or exhausted Hermes fails closed with the localized
+    safe blocked envelope and zero action, session, proposal, or write.
+    """
+
+    def test_unwired_provider_fails_closed_without_legacy_path(self, client: TestClient):
+        assert api_server._SEMANTIC_PROVIDER is None
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Hola"})
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "blocked"
+        assert envelope["unavailable"] is True
+        assert envelope["action"] == "blocked_explanation"
+        assert envelope["response"].startswith("El Asistente IA no pudo")
+        legacy.assert_not_awaited()
+
+    def test_allow_returns_server_envelope_without_second_run(self, client: TestClient, monkeypatch):
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        with patch("api_server._run_hermes", new=AsyncMock(return_value="unused")) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Hola"})
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "allow"
+        assert envelope["action"] == "answer"
+        assert envelope["response"] == "Hermes semantic answer."
+        assert envelope["attempts"] == 1
+        assert envelope["guided"] is True
+        assert "fallback" not in envelope
+        legacy.assert_not_awaited()
+        assert runs.starts == 1
+
+    def test_self_contained_states_route_through_the_seam(self, client: TestClient, monkeypatch):
+        for state in ("clarify", "blocked"):
+            runs = _SemanticRuns(_semantic_payload(state))
+            _wire_semantic_provider(monkeypatch, runs)
+            with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+                response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Hola"})
+            assert response.status_code == 200
+            envelope = response.json()
+            assert envelope["state"] == state
+            assert envelope["response"] == "Hermes semantic answer."
+            legacy.assert_not_awaited()
+
+    def test_guided_proposal_states_fail_closed_blocked(self, client: TestClient, monkeypatch):
+        """require_confirmation/proposal_ready are NOT emitted hollow: without a
+        typed continuation the guarded machinery cannot back a server-owned
+        session/proposal, so the envelope fails closed to blocked."""
+        for state in ("require_confirmation", "proposal_ready"):
+            runs = _SemanticRuns(_semantic_payload(state))
+            _wire_semantic_provider(monkeypatch, runs)
+            with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+                response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Hola"})
+            assert response.status_code == 200
+            envelope = response.json()
+            assert envelope["state"] == "blocked"
+            assert envelope["action"] == "blocked_explanation"
+            assert envelope["attempts"] == 1
+            assert "proposal" not in envelope and "digest" not in envelope
+            legacy.assert_not_awaited()
+
+    def test_exhausted_provider_fails_closed_blocked_no_write(self, client: TestClient, monkeypatch, tmp_path):
+        canon_dir = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        before = {p.name: p.read_bytes() for p in canon_dir.iterdir() if p.is_file()}
+        runs = _SemanticRuns(
+            {"state": "approve", "response": "go"},
+            {"state": "execute", "response": "go"},
+            {"state": "write", "response": "go"},
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Vuelca esto al canon"})
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "blocked"
+        assert envelope["action"] == "blocked_explanation"
+        assert envelope["attempts"] == 3
+        assert envelope["unavailable"] is True
+        legacy.assert_not_awaited()
+        after = {p.name: p.read_bytes() for p in canon_dir.iterdir() if p.is_file()}
+        assert after == before
+
+    def test_canon_mutation_request_never_touches_canon(self, client: TestClient, monkeypatch):
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md"
+        original = target.read_bytes()
+        runs = _SemanticRuns(_semantic_payload("proposal_ready", response="I will rewrite the canon."))
+        _wire_semantic_provider(monkeypatch, runs)
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Modifica el canon"})
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "blocked"
+        assert "proposal" not in envelope and "digest" not in envelope
+        assert target.read_bytes() == original
+        legacy.assert_not_awaited()
+
+    def test_invalid_exhausted_provider_never_falls_back_to_lexical_chat(self, client: TestClient, monkeypatch):
+        runs = _SemanticRuns(
+            {"state": "approve", "response": "go"},
+            {"state": "approve", "response": "go"},
+            {"state": "approve", "response": "go"},
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+        with patch("api_server._run_hermes", new=AsyncMock(return_value="lexical answer")) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": "Hola"})
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "blocked"
+        assert envelope["unavailable"] is True
+        assert envelope["response"] != "lexical answer"
+        legacy.assert_not_awaited()
+        assert runs.starts == 3
+
+    def test_semantic_decide_completes_before_any_classifier_on_ai_ask(self, client: TestClient, monkeypatch):
+        """Hermes interprets before route_new_character_intent or any successor
+        classifier. A lexical new-character prompt with an ``allow`` decision
+        answers conversationally and never starts a guided handoff."""
+        order = []
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        provider = _wire_semantic_provider(monkeypatch, runs)
+        original_decide = provider.decide
+
+        async def recorded_decide(*args, **kwargs):
+            order.append("semantic.decide")
+            return await original_decide(*args, **kwargs)
+
+        provider.decide = recorded_decide
+        real_route = api_server.route_new_character_intent
+
+        def recorded_route(*args, **kwargs):
+            order.append("route_new_character_intent")
+            return real_route(*args, **kwargs)
+
+        monkeypatch.setattr(api_server, "route_new_character_intent", recorded_route)
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        response = client.post(
+            "/api/test_mundo/ai/ask",
+            json={"prompt": "Un guerrero de las sombras", "session_id": "chat-1"},
+        )
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "allow"
+        assert envelope["response"] == "Hermes semantic answer."
+        assert order == ["semantic.decide"]
+        assert runs.starts == 1
+
+    def test_ai_ask_authorized_context_reaches_hermes_before_decide(self, client: TestClient, monkeypatch):
+        """Bounded authorized context {mundo,ficha,...} reaches decide(), never
+        credentials, filesystem/write authority, or raw secrets."""
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md"
+        target.write_text("---\ntitle: Inicio\n---\nCuerpo del ficha\n", encoding="utf-8")
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={
+                "prompt": "Hola", "section": "lore", "file_path": "00_inicio.md",
+            })
+        assert response.status_code == 200
+        prompt = runs.requests[0].prompt
+        assert "test_mundo" in prompt
+        assert "Cuerpo del ficha" in prompt
+        for forbidden in ("api_key", "sk-secret", "auth-token", "/etc/passwd",
+                          '"digest"', '"authority"', '"path"'):
+            assert forbidden not in prompt
+        legacy.assert_not_awaited()
+        assert runs.starts == 1
+
+    def test_chat_valid_decision_preserves_compatibility_content(self, client: TestClient, monkeypatch):
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/chat", json={
+                "messages": [{"role": "user", "content": "Hola"}],
+                "mundo": "test_mundo",
+            })
+        assert response.status_code == 200
+        body = response.json()
+        assert body["state"] == "allow"
+        assert body["content"] == "Hermes semantic answer."
+        assert body["response"] == "Hermes semantic answer."
+        assert body["action"] == "answer"
+        assert body["unavailable"] is False
+        legacy.assert_not_awaited()
+        assert runs.starts == 1
+
+    def test_chat_unwired_provider_fails_closed_without_leakage(self, client: TestClient):
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/chat", json={"messages": [{"role": "user", "content": "Hola"}]})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["state"] == "blocked"
+        assert body["unavailable"] is True
+        assert "content" not in body
+        lowered = f"{body['response']} {body['action']}".lower()
+        for term in ("hermes", "provider", "gateway", "http", "timeout", "quota",
+                     "credits", "credential", "model", "error:"):
+            assert term not in lowered
+        legacy.assert_not_awaited()
+
+    def test_chat_exhausted_hermes_blocks_with_zero_classifier(self, client: TestClient, monkeypatch):
+        order = []
+        runs = _SemanticRuns(
+            {"state": "approve", "response": "go"},
+            {"state": "approve", "response": "go"},
+            {"state": "approve", "response": "go"},
+        )
+        provider = _wire_semantic_provider(monkeypatch, runs)
+        original_decide = provider.decide
+
+        async def recorded_decide(*args, **kwargs):
+            order.append("semantic.decide")
+            return await original_decide(*args, **kwargs)
+
+        provider.decide = recorded_decide
+        monkeypatch.setattr(
+            api_server, "route_new_character_intent",
+            lambda *a, **k: order.append("classifier") or None,
+        )
+        response = client.post("/api/chat", json={
+            "messages": [{"role": "user", "content": "Crea un personaje"}],
+        })
+        assert response.status_code == 200
+        body = response.json()
+        assert body["state"] == "blocked"
+        assert body["attempts"] == 3
+        assert body["unavailable"] is True
+        assert order == ["semantic.decide"]
+        assert runs.starts == 3
+
+
+class TestSemanticActivitySSE:
+    """PR 3 (task 3.1): the activity SSE boundary is Hermes-first and emits the
+    authoritative ``semantic_decision`` event before compatible ``answer`` and
+    final ``terminal`` events. Unavailable Hermes fails closed over HTTP 200
+    with the ordered blocked semantic stream, zero action/session/proposal/
+    write, and no provider/internal leakage. Guided decisions hand off (503)
+    without any lexical classifier."""
+
+    def test_activity_semantic_decision_precedes_answer_and_terminal(self, client, monkeypatch):
+        class FakeAdapter:
+            available = True
+            capability = _activity_capability()
+
+            def __init__(self):
+                self.cancelled = []
+
+            def start(self, request):
+                return "run-1"
+
+            async def events(self, run_id):
+                yield {"event": "message.delta", "run_id": run_id, "delta": "safe answer"}
+                yield {"event": "run.completed", "run_id": run_id, "output": "safe answer"}
+
+            def cancel(self, run_id):
+                self.cancelled.append(run_id)
+
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        adapter = FakeAdapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+        response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
+
+        assert response.status_code == 200
+        events = _parse_sse(response.text)
+        kinds = [event["kind"] for event in events]
+        assert kinds[0] == "semantic_decision"
+        assert kinds.index("semantic_decision") < kinds.index("answer")
+        assert kinds.index("semantic_decision") < kinds.index("terminal")
+        assert kinds[-1] == "terminal"
+        decision = events[0]
+        assert decision["request_id"].startswith("activity-")
+        assert decision["state"] == "allow"
+        assert decision["action"] == "answer"
+        assert decision["unavailable"] is False
+        assert decision["continuation"] is None
+        answer = next(event for event in events if event["kind"] == "answer")
+        assert answer["response"] == "safe answer"
+        assert adapter.cancelled == []
+        assert runs.starts == 1
+
+    def test_activity_unavailable_fails_closed_with_ordered_blocked_stream(self, client):
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/test_mundo/ai/ask/activity", json={"prompt": "Hola"})
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = _parse_sse(response.text)
+        kinds = [event["kind"] for event in events]
+        assert kinds[0] == "semantic_decision"
+        assert kinds[-1] == "terminal"
+        decision = events[0]
+        assert decision["state"] == "blocked"
+        assert decision["action"] == "blocked_explanation"
+        assert decision["unavailable"] is True
+        assert decision["continuation"] is None
+        answer = next(event for event in events if event["kind"] == "answer")
+        assert answer["response"].startswith("El Asistente IA no pudo")
+        terminal = events[-1]
+        assert terminal["status"] == "failed"
+        legacy.assert_not_awaited()
+        lowered = response.text.lower()
+        for term in ("hermes", "provider", "gateway", "http", "timeout", "quota",
+                     "credits", "credential", "model", "error:"):
+            assert term not in lowered
+
+    def test_activity_guided_semantic_decision_hands_off_without_lexical_shortcut(
+        self, client, monkeypatch
+    ):
+        order = []
+        runs = _SemanticRuns(_continuation_semantic_payload("require_confirmation"))
+        provider = _wire_semantic_provider(monkeypatch, runs)
+        original_decide = provider.decide
+
+        async def recorded_decide(*args, **kwargs):
+            order.append("semantic.decide")
+            return await original_decide(*args, **kwargs)
+
+        provider.decide = recorded_decide
+        monkeypatch.setattr(
+            api_server, "route_new_character_intent",
+            lambda *a, **k: order.append("route_new_character_intent") or None,
+        )
+        response = client.post(
+            "/api/test_mundo/ai/ask/activity",
+            json={"prompt": "Quiero crear un personaje"},
+        )
+
+        assert response.status_code == 503
+        assert response.json()["code"] == "guided_handoff"
+        assert order == ["semantic.decide"]
+        assert runs.starts == 1
+
+
+class TestSemanticSingleRunContinuation:
+    """PR 2 continuation (task 2.3): one Hermes run backs guided/proposal states.
+
+    require_confirmation and proposal_ready are REAL only when the same run
+    supplies a typed continuation that the server routes through the existing
+    guarded session / diskless proposal machinery. No second Hermes run is
+    started; any missing backing, auth, world, graph, or validation failure
+    fails the envelope closed to blocked with zero writes.
+    """
+
+    _NON_GUIDED_PROMPT = "Define el perfil de un ser que lo protege"
+    _CONFIRM_PROMPT = "Quisiera que me propongas un compañero para ese mundo"
+
+    def _wire_continuation(self, client, monkeypatch, *payloads):
+        runs = _SemanticRuns(*payloads)
+        _wire_semantic_provider(monkeypatch, runs)
+        _principal(monkeypatch)
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_GUIDED_PENDING_PROPOSALS", {})
+        monkeypatch.setattr(
+            api_server, "_named_reference_context",
+            lambda _mundo, _prompt: ("", False, None),
+        )
+        return runs
+
+    def test_proposal_ready_single_run_creates_diskless_proposal(self, client: TestClient, monkeypatch):
+        runs = self._wire_continuation(client, monkeypatch, _continuation_semantic_payload("proposal_ready"))
+        with patch("api_server._run_hermes", new=AsyncMock(return_value="unused")) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": self._NON_GUIDED_PROMPT})
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "proposal_ready"
+        assert envelope["action"] == "show_proposal"
+        assert envelope["guided"] is True
+        assert envelope["guided_session_id"].startswith("guided-")
+        assert envelope["guided_revision"] == 1
+        assert envelope["target"] == "personajes/rhyz-s-wife.md"
+        assert envelope["is_new_file"] is True
+        assert re.fullmatch(r"[0-9a-f]{64}", envelope["proposed_digest"])
+        assert hashlib.sha256(envelope["proposed_content"].encode("utf-8")).hexdigest() == envelope["proposed_digest"]
+        assert envelope["proposal_id"].startswith("guided-proposal-")
+        assert runs.starts == 1
+        legacy.assert_not_awaited()
+        pending = api_server._GUIDED_PENDING_PROPOSALS[envelope["proposal_id"]]
+        assert pending["target"] == envelope["target"]
+        assert pending["digest"] == envelope["proposed_digest"]
+        assert pending["principal_id"] == "tester"
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
+
+    def test_require_confirmation_single_run_begins_guarded_confirmation(self, client: TestClient, monkeypatch):
+        runs = self._wire_continuation(client, monkeypatch, _continuation_semantic_payload("require_confirmation"))
+        with patch("api_server._run_hermes", new=AsyncMock(return_value="unused")) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": self._CONFIRM_PROMPT})
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "require_confirmation"
+        assert envelope["action"] == "request_confirmation"
+        assert envelope["response"] == "¿Creo este personaje?"
+        assert envelope["guided_session_id"].startswith("guided-")
+        assert envelope["guided_revision"] == 1
+        assert envelope["guided_state"]["phase"] == "confirmation"
+        assert envelope["guided_state"]["pending_question"] == "¿Creo este personaje?"
+        assert "proposal_id" not in envelope and "proposed_digest" not in envelope
+        assert runs.starts == 1
+        legacy.assert_not_awaited()
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
+
+    def test_confirmation_state_answers_flow_through_guarded_machinery(self, client: TestClient, monkeypatch):
+        runs = self._wire_continuation(
+            client, monkeypatch,
+            _continuation_semantic_payload("require_confirmation"),
+            _semantic_payload("allow"),
+        )
+        started = client.post("/api/test_mundo/ai/ask", json={"prompt": self._CONFIRM_PROMPT}).json()
+        sid, revision = started["guided_session_id"], started["guided_revision"]
+
+        guided_calls = []
+
+        async def provider(request, _token):
+            guided_calls.append(request)
+            return {
+                "protocol_version": request.protocol_version,
+                "request_id": request.request_id,
+                "session_id": request.session_id,
+                "outcome": "question",
+                "question": "What drives them?",
+            }
+
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", api_server.Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        with patch("api_server._run_hermes", new=AsyncMock(return_value="unused")) as legacy:
+            confirmed = client.post("/api/test_mundo/ai/ask", json={
+                "prompt": "sí", "session_id": "chat-1",
+                "guided_session_id": sid, "guided_revision": revision,
+            })
+        assert confirmed.status_code == 200
+        assert confirmed.json()["guided_state"]["phase"] == "conversation"
+        assert len(guided_calls) == 1
+        assert runs.starts == 2
+        legacy.assert_not_awaited()
+
+    def test_semantic_decide_precedes_typed_confirmation_parsing(self, client: TestClient, monkeypatch):
+        """Typed confirmation is parsed as policy ONLY after a validated Hermes
+        interpretation: confirmation_decision never decides whether Hermes runs."""
+        order = []
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        provider = _wire_semantic_provider(monkeypatch, runs)
+        original_decide = provider.decide
+
+        async def recorded_decide(*args, **kwargs):
+            order.append("semantic.decide")
+            return await original_decide(*args, **kwargs)
+
+        provider.decide = recorded_decide
+        _principal(monkeypatch)
+        sessions = api_server.GuidedSessionStore()
+        state = sessions.create("guided-confirm", "test_mundo", "tester")
+        confirming = sessions.begin_confirmation(
+            "guided-confirm", "tester", "Crea un personaje", "¿Sí o no?",
+        )
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
+        monkeypatch.setattr(
+            api_server, "_named_reference_context",
+            lambda _mundo, _prompt: ("", False, None),
+        )
+        def recorded_confirmation(*args, **kwargs):
+            order.append("confirmation_decision")
+            # Return None (ambiguous) so the guarded confirmation re-prompts
+            # without invoking the guided provider: the ordering proof only
+            # needs confirmation_decision to run strictly after decide().
+            return None
+
+        monkeypatch.setattr(api_server, "confirmation_decision", recorded_confirmation)
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", None)
+        response = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "sí", "session_id": "chat-1",
+            "guided_session_id": state.session_id,
+            "guided_revision": confirming.revision,
+        })
+        assert response.status_code == 200
+        assert order == ["semantic.decide", "confirmation_decision"]
+        assert runs.starts == 1
+
+    def test_semantic_guided_continuation_requires_auth(self, client: TestClient, monkeypatch):
+        runs = _SemanticRuns(_continuation_semantic_payload("proposal_ready"))
+        _wire_semantic_provider(monkeypatch, runs)
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": self._NON_GUIDED_PROMPT})
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "blocked"
+        assert envelope["action"] == "blocked_explanation"
+        assert "proposal" not in envelope and "digest" not in envelope
+        assert legacy.assert_not_awaited() or runs.starts == 1
+
+    def test_malformed_continuation_fails_closed_no_write(self, client: TestClient, monkeypatch):
+        runs = self._wire_continuation(client, monkeypatch, {
+            "state": "proposal_ready",
+            "response": "I will rewrite the canon.",
+            "request_id": "request-1",
+            "session_id": "chat-1",
+            "guided": True,
+            "continuation": {"outcome": "delta", "delta": {"target": "lore/00_inicio.md", "name": "X"}},
+        })
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "00_inicio.md"
+        original = target.read_bytes()
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": self._NON_GUIDED_PROMPT})
+        envelope = response.json()
+        assert envelope["state"] == "blocked"
+        assert envelope["action"] == "blocked_explanation"
+        assert envelope["attempts"] == 3
+        assert "proposal" not in envelope and "digest" not in envelope
+        assert target.read_bytes() == original
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
+        assert api_server._GUIDED_PENDING_PROPOSALS == {}
+        assert legacy.assert_not_awaited() or runs.starts == 3
+
+    def test_continuation_fails_closed_when_graph_evidence_unavailable(self, client: TestClient, monkeypatch):
+        runs = _SemanticRuns(_continuation_semantic_payload("proposal_ready"))
+        _wire_semantic_provider(monkeypatch, runs)
+        _principal(monkeypatch)
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", api_server.GuidedSessionStore())
+        monkeypatch.setattr(api_server, "_named_reference_context", lambda _mundo, _prompt: ("", True, None))
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            response = client.post("/api/test_mundo/ai/ask", json={"prompt": self._NON_GUIDED_PROMPT})
+        envelope = response.json()
+        assert envelope["state"] == "blocked"
+        assert envelope["action"] == "blocked_explanation"
+        assert "proposal" not in envelope and "digest" not in envelope
+        assert api_server._GUIDED_PENDING_PROPOSALS == {}
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
+        legacy.assert_not_awaited()
+
+    def test_semantic_proposal_stale_revision_is_rejected(self, client: TestClient, monkeypatch):
+        self._wire_continuation(client, monkeypatch, _continuation_semantic_payload("proposal_ready"))
+        created = client.post("/api/test_mundo/ai/ask", json={"prompt": self._NON_GUIDED_PROMPT}).json()
+        sid = created["guided_session_id"]
+        with patch("api_server._run_hermes", new=AsyncMock()) as legacy:
+            stale = client.post("/api/test_mundo/ai/ask", json={
+                "prompt": "un turno", "session_id": "chat-1",
+                "guided_session_id": sid, "guided_revision": 0,
+            })
+        assert stale.status_code == 409
+        assert stale.json()["code"] == "revision_conflict"
+        legacy.assert_not_awaited()
+
+    def test_semantic_proposal_accepts_through_existing_guarded_endpoint(self, client: TestClient, monkeypatch):
+        self._wire_continuation(client, monkeypatch, _continuation_semantic_payload("proposal_ready"))
+        created = client.post("/api/test_mundo/ai/ask", json={"prompt": self._NON_GUIDED_PROMPT}).json()
+        sid, revision = created["guided_session_id"], created["guided_revision"]
+        accepted = client.post("/api/test_mundo/guided-character/proposal/accept", json={
+            "session_id": sid, "base_revision": revision, "key": "desire",
+        })
+        assert accepted.status_code == 200
+        assert accepted.json()["candidate"]["accepted_canon"]["desire"]["certainty"] == "accepted"
+        assert accepted.json()["revision"] == 2
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
+
+    def test_semantic_created_session_inherits_guided_handoff(self, client: TestClient, monkeypatch):
+        runs = self._wire_continuation(client, monkeypatch, _continuation_semantic_payload("proposal_ready"))
+        created = client.post("/api/test_mundo/ai/ask", json={"prompt": self._NON_GUIDED_PROMPT}).json()
+        handoff = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "x", "session_id": "chat-1",
+            "guided_session_id": created["guided_session_id"],
+            "guided_revision": created["guided_revision"],
+        })
+        assert handoff.status_code == 503
+        assert handoff.json()["code"] == "guided_handoff"
+        assert runs.starts == 1
 
 
 class TestMundoValidation:
@@ -1528,20 +3070,23 @@ class TestReadPathAuthorization:
         resp = client.get("/api/%2e%2e/lore/file?path=secreto.md")
         self._assert_soft_denial(resp, "SECRETO")
 
-    def test_ai_ask_traversal_never_leaks_content(self, client: TestClient, tmp_path):
+    def test_ai_ask_traversal_never_leaks_content(self, client: TestClient, tmp_path, monkeypatch):
         """Proposal-adjacent read: ai/ask must not inject the content of an
-        escaped target into the Hermes prompt."""
+        escaped target into the Hermes semantic prompt."""
         escape = tmp_path / "mundos" / "secrets.md"
         escape.write_text("AI LEAK SECRET\n", encoding="utf-8")
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
         with patch("api_server._run_hermes", new=AsyncMock(return_value="ok")) as mock_run:
             resp = client.post(
                 "/api/test_mundo/ai/ask",
                 json={"prompt": "Hola", "section": "lore", "file_path": "../../secrets.md"},
             )
         assert resp.status_code == 200
-        sent = mock_run.await_args.args[0]
+        sent = runs.requests[0].prompt
         assert "AI LEAK SECRET" not in sent
         assert escape.read_text(encoding="utf-8") == "AI LEAK SECRET\n"
+        mock_run.assert_not_awaited()
 
 
 class TestEditPrincipalSeam:

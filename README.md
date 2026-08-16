@@ -1,6 +1,6 @@
 # Demiurgos
 
-**Hermes-powered narrative engine.** Create, index, and write stories with AI — while maintaining canon coherence and continuity across arcs.
+**Proprietary freeware lore & worldbuilding platform.** A complete, world-agnostic web app for any world in OKF format — lore storage, graph, indexing, workflows, and UI — with AI-assisted, canon-safe storytelling built in.
 
 > 🚧 **Status:** In active development. Public beta coming soon.
 
@@ -8,13 +8,14 @@
 
 ## What is Demiurgos?
 
-Demiurgos is an open-source narrative engine that runs on **Hermes Agent**. It brings structured creative writing to AI-assisted storytelling:
+Demiurgos is a complete, proprietary freeware lore/worldbuilding **web platform**. It owns the full stack — frontend, backend, Hermes, storage, graph, indexing, workflows, and UI — and manages any world you load in **OKF format**, independent of any single fictional universe. AI-assisted narrative writing is a managed capability of the platform, not the whole product. The Core is completely free; additional workshops are purchased once, with community discounts distributed manually or through future automation. Source code and official release artifacts are not public by default:
 
-- **13 narrative phases** — from world-building to final archive
+- **13 narrative phases** — a managed skill subsystem from world-building to final archive
 - **Intent-driven** — speak naturally, the orchestrator routes to the right phase
 - **Canon protection** — lore is sacred, contradictions are flagged before they reach the page
 - **Persistent memory** — Engram ensures no idea or decision is lost between sessions
-- **World-agnostic** — works with any fictional universe you create
+- **World-agnostic (OKF)** — works with any fictional universe you load
+- **Hermes is one component** — the conversational provider, not the platform itself
 
 ---
 
@@ -32,6 +33,8 @@ The installer handles everything: Hermes Agent, Engram memory, Demiurgos skills,
 ---
 
 ## How It Works
+
+The narrative skill subsystem runs inside the platform — the web UI, backend API, entity graph, and indexing services provide the world context it reads from. The narrative flow looks like this:
 
 ```
 You speak naturally
@@ -57,6 +60,8 @@ You speak naturally
 │  mem_save/search     │
 └─────────────────────┘
 ```
+
+The full platform also includes the web UI, backend API, entity graph, and lore indexing — the diagram above shows the managed narrative subsystem inside it, with Hermes acting as one conversational provider.
 
 ---
 
@@ -97,8 +102,10 @@ endpoint, model, and API key env var name. All Demiurgos components
 
 ```
 Demiurgos/
-├── AGENTS.md              ← Orchestrator system prompt
-├── skills/                ← 13 Hermes-compatible SKILL.md
+├── frontend/                    ← Web UI (wiki, editor, guided creation, assistant)
+├── src/tools/demiurgos-suite/   ← Backend API: graph, sessions, gates, indexing
+├── AGENTS.md              ← Orchestrator system prompt (narrative role)
+├── skills/                ← Managed narrative skill subsystem (14 SKILL.md)
 │   ├── narrative-init/
 │   ├── narrative-explore/
 │   ├── narrative-propose/
@@ -114,10 +121,10 @@ Demiurgos/
 
 ## Development
 
-Demiurgos is built as a **Hermes skill tap** — skills are loaded via `skills.external_dirs` in Hermes' config. The orchestrator lives in `AGENTS.md` and is loaded as Hermes' system prompt when the user opens their world directory.
+The **narrative subsystem** is delivered as a **Hermes skill tap** — skills are loaded via `skills.external_dirs` in Hermes' config. The orchestrator lives in `AGENTS.md` and is loaded as Hermes' system prompt when the user opens their world directory. Hermes is one component/provider of the platform, not the platform itself.
 
-- **Stack:** Hermes Agent + Engram MCP + Python (sync tools)
-- **License:** MIT
+- **Stack:** Web frontend + backend API + Hermes Agent + Engram MCP + Python (sync/index tools)
+- **Product model:** Proprietary freeware with free and paid tiers
 - **Built by:** [@maar1223](https://github.com/maar1223)
 
 ---

@@ -1,6 +1,8 @@
 <!-- =========================================================================
      screen_backup.html — Screen 5: Backup & Sync
-     Optional screen. Google Drive toggle with rclone requirement notice.
+     Optional screen. Google Drive toggle with per-workshop mirror selection,
+     30-second post-edit sync, and a Google → Demiurgos restore action.
+     rclone/Google availability is OPTIONAL: unavailable → pending, Core usable.
      ========================================================================= -->
 
 <div class="wizard-screen" data-screen="5">
@@ -28,25 +30,83 @@
           </label>
         </div>
 
-        <!-- rclone warning (shown when toggle is on but rclone not detected) -->
+        <!-- rclone warning / pending state (shown when rclone not detected) -->
         {% if backup_enabled and not rclone_detected %}
         <div role="alert" class="warning-card">
           <svg class="icon icon-md"><use href="#alert-triangle"/></svg>
           <p>{{ t('rclone_warning') }}</p>
+          <p class="text-muted">{{ t('backup_pending_note') }}</p>
         </div>
         {% endif %}
 
-        <!-- Backup config fields -->
+        {% if backup_enabled and rclone_detected %}
+        <div role="status" class="success-card">
+          <svg class="icon icon-md"><use href="#check"/></svg>
+          <p>{{ t('backup_ready') }}</p>
+        </div>
+        {% endif %}
+
+        <!-- Remote base -->
         <div class="backup-config-fields">
-          <label for="backup-interval">{{ t('backup_interval_label') }}</label>
-          <div class="select-wrapper">
-            <select id="backup-interval" name="backup_interval">
-              <option value="hourly">{{ t('backup_interval_hourly') }}</option>
-              <option value="daily" selected>{{ t('backup_interval_daily') }}</option>
-              <option value="weekly">{{ t('backup_interval_weekly') }}</option>
-            </select>
-            <svg class="icon icon-sm select-chevron"><use href="#chevron-down"/></svg>
+          <label for="backup-remote">{{ t('backup_remote_label') }}</label>
+          <input type="text"
+                 id="backup-remote"
+                 name="backup_remote"
+                 value="{{ backup_remote or 'gdrive:demiurgos' }}"
+                 placeholder="gdrive:demiurgos"
+                 autocomplete="off">
+          <span class="text-muted hint">{{ t('backup_remote_hint') }}</span>
+        </div>
+
+        <!-- Per-workshop mirror (espejo por taller) -->
+        <div class="backup-config-fields">
+          <label>{{ t('backup_mirror_title') }}</label>
+          {% for name in workshop_options %}
+          <label class="toggle-row">
+            <input type="checkbox"
+                   name="backup_workshop_{{ name }}"
+                   role="switch"
+                   {% if name in backup_workshops %}checked{% endif %}>
+            <span>{{ t('backup_workshop_' ~ name) }}</span>
+          </label>
+          {% endfor %}
+          <span class="text-muted hint">{{ t('backup_mirror_hint') }}</span>
+        </div>
+
+        <!-- 30s post-edit sync -->
+        <div class="backup-config-fields">
+          <label for="backup-sync-seconds">{{ t('backup_sync_label') }}</label>
+          <input type="number"
+                 id="backup-sync-seconds"
+                 name="backup_sync_seconds"
+                 value="{{ backup_sync_seconds or 30 }}"
+                 min="5"
+                 max="3600"
+                 step="5">
+          <span class="text-muted hint">{{ t('backup_sync_hint') }}</span>
+        </div>
+
+        <!-- Restore Google → Demiurgos -->
+        <div class="backup-config-fields">
+          <label>{{ t('backup_restore_title') }}</label>
+          <p class="text-muted hint">{{ t('backup_restore_hint') }}</p>
+          {% if not rclone_detected %}
+          <div role="status" class="warning-card">
+            <p>{{ t('backup_restore_unavailable') }}</p>
           </div>
+          {% else %}
+          {% for name in workshop_options %}
+          <button type="button"
+                  class="btn-secondary"
+                  hx-post="/backup/restore"
+                  hx-target="#backup-restore-result"
+                  hx-swap="innerHTML"
+                  hx-vals='{"workshop": "{{ name }}"}'>
+            {{ t('backup_restore_button') }} — {{ t('backup_workshop_' ~ name) }}
+          </button>
+          {% endfor %}
+          <div id="backup-restore-result" aria-live="polite"></div>
+          {% endif %}
         </div>
       </div>
 

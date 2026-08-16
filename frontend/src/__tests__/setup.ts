@@ -1,5 +1,14 @@
 import "@testing-library/jest-dom/vitest";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
+
+/**
+ * The active-world selection (useCurrentWorld) and other features persist
+ * to localStorage; tests must never inherit state written by a previous
+ * test in the same file or suite.
+ */
+afterEach(() => {
+  window.localStorage.clear();
+});
 
 /**
  * jsdom does not implement window.print — calling it throws

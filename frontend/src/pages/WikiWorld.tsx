@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
+import { getCurrentWorld, setCurrentWorld } from "@/lib/currentWorld";
 import { Navbar } from "@/components/organisms/Navbar";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import { SectionCard } from "@/components/molecules/SectionCard";
@@ -14,6 +16,9 @@ import type { WorldInfo } from "@/api/types";
 /**
  * Wiki World page (`/wiki/:mundo`) — section cards landing page.
  *
+ * Opening a valid route marks `mundo` as the active world (same-tab
+ * localStorage) without navigating back.
+ *
  * States:
  * - 🟡 Loading: spinner centered on page
  * - 🔴 Error: ErrorBanner with retry
@@ -27,6 +32,12 @@ export default function WikiWorld() {
   const { worlds, isLoading, error, mutate } = useWorlds();
 
   const world = worlds.find((w) => w.name === mundo);
+
+  useEffect(() => {
+    if (mundo && world && getCurrentWorld() !== mundo) {
+      setCurrentWorld(mundo);
+    }
+  }, [mundo, world]);
 
   const getCount = (w: WorldInfo, section: Section): number => {
     switch (section) {

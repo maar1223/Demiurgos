@@ -112,6 +112,22 @@ describe("AssistantSettingsPanel", () => {
     expect(window.location.search).not.toContain("api_key");
   });
 
+  it("fills the OpenCode Go default endpoint when the provider is selected", async () => {
+    const user = userEvent.setup();
+    mocked.getAssistantSettings.mockResolvedValue({
+      ...status,
+      provider: "compatible",
+      base_url: "https://custom.example/v1",
+    });
+    render(<AssistantSettingsPanel auth={auth} />);
+    await screen.findByRole("heading", { name: "Proveedor" });
+
+    await user.selectOptions(screen.getByLabelText("Elegí un proveedor"), "opencode-go");
+    await user.click(screen.getByRole("button", { name: "Conexión" }));
+
+    expect(screen.getByLabelText("Endpoint")).toHaveValue("https://opencode.ai/zen/go/v1");
+  });
+
   it("requires revalidation when the API key changes", async () => {
     const user = userEvent.setup();
     render(<AssistantSettingsPanel auth={auth} />);

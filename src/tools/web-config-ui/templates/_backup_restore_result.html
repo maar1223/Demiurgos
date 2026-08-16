@@ -1,0 +1,36 @@
+<!-- =========================================================================
+     _backup_restore_result.html — Fragment for Google → Demiurgos restore.
+     Shows the explicit state (ok / conflict / error / pending / timeout).
+     ========================================================================= -->
+
+<div class="backup-restore-result" data-state="{{ state }}">
+  {% if state == 'ok' %}
+  <div role="status" class="success-card">
+    <svg class="icon icon-md"><use href="#check"/></svg>
+    <p>{{ t('backup_restore_success') }}</p>
+    {% if detail %}<p class="text-muted">{{ detail }}</p>{% endif %}
+  </div>
+  {% elif state == 'conflict' %}
+  <div role="alert" class="warning-card">
+    <svg class="icon icon-md"><use href="#alert-triangle"/></svg>
+    <p>{{ t('backup_restore_conflict') }}</p>
+    {% if detail %}<p class="text-muted">{{ detail }}</p>{% endif %}
+  </div>
+  {% elif state == 'timeout' %}
+  <div role="alert" class="warning-card">
+    <svg class="icon icon-md"><use href="#alert-triangle"/></svg>
+    <p>{{ t('backup_restore_timeout') }}</p>
+  </div>
+  {% elif state == 'pending' %}
+  <div role="status" class="warning-card">
+    <svg class="icon icon-md"><use href="#alert-triangle"/></svg>
+    <p>{{ t('backup_pending_note') }}</p>
+  </div>
+  {% else %}
+  <div role="alert" class="warning-card">
+    <svg class="icon icon-md"><use href="#alert-triangle"/></svg>
+    <p>{{ t('backup_restore_error') }}</p>
+    {% if detail %}<p class="text-muted">{{ detail }}</p>{% endif %}
+  </div>
+  {% endif %}
+</div>

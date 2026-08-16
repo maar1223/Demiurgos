@@ -97,6 +97,18 @@ class TestAssistantSettings:
         assert body["models"]
         assert "api_key" not in body
 
+    def test_get_uses_provider_default_when_endpoint_is_omitted(self, client: TestClient):
+        paths = assistant_settings._resolve_profile_paths()
+        paths.config.write_text(
+            "model:\n  default: gpt-5.6-luna\n  provider: opencode-go\n",
+            encoding="utf-8",
+        )
+
+        response = client.get("/api/profile/assistant/status")
+
+        assert response.status_code == 200
+        assert response.json()["base_url"] == "https://opencode.ai/zen/go/v1"
+
     def test_public_contract_redacts_url_credentials_and_normalizes_metadata(self):
         status = assistant_settings.AssistantSettingsStatus(
             provider="compatible",

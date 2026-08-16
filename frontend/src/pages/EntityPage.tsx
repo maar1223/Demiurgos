@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
+import { getCurrentWorld, setCurrentWorld } from "@/lib/currentWorld";
 import { useBacklinks } from "@/hooks/useBacklinks";
 import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
@@ -45,6 +46,16 @@ export default function EntityPage() {
 
   // World list for Navbar and validation
   const { worlds, isLoading: worldsLoading } = useWorlds();
+
+  const worldExists = worlds.some((w) => w.name === mundo);
+
+  // Opening a valid route marks `mundo` as the active world (same-tab
+  // localStorage) without navigating back.
+  useEffect(() => {
+    if (mundo && worldExists && getCurrentWorld() !== mundo) {
+      setCurrentWorld(mundo);
+    }
+  }, [mundo, worldExists]);
 
   // Entity connections for Contexto tab
   const { links, isLoading: linksLoading } = useBacklinks(mundo, entityName);
@@ -92,7 +103,6 @@ export default function EntityPage() {
   }
 
   // --- World not found ---
-  const worldExists = worlds.some((w) => w.name === mundo);
   if (!worldExists) {
     return (
       <EditorLayout

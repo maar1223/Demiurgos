@@ -4,6 +4,8 @@ import WikiHome from "@/pages/WikiHome";
 import WikiWorld from "@/pages/WikiWorld";
 import WikiEditor from "@/pages/WikiEditor";
 import ProfilePage from "@/pages/ProfilePage";
+import ToolWorkshop from "@/pages/ToolWorkshop";
+import WorldWorkshop from "@/pages/WorldWorkshop";
 import NotFound from "@/pages/NotFound";
 
 /** Lazy-loaded entity page — code-split because it's only used on entity routes */
@@ -15,6 +17,8 @@ const EntityPage = lazy(() => import("@/pages/EntityPage"));
  * Routes:
  * - `/` → redirect to `/wiki`
  * - `/wiki` → Wiki Home page
+ * - `/taller-herramientas` → ToolWorkshop (Taller de Herramientas shell)
+ * - `/taller-mundo` → WorldWorkshop (Taller de Mundo shell)
  * - `/perfil` → Profile page (local session + Integraciones → Captura de ideas)
  * - `/wiki/:mundo/entity/*path` → EntityPage (entity detail with connections)
  * - `/wiki/:mundo` → WikiWorld (section cards for one world)
@@ -32,6 +36,8 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/wiki" replace />} />
         <Route path="/wiki" element={<WikiHome />} />
+        <Route path="/taller-herramientas" element={<ToolWorkshop />} />
+        <Route path="/taller-mundo" element={<WorldWorkshop />} />
         <Route path="/perfil" element={<ProfilePage />} />
         <Route
           path="/wiki/:mundo/entity/*"

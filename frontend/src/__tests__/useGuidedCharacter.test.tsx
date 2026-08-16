@@ -21,6 +21,8 @@ const recovered = {
   session_id: "server-session",
   world: "Vibrantes",
   phase: "conversation" as const,
+  mode: "full" as const,
+  depth: "standard" as const,
   revision: 4,
   pending_question: "What do they fear?",
   messages: [],

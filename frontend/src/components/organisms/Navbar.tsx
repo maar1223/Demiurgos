@@ -3,8 +3,15 @@ import { useNavigate } from "react-router-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
 import type { WorldInfo } from "@/api/types";
-import { NAV_LINKS, PLACEHOLDER_TOAST } from "@/lib/constants";
+import {
+  GENERIC_TEASER_LABEL,
+  NAV_LINKS,
+  PLACEHOLDER_TOAST,
+  ROUTES,
+  type NavLink,
+} from "@/lib/constants";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
+import { useCurrentWorld } from "@/hooks/useCurrentWorld";
 
 interface NavbarProps {
   worlds: WorldInfo[];
@@ -15,9 +22,17 @@ interface NavbarProps {
 /**
  * Global navigation header: logo, world selector, nav links, avatar.
  * Renders on all pages. Collapses nav links on mobile.
+ *
+ * Workshop-nav contract: `available` links navigate to the Core workshops;
+ * `teaser` links are non-actionable future/paid surfaces. The single generic
+ * teaser (label "Próximamente") is never routable; the redundant badge is
+ * suppressed when the label already says "Próximamente". Rightmost-marked
+ * links (Taller de Publicación, when enabled) always render last.
  */
 export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
   const navigate = useNavigate();
+  const { world: activeWorld } = useCurrentWorld();
+  const resolvedWorld = currentWorld ?? activeWorld ?? undefined;
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [sessionActionLoading, setSessionActionLoading] = useState(false);
@@ -25,13 +40,28 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
   const { status, isLoading: sessionLoading, error: sessionError, start, logout } =
     useLocalDevAuth(profileOpen);
 
-  const handleNavClick = (to: string, active: boolean) => {
-    if (!active) {
+  // Taller de Publicación (rightmost) always renders last — never hidden
+  // behind future teasers regardless of the constant ordering.
+  const navLinks = [
+    ...NAV_LINKS.filter((link) => !link.rightmost),
+    ...NAV_LINKS.filter((link) => link.rightmost),
+  ];
+
+  const isTeaser = (link: NavLink) => link.availability !== "available";
+
+  const handleNavClick = (link: NavLink) => {
+    if (isTeaser(link)) {
       alert(PLACEHOLDER_TOAST);
       return;
     }
     setMobileMenuOpen(false);
-    navigate(to);
+    // With an active world, "Taller de Mundo" jumps straight into that world's
+    // wiki workspace; otherwise it lands on the world-selection surface.
+    if (link.to === ROUTES.TALLER_MUNDO && activeWorld) {
+      navigate(`/wiki/${encodeURIComponent(activeWorld)}`);
+      return;
+    }
+    navigate(link.to);
   };
 
   const handleAvatarClick = () => {
@@ -73,19 +103,27 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
         </button>
 
         {/* Center: Nav links (desktop) */}
-        <nav className="hidden items-center gap-1 md:flex">
-          {NAV_LINKS.map((link) => (
+        <nav aria-label="Navegación principal" className="hidden items-center gap-1 md:flex">
+          {navLinks.map((link) => (
             <button
               key={link.label}
               type="button"
-              onClick={() => handleNavClick(link.to, link.active)}
+              onClick={() => handleNavClick(link)}
               className={`rounded-lg px-3 py-1.5 text-small transition-colors ${
-                link.active
-                  ? "text-pergamino hover:bg-piedra"
-                  : "text-sombra cursor-pointer hover:text-pergamino hover:bg-piedra"
+                isTeaser(link)
+                  ? "text-sombra cursor-pointer hover:text-pergamino hover:bg-piedra"
+                  : "text-pergamino hover:bg-piedra"
               }`}
             >
               {link.label}
+              {isTeaser(link) && link.label !== GENERIC_TEASER_LABEL && (
+                <span
+                  aria-hidden="true"
+                  className="ml-1.5 rounded-full bg-filio px-1.5 py-0.5 align-middle text-[10px] uppercase tracking-wide text-tinta-desvaida"
+                >
+                  Próximamente
+                </span>
+              )}
             </button>
           ))}
         </nav>
@@ -94,7 +132,7 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
         <div className="flex items-center gap-2">
           <WorldSelector
             worlds={worlds}
-            currentWorld={currentWorld}
+            currentWorld={resolvedWorld}
             onWorldChange={onWorldChange}
           />
 
@@ -193,19 +231,27 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
       {/* Mobile nav menu */}
       {mobileMenuOpen && (
         <div className="border-t border-filio bg-madero md:hidden">
-          <nav className="flex flex-col gap-1 px-4 py-3">
-            {NAV_LINKS.map((link) => (
+          <nav aria-label="Navegación móvil" className="flex flex-col gap-1 px-4 py-3">
+            {navLinks.map((link) => (
               <button
                 key={link.label}
                 type="button"
-                onClick={() => handleNavClick(link.to, link.active)}
+                onClick={() => handleNavClick(link)}
                 className={`rounded-lg px-3 py-2 text-left text-body transition-colors ${
-                  link.active
-                    ? "text-pergamino hover:bg-piedra"
-                    : "text-sombra hover:text-pergamino hover:bg-piedra"
+                  isTeaser(link)
+                    ? "text-sombra hover:text-pergamino hover:bg-piedra"
+                    : "text-pergamino hover:bg-piedra"
                 }`}
               >
                 {link.label}
+                {isTeaser(link) && link.label !== GENERIC_TEASER_LABEL && (
+                  <span
+                    aria-hidden="true"
+                    className="ml-1.5 rounded-full bg-filio px-1.5 py-0.5 align-middle text-[10px] uppercase tracking-wide text-tinta-desvaida"
+                  >
+                    Próximamente
+                  </span>
+                )}
               </button>
             ))}
           </nav>

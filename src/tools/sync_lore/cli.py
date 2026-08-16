@@ -304,6 +304,38 @@ def main() -> None:
         if pdf_files:
             print(f"    .pdf: {len(pdf_files)}", file=sys.stderr)
 
+        # OKF v1 diagnostics: surface identity/minimum issues tolerantly.
+        # Reports only — never blocks ingestion and never writes canon.
+        if md_files:
+            from .schemas import normalize_okf_content
+            okf_count = 0
+            issue_count = 0
+            for f in md_files:
+                try:
+                    text = f.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                normalized = normalize_okf_content(text)
+                if normalized is None:
+                    continue
+                okf_count += 1
+                for group in normalized.missing_minimum_groups:
+                    issue_count += 1
+                    print(
+                        f"    OKF v1: {f.name} missing a required minimum "
+                        f"({', '.join(sorted(group))})",
+                        file=sys.stderr,
+                    )
+            print(
+                f"  OKF v1 files: {okf_count} (diagnostic only, never blocking)",
+                file=sys.stderr,
+            )
+            if issue_count:
+                print(
+                    f"  OKF v1 issues surfaced: {issue_count}",
+                    file=sys.stderr,
+                )
+
         # Estimate chunks
         from .utils.chunker import estimate_tokens
         total_est = 0

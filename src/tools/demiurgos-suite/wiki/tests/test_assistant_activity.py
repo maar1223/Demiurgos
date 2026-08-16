@@ -25,6 +25,7 @@ from assistant_activity import (  # noqa: E402
     HermesRunsActivityAdapter,
     INCOMPLETE_EVIDENCE_WARNING,
     NEUTRAL_EVIDENCE_WARNING,
+    SemanticDecisionEvent,
     assess_hermes_capabilities,
     validate_structured_world_path,
 )
@@ -219,3 +220,42 @@ def test_structured_path_validator_rejects_unsafe_or_unvalidated_paths(tmp_path:
         assert validate_structured_world_path(world, raw_path) is None
 
     assert validate_structured_world_path(world, "lore/inicio.md") == "lore/inicio.md"
+
+
+def test_semantic_decision_event_contract(tmp_path: Path):
+    """PR 3 (task 3.1): the additive SemanticDecisionEvent carries validated
+    state/action/unavailable and a safely serialized continuation (or None)."""
+    event = SemanticDecisionEvent(
+        request_id="request-1",
+        state="allow",
+        action="answer",
+        unavailable=False,
+    )
+
+    assert event.kind == "semantic_decision"
+    assert event.as_dict() == {
+        "kind": "semantic_decision",
+        "request_id": "request-1",
+        "state": "allow",
+        "action": "answer",
+        "unavailable": False,
+        "continuation": None,
+    }
+
+
+def test_semantic_decision_event_carries_validated_continuation(tmp_path: Path):
+    """A guided decision may carry its bounded continuation without exposing
+    any authority claim (only the validated outcome/question/delta shape)."""
+    event = SemanticDecisionEvent(
+        request_id="request-1",
+        state="require_confirmation",
+        action="request_confirmation",
+        unavailable=False,
+        continuation={"outcome": "question", "question": "¿Sí o no?"},
+    )
+
+    payload = event.as_dict()
+    assert payload["state"] == "require_confirmation"
+    assert payload["unavailable"] is False
+    assert payload["continuation"] == {"outcome": "question", "question": "¿Sí o no?"}
+    assert set(payload["continuation"]) == {"outcome", "question"}

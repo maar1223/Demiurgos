@@ -115,8 +115,13 @@
         <div class="summary-card">
           <span class="summary-label">{{ t('backup_label') }}</span>
           <span class="summary-value">
-            {% if backup_enabled %}
+            {% if backup_enabled and backup_status == 'configured' %}
               Google Drive — {{ t('configured') }}
+              {% if backup_workshops %}
+                <small class="summary-sub">{{ backup_workshops | join(', ') }}</small>
+              {% endif %}
+            {% elif backup_enabled and backup_status == 'pending' %}
+              Google Drive — {{ t('backup_pending_note') }}
             {% else %}
               {{ t('skipped') }}
             {% endif %}

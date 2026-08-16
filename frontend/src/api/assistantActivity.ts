@@ -1,6 +1,10 @@
 import type {
   AssistantActivityEvent,
   AssistantActivityTerminalStatus,
+  SemanticDecisionAction,
+  SemanticDecisionContinuation,
+  SemanticDecisionEvent,
+  SemanticDecisionState,
 } from "@/api/types";
 
 export const INCOMPLETE_EVIDENCE_WARNING = "Evidence incomplete.";
@@ -16,17 +20,53 @@ const SAFE_TERMINAL_STATUSES = new Set(["succeeded", "failed", "unknown"]);
 const SAFE_UNAVAILABLE_REASONS = new Set([
   "file_evidence_contract_unverified",
   "provider_activity_unavailable",
+  "guided_handoff",
 ]);
+const SEMANTIC_STATES = new Set<SemanticDecisionState>([
+  "allow",
+  "clarify",
+  "require_confirmation",
+  "proposal_ready",
+  "blocked",
+]);
+
+// Provider-supplied authority claims never reach the client as typed
+// continuations; any of these keys inside a delta fails the event closed.
+const AUTHORITATIVE_CONTINUATION_KEYS = new Set([
+  "target",
+  "digest",
+  "revision",
+  "authority",
+  "reference",
+  "acceptance",
+  "accepted_canon",
+  "authorization",
+]);
+const MAX_CONTINUATION_DEPTH = 4;
+
+function continuationDeltaHasAuthoritativeKey(value: unknown, depth = 0): boolean {
+  if (depth > MAX_CONTINUATION_DEPTH) return true;
+  if (isRecord(value)) {
+    return Object.entries(value).some(([key, item]) =>
+      AUTHORITATIVE_CONTINUATION_KEYS.has(key) ||
+      continuationDeltaHasAuthoritativeKey(item, depth + 1),
+    );
+  }
+  return false;
+}
 
 export type AssistantActivityUnavailableReason =
   | "file_evidence_contract_unverified"
-  | "provider_activity_unavailable";
+  | "provider_activity_unavailable"
+  | "guided_handoff";
 
 export interface AssistantActivityRequest {
   prompt: string;
   session_id: string;
   section?: string;
   file_path?: string;
+  guided_session_id?: string;
+  guided_revision?: number;
 }
 
 export class AssistantActivityUnavailable extends Error {
@@ -45,6 +85,12 @@ export interface AssistantActivityStreamResult {
   events: AssistantActivityEvent[];
   answer: string | null;
   terminalStatus: AssistantActivityTerminalStatus | null;
+  /**
+   * The authoritative additive `semantic_decision` event, or `null` when the
+   * stream lacked one (or emitted it out of order / malformed). Consumers MUST
+   * treat `null` as fail-closed and never infer permission from answer text.
+   */
+  semanticDecision: SemanticDecisionEvent | null;
 }
 
 export interface StreamAssistantActivityOptions {
@@ -68,6 +114,42 @@ function isSafePath(value: unknown): value is string {
   );
 }
 
+/**
+ * Strictly validate a server `semantic_decision` continuation. Unknown,
+ * malformed, or over-bounded continuations fail the whole event closed.
+ */
+function parseSemanticContinuation(
+  value: unknown,
+): { ok: true; continuation: SemanticDecisionContinuation | null } | { ok: false } {
+  if (value === null) return { ok: true, continuation: null };
+  if (!isRecord(value)) return { ok: false };
+  const keys = Object.keys(value);
+  const outcome = value.outcome;
+  if (outcome === "question") {
+    if (keys.length !== 2 || !Object.prototype.hasOwnProperty.call(value, "question")) {
+      return { ok: false };
+    }
+    if (typeof value.question !== "string" || !value.question.trim()) return { ok: false };
+    return { ok: true, continuation: { outcome: "question", question: value.question } };
+  }
+  if (outcome === "delta") {
+    if (keys.length !== 2 || !Object.prototype.hasOwnProperty.call(value, "delta")) {
+      return { ok: false };
+    }
+    if (!isRecord(value.delta) || Object.keys(value.delta).length === 0) {
+      return { ok: false };
+    }
+    if (continuationDeltaHasAuthoritativeKey(value.delta)) {
+      return { ok: false };
+    }
+    return {
+      ok: true,
+      continuation: { outcome: "delta", delta: value.delta as Record<string, unknown> },
+    };
+  }
+  return { ok: false };
+}
+
 /** Accept only the application-owned normalized SSE contract. */
 export function parseAssistantActivityEvent(
   value: unknown,
@@ -77,6 +159,29 @@ export function parseAssistantActivityEvent(
     return null;
   }
   if (expectedRequestId && value.request_id !== expectedRequestId) return null;
+
+  if (value.kind === "semantic_decision") {
+    if (
+      typeof value.state !== "string" ||
+      !SEMANTIC_STATES.has(value.state as SemanticDecisionState) ||
+      typeof value.action !== "string" ||
+      !value.action ||
+      typeof value.unavailable !== "boolean"
+    ) {
+      return null;
+    }
+    const parsed = parseSemanticContinuation(value.continuation);
+    if (!parsed.ok) return null;
+    const event: SemanticDecisionEvent = {
+      kind: "semantic_decision",
+      request_id: value.request_id,
+      state: value.state as SemanticDecisionState,
+      action: value.action as SemanticDecisionAction,
+      unavailable: value.unavailable,
+      continuation: parsed.continuation,
+    };
+    return event;
+  }
 
   if (value.kind === "activity") {
     if (
@@ -167,6 +272,8 @@ export async function streamAssistantActivity(
   const events: AssistantActivityEvent[] = [];
   let answer: string | null = null;
   let terminalStatus: AssistantActivityTerminalStatus | null = null;
+  let semanticDecision: SemanticDecisionEvent | null = null;
+  let answerSeen = false;
   let requestId = response.headers.get("X-Assistant-Activity-Request-Id") ?? "";
   let buffer = "";
   let dataLines: string[] = [];
@@ -182,6 +289,13 @@ export async function streamAssistantActivity(
     const event = parseAssistantActivityEvent(raw, requestId || undefined);
     if (!event || terminalSeen) return;
     requestId ||= event.request_id;
+    if (event.kind === "semantic_decision") {
+      // The additive event is authoritative and must precede any compatible
+      // answer; a duplicate or out-of-order event fails the stream closed.
+      if (semanticDecision !== null || answerSeen) return;
+      semanticDecision = event;
+    }
+    if (event.kind === "answer") answerSeen = true;
     events.push(event);
     options.onEvent?.(event);
     if (event.kind === "answer") answer = event.response;
@@ -213,5 +327,5 @@ export async function streamAssistantActivity(
   if (buffer) dispatch(buffer);
   dispatch("");
 
-  return { accepted: true, events, answer, terminalStatus };
+  return { accepted: true, events, answer, terminalStatus, semanticDecision };
 }

@@ -17,9 +17,14 @@ from guided_character_domain import (  # noqa: E402
     GraphEvidence,
     apply_delta,
     collect_graph_evidence,
+    extract_related_goal,
+    resolve_named_reference,
     retain_graph_evidence,
     route_new_character_intent,
+    confirmation_decision,
     serialize_ficha,
+    candidate_minimum_complete,
+    next_required_question,
 )
 from guided_character_protocol import CandidateState  # noqa: E402
 
@@ -31,11 +36,119 @@ def test_new_character_routing_is_focused_and_compact() -> None:
     assert len(result.response) < 80
     assert not route_new_character_intent("Tell me about the existing character Aria").is_new_character
     for edit_request in (
-        "I want to edit an existing character Aria",
-        "quiero modificar el personaje existente Aria",
+        "edit the character Aria",
+        "editar el personaje Aria",
+        "existing character Aria",
+        "personaje existente Aria",
+        "modify the character Aria",
+        "modificar el personaje Aria",
         "update the character Aria",
+        "actualizar el personaje Aria",
+        "change the character Aria",
+        "cambiar el personaje Aria",
     ):
         assert not route_new_character_intent(edit_request).is_new_character
+
+
+def test_default_guided_questions_follow_configured_language_not_prompt() -> None:
+    spanish_prompt = route_new_character_intent("I want a character", language="es")
+    english_prompt = route_new_character_intent("Quiero un personaje", language="en")
+    assert "¿" in spanish_prompt.question or "deseo" in spanish_prompt.question
+    assert "?" in english_prompt.question and "¿" not in english_prompt.question
+    assert spanish_prompt.question != english_prompt.question
+
+
+def test_descriptive_seeds_require_the_explicit_guided_start_context() -> None:
+    for seed in ("Un guerrero de las sombras", "Un personaje llamado Aria"):
+        assert not route_new_character_intent(seed).is_new_character
+        assert route_new_character_intent(seed, allow_descriptive_seed=True).is_new_character
+
+
+@pytest.mark.parametrize("prompt", [
+    "Quiero crear la esposa de Rhyz", "I want to create Rhyz's wife",
+    "Create the spouse of Rhyz", "Necesito crear la pareja de Rhyz",
+    "Quiero crear al primo de Rhyz", "Create the grandfather of Rhyz",
+    "Necesito un sobrino de Rhyz", "Create the mentor de Rhyz",
+])
+def test_relationship_creation_requires_confirmation(prompt: str) -> None:
+    result = route_new_character_intent(prompt)
+    assert result.is_new_character
+    assert result.requires_confirmation
+
+
+def test_relationship_detection_is_structural_and_not_descriptive_false_positive() -> None:
+    for prompt in ("¿Quién es el primo de Rhyz?", "Tell me about Rhyz's cousin", "Rhyz's cousin"):
+        result = route_new_character_intent(prompt, allow_descriptive_seed=True)
+        assert not result.is_new_character
+        assert not result.requires_confirmation
+    assert route_new_character_intent("Create Rhyz's cousin").requires_confirmation
+    assert route_new_character_intent("Un guerrero de sombras").is_new_character is False
+
+
+@pytest.mark.parametrize("prompt", [
+    "Create a character quickly",
+    "Quiero crear un personaje solo con lo fundamental",
+    "Write the character immediately and skip the questionnaire",
+])
+def test_fast_mode_is_explicit_and_bounded(prompt: str) -> None:
+    result = route_new_character_intent(prompt)
+    assert result.mode == "fast"
+    assert result.depth == "fundamental"
+
+
+@pytest.mark.parametrize("prompt", [
+    "escríbelo ya", "write it now", "créalo ya", "create it now",
+    "sin preguntas", "no me hagas preguntas", "just create it",
+])
+def test_concise_author_fast_markers_select_fundamental_depth(prompt: str) -> None:
+    result = route_new_character_intent(f"Create a character: {prompt}")
+    assert result.mode == "fast"
+    assert result.depth == "fundamental"
+
+
+def test_ambiguous_speed_request_keeps_full_mode() -> None:
+    result = route_new_character_intent("I need a character with a fast horse")
+    assert result.mode == "full"
+
+
+def test_confirmation_classifier_fails_closed_for_ambiguous_answers() -> None:
+    assert confirmation_decision("sí") is True
+    assert confirmation_decision("no, más tarde") is False
+    assert confirmation_decision("maybe") is None
+
+
+def test_related_goal_extracts_safe_spanish_and_english_relations() -> None:
+    spanish = extract_related_goal("quiero crear al hermano de Rhyz", language="es")
+    assert spanish.relation == "brother"
+    assert spanish.reference_name == "Rhyz"
+    assert "hermano" in spanish.summary and "Rhyz" in spanish.summary
+
+    english = extract_related_goal("I want to create Rhyz's brother", language="en")
+    assert english.relation == "brother"
+    assert english.reference_name == "Rhyz"
+    assert "brother" in english.summary and "Rhyz" in english.summary
+
+
+def test_related_goal_preserves_the_authors_spanish_gender_term() -> None:
+    goal = extract_related_goal("quiero crear a la hermana de Rhyz", language="es")
+    assert goal.relation == "brother"
+    assert goal.summary == "Nuevo personaje: hermana de Rhyz"
+
+
+def test_related_goal_never_invents_a_relation() -> None:
+    assert extract_related_goal("Create a character").summary == ""
+    assert extract_related_goal("Quiero crear un personaje para la historia").summary == ""
+    assert extract_related_goal("Crear un hermano sin referencia").summary == ""
+    ambiguous = extract_related_goal("quiero crear la esposa y la hermana de Rhyz", language="es")
+    assert ambiguous.relation is None and ambiguous.summary == ""
+
+
+def test_related_goal_summary_is_bounded() -> None:
+    goal = extract_related_goal(
+        "quiero crear al hermano de Rhyz el antiguo señor de las tormentas",
+        language="es",
+    )
+    assert goal.summary and len(goal.summary) <= 400
 
 
 def test_proposals_are_separate_until_explicit_acceptance_or_rejection() -> None:
@@ -49,6 +162,35 @@ def test_proposals_are_separate_until_explicit_acceptance_or_rejection() -> None
     assert candidate.accepted_canon["origin"]["certainty"] == "accepted"
     assert "rumor" not in candidate.accepted_canon
     assert "rejected:rumor" in candidate.provenance
+
+
+def test_candidate_minimum_complete_requires_identity_and_desire() -> None:
+    assert not candidate_minimum_complete(CandidateState())
+    assert not candidate_minimum_complete(CandidateState(proposals={"desire": {"value": "freedom"}}))
+    assert not candidate_minimum_complete(CandidateState(proposals={"name": {"value": "Pert"}}))
+    assert candidate_minimum_complete(CandidateState(proposals={"name": "Pert", "desire": "freedom"}))
+    assert candidate_minimum_complete(CandidateState(proposals={"nombre": "Pert", "motivacion": "freedom"}))
+    assert candidate_minimum_complete(CandidateState(accepted_canon={"name": "Pert", "desire": "freedom"}))
+
+
+def test_candidate_minimum_complete_considers_incoming_delta() -> None:
+    assert candidate_minimum_complete(CandidateState(), delta={"name": "Pert", "desire": "freedom"})
+    assert not candidate_minimum_complete(CandidateState(), delta={"age": "~30"})
+
+
+def test_candidate_minimum_complete_fast_mode_skips_the_gate() -> None:
+    assert candidate_minimum_complete(CandidateState(), mode="fast")
+    assert candidate_minimum_complete(CandidateState(proposals={"desire": "freedom"}), mode="fast")
+
+
+def test_next_required_question_asks_one_focused_missing_field() -> None:
+    assert "?" in next_required_question(CandidateState(), language="en")
+    assert "name" in next_required_question(CandidateState(), language="en").casefold()
+    assert "llama" in next_required_question(CandidateState(), language="es").casefold()
+    desire = next_required_question(CandidateState(proposals={"name": "Pert"}), language="en")
+    assert "?" in desire and desire.count("?") == 1
+    assert "desire" in desire.casefold() or "want" in desire.casefold()
+    assert next_required_question(CandidateState(), delta={"name": "Pert"}, language="en").count("?") == 1
 
 
 class FakeGraph:
@@ -74,6 +216,76 @@ def test_graph_order_is_search_read_then_forward_and_backlinks() -> None:
     evidence = collect_graph_evidence(graph, "known")
     assert [call[0] for call in graph.calls] == ["search", "read", "links", "links"]
     assert evidence.forward and evidence.backlinks
+
+
+def test_named_reference_requires_unique_match_and_passes_verified_facts() -> None:
+    graph = FakeGraph([{"path": "personajes/rhyz.md", "name": "Rhyz"}])
+    def read(path: str) -> dict:
+        graph.calls.append(("read", path))
+        return {"path": path, "name": "Rhyz", "type": "Personaje", "content": "Patient tactician."}
+    graph.read = read  # type: ignore[method-assign]
+    reference = resolve_named_reference(graph, "quiero crear un hermano de Rhyz")
+    assert reference and not reference.unresolved
+    assert "Patient tactician." in reference.context
+    assert [call[0] for call in graph.calls] == ["search", "read", "links", "links"]
+
+
+def test_named_reference_does_not_select_ambiguous_match() -> None:
+    graph = FakeGraph([
+        {"path": "personajes/rhyz-a.md", "name": "Rhyz"},
+        {"path": "personajes/rhyz-b.md", "name": "Rhyz"},
+    ])
+    reference = resolve_named_reference(graph, "crear una hermana de Rhyz")
+    assert reference and reference.unresolved and reference.ambiguous
+    assert [call[0] for call in graph.calls] == ["search"]
+
+
+def test_named_reference_prefers_unique_canonical_prefix_over_mentions() -> None:
+    graph = FakeGraph([
+        {"path": "sagas/echo.md", "name": "Echo Ayagar de Rhyz", "type": "Criatura"},
+        {"path": "relaciones/rhyz.md", "name": "Rhyz y el eco", "type": "Relacion"},
+        {"path": "personajes/rhyz-resonante.md", "name": "Rhyz El Resonante", "type": "Personaje"},
+    ])
+
+    def read(path: str) -> dict:
+        graph.calls.append(("read", path))
+        return {"path": path, "name": "Rhyz El Resonante", "type": "Personaje", "content": "Resonant."}
+
+    graph.read = read  # type: ignore[method-assign]
+    reference = resolve_named_reference(graph, "me gustaria que crearamos al hermano de Rhyz")
+
+    assert reference and not reference.unresolved
+    assert "Rhyz El Resonante" in reference.context
+    assert graph.calls == [
+        ("search", "Rhyz"),
+        ("read", "personajes/rhyz-resonante.md"),
+        ("links", "forward"),
+        ("links", "backlinks"),
+    ]
+
+
+def test_named_reference_keeps_multiple_canonical_prefix_matches_ambiguous() -> None:
+    graph = FakeGraph([
+        {"path": "personajes/rhyz-a.md", "name": "Rhyz El Resonante", "type": "Personaje"},
+        {"path": "personajes/rhyz-b.md", "name": "Rhyz El Errante", "type": "Personaje"},
+    ])
+
+    reference = resolve_named_reference(graph, "crear una hermana de Rhyz")
+
+    assert reference and reference.unresolved and reference.ambiguous
+    assert graph.calls == [("search", "Rhyz")]
+
+
+def test_named_reference_keeps_noncanonical_mentions_unresolved() -> None:
+    graph = FakeGraph([
+        {"path": "sagas/rhyz.md", "name": "Rhyz El Resonante", "type": "Saga"},
+        {"path": "lore/rhyz.md", "name": "Rhyz", "type": "Mencion"},
+    ])
+
+    reference = resolve_named_reference(graph, "crear una hermana de Rhyz")
+
+    assert reference and reference.unresolved and reference.ambiguous
+    assert graph.calls == [("search", "Rhyz")]
 
 
 def test_unresolved_and_conflict_evidence_is_retained() -> None:

@@ -86,7 +86,7 @@ _IMAGE_SYSTEM_PROMPT = (
 
 class LlmProvider(ProviderAdapter):
     """
-    LlmProvider — HTTP Chat Completion API (any OpenAI, Google, Groq, etc.)
+    LlmProvider â€” HTTP Chat Completion API (any OpenAI, Google, Groq, etc.)
 
     Uses httpx.AsyncClient for async HTTP. 3 retries with exponential
     backoff on connection/timeout errors.

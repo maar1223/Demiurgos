@@ -287,6 +287,38 @@ class TerminalEvent:
         return result
 
 
+@dataclass(frozen=True)
+class SemanticDecisionEvent:
+    """Authoritative typed semantic outcome emitted before compatible events.
+
+    Built only from a server-validated semantic decision: ``state`` and
+    ``action`` are server-derived, ``unavailable`` marks a fail-closed outcome,
+    and ``continuation`` is a safely bounded serialized continuation or None.
+    Consumers MUST use this event for permission/state decisions and never
+    infer them from answer text. Legacy clients may ignore the additive event.
+    """
+
+    request_id: str
+    state: str
+    action: str
+    unavailable: bool
+    continuation: dict[str, Any] | None = None
+
+    @property
+    def kind(self) -> str:
+        return "semantic_decision"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "kind": self.kind,
+            "request_id": self.request_id,
+            "state": self.state,
+            "action": self.action,
+            "unavailable": self.unavailable,
+            "continuation": self.continuation,
+        }
+
+
 class ActivityTranslator:
     """Translate only correlated, documented Hermes run events."""
 

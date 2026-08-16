@@ -1,6 +1,7 @@
 import { apiFetch } from "@/api/client";
 import { ApiError } from "@/api/types";
 import type {
+  AiAskResponse,
   DiffPreview,
   DuplicateResponse,
   EmptyTrashResponse,
@@ -69,6 +70,51 @@ function apiUrl(
   if (!params) return url;
   const qs = new URLSearchParams(params).toString();
   return `${url}?${qs}`;
+}
+
+// ---------------------------------------------------------------------------
+// Assistant ask
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/{mundo}/ai/ask — the AI assistant turn boundary.
+ *
+ * Returns either a legacy chat answer, a guided handoff envelope, or the
+ * validated semantic decision envelope emitted by the server seam. The client
+ * never interprets raw provider output: every state and continuation field is
+ * server-owned and strictly validated on the backend.
+ */
+export async function askAssistant(
+  mundo: string,
+  request: {
+    prompt: string;
+    session_id: string;
+    section?: string;
+    file_path?: string;
+    guided_session_id?: string;
+    guided_revision?: number;
+  },
+  signal?: AbortSignal,
+): Promise<AiAskResponse> {
+  const response = await fetch(
+    `/api/${encodeURIComponent(mundo)}/ai/ask`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+      signal,
+    },
+  );
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    const detail = isRecord(body) && typeof body.detail === "string" ? body.detail : undefined;
+    throw new ApiError(response.status, detail ?? `HTTP ${response.status}`, detail);
+  }
+  return (await response.json()) as AiAskResponse;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // ---------------------------------------------------------------------------

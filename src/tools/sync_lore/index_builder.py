@@ -7,11 +7,15 @@ and relationship resolution.
 
 from __future__ import annotations
 
+import hashlib
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Literal
 
 from .schemas import (
+    ApprovedCharacterWrite,
     ContradictionEntry,
     LoreEntity,
     LoreIndex,
@@ -353,3 +357,108 @@ def _claims_different(a: str, b: str) -> bool:
         if a_norm in b_norm or b_norm in a_norm:
             return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Approved character graph reconciliation (idempotent, approval-gated)
+# ---------------------------------------------------------------------------
+
+
+ReconcileStatus = Literal["indexed", "pending", "failed", "dirty"]
+
+
+@dataclass(frozen=True)
+class ReconcileResult:
+    """Outcome of reconciling one approved character write with the graph."""
+
+    target: str
+    content_digest: str
+    index_status: ReconcileStatus
+    retryable: bool
+    message: str
+
+
+class ApprovedCharacterReconciler:
+    """Idempotently reconcile an approved character write with a graph index.
+
+    Sync-lore-owned counterpart of the wiki ``ReindexCoordinator``: it never
+    repeats durable file creation and never writes canon.  Results are
+    memoized by ``(target, content_digest)`` so a repeated reconcile for the
+    same approved write is a no-op that does not re-run the graph build.
+    Fail-closed: a missing file or a content digest mismatch never yields an
+    ``indexed`` result.
+    """
+
+    def __init__(
+        self,
+        mundos_root: Path,
+        index_factory: Callable[[str], Any],
+    ) -> None:
+        self._mundos_root = mundos_root
+        self._index_factory = index_factory
+        self._results: dict[tuple[str, str], ReconcileResult] = {}
+
+    def reconcile(self, approved: ApprovedCharacterWrite) -> ReconcileResult:
+        key = (approved.target, approved.content_digest)
+        previous = self._results.get(key)
+        if previous is not None and previous.index_status == "indexed":
+            return previous
+
+        full = (self._mundos_root / approved.world / approved.target).resolve()
+        world_root = (self._mundos_root / approved.world).resolve()
+        if world_root not in full.parents or not full.is_file():
+            return self._remember(
+                key,
+                ReconcileResult(
+                    approved.target, approved.content_digest, "failed", False,
+                    "Character was not persisted; graph reconciliation was not attempted.",
+                ),
+            )
+        actual_digest = hashlib.sha256(full.read_bytes()).hexdigest()
+        if actual_digest != approved.content_digest:
+            return self._remember(
+                key,
+                ReconcileResult(
+                    approved.target, approved.content_digest, "failed", False,
+                    "Character content changed; graph reconciliation requires re-review.",
+                ),
+            )
+
+        try:
+            index = self._index_factory(approved.world)
+            index.build(approved.world)
+            if index.dirty:
+                return self._remember(
+                    key,
+                    ReconcileResult(
+                        approved.target, approved.content_digest, "dirty", True,
+                        "Character created; graph indexing is still dirty. Retry shortly.",
+                    ),
+                )
+            if index.get_entity(approved.target) is None:
+                return self._remember(
+                    key,
+                    ReconcileResult(
+                        approved.target, approved.content_digest, "pending", True,
+                        "Character created; graph indexing is pending. Retry or reload.",
+                    ),
+                )
+            return self._remember(
+                key,
+                ReconcileResult(
+                    approved.target, approved.content_digest, "indexed", False,
+                    "Character created and is visible in the graph.",
+                ),
+            )
+        except Exception:
+            return self._remember(
+                key,
+                ReconcileResult(
+                    approved.target, approved.content_digest, "failed", True,
+                    "Character created; graph indexing is unavailable. Retry later.",
+                ),
+            )
+
+    def _remember(self, key: tuple[str, str], result: ReconcileResult) -> ReconcileResult:
+        self._results[key] = result
+        return result

@@ -448,6 +448,111 @@ def write_json_config(path: str, data: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Backup / mirror / restore config
+# ---------------------------------------------------------------------------
+
+BACKUP_ENV_VARS = {
+    "enabled": "DEMIURGOS_BACKUP_ENABLED",
+    "remote": "DEMIURGOS_BACKUP_REMOTE",
+    "workshops": "DEMIURGOS_BACKUP_WORKSHOPS",
+    "sync_seconds": "DEMIURGOS_BACKUP_SYNC_SECONDS",
+}
+
+
+def read_backup_config(path: str) -> dict:
+    """Parse *.path* (dotenv format) into a backup/mirror config dict.
+
+    Returns keys: ``enabled`` (bool), ``remote`` (str), ``workshops`` (list),
+    ``sync_seconds`` (int). Missing keys fall back to safe defaults; the
+    absence of a value never raises.
+    """
+    try:
+        values = dotenv_values(path)
+    except Exception:
+        return {"enabled": False, "remote": "", "workshops": [], "sync_seconds": 30}
+
+    sync_raw = values.get(BACKUP_ENV_VARS["sync_seconds"], "30")
+    try:
+        sync_seconds = int(sync_raw)
+    except (TypeError, ValueError):
+        sync_seconds = 30
+
+    workshops_raw = values.get(BACKUP_ENV_VARS["workshops"], "")
+    workshops = [w.strip() for w in workshops_raw.split(",") if w.strip()]
+
+    return {
+        "enabled": values.get(BACKUP_ENV_VARS["enabled"], "").lower() == "true",
+        "remote": values.get(BACKUP_ENV_VARS["remote"], ""),
+        "workshops": workshops,
+        "sync_seconds": sync_seconds,
+    }
+
+
+def write_backup_config(path: str, data: dict) -> bool:
+    """Write backup/mirror vars to *.path*, preserving unrelated lines.
+
+    Only the four ``DEMIURGOS_BACKUP_*`` keys managed by the wizard are
+    written/updated. Returns ``True`` on success, ``False`` on any I/O error.
+    """
+    new_values = {
+        BACKUP_ENV_VARS["enabled"]: "true" if data.get("enabled") else "false",
+        BACKUP_ENV_VARS["remote"]: (data.get("remote") or "").strip(),
+        BACKUP_ENV_VARS["workshops"]: ",".join(data.get("workshops") or []),
+        BACKUP_ENV_VARS["sync_seconds"]: str(int(data.get("sync_seconds") or 30)),
+    }
+
+    original_lines: list[str] = []
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            original_lines = fh.readlines()
+    except FileNotFoundError:
+        logger.debug("No existing .env — will create from scratch")
+    except OSError as exc:
+        logger.error("Cannot read %s: %s", path, exc)
+        return False
+
+    new_lines: list[str] = []
+    written: set[str] = set()
+    for line in original_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            new_lines.append(line)
+            continue
+        if "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            if key in new_values:
+                new_lines.append(f"{key}={new_values[key]}\n")
+                written.add(key)
+            else:
+                new_lines.append(line)
+        else:
+            new_lines.append(line)
+
+    pending = [(k, v) for k, v in new_values.items() if k not in written]
+    if pending:
+        new_lines.append("\n# --- Backup / mirror config (managed by web-config-ui) ---\n")
+        for key, value in pending:
+            new_lines.append(f"{key}={value}\n")
+
+    tmp_path = path + ".tmp"
+    try:
+        with open(tmp_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.writelines(new_lines)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+        logger.info("Backup config written to %s", path)
+        return True
+    except OSError as exc:
+        logger.error("Failed to write backup config: %s", exc)
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Connection test
 # ---------------------------------------------------------------------------
 

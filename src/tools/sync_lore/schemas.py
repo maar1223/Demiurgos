@@ -7,6 +7,8 @@ CLOSED schemas: no extra fields beyond those defined here.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -204,3 +206,185 @@ class LoreIndex:
     terms: list[dict] = field(default_factory=list)
     images: list[ImageEntry] = field(default_factory=list)
     contradictions: list[ContradictionEntry] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# OKF v1 normalization (identity, minimums, relationship conventions)
+# ---------------------------------------------------------------------------
+#
+# World-agnostic contract conventions shared with the wiki OKF layer.  These
+# helpers are pure: they derive a normalized payload from frontmatter/body and
+# never write to canon.  Per-entity minimums are extensible, characters first.
+
+OKF_VERSION = "1"
+RELACIONES_FIELD = "relaciones"
+
+# Relationship convention: a relationship is a [[Name]] wikilink.
+_RE_WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
+
+MINIMUM_IDENTITY_FIELDS = frozenset({"name", "nombre", "title"})
+MINIMUM_DESIRE_FIELDS = frozenset({
+    "desire", "deseo", "motivacion", "motivations", "motivation", "motivaciones",
+})
+
+# Extensible per-entity minimums: entity type -> groups of alternative fields.
+OKF_MINIMUM_GROUPS_BY_TYPE: dict[str, tuple[frozenset[str], ...]] = {
+    "personaje": (MINIMUM_IDENTITY_FIELDS, MINIMUM_DESIRE_FIELDS),
+}
+
+
+def register_okf_minimums(entity_type: str, *groups: Any) -> None:
+    """Extend the per-entity OKF minimum registry (mutually tolerant)."""
+    normalized = entity_type.strip().lower()
+    if not normalized:
+        raise ValueError("entity_type is required")
+    combined = list(OKF_MINIMUM_GROUPS_BY_TYPE.get(normalized, ()))
+    for group in groups:
+        fields = frozenset(group)
+        if fields and fields not in combined:
+            combined.append(fields)
+    OKF_MINIMUM_GROUPS_BY_TYPE[normalized] = tuple(combined)
+
+
+@dataclass(frozen=True)
+class OkfNormalized:
+    """OKF v1 identity and relationship conventions, normalized for indexing."""
+
+    name: str
+    type: str
+    title: str
+    forward_links: tuple[str, ...]
+    missing_minimum_groups: tuple[frozenset[str], ...]
+
+
+def normalize_okf_v1(frontmatter: dict, body: str = "") -> OkfNormalized | None:
+    """Return OKF v1 identity/links from frontmatter, or None when not OKF.
+
+    A document is OKF v1 when its frontmatter declares a non-empty ``type``.
+    Minimum groups are surfaced (never silently assumed) and ``[[Name]]``
+    links from the body plus ``relaciones`` frontmatter are collected in
+    document order.  Pure: writes nothing.
+    """
+    if not isinstance(frontmatter, dict):
+        return None
+    entity_type = str(frontmatter.get("type", "")).strip()
+    if not entity_type:
+        return None
+
+    name = str(
+        frontmatter.get("name")
+        or frontmatter.get("nombre")
+        or frontmatter.get("title")
+        or ""
+    ).strip()
+    title = str(frontmatter.get("title", "")).strip()
+
+    links: list[str] = []
+    for match in _RE_WIKILINK.finditer(body or ""):
+        link = match.group(1).strip()
+        if link not in links:
+            links.append(link)
+    raw_relations = frontmatter.get(RELACIONES_FIELD)
+    if isinstance(raw_relations, list):
+        for rel in raw_relations:
+            if isinstance(rel, str):
+                m = _RE_WIKILINK.search(rel)
+                if m:
+                    link = m.group(1).strip()
+                    if link not in links:
+                        links.append(link)
+
+    groups = OKF_MINIMUM_GROUPS_BY_TYPE.get(entity_type.lower(), ())
+    missing = tuple(
+        group for group in groups
+        if not any(_field_present(frontmatter, f) for f in group)
+    )
+
+    return OkfNormalized(
+        name=name,
+        type=entity_type,
+        title=title,
+        forward_links=tuple(links),
+        missing_minimum_groups=missing,
+    )
+
+
+def normalize_okf_content(content: str) -> OkfNormalized | None:
+    """Parse OKF v1 frontmatter/body from raw markdown and normalize.
+
+    Tolerant: unparseable frontmatter or missing ``type`` yields None rather
+    than an error.  Requires PyYAML; returns None when it is unavailable.
+    """
+    try:
+        import yaml
+    except ImportError:
+        return None
+    lines = content.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None
+    end_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end_idx = i
+            break
+    if end_idx is None:
+        return None
+    try:
+        frontmatter = yaml.safe_load("\n".join(lines[1:end_idx]))
+    except yaml.YAMLError:
+        return None
+    if not isinstance(frontmatter, dict):
+        return None
+    body = "\n".join(lines[end_idx + 1:])
+    return normalize_okf_v1(frontmatter, body)
+
+
+@dataclass(frozen=True)
+class ApprovedCharacterWrite:
+    """A character write payload that has passed the approval gate.
+
+    Construction is only possible through ``approve``, which binds the payload
+    to an authorization digest and restricts the target to ``personajes/``.
+    The dataclass itself never touches the filesystem: a caller submits it to
+    a gated write endpoint, preserving graph authority and approval-gated
+    writes.  Tokens and digests stay ephemeral and non-inheritable.
+    """
+
+    content: str
+    target: str
+    world: str
+    content_digest: str
+
+    @staticmethod
+    def approve(
+        content: str,
+        target: str,
+        *,
+        world: str = "",
+        edit_id: str,
+        confirmation_token: str,
+        confirmation_digest: str,
+    ) -> "ApprovedCharacterWrite":
+        """Digest-gate a character payload for a gated write.
+
+        Raises ValueError when authorization data is missing, the target is
+        outside ``personajes/``, or the digest does not match the content.
+        """
+        if not edit_id.strip() or not confirmation_token.strip():
+            raise ValueError("edit_id and confirmation token are required")
+        if not target.startswith("personajes/") or not target.endswith(".md"):
+            raise ValueError("approved character target must be under personajes/")
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        if digest != confirmation_digest:
+            raise ValueError("confirmation digest does not match content")
+        return ApprovedCharacterWrite(
+            content=content,
+            target=target,
+            world=world,
+            content_digest=digest,
+        )
+
+
+def _field_present(frontmatter: dict, field: str) -> bool:
+    value = frontmatter.get(field)
+    return value not in (None, "")

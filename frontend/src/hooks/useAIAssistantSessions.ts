@@ -3,14 +3,24 @@ import {
   AssistantActivityUnavailable,
   type AssistantActivityUnavailableReason,
   INCOMPLETE_EVIDENCE_WARNING,
-  NEUTRAL_EVIDENCE_WARNING,
   streamAssistantActivity,
 } from "@/api/assistantActivity";
 import type {
   AssistantActivityEvent,
   AssistantActivityEvidence,
   AssistantActivityItem,
+  EditProposal,
+  GuidedCharacterSession,
+  SemanticDecisionEvent,
 } from "@/api/types";
+import {
+  acceptGuidedCharacterProposal,
+  rejectGuidedCharacterProposal,
+  serializeGuidedCharacter,
+} from "@/api/guidedCharacter";
+import { askAssistant } from "@/api/wiki";
+import { mapSemanticDecision, semanticBlockedText } from "@/lib/semanticIntent";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export interface Message {
   role: "user" | "assistant";
@@ -22,6 +32,8 @@ export interface Session {
   title: string;
   messages: Message[];
   createdAt: number;
+  guided?: GuidedCharacterSession;
+  pendingReview?: EditProposal;
 }
 
 const STORAGE_KEY = "demiurgos-ai-sessions";
@@ -34,6 +46,25 @@ export interface AssistantActivityState {
   warning: string | null;
   availability: "unknown" | "available" | "unavailable";
   availabilityReason?: AssistantActivityUnavailableReason;
+  /** Fail-closed turn: the semantic decision was blocked, missing, or malformed. */
+  blocked?: boolean;
+}
+
+export interface AIAssistantSessionsResult {
+  sessions: Session[];
+  activeSession: Session | null;
+  activeSessionId: string | null;
+  isSending: boolean;
+  error: string | null;
+  activity: AssistantActivityState;
+  evidence: AssistantActivityEvidence;
+  createSession: () => void;
+  switchSession: (id: string) => void;
+  deleteSession: (id: string) => void;
+  sendMessage: (prompt: string) => Promise<void>;
+  resolveGuidedProposal: (accept: boolean) => Promise<void>;
+  requestGuidedReview?: () => Promise<EditProposal | null>;
+  cancelSend: () => void;
 }
 
 const INITIAL_ACTIVITY: AssistantActivityState = {
@@ -134,13 +165,14 @@ export function useAIAssistantSessions(
   mundo: string,
   section?: string,
   filePath?: string,
-) {
+): AIAssistantSessionsResult {
   const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activity, setActivity] = useState<AssistantActivityState>(INITIAL_ACTIVITY);
   const activityAbortRef = useRef<AbortController | null>(null);
+  const language = useAppLanguage();
 
   // Persist sessions whenever they change
   useEffect(() => {
@@ -219,45 +251,86 @@ export function useAIAssistantSessions(
       activityAbortRef.current = controller;
       let activityAccepted = false;
       let streamedAnswer: string | null = null;
+      let semanticDecision: SemanticDecisionEvent | null = null;
 
-      const appendAssistantMessage = (content: string) => {
+      const appendAssistantMessage = (content: string, guided?: GuidedCharacterSession) => {
         const assistantMessage: Message = { role: "assistant", content };
         setSessions((prev) =>
           prev.map((s) =>
             s.id === sessionId
-              ? { ...s, messages: [...s.messages, assistantMessage] }
+              ? { ...s, messages: [...s.messages, assistantMessage], ...(guided ? { guided } : {}) }
               : s,
           ),
         );
       };
 
-      const legacyRequest = async (): Promise<string> => {
-        const response = await fetch(`/api/${encodeURIComponent(mundo)}/ai/ask`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: controller.signal,
-          body: JSON.stringify({
-            prompt: trimmed,
-            session_id: sessionId ?? "",
-            ...(section ? { section } : {}),
-            ...(filePath ? { file_path: filePath } : {}),
-          }),
-        });
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          throw new Error(body.detail ?? `HTTP ${response.status}`);
+      const guided = activeSession?.guided;
+      const requestBody = {
+        prompt: trimmed,
+        session_id: sessionId ?? "",
+        ...(section ? { section } : {}),
+        ...(filePath ? { file_path: filePath } : {}),
+        ...(guided ? {
+          guided_session_id: guided.session_id,
+          guided_revision: guided.revision,
+        } : {}),
+      };
+
+      const legacyRequest = async () => {
+        return askAssistant(mundo, requestBody, controller.signal);
+      };
+
+      const applySemanticOutcome = (outcome: ReturnType<typeof mapSemanticDecision>) => {
+        if (outcome.kind === "review") {
+          const assistantMessage: Message = { role: "assistant", content: outcome.text };
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === sessionId
+                ? {
+                    ...s,
+                    messages: [...s.messages, assistantMessage],
+                    guided: outcome.guided ?? s.guided,
+                    pendingReview: outcome.proposal,
+                  }
+                : s,
+            ),
+          );
+          return;
         }
-        const data = (await response.json()) as { response: string };
-        return data.response;
+        if (outcome.kind === "confirmation") {
+          appendAssistantMessage(outcome.text, outcome.guided);
+          return;
+        }
+        if (outcome.kind === "blocked") {
+          appendAssistantMessage(outcome.text);
+          setActivity((current) => ({
+            ...current,
+            blocked: true,
+            status: "complete",
+            availability: "unavailable",
+          }));
+          return;
+        }
+        if (outcome.kind === "answer") {
+          appendAssistantMessage(outcome.text, outcome.guided);
+          return;
+        }
+        appendAssistantMessage(outcome.text);
+      };
+
+      const applyBlocked = (text: string, unavailable: boolean) => {
+        appendAssistantMessage(text);
+        setActivity((current) => ({
+          ...current,
+          accepted: true,
+          blocked: true,
+          availability: unavailable ? "unavailable" : current.availability,
+          status: "complete",
+        }));
       };
 
       try {
-        const request = {
-          prompt: trimmed,
-          session_id: sessionId ?? "",
-          ...(section ? { section } : {}),
-          ...(filePath ? { file_path: filePath } : {}),
-        };
+        const request = requestBody;
         const result = await streamAssistantActivity(mundo, request, {
           signal: controller.signal,
           onAccepted: () => {
@@ -269,13 +342,31 @@ export function useAIAssistantSessions(
             }));
           },
           onEvent: (event) => {
+            if (event.kind === "semantic_decision") semanticDecision = event;
             if (event.kind === "answer") streamedAnswer = event.response;
             setActivity((current) => applyAssistantActivityEvent(current, event));
           },
         });
+        semanticDecision = semanticDecision ?? result.semanticDecision;
         streamedAnswer = result.answer ?? streamedAnswer;
-        if (streamedAnswer === null) throw new Error("Assistant returned no answer");
-        appendAssistantMessage(streamedAnswer);
+
+        // The semantic decision is authoritative: answer text alone never grants
+        // an outcome. Missing/malformed/out-of-contract decisions fail closed.
+        const state = semanticDecision?.state ?? null;
+        if (state === "allow" || state === "clarify") {
+          if (streamedAnswer === null) {
+            applyBlocked(semanticBlockedText(language), true);
+          } else {
+            appendAssistantMessage(streamedAnswer);
+          }
+        } else if (state === "blocked") {
+          applyBlocked(
+            streamedAnswer ?? semanticBlockedText(language),
+            semanticDecision?.unavailable ?? true,
+          );
+        } else {
+          applyBlocked(semanticBlockedText(language), true);
+        }
       } catch (err) {
         if (controller.signal.aborted) return;
         if (err instanceof AssistantActivityUnavailable && !activityAccepted) {
@@ -285,13 +376,15 @@ export function useAIAssistantSessions(
             availabilityReason: err.reasonCode,
           });
           try {
-            appendAssistantMessage(await legacyRequest());
+            const result = await legacyRequest();
+            applySemanticOutcome(mapSemanticDecision(result, language));
           } catch (legacyError) {
-            const msg = legacyError instanceof Error ? legacyError.message : "Error desconocido";
-            setError(msg);
-            appendAssistantMessage(`Error: ${msg}`);
+            applyBlocked(semanticBlockedText(language), true);
           }
-        } else if (streamedAnswer !== null) {
+        } else if (
+          streamedAnswer !== null &&
+          (semanticDecision?.state === "allow" || semanticDecision?.state === "clarify")
+        ) {
           setActivity((current) => ({
             ...current,
             warning: INCOMPLETE_EVIDENCE_WARNING,
@@ -299,21 +392,38 @@ export function useAIAssistantSessions(
           }));
           appendAssistantMessage(streamedAnswer);
         } else {
-          const msg = err instanceof Error ? err.message : "Error desconocido";
-          setError(msg);
-          setActivity((current) => ({
-            ...current,
-            warning: current.warning ?? NEUTRAL_EVIDENCE_WARNING,
-          }));
-          appendAssistantMessage(`Error: ${msg}`);
+          applyBlocked(semanticBlockedText(language), true);
         }
       } finally {
         if (activityAbortRef.current === controller) activityAbortRef.current = null;
         setIsSending(false);
       }
     },
-    [activeSessionId, isSending, mundo, section, filePath],
+    [activeSession, activeSessionId, isSending, mundo, section, filePath, language],
   );
+
+  const resolveGuidedProposal = useCallback(async (accept: boolean) => {
+    if (!activeSession?.guided?.proposal || !activeSessionId) return;
+    const guided = activeSession.guided;
+    const proposal = guided.proposal;
+    if (!proposal) return;
+    const proposalKey = proposal.key;
+    const action = accept ? acceptGuidedCharacterProposal : rejectGuidedCharacterProposal;
+    const next = await action(mundo, guided.session_id, guided.revision, proposalKey);
+    setSessions((prev) => prev.map((session) => (
+      session.id === activeSessionId ? { ...session, guided: next } : session
+    )));
+  }, [activeSession, activeSessionId, mundo]);
+
+  const requestGuidedReview = useCallback(async () => {
+    const guided = activeSession?.guided;
+    if (!guided || !activeSessionId) return null;
+    const proposal = await serializeGuidedCharacter(mundo, guided.session_id, guided.revision);
+    setSessions((prev) => prev.map((session) => (
+      session.id === activeSessionId ? { ...session, pendingReview: proposal } : session
+    )));
+    return proposal;
+  }, [activeSession, activeSessionId, mundo]);
 
   const cancelSend = useCallback(() => activityAbortRef.current?.abort(), []);
 
@@ -329,6 +439,8 @@ export function useAIAssistantSessions(
     switchSession,
     deleteSession,
     sendMessage,
+    resolveGuidedProposal,
+    requestGuidedReview,
     cancelSend,
   };
 }

@@ -25,6 +25,7 @@ import yaml
 from rank_bm25 import BM25Okapi  # noqa: E402
 
 from .graph_models import EntityDetail, EntityHit
+from .okf_contract import validate as okf_validate
 
 # ---------------------------------------------------------------------------
 # Constants (mirror migrate_okf.py exclusions)
@@ -198,6 +199,15 @@ class EntityGraphIndex:
                         if link not in forward_links:
                             forward_links.append(link)
 
+        # OKF v1 diagnostics: surface missing minimums on the entity without
+        # ever changing what gets indexed (tolerant existing-world behavior).
+        validation = okf_validate(content)
+        okf_issues = [
+            issue.to_dict()
+            for issue in validation.issues
+            if issue.code in ("missing-minimum", "version")
+        ]
+
         entity: dict[str, Any] = {
             "name": name,
             "type": fm.get("type", "Ficha"),
@@ -210,6 +220,8 @@ class EntityGraphIndex:
             "relaciones": relaciones_raw if isinstance(relaciones_raw, list) else [],
             "content": body,
             "word_count": len(body.split()),
+            "okf_v1": True,
+            "okf_issues": okf_issues,
         }
         return entity
 
@@ -292,6 +304,46 @@ class EntityGraphIndex:
                 return path
 
         return None
+
+    def _resolve_link_candidates(self, link_name: str) -> list[str]:
+        """Return ALL entity paths a wikilink name can match.
+
+        Like ``_resolve_link`` but non-greedy: used to surface ambiguous
+        references instead of silently choosing the first match.
+        """
+        name_lower = link_name.lower().replace("_", " ").strip()
+        matches: list[str] = []
+        for path, entity in self._cache["entities"].items():
+            entity_name_lower = entity["name"].lower().replace("_", " ").strip()
+            if entity_name_lower == name_lower:
+                matches.append(path)
+                continue
+            file_stem = Path(path).stem.lower().replace("_", " ").strip()
+            if file_stem == name_lower:
+                matches.append(path)
+        return matches
+
+    def okf_validation(self, entity_path: str):
+        """Validate a cached entity against the current graph (reference-aware).
+
+        Read-only: reads the source file and resolves its wikilinks against
+        the cache so ambiguous/unresolved references surface.  Returns the
+        contract ``OkfValidation`` or None when the entity is not cached or
+        its source is unreadable.
+        """
+        mundo = self._active_mundo
+        if mundo is None:
+            return None
+        with self._lock:
+            if entity_path not in self._cache["entities"]:
+                return None
+        full = self._mundos_path / mundo / entity_path
+        try:
+            content = full.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return None
+        with self._lock:
+            return okf_validate(content, resolve=self._resolve_link_candidates)
 
     def _path_from_absolute(self, abs_path: str, mundo: str) -> str | None:
         """Convert an absolute filesystem path to a relative path from mundo root."""

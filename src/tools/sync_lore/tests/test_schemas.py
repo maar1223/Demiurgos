@@ -7,6 +7,8 @@ and Enum behavior.
 
 import sys
 import unittest
+import tempfile
+import hashlib
 from pathlib import Path
 
 # HACK: add parent's parent to path so we can import the sync-lore package
@@ -16,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import importlib
 
 schemas = importlib.import_module("sync-lore.schemas")
+index_builder = importlib.import_module("sync-lore.index_builder")
 
 
 class TestProviderConfig(unittest.TestCase):
@@ -230,6 +233,143 @@ class TestLoreIndex(unittest.TestCase):
         self.assertEqual(index.terms, [])
         self.assertEqual(index.images, [])
         self.assertEqual(index.contradictions, [])
+
+
+class TestOkfNormalization(unittest.TestCase):
+    """OKF v1 normalization: identity, minimums (character first), relations."""
+
+    def test_character_minimums_defined_first(self):
+        groups = schemas.OKF_MINIMUM_GROUPS_BY_TYPE["personaje"]
+        self.assertGreaterEqual(len(groups), 2)  # identity + desire anchors
+
+    def test_non_okf_returns_none(self):
+        self.assertIsNone(schemas.normalize_okf_v1({"title": "X"}))
+        self.assertIsNone(schemas.normalize_okf_v1(None))
+        self.assertIsNone(schemas.normalize_okf_v1({"type": "   "}))
+
+    def test_character_missing_desire_surfaces_missing_group(self):
+        normalized = schemas.normalize_okf_v1(
+            {"type": "Personaje", "title": "Anisa"}, body="## Cuerpo\n"
+        )
+        self.assertIsNotNone(normalized)
+        missing = {frozenset(g) for g in normalized.missing_minimum_groups}
+        self.assertIn(schemas.MINIMUM_DESIRE_FIELDS, missing)
+        self.assertNotIn(schemas.MINIMUM_IDENTITY_FIELDS, missing)
+
+    def test_extracts_body_and_relaciones_wikilinks(self):
+        normalized = schemas.normalize_okf_v1(
+            {"type": "Personaje", "title": "Anisa", "relaciones": ["[[Bira]] (complementa)"]},
+            body="Conoce a [[Bira]] desde siempre.\n",
+        )
+        self.assertIsNotNone(normalized)
+        self.assertEqual(set(normalized.forward_links), {"Bira"})
+
+    def test_normalization_is_pure(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        normalized = schemas.normalize_okf_v1({"type": "Personaje", "title": "X"})
+        self.assertIsNotNone(normalized)
+        self.assertEqual(list(Path(tmp.name).iterdir()), [])
+
+
+class TestApprovedCharacterGatedWrite(unittest.TestCase):
+    """Approved character writes are digest-gated and never touch the filesystem."""
+
+    CONTENT = "---\ntype: Personaje\ntitle: Aria\ndesire: volar\n---\nCuerpo.\n"
+
+    @staticmethod
+    def _digest() -> str:
+        return hashlib.sha256(TestApprovedCharacterGatedWrite.CONTENT.encode("utf-8")).hexdigest()
+
+    def test_approval_requires_matching_digest(self):
+        with self.assertRaises(ValueError):
+            schemas.ApprovedCharacterWrite.approve(
+                self.CONTENT, "personajes/aria.md", edit_id="p-1",
+                confirmation_token="tok", confirmation_digest="0" * 64,
+            )
+
+    def test_approval_requires_personajes_target(self):
+        with self.assertRaises(ValueError):
+            schemas.ApprovedCharacterWrite.approve(
+                self.CONTENT, "lore/aria.md", edit_id="p-1",
+                confirmation_token="tok", confirmation_digest=self._digest(),
+            )
+
+    def test_valid_approval_creates_payload_without_writing(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        approved = schemas.ApprovedCharacterWrite.approve(
+            self.CONTENT, "personajes/aria.md", world="vibrantes",
+            edit_id="p-1", confirmation_token="tok",
+            confirmation_digest=self._digest(),
+        )
+        self.assertEqual(approved.target, "personajes/aria.md")
+        self.assertEqual(approved.content_digest, self._digest())
+        self.assertEqual(approved.world, "vibrantes")
+        self.assertEqual(list(Path(tmp.name).iterdir()), [])
+
+
+class FakeIndex:
+    """Minimal graph stub for reconciliation idempotency tests."""
+
+    def __init__(self, dirty: bool = False, visible: bool = True, fail: bool = False):
+        self.dirty = dirty
+        self.visible = visible
+        self.fail = fail
+        self.builds = 0
+
+    def build(self, mundo: str) -> int:
+        self.builds += 1
+        if self.fail:
+            raise RuntimeError("index outage")
+        self.dirty = False
+        return 1
+
+    def get_entity(self, path: str):
+        return {"path": path} if self.visible else None
+
+
+class TestApprovedCharacterGraphReconcile(unittest.TestCase):
+    """Reconciling an approved character against the graph is idempotent and gated."""
+
+    CONTENT = "---\ntype: Personaje\ntitle: Aria\ndesire: volar\n---\nCuerpo.\n"
+
+    @staticmethod
+    def _digest() -> str:
+        return hashlib.sha256(TestApprovedCharacterGraphReconcile.CONTENT.encode("utf-8")).hexdigest()
+
+    def _coordinator(self, tmpdir, index):
+        target = Path(tmpdir) / "vibrantes" / "personajes" / "aria.md"
+        target.parent.mkdir(parents=True)
+        target.write_text(self.CONTENT, encoding="utf-8")
+        return index_builder.ApprovedCharacterReconciler(Path(tmpdir), lambda mundo: index)
+
+    def test_reconcile_is_idempotent(self):
+        index = FakeIndex()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            reconciler = self._coordinator(tmpdir, index)
+            approved = schemas.ApprovedCharacterWrite.approve(
+                self.CONTENT, "personajes/aria.md", world="vibrantes",
+                edit_id="p-1", confirmation_token="tok",
+                confirmation_digest=self._digest(),
+            )
+            first = reconciler.reconcile(approved)
+            second = reconciler.reconcile(approved)
+        self.assertEqual(first.index_status, "indexed")
+        self.assertEqual(second.index_status, "indexed")
+        self.assertEqual(index.builds, 1, "reconciliation must not duplicate builds")
+
+    def test_reconcile_fails_closed_on_digest_mismatch(self):
+        index = FakeIndex()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            reconciler = self._coordinator(tmpdir, index)
+            approved = schemas.ApprovedCharacterWrite(
+                content="---\ntype: Personaje\n---\n", target="personajes/aria.md",
+                world="vibrantes", content_digest="0" * 64,
+            )
+            result = reconciler.reconcile(approved)
+        self.assertNotEqual(result.index_status, "indexed")
+        self.assertTrue(result.retryable is False)
 
 
 class TestImageEntry(unittest.TestCase):
