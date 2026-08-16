@@ -345,6 +345,7 @@ Estas decisiones pertenecen a la **plataforma completa** (no a la iniciativa de 
 | **G11** | Onboarding y respaldo | **[DECISIÓN CERRADA]** El onboarding configura idioma, modelos LLM e importar/crear mundo; Google+rclone es **no bloqueante**; rclone crea el **árbol espejo por taller**; hay **sync 30 s tras editar** y **restauración Google→Demiurgos** |
 | **G12** | Exportar vs publicar | **[DECISIÓN CERRADA]** "Exportar ficha a PDF" permanece en el **Core** (datos/backup). El **Taller de Publicación** completo es módulo de pago con **perfiles por módulo**. Se distingue **exportar** (datos/backup) de **publicar** (artefactos) |
 | **G13** | Skill Madre (capacidad protegida) | **[DECISIÓN CERRADA]** Capacidad protegida **instalada obligatoriamente con Demiurgos**: no editable ni eliminable desde el Taller de Herramientas, se actualiza solo mediante **releases oficiales** y sirve para **co-crear nuevas skills**. Contrato en 10.5; el ciclo de vida de la biblioteca gestionada por el Autor vive en la iniciativa |
+| **G14** | Clasificación y autoridad de Skills | **[DECISIÓN CERRADA]** La UI muestra tres categorías: **Oficiales** (solo creadas/aprobadas y firmadas por el Autor de Demiurgos), **Personalizadas** (creadas o derivadas por el Autor) y **Comunitarias** (creadas/compartidas por la comunidad). `fundamental`, `derived`, `co-created`, `verified` y `quarantined` son atributos secundarios; la Skill Madre queda fuera de estas categorías visibles |
 
 ### 10.1 Contrato de la decisión G2 `[DECISIÓN CERRADA]`
 

@@ -80,6 +80,18 @@
 
 **`[DECISIÓN CERRADA]`** La **Skill Madre** (capacidad protegida instalada con Demiurgos, constitución G13) **no pertenece a la biblioteca gestionada por el Autor**: no es editable ni eliminable desde este Taller y se actualiza solo mediante **releases oficiales**; se referencia aquí únicamente para delimitar el alcance (ver 9, co-creación).
 
+### 3.1.1 Clasificación visible y atributos de confianza
+
+**`[DECISIÓN CERRADA]`** La biblioteca presenta tres categorías visibles y simples:
+
+| Categoría | Regla |
+|---|---|
+| **Oficiales** | Skills creadas o aprobadas y firmadas exclusivamente por el Autor de Demiurgos. Una firma comunitaria nunca concede estado Oficial. |
+| **Personalizadas** | Skills creadas por el Autor o derivadas de otra Skill; pueden editarse, versionarse, activarse y eliminarse según su ciclo de vida. |
+| **Comunitarias** | Skills creadas o compartidas por miembros de la comunidad; pueden estar verificadas, en revisión o en cuarentena, pero no son Oficiales sin aprobación/firma del Autor. |
+
+`fundamental`, `derived`, `co-created`, `verified` y `quarantined` son atributos secundarios de procedencia, ciclo de vida o confianza, no categorías visibles excluyentes. Una Skill puede combinar atributos, por ejemplo `Oficial + fundamental + co-created + verified` o `Personalizada + derived + verified`. La Skill Madre queda fuera de estas categorías porque es una capacidad protegida del sistema.
+
 ### 3.2 Kernel del sistema vs metodología de usuario — frontera exacta
 
 | Capa | Propiedad | Qué contiene | Quién lo edita | Efecto en runtime |
@@ -551,7 +563,7 @@ Los estados `require_confirmation`/`proposal_ready` son reales **solo** cuando l
 - **C9.** La constitución global prevalece sobre este documento; este documento no duplica la definición global (sección 0).
 - **C10.** La co-creación, la intención semántica y la **Skill Madre** son decisiones globales de la constitución (secciones 2.3, 5, G13/10.5); esta iniciativa las referencia sin duplicarlas y regula solo la **biblioteca gestionada por el Autor**.
 
-### 16.2 Decisiones 16.a–16.l (todas cerradas; solo quedan residuos propuestos o fuera de iniciativa)
+### 16.2 Decisiones 16.a–16.m (todas cerradas; solo quedan residuos propuestos o fuera de iniciativa)
 
 | ID | Decisión | Opciones/Propuesta | Depende de |
 |---|---|---|---|
@@ -567,6 +579,7 @@ Los estados `require_confirmation`/`proposal_ready` son reales **solo** cuando l
 | **16.j** | Activación de la skill activa | **[DECISIÓN CERRADA]** El backend selecciona la skill activa por mundo tras el handoff semántico y **antes de la primera llamada guiada**; snapshot `workshop + world + skill_id + skill_version + contrato compilado`; **no modifica `AGENTS.md`**; el contrato compilado se proyecta **compacto por turno** (secciones 7.2, 14.1, 16.3) | Ciclo de vida/runtime |
 | **16.k** | Versiones y desactivación | **[DECISIÓN CERRADA]** Publicada inmutable; cambios crean nueva versión. Activar una versión nueva exige **nueva conversación** en el Asistente IA del Taller de Mundo. Desactivar conserva versión/historial pero impide **nuevas sesiones**; las sesiones existentes conservan su snapshot y pueden terminar (sección 14.1) | Ciclo de vida |
 | **16.l** | UX del Taller de Herramientas | **[DECISIÓN CERRADA]** La creación de skills es **asistida por Hermes** (co-creación), no un formulario técnico de Skill ID/Markdown como flujo principal; con revisión del borrador, validación visible y aprobación explícita del Autor (sección 9) | Frontend |
+| **16.m** | Clasificación visible de Skills | **[DECISIÓN CERRADA]** La biblioteca muestra **Oficiales**, **Personalizadas** y **Comunitarias**. `Oficial` requiere aprobación/firma exclusiva del Autor de Demiurgos; `fundamental`, `derived`, `co-created`, `verified` y `quarantined` quedan como atributos secundarios. La Skill Madre no aparece en la biblioteca | Trust/biblioteca |
 
 ### 16.3 Decisión de diseño sobre el snapshot de sesión
 
