@@ -81,7 +81,7 @@ from onboarding import (
     commit_world_created as _commit_world_created,
     status_from as _onboarding_status_from,
 )
-from readiness import probe_local_storage
+from readiness import probe_local_storage, project_cards
 from world_authority import WorldResultKind, create_world as _create_world
 from methodology_library import (
     AlreadyPublishedError,
@@ -343,22 +343,16 @@ def create_world(body: WorldCreateRequest, request: Request):
 
 @app.get("/api/onboarding/readiness")
 def onboarding_readiness():
-    """Essential local readiness (OC11/OC21). Derived runtime truth from the
-    local-storage probe and the local registry; never overstates remote
-    capabilities."""
+    """Essential local readiness + card states (OC11/OC12/OC21).
+
+    Derived runtime truth: the local-storage probe, filesystem world truth,
+    the persisted locale, and the three-proof assistant evidence. Cloud cards
+    never become ``configured`` from local evidence (ONB-3.1); the projection
+    downgrades any stale registry claim instead of trusting it.
+    """
     probe = probe_local_storage(PROJECT_ROOT)
     state = _local_state().snapshot()
-    caps = state.get("capabilities") or {}
-    worlds = _list_worlds()
-    cards = {
-        "identity": caps.get("identity", "pending"),
-        "assistant": caps.get("assistant", "pending"),
-        "telegram": caps.get("telegram", "pending"),
-        "backup": caps.get("backup", "pending"),
-        "world": "configured" if worlds else "pending",
-        "locale": "configured" if state.get("locale") else "pending",
-        "offline": "configured" if probe["ok"] else "error",
-    }
+    cards = project_cards(state, _world_names(), bool(probe["ok"]))
     return {"local_editor": probe, "cards": cards}
 
 

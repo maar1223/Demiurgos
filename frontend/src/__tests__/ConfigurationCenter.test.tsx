@@ -134,9 +134,88 @@ describe("ConfigurationCenter (ONB-1.7)", () => {
     );
     // Every card is a labelled section with a visible text status, and the
     // state grid is a polite live region (color is never the only signal).
+    // The essential-readiness block is a labelled section too.
     const sections = container.querySelectorAll("section[aria-labelledby]");
-    expect(sections.length).toBe(7);
+    expect(sections.length).toBe(8);
     expect(container.querySelector('[aria-live="polite"]')).not.toBeNull();
-    expect(screen.getAllByText(/Estado:/)).toHaveLength(7);
+    expect(screen.getAllByText(/Estado:/)).toHaveLength(9);
+  });
+
+  // ---------------------------------------------------------------------------
+  // ONB-3.2 — Badges UI (OC11/OC21): World + local editor essential badges and
+  // cloud cards that can never render as ready from local evidence.
+  // ---------------------------------------------------------------------------
+
+  it("renders essential World + local editor badges from local truth", async () => {
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: {
+        identity: "pending",
+        assistant: "pending",
+        telegram: "pending",
+        backup: "pending",
+        locale: "configured",
+        world: "configured",
+        offline: "configured",
+      },
+    });
+    renderCenter();
+
+    expect(
+      await screen.findByRole("heading", { name: "Listo para trabajar" }),
+    ).toBeInTheDocument();
+    // World + editor badges read "Listo" only when local truth proves them.
+    expect(screen.getByText("Mundos:")).toBeInTheDocument();
+    expect(screen.getByText("Editor local:")).toBeInTheDocument();
+    expect(screen.getAllByText("Listo")).toHaveLength(2);
+  });
+
+  it("shows honest pending essential badges when world or editor is not ready", async () => {
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: false, detail: "read-back mismatch" },
+      cards: {
+        identity: "pending",
+        assistant: "pending",
+        telegram: "pending",
+        backup: "pending",
+        locale: "pending",
+        world: "pending",
+        offline: "error",
+      },
+    });
+    renderCenter();
+
+    await screen.findByRole("heading", { name: "Listo para trabajar" });
+    expect(screen.getAllByText("No disponible")).toHaveLength(1);
+    expect(screen.getAllByText("Pendiente").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("Listo")).not.toBeInTheDocument();
+  });
+
+  it("never renders cloud cards as ready from stale local evidence", async () => {
+    // A stale/buggy backend claims cloud capabilities are configured. The
+    // UI must NOT overstate readiness: identity/telegram/backup stay pending.
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: {
+        identity: "configured",
+        assistant: "configured",
+        telegram: "configured",
+        backup: "configured",
+        locale: "configured",
+        world: "configured",
+        offline: "configured",
+      },
+    });
+    renderCenter();
+
+    await screen.findByRole("heading", { name: "Centro de Configuración" });
+    const configured = screen.getAllByText("Configurado");
+    // Only local capabilities may render configured; the three cloud cards
+    // are forced back to pending by the UI's anti-overstatement guard.
+    expect(configured.length).toBe(4); // assistant, locale, world, offline
+    expect(screen.getByRole("heading", { name: "Telegram" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Identidad" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Respaldo y restauración" })).toBeInTheDocument();
+    expect(screen.getAllByText("Pendiente")).toHaveLength(3); // the cloud cards
   });
 });

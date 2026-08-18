@@ -24,6 +24,21 @@ const STATE_META: Record<CardState, { label: string; badge: "default" | "success
   error: { label: "Error", badge: "error" },
 };
 
+/**
+ * Cloud/remote capabilities (ONB-3.1): their cards can NEVER render as
+ * "Configurado" in this slice, because only their dedicated contracts may
+ * mark them configured. Defense in depth: even if a stale/buggy backend
+ * reports "configured" for one of these keys, the UI forces the honest
+ * pending state instead of overstating readiness.
+ */
+const CLOUD_CARD_KEYS: ReadonlySet<string> = new Set(["identity", "telegram", "backup"]);
+
+/** Essential local readiness badges (OC11/OC21): World + local editor. */
+const ESSENTIAL_BADGES: { key: string; title: string }[] = [
+  { key: "world", title: "Mundos" },
+  { key: "editor", title: "Editor local" },
+];
+
 interface CardAction {
   label: string;
   to: string;
@@ -65,6 +80,30 @@ export default function ConfigurationCenter() {
 
   const cards = readiness?.cards ?? {};
 
+  /**
+   * Honest per-card state (ONB-3.1): cloud/remote cards can never be
+   * "configured" in this slice — their dedicated contracts are the only
+   * path to configured, and none exists yet. Even if the backend reports
+   * "configured" for a cloud key (stale/buggy state), the UI renders the
+   * truthful pending state.
+   */
+  const stateFor = (key: string): CardState => {
+    const raw = cards[key] ?? "pending";
+    if (CLOUD_CARD_KEYS.has(key) && raw === "configured") return "pending";
+    return raw as CardState;
+  };
+
+  const essentialBadge = (key: string): { label: string; badge: "default" | "success" | "error" } => {
+    if (key === "editor") {
+      return readiness?.local_editor.ok
+        ? { label: "Listo", badge: "success" }
+        : { label: "No disponible", badge: "error" };
+    }
+    return stateFor("world") === "configured"
+      ? { label: "Listo", badge: "success" }
+      : { label: "Pendiente", badge: "default" };
+  };
+
   return (
     <div className="min-h-screen bg-cripta">
       <header className="border-b border-filio bg-cripta/95">
@@ -98,38 +137,65 @@ export default function ConfigurationCenter() {
         )}
 
         {readiness && (
-          <div className="mt-8 grid grid-cols-1 gap-4 tablet:grid-cols-2" aria-live="polite">
-            {CARD_DEFS.map((card) => {
-              const state: CardState = cards[card.key] ?? "pending";
-              const meta = STATE_META[state];
-              return (
-                <section
-                  key={card.key}
-                  aria-labelledby={`card-title-${card.key}`}
-                  className="flex flex-col justify-between gap-4 rounded-lg border border-filio bg-madero p-5"
-                >
-                  <div>
-                    <h2 id={`card-title-${card.key}`} className="font-heading text-body text-pergamino">
-                      {card.title}
-                    </h2>
-                    <p className="mt-1 text-small text-tinta-desvaida">{card.description}</p>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="flex items-center gap-2">
+          <div className="mt-8 space-y-8" aria-live="polite">
+            {/* Essential local readiness badges (OC11/OC21) */}
+            <section
+              aria-labelledby="essential-readiness-title"
+              className="rounded-lg border border-filio bg-madero p-5"
+            >
+              <h2 id="essential-readiness-title" className="font-heading text-body text-pergamino">
+                Listo para trabajar
+              </h2>
+              <p className="mt-1 text-small text-tinta-desvaida">
+                Capacidades esenciales locales: Mundo y editor local.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-3">
+                {ESSENTIAL_BADGES.map((badge) => {
+                  const meta = essentialBadge(badge.key);
+                  return (
+                    <span key={badge.key} className="flex items-center gap-2">
+                      <span className="text-small text-tinta-desvaida">{badge.title}:</span>
                       <Badge variant={meta.badge}>{meta.label}</Badge>
                       <span className="sr-only">Estado: {meta.label}</span>
                     </span>
-                    {card.action ? (
-                      <Button variant="secondary" size="sm" onClick={() => navigate(card.action!.to)}>
-                        {card.action.label}
-                      </Button>
-                    ) : (
-                      <span className="text-small text-sombra">Se retoma desde esta tarjeta</span>
-                    )}
-                  </div>
-                </section>
-              );
-            })}
+                  );
+                })}
+              </div>
+            </section>
+
+            <div className="grid grid-cols-1 gap-4 tablet:grid-cols-2">
+              {CARD_DEFS.map((card) => {
+                const state = stateFor(card.key);
+                const meta = STATE_META[state];
+                return (
+                  <section
+                    key={card.key}
+                    aria-labelledby={`card-title-${card.key}`}
+                    className="flex flex-col justify-between gap-4 rounded-lg border border-filio bg-madero p-5"
+                  >
+                    <div>
+                      <h2 id={`card-title-${card.key}`} className="font-heading text-body text-pergamino">
+                        {card.title}
+                      </h2>
+                      <p className="mt-1 text-small text-tinta-desvaida">{card.description}</p>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-2">
+                        <Badge variant={meta.badge}>{meta.label}</Badge>
+                        <span className="sr-only">Estado: {meta.label}</span>
+                      </span>
+                      {card.action ? (
+                        <Button variant="secondary" size="sm" onClick={() => navigate(card.action!.to)}>
+                          {card.action.label}
+                        </Button>
+                      ) : (
+                        <span className="text-small text-sombra">Se retoma desde esta tarjeta</span>
+                      )}
+                    </div>
+                  </section>
+                );
+              })}
+            </div>
           </div>
         )}
       </main>

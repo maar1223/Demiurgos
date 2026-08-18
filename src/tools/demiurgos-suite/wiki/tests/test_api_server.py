@@ -4300,3 +4300,97 @@ class TestReadinessEndpoint:
         assert body["cards"]["world"] == "pending"
         assert body["cards"]["identity"] == "pending"
         assert body["cards"]["telegram"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# ONB-3.1 — Readiness truthfulness: cloud cards never ready from local
+# evidence; assistant pending without the three proofs (OC11/OC12/OC21).
+# The projection must NOT trust registry claims for remote capabilities —
+# only their dedicated contracts may mark them configured, and none exists
+# for identity/telegram/backup in this slice.
+# ---------------------------------------------------------------------------
+
+
+class TestReadinessTruthfulness:
+    def test_cloud_cards_never_configured_from_local_registry_claims(
+            self, empty_client: TestClient):
+        """A stale/buggy local registry entry claiming cloud capabilities
+        configured must be downgraded: remote cards stay pending."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state["capabilities"]["identity"] = "configured"
+        state["capabilities"]["telegram"] = "configured"
+        state["capabilities"]["backup"] = "configured"
+        registry.atomic_commit(state)
+
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["identity"] == "pending"
+        assert body["cards"]["telegram"] == "pending"
+        assert body["cards"]["backup"] == "pending"
+
+    def test_assistant_pending_without_three_proofs(self, empty_client: TestClient):
+        """A registry claim of a configured assistant is not proof: without
+        the text+vision+runtime acceptance evidence the card stays pending."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state["capabilities"]["assistant"] = "configured"
+        registry.atomic_commit(state)
+
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["assistant"] == "pending"
+
+    def test_assistant_configured_only_with_all_three_proofs(
+            self, empty_client: TestClient):
+        """Only recorded text+vision+runtime acceptance evidence completes
+        the assistant card; the claim alone never does."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state["capabilities"]["assistant"] = "configured"
+        state["assistant_acceptance"] = {
+            "text": "passed",
+            "vision": "passed",
+            "runtime": "accepted",
+        }
+        registry.atomic_commit(state)
+
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["assistant"] == "configured"
+
+    def test_assistant_pending_when_any_proof_missing(self, empty_client: TestClient):
+        """Partial evidence (e.g. only text+vision) must not configure."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state["capabilities"]["assistant"] = "configured"
+        state["assistant_acceptance"] = {"text": "passed", "vision": "passed"}
+        registry.atomic_commit(state)
+
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["assistant"] == "pending"
+
+    def test_world_badge_derives_from_filesystem_truth(self, empty_client: TestClient):
+        """The world badge follows filesystem truth: a real world dir turns
+        the card configured; no world keeps it pending."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state["capabilities"]["world"] = "configured"
+        registry.atomic_commit(state)
+
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["world"] == "pending"
+
+        (api_server.MUNDOS_DIR / "real_world").mkdir()
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["world"] == "configured"
+
+    def test_locale_and_offline_derive_from_local_truth(self, empty_client: TestClient):
+        """locale follows persisted step-0; offline follows the storage probe."""
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["locale"] == "pending"
+        assert body["cards"]["offline"] == "configured"
+
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state["locale"] = {"ui": "es", "conversation": "es", "content": "es"}
+        registry.atomic_commit(state)
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["locale"] == "configured"
