@@ -82,6 +82,10 @@ from onboarding import (
     status_from as _onboarding_status_from,
 )
 from readiness import probe_local_storage, project_cards
+from telegram_settings import (
+    has_token as telegram_has_token,
+    telegram_state,
+)
 from world_authority import WorldResultKind, create_world as _create_world
 from methodology_library import (
     AlreadyPublishedError,
@@ -347,12 +351,20 @@ def onboarding_readiness():
 
     Derived runtime truth: the local-storage probe, filesystem world truth,
     the persisted locale, and the three-proof assistant evidence. Cloud cards
-    never become ``configured`` from local evidence (ONB-3.1); the projection
-    downgrades any stale registry claim instead of trusting it.
+    without a dedicated contract (identity/backup) never become ``configured``
+    from local evidence (ONB-3.1); the projection downgrades any stale
+    registry claim instead of trusting it. The telegram card follows the
+    ONB-3.3 backend's real evidence (write-only token presence + last
+    connection test) passed through ``telegram_state``.
     """
     probe = probe_local_storage(PROJECT_ROOT)
     state = _local_state().snapshot()
-    cards = project_cards(state, _world_names(), bool(probe["ok"]))
+    cards = project_cards(
+        state,
+        _world_names(),
+        bool(probe["ok"]),
+        telegram_state=telegram_state(state, telegram_has_token()),
+    )
     return {"local_editor": probe, "cards": cards}
 
 
@@ -4002,6 +4014,7 @@ async def ai_edit_suggest(mundo: str, body: dict, request: Request):
 
 from idea_capture_ui import create_idea_capture_router  # noqa: E402
 from assistant_settings import create_assistant_settings_router  # noqa: E402
+from telegram_settings import create_telegram_settings_router  # noqa: E402
 
 # Assistant settings routes accept transient credentials only on authenticated
 # write requests and return metadata-only status payloads. Configuration saves
@@ -4016,6 +4029,13 @@ app.include_router(
 app.include_router(
     create_assistant_settings_router(
         require_principal=lambda request: _resolve_principal(request),
+    ),
+)
+
+app.include_router(
+    create_telegram_settings_router(
+        require_principal=lambda request: _resolve_principal(request),
+        registry=lambda: _local_state(),
     ),
 )
 

@@ -20,6 +20,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import requests
 from fastapi.testclient import TestClient
 
 _HERE = Path(__file__).resolve().parent
@@ -34,6 +35,8 @@ from assistant_activity import assess_hermes_capabilities  # noqa: E402
 import guided_session_store  # noqa: E402
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore  # noqa: E402
 from guided_session_store import SESSION_TTL  # noqa: E402
+import idea_capture_ui  # noqa: E402
+import telegram_settings  # noqa: E402
 
 
 def _activity_capability():
@@ -4055,6 +4058,10 @@ def empty_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     mundos.mkdir(parents=True)
     monkeypatch.setattr(api_server, "MUNDOS_DIR", mundos)
     monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+    # The telegram secret boundary (.env) must be hermetic too: the same
+    # repo-root .env the idea-capture panel manages is redirected to the
+    # sandbox so telegram tests never touch (or read) the real .env.
+    monkeypatch.setattr(idea_capture_ui, "REPO_ROOT", tmp_path)
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
     api_server._graph_indices.clear()
@@ -4394,3 +4401,176 @@ class TestReadinessTruthfulness:
         registry.atomic_commit(state)
         body = empty_client.get("/api/onboarding/readiness").json()
         assert body["cards"]["locale"] == "configured"
+
+
+# ---------------------------------------------------------------------------
+# ONB-3.3 — Telegram backend: write-only token, honest card states
+# (pending | requires_connection | configured | error). Token never echoed,
+# never logged; offline test → requires_connection.
+# ---------------------------------------------------------------------------
+
+
+class TestTelegramSettings:
+    """ONB-3.3 — Telegram card backend (WU-3b1)."""
+
+    SECRET = "123456789:AA-test-secret"
+
+    def _authed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _principal(monkeypatch)
+
+    def _put_token(self, client: TestClient, token: str = SECRET):
+        return client.put("/api/telegram/token", json={"token": token})
+
+    def test_telegram_routes_fail_closed_without_principal(self, empty_client: TestClient):
+        assert empty_client.get("/api/telegram/status").status_code == 401
+        assert empty_client.put("/api/telegram/token",
+                                json={"token": self.SECRET}).status_code == 401
+        assert empty_client.delete("/api/telegram/token").status_code == 401
+        assert empty_client.post("/api/telegram/test-connection").status_code == 401
+
+    def test_telegram_status_pending_without_token(self, empty_client: TestClient,
+                                                   monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        body = empty_client.get("/api/telegram/status").json()
+        assert body["state"] == "pending"
+        assert body["has_token"] is False
+        assert self.SECRET not in empty_client.get("/api/telegram/status").text
+
+    def test_telegram_set_token_is_write_only_never_echoed(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        resp = self._put_token(empty_client)
+        assert resp.status_code == 200, resp.text
+        assert self.SECRET not in resp.text
+        body = resp.json()
+        assert body["state"] == "requires_connection"
+        assert body["has_token"] is True
+
+        # Persisted write-only in the .env secret boundary (same var the
+        # idea-capture panel manages — one shared token).
+        env = (api_server.PROJECT_ROOT / ".env").read_text(encoding="utf-8")
+        assert f"TELEGRAM_BOT_TOKEN={self.SECRET}" in env
+
+        # Status and all later responses never echo the token.
+        status = empty_client.get("/api/telegram/status")
+        assert self.SECRET not in status.text
+        assert status.json()["state"] == "requires_connection"
+
+    def test_telegram_invalid_token_rejected_without_mutation(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        for bad in ("", "   ", "abc def", "x" * 300):
+            resp = empty_client.put("/api/telegram/token", json={"token": bad})
+            assert resp.status_code == 400, resp.text
+        env = api_server.PROJECT_ROOT / ".env"
+        assert not env.exists() or "TELEGRAM_BOT_TOKEN" not in env.read_text(encoding="utf-8")
+
+    def test_telegram_clear_token_returns_pending(self, empty_client: TestClient,
+                                                  monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._put_token(empty_client)
+        resp = empty_client.delete("/api/telegram/token")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"state": "pending", "has_token": False}
+        env = (api_server.PROJECT_ROOT / ".env").read_text(encoding="utf-8")
+        assert "TELEGRAM_BOT_TOKEN" not in env
+        assert empty_client.get("/api/telegram/status").json()["state"] == "pending"
+
+    def test_telegram_test_connection_success_marks_configured(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._put_token(empty_client)
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"ok": True, "result": {"id": 123, "username": "demo_bot"}}
+
+        monkeypatch.setattr(telegram_settings.requests, "get",
+                            lambda *a, **k: _Resp())
+
+        resp = empty_client.post("/api/telegram/test-connection")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["state"] == "configured"
+        assert body["has_token"] is True
+        assert self.SECRET not in resp.text
+
+        # Readiness projection now reports the honest telegram card.
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "configured"
+
+    def test_telegram_test_connection_offline_requires_connection(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._put_token(empty_client)
+
+        def offline(*a, **k):
+            raise requests.ConnectionError("offline")
+
+        monkeypatch.setattr(telegram_settings.requests, "get", offline)
+        resp = empty_client.post("/api/telegram/test-connection")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["state"] == "requires_connection"
+        assert body["error_code"] == "network"
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "requires_connection"
+
+    def test_telegram_test_connection_invalid_token_marks_error(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._put_token(empty_client, token="123456:INVALID")
+
+        class _Resp:
+            status_code = 401
+
+            def json(self):
+                return {"ok": False, "error_code": 401, "description": "Unauthorized"}
+
+        monkeypatch.setattr(telegram_settings.requests, "get",
+                            lambda *a, **k: _Resp())
+        resp = empty_client.post("/api/telegram/test-connection")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["state"] == "error"
+        assert body["error_code"] == "invalid_token"
+        cards = empty_client.get("/api/onboarding/readiness").json()["cards"]
+        assert cards["telegram"] == "error"
+
+    def test_telegram_test_connection_without_token_fails_closed(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        resp = empty_client.post("/api/telegram/test-connection")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "no_token"
+
+    def test_telegram_state_survives_restart(self, empty_client: TestClient,
+                                             monkeypatch: pytest.MonkeyPatch):
+        self._authed(monkeypatch)
+        self._put_token(empty_client)
+
+        class _Resp:
+            status_code = 200
+
+            def json(self):
+                return {"ok": True, "result": {"id": 123}}
+
+        monkeypatch.setattr(telegram_settings.requests, "get",
+                            lambda *a, **k: _Resp())
+        empty_client.post("/api/telegram/test-connection")
+
+        # Simulate a process restart: a fresh LocalState reads the same file.
+        api_server._LOCAL_STATE = None
+        status = empty_client.get("/api/telegram/status").json()
+        assert status["state"] == "configured"
+        assert status["has_token"] is True
+
+    def test_telegram_token_never_logged(self, empty_client: TestClient,
+                                         monkeypatch: pytest.MonkeyPatch, caplog):
+        self._authed(monkeypatch)
+        with caplog.at_level(logging.INFO):
+            self._put_token(empty_client)
+            empty_client.post("/api/telegram/test-connection")
+        assert self.SECRET not in caplog.text

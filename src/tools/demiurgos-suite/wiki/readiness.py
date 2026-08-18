@@ -8,10 +8,15 @@ never proves readiness. It never overstates a remote/cloud capability.
 ``project_cards`` derives the OC12 card states from authoritative local
 truth (ONB-3.1/3.2, OC11/OC12/OC21):
 
-- Cloud cards (identity, telegram, backup) NEVER become ``configured`` from
-  local evidence: only their dedicated contracts may mark them configured,
-  and none exists in this slice. A stale registry claim is downgraded to
-  ``pending`` instead of being trusted.
+- Cloud cards WITHOUT a dedicated contract (identity, backup) NEVER become
+  ``configured`` from local evidence: only their dedicated contracts may mark
+  them configured, and none exists in this slice. A stale registry claim is
+  downgraded to ``pending`` instead of being trusted.
+- The telegram card HAS a dedicated contract (ONB-3.3 backend): its state is
+  supplied by the backend from real evidence (write-only token presence plus
+  the last Telegram API connection-test outcome), never from a bare registry
+  claim. ``project_cards`` accepts that derived state via ``telegram_state``
+  and defaults to ``pending`` when absent.
 - The assistant card is ``configured`` ONLY when the registry records the
   three-proof evidence (text + vision probes passed and Hermes runtime
   acceptance). A bare ``capabilities.assistant == "configured"`` claim is
@@ -27,10 +32,14 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from local_state import CARD_STATES
 
-# Cloud/remote capabilities: their cards can never be derived to
-# ``configured`` from local evidence in this slice (ONB-3.1).
-CLOUD_CARDS: frozenset[str] = frozenset({"identity", "telegram", "backup"})
+
+# Cloud/remote capabilities without a dedicated contract: their cards can
+# never be derived to ``configured`` from local evidence in this slice
+# (ONB-3.1). Telegram is excluded here because ONB-3.3 provides its dedicated
+# backend contract; its state is passed in explicitly.
+CLOUD_CARDS: frozenset[str] = frozenset({"identity", "backup"})
 
 # Assistant proof evidence keys required before the card may be configured.
 ASSISTANT_PROOF_KEYS: tuple[str, ...] = ("text", "vision", "runtime")
@@ -62,16 +71,25 @@ def project_cards(
     state: Mapping[str, Any],
     worlds: Sequence[str],
     probe_ok: bool,
+    telegram_state: str | None = None,
 ) -> dict[str, str]:
     """Derive honest Configuration Center card states (OC11/OC12/OC21).
 
     ``state`` is the local registry snapshot; ``worlds`` is the runtime list
     of existing world names (filesystem truth); ``probe_ok`` is the derived
-    local-storage probe result. Returns one CardState per card key.
+    local-storage probe result; ``telegram_state`` is the state supplied by
+    the ONB-3.3 telegram backend (write-only token presence + last connection
+    test) or None when no backend evidence exists. Returns one CardState per
+    card key.
     """
     cards: dict[str, str] = {}
     for key in CLOUD_CARDS:
         cards[key] = "pending"
+    # Telegram has a dedicated backend contract (ONB-3.3): its card follows
+    # the backend's real evidence; without it the card stays pending.
+    cards["telegram"] = (
+        telegram_state if telegram_state in CARD_STATES else "pending"
+    )
     cards["assistant"] = "configured" if assistant_proven(state) else "pending"
     cards["world"] = "configured" if worlds else "pending"
     cards["locale"] = "configured" if state.get("locale") else "pending"
