@@ -443,4 +443,86 @@ describe("ConfigurationCenter (ONB-1.7)", () => {
     );
     expect((getReadiness as Mock).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
+
+  // ---------------------------------------------------------------------------
+  // ONB-4.4 + ONB-4.5 (WU-4d) — Google identity and backup/restore cards:
+  // entry points only. No fake OAuth, no fake backup, never configured.
+  // ---------------------------------------------------------------------------
+
+  it("identity card is an honest pending entry point and never renders configured", async () => {
+    // A stale/buggy backend claims identity is configured. The card must
+    // stay pending: OAuth/OIDC is not implemented in this change (ONB-4.4).
+    (getReadiness as Mock).mockResolvedValue(
+      makeReadiness({
+        cards: {
+          identity: "configured",
+          assistant: "pending",
+          telegram: "pending",
+          backup: "pending",
+          locale: "configured",
+          world: "configured",
+          offline: "configured",
+          import: "pending",
+        },
+      }),
+    );
+    renderCenter();
+
+    await screen.findByRole("heading", { name: "Identidad" });
+    const identitySection = screen
+      .getByRole("heading", { name: "Identidad" })
+      .closest("section") as HTMLElement;
+    expect(identitySection).toHaveTextContent("Pendiente");
+    expect(identitySection).not.toHaveTextContent("Configurado");
+    // Entry-only copy: revalidation / authorized recovery, stable sub id,
+    // and no vocabulary claiming an active Google session.
+    expect(identitySection).toHaveTextContent(/revalidación online|recuperación autorizada/i);
+    expect(identitySection).toHaveTextContent(/identificador estable/i);
+    expect(identitySection).toHaveTextContent("sub");
+    expect(identitySection).not.toHaveTextContent(/inicia[dr] sesión con google|conectad[oa] con google/i);
+  });
+
+  it("identity card keeps the authorized-recovery entry to Perfil", async () => {
+    const user = userEvent.setup();
+    (getReadiness as Mock).mockResolvedValue(makeReadiness());
+    renderCenter();
+
+    await screen.findByRole("heading", { name: "Identidad" });
+    await user.click(screen.getByRole("button", { name: "Ir a Perfil" }));
+    expect(screen.getByTestId("perfil")).toBeInTheDocument();
+  });
+
+  it("backup/restore card is an honest pending entry point and never renders configured", async () => {
+    (getReadiness as Mock).mockResolvedValue(
+      makeReadiness({
+        cards: {
+          identity: "pending",
+          assistant: "pending",
+          telegram: "pending",
+          backup: "configured", // stale/buggy claim — must be downgraded
+          locale: "configured",
+          world: "configured",
+          offline: "configured",
+          import: "pending",
+        },
+      }),
+    );
+    renderCenter();
+
+    await screen.findByRole("heading", { name: "Respaldo y restauración" });
+    const backupSection = screen
+      .getByRole("heading", { name: "Respaldo y restauración" })
+      .closest("section") as HTMLElement;
+    expect(backupSection).toHaveTextContent("Pendiente");
+    expect(backupSection).not.toHaveTextContent("Configurado");
+    // Entry-only copy: not implemented yet, consent separation (identity ≠
+    // Drive), backup and restore are distinct flows, no fake completion.
+    expect(backupSection).toHaveTextContent(/no están implementados/i);
+    expect(backupSection).toHaveTextContent(/consentimiento de Drive es independiente/i);
+    expect(backupSection).toHaveTextContent(/flujos distintos/i);
+    expect(backupSection).not.toHaveTextContent(/respaldo completado|restauración completada|con éxito/i);
+    // No misleading "resume from this card" affordance without a dedicated
+    // panel yet.
+    expect(backupSection).not.toHaveTextContent("Se retoma desde esta tarjeta");
+  });
 });

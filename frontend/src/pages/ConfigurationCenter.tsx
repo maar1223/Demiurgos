@@ -72,10 +72,10 @@ interface CardDef {
 }
 
 const CARD_DEFS: CardDef[] = [
-  { key: "identity", title: "Identidad", description: "Cuenta local / Google, revalidación y recuperación.", action: { label: "Ir a Perfil", to: "/perfil" } },
+  { key: "identity", title: "Identidad", description: "Cuenta local / Google: revalidación online y recuperación autorizada.", action: { label: "Ir a Perfil", to: "/perfil" } },
   { key: "assistant", title: "IA texto y visión", description: "Modelo principal del Asistente (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
   { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: null },
-  { key: "backup", title: "Respaldo y restauración", description: "Google Drive / rclone. Requiere conexión y consentimiento.", action: null },
+  { key: "backup", title: "Respaldo y restauración", description: "Google Drive / rclone: respaldo y restauración, con consentimiento separado de la identidad.", action: null },
   { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/onboarding?step=step0" } },
   { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },
   { key: "offline", title: "Offline / dispositivo", description: "Núcleo local (editor, ideas, grafo) sin conexión.", action: null },
@@ -232,10 +232,51 @@ export default function ConfigurationCenter() {
                         <Button variant="secondary" size="sm" onClick={() => navigate(card.action!.to)}>
                           {card.action.label}
                         </Button>
+                      ) : card.key === "backup" ? (
+                        <span className="text-small text-sombra">
+                          Pendiente — contrato dedicado en definición
+                        </span>
                       ) : (
                         <span className="text-small text-sombra">Se retoma desde esta tarjeta</span>
                       )}
                     </div>
+                    {/* ONB-4.4 (WU-4d) — Google identity card: entry only.
+                        OAuth/OIDC is an MVP objective, NOT implemented in
+                        this change: the card stays pending and only exposes
+                        the revalidation / authorized-recovery entry in
+                        Perfil. Identity uses a stable Google identifier
+                        (sub), never the email, and never reuses another
+                        installation's credential without authorization
+                        (OC4/OC23). */}
+                    {card.key === "identity" && (
+                      <div className="mt-4 border-t border-filio pt-4">
+                        <p className="text-small text-tinta-desvaida">
+                          El vínculo con Google (OAuth/OIDC) es objetivo del MVP y aún no está
+                          implementado: esta tarjeta queda pendiente y solo ofrece la entrada de
+                          revalidación online o recuperación autorizada desde Perfil. La identidad
+                          usa un identificador estable de Google (<code>sub</code>), nunca el
+                          email, y no reutiliza credenciales de otra instalación sin autorización.
+                        </p>
+                      </div>
+                    )}
+                    {/* ONB-4.5 (WU-4d) — Backup/restore card: entry only.
+                        Google Drive / rclone backup is not implemented in
+                        this change; the card stays pending and is only an
+                        entry for its dedicated contract. Drive consent is
+                        separate from the Google identity consent, and backup
+                        and restore are distinct flows (OC10/OC24). */}
+                    {card.key === "backup" && (
+                      <div className="mt-4 border-t border-filio pt-4">
+                        <p className="text-small text-tinta-desvaida">
+                          El respaldo y la restauración (Google Drive / rclone) no están
+                          implementados en esta versión: la tarjeta queda pendiente y es solo la
+                          entrada para su contrato dedicado. El consentimiento de Drive es
+                          independiente del consentimiento de identidad de Google, y respaldo y
+                          restauración son flujos distintos. Nunca se afirma configurado sin ese
+                          contrato.
+                        </p>
+                      </div>
+                    )}
                     {card.key === "telegram" && telegramOpen && (
                       <div id="telegram-card-panel" className="mt-4">
                         <TelegramCard />

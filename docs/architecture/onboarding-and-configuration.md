@@ -301,6 +301,7 @@ Estado verificado hoy en el repositorio (existe hoy; no es el objetivo):
 |---|---|
 | `src/tools/web-config-ui/` | Wizard de configuración web existente: servidor FastAPI de un solo archivo (`main.py`) con **asistente de 7 pantallas** (idioma/bienvenida, mundo, IA, imágenes, chat, respaldo y resumen) vía htmx, sin CDN externo, con `i18n.py`, `config.py`, `backup.py` y `templates/` |
 | `install.sh` | Referencia activa al wizard: instala `requirements.txt` y usa el directorio `src/tools/web-config-ui/` (líneas 257 y 265) |
+| Puerto 8000 | **Auditoría ONB-4.6:** dos servidores pueden enlazar el puerto 8000 — la **Wiki API** (`src/tools/demiurgos-suite/wiki/api_server.py`, puerto por defecto en su entrada) y el wizard legacy (`install.sh` línea 267: `uvicorn main:app --port 8000`). **Resolución documentada: la Wiki API es el dueño canónico del puerto 8000**; la referencia del wizard legacy se conserva intacta y **sin cambios de propiedad** ni de scripts hasta el slice de retiro (**WU-5**), que eliminará sus referencias activas del camino soportado |
 | `sdd/web-config-ui/spec.md` | Especificación SDD del wizard legacy (proveedores, claves de API) — **histórica** |
 | Constitución (`demiurgos-platform.md`) | Mapa de componentes (sección 2.1), superficie "Configuración/instalación" (sección 4) y mapa del repositorio (sección 8.1) citan `web-config-ui` como wizard actual |
 
