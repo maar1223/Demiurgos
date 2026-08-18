@@ -138,6 +138,26 @@ class TestAssistantSettings:
         assert body["models"]
         assert "api_key" not in body
 
+    def test_catalog_declares_luna_multimodal_and_others_text_only(self):
+        models = {item["id"]: item for item in assistant_settings.ASSISTANT_MODEL_CATALOG}
+
+        assert models["gpt-5.6-luna"]["capability"] == "multimodal"
+        assert models["qwen3.6-plus"]["capability"] == "multimodal"
+        for model_id in ("deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-lite"):
+            assert models[model_id]["capability"] == "text-only"
+
+    def test_model_metadata_resolves_catalog_capability_for_luna(self):
+        model = assistant_settings._model_metadata("gpt-5.6-luna")
+
+        assert model.capability == "multimodal"
+        assert model.label == "GPT-5.6 Luna"
+
+    def test_get_reports_luna_as_multimodal(self, client: TestClient):
+        response = client.get("/api/profile/assistant")
+
+        assert response.status_code == 200
+        assert response.json()["model_metadata"]["capability"] == "multimodal"
+
     def test_get_uses_provider_default_when_endpoint_is_omitted(self, client: TestClient):
         paths = assistant_settings._resolve_profile_paths()
         paths.config.write_text(

@@ -86,6 +86,53 @@ class TestTextOracle:
 
         assert runner.run_text().outcome == OUTCOME_PROVIDER_FAILURE
 
+    def test_http_error_surfaces_safe_provider_detail(self):
+        def failing(method, url, headers, payload):
+            return 400, {"error": {"message": "model 'gpt-5.6-luna' does not support image input"}}
+
+        runner = ProbeRunner("http://x.test/v1", "gpt-5.6-luna", transport=failing)
+
+        result = runner.run_text()
+
+        assert result.outcome == OUTCOME_PROVIDER_FAILURE
+        assert "does not support image input" in result.message
+        assert result.message.startswith("The provider rejected the probe request (HTTP 400).")
+
+    def test_http_error_missing_or_blank_detail_uses_fallback(self):
+        def failing(method, url, headers, payload):
+            return 400, {"error": {"message": "   "}}
+
+        runner = ProbeRunner("http://x.test/v1", "m", transport=failing)
+
+        result = runner.run_text()
+
+        assert result.outcome == OUTCOME_PROVIDER_FAILURE
+        assert result.message == "The provider rejected the probe request (HTTP 400)."
+
+    def test_http_error_never_echoes_secrets_or_image_blob(self):
+        def failing(method, url, headers, payload):
+            # A hostile/misbehaving provider echoes the request body back,
+            # including the image data URI and a leaked credential shape.
+            message = (
+                "invalid request: sk-opaque-secret and "
+                "data:image/jpeg;base64,AAAA== in payload"
+            )
+            return 400, {"error": {"message": message}}
+
+        runner = ProbeRunner(
+            "http://x.test/v1", "m", api_key="opaque-probe-secret", transport=failing
+        )
+
+        result = runner.run_vision()
+
+        assert result.outcome == OUTCOME_PROVIDER_FAILURE
+        assert "sk-opaque-secret" not in result.message
+        assert "opaque-probe-secret" not in result.message
+        assert "data:image/jpeg" not in result.message
+        assert "AAAA" not in result.message
+        # Detail is bounded to a short diagnostic snippet.
+        assert len(result.message) <= 200
+
     def test_transport_timeout_is_timeout(self):
         import httpx
 
@@ -112,7 +159,10 @@ class TestVisionOracle:
             assert isinstance(content, list) and len(content) == 2
             image = content[1]
             assert image["type"] == "image_url"
-            assert image["image_url"]["url"].startswith("data:image/jpeg;base64,")
+            # OpenCode Go/OpenAI-compatible endpoints expect image_url as a
+            # direct data-URI string (see sync_lore providers), not an object.
+            assert isinstance(image["image_url"], str)
+            assert image["image_url"].startswith("data:image/jpeg;base64,")
             assert "opaque-key" not in repr(payload)
 
     def test_fixture_wrong_answer_is_not_causal(self):
@@ -186,4 +236,4 @@ class TestSecretBoundaryInProbes:
         payload = calls[0][2]
         assert "opaque-probe-secret" not in repr(payload)
         image = payload["messages"][0]["content"][1]
-        assert base64.b64decode(image["image_url"]["url"].split(",", 1)[1])[:8]
+        assert base64.b64decode(image["image_url"].split(",", 1)[1])[:8]

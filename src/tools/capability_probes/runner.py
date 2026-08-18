@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -35,6 +36,11 @@ VISION_QUESTION = (
     "Does this image contain a bright magenta square in its top-left corner? "
     "Answer with exactly yes or no."
 )
+
+# Redactions applied to provider-reported error details so an echo of the
+# request can never carry credentials or the full base64 image blob back to UI.
+_REDACT_DATA_URI = re.compile(r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+")
+_REDACT_BEARER = re.compile(r"\b(?:bearer|api[_-]?key|sk-)[A-Za-z0-9._-]+", re.IGNORECASE)
 
 _DEFAULT_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "logo-demiurgos.jpg"
 _DEFAULT_VARIANT = Path(__file__).resolve().parent / "fixtures" / "logo-demiurgos-altered.jpg"
@@ -101,6 +107,38 @@ def _extract_content(body: Any) -> str | None:
     return None
 
 
+def _provider_rejection_message(status: int, body: Any) -> str:
+    """Build a safe, useful rejection message from the provider error body.
+
+    The returned detail never echoes credentials, the prompt, or image data:
+    only a short provider-reported ``error.message`` (or a stable fallback) is
+    surfaced so the UI can distinguish unsupported formats, unknown models, and
+    invalid endpoints without leaking secrets.
+    """
+    base = f"The provider rejected the probe request (HTTP {status})."
+    if not isinstance(body, Mapping):
+        return base
+    error = body.get("error")
+    if not isinstance(error, Mapping):
+        return base
+    message = error.get("message")
+    if not isinstance(message, str):
+        return base
+    message = message.strip()
+    if not message:
+        return base
+    # Collapse whitespace, then redact anything that could carry a secret or
+    # the full image blob: base64 data URIs and common credential shapes.
+    message = " ".join(message.split())
+    message = _REDACT_DATA_URI.sub("<image-data>", message)
+    message = _REDACT_BEARER.sub("<bearer-token>", message)
+    # Cap the detail to a short diagnostic snippet so an echo of the request
+    # (some providers echo malformed payloads) cannot carry it back to the UI.
+    if len(message) > 120:
+        message = message[:120] + "…"
+    return f"{base} Provider detail: {message}"
+
+
 class ProbeRunner:
     """Run the text and causal-vision oracles against one model endpoint."""
 
@@ -159,7 +197,7 @@ class ProbeRunner:
             raise ProbeFailure(OUTCOME_PROVIDER_FAILURE, "The provider endpoint could not be reached.")
         if status >= 400:
             raise ProbeFailure(
-                OUTCOME_PROVIDER_FAILURE, f"The provider rejected the probe request (HTTP {status})."
+                OUTCOME_PROVIDER_FAILURE, _provider_rejection_message(status, body)
             )
         content_text = _extract_content(body)
         if content_text is None:
@@ -173,7 +211,7 @@ class ProbeRunner:
             raise ProbeFailure(OUTCOME_PROVIDER_FAILURE, "The probe fixture could not be read.") from exc
         return {
             "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+            "image_url": f"data:image/jpeg;base64,{encoded}",
         }
 
     # -- oracles -----------------------------------------------------------

@@ -54,11 +54,11 @@ _PROFILE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 # Server-owned catalog. Values are bare Hermes model ids, never provider/model
 # strings. Keep this list explicit so arbitrary model input cannot reach Hermes.
 ASSISTANT_MODEL_CATALOG: tuple[dict[str, Any], ...] = (
-    {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna", "capability": "unknown", "pricing": None},
-    {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash", "capability": "unknown", "pricing": None},
-    {"id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro", "capability": "unknown", "pricing": None},
-    {"id": "deepseek-v4-lite", "label": "DeepSeek V4 Lite", "capability": "unknown", "pricing": None},
-    {"id": "qwen3.6-plus", "label": "Qwen 3.6 Plus", "capability": "unknown", "pricing": None},
+    {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna", "capability": "multimodal", "pricing": None},
+    {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash", "capability": "text-only", "pricing": None},
+    {"id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro", "capability": "text-only", "pricing": None},
+    {"id": "deepseek-v4-lite", "label": "DeepSeek V4 Lite", "capability": "text-only", "pricing": None},
+    {"id": "qwen3.6-plus", "label": "Qwen 3.6 Plus", "capability": "multimodal", "pricing": None},
 )
 _ALLOWED_MODELS = frozenset(item["id"] for item in ASSISTANT_MODEL_CATALOG)
 PROVIDER_REGISTRY = ProviderRegistry()
