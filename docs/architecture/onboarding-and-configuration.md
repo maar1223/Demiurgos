@@ -291,30 +291,31 @@ Reglas de la estructura recomendada:
 
 ## 13. Retiro del wizard legacy `web-config-ui`
 
-Esta sección distingue explícitamente **evidencia actual de auditoría** de **objetivo de retiro futuro**.
+Esta sección registra el retiro del wizard legacy: **13.1** conserva la auditoría del estado previo al retiro y **13.2** documenta el retiro ejecutado y el estado final verificado.
 
-### 13.1 Evidencia actual `[ACTUAL]`
+### 13.1 Estado previo al retiro — auditoría `[ACTUAL — histórico]`
 
-Estado verificado hoy en el repositorio (existe hoy; no es el objetivo):
+Estado verificado ANTES del retiro (WU-5a/WU-5b, 2026-08-18). Se conserva como evidencia de auditoría; **ya no describe el estado actual** del repositorio:
 
 | Evidencia | Detalle |
 |---|---|
-| `src/tools/web-config-ui/` | Wizard de configuración web existente: servidor FastAPI de un solo archivo (`main.py`) con **asistente de 7 pantallas** (idioma/bienvenida, mundo, IA, imágenes, chat, respaldo y resumen) vía htmx, sin CDN externo, con `i18n.py`, `config.py`, `backup.py` y `templates/` |
-| `install.sh` | Referencia activa al wizard: instala `requirements.txt` y usa el directorio `src/tools/web-config-ui/` (líneas 257 y 265) |
-| Puerto 8000 | **Auditoría ONB-4.6:** dos servidores pueden enlazar el puerto 8000 — la **Wiki API** (`src/tools/demiurgos-suite/wiki/api_server.py`, puerto por defecto en su entrada) y el wizard legacy (`install.sh` línea 267: `uvicorn main:app --port 8000`). **Resolución documentada: la Wiki API es el dueño canónico del puerto 8000**; la referencia del wizard legacy se conserva intacta y **sin cambios de propiedad** ni de scripts hasta el slice de retiro (**WU-5**), que eliminará sus referencias activas del camino soportado |
+| `src/tools/web-config-ui/` | Wizard de configuración web legacy: servidor FastAPI de un solo archivo (`main.py`) con **asistente de 7 pantallas** (idioma/bienvenida, mundo, IA, imágenes, chat, respaldo y resumen) vía htmx, sin CDN externo, con `i18n.py`, `config.py`, `backup.py` y `templates/` — **retirado del camino soportado en WU-5b; conservado solo como referencia histórica** |
+| `install.sh` | Contenía la referencia activa al wizard: Stage 6/`launch_web_ui` instalaba `requirements.txt` y usaba el directorio `src/tools/web-config-ui/` (líneas 257 y 265) — **eliminado en WU-5b** |
+| Puerto 8000 | **Auditoría ONB-4.6:** dos servidores podían enlazar el puerto 8000 — la **Wiki API** (`src/tools/demiurgos-suite/wiki/api_server.py`, puerto por defecto en su entrada) y el wizard legacy (`install.sh` línea 267: `uvicorn main:app --port 8000`). **Resolución: la Wiki API es el dueño canónico del puerto 8000**; el binder legacy fue **eliminado en WU-5b** con el Stage 6 — sin propiedad residual en conflicto |
 | `sdd/web-config-ui/spec.md` | Especificación SDD del wizard legacy (proveedores, claves de API) — **histórica** |
-| Constitución (`demiurgos-platform.md`) | Mapa de componentes (sección 2.1), superficie "Configuración/instalación" (sección 4) y mapa del repositorio (sección 8.1) citan `web-config-ui` como wizard actual |
+| Constitución (`demiurgos-platform.md`) | Mapa de componentes (sección 2.1), superficie "Configuración/instalación" (sección 4), mapa del repositorio (sección 8.1) y decisión G8 citaban `web-config-ui` como wizard actual — **actualizados a estado histórico en WU-5b** |
 
-### 13.2 Objetivo de retiro `[OBJETIVO]`
+### 13.2 Retiro ejecutado `[ACTUAL — WU-5b]`
 
-**[DECISIÓN CERRADA — OC13]** Tras validar el nuevo onboarding y el Centro de Configuración, el wizard legacy pasa a ser **histórico / solo referencia**:
+**[DECISIÓN CERRADA — OC13, ejecutada]** Tras validar el nuevo onboarding y el Centro de Configuración (gate WU-5a, 10/10), el wizard legacy pasó a ser **histórico / solo referencia**:
 
-- **Retirarlo del camino soportado**: deja de ser la superficie de configuración oficial.
-- **Marcarlo no usable**: se indica explícitamente que no se debe invocar ni mantener como funcional.
-- **Eliminar referencias activas** de documentación y arranque (p. ej. el mapa de la constitución, `install.sh` y cualquier guía de inicio).
-- **Conservar solo las ideas aprovechables**: los flujos de respaldo/restauración (`backup.py`) y la configuración de proveedores informan el nuevo Centro, sin reutilizar el código como runtime.
+- **Retirado del camino soportado**: ya no es la superficie de configuración oficial; el onboarding + Centro de Configuración (wiki) la reemplazan.
+- **Marcado no usable**: `src/tools/web-config-ui/` se conserva **solo como referencia histórica**; no se invoca ni se mantiene como funcional.
+- **Referencias activas eliminadas** (ONB-5.3): `install.sh` perdió el Stage 6 (`launch_web_ui`) y su llamada, incluyendo el binder legacy del puerto 8000; el mapa, la superficie y la decisión G8 de la constitución se actualizaron a estado histórico (ONB-5.4).
+- **Conservadas solo las ideas aprovechables**: los flujos de respaldo/restauración (`backup.py`) y la configuración de proveedores informan el nuevo Centro; `backup.py` y `tests/test_restore.py` permanecen **intactos como referencia de patrón**, sin reutilizarse como runtime.
+- **Gate de retiro finalizado** (ONB-5.4): `retirement_gate.py` valida ahora el estado post-retirement (`legacy_wiring_removed`, `legacy_preserved_historical`, `new_runtime_present` + 8 gates funcionales); el runbook `retirement-overlap-runbook.md` documenta la comprobación final.
 
-> **Regla de etiquetas:** todo lo de la sección 13.1 es `[ACTUAL]` (auditoría verificada); el retiro de la sección 13.2 es `[OBJETIVO]`/`[DECISIÓN CERRADA — OC13]` y **no se presenta como ya realizado**. Se aplicará un **solapamiento controlado** durante la validación del nuevo onboarding; después, el wizard legacy se retirará del camino soportado y se eliminarán sus referencias activas. `[DECISIÓN CERRADA — OC25]`
+> **Regla de etiquetas:** la sección 13.1 es `[ACTUAL — histórico]` (auditoría previa al retiro, conservada como evidencia); la sección 13.2 es `[ACTUAL]` porque el retiro **ya está ejecutado** (WU-5b). El solapamiento controlado (OC25) se completó con el gate WU-5a y el retiro se aplicó después, con rollback posible hasta que las compuertas pasaron.
 
 ---
 

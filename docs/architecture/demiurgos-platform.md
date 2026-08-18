@@ -112,7 +112,7 @@ El **Autor** es el usuario de la plataforma: escribe intenciones y respuestas en
 │                                                                     │
 │  Orquestador: AGENTS.md (14 skills narrativas) + .demiurgos-estado  │
 │  Indexado: src/tools/sync_lore (pipelines) · Ideas: idea_capture    │
-│  Config: web-config-ui (wizard) · Instalación: install.sh           │
+│  Config: onboarding + Centro (wiki) · Instalación: install.sh       │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -198,7 +198,7 @@ Etiquetas de estado: `[ACTUAL]` = verificado hoy; `[OBJETIVO]` = acordado, pendi
 | Persistencia y revisión | `[ACTUAL]` | Pipeline de escritura gated (confirmación digest+token), papelera, historial |
 | Memoria persistente | `[ACTUAL]` | Engram (MCP): `mem_save/search/context`; obligatoria para co-creación |
 | Imágenes | `[ACTUAL]` subida de media + `image_indexer` + proveedor de visión + `nanobanana` · `[PROPUESTO]` flujos de imagen de personaje profundos | No es objetivo de la iniciativa de skills; profundidad es decisión abierta (sección 10) |
-| Configuración/instalación | `[ACTUAL]` | `web-config-ui` (wizard de configuración), `install.sh` |
+| Configuración/instalación | `[ACTUAL]` | onboarding + Centro de Configuración (wiki); wizard legacy `web-config-ui` retirado (histórico, solo referencia) |
 | Workflows narrativos | `[ACTUAL]` | Orquestador AGENTS.md + máquina de fases + `.demiurgos-estado.json` |
 | Captura de ideas | `[ACTUAL]` | Ingesta nativa (`idea_capture`), entrada Telegram; el legacy batch sync está archivado/retirado |
 | Navegación por talleres | `[OBJETIVO]` | Navbar modular con **solo los talleres disponibles**; el MVP arranca con el Core (Taller de Herramientas + Taller de Mundo) y los módulos de pago futuros aparecen como teaser "Próximamente" en el centro (Visuales, Planificación, Rol, Escritor, GameDesigner); Taller de Publicación siempre como último elemento a la derecha cuando exista |
@@ -282,7 +282,7 @@ Etiquetas de estado: `[ACTUAL]` = verificado hoy; `[OBJETIVO]` = acordado, pendi
 | `src/tools/sync_lore/` | Pipeline de indexado de lore (35 tests) |
 | `src/tools/idea_capture/` | Captura nativa de ideas |
 | `src/tools/engram_sync/` | Worker de sincronización de Engram |
-| `src/tools/web-config-ui/` | Wizard de configuración web |
+| `src/tools/web-config-ui/` | Wizard legacy de configuración — retirado, solo referencia histórica |
 | `skills/` | 14 skills narrativas `narrative-*` + skills legacy `.md` (`crear_personaje.md` como referencia histórica) |
 | `plantillas/` | Catálogos narrativos universales (`_catalog.json`) |
 | `AGENTS.md` / `Agente_Maestro.md` | Orquestador narrativo / reglas maestras de la IA |
@@ -339,7 +339,7 @@ Estas decisiones pertenecen a la **plataforma completa** (no a la iniciativa de 
 | **G5** | Alcance de flujos de imagen | Subida/media + `image_indexer` + visión actuales vs generación/regeneración profunda de imágenes de personaje |
 | **G6** | Rol de Engram como memoria de plataforma | Registro de co-creación vs fuente de contexto de búsqueda; sincronización con el worker `engram_sync` |
 | **G7** | Idioma de UI en runtime | `DEMIURGOS_LANGUAGE` estático actual vs cambio dinámico con persistencia (el frontend ya tiene `useAppLanguage`) |
-| **G8** | Instalación/despliegue | `install.sh` + `web-config-ui` actuales vs empaquetado/despliegue gestionado (p. ej. Docker) |
+| **G8** | Instalación/despliegue | `install.sh` + onboarding/Centro de Configuración actuales vs empaquetado/despliegue gestionado (p. ej. Docker); wizard legacy `web-config-ui` retirado (histórico) |
 | **G9** | Modelo de licencias y activación | **[DECISIÓN CERRADA]** Módulos de **pago único**; la compra incluye **actualizaciones durante 1 año**; la **renovación colaborativa** es opcional y posterior; la **versión instalada nunca se bloquea**. La activación es **por plataforma**: 1 Windows + 1 macOS + 1 Linux + 1 servidor/VPS, con transferencia. Los cobros son agnósticos de proveedor (Stripe/Binance futuros) y los **descuentos se calculan en Demiurgos**, no en el proveedor |
 | **G10** | Alcance del MVP | **[DECISIÓN CERRADA]** El MVP entrega solo el **Core**: Taller de Herramientas + Taller de Mundo. Los 6 módulos de pago (Visuales, Planificación, Rol, Escritor, GameDesigner, Publicación) van después |
 | **G11** | Onboarding y respaldo | **[DECISIÓN CERRADA]** El onboarding configura idioma, modelos LLM e importar/crear mundo; Google+rclone es **no bloqueante**; rclone crea el **árbol espejo por taller**; hay **sync 30 s tras editar** y **restauración Google→Demiurgos** |

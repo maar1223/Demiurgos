@@ -1,15 +1,12 @@
 # -*- coding: utf-8 -*-
-"""ONB-4.6 — Port 8000 ownership audit (WU-4d).
+"""ONB-4.6/ONB-5.3 — Port 8000 ownership audit (WU-4d) + retirement (WU-5b).
 
 The audit and its documented resolution live in
 `docs/architecture/onboarding-and-configuration.md` (section 13.1): the wiki
-API is the canonical owner of port 8000, and the legacy wizard keeps its
-current reference until the retirement slice (WU-5). RED first — these
-assertions fail until the document records the audit and its resolution.
-
-No scripts or ownership are changed in this slice; this module only inspects
-the documentation (the audit is `[ACTUAL]`, the resolution is a documented
-decision, and removal is out of scope for WU-4d).
+API is the canonical owner of port 8000. WU-4d kept the legacy wizard
+reference intact; WU-5b (retirement slice) REMOVED it from install.sh. RED
+first — these assertions fail until the document records the audit, its
+resolution, and the removal.
 """
 
 from __future__ import annotations
@@ -40,10 +37,13 @@ def test_port_8000_ownership_audit_and_resolution_are_documented():
     assert "dueño canónico del puerto 8000" in text
 
 
-def test_legacy_wizard_reference_stays_until_retirement_slice():
+def test_legacy_wizard_reference_removed_at_retirement_slice():
     text = DOC.read_text(encoding="utf-8")
-    # The legacy wizard reference is documented as retained: removal belongs
-    # to the retirement slice (WU-5) and no ownership/script change happened
-    # in this slice.
+    # The retirement slice (WU-5b) removed the legacy wizard reference from
+    # install.sh; the docs record the removal and the wiki API remains the
+    # canonical owner of port 8000.
     assert "WU-5" in text
-    assert "sin cambios de propiedad" in text
+    assert "eliminado en WU-5b" in text
+    install = (api_server.PROJECT_ROOT / "install.sh").read_text(encoding="utf-8")
+    assert "web-config-ui" not in install
+    assert "uvicorn main:app" not in install

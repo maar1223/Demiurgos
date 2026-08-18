@@ -1,12 +1,15 @@
-"""Retirement overlap gate (ONB-5.1/5.2, WU-5a): verifiable barrier proving the
-new onboarding/Configuration Center coexist with the legacy wizard runtime.
-Every gate is a pure, read-only check over project files and wiki module
-contracts; running the gate never mutates legacy folders or wiring. Retirement
-(reference removal, port moves, badge/endpoint changes) is WU-5b. Gates:
-legacy_references_intact (ONB-5.1 RED barrier), coexistence,
-online_offline_restart, canonical_tree, migration_rollback_evidence,
-three_proof_runtime, readiness_truthfulness, deferred_handoff,
-auth_fail_closed, zero_legacy_mutation."""
+"""Retirement gate (ONB-5.1–5.4, WU-5a/5b): verifiable barrier for the
+controlled legacy retirement. WU-5a validated the overlap with the legacy
+wizard runtime (references INTACT). WU-5b removed the active wiring; this
+module now validates the POST-RETIREMENT state: install.sh is free of legacy
+wiring, web-config-ui is preserved as historical reference only (backup.py +
+test_restore.py intact), and the new onboarding/Configuration Center runtime is
+the supported path. Every gate is a pure, read-only check over project files
+and wiki module contracts; running the gate never mutates anything. Gates:
+legacy_wiring_removed (ONB-5.1 RED barrier, inverted), legacy_preserved_historical,
+new_runtime_present, online_offline_restart, canonical_tree,
+migration_rollback_evidence, three_proof_runtime, readiness_truthfulness,
+deferred_handoff, auth_fail_closed, zero_legacy_mutation."""
 
 from __future__ import annotations
 
@@ -33,7 +36,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[4]
 INSTALL_SH = "install.sh"
 ARCH_DOC = Path("docs") / "architecture" / "onboarding-and-configuration.md"
 NEW_MODULES = ("onboarding.py", "world_authority.py", "local_state.py", "migration.py")
-LEGACY_MARKERS = ("web-config-ui/requirements.txt", "web-config-ui", "port 8000")
+LEGACY_WIRING_MARKERS = ("web-config-ui", "port 8000")
+LEGACY_DIR = Path("src") / "tools" / "web-config-ui"
+LEGACY_KEEPERS = ("backup.py", "tests/test_restore.py")
 PROOF_KEYS = ("text", "vision", "runtime")
 PROOF_VALUES = {"text": "passed", "vision": "passed", "runtime": "accepted"}
 HERMES_STATES = ("accepted", "pending-reload", "saved-not-active")
@@ -76,29 +81,48 @@ def _cards(claims: dict) -> dict:
     return project_cards(claims, worlds=["gate-world"], probe_ok=True)
 
 
-def check_legacy_references_intact(project_root: Path) -> GateCheck:
+def check_legacy_wiring_removed(project_root: Path) -> GateCheck:
     install = _read(Path(project_root) / INSTALL_SH)
     doc = _read(Path(project_root) / ARCH_DOC)
-    missing = [marker for marker in LEGACY_MARKERS if marker not in install]
-    if "web-config-ui" not in doc or "WU-5" not in doc:
-        missing.append("docs section 13.1 (web-config-ui + WU-5 retention)")
+    still_wired = [marker for marker in LEGACY_WIRING_MARKERS if marker in install]
+    if still_wired:
+        return _verdict("legacy_wiring_removed", False,
+                        "active legacy wiring remains in install.sh: "
+                        + ", ".join(still_wired))
+    if "web-config-ui" not in doc or "histórico" not in doc:
+        return _verdict("legacy_wiring_removed", False,
+                        "docs do not record web-config-ui as retired/historical")
+    return _verdict("legacy_wiring_removed", True,
+                    "install.sh free of legacy wiring; docs record the retirement")
+
+
+def check_legacy_preserved_historical(project_root: Path) -> GateCheck:
+    root = Path(project_root)
+    legacy = root / LEGACY_DIR
+    missing = []
+    if not legacy.is_dir():
+        missing.append("src/tools/web-config-ui/")
+    for keeper in LEGACY_KEEPERS:
+        if not (legacy / keeper).is_file():
+            missing.append("web-config-ui/" + keeper)
+    doc = _read(root / ARCH_DOC)
+    if "web-config-ui" not in doc or "histórico" not in doc:
+        missing.append("docs historical marker")
     if missing:
-        return _verdict("legacy_references_intact", False,
-                        "legacy references removed: " + ", ".join(missing))
-    return _verdict("legacy_references_intact", True,
-                    "install.sh refs (257/265/267) and docs section 13.1 retained")
+        return _verdict("legacy_preserved_historical", False,
+                        "legacy reference not preserved: " + ", ".join(missing))
+    return _verdict("legacy_preserved_historical", True,
+                    "web-config-ui/ preserved; backup.py + test_restore.py intact")
 
 
-def check_coexistence(project_root: Path) -> GateCheck:
+def check_new_runtime_present(project_root: Path) -> GateCheck:
     wiki = Path(project_root) / "src" / "tools" / "demiurgos-suite" / "wiki"
     missing = [name for name in NEW_MODULES if not (wiki / name).is_file()]
-    legacy_alive = "web-config-ui" in _read(Path(project_root) / INSTALL_SH)
-    if missing or not legacy_alive:
-        return _verdict("coexistence", False,
-                        f"new modules missing: {', '.join(missing) or 'none'}; "
-                        f"legacy wiring alive: {legacy_alive}")
-    return _verdict("coexistence", True,
-                    "new onboarding/Center present; legacy wiring intact")
+    if missing:
+        return _verdict("new_runtime_present", False,
+                        f"new modules missing: {', '.join(missing)}")
+    return _verdict("new_runtime_present", True,
+                    "onboarding/Center runtime modules present")
 
 
 def check_auth_fail_closed(project_root: Path) -> GateCheck:
@@ -221,7 +245,8 @@ def check_zero_legacy_mutation(project_root: Path) -> GateCheck:
 
 
 CHECKS = (
-    check_legacy_references_intact, check_coexistence, check_auth_fail_closed,
+    check_legacy_wiring_removed, check_legacy_preserved_historical,
+    check_new_runtime_present, check_auth_fail_closed,
     check_online_offline_restart, check_canonical_tree,
     check_migration_rollback_evidence, check_three_proof_runtime,
     check_readiness_truthfulness, check_deferred_handoff,

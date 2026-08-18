@@ -1,13 +1,17 @@
 # -*- coding: utf-8 -*-
-"""ONB-5.1/5.2 — Retirement overlap gate RED tests (WU-5a).
+"""ONB-5.1–5.4 — Retirement gate RED tests (WU-5a overlap + WU-5b retirement).
 
-The retirement gate is a verifiable barrier: it proves the new onboarding and
-Configuration Center coexist with the legacy wizard runtime BEFORE any legacy
-retirement. RED first — these tests fail until `wiki/retirement_gate.py`
-exists and every gate passes on the real project root. The barrier semantic
-(ONB-5.1) is covered too: removing a legacy reference makes the gate FAIL
-(premature retirement is blocked); negatives run on sandboxed roots, never on
-the real files. No retirement happens in this unit — that is WU-5b.
+The retirement gate is a verifiable barrier. In WU-5a it proved the new
+onboarding and Configuration Center coexisted with the legacy wizard runtime
+(references INTACT). WU-5b removed the active legacy wiring and finalized the
+docs; this file now validates the POST-RETIREMENT state: install.sh is free of
+legacy wiring, web-config-ui is preserved as historical reference only
+(backup.py + test_restore.py intact), and the new runtime is the supported
+path. RED first — these tests fail against the WU-5a gate module (missing
+gates, inverted barrier semantics) until `wiki/retirement_gate.py` is updated.
+The barrier semantic (ONB-5.1) is preserved: retirement without the full
+retirement contract (docs record + preservation) FAILS; negatives run on
+sandboxed roots, never on the real files.
 """
 
 from __future__ import annotations
@@ -25,7 +29,8 @@ from wiki import retirement_gate as gate  # noqa: E402
 
 PROJECT_ROOT = gate.PROJECT_ROOT
 
-EXPECTED_GATES = {"legacy_references_intact", "coexistence", "auth_fail_closed",
+EXPECTED_GATES = {"legacy_wiring_removed", "legacy_preserved_historical",
+                  "new_runtime_present", "auth_fail_closed",
                   "online_offline_restart", "canonical_tree",
                   "migration_rollback_evidence", "three_proof_runtime",
                   "readiness_truthfulness", "deferred_handoff",
@@ -49,36 +54,63 @@ def test_all_gates_pass_on_real_root():
     assert [item.name for item in report.gates if not item.passed] == []
 
 
-def test_legacy_references_intact_passes_on_real_root():
-    assert gate.check_legacy_references_intact(PROJECT_ROOT).passed
+def test_legacy_wiring_removed_passes_on_real_root():
+    assert gate.check_legacy_wiring_removed(PROJECT_ROOT).passed
 
 
-def test_premature_reference_removal_fails_the_barrier():
-    """ONB-5.1 RED barrier: removing a legacy ref before gates pass FAILS."""
+def test_partial_retirement_without_docs_record_fails():
+    """ONB-5.1 barrier, post-retirement: removing wiring WITHOUT the docs
+    retirement record FAILS the gate (retirement must be complete)."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "install.sh").write_text(
-            "#!/usr/bin/env bash\n# port moved to the wiki API\n", encoding="utf-8"
+            "#!/usr/bin/env bash\n# clean install\n", encoding="utf-8"
         )
         docs = root / "docs" / "architecture"
         docs.mkdir(parents=True)
         (docs / "onboarding-and-configuration.md").write_text(
             "# Onboarding\n", encoding="utf-8"
         )
-        check = gate.check_legacy_references_intact(root)
+        check = gate.check_legacy_wiring_removed(root)
         assert not check.passed
-        assert "port 8000" in check.detail and "web-config-ui" in check.detail
+        assert "docs" in check.detail
 
 
-def test_coexistence_passes_on_real_root():
-    assert gate.check_coexistence(PROJECT_ROOT).passed
-
-
-def test_coexistence_fails_when_new_module_missing():
+def test_legacy_wiring_removed_fails_when_wiring_remains():
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
-        (root / "install.sh").write_text("web-config-ui\n", encoding="utf-8")
-        assert not gate.check_coexistence(root).passed
+        (root / "install.sh").write_text(
+            "launch web-config-ui\nuvicorn main:app --port 8000\n",
+            encoding="utf-8",
+        )
+        assert not gate.check_legacy_wiring_removed(root).passed
+
+
+def test_legacy_preserved_historical_passes_on_real_root():
+    assert gate.check_legacy_preserved_historical(PROJECT_ROOT).passed
+
+
+def test_legacy_preserved_historical_fails_when_dir_deleted():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        docs = root / "docs" / "architecture"
+        docs.mkdir(parents=True)
+        (docs / "onboarding-and-configuration.md").write_text(
+            "web-config-ui histórico\n", encoding="utf-8"
+        )
+        assert not gate.check_legacy_preserved_historical(root).passed
+
+
+def test_new_runtime_present_passes_on_real_root():
+    assert gate.check_new_runtime_present(PROJECT_ROOT).passed
+
+
+def test_new_runtime_present_fails_when_module_missing():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        wiki = root / "src" / "tools" / "demiurgos-suite" / "wiki"
+        wiki.mkdir(parents=True)
+        assert not gate.check_new_runtime_present(root).passed
 
 
 def test_auth_fail_closed_passes_on_real_root():

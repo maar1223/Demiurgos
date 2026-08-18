@@ -239,49 +239,6 @@ configure_mcp_profile() {
     fi
 }
 
-# ── Stage 6: Launch Web Config UI ──────────────────────────
-launch_web_ui() {
-    step "Instalando dependencias de la Web UI..."
-    
-    local PYTHON=""
-    if command -v python3 &>/dev/null; then
-        PYTHON="python3"
-    elif command -v python &>/dev/null; then
-        PYTHON="python"
-    else
-        warn "Python 3 no encontrado. La Web UI no se puede iniciar."
-        warn "Instalalo con: apt install python3 / brew install python3"
-        return 1
-    fi
-    
-    local req="$DEMIURGOS_HOME/repo/src/tools/web-config-ui/requirements.txt"
-    $PYTHON -m pip install -r "$req" 2>/dev/null || {
-        warn "No se pudieron instalar las dependencias de la Web UI."
-        return 1
-    }
-    ok "Dependencias de Web UI instaladas"
-    
-    # Launch uvicorn in background
-    local ui_dir="$DEMIURGOS_HOME/repo/src/tools/web-config-ui"
-    cd "$ui_dir"
-    nohup uvicorn main:app --host 127.0.0.1 --port 8000 >/dev/null 2>&1 &
-    
-    sleep 2
-    
-    # Open browser
-    if command -v xdg-open &>/dev/null; then
-        xdg-open "http://localhost:8000" 2>/dev/null &
-    elif command -v open &>/dev/null; then
-        open "http://localhost:8000" 2>/dev/null &
-    fi
-    
-    ok "Web UI iniciada en http://localhost:8000"
-    
-    echo ""
-    echo -e "  ${GREEN}✓${NC} Abrí tu navegador en ${BOLD}http://localhost:8000${NC}"
-    echo -e "  ${GREEN}✓${NC} Para detener: ${BOLD}pkill -f \"uvicorn main:app\"${NC}"
-}
-
 # ── Main ───────────────────────────────────────────────────
 main() {
     check_prerequisites
@@ -290,7 +247,6 @@ main() {
     configure_engram "$DEMIURGOS_HOME/bin/engram"
     install_demiurgos
     configure_mcp_profile
-    launch_web_ui
 }
 
 main "$@"
