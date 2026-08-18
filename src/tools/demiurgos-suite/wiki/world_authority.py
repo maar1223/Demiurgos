@@ -49,6 +49,11 @@ TRANSVERSAL_DIRS = frozenset({"relaciones", "canon", "conflictos", "propuestas"}
 # Names reserved at the worlds root.
 RESERVED_NAMES = frozenset({"Ideas"})
 
+# Legacy (uppercase) top-level layout folders — never the canonical tree (OC7).
+# Their presence marks a world as using the legacy layout, which runtime
+# case-sensitive paths do not recognize.
+LEGACY_FOLDERS = ("Lore", "Personajes")
+
 
 class WorldResultKind(Enum):
     """Machine-readable outcome of a world-creation request."""
@@ -187,6 +192,48 @@ def create_world(
         path=target,
         message="Mundo creado.",
     )
+
+
+def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
+    """Read-only legacy-layout detection (ONB-4.2).
+
+    Scans ``mundos/`` for worlds whose top level uses the legacy uppercase
+    folders ``Lore``/``Personajes`` instead of the canonical lowercase
+    ``lore``/``personajes`` (OC7). Each finding is
+    ``{"world": <name>, "folders": [folder, ...]}``.
+
+    Detection is STRICTLY read-only: it never renames, moves, deletes, or
+    writes anything. Runtime paths are case-sensitive, so a legacy folder is
+    invisible to the canonical readers; migration is a separate,
+    explicitly-approved step (ONB-4.3) and never automatic. Visibility rules
+    mirror ``_list_worlds`` (hidden/``_``-prefixed entries and ``Ideas`` are
+    skipped); names are compared as directory-entry strings, so a world with
+    only the lowercase canonical folders is never reported even on
+    case-insensitive filesystems.
+    """
+    findings: list[dict] = []
+    root = Path(mundos_dir)
+    try:
+        if not root.is_dir():
+            return findings
+        entries = sorted(root.iterdir())
+    except OSError:
+        return findings
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        if entry.name.startswith((".", "_")) or entry.name == "Ideas":
+            continue
+        try:
+            top_dir_names = {
+                child.name for child in entry.iterdir() if child.is_dir()
+            }
+        except OSError:
+            continue
+        found = [folder for folder in LEGACY_FOLDERS if folder in top_dir_names]
+        if found:
+            findings.append({"world": entry.name, "folders": found})
+    return findings
 
 
 def _is_canonical_clean(root: Path, *, lore_skeleton: bool) -> bool:

@@ -32,6 +32,8 @@ function makeReadiness(overrides: Record<string, unknown> = {}) {
       local_ready: true,
       remote_pending: ["identity", "telegram", "backup", "assistant"],
     },
+    // ONB-4.2: read-only legacy detection — no findings by default.
+    legacy: [],
     ...overrides,
   };
 }
@@ -352,5 +354,45 @@ describe("ConfigurationCenter (ONB-1.7)", () => {
     const assistantSection = screen.getByRole("heading", { name: "IA texto y visión" }).closest("section");
     expect(assistantSection).toHaveTextContent("Configurado");
     expect(assistantSection).not.toHaveTextContent("Pendiente / no apto");
+  });
+
+  // ---------------------------------------------------------------------------
+  // ONB-4.2 — Mundos card read-only legacy notice: uppercase Lore/Personajes
+  // detected, case-sensitive risk explained, never mutated (the card stays
+  // read-only — no resumable panel and no migration controls in this unit).
+  // ---------------------------------------------------------------------------
+
+  it("Mundos card shows a read-only legacy detection notice", async () => {
+    (getReadiness as Mock).mockResolvedValue(
+      makeReadiness({
+        legacy: [{ world: "legacy-x", folders: ["Lore", "Personajes"] }],
+      }),
+    );
+    renderCenter();
+
+    await screen.findByRole("heading", { name: "Mundos" });
+    const worldSection = screen.getByRole("heading", { name: "Mundos" }).closest("section") as HTMLElement;
+    expect(within(worldSection).getByText("Carpetas legacy detectadas")).toBeInTheDocument();
+    expect(worldSection).toHaveTextContent("legacy-x");
+    expect(worldSection).toHaveTextContent("Lore");
+    expect(worldSection).toHaveTextContent("Personajes");
+    // The case-sensitive risk is explained and never auto-renamed.
+    expect(worldSection).toHaveTextContent(/distinguen mayúsculas y minúsculas/i);
+    expect(worldSection).toHaveTextContent(/nunca se renombran de forma automática/i);
+    // Read-only: no resumable panel toggle and no migration control on the
+    // Mundos card (only Telegram renders an expandable panel in this Center).
+    expect(within(worldSection).queryByRole("button", { name: /ocultar panel|mostrar panel/i }))
+      .not.toBeInTheDocument();
+    expect(worldSection).not.toHaveTextContent("Configurar Telegram");
+  });
+
+  it("Mundos card renders no legacy notice when none is detected", async () => {
+    (getReadiness as Mock).mockResolvedValue(makeReadiness()); // legacy: []
+    renderCenter();
+
+    await screen.findByRole("heading", { name: "Mundos" });
+    const worldSection = screen.getByRole("heading", { name: "Mundos" }).closest("section") as HTMLElement;
+    expect(worldSection).not.toHaveTextContent("Carpetas legacy detectadas");
+    expect(worldSection).not.toHaveTextContent(/legacy/i);
   });
 });

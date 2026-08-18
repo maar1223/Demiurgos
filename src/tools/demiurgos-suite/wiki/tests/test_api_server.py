@@ -4218,6 +4218,45 @@ class TestWorldCreateEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# ONB-4.1 / ONB-4.2 — read-only legacy detection: uppercase Lore/Personajes
+# detected and surfaced via readiness; never mutated (approval/migration is
+# ONB-4.3, a separate work unit).
+# ---------------------------------------------------------------------------
+
+
+class TestLegacyDetectionEndpoint:
+    def test_readiness_reports_legacy_uppercase_folders_read_only(
+            self, empty_client: TestClient):
+        legacy = api_server.MUNDOS_DIR / "legacy-x"
+        (legacy / "Lore").mkdir(parents=True)
+        (legacy / "Personajes").mkdir()
+        (legacy / "Lore" / "00_inicio.md").write_text("# X\n", encoding="utf-8")
+        body = empty_client.get("/api/onboarding/readiness").json()
+        finding = next((f for f in body["legacy"] if f["world"] == "legacy-x"), None)
+        assert finding is not None
+        assert set(finding["folders"]) == {"Lore", "Personajes"}
+        # Detection is strictly read-only: the GET mutated nothing.
+        assert (legacy / "Lore").is_dir()
+        assert (legacy / "Personajes").is_dir()
+        assert (legacy / "Lore" / "00_inicio.md").exists()
+        assert not (legacy / "lore").exists(), "never auto-renamed to lowercase"
+
+    def test_readiness_does_not_report_canonical_worlds(
+            self, empty_client: TestClient):
+        good = api_server.MUNDOS_DIR / "bueno"
+        for sub in ("lore", "personajes", "sagas"):
+            (good / sub).mkdir(parents=True)
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["legacy"] == []
+        assert all(f["world"] != "bueno" for f in body["legacy"])
+
+    def test_readiness_legacy_is_empty_when_clean(
+            self, empty_client: TestClient):
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["legacy"] == []
+
+
+# ---------------------------------------------------------------------------
 # ONB-1.9 — CORS: env-based origin allowlist; credentials never wildcard
 # ---------------------------------------------------------------------------
 

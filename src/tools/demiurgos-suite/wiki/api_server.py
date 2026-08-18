@@ -87,6 +87,7 @@ from telegram_settings import (
     telegram_state,
 )
 from world_authority import WorldResultKind, create_world as _create_world
+from world_authority import detect_legacy_layout
 from methodology_library import (
     AlreadyPublishedError,
     MethodologyLibrary,
@@ -356,7 +357,9 @@ def onboarding_readiness():
     registry claim instead of trusting it. The telegram card follows the
     ONB-3.3 backend's real evidence (write-only token presence + last
     connection test) passed through ``telegram_state``. The ``offline``
-    breakdown (ONB-3.4) reports local-ready + remote-pending honestly.
+    breakdown (ONB-3.4) reports local-ready + remote-pending honestly. The
+    ``legacy`` list (ONB-4.2) reports worlds using uppercase ``Lore``/
+    ``Personajes`` folders — read-only detection; nothing is ever renamed.
     """
     probe = probe_local_storage(PROJECT_ROOT)
     state = _local_state().snapshot()
@@ -366,7 +369,12 @@ def onboarding_readiness():
         bool(probe["ok"]),
         telegram_state=telegram_state(state, telegram_has_token()),
     )
-    return {"local_editor": probe, "cards": cards, "offline": project_offline(cards)}
+    return {
+        "local_editor": probe,
+        "cards": cards,
+        "offline": project_offline(cards),
+        "legacy": detect_legacy_layout(MUNDOS_DIR),
+    }
 
 
 def _record_assistant_acceptance(runtime_state: str) -> None:

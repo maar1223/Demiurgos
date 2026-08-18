@@ -239,6 +239,26 @@ export default function ConfigurationCenter() {
                         <TelegramCard />
                       </div>
                     )}
+                    {/* ONB-4.2 — read-only legacy detection notice on the
+                        Mundos card: uppercase Lore/Personajes found by the
+                        backend are listed with the case-sensitive risk.
+                        Detection never mutates; the card stays read-only —
+                        migration (ONB-4.3) is a separate, approved step. */}
+                    {card.key === "world" && (readiness.legacy ?? []).length > 0 && (
+                      <div role="note" className="mt-4 border-t border-filio pt-4">
+                        <p className="text-small font-medium text-pergamino">
+                          Carpetas legacy detectadas
+                        </p>
+                        <p className="mt-1 text-small text-tinta-desvaida">
+                          {readiness.legacy
+                            .map((f) => `${f.world} (${f.folders.join(", ")})`)
+                            .join("; ")}
+                          . Las rutas distinguen mayúsculas y minúsculas: estas
+                          carpetas no se reconocen como lore/personajes canónicos
+                          y nunca se renombran de forma automática.
+                        </p>
+                      </div>
+                    )}
                     {card.key === "offline" && (
                       <dl className="mt-4 space-y-3 border-t border-filio pt-4">
                         <div className="flex items-center justify-between gap-3">

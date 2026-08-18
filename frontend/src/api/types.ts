@@ -141,11 +141,22 @@ export interface OfflineBreakdown {
   remote_pending: string[];
 }
 
+/** Read-only legacy-layout finding (ONB-4.2): a world whose top level uses
+ *  uppercase `Lore`/`Personajes` folders instead of the canonical lowercase
+ *  tree. Detection never mutates; migration is a separate, explicitly
+ *  approved step (ONB-4.3) and never automatic. */
+export interface LegacyFinding {
+  world: string;
+  folders: string[];
+}
+
 /** Essential local readiness + per-card states (OC11/OC21). */
 export interface ReadinessSnapshot {
   local_editor: { probe: string; ok: boolean; detail: string };
   cards: Record<string, CardState>;
   offline: OfflineBreakdown;
+  /** Worlds using the legacy uppercase layout (read-only detection). */
+  legacy: LegacyFinding[];
 }
 
 // ---------------------------------------------------------------------------

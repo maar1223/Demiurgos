@@ -35,6 +35,7 @@ from wiki.world_authority import (  # noqa: E402
     OC8_LORE_SKELETON,
     WorldResultKind,
     create_world,
+    detect_legacy_layout,
     normalize_world_name,
 )
 
@@ -404,6 +405,50 @@ class TestWorldTraversalSymlink(unittest.TestCase):
         self.assertEqual(result.kind, WorldResultKind.COLLISION)
         self.assertEqual(sorted(p.name for p in outside.iterdir()), [],
                          "symlink target must not be mutated")
+
+
+class TestLegacyLayoutDetection(unittest.TestCase):
+    """ONB-4.2 — read-only uppercase ``Lore``/``Personajes`` detection.
+
+    Detection is strictly read-only (no rename/move/delete/write); migration is
+    a separate, explicitly-approved step (ONB-4.3) and never automatic.
+    """
+
+    def _mundos(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name) / "mundos"
+
+    def test_detects_uppercase_legacy_folders(self) -> None:
+        mundos = self._mundos()
+        legacy = mundos / "legacy-x"
+        (legacy / "Lore").mkdir(parents=True)
+        (legacy / "Personajes").mkdir()
+        findings = detect_legacy_layout(mundos)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["world"], "legacy-x")
+        self.assertEqual(set(findings[0]["folders"]), {"Lore", "Personajes"})
+
+    def test_canonical_lowercase_worlds_are_not_reported(self) -> None:
+        mundos = self._mundos()
+        result = create_world(mundos, "canonico")
+        self.assertEqual(result.kind, WorldResultKind.CREATED)
+        self.assertEqual(detect_legacy_layout(mundos), [])
+
+    def test_detection_is_strictly_read_only(self) -> None:
+        mundos = self._mundos()
+        legacy = mundos / "legacy-y"
+        (legacy / "Lore").mkdir(parents=True)
+        (legacy / "Lore" / "reglas.md").write_text("# R\n", encoding="utf-8")
+        before = sorted(p.name for p in legacy.iterdir())
+        detect_legacy_layout(mundos)
+        self.assertEqual(sorted(p.name for p in legacy.iterdir()), before,
+                         "detection must never rename/move/delete folders")
+        self.assertTrue((legacy / "Lore").is_dir())
+        self.assertTrue((legacy / "Lore" / "reglas.md").exists())
+
+    def test_missing_mundos_dir_returns_empty(self) -> None:
+        self.assertEqual(detect_legacy_layout(self._mundos()), [])
 
 
 if __name__ == "__main__":
