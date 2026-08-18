@@ -26,24 +26,37 @@ const STATE_META: Record<CardState, { label: string; badge: "default" | "success
 };
 
 /**
- * Cloud/remote capabilities without a dedicated contract (ONB-3.1): their
- * cards can NEVER render as "Configurado", because only their dedicated
- * contracts may mark them configured. Defense in depth: even if a stale/buggy
- * backend reports "configured" for one of these keys, the UI forces the
- * honest pending state instead of overstating readiness.
+ * Capabilities without a dedicated contract (ONB-3.1/ONB-3.5): their cards
+ * can NEVER render as "Configurado", because only their dedicated contracts
+ * may mark them configured. Defense in depth: even if a stale/buggy backend
+ * reports "configured" for one of these keys, the UI forces the honest
+ * pending state instead of overstating readiness.
+ *
+ * - identity / backup: remote capabilities whose dedicated contracts do not
+ *   exist in this change.
+ * - import (ONB-3.5): the importer is a separate SDD; its card exposes
+ *   entry/pending only and must never claim an import happened.
  *
  * NOTE (WU-3b1): telegram is intentionally NOT in this set anymore — ONB-3.3
  * gave it a dedicated backend contract whose `configured` state is proven by
  * a real server-side getMe check, so its card may truthfully render
- * configured. Only identity and backup still lack dedicated contracts here.
+ * configured.
  */
-const CLOUD_CARD_KEYS: ReadonlySet<string> = new Set(["identity", "backup"]);
+const DEFERRED_CARD_KEYS: ReadonlySet<string> = new Set(["identity", "backup", "import"]);
 
 /** Essential local readiness badges (OC11/OC21): World + local editor. */
 const ESSENTIAL_BADGES: { key: string; title: string }[] = [
   { key: "world", title: "Mundos" },
   { key: "editor", title: "Editor local" },
 ];
+
+/** Remote capability labels shown in the offline card breakdown (OC5). */
+const REMOTE_LABELS: Record<string, string> = {
+  identity: "Identidad",
+  telegram: "Telegram",
+  backup: "Respaldo",
+  assistant: "Asistente (IA)",
+};
 
 interface CardAction {
   label: string;
@@ -65,6 +78,7 @@ const CARD_DEFS: CardDef[] = [
   { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/onboarding?step=step0" } },
   { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },
   { key: "offline", title: "Offline / dispositivo", description: "Núcleo local (editor, ideas, grafo) sin conexión.", action: null },
+  { key: "import", title: "Importar mundo", description: "Importar contenido a un mundo. El contrato del importador está en definición; esta capacidad aún no está disponible (ONB-3.5).", action: { label: "Ir al Taller de Mundo", to: "/taller-mundo" } },
 ];
 
 export default function ConfigurationCenter() {
@@ -88,16 +102,26 @@ export default function ConfigurationCenter() {
   const cards = readiness?.cards ?? {};
 
   /**
-   * Honest per-card state (ONB-3.1): cloud/remote cards can never be
-   * "configured" in this slice — their dedicated contracts are the only
-   * path to configured, and none exists yet. Even if the backend reports
-   * "configured" for a cloud key (stale/buggy state), the UI renders the
-   * truthful pending state.
+   * Honest per-card state (ONB-3.1/ONB-3.5): capabilities without a dedicated
+   * contract can never be "configured" in this slice — their dedicated
+   * contracts are the only path to configured, and none exists yet. Even if
+   * the backend reports "configured" for such a key (stale/buggy state), the
+   * UI renders the truthful pending state.
    */
   const stateFor = (key: string): CardState => {
     const raw = cards[key] ?? "pending";
-    if (CLOUD_CARD_KEYS.has(key) && raw === "configured") return "pending";
+    if (DEFERRED_CARD_KEYS.has(key) && raw === "configured") return "pending";
     return raw as CardState;
+  };
+
+  /**
+   * Per-card visible label. The assistant badge (OC19) reports
+   * "Pendiente / no apto" when no multimodal model has passed the three
+   * proofs — it never claims configured in that case.
+   */
+  const labelFor = (key: string, state: CardState): string => {
+    if (key === "assistant" && state === "pending") return "Pendiente / no apto";
+    return STATE_META[state].label;
   };
 
   const essentialBadge = (key: string): { label: string; badge: "default" | "success" | "error" } => {
@@ -173,6 +197,7 @@ export default function ConfigurationCenter() {
             <div className="grid grid-cols-1 gap-4 tablet:grid-cols-2">
               {CARD_DEFS.map((card) => {
                 const state = stateFor(card.key);
+                const label = labelFor(card.key, state);
                 const meta = STATE_META[state];
                 return (
                   <section
@@ -188,8 +213,8 @@ export default function ConfigurationCenter() {
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span className="flex items-center gap-2">
-                        <Badge variant={meta.badge}>{meta.label}</Badge>
-                        <span className="sr-only">Estado: {meta.label}</span>
+                        <Badge variant={meta.badge}>{label}</Badge>
+                        <span className="sr-only">Estado: {label}</span>
                       </span>
                       {card.key === "telegram" ? (
                         <Button
@@ -213,6 +238,36 @@ export default function ConfigurationCenter() {
                       <div id="telegram-card-panel" className="mt-4">
                         <TelegramCard />
                       </div>
+                    )}
+                    {card.key === "offline" && (
+                      <dl className="mt-4 space-y-3 border-t border-filio pt-4">
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-small text-tinta-desvaida">Núcleo local</dt>
+                          <dd className="flex items-center gap-2">
+                            <Badge variant={readiness.offline.local_ready ? "success" : "error"}>
+                              {readiness.offline.local_ready ? "Listo" : "No disponible"}
+                            </Badge>
+                            <span className="sr-only">
+                              Estado: {readiness.offline.local_ready ? "Listo" : "No disponible"}
+                            </span>
+                          </dd>
+                        </div>
+                        <div>
+                          <dt className="text-small text-tinta-desvaida">Remoto</dt>
+                          <dd className="mt-1 text-small text-tinta-desvaida">
+                            {readiness.offline.remote_pending.length > 0 ? (
+                              <span>
+                                Capacidades remotas pendientes (requieren conexión):{" "}
+                                {readiness.offline.remote_pending
+                                  .map((key) => REMOTE_LABELS[key] ?? key)
+                                  .join(", ")}.
+                              </span>
+                            ) : (
+                              <span>Sin capacidades remotas pendientes.</span>
+                            )}
+                          </dd>
+                        </div>
+                      </dl>
                     )}
                   </section>
                 );

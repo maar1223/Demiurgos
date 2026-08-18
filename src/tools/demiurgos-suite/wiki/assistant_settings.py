@@ -481,8 +481,15 @@ def create_assistant_settings_router(
     provider_registry: ProviderRegistry | None = None,
     runtime_seam: HermesRuntimeSeam | None = None,
     probe_factory: Callable[[dict[str, Any], str], ProbeRunner] | None = None,
+    on_acceptance: Callable[[str], None] | None = None,
 ) -> APIRouter:
-    """Build authenticated assistant settings routes."""
+    """Build authenticated assistant settings routes.
+
+    ``on_acceptance`` (optional) is invoked after a successful three-proof
+    save with the applied runtime state (``active``/``pending-reload``/
+    ``saved-not-active``) so the host can record acceptance evidence (ONB-3.6).
+    It is never called when probes fail or the save is rejected.
+    """
     router = APIRouter(prefix="/api/profile/assistant", tags=["assistant-settings"])
     registry = provider_registry or PROVIDER_REGISTRY
     seam = runtime_seam or HermesRuntimeSeam()
@@ -639,7 +646,12 @@ def create_assistant_settings_router(
                     capability=model["capability"], pricing=model["pricing"],
                 ),
             )
-            saved["runtime_state"] = seam.apply(saved["revision"]).state
+            runtime_state = seam.apply(saved["revision"]).state
+            saved["runtime_state"] = runtime_state
+            # ONB-3.6: record the runtime acceptance evidence so the Center
+            # badge may become configured only on real acceptance.
+            if on_acceptance is not None:
+                on_acceptance(runtime_state)
             return saved
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

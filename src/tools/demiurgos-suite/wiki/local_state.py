@@ -69,6 +69,7 @@ def default_state() -> dict[str, Any]:
             "backup": "pending",
             "world": "pending",
             "offline": "pending",
+            "import": "pending",
         },
     }
 

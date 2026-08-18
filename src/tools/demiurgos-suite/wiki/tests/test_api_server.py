@@ -4574,3 +4574,113 @@ class TestTelegramSettings:
             self._put_token(empty_client)
             empty_client.post("/api/telegram/test-connection")
         assert self.SECRET not in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# ONB-3.4 — Offline/dispositivo card backend: honest offline breakdown
+# (local-ready + remote-pending) and expired local sessions are never reused.
+# The local core must not depend on authentication or the assistant (OC5/OC19).
+# ---------------------------------------------------------------------------
+
+
+class TestOfflineContinuation:
+    """ONB-3.4 — offline continuation (WU-3c)."""
+
+    def test_readiness_reports_offline_local_ready_and_remote_pending(
+            self, empty_client: TestClient):
+        """The offline card needs an honest breakdown: the local core is
+        ready (storage probe ok) while remote capabilities stay pending."""
+        body = empty_client.get("/api/onboarding/readiness").json()
+        offline = body["offline"]
+        assert offline["local_ready"] is True
+        assert "identity" in offline["remote_pending"]
+        assert "telegram" in offline["remote_pending"]
+        assert "backup" in offline["remote_pending"]
+        assert "assistant" in offline["remote_pending"]
+
+    def test_readiness_reports_offline_unavailable_when_probe_fails(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        """When the storage probe fails the local core is NOT claimed ready."""
+        monkeypatch.setattr(
+            api_server,
+            "probe_local_storage",
+            lambda root: {"probe": "local_editor", "ok": False, "detail": "read-only"},
+        )
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["offline"]["local_ready"] is False
+        assert body["cards"]["offline"] == "error"
+
+    def test_offline_readiness_is_public_without_auth(self, empty_client: TestClient):
+        """The local core must not depend on authentication: readiness (local
+        work available offline) reads fine without any principal."""
+        resp = empty_client.get("/api/onboarding/readiness")
+        assert resp.status_code == 200
+
+    def test_expired_local_session_is_never_reused(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        """An expired local-dev session must not authorize gated writes: it is
+        pruned on access and every write fails closed (OC1/OC5 — expired
+        authorization is never reused)."""
+        monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
+        started = empty_client.post("/api/auth/local-dev/session")
+        assert started.status_code == 200
+        # Expire the stored session directly (simulates TTL passage).
+        with api_server._local_session_lock:
+            for record in api_server._local_sessions.values():
+                record["expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+        status = empty_client.get("/api/auth/local-dev/session").json()
+        assert status["authenticated"] is False
+        assert _post_step0(empty_client).status_code == 401
+        assert empty_client.post("/api/worlds", json={"name": "x"}).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# ONB-3.5 — Import handoff card: entry/pending/error only, never configured.
+# The importer stays a separate SDD; this change exposes no fake completion.
+# ---------------------------------------------------------------------------
+
+
+class TestImportHandoff:
+    """ONB-3.5 — import handoff (WU-3c)."""
+
+    def test_import_card_always_pending_never_configured(
+            self, empty_client: TestClient):
+        """The importer has no dedicated contract in this change: the card
+        reports pending even when a stale registry claim says configured."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state["capabilities"]["import"] = "configured"
+        registry.atomic_commit(state)
+
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["import"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# ONB-3.6 — Assistant badge evidence wiring: the three-proof acceptance is
+# recorded in the registry so the badge may become configured ONLY when the
+# runtime accepted the model; otherwise it stays pending/no-apto (OC19).
+# ---------------------------------------------------------------------------
+
+
+class TestAssistantEvidence:
+    """ONB-3.6 — assistant acceptance evidence (WU-3c)."""
+
+    def test_accepted_runtime_records_evidence_and_configures_badge(
+            self, empty_client: TestClient):
+        api_server._record_assistant_acceptance("accepted")
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["assistant"] == "configured"
+
+    def test_pending_reload_runtime_keeps_badge_pending(
+            self, empty_client: TestClient):
+        api_server._record_assistant_acceptance("pending-reload")
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["assistant"] == "pending"
+
+    def test_saved_not_active_runtime_keeps_badge_pending(
+            self, empty_client: TestClient):
+        api_server._record_assistant_acceptance("saved-not-active")
+        body = empty_client.get("/api/onboarding/readiness").json()
+        assert body["cards"]["assistant"] == "pending"

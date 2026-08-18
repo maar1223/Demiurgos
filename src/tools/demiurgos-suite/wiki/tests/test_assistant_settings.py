@@ -70,6 +70,11 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     (hermes / ".env").write_text("HERMES_GATEWAY_KEY=gateway-fixture\nKEEP_ME=1\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(hermes))
+    # Isolate the api_server registry too: the assistant router's ONB-3.6
+    # acceptance wiring writes to the local registry on successful saves, and
+    # this fixture drives the REAL api_server.app — otherwise those saves
+    # would create data/local-state.json at the repo root.
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
     monkeypatch.setattr(
         api_server,
         "_resolve_principal",
@@ -577,3 +582,98 @@ class TestHermesRuntimeSeam:
         import hermes_runtime
 
         assert "subprocess" not in hermes_runtime.__dict__
+
+
+class TestAcceptanceEvidenceCallback:
+    """ONB-3.6 — the router reports the runtime acceptance to the wired
+    callback so api_server can record the three-proof evidence in the local
+    registry (badge becomes configured only on real acceptance)."""
+
+    def _build_client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                      on_acceptance, seam: HermesRuntimeSeam) -> TestClient:
+        hermes = tmp_path / "hermes-evidence"
+        hermes.mkdir()
+        (hermes / "config.yaml").write_text(
+            "model:\n  default: gpt-5.6-luna\n  provider: opencode-go\n"
+            "  base_url: https://opencode.ai/zen/go/v1\n",
+            encoding="utf-8",
+        )
+        (hermes / ".env").write_text("HERMES_GATEWAY_KEY=gateway-fixture\n", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes))
+        _install_fake_probes(monkeypatch)
+        registry = ProviderRegistry()
+        registry.transport = lambda method, url, headers: (200, {"data": []})
+        local_app = FastAPI()
+        local_app.include_router(
+            assistant_settings.create_assistant_settings_router(
+                require_principal=lambda request: object(),
+                provider_registry=registry,
+                runtime_seam=seam,
+                on_acceptance=on_acceptance,
+            )
+        )
+        return TestClient(local_app, client=("127.0.0.1", 50000))
+
+    def test_callback_receives_accepted_runtime_after_successful_save(
+            self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        captured: list[str] = []
+        seam = HermesRuntimeSeam(
+            lambda revision: HermesRuntimeResult("active", accepted=True)
+        )
+        client = self._build_client(tmp_path, monkeypatch, captured.append, seam)
+
+        response = client.put(
+            "/api/profile/assistant/configuration",
+            json={
+                "provider": "openai",
+                "api_key": "fixture-evidence-key",
+                "manual_model_id": "manual-model",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["runtime_state"] == "active"
+        assert captured == ["active"]
+
+    def test_callback_receives_pending_reload_runtime(self, tmp_path: Path,
+                                                      monkeypatch: pytest.MonkeyPatch):
+        captured: list[str] = []
+        seam = HermesRuntimeSeam(
+            lambda revision: HermesRuntimeResult("pending-reload", accepted=True,
+                                                 reload_required=True)
+        )
+        client = self._build_client(tmp_path, monkeypatch, captured.append, seam)
+
+        response = client.put(
+            "/api/profile/assistant/configuration",
+            json={
+                "provider": "openai",
+                "api_key": "fixture-evidence-key",
+                "manual_model_id": "manual-model",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["runtime_state"] == "pending-reload"
+        assert captured == ["pending-reload"]
+
+    def test_callback_not_invoked_when_save_fails(self, tmp_path: Path,
+                                                  monkeypatch: pytest.MonkeyPatch):
+        captured: list[str] = []
+        seam = HermesRuntimeSeam(
+            lambda revision: HermesRuntimeResult("active", accepted=True)
+        )
+        client = self._build_client(tmp_path, monkeypatch, captured.append, seam)
+        _install_fake_probes(monkeypatch, text=ProbeResult("not_causal", "text-marker", "nope"))
+
+        response = client.put(
+            "/api/profile/assistant/configuration",
+            json={
+                "provider": "openai",
+                "api_key": "fixture-evidence-key",
+                "manual_model_id": "manual-model",
+            },
+        )
+
+        assert response.status_code == 422
+        assert captured == []

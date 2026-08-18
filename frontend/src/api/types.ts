@@ -134,10 +134,18 @@ export type CardState =
   | "requires_connection"
   | "error";
 
+/** Honest offline/dispositivo breakdown (OC5/ONB-3.4): the local core works
+ *  without connection while remote capabilities stay pending. */
+export interface OfflineBreakdown {
+  local_ready: boolean;
+  remote_pending: string[];
+}
+
 /** Essential local readiness + per-card states (OC11/OC21). */
 export interface ReadinessSnapshot {
   local_editor: { probe: string; ok: boolean; detail: string };
   cards: Record<string, CardState>;
+  offline: OfflineBreakdown;
 }
 
 // ---------------------------------------------------------------------------

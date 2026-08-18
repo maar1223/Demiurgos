@@ -81,7 +81,7 @@ from onboarding import (
     commit_world_created as _commit_world_created,
     status_from as _onboarding_status_from,
 )
-from readiness import probe_local_storage, project_cards
+from readiness import probe_local_storage, project_cards, project_offline
 from telegram_settings import (
     has_token as telegram_has_token,
     telegram_state,
@@ -355,7 +355,8 @@ def onboarding_readiness():
     from local evidence (ONB-3.1); the projection downgrades any stale
     registry claim instead of trusting it. The telegram card follows the
     ONB-3.3 backend's real evidence (write-only token presence + last
-    connection test) passed through ``telegram_state``.
+    connection test) passed through ``telegram_state``. The ``offline``
+    breakdown (ONB-3.4) reports local-ready + remote-pending honestly.
     """
     probe = probe_local_storage(PROJECT_ROOT)
     state = _local_state().snapshot()
@@ -365,7 +366,27 @@ def onboarding_readiness():
         bool(probe["ok"]),
         telegram_state=telegram_state(state, telegram_has_token()),
     )
-    return {"local_editor": probe, "cards": cards}
+    return {"local_editor": probe, "cards": cards, "offline": project_offline(cards)}
+
+
+def _record_assistant_acceptance(runtime_state: str) -> None:
+    """Record the three-proof assistant acceptance mirror in the registry.
+
+    Called by the assistant settings router after a successful save whose
+    probes passed server-side (ONB-2.5/ONB-3.6). The runtime state is the
+    Hermes seam result — ``accepted`` maps to the readiness proof vocabulary;
+    any other state (``pending-reload``/``saved-not-active``) keeps the badge
+    honestly pending because the projection requires exactly
+    text=passed + vision=passed + runtime=accepted.
+    """
+    registry = _local_state()
+    state = registry.snapshot()
+    state["assistant_acceptance"] = {
+        "text": "passed",
+        "vision": "passed",
+        "runtime": "accepted" if runtime_state == "active" else runtime_state,
+    }
+    registry.atomic_commit(state)
 
 
 # ---------------------------------------------------------------------------
@@ -4029,6 +4050,10 @@ app.include_router(
 app.include_router(
     create_assistant_settings_router(
         require_principal=lambda request: _resolve_principal(request),
+        # ONB-3.6: a successful three-proof save records its runtime acceptance
+        # in the local registry so the readiness badge may become configured
+        # only on real acceptance (pending/no-apto otherwise).
+        on_acceptance=_record_assistant_acceptance,
     ),
 )
 
