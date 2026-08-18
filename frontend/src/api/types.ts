@@ -150,6 +150,36 @@ export interface LegacyFinding {
   folders: string[];
 }
 
+/** Honest migration outcome (ONB-4.3): the approved folders moved to the
+ *  canonical lowercase tree, or were restored after a mid-transaction
+ *  failure. Never any other value — the server is the authority. */
+export type MigrationOutcomeStatus = "completed" | "rolled_back";
+
+/** One approved folder inside a migration transaction. The source/destination
+ *  are ABSOLUTE filesystem paths and the hashes are sha256 digests: the UI
+ *  renders only `folder` and never exposes the rest (no path/hash leak). */
+export interface MigrationStep {
+  folder: string;
+  source: string;
+  destination: string;
+  source_hash: string;
+  destination_hash: string;
+  restored: boolean;
+}
+
+/** Response of POST /api/migration/execute — mirrors the persisted evidence
+ *  record (transaction id, restore flag, timestamps, per-folder steps). */
+export interface MigrationExecuteResult {
+  status: MigrationOutcomeStatus;
+  transaction_id: string;
+  world: string;
+  restore_verified: boolean;
+  started_at: string;
+  finished_at: string;
+  error: string | null;
+  steps: MigrationStep[];
+}
+
 /** Essential local readiness + per-card states (OC11/OC21). */
 export interface ReadinessSnapshot {
   local_editor: { probe: string; ok: boolean; detail: string };

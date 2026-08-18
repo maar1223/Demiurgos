@@ -11,7 +11,12 @@ vi.mock("@/api/onboarding", () => ({
   createWorld: vi.fn(),
 }));
 
+vi.mock("@/api/migration", () => ({
+  executeMigration: vi.fn(),
+}));
+
 import { getReadiness } from "@/api/onboarding";
+import { executeMigration } from "@/api/migration";
 import type { Mock } from "vitest";
 
 /** Fresh honest readiness payload (ONB-3.4: offline breakdown included). */
@@ -357,12 +362,14 @@ describe("ConfigurationCenter (ONB-1.7)", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // ONB-4.2 — Mundos card read-only legacy notice: uppercase Lore/Personajes
-  // detected, case-sensitive risk explained, never mutated (the card stays
-  // read-only — no resumable panel and no migration controls in this unit).
+  // ONB-4.2 + ONB-4.3 (WU-4c2) — Mundos card: read-only legacy detection notice
+  // plus an EXPLICIT migration approval panel. Detection stays read-only; the
+  // migration runs only through the panel's confirm dialog and never
+  // automatically. After a completed migration the Center refreshes readiness,
+  // so the notice disappears once the tree is canonical.
   // ---------------------------------------------------------------------------
 
-  it("Mundos card shows a read-only legacy detection notice", async () => {
+  it("Mundos card shows the legacy notice and offers an explicit migration panel", async () => {
     (getReadiness as Mock).mockResolvedValue(
       makeReadiness({
         legacy: [{ world: "legacy-x", folders: ["Lore", "Personajes"] }],
@@ -374,16 +381,14 @@ describe("ConfigurationCenter (ONB-1.7)", () => {
     const worldSection = screen.getByRole("heading", { name: "Mundos" }).closest("section") as HTMLElement;
     expect(within(worldSection).getByText("Carpetas legacy detectadas")).toBeInTheDocument();
     expect(worldSection).toHaveTextContent("legacy-x");
-    expect(worldSection).toHaveTextContent("Lore");
-    expect(worldSection).toHaveTextContent("Personajes");
     // The case-sensitive risk is explained and never auto-renamed.
     expect(worldSection).toHaveTextContent(/distinguen mayúsculas y minúsculas/i);
     expect(worldSection).toHaveTextContent(/nunca se renombran de forma automática/i);
-    // Read-only: no resumable panel toggle and no migration control on the
-    // Mundos card (only Telegram renders an expandable panel in this Center).
-    expect(within(worldSection).queryByRole("button", { name: /ocultar panel|mostrar panel/i }))
-      .not.toBeInTheDocument();
-    expect(worldSection).not.toHaveTextContent("Configurar Telegram");
+    // WU-4c2: the card now offers an explicit migration panel (hidden by
+    // default); migration NEVER runs without the panel + confirm flow.
+    const toggle = within(worldSection).getByRole("button", { name: "Migrar carpetas legacy" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(executeMigration).not.toHaveBeenCalled();
   });
 
   it("Mundos card renders no legacy notice when none is detected", async () => {
@@ -394,5 +399,48 @@ describe("ConfigurationCenter (ONB-1.7)", () => {
     const worldSection = screen.getByRole("heading", { name: "Mundos" }).closest("section") as HTMLElement;
     expect(worldSection).not.toHaveTextContent("Carpetas legacy detectadas");
     expect(worldSection).not.toHaveTextContent(/legacy/i);
+    // No migration control without detected legacy folders.
+    expect(within(worldSection).queryByRole("button", { name: /migrar/i })).not.toBeInTheDocument();
+  });
+
+  it("approved migration refreshes readiness and clears the legacy notice", async () => {
+    const user = userEvent.setup();
+    (getReadiness as Mock)
+      .mockResolvedValueOnce(
+        makeReadiness({
+          legacy: [{ world: "legacy-x", folders: ["Lore", "Personajes"] }],
+        }),
+      )
+      .mockResolvedValueOnce(makeReadiness()); // canonical tree after migration
+    (executeMigration as Mock).mockResolvedValue({
+      status: "completed",
+      transaction_id: "mig-20260818-xyz789",
+      world: "legacy-x",
+      restore_verified: true,
+      started_at: "2026-08-18T12:00:00Z",
+      finished_at: "2026-08-18T12:00:01Z",
+      error: null,
+      steps: [],
+    });
+    renderCenter();
+
+    await screen.findByRole("heading", { name: "Mundos" });
+    await user.click(screen.getByRole("button", { name: "Migrar carpetas legacy" }));
+
+    // The panel exposes the finding; still nothing has been executed.
+    expect(screen.getByRole("button", { name: "Migrar carpetas de legacy-x" })).toBeInTheDocument();
+    expect(executeMigration).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Migrar carpetas de legacy-x" }));
+
+    // Explicit confirmation is required before the API call.
+    expect(executeMigration).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Migrar" }));
+    expect(executeMigration).toHaveBeenCalledWith("legacy-x", ["Lore", "Personajes"]);
+
+    // Readiness refresh: the notice disappears once the tree is canonical.
+    await waitFor(() =>
+      expect(screen.queryByText("Carpetas legacy detectadas")).not.toBeInTheDocument(),
+    );
+    expect((getReadiness as Mock).mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });

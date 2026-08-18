@@ -6,6 +6,7 @@ import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { MigrationPanel } from "@/components/organisms/MigrationPanel";
 import { TelegramCard } from "@/components/organisms/TelegramCard";
 
 /**
@@ -87,6 +88,7 @@ export default function ConfigurationCenter() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [telegramOpen, setTelegramOpen] = useState(false);
+  const [migrationOpen, setMigrationOpen] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -242,21 +244,45 @@ export default function ConfigurationCenter() {
                     {/* ONB-4.2 — read-only legacy detection notice on the
                         Mundos card: uppercase Lore/Personajes found by the
                         backend are listed with the case-sensitive risk.
-                        Detection never mutates; the card stays read-only —
-                        migration (ONB-4.3) is a separate, approved step. */}
+                        Detection never mutates; migration (ONB-4.3, WU-4c2)
+                        is a separate, explicitly approved step that only runs
+                        from the panel's ConfirmDialog. After a completed
+                        migration the Center refreshes readiness so the notice
+                        disappears once the tree is canonical. */}
                     {card.key === "world" && (readiness.legacy ?? []).length > 0 && (
-                      <div role="note" className="mt-4 border-t border-filio pt-4">
-                        <p className="text-small font-medium text-pergamino">
-                          Carpetas legacy detectadas
-                        </p>
-                        <p className="mt-1 text-small text-tinta-desvaida">
-                          {readiness.legacy
-                            .map((f) => `${f.world} (${f.folders.join(", ")})`)
-                            .join("; ")}
-                          . Las rutas distinguen mayúsculas y minúsculas: estas
-                          carpetas no se reconocen como lore/personajes canónicos
-                          y nunca se renombran de forma automática.
-                        </p>
+                      <div className="mt-4 border-t border-filio pt-4">
+                        <div role="note">
+                          <p className="text-small font-medium text-pergamino">
+                            Carpetas legacy detectadas
+                          </p>
+                          <p className="mt-1 text-small text-tinta-desvaida">
+                            {readiness.legacy
+                              .map((f) => `${f.world} (${f.folders.join(", ")})`)
+                              .join("; ")}
+                            . Las rutas distinguen mayúsculas y minúsculas: estas
+                            carpetas no se reconocen como lore/personajes canónicos
+                            y nunca se renombran de forma automática.
+                          </p>
+                        </div>
+                        <div className="mt-3">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            aria-expanded={migrationOpen}
+                            aria-controls="migration-panel"
+                            onClick={() => setMigrationOpen((open) => !open)}
+                          >
+                            {migrationOpen ? "Ocultar migración" : "Migrar carpetas legacy"}
+                          </Button>
+                        </div>
+                        {migrationOpen && (
+                          <div id="migration-panel" className="mt-4">
+                            <MigrationPanel
+                              findings={readiness.legacy}
+                              onMigrated={load}
+                            />
+                          </div>
+                        )}
                       </div>
                     )}
                     {card.key === "offline" && (
