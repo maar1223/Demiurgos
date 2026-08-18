@@ -23,8 +23,11 @@ import httpx
 # Ensure wiki package is importable
 _HERE = Path(__file__).resolve().parent
 _SUITE = _HERE.parent
+_TOOLS = _SUITE.parent
 if str(_SUITE) not in sys.path:
     sys.path.insert(0, str(_SUITE))
+if str(_TOOLS) not in sys.path:
+    sys.path.insert(0, str(_TOOLS))
 
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile

@@ -19,7 +19,43 @@ for _path in (str(_WIKI), str(_SUITE)):
 import api_server  # noqa: E402
 import assistant_settings  # noqa: E402
 from assistant_provider_adapters import ProviderRegistry  # noqa: E402
+from capability_probes.runner import ProbeResult  # noqa: E402
 from hermes_runtime import HermesRuntimeResult, HermesRuntimeSeam  # noqa: E402
+
+
+class _FakeProbeRunner:
+    """Deterministic probe stand-in injected through the module ProbeRunner name."""
+
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        *,
+        api_key: str = "",
+        text: ProbeResult | None = None,
+        vision: ProbeResult | None = None,
+    ) -> None:
+        self._text = text if text is not None else ProbeResult("passed", "text-marker")
+        self._vision = vision if vision is not None else ProbeResult("passed", "causal-vision")
+
+    def run_text(self) -> ProbeResult:
+        return self._text
+
+    def run_vision(self) -> ProbeResult:
+        return self._vision
+
+
+def _install_fake_probes(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    text: ProbeResult | None = None,
+    vision: ProbeResult | None = None,
+) -> None:
+    monkeypatch.setattr(
+        assistant_settings,
+        "ProbeRunner",
+        lambda *args, **kwargs: _FakeProbeRunner(*args, text=text, vision=vision, **kwargs),
+    )
 
 
 @pytest.fixture()
@@ -375,19 +411,22 @@ class TestProviderAPI:
         payload = {"provider": "openai", "api_key": "fixture-secret-value"}
         assert client.post("/api/profile/assistant/connection/validate", json=payload).status_code == 401
         assert client.post("/api/profile/assistant/models/discover", json=payload).status_code == 401
+        assert client.post("/api/profile/assistant/probe/text", json=payload).status_code == 401
+        assert client.post("/api/profile/assistant/probe/vision", json=payload).status_code == 401
         assert client.put("/api/profile/assistant/configuration", json=payload).status_code == 401
 
-    def test_validate_discover_save_and_manual_unknown_ack(self, client: TestClient, monkeypatch):
+    def test_validate_discover_save_after_three_proofs(self, client: TestClient, monkeypatch):
         def transport(method, url, headers):
             return 200, {"data": [{"id": "manual-model", "name": "Manual Model"}]}
 
         monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", transport)
+        _install_fake_probes(monkeypatch)
         secret_marker = "fixture-secret-value"
         payload = {"provider": "openai", "api_key": secret_marker}
         assert client.post("/api/profile/assistant/connection/validate", json=payload).json()["outcome"] == "validated"
         discovery = client.post("/api/profile/assistant/models/discover", json=payload)
         assert discovery.json()["models"][0]["capability"] == "unknown"
-        save = {**payload, "manual_model_id": "manual-model", "unknown_ack": True}
+        save = {**payload, "manual_model_id": "manual-model"}
         response = client.put("/api/profile/assistant/configuration", json=save)
 
         assert response.status_code == 200, response.text
@@ -400,6 +439,92 @@ class TestProviderAPI:
                                 json={"revision": response.json()["revision"]})
         assert cleared.status_code == 200
         assert "OPENAI_API_KEY" not in assistant_settings._resolve_profile_paths().env.read_text(encoding="utf-8")
+
+
+class TestThreeProofGate:
+    """ONB-2.1: only text + causal vision + runtime acceptance configure; no unknown_ack."""
+
+    def _save(self, client: TestClient, payload: dict) -> dict:
+        return client.put("/api/profile/assistant/configuration", json=payload)
+
+    def _payload(self, model_id: str = "manual-model") -> dict:
+        return {"provider": "openai", "api_key": "fixture-secret-value", "manual_model_id": model_id}
+
+    def test_unknown_ack_is_ignored_when_probes_pass(self, client: TestClient, monkeypatch):
+        def transport(method, url, headers):
+            return 200, {"data": [{"id": "manual-model", "name": "Manual Model"}]}
+
+        monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", transport)
+        _install_fake_probes(monkeypatch, vision=ProbeResult("passed", "causal-vision"))
+        response = self._save(client, {**self._payload(), "unknown_ack": True})
+
+        assert response.status_code == 200  # probes passed; ack is irrelevant metadata
+        assert "unknown_ack" not in response.json()
+
+    def test_failed_text_probe_never_configures(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", lambda *_: (200, {}))
+        _install_fake_probes(monkeypatch, text=ProbeResult("not_causal", "text-marker", "nope"))
+        before_config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+
+        response = self._save(client, self._payload())
+
+        assert response.status_code == 422
+        assert "text probe" in response.json()["detail"]
+        assert assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8") == before_config
+
+    def test_failed_vision_probe_never_configures(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", lambda *_: (200, {}))
+        _install_fake_probes(monkeypatch, vision=ProbeResult("not_causal", "vision-fixture", "wrong"))
+        before_env = assistant_settings._resolve_profile_paths().env.read_text(encoding="utf-8")
+
+        response = self._save(client, self._payload())
+
+        assert response.status_code == 422
+        assert "vision" in response.json()["detail"]
+        assert assistant_settings._resolve_profile_paths().env.read_text(encoding="utf-8") == before_env
+
+    def test_malformed_and_timeout_probes_never_configure(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", lambda *_: (200, {}))
+        before_config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+        for outcome in ("malformed", "timeout", "provider_failure"):
+            _install_fake_probes(monkeypatch, text=ProbeResult(outcome, "text-marker", "boom"))
+            response = self._save(client, self._payload())
+            assert response.status_code == 422, outcome
+            assert assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8") == before_config
+
+    def test_connection_failure_never_configures(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", lambda *_: (401, {}))
+        _install_fake_probes(monkeypatch)
+        before_config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+
+        response = self._save(client, self._payload())
+
+        assert response.status_code == 422
+        assert assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8") == before_config
+
+    def test_text_only_model_fails_vision_and_never_configures(self, client: TestClient, monkeypatch):
+        monkeypatch.setattr(assistant_settings.PROVIDER_REGISTRY, "transport", lambda *_: (200, {}))
+        _install_fake_probes(monkeypatch, vision=ProbeResult("not_causal", "vision-variant", "text-only"))
+        before_config = assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8")
+
+        response = self._save(client, self._payload("text-only-model"))
+
+        assert response.status_code == 422
+        assert assistant_settings._resolve_profile_paths().config.read_text(encoding="utf-8") == before_config
+
+    def test_probe_endpoints_report_independent_oracle_results(self, client: TestClient, monkeypatch):
+        _install_fake_probes(monkeypatch, text=ProbeResult("passed", "text-marker"), vision=ProbeResult("not_causal", "vision-fixture", "wrong"))
+        payload = self._payload()
+
+        text = client.post("/api/profile/assistant/probe/text", json=payload)
+        vision = client.post("/api/profile/assistant/probe/vision", json=payload)
+
+        assert text.status_code == 200
+        assert text.json()["outcome"] == "passed"
+        assert text.json()["oracle"] == "text-marker"
+        assert vision.status_code == 200
+        assert vision.json()["outcome"] == "not_causal"
+        assert vision.json()["oracle"] == "vision-fixture"
 
 
 class TestHermesRuntimeSeam:
@@ -420,6 +545,7 @@ class TestHermesRuntimeSeam:
         expected_state: str,
     ):
         seam = HermesRuntimeSeam(lambda revision: result)
+        _install_fake_probes(monkeypatch)
         client = _runtime_client(tmp_path, monkeypatch, seam)
 
         response = client.put(
@@ -428,7 +554,6 @@ class TestHermesRuntimeSeam:
                 "provider": "openai",
                 "api_key": "fixture-runtime-key",
                 "manual_model_id": "manual-model",
-                "unknown_ack": True,
             },
         )
 

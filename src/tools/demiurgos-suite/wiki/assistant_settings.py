@@ -16,6 +16,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import sys
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
 import uuid
@@ -23,12 +24,18 @@ import uuid
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
+# Ensure sibling tool packages (capability_probes) are importable.
+_TOOLS_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_TOOLS_ROOT) not in sys.path:
+    sys.path.insert(0, str(_TOOLS_ROOT))
+
 from assistant_provider_adapters import (
     ProviderRegistry,
     candidate_from_payload,
     default_base_url,
     normalize_model,
 )
+from capability_probes.runner import ProbeRunner
 from hermes_runtime import HermesRuntimeSeam
 
 
@@ -377,7 +384,7 @@ def _set_model_config_content(content: str, model: str, provider: str, base_url:
     return "".join(updated)
 
 
-def _atomic_write(path: Path, content: str) -> None:
+def _atomic_write(path: Path, content: str, mode: int | None = None) -> None:
     if not path.parent.is_dir():
         raise AssistantSettingsError("El directorio del perfil activo de Hermes no existe")
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
@@ -387,12 +394,21 @@ def _atomic_write(path: Path, content: str) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        if mode is not None:
+            try:
+                os.chmod(path, mode)
+            except OSError:
+                # Read-only bit is the only portable chmod effect on Windows.
+                pass
     except OSError as exc:
         try:
             temporary.unlink(missing_ok=True)
         except OSError:
             pass
         raise AssistantSettingsError("No se pudo guardar la configuración del asistente") from exc
+
+
+_ENV_FILE_MODE = 0o600
 
 
 def _status(
@@ -423,41 +439,54 @@ def _persist_provider_configuration(payload: dict[str, Any], model: AssistantMod
         provider=candidate.provider,
         base_url=candidate.base_url,
         model=model,
-        key_configured=True,
+        key_configured=bool(candidate.api_key),
         revision=current_status.revision + 1,
     )
     next_config = _set_model_config_content(
         config_content, model.id, candidate.provider, candidate.base_url
     )
     next_config = _set_normalized_content(next_config, next_status)
-    next_env, env_changed = _set_env_content(
-        env_content, candidate.api_key, _provider_key_env(candidate.provider)
-    )
+    if candidate.api_key:
+        next_env, env_changed = _set_env_content(
+            env_content, candidate.api_key, _provider_key_env(candidate.provider)
+        )
+    else:
+        # Local providers require no secret; leave the env file untouched.
+        next_env, env_changed = env_content, False
     config_changed = next_config != config_content
     try:
         if config_changed:
             _atomic_write(paths.config, next_config)
         if env_changed:
-            _atomic_write(paths.env, next_env)
+            _atomic_write(paths.env, next_env, mode=_ENV_FILE_MODE)
     except AssistantSettingsError:
         if config_changed:
             _atomic_write(paths.config, config_content)
         if env_changed:
-            _atomic_write(paths.env, env_content)
+            _atomic_write(paths.env, env_content, mode=_ENV_FILE_MODE)
         raise
     _, refreshed_model, refreshed_data = _read_config(paths.config)
     return _status(paths, refreshed_model, refreshed_data)
+
+
+def _default_probe_factory(payload: dict[str, Any], model_id: str) -> ProbeRunner:
+    candidate = candidate_from_payload(payload)
+    if candidate is None:
+        raise ValueError("Provider, endpoint, and API key are required")
+    return ProbeRunner(candidate.base_url, model_id, api_key=candidate.api_key)
 
 
 def create_assistant_settings_router(
     require_principal: Callable[[Request], Any],
     provider_registry: ProviderRegistry | None = None,
     runtime_seam: HermesRuntimeSeam | None = None,
+    probe_factory: Callable[[dict[str, Any], str], ProbeRunner] | None = None,
 ) -> APIRouter:
     """Build authenticated assistant settings routes."""
     router = APIRouter(prefix="/api/profile/assistant", tags=["assistant-settings"])
     registry = provider_registry or PROVIDER_REGISTRY
     seam = runtime_seam or HermesRuntimeSeam()
+    probe_factory = probe_factory or _default_probe_factory
 
     def guard(request: Request) -> None:
         if require_principal(request) is None:
@@ -466,6 +495,12 @@ def create_assistant_settings_router(
     def settings_error(exc: AssistantSettingsError) -> HTTPException:
         status = 409 if isinstance(exc, StaleRevisionError) else 503
         return HTTPException(status_code=status, detail=str(exc))
+
+    def selected_model(payload: dict[str, Any]) -> dict[str, Any]:
+        model = normalize_model(payload.get("model") or payload.get("manual_model_id"))
+        if model is None:
+            raise HTTPException(status_code=400, detail="A usable model ID is required")
+        return model
 
     @router.get("")
     @router.get("/status")
@@ -523,14 +558,14 @@ def create_assistant_settings_router(
                 if config_changed:
                     _atomic_write(paths.config, next_config)
                 if env_changed:
-                    _atomic_write(paths.env, next_env)
+                    _atomic_write(paths.env, next_env, mode=_ENV_FILE_MODE)
             except AssistantSettingsError:
                 # Restore every file touched by this transaction, including a
                 # metadata migration that preceded a failed secret write.
                 if config_changed:
                     _atomic_write(paths.config, config_content)
                 if env_changed:
-                    _atomic_write(paths.env, env_content)
+                    _atomic_write(paths.env, env_content, mode=_ENV_FILE_MODE)
                 raise
             _, refreshed_model, refreshed_data = _read_config(paths.config)
             return _status(paths, refreshed_model, refreshed_data, seam)
@@ -551,18 +586,51 @@ def create_assistant_settings_router(
         guard(request)
         return registry.discover(body if isinstance(body, dict) else {})
 
+    @router.post("/probe/text")
+    def probe_text(request: Request, body: dict | None = None) -> dict[str, Any]:
+        guard(request)
+        payload = body if isinstance(body, dict) else {}
+        model = selected_model(payload)
+        try:
+            result = probe_factory(payload, model["id"]).run_text()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"outcome": result.outcome, "oracle": result.oracle, "message": result.message}
+
+    @router.post("/probe/vision")
+    def probe_vision(request: Request, body: dict | None = None) -> dict[str, Any]:
+        guard(request)
+        payload = body if isinstance(body, dict) else {}
+        model = selected_model(payload)
+        try:
+            result = probe_factory(payload, model["id"]).run_vision()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"outcome": result.outcome, "oracle": result.oracle, "message": result.message}
+
     @router.put("/configuration")
     def save_configuration(request: Request, body: dict | None = None) -> dict[str, Any]:
         guard(request)
         payload = body if isinstance(body, dict) else {}
-        model = normalize_model(payload.get("model") or payload.get("manual_model_id"))
-        if model is None:
-            raise HTTPException(status_code=400, detail="A usable model ID is required")
-        if model["capability"] == "unknown" and payload.get("unknown_ack") is not True:
-            raise HTTPException(status_code=400, detail="Unknown model capability requires acknowledgement")
+        model = selected_model(payload)
         validation = registry.validate(payload)
         if validation["outcome"] != "validated":
             raise HTTPException(status_code=422, detail=validation.get("message", "Connection validation failed"))
+        # Three proofs gate (OC14/OC15/OC16): text + causal vision are re-run
+        # server-side; the provider label never substitutes for the probes.
+        # The Hermes runtime acceptance is applied after persistence below.
+        try:
+            runner = probe_factory(payload, model["id"])
+            text = runner.run_text()
+            vision = runner.run_vision()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if text.outcome != "passed" or vision.outcome != "passed":
+            failing = "text probe" if text.outcome != "passed" else "causal vision probe"
+            raise HTTPException(
+                status_code=422,
+                detail=f"Assistant cannot be configured: the {failing} did not pass.",
+            )
         try:
             saved = _persist_provider_configuration(
                 payload,
@@ -606,12 +674,12 @@ def create_assistant_settings_router(
                 if config_changed:
                     _atomic_write(paths.config, next_config)
                 if changed:
-                    _atomic_write(paths.env, next_env)
+                    _atomic_write(paths.env, next_env, mode=_ENV_FILE_MODE)
             except AssistantSettingsError:
                 if config_changed:
                     _atomic_write(paths.config, config_content)
                 if changed:
-                    _atomic_write(paths.env, env_content)
+                    _atomic_write(paths.env, env_content, mode=_ENV_FILE_MODE)
                 raise
             _, refreshed_model, refreshed_data = _read_config(paths.config)
             return _status(paths, refreshed_model, refreshed_data, seam)
