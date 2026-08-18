@@ -2,6 +2,8 @@ import { apiFetch } from "@/api/client";
 import type {
   AssistantConnectionInput,
   AssistantDiscoveryResult,
+  AssistantProbeInput,
+  AssistantProbeResult,
   AssistantSettingsStatus,
   AssistantValidationResult,
   SaveAssistantConfigurationInput,
@@ -14,6 +16,8 @@ const CREDENTIALS = { credentials: "same-origin" as const };
  * in request payloads but never returned, stored in frontend state, or logged.
  * Saves return Active, Pending restart/reload, or Saved-not-active; the API
  * reports that state but does not control Hermes or any process lifecycle.
+ * The primary model is configured only after the text and causal-vision
+ * probes pass and the Hermes runtime accepts the saved revision.
  */
 export function getAssistantSettings(): Promise<AssistantSettingsStatus> {
   return apiFetch<AssistantSettingsStatus>("/api/profile/assistant", CREDENTIALS);
@@ -33,6 +37,22 @@ export function discoverAssistantModels(
   input: AssistantConnectionInput,
 ): Promise<AssistantDiscoveryResult> {
   return apiFetch<AssistantDiscoveryResult>("/api/profile/assistant/models/discover", {
+    method: "POST",
+    body: JSON.stringify(input),
+    ...CREDENTIALS,
+  });
+}
+
+export function runAssistantTextProbe(input: AssistantProbeInput): Promise<AssistantProbeResult> {
+  return apiFetch<AssistantProbeResult>("/api/profile/assistant/probe/text", {
+    method: "POST",
+    body: JSON.stringify(input),
+    ...CREDENTIALS,
+  });
+}
+
+export function runAssistantVisionProbe(input: AssistantProbeInput): Promise<AssistantProbeResult> {
+  return apiFetch<AssistantProbeResult>("/api/profile/assistant/probe/vision", {
     method: "POST",
     body: JSON.stringify(input),
     ...CREDENTIALS,

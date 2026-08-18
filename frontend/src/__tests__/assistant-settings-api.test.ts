@@ -3,6 +3,8 @@ import {
   clearAssistantKey,
   discoverAssistantModels,
   getAssistantSettings,
+  runAssistantTextProbe,
+  runAssistantVisionProbe,
   saveAssistantConfiguration,
   validateAssistantConnection,
 } from "@/api/assistantSettings";
@@ -84,12 +86,32 @@ describe("assistant settings API", () => {
       ...candidate,
       model: status.model_metadata,
       revision: status.revision,
-      unknown_ack: true,
     });
 
     expect(fetchMock.mock.calls[0][0]).toBe("/api/profile/assistant/models/discover");
     expect(fetchMock.mock.calls[1][0]).toBe("/api/profile/assistant/configuration");
     expect(JSON.stringify(status)).not.toContain("api_key");
+  });
+
+  it("runs text and vision probes through authenticated probe endpoints", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ outcome: "passed", oracle: "text-marker" }))
+      .mockResolvedValueOnce(jsonResponse({ outcome: "passed", oracle: "causal-vision" }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+    const input = { provider: "ollama", base_url: "http://127.0.0.1:11434", api_key: "", model: status.model_metadata };
+
+    const text = await runAssistantTextProbe(input);
+    const vision = await runAssistantVisionProbe(input);
+
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/profile/assistant/probe/text");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/profile/assistant/probe/vision");
+    expect(text.outcome).toBe("passed");
+    expect(vision.outcome).toBe("passed");
+    expect(fetchMock.mock.calls[0][1]).toEqual(
+      expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+    );
+    expect(fetchMock.mock.calls[0][1].body).toContain("gpt-5.6-luna");
   });
 
   it("clears the key with DELETE", async () => {

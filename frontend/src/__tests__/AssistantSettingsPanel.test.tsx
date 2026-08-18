@@ -6,6 +6,8 @@ import {
   clearAssistantKey,
   discoverAssistantModels,
   getAssistantSettings,
+  runAssistantTextProbe,
+  runAssistantVisionProbe,
   saveAssistantConfiguration,
   validateAssistantConnection,
 } from "@/api/assistantSettings";
@@ -17,6 +19,8 @@ vi.mock("@/api/assistantSettings", () => ({
   clearAssistantKey: vi.fn(),
   discoverAssistantModels: vi.fn(),
   getAssistantSettings: vi.fn(),
+  runAssistantTextProbe: vi.fn(),
+  runAssistantVisionProbe: vi.fn(),
   saveAssistantConfiguration: vi.fn(),
   validateAssistantConnection: vi.fn(),
 }));
@@ -25,6 +29,8 @@ const mocked = {
   clearAssistantKey: clearAssistantKey as Mock,
   discoverAssistantModels: discoverAssistantModels as Mock,
   getAssistantSettings: getAssistantSettings as Mock,
+  runAssistantTextProbe: runAssistantTextProbe as Mock,
+  runAssistantVisionProbe: runAssistantVisionProbe as Mock,
   saveAssistantConfiguration: saveAssistantConfiguration as Mock,
   validateAssistantConnection: validateAssistantConnection as Mock,
 };
@@ -69,15 +75,17 @@ describe("AssistantSettingsPanel", () => {
       provider: "opencode-go",
     });
     mocked.discoverAssistantModels.mockResolvedValue({ outcome: "discovered", models });
+    mocked.runAssistantTextProbe.mockResolvedValue({ outcome: "passed", oracle: "text-marker" });
+    mocked.runAssistantVisionProbe.mockResolvedValue({ outcome: "passed", oracle: "causal-vision" });
     mocked.saveAssistantConfiguration.mockResolvedValue(status);
     mocked.clearAssistantKey.mockResolvedValue({ ...status, key_configured: false });
   });
 
-  it("renders exactly four revisitable steps", async () => {
+  it("renders exactly six revisitable steps", async () => {
     render(<AssistantSettingsPanel auth={auth} />);
 
     expect(await screen.findByRole("heading", { name: "Proveedor" })).toBeInTheDocument();
-    for (const label of ["Proveedor", "Conexión", "Modelos", "Confirmación"]) {
+    for (const label of ["Proveedor", "Conexión", "Modelos", "Texto", "Visión", "Confirmación"]) {
       expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
     }
     await userEvent.click(screen.getByRole("button", { name: "Conexión" }));
@@ -144,7 +152,7 @@ describe("AssistantSettingsPanel", () => {
     expect(screen.getByRole("button", { name: "Siguiente" })).toBeDisabled();
   });
 
-  it("offers manual fallback, unavailable pricing, and requires unknown capability acknowledgement", async () => {
+  it("offers manual fallback and requires both probes before confirmation", async () => {
     const user = userEvent.setup();
     mocked.discoverAssistantModels.mockResolvedValue({
       outcome: "failed",
@@ -162,12 +170,61 @@ describe("AssistantSettingsPanel", () => {
     expect(screen.getByText(/No usable models/)).toBeInTheDocument();
     await user.type(screen.getByLabelText("ID de modelo manual"), "manual-model");
     await user.click(screen.getByRole("button", { name: "Usar modelo manual" }));
-    expect(screen.getByText(/Precio no disponible/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Texto" }));
+    expect(screen.getByRole("heading", { name: "Prueba de texto" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Visión" }));
+    expect(screen.getByText(/Pasá la prueba de texto/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Probar texto" }));
+    expect(await screen.findByText("Prueba de texto superada.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Visión" }));
+    await user.click(screen.getByRole("button", { name: "Probar visión" }));
+    expect(await screen.findByText("Prueba de visión superada.")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Confirmación" }));
-    expect(screen.getByRole("checkbox", { name: /acepto/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Guardar configuración" })).toBeDisabled();
-    await user.click(screen.getByRole("checkbox", { name: /acepto/i }));
+    expect(screen.getByRole("heading", { name: "Confirmación" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar configuración" })).toBeEnabled();
+  });
+
+  it("blocks confirmation until both probes pass", async () => {
+    const user = userEvent.setup();
+    mocked.runAssistantTextProbe.mockResolvedValue({
+      outcome: "not_causal",
+      oracle: "text-marker",
+      message: "La prueba de texto no pasó.",
+    });
+    render(<AssistantSettingsPanel auth={auth} />);
+    await screen.findByRole("heading", { name: "Proveedor" });
+    await user.click(screen.getByRole("button", { name: "Conexión" }));
+    await user.click(screen.getByRole("button", { name: "Validar conexión" }));
+    await user.click(screen.getByRole("button", { name: "Modelos" }));
+    await user.click(screen.getByRole("button", { name: "Descubrir modelos" }));
+    await user.click(screen.getByRole("button", { name: "Texto" }));
+    await user.click(screen.getByRole("button", { name: "Probar texto" }));
+    expect(await screen.findByText("La prueba de texto no pasó.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirmación" }));
+    expect(screen.getByText(/pruebas de texto y visión/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Guardar configuración" })).not.toBeInTheDocument();
+  });
+
+  it("walks provider → connection → models → text → vision → confirmation and saves without unknown_ack", async () => {
+    const user = userEvent.setup();
+    render(<AssistantSettingsPanel auth={auth} />);
+    await screen.findByRole("heading", { name: "Proveedor" });
+    await user.click(screen.getByRole("button", { name: "Conexión" }));
+    await user.click(screen.getByRole("button", { name: "Validar conexión" }));
+    expect(await screen.findByText("Conexión validada.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Modelos" }));
+    await user.click(screen.getByRole("button", { name: "Descubrir modelos" }));
+    expect(await screen.findByRole("combobox", { name: "Modelo descubierto" })).toHaveValue("gpt-5.6-luna");
+    await user.click(screen.getByRole("button", { name: "Texto" }));
+    await user.click(screen.getByRole("button", { name: "Probar texto" }));
+    expect(await screen.findByText("Prueba de texto superada.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Visión" }));
+    await user.click(screen.getByRole("button", { name: "Probar visión" }));
+    expect(await screen.findByText("Prueba de visión superada.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirmación" }));
+    await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
+    expect(mocked.saveAssistantConfiguration).toHaveBeenCalledTimes(1);
+    expect(mocked.saveAssistantConfiguration.mock.calls[0][0]).not.toHaveProperty("unknown_ack");
   });
 
   it.each([

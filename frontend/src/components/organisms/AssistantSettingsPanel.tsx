@@ -3,24 +3,29 @@ import {
   clearAssistantKey,
   discoverAssistantModels,
   getAssistantSettings,
+  runAssistantTextProbe,
+  runAssistantVisionProbe,
   saveAssistantConfiguration,
   validateAssistantConnection,
 } from "@/api/assistantSettings";
 import type {
   AssistantModelOption,
+  AssistantProbeResult,
   AssistantSettingsStatus,
 } from "@/api/types";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import type { LocalAuthController } from "@/components/organisms/IdeaCapturePanel";
 
-type Step = "provider" | "connection" | "models" | "confirmation";
+type Step = "provider" | "connection" | "models" | "text" | "vision" | "confirmation";
 type Validation = "idle" | "validated" | "failed";
 
 const steps: { id: Step; label: string }[] = [
   { id: "provider", label: "Proveedor" },
   { id: "connection", label: "Conexión" },
   { id: "models", label: "Modelos" },
+  { id: "text", label: "Texto" },
+  { id: "vision", label: "Visión" },
   { id: "confirmation", label: "Confirmación" },
 ];
 const providers = [
@@ -28,12 +33,17 @@ const providers = [
   ["openai", "OpenAI"],
   ["openrouter", "OpenRouter"],
   ["compatible", "OpenAI-compatible"],
+  ["ollama", "Ollama (local)"],
+  ["lm-studio", "LM Studio (local)"],
 ] as const;
 const defaultBaseUrls: Record<string, string> = {
   "opencode-go": "https://opencode.ai/zen/go/v1",
   openai: "https://api.openai.com/v1",
   openrouter: "https://openrouter.ai/api/v1",
+  ollama: "http://127.0.0.1:11434",
+  "lm-studio": "http://127.0.0.1:1234/v1",
 };
+const LOCAL_PROVIDERS = new Set(["ollama", "lm-studio"]);
 const inputClass =
   "w-full rounded-md border border-filio bg-piedra py-1.5 px-3 text-small text-pergamino " +
   "placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50";
@@ -66,7 +76,8 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
   const [selectedModel, setSelectedModel] = useState<AssistantModelOption | null>(null);
   const [manualModelId, setManualModelId] = useState("");
   const [validation, setValidation] = useState<Validation>("idle");
-  const [unknownAck, setUnknownAck] = useState(false);
+  const [textProbe, setTextProbe] = useState<AssistantProbeResult | null>(null);
+  const [visionProbe, setVisionProbe] = useState<AssistantProbeResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,6 +116,8 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
   }
   if (!status) return <p className="text-small text-sangre">{error ?? "No se pudo cargar la configuración"}</p>;
 
+  const localProvider = LOCAL_PROVIDERS.has(provider);
+
   const candidate = () => ({
     provider,
     ...(baseUrl.trim() ? { base_url: baseUrl.trim() } : {}),
@@ -118,6 +131,8 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
       const result = await validateAssistantConnection(candidate());
       if (result.outcome !== "validated") throw new Error(result.message ?? "No se pudo validar la conexión");
       setValidation("validated");
+      setTextProbe(null);
+      setVisionProbe(null);
     } catch (cause) {
       setValidation("failed");
       setError(errorText(cause, "No se pudo validar la conexión"));
@@ -137,9 +152,13 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
       }
       setModels(result.models);
       setSelectedModel(result.models[0]);
+      setTextProbe(null);
+      setVisionProbe(null);
     } catch (cause) {
       setModels([]);
       setSelectedModel(null);
+      setTextProbe(null);
+      setVisionProbe(null);
       setError(errorText(cause, "No usable models were returned"));
     } finally {
       setBusy(false);
@@ -151,11 +170,52 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
     if (!id) return;
     setSelectedModel({ id, label: id, capability: "unknown", pricing: null });
     setModels([]);
+    setTextProbe(null);
+    setVisionProbe(null);
     setError(null);
   };
 
+  const probePayload = () => ({
+    ...candidate(),
+    ...(selectedModel ? { model: selectedModel } : {}),
+  });
+
+  const runTextProbe = async () => {
+    if (!selectedModel || validation !== "validated") return;
+    setBusy(true);
+    setError(null);
+    try {
+      setTextProbe(await runAssistantTextProbe(probePayload()));
+    } catch (cause) {
+      setTextProbe({
+        outcome: "provider_failure",
+        oracle: "text-marker",
+        message: errorText(cause, "No se pudo probar el modelo"),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runVisionProbe = async () => {
+    if (!selectedModel || textProbe?.outcome !== "passed") return;
+    setBusy(true);
+    setError(null);
+    try {
+      setVisionProbe(await runAssistantVisionProbe(probePayload()));
+    } catch (cause) {
+      setVisionProbe({
+        outcome: "provider_failure",
+        oracle: "causal-vision",
+        message: errorText(cause, "No se pudo probar la visión"),
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const save = async () => {
-    if (!selectedModel || validation !== "validated" || (selectedModel.capability === "unknown" && !unknownAck)) return;
+    if (!selectedModel || validation !== "validated" || textProbe?.outcome !== "passed" || visionProbe?.outcome !== "passed") return;
     setBusy(true);
     setError(null);
     try {
@@ -163,7 +223,6 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
         ...candidate(),
         model: selectedModel,
         revision: status.revision,
-        unknown_ack: unknownAck,
       });
       setStatus(next);
       setSelectedModel(next.model_metadata);
@@ -191,8 +250,16 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
   };
 
   const goTo = (next: Step) => {
-    if (next === "confirmation" && validation !== "validated") {
-      setError("Validá la conexión antes de confirmar");
+    if (next === "text" && validation !== "validated") {
+      setError("Validá la conexión antes de probar el modelo");
+      return;
+    }
+    if (next === "vision" && textProbe?.outcome !== "passed") {
+      setError("Pasá la prueba de texto antes de probar la visión");
+      return;
+    }
+    if (next === "confirmation" && (validation !== "validated" || textProbe?.outcome !== "passed" || visionProbe?.outcome !== "passed")) {
+      setError("Completá la conexión y las pruebas de texto y visión antes de confirmar");
       return;
     }
     setStep(next);
@@ -211,13 +278,15 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
       </div>
       <p className="mt-3 text-small text-tinta-desvaida">Estado: <strong>{stateLabel(status.runtime_state)}</strong></p>
       <div className="mt-5 space-y-4">
-        {step === "provider" && <section><h4 className="font-heading text-body text-pergamino">Proveedor</h4><label className={labelClass} htmlFor="assistant-provider">Elegí un proveedor</label><select id="assistant-provider" className={inputClass} value={provider} onChange={(event) => { const nextProvider = event.target.value; setProvider(nextProvider); setBaseUrl(defaultBaseUrls[nextProvider] ?? (provider === "compatible" ? baseUrl : "")); setValidation("idle"); }} >{providers.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select><p className="mt-2 text-small text-tinta-desvaida">OpenCode Go es la opción recomendada. Los endpoints compatibles requieren una URL propia.</p></section>}
-        {step === "connection" && <section><h4 className="font-heading text-body text-pergamino">Conexión</h4><label className={labelClass} htmlFor="assistant-base-url">Endpoint</label><input id="assistant-base-url" className={inputClass} value={baseUrl} onChange={(event) => { setBaseUrl(event.target.value); setValidation("idle"); }} placeholder="https://..." /><label className={`${labelClass} mt-3`} htmlFor="assistant-api-key">Clave API</label><input ref={apiKeyInputRef} id="assistant-api-key" type="password" autoComplete="new-password" className={inputClass} onChange={(event) => { apiKeyValueRef.current = event.target.value; setValidation("idle"); }} placeholder={status.key_configured ? "Ingresá una clave para validar" : "Ingresá tu clave"} /><div className="mt-3 flex flex-wrap gap-2"><Button onClick={() => void validate()} disabled={busy}>{busy ? "Validando…" : "Validar conexión"}</Button>{status.key_configured && <Button variant="secondary" onClick={() => void clear()} disabled={busy}>Eliminar clave</Button>}</div>{validation === "validated" && <p className="mt-2 text-small text-musgo">Conexión validada.</p>}</section>}
-        {step === "models" && <section><h4 className="font-heading text-body text-pergamino">Modelos</h4>{validation !== "validated" ? <p className="text-small text-tinta-desvaida">Validá la conexión para habilitar el descubrimiento.</p> : <><Button onClick={() => void discover()} disabled={busy}>{busy ? "Buscando…" : "Descubrir modelos"}</Button>{error && <p className="mt-2 text-small text-sangre">{error}</p>}{models.length > 0 && <select aria-label="Modelo descubierto" className={`${inputClass} mt-3`} value={selectedModel?.id ?? ""} onChange={(event) => setSelectedModel(models.find((model) => model.id === event.target.value) ?? null)}>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>}<label className={`${labelClass} mt-3`} htmlFor="assistant-manual-model">ID de modelo manual</label><input id="assistant-manual-model" className={inputClass} value={manualModelId} onChange={(event) => setManualModelId(event.target.value)} placeholder="model-id" /><Button className="mt-2" variant="secondary" onClick={useManualModel}>Usar modelo manual</Button>{selectedModel && <p className="mt-3 text-small text-tinta-desvaida">{modelDescription(selectedModel)} · {selectedModel.pricing ? "Precio informado" : "Precio no disponible"}</p>}</>}</section>}
-        {step === "confirmation" && <section><h4 className="font-heading text-body text-pergamino">Confirmación</h4><p className="text-small text-tinta-desvaida">{provider} · {selectedModel?.label ?? "Sin modelo"}</p><p className="mt-2 text-small text-tinta-desvaida">{modelDescription(selectedModel)} · {selectedModel?.pricing ? "Precio informado" : "Precio no disponible"}</p>{selectedModel?.capability === "unknown" && <label className="mt-3 flex gap-2 text-small text-tinta-desvaida"><input type="checkbox" checked={unknownAck} onChange={(event) => setUnknownAck(event.target.checked)} /> Acepto continuar con capacidad desconocida</label>}<Button className="mt-4" onClick={() => void save()} disabled={busy || !selectedModel || (selectedModel.capability === "unknown" && !unknownAck)}>{busy ? "Guardando…" : "Guardar configuración"}</Button></section>}
+        {step === "provider" && <section><h4 className="font-heading text-body text-pergamino">Proveedor</h4><label className={labelClass} htmlFor="assistant-provider">Elegí un proveedor</label><select id="assistant-provider" className={inputClass} value={provider} onChange={(event) => { const nextProvider = event.target.value; setProvider(nextProvider); setBaseUrl(defaultBaseUrls[nextProvider] ?? (provider === "compatible" ? baseUrl : "")); setValidation("idle"); setTextProbe(null); setVisionProbe(null); }} >{providers.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select><p className="mt-2 text-small text-tinta-desvaida">OpenCode Go es la opción recomendada. Ollama y LM Studio son locales y no requieren clave. Los endpoints compatibles requieren una URL propia.</p></section>}
+        {step === "connection" && <section><h4 className="font-heading text-body text-pergamino">Conexión</h4><label className={labelClass} htmlFor="assistant-base-url">Endpoint</label><input id="assistant-base-url" className={inputClass} value={baseUrl} onChange={(event) => { setBaseUrl(event.target.value); setValidation("idle"); setTextProbe(null); setVisionProbe(null); }} placeholder="https://..." />{!localProvider && <><label className={`${labelClass} mt-3`} htmlFor="assistant-api-key">Clave API</label><input ref={apiKeyInputRef} id="assistant-api-key" type="password" autoComplete="new-password" className={inputClass} onChange={(event) => { apiKeyValueRef.current = event.target.value; setValidation("idle"); setTextProbe(null); setVisionProbe(null); }} placeholder={status.key_configured ? "Ingresá una clave para validar" : "Ingresá tu clave"} /></>}<div className="mt-3 flex flex-wrap gap-2"><Button onClick={() => void validate()} disabled={busy}>{busy ? "Validando…" : "Validar conexión"}</Button>{status.key_configured && <Button variant="secondary" onClick={() => void clear()} disabled={busy}>Eliminar clave</Button>}</div>{validation === "validated" && <p className="mt-2 text-small text-musgo">Conexión validada.</p>}</section>}
+        {step === "models" && <section><h4 className="font-heading text-body text-pergamino">Modelos</h4>{validation !== "validated" ? <p className="text-small text-tinta-desvaida">Validá la conexión para habilitar el descubrimiento.</p> : <><Button onClick={() => void discover()} disabled={busy}>{busy ? "Buscando…" : "Descubrir modelos"}</Button>{error && <p className="mt-2 text-small text-sangre">{error}</p>}{models.length > 0 && <select aria-label="Modelo descubierto" className={`${inputClass} mt-3`} value={selectedModel?.id ?? ""} onChange={(event) => { setSelectedModel(models.find((model) => model.id === event.target.value) ?? null); setTextProbe(null); setVisionProbe(null); }}>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>}<label className={`${labelClass} mt-3`} htmlFor="assistant-manual-model">ID de modelo manual</label><input id="assistant-manual-model" className={inputClass} value={manualModelId} onChange={(event) => setManualModelId(event.target.value)} placeholder="model-id" /><Button className="mt-2" variant="secondary" onClick={useManualModel}>Usar modelo manual</Button>{selectedModel && <p className="mt-3 text-small text-tinta-desvaida">{modelDescription(selectedModel)} · {selectedModel.pricing ? "Precio informado" : "Precio no disponible"}</p>}</>}</section>}
+        {step === "text" && <section><h4 className="font-heading text-body text-pergamino">Prueba de texto</h4><p className="mt-1 text-small text-tinta-desvaida">El modelo debe superar la prueba de texto antes de continuar.</p><Button onClick={() => void runTextProbe()} disabled={busy || !selectedModel || validation !== "validated"}>{busy ? "Probando…" : "Probar texto"}</Button>{textProbe && <p aria-live="polite" className={`mt-2 text-small ${textProbe.outcome === "passed" ? "text-musgo" : "text-sangre"}`}>{textProbe.outcome === "passed" ? "Prueba de texto superada." : textProbe.message ?? "La prueba de texto no pasó."}</p>}</section>}
+        {step === "vision" && <section><h4 className="font-heading text-body text-pergamino">Prueba de visión</h4><p className="mt-1 text-small text-tinta-desvaida">La prueba causal de visión verifica que el modelo realmente ve la imagen, no que la memorizó.</p><Button onClick={() => void runVisionProbe()} disabled={busy || textProbe?.outcome !== "passed"}>{busy ? "Probando…" : "Probar visión"}</Button>{visionProbe && <p aria-live="polite" className={`mt-2 text-small ${visionProbe.outcome === "passed" ? "text-musgo" : "text-sangre"}`}>{visionProbe.outcome === "passed" ? "Prueba de visión superada." : visionProbe.message ?? "La prueba de visión no pasó."}</p>}</section>}
+        {step === "confirmation" && <section><h4 className="font-heading text-body text-pergamino">Confirmación</h4><p className="text-small text-tinta-desvaida">{provider} · {selectedModel?.label ?? "Sin modelo"}</p><p className="mt-2 text-small text-musgo">Prueba de texto: superada · Prueba de visión: superada</p><p className="mt-1 text-small text-tinta-desvaida">Al confirmar, el backend vuelve a ejecutar ambas pruebas antes de persistir.</p><Button className="mt-4" onClick={() => void save()} disabled={busy || !selectedModel || textProbe?.outcome !== "passed" || visionProbe?.outcome !== "passed"}>{busy ? "Guardando…" : "Guardar configuración"}</Button></section>}
         {error && step !== "models" && <p className="text-small text-sangre">{error}</p>}
       </div>
-      <div className="mt-5 flex gap-2"><Button variant="secondary" onClick={() => move(-1)} disabled={step === "provider"}>Atrás</Button><Button variant="secondary" onClick={() => move(1)} disabled={step === "confirmation" || (step === "connection" && validation !== "validated")}>Siguiente</Button></div>
+      <div className="mt-5 flex gap-2"><Button variant="secondary" onClick={() => move(-1)} disabled={step === "provider"}>Atrás</Button><Button variant="secondary" onClick={() => move(1)} disabled={step === "confirmation" || (step === "connection" && validation !== "validated") || (step === "text" && validation !== "validated") || (step === "vision" && textProbe?.outcome !== "passed")}>Siguiente</Button></div>
     </div>
   );
 }

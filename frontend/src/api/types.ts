@@ -253,13 +253,25 @@ export interface AssistantValidationResult {
 export interface AssistantDiscoveryResult extends Omit<AssistantValidationResult, "outcome"> {
   outcome: "discovered" | "failed";
   models: AssistantModelOption[];
+  loaded_models?: string[];
+  jit_load_allowed?: boolean;
+}
+
+export interface AssistantProbeResult {
+  outcome: "passed" | "malformed" | "timeout" | "provider_failure" | "not_causal";
+  oracle: string;
+  message?: string;
+}
+
+export interface AssistantProbeInput extends AssistantConnectionInput {
+  model?: AssistantModelOption;
+  manual_model_id?: string;
 }
 
 export interface SaveAssistantConfigurationInput extends AssistantConnectionInput {
   model?: AssistantModelOption;
   manual_model_id?: string;
   revision?: number;
-  unknown_ack?: boolean;
 }
 
 // ---------------------------------------------------------------------------
