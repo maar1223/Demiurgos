@@ -1,21 +1,49 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
 import WikiHome from "@/pages/WikiHome";
 import WikiWorld from "@/pages/WikiWorld";
 import WikiEditor from "@/pages/WikiEditor";
 import ProfilePage from "@/pages/ProfilePage";
 import ToolWorkshop from "@/pages/ToolWorkshop";
 import WorldWorkshop from "@/pages/WorldWorkshop";
+import Onboarding from "@/pages/Onboarding";
+import ConfigurationCenter from "@/pages/ConfigurationCenter";
 import NotFound from "@/pages/NotFound";
+import { useOnboardingGate } from "@/hooks/useOnboardingGate";
 
 /** Lazy-loaded entity page — code-split because it's only used on entity routes */
 const EntityPage = lazy(() => import("@/pages/EntityPage"));
+
+/**
+ * First-run gate (ONB-1.1): while onboarding is pending AND no world exists,
+ * every Core surface redirects to `/onboarding`. Existing installations with
+ * a world are never forced back into onboarding.
+ */
+function FirstRunGate() {
+  const { loading, needsOnboarding } = useOnboardingGate();
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-cripta">
+        <span className="text-tinta-desvaida">Comprobando configuración…</span>
+      </div>
+    );
+  }
+
+  if (needsOnboarding) {
+    return <Navigate to="/onboarding" replace />;
+  }
+
+  return <Outlet />;
+}
 
 /**
  * Root application component with routing.
  *
  * Routes:
  * - `/` → redirect to `/wiki`
+ * - `/onboarding` → first-run onboarding (outside the gate)
+ * - `/centro-configuracion` → permanent Configuration Center (OC12)
  * - `/wiki` → Wiki Home page
  * - `/taller-herramientas` → ToolWorkshop (Taller de Herramientas shell)
  * - `/taller-mundo` → WorldWorkshop (Taller de Mundo shell)
@@ -35,29 +63,32 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/wiki" replace />} />
-        <Route path="/wiki" element={<WikiHome />} />
-        <Route path="/taller-herramientas" element={<ToolWorkshop />} />
-        <Route path="/taller-mundo" element={<WorldWorkshop />} />
-        <Route path="/perfil" element={<ProfilePage />} />
-        <Route
-          path="/wiki/:mundo/entity/*"
-          element={
-            <Suspense
-              fallback={
-                <div className="flex min-h-screen items-center justify-center bg-cripta">
-                  <span className="text-tinta-desvaida">Cargando entidad…</span>
-                </div>
-              }
-            >
-              <EntityPage />
-            </Suspense>
-          }
-        />
-        <Route path="/wiki/:mundo" element={<WikiWorld />} />
-        <Route
-          path="/wiki/:mundo/:section/*"
-          element={<WikiEditor />}
-        />
+        <Route path="/onboarding" element={<Onboarding />} />
+        <Route path="/centro-configuracion" element={<ConfigurationCenter />} />
+
+        <Route element={<FirstRunGate />}>
+          <Route path="/wiki" element={<WikiHome />} />
+          <Route path="/taller-herramientas" element={<ToolWorkshop />} />
+          <Route path="/taller-mundo" element={<WorldWorkshop />} />
+          <Route path="/perfil" element={<ProfilePage />} />
+          <Route
+            path="/wiki/:mundo/entity/*"
+            element={
+              <Suspense
+                fallback={
+                  <div className="flex min-h-screen items-center justify-center bg-cripta">
+                    <span className="text-tinta-desvaida">Cargando entidad…</span>
+                  </div>
+                }
+              >
+                <EntityPage />
+              </Suspense>
+            }
+          />
+          <Route path="/wiki/:mundo" element={<WikiWorld />} />
+          <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
+        </Route>
+
         <Route path="*" element={<NotFound />} />
       </Routes>
     </BrowserRouter>
