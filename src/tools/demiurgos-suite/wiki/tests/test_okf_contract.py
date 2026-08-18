@@ -30,6 +30,13 @@ from wiki.okf_contract import (  # noqa: E402
     minimums_for,
     validate,
 )
+from wiki.world_authority import (  # noqa: E402
+    CANONICAL_DIRS,
+    OC8_LORE_SKELETON,
+    WorldResultKind,
+    create_world,
+    normalize_world_name,
+)
 
 
 def _personaje_missing_desire() -> str:
@@ -256,6 +263,147 @@ class TestGraphIndexerIntegration(unittest.TestCase):
         if validation is not None:
             codes = {issue.code for issue in validation.issues}
             self.assertIn("ambiguous-reference", codes)
+
+
+class TestWorldNameValidation(unittest.TestCase):
+    """ONB-1.2 — safe world names; unsafe names explain without mutation."""
+
+    def _mundos(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name) / "mundos"
+
+    def test_valid_names_normalize(self) -> None:
+        self.assertEqual(normalize_world_name("  mi-mundo  "), "mi-mundo")
+        self.assertEqual(normalize_world_name("Mi Mundo"), "Mi Mundo")
+        self.assertEqual(normalize_world_name("a1_b2"), "a1_b2")
+
+    def test_unsafe_names_are_rejected(self) -> None:
+        for raw in ["", "  ", "..", ".", "...", "a/b", "a\\b", "a b/c",
+                    "/abs", "sub/../../x", ".hidden", "_privado", "Ideas"]:
+            self.assertIsNone(normalize_world_name(raw), raw)
+
+    def test_non_string_name_is_rejected(self) -> None:
+        self.assertIsNone(normalize_world_name(None))
+        self.assertIsNone(normalize_world_name(42))
+
+    def test_invalid_name_returns_result_without_mutation(self) -> None:
+        mundos = self._mundos()
+        result = create_world(mundos, "../escape")
+        self.assertEqual(result.kind, WorldResultKind.INVALID_NAME)
+        self.assertFalse(mundos.exists())
+
+
+class TestWorldCreateIdempotencyCollision(unittest.TestCase):
+    """ONB-1.2 — repeats are harmless; differing collisions rejected."""
+
+    def _mundos(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name) / "mundos"
+
+    def test_create_produces_canonical_tree(self) -> None:
+        mundos = self._mundos()
+        result = create_world(mundos, "tierra-media")
+        self.assertEqual(result.kind, WorldResultKind.CREATED)
+        root = result.path
+        self.assertIsNotNone(root)
+        for sub in CANONICAL_DIRS:
+            self.assertTrue((root / sub).is_dir(), sub)
+        self.assertEqual(sorted(p.name for p in root.iterdir()), sorted(CANONICAL_DIRS))
+
+    def test_repeat_same_request_is_idempotent(self) -> None:
+        mundos = self._mundos()
+        first = create_world(mundos, "tierra-media", lore_skeleton=True)
+        self.assertEqual(first.kind, WorldResultKind.CREATED)
+        second = create_world(mundos, "tierra-media", lore_skeleton=True)
+        self.assertEqual(second.kind, WorldResultKind.ALREADY_EXISTS)
+        # No extra mutation on the repeat.
+        self.assertEqual(sorted(p.name for p in first.path.iterdir()), sorted(CANONICAL_DIRS))
+
+    def test_collision_with_author_tree_rejected_without_mutation(self) -> None:
+        mundos = self._mundos()
+        existing = mundos / "autor"
+        existing.mkdir(parents=True)
+        (existing / "lore").mkdir()
+        (existing / "lore" / "mi_canon.md").write_text("# X\n", encoding="utf-8")
+        result = create_world(mundos, "autor")
+        self.assertEqual(result.kind, WorldResultKind.COLLISION)
+        self.assertTrue((existing / "lore" / "mi_canon.md").exists(),
+                        "Author-owned tree must never be mutated")
+
+    def test_collision_with_legacy_uppercase_folders_rejected(self) -> None:
+        mundos = self._mundos()
+        legacy = mundos / "legacy"
+        legacy.mkdir(parents=True)
+        (legacy / "Lore").mkdir()
+        result = create_world(mundos, "legacy")
+        self.assertEqual(result.kind, WorldResultKind.COLLISION)
+        self.assertTrue((legacy / "Lore").is_dir(), "legacy folders never auto-renamed")
+
+    def test_collision_with_plain_file_rejected(self) -> None:
+        mundos = self._mundos()
+        mundos.mkdir(parents=True)
+        (mundos / "archivo").write_text("x", encoding="utf-8")
+        result = create_world(mundos, "archivo")
+        self.assertEqual(result.kind, WorldResultKind.COLLISION)
+
+
+class TestWorldCanonicalFolderSet(unittest.TestCase):
+    """ONB-1.5 — OC8 skeleton exactly; never system/transversal folders."""
+
+    def _mundos(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name) / "mundos"
+
+    def test_optional_skeleton_creates_exactly_oc8_folders(self) -> None:
+        mundos = self._mundos()
+        result = create_world(mundos, "nuevo", lore_skeleton=True)
+        self.assertEqual(result.kind, WorldResultKind.CREATED)
+        lore = result.path / "lore"
+        self.assertEqual(
+            sorted(p.name for p in lore.iterdir()),
+            sorted(OC8_LORE_SKELETON),
+        )
+        # Folders must be EMPTY — no invented content.
+        for sub in OC8_LORE_SKELETON:
+            self.assertEqual(list((lore / sub).iterdir()), [], sub)
+
+    def test_system_and_transversal_folders_never_created(self) -> None:
+        mundos = self._mundos()
+        result = create_world(mundos, "limpio", lore_skeleton=True)
+        self.assertEqual(result.kind, WorldResultKind.CREATED)
+        for forbidden in ("_context", ".history", ".papelera",
+                          "relaciones", "canon", "conflictos", "propuestas"):
+            self.assertFalse((result.path / forbidden).exists(), forbidden)
+
+    def test_no_skeleton_means_only_canonical_dirs(self) -> None:
+        mundos = self._mundos()
+        result = create_world(mundos, "basico")
+        self.assertEqual(result.kind, WorldResultKind.CREATED)
+        lore = result.path / "lore"
+        self.assertEqual(list(lore.iterdir()), [])
+
+
+class TestWorldTraversalSymlink(unittest.TestCase):
+    """ONB-1.5 — traversal/symlink escapes are rejected without mutation."""
+
+    def _mundos(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        return Path(tmp.name) / "mundos"
+
+    def test_symlink_world_escape_rejected(self) -> None:
+        mundos = self._mundos()
+        mundos.mkdir(parents=True)
+        outside = Path(mundos).parent / "outside"
+        outside.mkdir()
+        (mundos / "link").symlink_to(outside, target_is_directory=True)
+        result = create_world(mundos, "link")
+        self.assertEqual(result.kind, WorldResultKind.COLLISION)
+        self.assertEqual(sorted(p.name for p in outside.iterdir()), [],
+                         "symlink target must not be mutated")
 
 
 if __name__ == "__main__":
