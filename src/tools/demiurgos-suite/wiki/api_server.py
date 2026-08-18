@@ -67,7 +67,19 @@ from guided_character_domain import (
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
-from demiurgos_language import resolve_ui_language
+from demiurgos_language import (
+    LocaleSettings,
+    normalize_locale,
+    resolve_ui_language,
+)
+from local_state import LocalState
+from onboarding import (
+    commit_step0 as _commit_step0,
+    commit_world_created as _commit_world_created,
+    status_from as _onboarding_status_from,
+)
+from readiness import probe_local_storage
+from world_authority import WorldResultKind, create_world as _create_world
 from methodology_library import (
     AlreadyPublishedError,
     MethodologyLibrary,
@@ -90,9 +102,36 @@ logger = logging.getLogger("demiurgos-api")
 
 app = FastAPI(title="Demiurgos Wiki API")
 
+
+def _cors_config() -> dict:
+    """Env-based CORS allowlist (ONB-1.9).
+
+    Decision: origins come from ``DEMIURGOS_CORS_ORIGINS`` (comma-separated).
+    The default is the local development origin set. Credentials (session
+    cookies) are enabled ONLY when the allowlist is explicit — a wildcard
+    origin never carries credentials, so secret/credential-bearing requests
+    can never be made from arbitrary origins. Existing same-origin dev usage
+    (Vite proxy) is unaffected.
+    """
+    raw = os.environ.get("DEMIURGOS_CORS_ORIGINS", "").strip()
+    if not raw:
+        origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+        allow_credentials = True
+    else:
+        origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+        if "*" in origins:
+            origins = ["*"]
+            allow_credentials = False
+        else:
+            allow_credentials = True
+    return {"origins": origins, "allow_credentials": allow_credentials}
+
+
+_cors = _cors_config()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors["origins"],
+    allow_credentials=_cors["allow_credentials"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -102,6 +141,22 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[4]  # Demiurgos/ (wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> root)
 MUNDOS_DIR = PROJECT_ROOT / "mundos"
+
+
+_LOCAL_STATE: LocalState | None = None
+
+
+def _local_state() -> LocalState:
+    """Lazily-initialized authoritative local state registry (ONB-1.3).
+
+    Lives under ``<project>/data/local-state.json`` and is runtime-authoritative:
+    Engram is recovery/context only and never governs readiness. The registry
+    never touches ``.demiurgos-estado.json`` (narrative arc state).
+    """
+    global _LOCAL_STATE
+    if _LOCAL_STATE is None:
+        _LOCAL_STATE = LocalState(PROJECT_ROOT / "data" / "local-state.json")
+    return _LOCAL_STATE
 
 
 def _list_worlds() -> list[dict]:
@@ -179,6 +234,129 @@ def get_app_config():
     project ``.env`` or the environment); never secrets or paths.
     """
     return {"language": _configured_language()}
+
+
+# ---------------------------------------------------------------------------
+# Onboarding / Configuration Center (Slice 1 — Foundation)
+#
+# Read routes are non-sensitive (they expose onboarding progress and locale,
+# never secrets or world content). Every WRITE is gated on the authenticated
+# principal and fails closed (401) on unauthenticated access.
+# ---------------------------------------------------------------------------
+
+
+class OnboardingStep0Request(BaseModel):
+    ui: str
+    conversation: str
+    content: str
+    region: str | None = None
+    region_explicit: bool = False
+    iana_timezone: str = "UTC"
+
+
+class WorldCreateRequest(BaseModel):
+    name: str
+    lore_skeleton: bool = False
+
+
+def _world_names() -> list[str]:
+    return [world["name"] for world in _list_worlds()]
+
+
+@app.get("/api/onboarding/status")
+def onboarding_status():
+    """First-run gate read: completed?, current step, pending/remote pending."""
+    return _onboarding_status_from(_local_state().snapshot(), world_names=_world_names())
+
+
+@app.get("/api/locale")
+def get_locale():
+    """Current G7/OC3 locale (independent UI/conversation/content languages,
+    region override, IANA timezone). Safe default when unset."""
+    locale = _local_state().snapshot().get("locale")
+    if not isinstance(locale, dict):
+        return LocaleSettings().to_dict()
+    return locale
+
+
+@app.post("/api/onboarding/step0")
+def onboarding_step0(body: OnboardingStep0Request, request: Request):
+    """Persist step 0 locale. Gated: unauthenticated access fails closed."""
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    registry = _local_state()
+    try:
+        next_state = _commit_step0(
+            registry.snapshot(),
+            body.model_dump(),
+            normalize_locale=normalize_locale,
+        )
+    except ValueError as exc:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+    registry.atomic_commit(next_state)
+    return _onboarding_status_from(registry.snapshot(), world_names=_world_names())
+
+
+@app.post("/api/worlds")
+def create_world(body: WorldCreateRequest, request: Request):
+    """Create a canonical new world (lowercase tree + optional OC8 skeleton).
+
+    Gated write; idempotent repeats are harmless; collisions and unsafe names
+    are rejected without mutation.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    result = _create_world(MUNDOS_DIR, body.name, lore_skeleton=body.lore_skeleton)
+    if result.kind == WorldResultKind.CREATED:
+        registry = _local_state()
+        registry.atomic_commit(_commit_world_created(registry.snapshot()))
+        return JSONResponse(status_code=201, content={
+            "kind": result.kind.value,
+            "name": result.name,
+            "path": str(result.path) if result.path else None,
+            "message": result.message,
+        })
+    if result.kind == WorldResultKind.ALREADY_EXISTS:
+        return JSONResponse(status_code=200, content={
+            "kind": result.kind.value,
+            "name": result.name,
+            "path": str(result.path) if result.path else None,
+            "message": result.message,
+        })
+    if result.kind == WorldResultKind.INVALID_NAME:
+        return JSONResponse(status_code=400, content={
+            "detail": result.message, "code": "invalid_name",
+        })
+    if result.kind == WorldResultKind.COLLISION:
+        return JSONResponse(status_code=409, content={
+            "detail": result.message, "code": "collision",
+        })
+    return JSONResponse(status_code=500, content={
+        "detail": result.message, "code": "io_error",
+    })
+
+
+@app.get("/api/onboarding/readiness")
+def onboarding_readiness():
+    """Essential local readiness (OC11/OC21). Derived runtime truth from the
+    local-storage probe and the local registry; never overstates remote
+    capabilities."""
+    probe = probe_local_storage(PROJECT_ROOT)
+    state = _local_state().snapshot()
+    caps = state.get("capabilities") or {}
+    worlds = _list_worlds()
+    cards = {
+        "identity": caps.get("identity", "pending"),
+        "assistant": caps.get("assistant", "pending"),
+        "telegram": caps.get("telegram", "pending"),
+        "backup": caps.get("backup", "pending"),
+        "world": "configured" if worlds else "pending",
+        "locale": "configured" if state.get("locale") else "pending",
+        "offline": "configured" if probe["ok"] else "error",
+    }
+    return {"local_editor": probe, "cards": cards}
 
 
 # ---------------------------------------------------------------------------

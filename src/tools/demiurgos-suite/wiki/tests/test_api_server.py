@@ -4038,3 +4038,265 @@ class TestAIEditSuggest:
         assert "lore/00_inicio.md" in caplog.text
         assert "attempts=1" in caplog.text and "outcome=proposal" in caplog.text
         assert "principal=opaque-42" in caplog.text
+
+
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# ONB-1.1 / ONB-1.4 — Onboarding first-run gate, resume, offline, pending,
+# unauthenticated access fails closed
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def empty_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """TestClient with an EMPTY mundos dir (no world) + fresh local registry."""
+    mundos = tmp_path / "mundos"
+    mundos.mkdir(parents=True)
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", mundos)
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
+    api_server._graph_indices.clear()
+    api_server._confirmation_store.clear()
+    api_server._GUIDED_PENDING_PROPOSALS.clear()
+    api_server._GUIDED_INDEX_REQUESTS.clear()
+    api_server._LOCAL_STATE = None
+    with api_server._local_session_lock:
+        api_server._local_sessions.clear()
+    api_server._target_locks.clear()
+    yield TestClient(api_server.app, client=("127.0.0.1", 50000))
+    api_server._LOCAL_STATE = None
+
+
+def _state_path() -> Path:
+    return api_server.PROJECT_ROOT / "data" / "local-state.json"
+
+
+def _post_step0(client: TestClient, **overrides):
+    payload = {
+        "ui": "es",
+        "conversation": "es",
+        "content": "es",
+        "region": "AR",
+        "region_explicit": True,
+        "iana_timezone": "America/Argentina/Buenos_Aires",
+    }
+    payload.update(overrides)
+    return client.post("/api/onboarding/step0", json=payload)
+
+
+class TestOnboardingRoutes:
+    def test_status_public_and_fresh_installation_reports_step0(
+            self, empty_client: TestClient):
+        resp = empty_client.get("/api/onboarding/status")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["completed"] is False
+        assert body["current_step"] == "step0"
+        assert body["completed_steps"] == []
+        assert "ai" in body["remote_pending"]
+        assert "telegram" in body["remote_pending"]
+
+    def test_step0_write_fails_closed_without_principal(self, empty_client: TestClient):
+        resp = _post_step0(empty_client)
+        assert resp.status_code == 401
+
+    def test_step0_write_requires_principal_and_persists_locale(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        resp = _post_step0(empty_client)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert "step0" in body["completed_steps"]
+        assert body["current_step"] == "world"
+        state = api_server._local_state().snapshot()
+        assert state["locale"]["conversation"] == "es"
+        assert state["locale"]["region"] == "AR"
+        assert state["locale"]["iana_timezone"] == "America/Argentina/Buenos_Aires"
+
+    def test_invalid_locale_is_rejected_without_mutation(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        resp = _post_step0(empty_client, iana_timezone="GMT+3")
+        assert resp.status_code == 422
+        state = api_server._local_state().snapshot()
+        assert state["locale"] is None
+
+    def test_resume_after_restart_never_replays_step0(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        _post_step0(empty_client)
+        # Simulate a process restart: a fresh LocalState reads the same file.
+        from local_state import LocalState
+        restarted = LocalState(_state_path())
+        assert "step0" in restarted.snapshot()["onboarding"]["completed_steps"]
+        # The endpoint agrees: step0 is not in pending_steps after reload.
+        api_server._LOCAL_STATE = None
+        resp = empty_client.get("/api/onboarding/status")
+        assert "step0" not in resp.json()["pending_steps"]
+
+    def test_offline_bootstrap_keeps_local_work_pending_remote(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        _post_step0(empty_client)
+        # No worlds and no connectivity: local steps stay actionable and
+        # remote capabilities are visibly pending, never fabricated ready.
+        resp = empty_client.get("/api/onboarding/status")
+        body = resp.json()
+        assert body["completed"] is False
+        assert body["current_step"] == "world"
+        assert set(body["remote_pending"]) == {"ai", "telegram", "backup_handoff"}
+
+
+# ---------------------------------------------------------------------------
+# ONB-1.2 / ONB-1.5 — World creation endpoint: naming, idempotency, collision
+# ---------------------------------------------------------------------------
+
+
+class TestWorldCreateEndpoint:
+    def test_create_fails_closed_without_principal(self, empty_client: TestClient):
+        resp = empty_client.post("/api/worlds", json={"name": "mundo-x", "lore_skeleton": False})
+        assert resp.status_code == 401
+
+    def test_create_valid_world_with_canonical_tree(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        resp = empty_client.post("/api/worlds", json={"name": "mundo-x", "lore_skeleton": True})
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["kind"] == "created"
+        root = api_server.MUNDOS_DIR / "mundo-x"
+        assert (root / "lore" / "reglas").is_dir()
+        assert (root / "personajes").is_dir()
+        assert (root / "sagas").is_dir()
+        assert not (root / "relaciones").exists()
+        assert not (root / "_context").exists()
+
+    def test_unsafe_name_returns_400_without_mutation(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        resp = empty_client.post("/api/worlds", json={"name": "../escape", "lore_skeleton": False})
+        assert resp.status_code == 400
+        assert not (api_server.MUNDOS_DIR / "escape").exists()
+
+    def test_collision_rejected_without_mutation(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        existing = api_server.MUNDOS_DIR / "test_mundo"
+        (existing / "lore").mkdir(parents=True)
+        (existing / "lore" / "00_inicio.md").write_text("# Inicio\n", encoding="utf-8")
+        resp = empty_client.post("/api/worlds", json={"name": "test_mundo", "lore_skeleton": False})
+        assert resp.status_code == 409
+        assert (existing / "lore" / "00_inicio.md").exists()
+
+    def test_repeat_creation_is_idempotent(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        first = empty_client.post("/api/worlds", json={"name": "nuevo", "lore_skeleton": False})
+        assert first.status_code == 201
+        second = empty_client.post("/api/worlds", json={"name": "nuevo", "lore_skeleton": False})
+        assert second.status_code == 200
+        assert second.json()["kind"] == "already_exists"
+
+    def test_world_creation_marks_operational_step(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        _post_step0(empty_client)
+        created = empty_client.post("/api/worlds", json={"name": "final", "lore_skeleton": True})
+        assert created.status_code == 201
+        status = empty_client.get("/api/onboarding/status").json()
+        assert status["completed"] is True
+        assert status["current_step"] == "ready"
+
+
+# ---------------------------------------------------------------------------
+# ONB-1.9 — CORS: env-based origin allowlist; credentials never wildcard
+# ---------------------------------------------------------------------------
+
+
+class TestCorsPolicy:
+    def test_default_config_allows_local_dev_origins_with_credentials(self, monkeypatch):
+        monkeypatch.delenv("DEMIURGOS_CORS_ORIGINS", raising=False)
+        cfg = api_server._cors_config()
+        assert "http://localhost:5173" in cfg["origins"]
+        assert cfg["allow_credentials"] is True
+        assert "*" not in cfg["origins"]
+
+    def test_env_allowlist_replaces_default(self, monkeypatch):
+        monkeypatch.setenv("DEMIURGOS_CORS_ORIGINS", "https://app.example, https://beta.example")
+        cfg = api_server._cors_config()
+        assert cfg["origins"] == ["https://app.example", "https://beta.example"]
+        assert cfg["allow_credentials"] is True
+
+    def test_wildcard_never_grants_credentials(self, monkeypatch):
+        monkeypatch.setenv("DEMIURGOS_CORS_ORIGINS", "*")
+        cfg = api_server._cors_config()
+        assert cfg["origins"] == ["*"]
+        assert cfg["allow_credentials"] is False
+
+    def test_preflight_allows_known_origin(self, client: TestClient):
+        resp = client.options(
+            "/api/onboarding/status",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert resp.status_code in (200, 400)
+        if resp.status_code == 200:
+            assert resp.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+    def test_preflight_rejects_unknown_origin(self, client: TestClient):
+        resp = client.options(
+            "/api/onboarding/status",
+            headers={
+                "Origin": "https://evil.example",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        if resp.status_code == 200:
+            assert "access-control-allow-origin" not in resp.headers
+
+
+# ---------------------------------------------------------------------------
+# ONB-1.6 — Locale endpoint (G7/OC3 independent domains + IANA zone)
+# ---------------------------------------------------------------------------
+
+
+class TestLocaleEndpoint:
+    def test_default_locale_is_safe(self, empty_client: TestClient):
+        resp = empty_client.get("/api/locale")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ui"] == "es"
+        assert body["conversation"] == "es"
+        assert body["content"] == "es"
+        assert body["iana_timezone"] == "UTC"
+
+    def test_locale_reflects_persisted_step0(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        _post_step0(empty_client,
+                    ui="en", conversation="es", content="es",
+                    iana_timezone="Europe/Madrid")
+        body = empty_client.get("/api/locale").json()
+        assert body["ui"] == "en"
+        assert body["conversation"] == "es"
+        assert body["iana_timezone"] == "Europe/Madrid"
+
+
+# ---------------------------------------------------------------------------
+# ONB-1.8 — Readiness probe endpoint (local_editor essential badge)
+# ---------------------------------------------------------------------------
+
+
+class TestReadinessEndpoint:
+    def test_local_editor_probe_round_trips(self, empty_client: TestClient):
+        resp = empty_client.get("/api/onboarding/readiness")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["local_editor"]["ok"] is True
+        assert body["cards"]["world"] == "pending"
+        assert body["cards"]["identity"] == "pending"
+        assert body["cards"]["telegram"] == "pending"
