@@ -36,6 +36,8 @@ export const ROUTES = {
   HOME: "/wiki",
   TALLER_HERRAMIENTAS: "/taller-herramientas",
   TALLER_MUNDO: "/taller-mundo",
+  ONBOARDING: "/onboarding",
+  CENTRO_CONFIGURACION: "/centro-configuracion",
   ENTITY: "/wiki/:mundo/entity/*path",
   EDITOR: "/wiki/:mundo/:section/*path",
   WILDCARD: "*",
@@ -58,16 +60,18 @@ export const GENERIC_TEASER_LABEL = "Próximamente" as const;
 
 /**
  * Core-only navigation contract (workshop-navigation spec): the free Core
- * exposes Taller de Mundo and Taller de Herramientas as the only `available`
- * workshops. Every future/paid surface collapses into ONE generic
- * non-actionable "Próximamente" teaser — legacy narrative phases
- * (Personajes/Escritura/Planificar/Revisar) are never presented as Core
- * workshops. Taller de Publicación stays absent until it exists/becomes
- * available; when enabled it is marked `rightmost` and always renders last.
+ * exposes Taller de Mundo and Taller de Herramientas as `available` workshops,
+ * plus the permanent Configuration Center (OC12). Every future/paid surface
+ * collapses into ONE generic non-actionable "Próximamente" teaser — legacy
+ * narrative phases (Personajes/Escritura/Planificar/Revisar) are never
+ * presented as Core workshops. Taller de Publicación stays absent until it
+ * exists/becomes available; when enabled it is marked `rightmost` and always
+ * renders last.
  */
 export const NAV_LINKS: readonly NavLink[] = [
   { label: "Taller de Herramientas", to: ROUTES.TALLER_HERRAMIENTAS, availability: "available" },
   { label: "Taller de Mundo", to: ROUTES.TALLER_MUNDO, availability: "available" },
+  { label: "Centro de Configuración", to: ROUTES.CENTRO_CONFIGURACION, availability: "available" },
   { label: GENERIC_TEASER_LABEL, to: "#", availability: "teaser" },
 ];
 

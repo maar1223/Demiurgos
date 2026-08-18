@@ -71,6 +71,76 @@ export interface AppConfig {
 }
 
 // ---------------------------------------------------------------------------
+// Onboarding / Configuration Center (Slice 1 — Foundation)
+// ---------------------------------------------------------------------------
+
+export type OnboardingStep =
+  | "step0"
+  | "ai"
+  | "telegram"
+  | "world"
+  | "backup_handoff"
+  | "ready";
+
+/** First-run gate state from GET /api/onboarding/status. */
+export interface OnboardingStatus {
+  completed: boolean;
+  current_step: OnboardingStep;
+  completed_steps: OnboardingStep[];
+  pending_steps: OnboardingStep[];
+  remote_pending: OnboardingStep[];
+  blocking_pending: OnboardingStep[];
+}
+
+/** G7/OC3 locale: independent UI/conversation/content languages + region + IANA zone. */
+export interface LocaleSettings {
+  ui: string;
+  conversation: string;
+  content: string;
+  region: string | null;
+  region_explicit: boolean;
+  iana_timezone: string;
+}
+
+/** Input for POST /api/onboarding/step0. */
+export interface LocaleInput {
+  ui: string;
+  conversation: string;
+  content: string;
+  region?: string | null;
+  region_explicit?: boolean;
+  iana_timezone: string;
+}
+
+export type WorldCreateKind =
+  | "created"
+  | "already_exists"
+  | "invalid_name"
+  | "collision"
+  | "io_error";
+
+/** Result of POST /api/worlds. */
+export interface WorldCreateResult {
+  kind: WorldCreateKind;
+  name: string;
+  path: string | null;
+  message: string;
+}
+
+/** Configuration Center card states (OC12). */
+export type CardState =
+  | "pending"
+  | "configured"
+  | "requires_connection"
+  | "error";
+
+/** Essential local readiness + per-card states (OC11/OC21). */
+export interface ReadinessSnapshot {
+  local_editor: { probe: string; ok: boolean; detail: string };
+  cards: Record<string, CardState>;
+}
+
+// ---------------------------------------------------------------------------
 // Idea capture configuration (Profile → Integraciones → Captura de ideas)
 // ---------------------------------------------------------------------------
 
