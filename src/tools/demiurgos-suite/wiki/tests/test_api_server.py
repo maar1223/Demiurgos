@@ -37,6 +37,8 @@ from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
 from guided_session_store import SESSION_TTL  # noqa: E402
 import idea_capture_ui  # noqa: E402
 import telegram_settings  # noqa: E402
+from wiki import migration as migration_module  # noqa: E402
+from migration_settings import create_migration_settings_router  # noqa: E402
 
 
 def _activity_capability():
@@ -4254,6 +4256,229 @@ class TestLegacyDetectionEndpoint:
             self, empty_client: TestClient):
         body = empty_client.get("/api/onboarding/readiness").json()
         assert body["legacy"] == []
+
+
+# ---------------------------------------------------------------------------
+# ONB-4.3 — Migration approval API (WU-4c1): explicit approval, fail-closed
+# auth, machine-readable MigrationErrorKind -> HTTP mapping, and the
+# completed/rolled_back/error response with transaction + evidence. The
+# transactional engine lives in wiki.migration (WU-4b); these RED tests cover
+# the backend routes/approval surface ONLY: no preview/history endpoints
+# beyond readiness, no auto-rename, unapproved folders never touched.
+# ---------------------------------------------------------------------------
+
+
+class TestMigrationApprovalEndpoint:
+    """ONB-4.3 — backend routes/approval API (WU-4c1)."""
+
+    WORLD = "legacy-x"
+
+    def _legacy_world(self, *, folders=("Lore", "Personajes")) -> Path:
+        root = api_server.MUNDOS_DIR / self.WORLD
+        for folder in folders:
+            (root / folder).mkdir(parents=True)
+        if (root / "Lore").is_dir():
+            (root / "Lore" / "00_inicio.md").write_text("# X\n", encoding="utf-8")
+        if (root / "Personajes").is_dir():
+            (root / "Personajes" / "pc.md").write_text("# PC\n", encoding="utf-8")
+        return root
+
+    def _execute(self, client: TestClient, world: str = WORLD, folders=None):
+        payload = {
+            "world": world,
+            "folders": folders if folders is not None else ["Lore", "Personajes"],
+        }
+        return client.post("/api/migration/execute", json=payload)
+
+    def _evidence_file(self, transaction_id: str) -> Path:
+        return (
+            api_server.PROJECT_ROOT / "data" / "migration-evidence"
+            / f"{transaction_id}.json"
+        )
+
+    def test_migration_execute_fails_closed_without_principal(
+            self, empty_client: TestClient):
+        root = self._legacy_world()
+        resp = self._execute(empty_client)
+        assert resp.status_code == 401
+        # Fail-closed: nothing was planned or moved.
+        assert (root / "Lore").is_dir()
+        assert (root / "Personajes").is_dir()
+        assert not (root / "lore").exists()
+        assert not (root / "personajes").exists()
+
+    def test_migration_no_preview_or_history_endpoints_beyond_readiness(
+            self, empty_client: TestClient, monkeypatch):
+        """WU-4c1 scope: readiness already reports legacy; no extra GETs.
+
+        The migration surface is exactly ONE explicit-approval POST endpoint:
+        no preview, no history, no evidence-retrieval route (the engine
+        persists evidence as files; retrieval is out of scope). The router
+        exposes that single POST, and the app serves no migration GET.
+        """
+        _principal(monkeypatch)
+        router = create_migration_settings_router(
+            require_principal=lambda request: api_server.EditPrincipal("tester"),
+            mundos_dir=lambda: api_server.MUNDOS_DIR,
+            evidence_dir=lambda: api_server.PROJECT_ROOT / "data"
+            / "migration-evidence",
+        )
+        routes = sorted(
+            (r.path, sorted(getattr(r, "methods", []) or []))
+            for r in router.routes
+        )
+        assert routes == [("/api/migration/execute", ["POST"])]
+        assert empty_client.get("/api/migration/execute").status_code == 405
+        assert empty_client.get("/api/migration/preview").status_code == 404
+
+    def test_migration_empty_approval_rejected_without_mutation(
+            self, empty_client: TestClient, monkeypatch):
+        root = self._legacy_world()
+        _principal(monkeypatch)
+        resp = self._execute(empty_client, folders=[])
+        assert resp.status_code == 400
+        assert resp.json()["code"] == "empty_approval"
+        assert (root / "Lore").is_dir()
+        assert not (root / "lore").exists()
+
+    def test_migration_unknown_folder_rejected_without_mutation(
+            self, empty_client: TestClient, monkeypatch):
+        root = self._legacy_world(folders=("Lore",))
+        _principal(monkeypatch)
+        resp = self._execute(empty_client, folders=["Lore", "Sagas"])
+        assert resp.status_code == 400
+        assert resp.json()["code"] == "unknown_folder"
+        assert (root / "Lore").is_dir()
+        assert not (root / "lore").exists()
+
+    def test_migration_invalid_world_rejected_without_mutation(
+            self, empty_client: TestClient, monkeypatch):
+        _principal(monkeypatch)
+        resp = self._execute(empty_client, world="no_such_world")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "invalid_world"
+
+    def test_migration_world_symlink_escape_rejected_without_mutation(
+            self, empty_client: TestClient, monkeypatch, tmp_path: Path):
+        _principal(monkeypatch)
+        outside = tmp_path / "outside-world"
+        (outside / "Lore").mkdir(parents=True)
+        (outside / "Lore" / "secret.md").write_text("# s\n", encoding="utf-8")
+        link = api_server.MUNDOS_DIR / "link-x"
+        link.symlink_to(outside, target_is_directory=True)
+        resp = self._execute(empty_client, world="link-x")
+        assert resp.status_code == 404
+        assert resp.json()["code"] == "invalid_world"
+        # The escape target is untouched: nothing moved or was renamed.
+        assert (outside / "Lore" / "secret.md").exists()
+        assert not (outside / "lore").exists()
+
+    def test_migration_destination_collision_rejected_without_mutation(
+            self, empty_client: TestClient, monkeypatch):
+        root = self._legacy_world()
+        (root / "lore").mkdir()
+        (root / "lore" / "exists.md").write_text("# y\n", encoding="utf-8")
+        _principal(monkeypatch)
+        resp = self._execute(empty_client)
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "collision"
+        assert (root / "Lore").is_dir()
+        assert (root / "lore" / "exists.md").exists()
+
+    def test_migration_approved_execution_completes_with_evidence(
+            self, empty_client: TestClient, monkeypatch):
+        root = self._legacy_world()
+        _principal(monkeypatch)
+        resp = self._execute(empty_client)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert body["transaction_id"].startswith("mig-")
+        assert body["world"] == self.WORLD
+        assert body["restore_verified"] is True
+        assert body["error"] == ""
+        assert {step["folder"] for step in body["steps"]} == {"Lore", "Personajes"}
+        for step in body["steps"]:
+            assert step["destination_hash"] == step["source_hash"]
+        # Lowercase canonical tree replaced the legacy folders.
+        assert not (root / "Lore").exists()
+        assert not (root / "Personajes").exists()
+        assert (root / "lore" / "00_inicio.md").exists()
+        assert (root / "personajes" / "pc.md").exists()
+        # Evidence persisted as JSON by the engine, keyed by the txn id.
+        evidence_file = self._evidence_file(body["transaction_id"])
+        assert evidence_file.is_file()
+        persisted = json.loads(evidence_file.read_text(encoding="utf-8"))
+        assert persisted["outcome"] == "completed"
+        assert persisted["transaction_id"] == body["transaction_id"]
+
+    def test_migration_unapproved_folders_never_touched(
+            self, empty_client: TestClient, monkeypatch):
+        root = self._legacy_world()
+        _principal(monkeypatch)
+        resp = self._execute(empty_client, folders=["Lore"])
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert [step["folder"] for step in body["steps"]] == ["Lore"]
+        assert not (root / "Lore").exists()
+        assert (root / "lore").is_dir()
+        # The unapproved legacy folder stays exactly as it was (no auto-rename).
+        assert (root / "Personajes").is_dir()
+        assert (root / "Personajes" / "pc.md").exists()
+        assert not (root / "personajes").exists()
+
+    def test_migration_mid_transaction_failure_rolls_back_with_evidence(
+            self, empty_client: TestClient, monkeypatch):
+        root = self._legacy_world()
+        _principal(monkeypatch)
+        real_move = migration_module._atomic_move
+        calls = {"n": 0}
+
+        def failing_move(source, destination):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("injected failure before second move")
+            return real_move(source, destination)
+
+        monkeypatch.setattr(migration_module, "_atomic_move", failing_move)
+        resp = self._execute(empty_client)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "rolled_back"
+        assert body["restore_verified"] is True
+        assert body["error"]
+        # Originals restored; lowercase destinations absent.
+        assert (root / "Lore" / "00_inicio.md").exists()
+        assert (root / "Personajes" / "pc.md").exists()
+        assert not (root / "lore").exists()
+        assert not (root / "personajes").exists()
+        evidence_file = self._evidence_file(body["transaction_id"])
+        assert evidence_file.is_file()
+        persisted = json.loads(evidence_file.read_text(encoding="utf-8"))
+        assert persisted["outcome"] == "rolled_back"
+        assert persisted["restore_verified"] is True
+
+    def test_migration_evidence_write_failure_maps_to_io_error(
+            self, empty_client: TestClient, monkeypatch):
+        """Engine's IO_ERROR (evidence persist failure) maps to HTTP 500."""
+        root = self._legacy_world()
+        _principal(monkeypatch)
+
+        def failing_evidence(evidence, evidence_dir):
+            raise migration_module.MigrationError(
+                migration_module.MigrationErrorKind.IO_ERROR,
+                "evidence could not be persisted (injected)",
+                evidence.transaction_id,
+            )
+
+        monkeypatch.setattr(
+            migration_module, "_persist_evidence", failing_evidence)
+        resp = self._execute(empty_client)
+        assert resp.status_code == 500
+        body = resp.json()
+        assert body["code"] == "io_error"
+        assert body["transaction_id"].startswith("mig-")
 
 
 # ---------------------------------------------------------------------------

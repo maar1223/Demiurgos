@@ -4044,6 +4044,7 @@ async def ai_edit_suggest(mundo: str, body: dict, request: Request):
 from idea_capture_ui import create_idea_capture_router  # noqa: E402
 from assistant_settings import create_assistant_settings_router  # noqa: E402
 from telegram_settings import create_telegram_settings_router  # noqa: E402
+from migration_settings import create_migration_settings_router  # noqa: E402
 
 # Assistant settings routes accept transient credentials only on authenticated
 # write requests and return metadata-only status payloads. Configuration saves
@@ -4069,6 +4070,18 @@ app.include_router(
     create_telegram_settings_router(
         require_principal=lambda request: _resolve_principal(request),
         registry=lambda: _local_state(),
+    ),
+)
+
+# ONB-4.3 (WU-4c1) — migration approval API. The engine (wiki.migration)
+# never auto-renames: approval arrives explicitly in the payload, and the
+# response carries the transaction + evidence (completed/rolled_back/error).
+# The evidence dir lives under the project data dir, outside mundos/.
+app.include_router(
+    create_migration_settings_router(
+        require_principal=lambda request: _resolve_principal(request),
+        mundos_dir=lambda: MUNDOS_DIR,
+        evidence_dir=lambda: PROJECT_ROOT / "data" / "migration-evidence",
     ),
 )
 
