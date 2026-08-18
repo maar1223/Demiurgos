@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import type { Mock } from "vitest";
 import {
   clearAssistantKey,
@@ -65,6 +66,14 @@ const auth: LocalAuthController = {
   logout: vi.fn(),
 };
 
+/** Render the panel inside a Router (it uses useNavigate for the Center CTA). */
+const renderPanel = () =>
+  render(
+    <MemoryRouter>
+      <AssistantSettingsPanel auth={auth} />
+    </MemoryRouter>,
+  );
+
 /** Walk the happy path up to the single capability step with a discovered model. */
 const walkToCapability = async (user: ReturnType<typeof userEvent.setup>) => {
   await screen.findByRole("heading", { name: "Proveedor" });
@@ -76,6 +85,16 @@ const walkToCapability = async (user: ReturnType<typeof userEvent.setup>) => {
   await screen.findByRole("combobox", { name: "Modelo descubierto" });
   await user.click(screen.getByRole("button", { name: "Capacidad" }));
   expect(screen.getByRole("heading", { name: "Capacidad" })).toBeInTheDocument();
+};
+
+/** Run both probes, reach confirmation and press the save button. */
+const saveFlow = async (user: ReturnType<typeof userEvent.setup>) => {
+  await walkToCapability(user);
+  await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
+  await screen.findByText("Prueba de visión superada.");
+  await user.click(screen.getByRole("button", { name: "Confirmación" }));
+  expect(screen.getByRole("heading", { name: "Confirmación" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
 };
 
 describe("AssistantSettingsPanel", () => {
@@ -95,7 +114,7 @@ describe("AssistantSettingsPanel", () => {
   });
 
   it("renders exactly five revisitable steps", async () => {
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
 
     expect(await screen.findByRole("heading", { name: "Proveedor" })).toBeInTheDocument();
     for (const label of ["Proveedor", "Conexión", "Modelos", "Capacidad", "Confirmación"]) {
@@ -114,7 +133,7 @@ describe("AssistantSettingsPanel", () => {
       base_url: "https://opaque.example/v1",
       api_key: "opaque-test-key",
     };
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await screen.findByRole("heading", { name: "Proveedor" });
     await user.click(screen.getByRole("button", { name: "Conexión" }));
     await user.click(screen.getByRole("button", { name: "Modelos" }));
@@ -140,7 +159,7 @@ describe("AssistantSettingsPanel", () => {
       provider: "compatible",
       base_url: "https://custom.example/v1",
     });
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await screen.findByRole("heading", { name: "Proveedor" });
 
     await user.selectOptions(screen.getByLabelText("Elegí un proveedor"), "opencode-go");
@@ -151,7 +170,7 @@ describe("AssistantSettingsPanel", () => {
 
   it("requires revalidation when the API key changes", async () => {
     const user = userEvent.setup();
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await screen.findByRole("heading", { name: "Proveedor" });
     await user.click(screen.getByRole("button", { name: "Conexión" }));
     await user.click(screen.getByRole("button", { name: "Validar conexión" }));
@@ -174,7 +193,7 @@ describe("AssistantSettingsPanel", () => {
       message: "No usable models were returned",
       models: [],
     });
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await screen.findByRole("heading", { name: "Proveedor" });
     await user.click(screen.getByRole("button", { name: "Conexión" }));
     await user.click(screen.getByRole("button", { name: "Validar conexión" }));
@@ -198,7 +217,7 @@ describe("AssistantSettingsPanel", () => {
 
   it("runs the text probe before the vision probe in the combined step", async () => {
     const user = userEvent.setup();
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await walkToCapability(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
@@ -221,7 +240,7 @@ describe("AssistantSettingsPanel", () => {
       oracle: "text-marker",
       message: "La prueba de texto no pasó.",
     });
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await walkToCapability(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
@@ -241,7 +260,7 @@ describe("AssistantSettingsPanel", () => {
       oracle: "causal-vision",
       message: "La prueba de visión no pasó.",
     });
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await walkToCapability(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
@@ -257,7 +276,7 @@ describe("AssistantSettingsPanel", () => {
 
   it("walks provider → connection → models → capability → confirmation and saves without unknown_ack", async () => {
     const user = userEvent.setup();
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await walkToCapability(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
@@ -277,7 +296,7 @@ describe("AssistantSettingsPanel", () => {
         resolveText = resolve;
       }),
     );
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await walkToCapability(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
@@ -295,7 +314,7 @@ describe("AssistantSettingsPanel", () => {
 
   it("announces probe results and the skipped-vision reason via aria-live", async () => {
     const user = userEvent.setup();
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await walkToCapability(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
@@ -318,21 +337,86 @@ describe("AssistantSettingsPanel", () => {
 
   it.each([
     ["active", "Activo"],
-    ["pending-reload", "Pendiente de reinicio\/recarga"],
+    ["pending-reload", "Guardado, pendiente de recarga"],
     ["saved-not-active", "Guardado, no activo"],
   ] as const)("shows runtime state %s", async (runtime_state, label) => {
     mocked.getAssistantSettings.mockResolvedValue({ ...status, runtime_state });
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     expect(await screen.findByText(label)).toBeInTheDocument();
   });
 
   it("clears the configured key through the authenticated endpoint", async () => {
     const user = userEvent.setup();
-    render(<AssistantSettingsPanel auth={auth} />);
+    renderPanel();
     await screen.findByRole("heading", { name: "Proveedor" });
     await user.click(screen.getByRole("button", { name: "Conexión" }));
     await user.click(screen.getByRole("button", { name: "Eliminar clave" }));
 
     expect(mocked.clearAssistantKey).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a persistent success panel with real runtime state after a successful save", async () => {
+    const user = userEvent.setup();
+    mocked.saveAssistantConfiguration.mockResolvedValue({ ...status, runtime_state: "active" });
+    renderPanel();
+    await saveFlow(user);
+
+    expect(await screen.findByRole("status")).toBeInTheDocument();
+    expect(screen.getByText("Configuración guardada")).toBeInTheDocument();
+    expect(screen.getByText("opencode-go")).toBeInTheDocument();
+    expect(screen.getByText("GPT-5.6 Luna")).toBeInTheDocument();
+    expect(screen.getByText("Texto: superada · Visión: superada")).toBeInTheDocument();
+    // Real runtime state, not hardcoded success.
+    expect(screen.getByText("Activo")).toBeInTheDocument();
+    expect(screen.getByText("Volver al Centro de Configuración")).toBeInTheDocument();
+  });
+
+  it("blocks a second save after the first succeeds (no duplicate requests)", async () => {
+    const user = userEvent.setup();
+    mocked.saveAssistantConfiguration.mockResolvedValue({ ...status, runtime_state: "active" });
+    renderPanel();
+    await saveFlow(user);
+
+    expect(await screen.findByText("Configuración guardada")).toBeInTheDocument();
+    // The editable flow (and its save button) is replaced by the success view.
+    expect(screen.queryByRole("button", { name: "Guardar configuración" })).not.toBeInTheDocument();
+    expect(mocked.saveAssistantConfiguration).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows pending-reload and saved-not-active runtime states with context after save", async () => {
+    const user = userEvent.setup();
+    mocked.saveAssistantConfiguration.mockResolvedValue({ ...status, runtime_state: "pending-reload" });
+    renderPanel();
+    await saveFlow(user);
+    expect(await screen.findByText("Guardado, pendiente de recarga")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cambiar configuración" }));
+    expect(screen.queryByText("Configuración guardada")).not.toBeInTheDocument();
+  });
+
+  it("shows an error and no success state when the save API fails", async () => {
+    const user = userEvent.setup();
+    mocked.saveAssistantConfiguration.mockRejectedValue(new Error("Servidor caído"));
+    renderPanel();
+    await saveFlow(user);
+
+    expect(await screen.findByText("Servidor caído")).toBeInTheDocument();
+    expect(screen.queryByText("Configuración guardada")).not.toBeInTheDocument();
+    // The save button remains available so the user can retry.
+    expect(screen.getByRole("button", { name: "Guardar configuración" })).toBeInTheDocument();
+  });
+
+  it("clears the confirmation and returns to the provider step via Cambiar configuración", async () => {
+    const user = userEvent.setup();
+    mocked.saveAssistantConfiguration.mockResolvedValue({ ...status, runtime_state: "active" });
+    renderPanel();
+    await saveFlow(user);
+    expect(await screen.findByText("Configuración guardada")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cambiar configuración" }));
+    expect(screen.queryByText("Configuración guardada")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Proveedor" })).toBeInTheDocument();
+    // Confirmation was cleared: the flow must be re-run to save again.
+    expect(screen.queryByRole("button", { name: "Guardar configuración" })).not.toBeInTheDocument();
   });
 });
