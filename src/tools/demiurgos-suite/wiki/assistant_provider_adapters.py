@@ -1,4 +1,19 @@
-"""Backend-only provider validation and model discovery adapters."""
+"""Backend-only provider validation and model discovery adapters.
+
+Provider-neutral surface with runtime-specific adapters:
+
+- **OpenAI-compatible/remote** (``opencode-go``, ``openai``, ``openrouter``,
+  ``compatible``): discovery via ``GET {base}/models``; every model is
+  available and loaded (no JIT concept).
+- **Ollama** (local): installed models via ``GET {base}/api/tags``, loaded
+  models via ``GET {base}/api/ps``; unloaded models load on demand.
+- **LM Studio** (local): downloaded models and their state via
+  ``GET {base}/api/v0/models``, JIT-visible models via
+  ``GET {base}/v1/models``.
+
+Local providers require no API key; remote providers require one. The
+adapters never log, return, or persist credentials.
+"""
 
 from __future__ import annotations
 
@@ -14,10 +29,37 @@ _DEFAULT_ENDPOINTS = {
     "opencode-go": "https://opencode.ai/zen/go/v1",
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
+    "ollama": "http://127.0.0.1:11434",
+    "lm-studio": "http://127.0.0.1:1234/v1",
 }
 _PROVIDERS = frozenset((*_DEFAULT_ENDPOINTS, "compatible"))
+_LOCAL_PROVIDERS = frozenset(("ollama", "lm-studio"))
 _CAPABILITIES = frozenset(("multimodal", "text-only", "unknown"))
 Transport = Callable[[str, str, dict[str, str]], tuple[int, Any]]
+
+
+def _is_local(provider: str) -> bool:
+    return provider in _LOCAL_PROVIDERS
+
+
+def _jit_allowed(provider: str) -> bool:
+    return _is_local(provider)
+
+
+def _discovery_urls(provider: str, base_url: str) -> list[str]:
+    if provider == "ollama":
+        return [f"{base_url}/api/tags"]
+    if provider == "lm-studio":
+        return [f"{base_url}/api/v0/models", f"{base_url}/v1/models"]
+    return [f"{base_url}/models"]
+
+
+def _load_url(provider: str, base_url: str) -> str | None:
+    if provider == "ollama":
+        return f"{base_url}/api/ps"
+    if provider == "lm-studio":
+        return f"{base_url}/api/v0/models"
+    return None
 
 
 @dataclass(frozen=True)
@@ -54,15 +96,27 @@ def _endpoint(provider: str, raw: Any) -> str | None:
 
 def candidate_from_payload(payload: Mapping[str, Any]) -> ProviderCandidate | None:
     provider = payload.get("provider")
-    key = payload.get("api_key")
     if not isinstance(provider, str) or provider not in _PROVIDERS:
         return None
-    if not isinstance(key, str) or not key.strip() or len(key) > 2048 or any(c.isspace() for c in key):
-        return None
+    key = payload.get("api_key")
+    if _is_local(provider):
+        # Local runtimes never require a secret; an empty key is valid.
+        if key is not None and (not isinstance(key, str) or len(key) > 2048):
+            return None
+        normalized_key = key.strip() if isinstance(key, str) else ""
+    else:
+        if (
+            not isinstance(key, str)
+            or not key.strip()
+            or len(key) > 2048
+            or any(char.isspace() for char in key)
+        ):
+            return None
+        normalized_key = key.strip()
     base_url = _endpoint(provider, payload.get("base_url"))
     if base_url is None:
         return None
-    return ProviderCandidate(provider, base_url, key.strip())
+    return ProviderCandidate(provider, base_url, normalized_key)
 
 
 def normalize_model(item: Any) -> dict[str, Any] | None:
@@ -71,6 +125,8 @@ def normalize_model(item: Any) -> dict[str, Any] | None:
         source: Mapping[str, Any] = {}
     elif isinstance(item, Mapping):
         model_id = item.get("id")
+        if not isinstance(model_id, str) and isinstance(item.get("name"), str):
+            model_id = item["name"]
         source = item
     else:
         return None
@@ -106,6 +162,20 @@ def normalize_model(item: Any) -> dict[str, Any] | None:
     return {"id": model_id.strip(), "label": label, "capability": capability, "pricing": pricing}
 
 
+def _parse_discovery(provider: str, body: Any) -> list[dict[str, Any]] | None:
+    """Extract normalized models from a provider discovery payload."""
+    if isinstance(body, list):  # LM Studio /api/v0/models returns a list
+        raw_models = body
+    elif isinstance(body, Mapping):
+        raw_models = body.get("data", body.get("models"))
+    else:
+        return None
+    if not isinstance(raw_models, list):
+        return None
+    models = [model for item in raw_models if (model := normalize_model(item))]
+    return models or None
+
+
 class ProviderRegistry:
     """Registry with bounded backend transport and categorical telemetry only."""
 
@@ -123,17 +193,84 @@ class ProviderRegistry:
                 "activation_state": "not-attempted",
             })
 
-    def _request(self, candidate: ProviderCandidate) -> tuple[int, Any]:
-        headers = {"Authorization": f"Bearer {candidate.api_key}", "Accept": "application/json"}
+    def _request(self, candidate: ProviderCandidate, url: str) -> tuple[int, Any]:
+        headers = {"Accept": "application/json"}
+        if candidate.api_key:
+            headers["Authorization"] = f"Bearer {candidate.api_key}"
         if self.transport:
-            return self.transport("GET", f"{candidate.base_url}/models", headers)
+            return self.transport("GET", url, headers)
         with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0)) as client:
-            response = client.get(f"{candidate.base_url}/models", headers=headers)
+            response = client.get(url, headers=headers)
             try:
                 body = response.json()
             except ValueError:
                 body = None
             return response.status_code, body
+
+    def _discover_models(self, candidate: ProviderCandidate) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """Collect models from every provider discovery URL, merged by id.
+
+        LM Studio contributes both its downloaded set (``/api/v0/models``)
+        and its JIT-visible set (``/v1/models``); Ollama and OpenAI-family
+        providers contribute a single endpoint. An empty merged result fails
+        with the most relevant error category.
+        """
+        urls = _discovery_urls(candidate.provider, candidate.base_url)
+        collected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        error: dict[str, Any] | None = None
+        for url in urls:
+            try:
+                status, body = self._request(candidate, url)
+            except (httpx.TimeoutException, TimeoutError):
+                error = {"outcome": "failed", "category": "timeout", "provider": candidate.provider,
+                         "message": "Model discovery timed out."}
+                continue
+            except (httpx.HTTPError, OSError):
+                error = {"outcome": "failed", "category": "transport", "provider": candidate.provider,
+                         "message": "Model discovery could not reach the provider."}
+                continue
+            if status >= 400:
+                continue
+            models = _parse_discovery(candidate.provider, body)
+            if models is None:
+                continue
+            for model in models:
+                if model["id"] not in seen:
+                    seen.add(model["id"])
+                    collected.append(model)
+        if collected:
+            return collected, None
+        return [], error or {"outcome": "failed", "category": "invalid-response",
+                             "provider": candidate.provider,
+                             "message": "The provider returned no usable model list."}
+
+    def _loaded_ids(self, candidate: ProviderCandidate) -> list[str] | None:
+        """Return in-memory loaded model ids, or None when the concept/runtime
+        does not apply or the load endpoint is unavailable."""
+        url = _load_url(candidate.provider, candidate.base_url)
+        if url is None:
+            return None
+        try:
+            status, body = self._request(candidate, url)
+        except (httpx.HTTPError, OSError, TimeoutError):
+            return None
+        if status >= 400:
+            return None
+        if candidate.provider == "ollama":
+            if not isinstance(body, Mapping):
+                return None
+            loaded = body.get("models")
+            if not isinstance(loaded, list):
+                return None
+            return [str(item.get("name", "")) for item in loaded if isinstance(item, Mapping) and item.get("name")]
+        if isinstance(body, list):  # LM Studio v0 state
+            return [
+                str(item.get("id", ""))
+                for item in body
+                if isinstance(item, Mapping) and item.get("state") == "loaded" and item.get("id")
+            ]
+        return None
 
     def validate(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
@@ -146,8 +283,9 @@ class ProviderRegistry:
                 self.telemetry({"outcome": "failed", "latency_ms": 0, "adapter": provider,
                                 "failure_category": "invalid-request", "activation_state": "not-attempted"})
             return result
+        target = _discovery_urls(candidate.provider, candidate.base_url)[0]
         try:
-            status, _ = self._request(candidate)
+            status, _ = self._request(candidate, target)
         except (httpx.TimeoutException, TimeoutError):
             category, message = "timeout", "The provider did not respond before the timeout."
         except (httpx.HTTPError, OSError):
@@ -166,30 +304,54 @@ class ProviderRegistry:
     def discover(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         validation = self.validate(payload)
         if validation["outcome"] != "validated":
-            return {**validation, "models": []}
+            return {**validation, "models": [], "loaded_models": [], "jit_load_allowed": False}
         candidate = candidate_from_payload(payload)
         assert candidate is not None
         started = time.monotonic()
-        try:
-            status, body = self._request(candidate)
-        except (httpx.TimeoutException, TimeoutError):
-            self._record("failed", candidate, "timeout", started)
-            return {"outcome": "failed", "category": "timeout", "provider": candidate.provider,
-                    "message": "Model discovery timed out.", "models": []}
-        except (httpx.HTTPError, OSError):
-            self._record("failed", candidate, "transport", started)
-            return {"outcome": "failed", "category": "transport", "provider": candidate.provider,
-                    "message": "Model discovery could not reach the provider.", "models": []}
-        if status >= 400 or not isinstance(body, Mapping):
-            self._record("failed", candidate, "invalid-response", started)
-            return {"outcome": "failed", "category": "invalid-response", "provider": candidate.provider,
-                    "message": "The provider returned no usable model list.", "models": []}
-        raw_models = body.get("data", body.get("models"))
-        models = [model for item in raw_models or [] if (model := normalize_model(item))]
-        if not models:
-            self._record("failed", candidate, "empty-discovery", started)
-            return {"outcome": "failed", "category": "empty-discovery", "provider": candidate.provider,
-                    "message": "No usable models were returned; enter a model ID manually or repair the connection.",
-                    "models": []}
+        models, error = self._discover_models(candidate)
+        if error is not None:
+            self._record("failed", candidate, error["category"], started)
+            return {**error, "models": [], "loaded_models": [], "jit_load_allowed": False}
+        loaded = self._loaded_ids(candidate)
         self._record("success", candidate, None, started)
-        return {"outcome": "discovered", "category": "ok", "provider": candidate.provider, "models": models}
+        return {
+            "outcome": "discovered",
+            "category": "ok",
+            "provider": candidate.provider,
+            "models": models,
+            "loaded_models": list(loaded or []),
+            "jit_load_allowed": _jit_allowed(candidate.provider),
+        }
+
+    def connection_state(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Report which models are available (installed/downloaded) vs loaded."""
+        validation = self.validate(payload)
+        if validation["outcome"] != "validated":
+            return {**validation, "available_models": [], "loaded_models": [], "jit_load_allowed": False}
+        candidate = candidate_from_payload(payload)
+        assert candidate is not None
+        models, _ = self._discover_models(candidate)
+        available = [model["id"] for model in models]
+        loaded = self._loaded_ids(candidate)
+        if loaded is None:
+            # Remote SaaS has no JIT: every available model is loaded.
+            loaded = available
+        return {
+            "outcome": "ok",
+            "provider": candidate.provider,
+            "available_models": available,
+            "loaded_models": loaded,
+            "jit_load_allowed": _jit_allowed(candidate.provider),
+        }
+
+    def load_state(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        """Per-model loaded flags derived from the runtime load endpoint."""
+        state = self.connection_state(payload)
+        if state["outcome"] != "ok":
+            return {**state, "models": []}
+        loaded = set(state["loaded_models"])
+        models = [
+            {"id": model_id, "loaded": model_id in loaded}
+            for model_id in state["available_models"]
+        ]
+        return {**state, "models": models}
