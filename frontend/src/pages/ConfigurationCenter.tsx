@@ -6,6 +6,7 @@ import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { TelegramCard } from "@/components/organisms/TelegramCard";
 
 /**
  * Configuration Center (OC12) — permanent surface for reviewing and resuming
@@ -25,13 +26,18 @@ const STATE_META: Record<CardState, { label: string; badge: "default" | "success
 };
 
 /**
- * Cloud/remote capabilities (ONB-3.1): their cards can NEVER render as
- * "Configurado" in this slice, because only their dedicated contracts may
- * mark them configured. Defense in depth: even if a stale/buggy backend
- * reports "configured" for one of these keys, the UI forces the honest
- * pending state instead of overstating readiness.
+ * Cloud/remote capabilities without a dedicated contract (ONB-3.1): their
+ * cards can NEVER render as "Configurado", because only their dedicated
+ * contracts may mark them configured. Defense in depth: even if a stale/buggy
+ * backend reports "configured" for one of these keys, the UI forces the
+ * honest pending state instead of overstating readiness.
+ *
+ * NOTE (WU-3b1): telegram is intentionally NOT in this set anymore — ONB-3.3
+ * gave it a dedicated backend contract whose `configured` state is proven by
+ * a real server-side getMe check, so its card may truthfully render
+ * configured. Only identity and backup still lack dedicated contracts here.
  */
-const CLOUD_CARD_KEYS: ReadonlySet<string> = new Set(["identity", "telegram", "backup"]);
+const CLOUD_CARD_KEYS: ReadonlySet<string> = new Set(["identity", "backup"]);
 
 /** Essential local readiness badges (OC11/OC21): World + local editor. */
 const ESSENTIAL_BADGES: { key: string; title: string }[] = [
@@ -54,7 +60,7 @@ interface CardDef {
 const CARD_DEFS: CardDef[] = [
   { key: "identity", title: "Identidad", description: "Cuenta local / Google, revalidación y recuperación.", action: { label: "Ir a Perfil", to: "/perfil" } },
   { key: "assistant", title: "IA texto y visión", description: "Modelo principal del Asistente (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
-  { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: { label: "Configurar", to: "/perfil" } },
+  { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: null },
   { key: "backup", title: "Respaldo y restauración", description: "Google Drive / rclone. Requiere conexión y consentimiento.", action: null },
   { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/onboarding?step=step0" } },
   { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },
@@ -66,6 +72,7 @@ export default function ConfigurationCenter() {
   const [readiness, setReadiness] = useState<ReadinessSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
+  const [telegramOpen, setTelegramOpen] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -184,7 +191,17 @@ export default function ConfigurationCenter() {
                         <Badge variant={meta.badge}>{meta.label}</Badge>
                         <span className="sr-only">Estado: {meta.label}</span>
                       </span>
-                      {card.action ? (
+                      {card.key === "telegram" ? (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          aria-expanded={telegramOpen}
+                          aria-controls="telegram-card-panel"
+                          onClick={() => setTelegramOpen((open) => !open)}
+                        >
+                          {telegramOpen ? "Ocultar panel" : "Configurar Telegram"}
+                        </Button>
+                      ) : card.action ? (
                         <Button variant="secondary" size="sm" onClick={() => navigate(card.action!.to)}>
                           {card.action.label}
                         </Button>
@@ -192,6 +209,11 @@ export default function ConfigurationCenter() {
                         <span className="text-small text-sombra">Se retoma desde esta tarjeta</span>
                       )}
                     </div>
+                    {card.key === "telegram" && telegramOpen && (
+                      <div id="telegram-card-panel" className="mt-4">
+                        <TelegramCard />
+                      </div>
+                    )}
                   </section>
                 );
               })}

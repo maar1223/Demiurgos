@@ -193,7 +193,10 @@ describe("ConfigurationCenter (ONB-1.7)", () => {
 
   it("never renders cloud cards as ready from stale local evidence", async () => {
     // A stale/buggy backend claims cloud capabilities are configured. The
-    // UI must NOT overstate readiness: identity/telegram/backup stay pending.
+    // UI must NOT overstate readiness: identity and backup stay pending
+    // (they lack dedicated contracts). Telegram is exempt since WU-3b1 gave
+    // it a real ONB-3.3 backend contract (server-side getMe proof), so its
+    // configured state is truthful and honored.
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {
@@ -210,12 +213,14 @@ describe("ConfigurationCenter (ONB-1.7)", () => {
 
     await screen.findByRole("heading", { name: "Centro de Configuración" });
     const configured = screen.getAllByText("Configurado");
-    // Only local capabilities may render configured; the three cloud cards
-    // are forced back to pending by the UI's anti-overstatement guard.
-    expect(configured.length).toBe(4); // assistant, locale, world, offline
+    // Only capabilities with real evidence may render configured: assistant,
+    // telegram (ONB-3.3 backend contract), locale, world, offline. Identity
+    // and backup are forced back to pending by the UI's anti-overstatement
+    // guard.
+    expect(configured.length).toBe(5);
     expect(screen.getByRole("heading", { name: "Telegram" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Identidad" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Respaldo y restauración" })).toBeInTheDocument();
-    expect(screen.getAllByText("Pendiente")).toHaveLength(3); // the cloud cards
+    expect(screen.getAllByText("Pendiente")).toHaveLength(2); // identity, backup
   });
 });

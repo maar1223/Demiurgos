@@ -187,6 +187,21 @@ export interface TokenStatus {
   has_token: boolean;
 }
 
+/** Telegram card status (ONB-3.3) from GET /api/telegram/status. The token
+ *  value is never present — only its write-only presence boolean. */
+export interface TelegramStatus {
+  state: CardState;
+  has_token: boolean;
+  tested_at: string | null;
+  error_code: string;
+}
+
+/** Result of POST /api/telegram/test-connection — same shape plus a friendly
+ *  server message; never carries the token value. */
+export interface TelegramTestResult extends TelegramStatus {
+  message?: string;
+}
+
 /** A discoverable Telegram chat candidate. The numeric id is an INTERNAL
  *  selection value — the UI shows the human-readable title/type and never
  *  asks the user to type or copy the id. */
