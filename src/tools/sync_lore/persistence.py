@@ -1,16 +1,19 @@
 """
 persistence.py — Write lore index to disk and optionally to Engram.
 
-Outputs lore-index.json and a human-readable report to stdout.
+The legacy ``lore-index.json`` file artifact is RETIRED (world-importer IM6):
+the importer's durable job contract (jobs + provenance) replaces it, and the
+canonical graph is the only entity read source. ``write_lore_index`` now fails
+loudly so no remaining caller silently regenerates the orphaned artifact.
+This module keeps the human report (adjusted for retirement) and the best-effort
+Engram persistence for index *counts* (not the retired file).
 """
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
-from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,70 +21,31 @@ if TYPE_CHECKING:
     from .schemas import LoreIndex
 
 
+class RetiredLegacyIndexError(RuntimeError):
+    """Raised when code tries to produce the retired ``lore-index.json`` file."""
+
+
+RETIRED_LORE_INDEX_MESSAGE = (
+    "lore-index.json is retired (world-importer IM6): the importer's durable "
+    "job contract (jobs + provenance) and the canonical OKF graph replace it. "
+    "Analysis and dry-run must surface results through the import-job contract, "
+    "not a lore-index.json file."
+)
+
+
 # ---------------------------------------------------------------------------
-# JSON persistence
+# JSON persistence (retired)
 # ---------------------------------------------------------------------------
-
-def _serialize_index(index: "LoreIndex") -> dict:
-    """Convert LoreIndex to a JSON-serializable dict."""
-    result: dict = {
-        "meta": asdict(index.meta),
-        "entities": [],
-        "terms": index.terms,
-        "images": index.images,  # already serializable
-        "contradictions": [],
-    }
-
-    for e in index.entities:
-        result["entities"].append({
-            "id": e.id,
-            "name": e.name,
-            "type": e.type,
-            "world": e.world,
-            "source_file": e.source_file,
-            "chunk_ref": e.chunk_ref,
-            "description": e.description,
-            "relations": e.relations,
-            "terms": e.terms,
-            "stal_tier": e.stal_tier,
-            "immutable": e.immutable,
-            "quotes": e.quotes,
-            "contradictions": e.contradictions,
-        })
-
-    for c in index.contradictions:
-        result["contradictions"].append({
-            "id": c.id,
-            "entity": c.entity,
-            "entity_id": c.entity_id,
-            "chunk_a": c.chunk_a,
-            "chunk_b": c.chunk_b,
-            "reason": c.reason,
-            "stal_conflict": c.stal_conflict,
-        })
-
-    return result
 
 
 def write_lore_index(index: "LoreIndex", output_dir: Path) -> Path:
+    """Retired. Fail loudly instead of regenerating ``lore-index.json``.
+
+    Raises ``RetiredLegacyIndexError``; never writes the file. Kept as a
+    fail-closed guard so any remaining production caller surfaces the
+    retirement instead of silently producing the orphaned artifact.
     """
-    Write lore-index.json to the output directory.
-
-    Args:
-        index: Complete LoreIndex to persist.
-        output_dir: Directory to write the JSON file.
-
-    Returns:
-        Path to the written file.
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "lore-index.json"
-
-    data = _serialize_index(index)
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-    return output_path
+    raise RetiredLegacyIndexError(RETIRED_LORE_INDEX_MESSAGE)
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +156,7 @@ def print_report(
 
     # Output section
     lines.append("=== Output ===")
-    lines.append(f"lore-index.json \u2192 {output_path}")
+    lines.append("lore-index.json: RETIRED (world-importer IM6); no file is written.")
     if engram_ok:
         lines.append(f"Engram: {index.meta.entities_extracted} entidades persistidas")
     else:

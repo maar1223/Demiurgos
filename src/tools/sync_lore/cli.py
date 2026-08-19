@@ -186,7 +186,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="sync-lore",
         description="sync-lore \u2014 Lore ingestion tool. "
                     "Extracts structured entities from narrative lore documents (.md, .docx, .pdf) "
-                    "and builds a queryable lore-index.json.",
+                    "and builds an in-memory lore index (the legacy lore-index.json file is RETIRED).",
     )
     # Positional: input path
     parser.add_argument(
@@ -212,7 +212,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         default=DEFAULT_OUTPUT,
-        help="Output directory for lore-index.json (default: ./output)",
+        help="Output directory (legacy lore-index.json is retired; used for display only)",
     )
     # Flag 4: --config
     parser.add_argument(
@@ -224,7 +224,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--engram",
         action="store_true",
-        help="Persist lore-index.json to Engram memory",
+        help="Persist lore index counts to Engram memory",
     )
     # Flag 6: --workers
     parser.add_argument(
@@ -352,7 +352,7 @@ def main() -> None:
         print(f"  World: {world or 'generic'}", file=sys.stderr)
         print(f"  Mode: {mode}", file=sys.stderr)
         print(f"  Workers: {workers}", file=sys.stderr)
-        print(f"  Output: {output_dir}/lore-index.json", file=sys.stderr)
+        print("  Output: lore-index.json is RETIRED (no file written)", file=sys.stderr)
         if runtime_opts["engram"]:
             print(f"  Engram: yes (topic: lore/{world or 'generic'}/index)", file=sys.stderr)
         print("\n  Pipeline ready. Run without --dry-run to process.", file=sys.stderr)
@@ -386,9 +386,12 @@ def main() -> None:
     # Update meta with pipeline stats
     index.meta.chunks_processed = len(chunk_results)
 
-    # Persist
-    from .persistence import write_lore_index, try_engram_save, print_report
-    output_path = write_lore_index(index, output_dir)
+    # Persist (legacy lore-index.json file is RETIRED, world-importer IM6: the
+    # importer's durable job contract + provenance replace it). We build the
+    # in-memory index for the report and best-effort Engram counts, but never
+    # write the orphaned lore-index.json file.
+    from .persistence import try_engram_save, print_report, RETIRED_LORE_INDEX_MESSAGE
+    output_path = output_dir / "lore-index.json"  # display-only; never written
 
     engram_ok = False
     if runtime_opts["engram"]:
@@ -404,6 +407,7 @@ def main() -> None:
         chunks_failed=chunks_failed,
         images_processed=len(image_entries),
     )
+    print(RETIRED_LORE_INDEX_MESSAGE, file=sys.stderr)
 
 
 if __name__ == "__main__":

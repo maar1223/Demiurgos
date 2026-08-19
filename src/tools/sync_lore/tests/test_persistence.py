@@ -22,7 +22,7 @@ persistence = importlib.import_module("sync-lore.persistence")
 
 
 class TestWriteLoreIndex(unittest.TestCase):
-    """JSON file output."""
+    """The legacy lore-index.json file output is RETIRED (world-importer IM6)."""
 
     def setUp(self):
         self.tmpdir = Path(tempfile.mkdtemp(prefix="sync_lore_persist_"))
@@ -32,61 +32,30 @@ class TestWriteLoreIndex(unittest.TestCase):
         if self.tmpdir.exists():
             shutil.rmtree(self.tmpdir)
 
-    def test_writes_valid_json(self):
-        """write_lore_index produces valid lore-index.json."""
+    def test_write_is_retired_raises(self):
+        """write_lore_index raises RetiredLegacyIndexError and never writes."""
         index = schemas.LoreIndex()
-        index.meta = schemas.LoreIndexMeta(
-            world="vibrantes",
-            mode="text",
-            chunks_processed=10,
-            entities_extracted=5,
-            contradictions_found=2,
-            generated_at="2025-01-01T00:00:00+00:00",
-        )
+        index.meta = schemas.LoreIndexMeta(world="vibrantes")
+        with self.assertRaises(persistence.RetiredLegacyIndexError):
+            persistence.write_lore_index(index, self.tmpdir)
+        self.assertFalse((self.tmpdir / "lore-index.json").exists())
 
-        output_path = persistence.write_lore_index(index, self.tmpdir)
-        self.assertTrue(output_path.exists())
-
-        with open(output_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        self.assertEqual(data["meta"]["world"], "vibrantes")
-        self.assertEqual(data["meta"]["mode"], "text")
-        self.assertEqual(data["meta"]["chunks_processed"], 10)
-        self.assertEqual(data["meta"]["entities_extracted"], 5)
-
-    def test_output_dir_created(self):
-        """write_lore_index creates the output directory if needed."""
+    def test_no_file_written_in_nested_dir(self):
+        """Retirement applies regardless of output directory; no file appears."""
         subdir = self.tmpdir / "sub" / "nested"
         index = schemas.LoreIndex()
-        output_path = persistence.write_lore_index(index, subdir)
-        self.assertTrue(output_path.exists())
+        with self.assertRaises(persistence.RetiredLegacyIndexError):
+            persistence.write_lore_index(index, subdir)
+        self.assertFalse((self.tmpdir / "lore-index.json").exists())
+        self.assertFalse((subdir / "lore-index.json").exists())
 
-    def test_entities_serialized(self):
-        """Entities are correctly serialized without image_bytes."""
+    def test_retirement_message_mentions_job_contract(self):
+        """The retirement error guides callers to the job contract replacement."""
         index = schemas.LoreIndex()
-        index.meta = schemas.LoreIndexMeta()
-        entity = schemas.LoreEntity(
-            id="abc-123",
-            name="Kaelen",
-            type="personaje",
-            world="vibrantes",
-            description="A warrior.",
-            relations=[{"target": "Ayagar", "type": "gobierna", "strength": 1.0}],
-            quotes=["Kaelen raised his blade."],
-            stal_tier="T1",
-        )
-        index.entities = [entity]
-
-        output_path = persistence.write_lore_index(index, self.tmpdir)
-        with open(output_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        self.assertEqual(len(data["entities"]), 1)
-        self.assertEqual(data["entities"][0]["name"], "Kaelen")
-        self.assertEqual(data["entities"][0]["type"], "personaje")
-        self.assertTrue(data["entities"][0]["immutable"])
-        self.assertEqual(len(data["entities"][0]["quotes"]), 1)
+        with self.assertRaises(persistence.RetiredLegacyIndexError) as ctx:
+            persistence.write_lore_index(index, self.tmpdir)
+        self.assertIn("retired", str(ctx.exception).lower())
+        self.assertIn("job", str(ctx.exception).lower())
 
 
 class TestTryEngramSave(unittest.TestCase):

@@ -261,23 +261,13 @@ class TestE2EDryRun(unittest.TestCase):
         term_names = [t["term"] for t in index.terms]
         self.assertIn("Symmetry Sagrado", term_names)
 
-        # Verify JSON serialization works
+        # The legacy lore-index.json file is RETIRED (world-importer IM6):
+        # the builder produces an in-memory index for reporting only, and the
+        # retired writer fails loudly instead of writing the orphaned file.
         output_path = self.output_dir
-        written = persistence.write_lore_index(index, output_path)
-        self.assertTrue(written.exists())
-
-        # Verify JSON is valid and has correct structure
-        with open(written, "r", encoding="utf-8") as f:
-            data = json.load(f)
-
-        self.assertIn("meta", data)
-        self.assertIn("entities", data)
-        self.assertIn("terms", data)
-        self.assertIn("contradictions", data)
-        self.assertIn("images", data)
-
-        self.assertEqual(data["meta"]["world"], "vibrantes")
-        self.assertGreater(len(data["entities"]), 0)
+        with self.assertRaises(persistence.RetiredLegacyIndexError):
+            persistence.write_lore_index(index, output_path)
+        self.assertFalse((output_path / "lore-index.json").exists())
 
     def test_entity_dedup(self):
         """Entities with same name+type+world are merged."""

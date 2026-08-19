@@ -24,7 +24,6 @@ def _registry(root: Path, *, write: bool = False) -> AdapterRegistry:
                            ideas_primary=str(root / "mundos" / "Ideas"),
                            ideas_secondary=str(root / "mundos" / WORLD / "ideas"),
                            estado=str(root / ".demiurgos-estado.json"),
-                           lore_index=str(root / "output" / "lore-index.json"),
                            templates_catalog=str(root / "plantillas" / "_catalog.json"))
 
 
@@ -39,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--root", dest="root", default=argparse.SUPPRESS,
                         metavar="PATH", help="workspace root")
     p_scan.add_argument("domain", nargs="?", default=None,
-                        help="domain: ideas, arc-state, lore-index, templates, or 'domains'")
+                        help="domain: ideas, arc-state, templates, or 'domains'")
     p_scan.add_argument("--session-start", action="store_true",
                         help="informational counts only; never repairs")
     p_scan.set_defaults(func=_scan_cmd)

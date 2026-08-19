@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from engram_sync.adapters import (ArcStateAdapter, IdeasAdapter, LoreIndexAdapter,
+from engram_sync.adapters import (ArcStateAdapter, IdeasAdapter,
                                   TemplatesAdapter, register_phase1)
 from engram_sync.adapter import AdapterRegistry, DomainAdapter
 from engram_sync.models import Action, AuthorizedOperation, Classification, SourceState
@@ -16,12 +16,8 @@ VALID = ('---\nid: "b1c2d3e4-f5a6-7890-abcd-ef1234567890"\nslug: "2026-08-02-ide
 MALFORMED = '---\nid: "71"\ntimestamp: 1779711257\n---\n\nBroken body\n'
 ESTADO = {"version": 1, "mundo_activo": "vibrantes", "last_session": "2026-08-07T00:00:00",
           "arcos": {"arc-x": {"status": "active", "fase_actual": "design"}}}
-INDEX = {"meta": {"version": "0.1.0", "entities_extracted": 3}, "terms": [{"t": 1}],
-         "contradictions": [{"c": 1}]}
 CATALOG = [{"file": "plantillas/a.md", "name": "A", "skill": "skills/x.md", "tags": ["t"],
             "use_case": "desc"}]
-LORE_ROW = {"id": 5, "topic": "lore/vibrantes/index", "title": "Lore Index \u2014 vibrantes",
-            "content": "**Stats**: 3 entities, 1 terms, 1 contradictions"}
 
 
 class FakeClient:
@@ -98,15 +94,16 @@ def test_arc_divergence_local_authority_remote_only_corrupt(tmp_path, tree_snaps
     assert item.item_key == "estado" and item.classification is Classification.UNREADABLE
 
 
-def test_lore_equivalent_divergent_absent(tmp_path):
-    path = _write(tmp_path, "lore.json", INDEX)
-    assert LoreIndexAdapter(FakeClient([LORE_ROW]), "vibrantes", path).discover()[0] \
-        .classification is Classification.EQUIVALENT
-    row = dict(LORE_ROW)
-    row["content"] = "**Stats**: 9 entities, 1 terms, 1 contradictions"
-    assert LoreIndexAdapter(FakeClient([row]), "vibrantes", path).discover()[0] \
-        .classification is Classification.DIVERGENT
-    assert LoreIndexAdapter(FakeClient(), "vibrantes", tmp_path / "nope.json").discover() == []
+def test_lore_index_adapter_retired(tmp_path):
+    # The legacy `lore-index.json` artifact is retired (world-importer IM6):
+    # no adapter may consume it and it is not registered in phase-1 adapters.
+    reg = register_phase1(AdapterRegistry(), FakeClient(), "vibrantes",
+                          ideas_primary=str(tmp_path / "a"),
+                          ideas_secondary=str(tmp_path / "b"),
+                          estado=str(tmp_path / "e.json"),
+                          templates_catalog=str(tmp_path / "t.json"))
+    assert "lore-index" not in reg.domains()
+    assert not (Path(__file__).resolve().parents[1] / "adapters" / "lore_index.py").exists()
 
 
 def test_templates_metadata_only_remote_absent(tmp_path):
@@ -124,9 +121,9 @@ def test_templates_metadata_only_remote_absent(tmp_path):
 def test_register_adapters_have_explicit_apply_contract(tmp_path):
     reg = register_phase1(AdapterRegistry(), FakeClient(), "vibrantes",
                           ideas_primary=str(tmp_path / "a"), ideas_secondary=str(tmp_path / "b"),
-                          estado=str(tmp_path / "e.json"), lore_index=str(tmp_path / "l.json"),
+                          estado=str(tmp_path / "e.json"),
                           templates_catalog=str(tmp_path / "t.json"))
-    assert reg.domains() == ["arc-state", "ideas", "lore-index", "templates"]
+    assert reg.domains() == ["arc-state", "ideas", "templates"]
     assert all(isinstance(reg.get(d), DomainAdapter) for d in reg.domains())
     assert all(callable(reg.get(d).apply) for d in reg.domains())
     pkg = Path(__file__).resolve().parents[1] / "adapters"

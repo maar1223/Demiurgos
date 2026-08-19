@@ -5,7 +5,7 @@ import json
 import pytest
 
 from engram_sync.adapter import AdapterRegistry
-from engram_sync.adapters import ArcStateAdapter, IdeasAdapter, LoreIndexAdapter, TemplatesAdapter
+from engram_sync.adapters import ArcStateAdapter, IdeasAdapter, TemplatesAdapter
 from engram_sync.confirm import ConfirmError, ConfirmedChoice, confirm
 from engram_sync.engram_client import EngramUnauthorized
 from engram_sync.journal import RunJournal
@@ -46,7 +46,7 @@ def _confirm(adapter, item, tmp_path):
     return result, journal
 
 
-@pytest.mark.parametrize("domain", ["ideas", "arc-state", "lore-index", "templates"])
+@pytest.mark.parametrize("domain", ["ideas", "arc-state", "templates"])
 def test_authorized_production_adapters_save_lossless_supported_metadata(tmp_path, domain):
     client = FakeEngram()
     if domain == "ideas":
@@ -60,11 +60,6 @@ def test_authorized_production_adapters_save_lossless_supported_metadata(tmp_pat
         path = tmp_path / "estado.json"
         path.write_text(json.dumps({"arcos": {"arc": {"status": "active"}}}), encoding="utf-8")
         adapter = ArcStateAdapter(client, "vibrantes", path)
-    elif domain == "lore-index":
-        path = tmp_path / "lore.json"
-        path.write_text(json.dumps({"meta": {"entities_extracted": 2}, "terms": [],
-                                    "contradictions": []}), encoding="utf-8")
-        adapter = LoreIndexAdapter(client, "vibrantes", path)
     else:
         path = tmp_path / "catalog.json"
         path.write_text(json.dumps([{"file": "a.md", "name": "A", "skill": "x", "tags": []}]),
