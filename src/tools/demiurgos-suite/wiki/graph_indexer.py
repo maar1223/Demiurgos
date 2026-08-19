@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import threading
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,21 @@ _RE_HAS_TYPE = re.compile(r"^type:", re.MULTILINE)
 # ---------------------------------------------------------------------------
 # EntityGraphIndex
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class GraphReconcileResult:
+    """Outcome of a bulk graph reconciliation over a batch of written paths.
+
+    ``processed`` counts paths that were read and parsed into a cache entity
+    (or removed from cache because their content is no longer OKF). ``failed``
+    lists the paths that could not be read (missing/unreadable). ``batches`` is
+    the number of bounded update batches actually processed.
+    """
+
+    processed: int = 0
+    failed: list[str] = field(default_factory=list)
+    batches: int = 0
 
 
 class EntityGraphIndex:
@@ -441,6 +457,79 @@ class EntityGraphIndex:
 
             self._recompute_backlinks()
             self._cache["dirty"] = True
+
+    def update_many(
+        self, paths: list[str], mundo: str, batch_size: int = 100
+    ) -> GraphReconcileResult:
+        """Bulk-reconcile many written fichas in bounded batches (slice 3, IM-3.1).
+
+        Processes ``paths`` in chunks of ``batch_size``. For each batch it
+        re-reads the files, updates the affected cache entries, and recomputes
+        backlinks once for that batch. Unreadable (missing/OSError/
+        UnicodeDecodeError) paths are collected in ``failed`` and never stop
+        the remaining batch from being reconciled. Thread-safe: ``_lock`` is
+        held for the duration of each batch so concurrent readers see a
+        consistent cache state.
+
+        Idempotent: re-running with the same ``paths`` yields an identical
+        cache state (entity backlinks are derived deterministically from the
+        same on-disk content).
+
+        Read-only: never writes back to the corpus files.
+        """
+        if not paths:
+            return GraphReconcileResult(processed=0, failed=[], batches=0)
+
+        mundo_path = self._mundos_path / mundo
+        processed = 0
+        failed: list[str] = []
+        batches = 0
+        any_changed = False
+
+        for start in range(0, len(paths), max(1, batch_size)):
+            batch = paths[start : start + batch_size]
+            batch_changed = False
+            with self._lock:
+                for raw in batch:
+                    path = Path(raw)
+                    if path.suffix.lower() != ".md":
+                        continue
+                    try:
+                        rel_path = str(path.relative_to(mundo_path)).replace("\\", "/")
+                    except ValueError:
+                        # Path is not under the world root; cannot index it.
+                        continue
+                    try:
+                        content = path.read_text(encoding="utf-8")
+                    except (OSError, UnicodeDecodeError):
+                        failed.append(rel_path)
+                        continue
+
+                    entity = self._entity_from_file(path, content, rel_path)
+                    if entity is not None:
+                        prev = self._cache["entities"].get(rel_path)
+                        if prev:
+                            entity["backlinks"] = prev.get("backlinks", [])
+                        self._cache["entities"][rel_path] = entity
+                        processed += 1
+                        batch_changed = True
+                    else:
+                        # Not OKF — remove if previously cached.
+                        if rel_path in self._cache["entities"]:
+                            del self._cache["entities"][rel_path]
+                            batch_changed = True
+
+                if batch_changed:
+                    self._recompute_backlinks()
+                    any_changed = True
+            batches += 1
+
+        if any_changed:
+            self._cache["dirty"] = True
+
+        return GraphReconcileResult(
+            processed=processed, failed=failed, batches=batches
+        )
 
     def start_watch(self, mundo: str) -> None:
         """Start watchdog observer on mundos/{mundo}/{lore,personajes,sagas}.

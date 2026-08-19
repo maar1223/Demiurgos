@@ -4164,7 +4164,16 @@ class TestOnboardingRoutes:
 
 
 class TestWorldCreateEndpoint:
-    def test_create_fails_closed_without_principal(self, empty_client: TestClient):
+    def test_create_allowed_without_principal_when_auth_disabled(self, empty_client: TestClient):
+        """When auth is disabled (default), world creation should work without authentication."""
+        resp = empty_client.post("/api/worlds", json={"name": "mundo-x", "lore_skeleton": False})
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["kind"] == "created"
+
+    def test_create_fails_closed_without_principal_when_auth_enabled(
+            self, empty_client: TestClient, monkeypatch):
+        """When auth is enabled, world creation requires authentication."""
+        monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
         resp = empty_client.post("/api/worlds", json={"name": "mundo-x", "lore_skeleton": False})
         assert resp.status_code == 401
 

@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from import_models import (
     Approval,
@@ -28,9 +29,20 @@ from import_models import (
     ItemOutcome,
     MergeDecision,
     ReplacementRecord,
+    TargetResolution,
     utcnow_iso,
 )
+from import_analysis import resolve_target
 from import_store import ImportJobStore
+
+if TYPE_CHECKING:
+    # Only needed for the type annotation; graph_indexer uses package-relative
+    # imports that are unsafe to trigger from the top-level test harness, so
+    # the name is never evaluated at runtime (annotations are stringified via
+    # ``from __future__ import annotations``).
+    from graph_indexer import GraphReconcileResult
+
+logger = logging.getLogger("demiurgos-import")
 
 APPROVAL_TTL_MINUTES = 30
 PAPELERA_RETENTION_DAYS = 30
@@ -225,6 +237,7 @@ class ImportService:
                  spool_dir: Path,
                  read_file: Callable[[str], str] | None = None,
                  graph_reconcile: Callable[[str, str], None] | None = None,
+                 graph_reconcile_many: Callable[[list[str], str], GraphReconcileResult] | None = None,
                  register_gallery: Callable[[str, Path, str], str] | None = None,
                  now: Callable[[], datetime] | None = None) -> None:
         self.store = store
@@ -232,6 +245,7 @@ class ImportService:
         self.spool_dir = Path(spool_dir)
         self._read_file = read_file or (lambda _rel: "")
         self._graph_reconcile = graph_reconcile
+        self._graph_reconcile_many = graph_reconcile_many
         self._register_gallery = register_gallery
         self._now = now or _utcnow
 
@@ -239,14 +253,33 @@ class ImportService:
         return self.mundos_dir / world
 
     def _target_for(self, world: str, candidate: Candidate) -> Path:
-        """Resolve the target ficha path from a candidate's identity."""
-        mundo = self._mundo_dir(world)
-        source = (candidate.provenance.source_path or "").replace("\\", "/")
-        section = source.split("/", 1)[0] if "/" in source else "lore"
-        if section not in _VALID_SECTIONS:
-            section = "lore"
-        identity = candidate.normalized_identity
-        return mundo / section / f"{identity}.md"
+        """Resolve the target ficha path from a candidate's identity.
+
+        Slice 1 (IM-1.2): delegates to ``resolve_target`` so legacy uppercase
+        sections and supported OKF subfolder aliases are normalized, and
+        ambiguous mappings produce a ``review`` outcome instead of a guess.
+        Kept for backwards compatibility with callers that only want the path;
+        prefer ``_resolve_candidate_target`` when the status matters.
+        """
+        resolution = resolve_target(world, candidate, mundos_dir=self.mundos_dir)
+        return self._mundo_dir(world) / resolution.canonical_path
+
+    def _resolve_candidate_target(self, world: str,
+                                  candidate: Candidate) -> TargetResolution:
+        """Return the ``TargetResolution`` (path + status) for one candidate.
+
+        Use this when the caller needs to surface ``review``/``rejected``
+        status (e.g., execution must short-circuit on a non-resolved mapping).
+        """
+        resolution = resolve_target(world, candidate, mundos_dir=self.mundos_dir)
+        if not resolution.canonical_path:
+            return resolution
+        # Re-anchor the canonical path against this instance's mundos_dir so
+        # the caller can use it directly without an extra join.
+        from pathlib import Path as _P
+        anchored = _P(resolution.canonical_path)
+        del anchored  # canonical_path is always relative; callers can join.
+        return resolution
 
     def candidate_digest(self, job: ImportJob) -> str:
         """Immutable digest over the reviewed candidates (group-scoped)."""
@@ -344,13 +377,90 @@ class ImportService:
                                   error=f"execution dependency failed: {type(exc).__name__}")
             raise ValueError(
                 f"execution failed closed: {type(exc).__name__}") from exc
+        # Bulk graph reconciliation (slice 3, IM-3.1): after preservation-first
+        # writes complete, reconcile all written canonical fichas through the
+        # bounded bulk boundary once. Graph state is secondary to canon writes:
+        # a bulk failure falls back to per-file reconcile and never fails the
+        # job (unresolved items are surfaced as observability events).
+        self._reconcile_after_execution(job, outcomes)
         self.store.add_event(job.job_id, "execution_complete")
         self.store.update_job(job.job_id, expected_revision=job.revision + 1,
                               state=ImportJobState.COMPLETED)
         return outcomes
 
+    def _reconcile_after_execution(
+        self, job: ImportJob, outcomes: list[ExecutionOutcome]
+    ) -> None:
+        """Reconcile written fichas through the bulk boundary (IM-3.1/IM-3.2).
+
+        ``graph_reconcile_many`` takes precedence: it runs once over all
+        written paths in bounded batches. When it is unavailable, the legacy
+        per-file ``graph_reconcile`` already ran inside ``_execute_candidate``
+        and nothing more happens here. Bulk failure falls back to per-file
+        reconcile for each written path; if both fail, the job still completes
+        (canon writes are authoritative) and the failure is emitted as an
+        observability event.
+        """
+        written: list[str] = []
+        for o in outcomes:
+            if o.written and o.target:
+                try:
+                    rel = str(Path(o.target).relative_to(self.mundos_dir)).replace("\\", "/")
+                    written.append(rel)
+                except ValueError:
+                    continue
+        if self._graph_reconcile_many is None:
+            # Legacy per-file reconcile already ran inline during execution.
+            return
+        if not written:
+            # No written fichas -> no-op reconciliation, no false failures.
+            return
+
+        try:
+            result = self._graph_reconcile_many(written, job.world)
+        except Exception as exc:  # noqa: BLE001 — graph is a non-critical side effect
+            logger.warning(
+                "graph_reconcile_many failed for job %s (%d paths): %s",
+                job.job_id, len(written), type(exc).__name__, exc_info=True,
+            )
+            self.store.add_event(job.job_id, "graph_reconcile_failed")
+            # Fall back to per-file reconcile for each written path.
+            if self._graph_reconcile is not None:
+                for rel in written:
+                    try:
+                        self._graph_reconcile(rel, job.world)
+                    except Exception as per_exc:  # noqa: BLE001
+                        logger.warning(
+                            "per-file graph reconcile failed for %s: %s",
+                            rel, type(per_exc).__name__, exc_info=True,
+                        )
+            return
+
+        self.store.add_event(
+            job.job_id,
+            f"graph_reconciled:{result.processed}:{result.batches}",
+        )
+        if result.failed:
+            self.store.add_event(
+                job.job_id,
+                f"graph_reconcile_partial:{len(result.failed)}",
+            )
+
     def _execute_candidate(self, job: ImportJob, candidate: Candidate) -> ExecutionOutcome:
-        target = self._target_for(job.world, candidate)
+        # Slice 1 (IM-1.2): resolve the canonical OKF target first; only a
+        # ``resolved`` mapping is allowed to write. ``review``/``rejected``
+        # mappings surface the diagnostic and never mutate canon.
+        resolution = self._resolve_candidate_target(job.world, candidate)
+        if not resolution.is_resolved():
+            target = self._mundo_dir(job.world) / resolution.canonical_path
+            return ExecutionOutcome(
+                candidate_id=candidate.candidate_id, target=str(target),
+                action="review", written=False,
+                placement_status="ambiguous",
+                detail=(f"target not resolved ({resolution.status}): "
+                        f"{resolution.diagnostic}"),
+            )
+        target = self._mundo_dir(job.world) / resolution.canonical_path
         current = ""
         if target.exists():
             try:
@@ -388,7 +498,7 @@ class ImportService:
             target.parent.mkdir(parents=True, exist_ok=True)
             atomic_write(target, candidate.content_preview)
             self._register_placements(job.world, job.job_id, placements)
-            if self._graph_reconcile is not None:
+            if self._graph_reconcile_many is None and self._graph_reconcile is not None:
                 rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
                 self._graph_reconcile(rel, job.world)
             return ExecutionOutcome(
@@ -411,7 +521,7 @@ class ImportService:
         target.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(target, candidate.content_preview)
         self._register_placements(job.world, job.job_id, placements)
-        if self._graph_reconcile is not None:
+        if self._graph_reconcile_many is None and self._graph_reconcile is not None:
             rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
             self._graph_reconcile(rel, job.world)
         return ExecutionOutcome(

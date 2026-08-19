@@ -311,11 +311,13 @@ def create_world(body: WorldCreateRequest, request: Request):
     """Create a canonical new world (lowercase tree + optional OC8 skeleton).
 
     Gated write; idempotent repeats are harmless; collisions and unsafe names
-    are rejected without mutation.
+    are rejected without mutation. When local auth is disabled, creation is
+    allowed without authentication (development mode).
     """
-    principal = _resolve_principal(request)
-    if principal is None:
-        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if _local_auth_enabled():
+        principal = _resolve_principal(request)
+        if principal is None:
+            return JSONResponse(status_code=401, content={"detail": "Authentication required."})
     result = _create_world(MUNDOS_DIR, body.name, lore_skeleton=body.lore_skeleton)
     if result.kind == WorldResultKind.CREATED:
         registry = _local_state()
@@ -4068,6 +4070,24 @@ def _reconcile_import_graph(rel: str, mundo: str) -> None:
         idx.update(str(full), mundo)
 
 
+def _reconcile_import_graph_many(
+    paths: list[str], mundo: str
+) -> "GraphReconcileResult":
+    """Bulk-reconcile written fichas through the bounded batch boundary (slice 3).
+
+    Returns the bulk reconciliation result so the service can emit completion /
+    partial-failure observability events. Graph state is secondary to canon
+    writes; callers treat bulk failure as non-fatal for the import job.
+    """
+    from wiki.graph_indexer import GraphReconcileResult  # type: ignore[import-untyped]
+
+    idx = _get_graph(mundo)
+    if idx is None:
+        return GraphReconcileResult(processed=0, failed=list(paths), batches=0)
+    full_paths = [str(MUNDOS_DIR / mundo / rel) for rel in paths]
+    return idx.update_many(full_paths, mundo)
+
+
 def _register_import_gallery(world: str, src: Path, rel: str) -> None:
     """Register a spooled image into the world gallery (existing media base).
 
@@ -4140,6 +4160,7 @@ app.include_router(
                 (PROJECT_ROOT / "data" / "import-spool" / rel).read_text(
                     encoding="utf-8") if rel else ""),
             graph_reconcile=lambda rel, mundo: _reconcile_import_graph(rel, mundo),
+            graph_reconcile_many=_reconcile_import_graph_many,
             register_gallery=_register_import_gallery,
         ),
     ),

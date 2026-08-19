@@ -19,6 +19,7 @@ from import_models import (  # noqa: E402
     ImportJob,
     ImportJobState,
     Provenance,
+    TargetResolution,
     utcnow_iso,
 )
 from import_store import ImportJobStore  # noqa: E402
@@ -30,7 +31,11 @@ from import_service import (  # noqa: E402
     plan_placements,
     snapshot_to_papelera,
 )
-from import_analysis import analyze_markdown, analyze_source  # noqa: E402
+from import_analysis import (  # noqa: E402
+    analyze_markdown,
+    analyze_source,
+    resolve_target,
+)
 
 
 def _job(world: str = "world1", principal: str = "tester") -> ImportJob:
@@ -327,3 +332,251 @@ class TestGraphReconciliation:
         assert rel.endswith("lore/A.md")
         done = store.get_job(job.job_id)
         assert done.state == ImportJobState.COMPLETED
+
+
+# ---------------------------------------------------------------------------
+# Slice 3 — bulk graph reconciliation (IM-3.1/IM-3.2)
+# ---------------------------------------------------------------------------
+
+class TestBulkGraphReconciliation:
+    def _service(self, store, tmp_path, *, many=None, per_file=None):
+        spool = tmp_path / "spool"
+        (spool / "job1").mkdir(parents=True, exist_ok=True)
+        return ImportService(
+            store=store, mundos_dir=tmp_path, spool_dir=spool,
+            graph_reconcile=per_file,
+            graph_reconcile_many=many,
+        )
+
+    def _events(self, store, job):
+        obs = store.observability(job.opaque_token)
+        return [e["event"] for e in obs["events"]]
+
+    def test_bulk_reconcile_called_once_all_written_paths(self, store, tmp_path):
+        called = []
+        many = lambda paths, mundo: (called.append((list(paths), mundo))
+                                     or _Result(2, [], 1))
+        svc = self._service(store, tmp_path, many=many)
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(_candidate())
+        store.add_candidate(_candidate(ident="B",
+                                       content="---\ntype: personaje\nname: B\n---\nB body"))
+        approval = svc.issue_approval(job, "tester", [])
+        svc.execute(job, "tester", approval.digest, approval.token)
+        assert len(called) == 1, "bulk reconcile must run exactly once"
+        paths, mundo = called[0]
+        assert mundo == "world1"
+        assert any(p.endswith("lore/A.md") for p in paths)
+        assert any(p.endswith("lore/B.md") for p in paths)
+        done = store.get_job(job.job_id)
+        assert done.state == ImportJobState.COMPLETED
+        events = self._events(store, job)
+        assert any(e.startswith("graph_reconciled:") for e in events)
+
+    def test_bulk_partial_failure_emits_partial_event_job_completes(self, store, tmp_path):
+        svc = self._service(
+            store, tmp_path,
+            many=lambda paths, mundo: _Result(1, ["lore/Missing.md"], 1))
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(_candidate())
+        approval = svc.issue_approval(job, "tester", [])
+        svc.execute(job, "tester", approval.digest, approval.token)
+        done = store.get_job(job.job_id)
+        assert done.state == ImportJobState.COMPLETED
+        events = self._events(store, job)
+        assert any(e.startswith("graph_reconciled:") for e in events)
+        assert "graph_reconcile_partial:1" in events
+
+    def test_bulk_failure_falls_back_to_per_file_job_completes(self, store, tmp_path, caplog):
+        per_file = []
+        def failing_many(paths, mundo):
+            raise RuntimeError("graph index unavailable")
+
+        svc = self._service(
+            store, tmp_path, many=failing_many,
+            per_file=lambda rel, mundo: per_file.append(rel))
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(_candidate())
+        approval = svc.issue_approval(job, "tester", [])
+        svc.execute(job, "tester", approval.digest, approval.token)
+        done = store.get_job(job.job_id)
+        assert done.state == ImportJobState.COMPLETED
+        # Per-file fallback ran for the written path.
+        assert any(p.endswith("lore/A.md") for p in per_file)
+        events = self._events(store, job)
+        assert "graph_reconcile_failed" in events
+
+    def test_bulk_and_per_file_both_fail_job_still_completes(self, store, tmp_path):
+        def failing_many(paths, mundo):
+            raise RuntimeError("graph index unavailable")
+        def failing_per_file(rel, mundo):
+            raise RuntimeError("graph index unavailable")
+
+        svc = self._service(store, tmp_path, many=failing_many,
+                            per_file=failing_per_file)
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(_candidate())
+        approval = svc.issue_approval(job, "tester", [])
+        svc.execute(job, "tester", approval.digest, approval.token)
+        done = store.get_job(job.job_id)
+        assert done.state == ImportJobState.COMPLETED
+        events = self._events(store, job)
+        assert "graph_reconcile_failed" in events
+
+    def test_no_written_fichas_is_noop_no_bulk_call(self, store, tmp_path):
+        # A candidate whose merge is "keep" writes nothing -> no bulk reconcile.
+        calls = []
+        svc = self._service(
+            store, tmp_path, many=lambda paths, mundo: calls.append(1) or _Result(0, [], 0))
+        job = _job()
+        store.create_job(job)
+        # Pre-create the target so the merge is "keep" (ficha unchanged).
+        target = tmp_path / "world1" / "lore" / "A.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("---\ntype: personaje\nname: A\n---\nA body", encoding="utf-8")
+        store.add_candidate(_candidate(content="---\ntype: personaje\nname: A\n---\nA body"))
+        approval = svc.issue_approval(job, "tester", [])
+        svc.execute(job, "tester", approval.digest, approval.token)
+        assert calls == []
+        done = store.get_job(job.job_id)
+        assert done.state == ImportJobState.COMPLETED
+
+
+class _Result:
+    """Minimal stand-in for GraphReconcileResult in service tests."""
+
+    def __init__(self, processed, failed, batches):
+        self.processed = processed
+        self.failed = failed
+        self.batches = batches
+
+
+# ---------------------------------------------------------------------------
+# Slice 1 — resolve_target: legacy uppercase -> canonical OKF
+# ---------------------------------------------------------------------------
+
+class TestResolveTarget:
+    """RED tests for ``resolve_target``.
+
+    Maps a candidate's source path to its canonical OKF target. Legacy
+    uppercase sections (Lore/Personajes) and known OKF subfolder aliases
+    (Places->lugares, Rules->reglas, etc.) are normalized; unknown sections
+    or subfolders produce ``status="review"`` with a diagnostic — never a
+    guessed target.
+    """
+
+    def _candidate(self, ident: str, source_path: str) -> Candidate:
+        return Candidate(
+            candidate_id=f"cand-{ident}", job_id="job1", world="world1",
+            normalized_identity=ident, source_hash=f"sha256:{ident}",
+            provenance=Provenance(source_path=source_path, source_kind="loose",
+                                  source_hash=f"sha256:{ident}"),
+        )
+
+    def test_uppercase_lore_normalized_to_lowercase(self, tmp_path):
+        cand = self._candidate("A", "Lore/A.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert isinstance(r, TargetResolution)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/A.md"
+        assert r.normalized_source == "lore/A.md"
+        assert r.alias_used == ""
+
+    def test_uppercase_personajes_normalized_to_lowercase(self, tmp_path):
+        cand = self._candidate("B", "Personajes/B.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "personajes/B.md"
+        assert r.normalized_source == "personajes/B.md"
+
+    def test_canonical_okf_passthrough(self, tmp_path):
+        # Already in canonical OKF form -> unchanged, no alias recorded.
+        cand = self._candidate("A", "lore/A.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/A.md"
+        assert r.alias_used == ""
+
+    def test_legacy_alias_places_to_lugares(self, tmp_path):
+        cand = self._candidate("City", "Lore/Places/City.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/lugares/City.md"
+        assert r.alias_used == "Lore/Places"
+
+    def test_legacy_alias_rules_to_reglas(self, tmp_path):
+        cand = self._candidate("X", "Lore/Rules/X.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/reglas/X.md"
+        assert r.alias_used == "Lore/Rules"
+
+    def test_legacy_alias_case_insensitive_section(self, tmp_path):
+        # `LORE` and `lore` should both normalize to canonical OKF.
+        cand = self._candidate("A", "LORE/A.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/A.md"
+
+    def test_legacy_alias_case_insensitive_subfolder(self, tmp_path):
+        # Subfolder name is matched case-insensitively too.
+        cand = self._candidate("A", "Lore/PLACES/A.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/lugares/A.md"
+
+    def test_unknown_subfolder_under_lore_returns_review(self, tmp_path):
+        # A subfolder that is NOT a known OKF alias must be reported for
+        # review — never silently guessed.
+        cand = self._candidate("X", "Lore/Random/X.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "review"
+        assert r.canonical_path == "lore/Random/X.md"
+        assert "Random" in r.diagnostic or "unknown" in r.diagnostic.lower()
+
+    def test_unknown_section_returns_review(self, tmp_path):
+        cand = self._candidate("X", "Mystery/X.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "review"
+        assert r.canonical_path == "Mystery/X.md"
+        assert "Mystery" in r.diagnostic or "unknown" in r.diagnostic.lower()
+
+    def test_empty_source_returns_rejected(self, tmp_path):
+        cand = Candidate(
+            candidate_id="cand-x", job_id="job1", world="world1",
+            normalized_identity="x", source_hash="sha256:x",
+            provenance=Provenance(source_path="", source_kind="loose",
+                                  source_hash="sha256:x"),
+        )
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "rejected"
+        assert r.diagnostic
+
+    def test_unsafe_path_returns_rejected(self, tmp_path):
+        cand = self._candidate("x", "../etc/passwd")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "rejected"
+        assert r.diagnostic
+
+    def test_personajes_with_subfolder_returns_review(self, tmp_path):
+        # `personajes` does not have OKF subfolders; an unknown subfolder
+        # there must be reported for review, never guessed.
+        cand = self._candidate("X", "Personajes/Random/X.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "review"
+        assert "personajes/Random" in r.canonical_path
+
+    def test_is_resolved_predicate(self, tmp_path):
+        from import_models import TargetResolution
+        cand = self._candidate("A", "Lore/Places/A.md")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        # The predicate must be true for resolved and false for review.
+        assert r.status == "resolved"
+        rev = self._candidate("X", "Lore/Random/X.md")
+        rr = resolve_target("world1", rev, mundos_dir=tmp_path)
+        assert rr.status == "review"
+        assert rr.status != "resolved"

@@ -19,7 +19,134 @@ _SRC_DIR = Path(__file__).resolve().parent.parent.parent  # demiurgos-suite/
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from wiki.graph_indexer import EntityGraphIndex  # noqa: E402
+from wiki.graph_indexer import EntityGraphIndex, GraphReconcileResult  # noqa: E402
+
+
+def _write_okf(mundo_dir: Path, rel: str, name: str, links: list[str] = ()) -> Path:
+    """Write a minimal OKF ficha under a world dir, returning its absolute path."""
+    target = (mundo_dir / rel)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    body = "\n".join(f"[[{l}]]" for l in links)
+    target.write_text(
+        f"---\ntype: personaje\ntitle: {name}\n---\n# {name}\n{body}",
+        encoding="utf-8",
+    )
+    return target
+
+
+class TestUpdateMany(unittest.TestCase):
+    """update_many: bounded bulk graph reconciliation (slice 3, IM-3.1)."""
+
+    def _make_world(self, tmpdir: str) -> tuple[Path, Path]:
+        mundos_path = Path(tmpdir) / "mundos"
+        mundo_dir = mundos_path / "bulkworld"
+        (mundo_dir / "lore").mkdir(parents=True, exist_ok=True)
+        return mundos_path, mundo_dir
+
+    def test_empty_paths_is_noop(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, _ = self._make_world(tmpdir)
+            index = EntityGraphIndex(mundos_path)
+            result = index.update_many([], "bulkworld")
+            self.assertEqual(result, GraphReconcileResult(processed=0, failed=[], batches=0))
+
+    def test_returns_counts_and_reconciles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._make_world(tmpdir)
+            p1 = _write_okf(mundo_dir, "lore/A.md", "Alpha", links=["Beta"])
+            p2 = _write_okf(mundo_dir, "lore/B.md", "Beta")
+            index = EntityGraphIndex(mundos_path)
+            result = index.update_many([str(p1), str(p2)], "bulkworld", batch_size=1)
+            self.assertEqual(result.processed, 2)
+            self.assertEqual(result.failed, [])
+            self.assertEqual(result.batches, 2)
+            self.assertTrue(index.dirty)
+            # Backlinks recomputed across the batch: A links to B.
+            beta = index.get_entity("lore/B.md")
+            self.assertIsNotNone(beta)
+            self.assertEqual(beta.backlinks, ["lore/A.md"])
+
+    def test_nonexistent_files_collected_as_failed_processing_continues(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._make_world(tmpdir)
+            good = _write_okf(mundo_dir, "lore/A.md", "Alpha")
+            missing = mundo_dir / "lore" / "Missing.md"
+            index = EntityGraphIndex(mundos_path)
+            result = index.update_many([str(good), str(missing)], "bulkworld")
+            self.assertEqual(result.processed, 1)
+            self.assertIn("lore/Missing.md", result.failed)
+            self.assertEqual(result.batches, 1)
+            # The good file still landed in cache.
+            self.assertIsNotNone(index.get_entity("lore/A.md"))
+
+    def test_idempotent_same_cache_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._make_world(tmpdir)
+            p1 = _write_okf(mundo_dir, "lore/A.md", "Alpha", links=["Beta"])
+            p2 = _write_okf(mundo_dir, "lore/B.md", "Beta", links=["Gamma"])
+            p3 = _write_okf(mundo_dir, "lore/C.md", "Gamma")
+            index = EntityGraphIndex(mundos_path)
+            index.update_many([str(p1), str(p2), str(p3)], "bulkworld")
+            snapshot1 = {
+                rel: (ent["forward_links"], sorted(ent["backlinks"]))
+                for rel, ent in index._cache["entities"].items()
+            }
+            index.update_many([str(p1), str(p2), str(p3)], "bulkworld")
+            snapshot2 = {
+                rel: (ent["forward_links"], sorted(ent["backlinks"]))
+                for rel, ent in index._cache["entities"].items()
+            }
+            self.assertEqual(snapshot1, snapshot2)
+            self.assertEqual(index.entity_count, 3)
+
+    def test_partial_failure_persists_earlier_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._make_world(tmpdir)
+            # Batch 0 (A) succeeds; batch 1 (Missing) fails.
+            p1 = _write_okf(mundo_dir, "lore/A.md", "Alpha")
+            missing = mundo_dir / "lore" / "Missing.md"
+            index = EntityGraphIndex(mundos_path)
+            result = index.update_many(
+                [str(p1), str(missing)], "bulkworld", batch_size=1)
+            self.assertEqual(result.processed, 1)
+            self.assertIn("lore/Missing.md", result.failed)
+            self.assertEqual(result.batches, 2)
+            # Earlier batch persisted even though a later batch had a failure.
+            self.assertIsNotNone(index.get_entity("lore/A.md"))
+            self.assertIsNone(index.get_entity("lore/Missing.md"))
+
+    def test_batch_size_bounds_recomputation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._make_world(tmpdir)
+            paths = [_write_okf(mundo_dir, f"lore/E{i}.md", f"E{i}") for i in range(5)]
+            index = EntityGraphIndex(mundos_path)
+            result = index.update_many([str(p) for p in paths], "bulkworld", batch_size=2)
+            self.assertEqual(result.batches, 3)  # 2 + 2 + 1
+            self.assertEqual(result.processed, 5)
+            self.assertEqual(index.entity_count, 5)
+
+    def test_500_paths_within_budget_no_oom(self) -> None:
+        """Performance: 500+ paths reconcile quickly without unbounded growth."""
+        import time
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._make_world(tmpdir)
+            paths = [
+                _write_okf(mundo_dir, f"lore/P{i:04}.md", f"P{i}",
+                           links=["P0"])
+                for i in range(500)
+            ]
+            index = EntityGraphIndex(mundos_path)
+            start = time.monotonic()
+            result = index.update_many([str(p) for p in paths], "bulkworld", batch_size=100)
+            elapsed = time.monotonic() - start
+            self.assertEqual(result.processed, 500)
+            self.assertEqual(result.failed, [])
+            self.assertEqual(result.batches, 5)
+            self.assertLess(elapsed, 10.0)
+            self.assertEqual(index.entity_count, 500)
+            # No unbounded growth across repeated runs.
+            index.update_many([str(p) for p in paths], "bulkworld", batch_size=100)
+            self.assertEqual(index.entity_count, 500)
 
 
 class TestUpdateReadOnly(unittest.TestCase):
