@@ -37,6 +37,8 @@ from import_intake import (  # noqa: E402
     reject_unsafe_path,
     validate_zip_manifest,
     inspect_zip,
+    extract_zip_bounded,
+    SpoolFile,
     ZipEntrySpec,
 )
 from import_store import ImportJobStore  # noqa: E402
@@ -313,3 +315,121 @@ class TestResumableIntake:
         _stream(client, job["job_id"], "lore/a.md", b"ab")
         end = _stream(client, job["job_id"], "lore/a.md", b"cd", offset=2)
         assert end == 4
+
+
+# ---------------------------------------------------------------------------
+# Slice 1 — extract_zip_bounded (bounded ZIP expansion)
+# ---------------------------------------------------------------------------
+
+class TestExtractZipBounded:
+    """RED tests for ``extract_zip_bounded``.
+
+    The function must reuse the existing manifest defenses (entry count, depth,
+    per-entry size, compression ratio, path safety) BEFORE writing anything,
+    and must stream entries into the destination one-by-one (never the
+    unbounded ``ZipFile.extractall``). All violations fail closed with no
+    partial extraction.
+    """
+
+    def test_extract_rejects_oversized_entry_count(self, tmp_path):
+        archive = tmp_path / "too_many.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            for i in range(10_001):
+                zf.writestr(f"lore/{i}.md", "x")
+        out = tmp_path / "out"
+        with pytest.raises(ZipBombError):
+            extract_zip_bounded(archive, out)
+        # Fail closed: nothing was extracted (destination empty or absent).
+        assert not out.exists() or not any(out.rglob("*"))
+
+    def test_extract_rejects_compression_ratio_bomb(self, tmp_path):
+        archive = tmp_path / "bomb.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            # 4 MB of nulls compresses to a tiny payload; ratio exceeds 200x.
+            zf.writestr("lore/bomb.md", b"\x00" * (4 * 1024 * 1024),
+                        compress_type=zipfile.ZIP_DEFLATED)
+        out = tmp_path / "out"
+        with pytest.raises(ZipBombError):
+            extract_zip_bounded(archive, out)
+        assert not out.exists() or not any(out.rglob("*"))
+
+    def test_extract_rejects_traversal_path(self, tmp_path):
+        archive = tmp_path / "evil.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("../etc/passwd", "pwn")
+        out = tmp_path / "out"
+        with pytest.raises(UnsafePathError):
+            extract_zip_bounded(archive, out)
+        assert not out.exists() or not any(out.rglob("*"))
+
+    def test_extract_rejects_absolute_path(self, tmp_path):
+        archive = tmp_path / "abs.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("/abs/path.md", "x")
+        out = tmp_path / "out"
+        with pytest.raises(UnsafePathError):
+            extract_zip_bounded(archive, out)
+        assert not out.exists() or not any(out.rglob("*"))
+
+    def test_extract_rejects_oversized_entry(self, tmp_path):
+        archive = tmp_path / "huge.zip"
+        # Write an entry whose declared uncompressed size exceeds 500 MB.
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("lore/huge.md", b"x", compress_type=zipfile.ZIP_STORED)
+            info = zf.infolist()[-1]
+            info.file_size = MAX_FILE_BYTES + 1
+        out = tmp_path / "out"
+        with pytest.raises(ZipBombError):
+            extract_zip_bounded(archive, out)
+        assert not out.exists() or not any(out.rglob("*"))
+
+    def test_extract_writes_files_when_safe(self, tmp_path):
+        archive = tmp_path / "world.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("lore/a.md", b"# A\nbody")
+            zf.writestr("personajes/b.md", b"# B\nbody")
+        out = tmp_path / "out"
+        result = extract_zip_bounded(archive, out)
+        assert len(result) == 2
+        assert isinstance(result[0], SpoolFile)
+        assert all(isinstance(sf, SpoolFile) for sf in result)
+        # Files are written under the destination and the entries are intact.
+        rels = {sf.relative_path for sf in result}
+        assert rels == {"lore/a.md", "personajes/b.md"}
+        assert (out / "lore" / "a.md").read_bytes() == b"# A\nbody"
+        assert (out / "personajes" / "b.md").read_bytes() == b"# B\nbody"
+
+    def test_extract_returns_spool_files_with_sizes(self, tmp_path):
+        archive = tmp_path / "sized.zip"
+        payload = b"hello world" * 10  # 110 bytes
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("lore/x.md", payload)
+        out = tmp_path / "out"
+        result = extract_zip_bounded(archive, out)
+        assert len(result) == 1
+        sf = result[0]
+        assert sf.size == len(payload)
+        assert sf.relative_path == "lore/x.md"
+        assert sf.path == (out / "lore" / "x.md").resolve()
+        assert sf.path.is_file()
+
+    def test_extract_streams_per_entry_not_whole_archive(self, tmp_path, monkeypatch):
+        """The implementation must call ``read``/``open`` per entry, never
+        the unbounded ``ZipFile.extractall``."""
+        archive = tmp_path / "safe.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("lore/a.md", b"a")
+        out = tmp_path / "out"
+        # If the implementation tried to call ``extractall``, this attribute
+        # access would still succeed; the test then fails when the patched
+        # method is invoked (extractall is forbidden here).
+        import zipfile as _zf
+        called = {"extractall": 0}
+        original = _zf.ZipFile.extractall
+        def _guard(self, *args, **kwargs):
+            called["extractall"] += 1
+            raise AssertionError("extractall must not be used in bounded extraction")
+        monkeypatch.setattr(_zf.ZipFile, "extractall", _guard)
+        extract_zip_bounded(archive, out)
+        assert called["extractall"] == 0
+        monkeypatch.setattr(_zf.ZipFile, "extractall", original)

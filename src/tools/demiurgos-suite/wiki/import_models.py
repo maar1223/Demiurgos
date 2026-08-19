@@ -87,6 +87,30 @@ class MergeDecision(BaseModel):
     outcome: str = "pending"
 
 
+class TargetResolution(BaseModel):
+    """Canonical OKF target mapping for a candidate (slice 1, IM-1.2).
+
+    Carries the canonical relative target, the normalized source, and a
+    status (``resolved``/``review``/``rejected``) with a diagnostic. Legacy
+    uppercase sections (``Lore``/``Personajes``) and supported subfolder
+    aliases are normalized here; unknown sections, unknown subfolders, or
+    unsafe paths produce a non-resolved status — never a guessed target.
+    """
+
+    canonical_path: str = ""
+    normalized_source: str = ""
+    status: str = "resolved"    # resolved|review|rejected
+    diagnostic: str = ""
+    alias_used: str = ""        # e.g., "Lore/Places" -> "lugares"
+
+    def is_resolved(self) -> bool:
+        return self.status == "resolved"
+
+    def model_dump_safe(self) -> dict[str, Any]:
+        """Serialization helper (status + paths only)."""
+        return self.model_dump()
+
+
 class ReplacementRecord(BaseModel):
     """Explicit-replacement snapshot for 30-day `.papelera` recovery."""
 
@@ -113,6 +137,7 @@ class Candidate(BaseModel):
     images: list[ImagePlacement] = Field(default_factory=list)
     merge: MergeDecision | None = None
     replacement: ReplacementRecord | None = None
+    target_resolution: dict[str, Any] | None = None  # TargetResolution-as-dict
 
 
 class ItemOutcome(BaseModel):
@@ -177,3 +202,16 @@ class ImportJob(BaseModel):
         data = self.model_dump()
         data.pop("opaque_token", None)
         return data
+
+
+class JobPage(BaseModel):
+    """Cursor-paginated slice of an import-job history (slice 2, IM-2.2).
+
+    Each entry is a pre-redacted dict (no ``opaque_token``); ``next_cursor``
+    is opaque to clients and absent when there is no further page. The cursor
+    encodes the (created_at, job_id) tuple of the last row so the next page
+    seeks strictly past it under DESC ordering.
+    """
+
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+    next_cursor: str | None = None

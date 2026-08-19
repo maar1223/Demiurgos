@@ -87,6 +87,20 @@ class ZipEntrySpec:
     uncompressed_size: int
 
 
+@dataclass(frozen=True)
+class SpoolFile:
+    """One file extracted from a bounded ZIP archive.
+
+    Carries the absolute path of the extracted file, the relative path
+    within the archive (the entry name), and the extracted size in bytes.
+    Returned by ``extract_zip_bounded`` after all manifest defenses pass.
+    """
+
+    path: Path
+    relative_path: str
+    size: int
+
+
 def validate_zip_manifest(entries: Iterable[ZipEntrySpec]) -> int:
     """Validate a ZIP entry manifest pre-extraction; return total uncompressed.
 
@@ -131,6 +145,102 @@ def inspect_zip(archive: Path) -> tuple[list[ZipEntrySpec], int]:
         ]
     total = validate_zip_manifest(specs)
     return specs, total
+
+
+# Streaming chunk size for per-entry extraction (avoids whole-file buffering
+# of large entries; 64 KiB matches the BoundedSpool's streaming posture).
+_ZIP_EXTRACT_CHUNK = 64 * 1024
+
+
+def extract_zip_bounded(archive: Path,
+                        destination: Path) -> list[SpoolFile]:
+    """Bounded extraction of a ZIP archive into *destination*.
+
+    Reuses ``inspect_zip`` (entry-count, per-entry size, depth, compression
+    ratio) BEFORE any file is written and re-validates each path through
+    ``reject_unsafe_path``. Every entry is streamed into the destination
+    via ``ZipFile.open`` one chunk at a time; the unbounded
+    ``ZipFile.extractall`` is never called. The aggregate uncompressed
+    total is bounded against ``MAX_JOB_AGGREGATE_BYTES`` during streaming
+    so a single oversize archive cannot exhaust the spool.
+
+    Raises ``ZipBombError``, ``UnsafePathError``, or ``BoundsError`` on any
+    violation — the destination is left empty (or untouched) on rejection.
+    """
+    archive = Path(archive)
+    destination = Path(destination)
+
+    # 1) Validate the complete manifest FIRST. inspect_zip calls
+    #    validate_zip_manifest which enforces entry count, depth, per-entry
+    #    size, ratio, and per-path safety (no traversal/absolute/system).
+    specs, total_uncompressed = inspect_zip(archive)
+    del specs  # manifest already validated; entries are re-read below
+
+    # 2) Pre-flight aggregate bound — the same 5 GB job-level cap enforced
+    #    by BoundedSpool for streamed files.
+    if total_uncompressed > MAX_JOB_AGGREGATE_BYTES:
+        raise BoundsError(
+            f"zip uncompressed total {total_uncompressed} bytes exceeds "
+            f"{MAX_JOB_AGGREGATE_BYTES} aggregate job limit"
+        )
+
+    # 3) Resolve the destination containment once.
+    dest_root = destination.resolve()
+    dest_root.mkdir(parents=True, exist_ok=True)
+
+    spool_files: list[SpoolFile] = []
+    cumulative = 0
+
+    with zipfile.ZipFile(archive) as zf:
+        for info in zf.infolist():
+            # Per-entry defenses (defensive re-check: inspect_zip already
+            # rejected manifest-level violations, but path/data divergence
+            # between header and central directory is theoretically possible).
+            reject_unsafe_path(info.filename)
+            if info.file_size > ZIP_MAX_ENTRY_SIZE:
+                raise ZipBombError(
+                    f"zip entry {info.filename!r} exceeds 500 MB per-file limit"
+                )
+
+            # Resolve the target path under the destination and ensure it
+            # remains contained (no escape outside the destination root).
+            rel = info.filename
+            target = (dest_root / rel).resolve()
+            if dest_root != target and dest_root not in target.parents:
+                raise UnsafePathError(
+                    f"zip entry escapes destination: {info.filename!r}"
+                )
+
+            # Directory entries have no body — just ensure the path exists.
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+            # Stream the entry one chunk at a time. We never call
+            # ZipFile.extractall; instead we open the entry, read in
+            # bounded chunks, and write to the target.
+            entry_size = 0
+            with zf.open(info) as src, target.open("wb") as dst:
+                while True:
+                    chunk = src.read(_ZIP_EXTRACT_CHUNK)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    entry_size += len(chunk)
+                    cumulative += len(chunk)
+                    if cumulative > MAX_JOB_AGGREGATE_BYTES:
+                        raise BoundsError(
+                            f"zip extraction exceeds 5 GB aggregate limit "
+                            f"({cumulative} bytes written)"
+                        )
+
+            spool_files.append(SpoolFile(
+                path=target, relative_path=rel, size=entry_size,
+            ))
+
+    return spool_files
 
 
 class BoundedSpool:

@@ -9,15 +9,27 @@ guesses placement — every image association is surfaced for review.
 This is the server-owned replacement for the legacy ``sync_lore`` extraction
 path during import: it keeps the same heading/source-order semantics while
 returning an ``AnalysisReport`` the import service can review and merge.
+
+Slice 1 adds ``resolve_target``: a pure function that normalizes a
+candidate's source path to its canonical OKF target (IM-1.2). Legacy
+uppercase sections and supported subfolder aliases are mapped; unknown or
+ambiguous candidates are returned with a ``review``/``rejected`` status
+and a diagnostic — never a guessed target.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable
 
-from import_models import ImagePlacement
+from import_intake import UnsafePathError, reject_unsafe_path
+from import_models import (
+    ImagePlacement,
+    Provenance,
+    TargetResolution,
+)
 
 _RE_HEADING = re.compile(r"^(#{1,3})\s+(.+)$")
 _RE_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
@@ -179,3 +191,159 @@ def analyze_source(
         analyzed = analyze_markdown(text, relative, digest, size)
         report.files.append(analyzed)
     return report
+
+
+# ---------------------------------------------------------------------------
+# Slice 1 — canonical OKF target resolution (IM-1.2)
+# ---------------------------------------------------------------------------
+
+# Legacy English subfolder names mapped to canonical OKF subfolder names
+# (OC8 lore skeleton: reglas, lugares, culturas, criaturas, facciones,
+# artefactos, historia). The mapping is case-insensitive on the subfolder
+# key; the section (``Lore``/``Personajes``) is normalized separately via
+# case-insensitive comparison to ``lore``/``personajes``.
+LEGACY_SUBFOLDER_ALIASES: dict[str, str] = {
+    "rules": "reglas",
+    "places": "lugares",
+    "cultures": "culturas",
+    "creatures": "criaturas",
+    "factions": "facciones",
+    "artifacts": "artefactos",
+    "history": "historia",
+}
+
+# Canonical OKF top-level sections (lowercase, case-sensitive).
+_CANONICAL_SECTIONS = frozenset({"lore", "personajes", "sagas", "referencias"})
+
+# Legacy uppercase sections normalized to their canonical lowercase form.
+_LEGACY_SECTIONS = {
+    "lore": "lore",
+    "personajes": "personajes",
+}
+
+
+def resolve_target(world: str, candidate,
+                   *, mundos_dir: Path | None = None) -> TargetResolution:
+    """Map a candidate's source path to its canonical OKF target.
+
+    Pure function: never mutates the candidate, never writes files, never
+    guesses ambiguous mappings. The returned ``TargetResolution`` carries:
+
+      - ``canonical_path`` — canonical OKF target as a relative POSIX path
+        (``lore/lugares/City.md``). For ``review``/``rejected`` outcomes this
+        is the best-effort path the caller may surface for human approval.
+      - ``normalized_source`` — the source path rewritten with the legacy
+        section mapped to its canonical lowercase form.
+      - ``status`` — ``"resolved"`` (canonical target determined),
+        ``"review"`` (unknown section / subfolder — never guessed), or
+        ``"rejected"`` (empty / unsafe source path).
+      - ``diagnostic`` — reason for ``review``/``rejected``; safe to surface.
+      - ``alias_used`` — which legacy alias produced the canonical target
+        (e.g., ``"Lore/Places"``); empty when no alias was applied.
+
+    The ``world`` parameter is accepted to mirror the design contract; it is
+    not currently needed for resolution (the canonical path is world-agnostic)
+    but is kept so future per-world policy (custom aliases, blocked targets)
+    can extend the function without a signature change.
+    """
+    del world, mundos_dir  # resolution is world-agnostic today; reserved for future policy
+    source = (getattr(getattr(candidate, "provenance", None),
+                     "source_path", None) or "").replace("\\", "/")
+
+    if not source.strip():
+        return TargetResolution(
+            canonical_path="", normalized_source="",
+            status="rejected", diagnostic="empty source path",
+        )
+
+    # Reject traversal / absolute / hidden / system paths up front. The
+    # candidate must never reach canon if the source path is unsafe.
+    try:
+        reject_unsafe_path(source)
+    except UnsafePathError as exc:
+        return TargetResolution(
+            canonical_path="", normalized_source=source,
+            status="rejected", diagnostic=str(exc),
+        )
+
+    parts = [p for p in source.split("/") if p]
+    if not parts:
+        return TargetResolution(
+            canonical_path="", normalized_source=source,
+            status="rejected", diagnostic="empty source path",
+        )
+
+    # The last path component is always the filename (must end with .md).
+    filename = parts[-1]
+    if not filename.endswith(".md"):
+        return TargetResolution(
+            canonical_path=source, normalized_source=source,
+            status="review",
+            diagnostic=f"non-markdown source path: {filename!r}",
+        )
+    identity = Path(filename).stem
+
+    # Normalize the top-level section (case-insensitive Lore/Personajes).
+    head = parts[0]
+    head_lower = head.lower()
+    if head_lower in _LEGACY_SECTIONS:
+        section = _LEGACY_SECTIONS[head_lower]
+    else:
+        section = head_lower
+
+    # Everything between the section and the filename is the subfolder chain.
+    rest = parts[1:-1]
+
+    # Legacy alias: ``lore/<legacy subfolder>/...`` -> ``lore/<okf subfolder>/...``
+    if section == "lore" and rest:
+        first_sub_lower = rest[0].lower()
+        if first_sub_lower in LEGACY_SUBFOLDER_ALIASES:
+            okf_sub = LEGACY_SUBFOLDER_ALIASES[first_sub_lower]
+            alias_key = f"Lore/{rest[0]}"
+            # Preserve additional nested subfolders after the alias.
+            tail = rest[1:]
+            tail_str = ("/" + "/".join(tail)) if tail else ""
+            canonical = f"lore/{okf_sub}{tail_str}/{identity}.md"
+            return TargetResolution(
+                canonical_path=canonical, normalized_source=canonical,
+                status="resolved", alias_used=alias_key,
+            )
+
+    # No alias applied. If there are subfolders under a canonical section
+    # they are unknown -> review (never guessed). The diagnostic carries
+    # the original subfolder name for the reviewer's reference.
+    if rest:
+        if section in _CANONICAL_SECTIONS:
+            normalized_path = f"{section}/{'/'.join(rest)}/{identity}.md"
+            return TargetResolution(
+                canonical_path=normalized_path,
+                normalized_source=normalized_path,
+                status="review",
+                diagnostic=f"unknown subfolder under {section!r}: {rest[0]!r}",
+            )
+        # Unknown top-level section with subfolders -> review with section
+        # diagnostic (the canonical_path keeps the original structure so a
+        # reviewer can override or relabel).
+        return TargetResolution(
+            canonical_path=source, normalized_source=source,
+            status="review",
+            diagnostic=f"unknown section: {parts[0]!r}",
+        )
+
+    # No subfolders. The top-level section itself must be a known canonical
+    # OKF section; anything else is reported for review (never guessed).
+    if section not in _CANONICAL_SECTIONS:
+        return TargetResolution(
+            canonical_path=source, normalized_source=source,
+            status="review",
+            diagnostic=f"unknown section: {parts[0]!r}",
+        )
+
+    # Top-level file under a canonical section (resolved). Section case
+    # normalization (``Lore`` -> ``lore``) is NOT recorded as an alias —
+    # ``alias_used`` is reserved for the subfolder alias table.
+    canonical = f"{section}/{identity}.md"
+    return TargetResolution(
+        canonical_path=canonical, normalized_source=canonical,
+        status="resolved", alias_used="",
+    )
