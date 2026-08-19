@@ -4045,6 +4045,44 @@ from idea_capture_ui import create_idea_capture_router  # noqa: E402
 from assistant_settings import create_assistant_settings_router  # noqa: E402
 from telegram_settings import create_telegram_settings_router  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
+from import_router import create_import_router  # noqa: E402
+from import_store import ImportJobStore  # noqa: E402
+from import_service import ImportService  # noqa: E402
+
+# Lazy world-importer store: reads current PROJECT_ROOT so tests can relocate it.
+_IMPORT_STORE: ImportJobStore | None = None
+
+
+def _import_store() -> ImportJobStore:
+    global _IMPORT_STORE
+    if _IMPORT_STORE is None:
+        _IMPORT_STORE = ImportJobStore(PROJECT_ROOT / "data" / "import-jobs.sqlite3")
+    return _IMPORT_STORE
+
+
+def _reconcile_import_graph(rel: str, mundo: str) -> None:
+    """Reconcile the canonical graph for a written ficha before success (2.9)."""
+    idx = _get_graph(mundo)
+    if idx is not None:
+        full = MUNDOS_DIR / mundo / rel
+        idx.update(str(full), mundo)
+
+
+def _register_import_gallery(world: str, src: Path, rel: str) -> None:
+    """Register a spooled image into the world gallery (existing media base).
+
+    Copies the (already bounded) image into ``mundos/{world}/wiki/media/`` so
+    the existing media contract (list/upload/serve via ``getMediaUrl``) sees it
+    as a first-class asset; the ficha references it via relative Markdown.
+    """
+    save_dir = MUNDOS_DIR / world / "wiki" / "media"
+    if not src.is_file():
+        return
+    name = Path(rel).name
+    save_dir.mkdir(parents=True, exist_ok=True)
+    dest = save_dir / name
+    if not dest.exists():
+        shutil.copy2(src, dest)
 
 # Assistant settings routes accept transient credentials only on authenticated
 # write requests and return metadata-only status payloads. Configuration saves
@@ -4082,6 +4120,28 @@ app.include_router(
         require_principal=lambda request: _resolve_principal(request),
         mundos_dir=lambda: MUNDOS_DIR,
         evidence_dir=lambda: PROJECT_ROOT / "data" / "migration-evidence",
+    ),
+)
+
+# World importer (Phase 1 intake + Phase 2 service). Principal and world are
+# resolved server-side; intake never writes canon, and only digest/token-bound
+# approval may invoke gated merge + gallery registration + graph reconcile.
+app.include_router(
+    create_import_router(
+        require_principal=lambda request: _resolve_principal(request),
+        mundos_dir=lambda: MUNDOS_DIR,
+        spool_dir=lambda: PROJECT_ROOT / "data" / "import-spool",
+        store=_import_store,
+        service=ImportService(
+            store=_import_store(),
+            mundos_dir=MUNDOS_DIR,
+            spool_dir=PROJECT_ROOT / "data" / "import-spool",
+            read_file=lambda rel: (
+                (PROJECT_ROOT / "data" / "import-spool" / rel).read_text(
+                    encoding="utf-8") if rel else ""),
+            graph_reconcile=lambda rel, mundo: _reconcile_import_graph(rel, mundo),
+            register_gallery=_register_import_gallery,
+        ),
     ),
 )
 

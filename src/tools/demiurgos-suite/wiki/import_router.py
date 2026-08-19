@@ -1,0 +1,366 @@
+"""World importer — REST lifecycle router (slice 1: intake).
+
+Server-owned import-job contract: create a job from a source selection
+(folders/loose/ZIP), stream durable chunks with resumable offsets, analyze
+(fail-closed on malformed/unavailable provider output), fetch redacted job
+state, and cancel. Every route requires a trusted principal and resolves the
+world through the canonical world authority; no canon write occurs here.
+"""
+
+from __future__ import annotations
+
+import base64
+import secrets
+import uuid
+from pathlib import Path
+from typing import Any, Callable
+
+from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel
+
+from import_models import (
+    ImportJob,
+    ImportJobState,
+    INTAKE_STATES,
+    Candidate,
+    utcnow_iso,
+)
+from import_intake import (
+    BoundedSpool,
+    MalformedProviderError,
+    UnsafePathError,
+    reject_unsafe_path,
+)
+from import_store import ImportJobStore
+from import_service import ImportService
+
+
+class CreateJobRequest(BaseModel):
+    source_kind: str = "loose"   # folder | loose | zip
+    files: list[str] = []
+
+
+class StreamChunkRequest(BaseModel):
+    relative: str
+    offset: int = 0
+    data_b64: str = ""
+
+
+class ApproveRequest(BaseModel):
+    digest: str = ""
+    token: str = ""
+    group_ids: list[str] = []
+
+
+def create_import_router(
+    *,
+    require_principal: Callable[[Request], Any],
+    mundos_dir: Callable[[], Path],
+    spool_dir: Callable[[], Path],
+    store: ImportJobStore | Callable[[], ImportJobStore],
+    provider: Callable[[ImportJob, list[dict[str, Any]]], list[Candidate]] | None = None,
+    service: ImportService | None = None,
+) -> APIRouter:
+    router = APIRouter(prefix="/api/{mundo}/imports", tags=["world-importer"])
+    _store = store if isinstance(store, ImportJobStore) else store()
+    _service = service
+
+    def guard(request: Request) -> Any:
+        principal = require_principal(request)
+        if principal is None:
+            raise HTTPException(status_code=401, detail="Authentication required.")
+        return principal
+
+    def resolve_world(mundo: str) -> Path:
+        world_dir = mundos_dir() / mundo
+        resolved = world_dir.resolve()
+        if not resolved.is_dir() or resolved.parent != mundos_dir().resolve():
+            raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        if Path(mundo).name != mundo or mundo.startswith((".", "_")):
+            raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        return resolved
+
+    def spool_for(job_id: str, world: str) -> BoundedSpool:
+        return BoundedSpool(spool_dir(), job_id, world)
+
+    @router.post("", status_code=201)
+    def create_job(mundo: str, request: Request, body: CreateJobRequest) -> dict:
+        principal = guard(request)
+        resolve_world(mundo)
+        if body.source_kind not in {"folder", "loose", "zip"}:
+            raise HTTPException(status_code=400, detail="Invalid source_kind")
+        for path in body.files:
+            try:
+                reject_unsafe_path(path)
+            except UnsafePathError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        job = ImportJob(
+            job_id=uuid.uuid4().hex,
+            world=mundo,
+            owner_principal=getattr(principal, "id", str(principal)),
+            state=ImportJobState.PENDING,
+            source_kind=body.source_kind,
+            opaque_token=secrets.token_hex(16),
+            created_at=utcnow_iso(),
+            updated_at=utcnow_iso(),
+        )
+        _store.create_job(job)
+        _store.add_event(job.job_id, "created")
+        return {"job": job.model_dump_redacted()}
+
+    @router.post("/{job_id}/stream")
+    def stream_chunk(mundo: str, job_id: str, request: Request,
+                     body: StreamChunkRequest) -> dict:
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        if job.state not in INTAKE_STATES:
+            raise HTTPException(status_code=409, detail="Job not in an intake state")
+        if not _store.acquire_lease(job_id, str(principal), job.state):
+            raise HTTPException(status_code=409, detail="Job busy (lease held)")
+        try:
+            spool = spool_for(job_id, mundo)
+            data = base64.b64decode(body.data_b64) if body.data_b64 else b""
+            spool.begin_file(body.relative, body.offset + len(data))
+            spool.write_chunk(body.relative, body.offset, data)
+            if job.state == ImportJobState.PENDING:
+                _store.update_job(job_id, expected_revision=job.revision,
+                                  state=ImportJobState.INTAKING)
+        except (UnsafePathError, ValueError) as exc:
+            _store.add_event(job_id, f"stream_error:{type(exc).__name__}")
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        finally:
+            _store.release_lease(job_id, str(principal))
+        return {"job_id": job_id, "offset": body.offset + len(data)}
+
+    @router.post("/{job_id}/analyze")
+    def analyze(mundo: str, job_id: str, request: Request) -> dict:
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        if not _store.acquire_lease(job_id, str(principal), job.state):
+            raise HTTPException(status_code=409, detail="Job busy or not intaking")
+        spool = spool_for(job_id, mundo)
+        files = [
+            {"relative": rel, "sha256": digest, "size": size}
+            for rel in spool.offsets()
+            for digest, size in [spool.finalize_file(rel)]
+        ]
+        files = [f for f in files if f["sha256"]]
+        try:
+            if provider is not None:
+                candidates = provider(job, files)
+                if not isinstance(candidates, list):
+                    raise MalformedProviderError("provider output is not a candidate list")
+            elif _service is not None:
+                candidates = _analyze_via_service(job, files, spool)
+            else:
+                raise MalformedProviderError("analysis provider unavailable")
+        except MalformedProviderError as exc:
+            _store.update_job(job_id, expected_revision=job.revision,
+                              state=ImportJobState.FAILED, error=str(exc))
+            _store.add_event(job_id, "failed:malformed_provider")
+            _store.release_lease(job_id, str(principal))
+            return {"job": _store.get_job(job_id).model_dump_redacted()}
+        except Exception as exc:  # fail closed on any unexpected provider error
+            _store.update_job(job_id, expected_revision=job.revision,
+                              state=ImportJobState.FAILED, error=f"{type(exc).__name__}")
+            _store.add_event(job_id, "failed:provider_error")
+            _store.release_lease(job_id, str(principal))
+            return {"job": _store.get_job(job_id).model_dump_redacted()}
+
+        added = 0
+        for candidate in candidates:
+            if _store.find_candidate(candidate.world, candidate.source_hash,
+                                     candidate.normalized_identity) is None:
+                _store.add_candidate(candidate)
+                added += 1
+        _store.update_job(job_id, expected_revision=job.revision,
+                          state=ImportJobState.REVIEW, file_count=added)
+        _store.add_event(job_id, "analysis_complete")
+        _store.release_lease(job_id, str(principal))
+        return {"job": _store.get_job(job_id).model_dump_redacted(),
+                "candidates": added}
+
+    @router.get("/{job_id}")
+    def get_job(mundo: str, job_id: str, request: Request) -> dict:
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        return {"job": job.model_dump_redacted()}
+
+    @router.get("/{job_id}/review")
+    def review(mundo: str, job_id: str, request: Request) -> dict:
+        """Read-only reviewed candidates with placements and merge decisions."""
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        candidates = [
+            c.model_dump() for c in _store.candidates_for(job_id)
+        ]
+        digest = _service.candidate_digest(job) if _service else ""
+        return {"job": job.model_dump_redacted(), "digest": digest,
+                "candidates": candidates}
+
+    @router.post("/{job_id}/approve")
+    def approve(mundo: str, job_id: str, request: Request,
+                body: ApproveRequest) -> dict:
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        # A failed/terminal job can never be approved (1.2).
+        if job.state != ImportJobState.REVIEW:
+            raise HTTPException(status_code=409,
+                                detail=f"Cannot approve job in state {job.state.value}")
+        if _service is None:
+            raise HTTPException(status_code=501,
+                                detail="Gated approval service not configured")
+        try:
+            approval = _service.issue_approval(
+                job, str(getattr(principal, "id", str(principal))),
+                list(body.group_ids))
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"approval_id": approval.approval_id,
+                "token": approval.token, "digest": approval.digest,
+                "expires_at": approval.expires_at}
+
+    @router.post("/{job_id}/execute")
+    def execute(mundo: str, job_id: str, request: Request,
+                body: ApproveRequest) -> dict:
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        if _service is None:
+            raise HTTPException(status_code=501,
+                                detail="Execution service not configured")
+        try:
+            outcomes = _service.execute(
+                job, str(getattr(principal, "id", str(principal))),
+                body.digest, body.token)
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"job": _store.get_job(job_id).model_dump_redacted(),
+                "outcomes": [o.model_dump() for o in outcomes]}
+
+    @router.post("/{job_id}/cancel")
+    def cancel(mundo: str, job_id: str, request: Request) -> dict:
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        if _service is not None:
+            job = _service.cancel(job, str(getattr(principal, "id", str(principal))))
+            return {"job": job.model_dump_redacted()}
+        if job.state not in INTAKE_STATES:
+            raise HTTPException(status_code=409, detail="Job not cancellable")
+        _store.update_job(job_id, expected_revision=job.revision,
+                          state=ImportJobState.CANCELLED)
+        _store.add_event(job_id, "cancelled")
+        return {"job": _store.get_job(job_id).model_dump_redacted()}
+
+    @router.post("/{job_id}/resume")
+    def resume(mundo: str, job_id: str, request: Request) -> dict:
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        if _service is None:
+            raise HTTPException(status_code=501, detail="Resume service not configured")
+        try:
+            job = _service.resume(job, str(getattr(principal, "id", str(principal))))
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        return {"job": job.model_dump_redacted()}
+
+    @router.post("/{job_id}/rollback")
+    def rollback(mundo: str, job_id: str, request: Request) -> dict:
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        if _service is None:
+            raise HTTPException(status_code=501, detail="Rollback service not configured")
+        try:
+            job = _service.rollback(job, str(getattr(principal, "id", str(principal))))
+        except (ValueError, PermissionError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"job": job.model_dump_redacted()}
+
+    return router
+
+
+def _analyze_via_service(job: ImportJob, files: list[dict],
+                         spool: BoundedSpool) -> list[Candidate]:
+    """Build ordered candidates from spooled files via the analysis facade.
+
+    Preserves source path, heading, sequence, nearby/image anchors, and source
+    order (2.7); server-owned identity/dedup so analysis stays read-only.
+    """
+    from import_analysis import analyze_source
+    from import_models import Provenance
+
+    spool_dir = spool.job_dir
+
+    def read_file(relative: str) -> str:
+        try:
+            return (spool_dir / relative).read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            return ""
+
+    def build_candidate(relative: str, digest: str, size: int,
+                        analyzed) -> Candidate:
+        identity = Path(relative).stem
+        provenance = Provenance(
+            source_path=relative, source_kind=job.source_kind,
+            source_hash=f"sha256:{digest}", source_sequence=0,
+            nearby_text_anchor=(analyzed.chunks[0].nearby_text_anchor
+                                if analyzed.chunks else ""),
+        )
+        candidate = Candidate(
+            candidate_id=uuid.uuid4().hex,
+            job_id=job.job_id, world=job.world,
+            normalized_identity=identity,
+            source_hash=f"sha256:{digest}",
+            provenance=provenance,
+            content_preview=analyzed.content_preview(),
+            size_bytes=size,
+        )
+        for chunk in analyzed.chunks:
+            candidate.images.extend(chunk.images)
+        return candidate
+
+    report = analyze_source(files, read_file)
+    candidates = [build_candidate(f.source_path, f.source_hash, f.size_bytes, f)
+                  for f in report.files]
+    # Server-owned OKF authority: diagnose every candidate against the sole
+    # contract so only valid candidates are eligible (2.8).
+    import okf_contract
+    for candidate in candidates:
+        validation = okf_contract.validate(candidate.content_preview)
+        candidate.okf_issues = [i.to_dict() for i in validation.issues]
+    return candidates

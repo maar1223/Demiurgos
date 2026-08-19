@@ -314,7 +314,32 @@ def normalize_okf_content(content: str) -> OkfNormalized | None:
 
     Tolerant: unparseable frontmatter or missing ``type`` yields None rather
     than an error.  Requires PyYAML; returns None when it is unavailable.
+
+    Delegates to the server-owned ``okf_contract`` authority when it is
+    importable in this runtime (sole OKF authority, 2.8); falls back to the
+    local implementation when the wiki module is not on the path.
     """
+    delegate = _delegate_okf_validate()
+    if delegate is not None:
+        parsed = delegate(content)
+        if parsed is None:
+            return None
+        doc = parsed.document
+        if doc is None:
+            return None
+        return OkfNormalized(
+            name=str(doc.frontmatter.get("name")
+                      or doc.frontmatter.get("nombre")
+                      or doc.frontmatter.get("title") or "").strip(),
+            type=doc.entity_type,
+            title=str(doc.frontmatter.get("title", "")).strip(),
+            forward_links=doc.forward_links,
+            missing_minimum_groups=parsed.missing_minimums,
+        )
+    return _normalize_okf_content_local(content)
+
+
+def _normalize_okf_content_local(content: str) -> OkfNormalized | None:
     try:
         import yaml
     except ImportError:
@@ -337,6 +362,27 @@ def normalize_okf_content(content: str) -> OkfNormalized | None:
         return None
     body = "\n".join(lines[end_idx + 1:])
     return normalize_okf_v1(frontmatter, body)
+
+
+_delegate_okf = None
+
+
+def _delegate_okf_validate():
+    """Best-effort resolve the server-owned okf_contract.validate authority.
+
+    Resolves once and caches the successful reference; a failed attempt is
+    NOT cached, so the delegation recovers if the wiki module later becomes
+    importable in this runtime. Falls back to the local implementation.
+    """
+    global _delegate_okf
+    if _delegate_okf is not None:
+        return _delegate_okf
+    try:
+        from okf_contract import validate as _validate  # type: ignore
+        _delegate_okf = _validate
+    except Exception:
+        _delegate_okf = None
+    return _delegate_okf
 
 
 @dataclass(frozen=True)
