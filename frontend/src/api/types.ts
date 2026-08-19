@@ -629,6 +629,160 @@ export interface RestoreFileRequest extends ConfirmedEditRequest {
 }
 
 // ---------------------------------------------------------------------------
+// World Importer (world-importer slice 3 — typed lifecycle)
+// ---------------------------------------------------------------------------
+
+/** Server-owned import job states (mirror of import_models.ImportJobState). */
+export type ImportJobState =
+  | "pending"
+  | "intaking"
+  | "analyzing"
+  | "review"
+  | "failed"
+  | "cancelled"
+  | "approved"
+  | "executing"
+  | "completed"
+  | "rolled_back";
+
+/** Source kinds accepted by the server-owned spool. */
+export type ImportSourceKind = "folder" | "loose" | "zip";
+
+/** Source proximity contract — every candidate keeps its traceable origin. */
+export interface ImportProvenance {
+  source_path: string;
+  source_kind: ImportSourceKind;
+  source_hash: string;
+  heading_path: string;
+  source_sequence: number;
+  chunk_id: string | null;
+  nearby_text_anchor: string;
+  image_anchor: string;
+  source_order: number;
+}
+
+/** Contextual image placement — `ambiguous` always requires review. */
+export type ImagePlacementStatus =
+  | "proposed"
+  | "approved"
+  | "ambiguous"
+  | "inserted"
+  | "skip";
+
+export interface ImportImagePlacement {
+  gallery_asset_id: string;
+  relative_media_path: string;
+  alt_text: string;
+  target_ficha: string;
+  confidence: number;
+  placement_status: ImagePlacementStatus;
+}
+
+/** Preservation-first merge decision (server-owned). */
+export interface ImportMergeDecision {
+  target: string;
+  base_revision: string;
+  mode: "add" | "replace";
+  action: "add" | "keep" | "replace" | "skip" | "review";
+  reason: string;
+  approver: string;
+  approval_digest: string;
+  outcome: string;
+}
+
+/** Explicit-replacement snapshot record (30-day `.papelera` recovery). */
+export interface ImportReplacementRecord {
+  prior_snapshot: string;
+  new_revision: string;
+  papelera_entry: string;
+  expiry: string;
+  recovery_status: string;
+}
+
+/** A diagnosed, eligible intake candidate (read-only until approved). */
+export interface ImportCandidate {
+  candidate_id: string;
+  job_id: string;
+  world: string;
+  normalized_identity: string;
+  source_hash: string;
+  provenance: ImportProvenance;
+  content_preview: string;
+  /** pending | eligible | conflict | rejected — server is the authority. */
+  status: string;
+  okf_issues: Array<Record<string, unknown>>;
+  size_bytes: number;
+  images: ImportImagePlacement[];
+  merge: ImportMergeDecision | null;
+  replacement: ImportReplacementRecord | null;
+}
+
+/** Public job view — never carries the opaque observability token. */
+export interface ImportJob {
+  job_id: string;
+  world: string;
+  owner_principal: string;
+  state: ImportJobState;
+  source_kind: ImportSourceKind;
+  aggregate_uncompressed_bytes: number;
+  aggregate_compressed_bytes: number;
+  file_count: number;
+  revision: number;
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Response of POST /api/{mundo}/imports and GET /api/{mundo}/imports/{id}. */
+export interface ImportJobResponse {
+  job: ImportJob;
+}
+
+/** Response of POST /api/{mundo}/imports/{id}/analyze. */
+export interface ImportAnalyzeResponse {
+  job: ImportJob;
+  candidates: number;
+}
+
+/** Response of GET /api/{mundo}/imports/{id}/review — candidates + digest. */
+export interface ImportReviewResponse {
+  job: ImportJob;
+  digest: string;
+  candidates: ImportCandidate[];
+}
+
+/** Approval issued for a reviewed, unchanged digest (token is single-use). */
+export interface ImportApprovalResponse {
+  approval_id: string;
+  token: string;
+  digest: string;
+  expires_at: string;
+}
+
+/** Outcome of one executed candidate (merge/placement/write). */
+export interface ImportExecutionOutcome {
+  candidate_id: string;
+  target: string;
+  action: "add" | "keep" | "replace" | "skip" | "review";
+  placement_status: string;
+  written: boolean;
+  detail: string;
+  papelera_entry: string;
+}
+
+/** Response of POST /api/{mundo}/imports/{id}/execute. */
+export interface ImportExecuteResponse {
+  job: ImportJob;
+  outcomes: ImportExecutionOutcome[];
+}
+
+/** Request body for POST /api/{mundo}/imports. */
+export interface ImportCreateJobInput {
+  source_kind: ImportSourceKind;
+  files: string[];
+}
+
+// ---------------------------------------------------------------------------
 // Graph
 // ---------------------------------------------------------------------------
 

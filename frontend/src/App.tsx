@@ -6,6 +6,7 @@ import WikiEditor from "@/pages/WikiEditor";
 import ProfilePage from "@/pages/ProfilePage";
 import ToolWorkshop from "@/pages/ToolWorkshop";
 import WorldWorkshop from "@/pages/WorldWorkshop";
+import WorldImporter from "@/pages/WorldImporter";
 import Onboarding from "@/pages/Onboarding";
 import ConfigurationCenter from "@/pages/ConfigurationCenter";
 import NotFound from "@/pages/NotFound";
@@ -50,10 +51,13 @@ function FirstRunGate() {
  * - `/perfil` → Profile page (local session + Integraciones → Captura de ideas)
  * - `/wiki/:mundo/entity/*path` → EntityPage (entity detail with connections)
  * - `/wiki/:mundo` → WikiWorld (section cards for one world)
+ * - `/wiki/:mundo/importer` → WorldImporter (world-level import workflow)
  * - `/wiki/:mundo/:section/*` → WikiEditor (file tree + markdown viewer + split diff preview)
  * - `*` → 404 NotFound
  *
- * Route ordering is CRITICAL: `entity` MUST come before `:section` wildcard.
+ * Route ordering is CRITICAL: `entity` MUST come before `:section` wildcard,
+ * and `importer` must be listed before the `:section/*` wildcard so the
+ * fixed segment wins over the dynamic section match.
  * React Router matches top-down — `:section` would capture `entity` if defined first.
  * `/wiki/:mundo` (exact match) is ranked more specific than the wildcard routes
  * by React Router, but is listed before `:section/*` for clarity.
@@ -86,6 +90,7 @@ export default function App() {
             }
           />
           <Route path="/wiki/:mundo" element={<WikiWorld />} />
+          <Route path="/wiki/:mundo/importer" element={<WorldImporter />} />
           <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
         </Route>
 

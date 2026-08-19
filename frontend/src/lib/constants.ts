@@ -39,6 +39,7 @@ export const ROUTES = {
   ONBOARDING: "/onboarding",
   CENTRO_CONFIGURACION: "/centro-configuracion",
   ENTITY: "/wiki/:mundo/entity/*path",
+  IMPORTER: "/wiki/:mundo/importer",
   EDITOR: "/wiki/:mundo/:section/*path",
   WILDCARD: "*",
 } as const;

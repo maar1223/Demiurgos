@@ -9,6 +9,8 @@ import { CategoryCard } from "@/components/molecules/CategoryCard";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
+import { Button } from "@/components/atoms/Button";
+import { Icon } from "@/components/atoms/Icon";
 import type { WorldInfo } from "@/api/types";
 
 /**
@@ -42,6 +44,12 @@ export default function WorldWorkshop() {
   const handleWorldClick = (world: WorldInfo) => {
     setCurrentWorld(world.name);
     navigate(`/wiki/${encodeURIComponent(world.name)}`);
+  };
+
+  /** World-level importer entry (UI1): open the import workflow for a world. */
+  const handleImportClick = (world: WorldInfo) => {
+    setCurrentWorld(world.name);
+    navigate(`/wiki/${encodeURIComponent(world.name)}/importer`);
   };
 
   const getFileCount = (world: WorldInfo): number => {
@@ -89,12 +97,24 @@ export default function WorldWorkshop() {
       {!isLoading && !error && worlds.length > 0 && (
         <>
           {worlds.map((world) => (
-            <CategoryCard
-              key={world.name}
-              world={world}
-              fileCount={getFileCount(world)}
-              onClick={handleWorldClick}
-            />
+            <div key={world.name} className="flex flex-col gap-2">
+              <CategoryCard
+                world={world}
+                fileCount={getFileCount(world)}
+                onClick={handleWorldClick}
+              />
+              {/* World-level import entry — read-only analysis until an
+                  explicit gated approval runs (UI1/UI3). */}
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handleImportClick(world)}
+                className="w-full"
+              >
+                <Icon name="upload" size={14} />
+                Importar contenido
+              </Button>
+            </div>
           ))}
         </>
       )}
