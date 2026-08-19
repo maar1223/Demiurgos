@@ -32,12 +32,16 @@ function LocationProbe() {
 interface SelectorTestProps {
   currentWorld?: string;
   onWorldChange?: (world: string) => void;
+  onRequestCreate?: () => void;
 }
 
-function renderSelector(props: SelectorTestProps = {}) {
+function renderSelector(
+  props: SelectorTestProps = {},
+  worldsList: WorldInfo[] = worlds,
+) {
   return render(
     <MemoryRouter initialEntries={["/wiki"]}>
-      <WorldSelector worlds={worlds} {...props} />
+      <WorldSelector worlds={worldsList} {...props} />
       <LocationProbe />
     </MemoryRouter>,
   );
@@ -112,5 +116,82 @@ describe("WorldSelector", () => {
     renderSelector();
 
     expect(screen.getByRole("button", { name: "Sombras" })).toBeInTheDocument();
+  });
+
+  it("renders + Nuevo mundo entry when worlds is non-empty", async () => {
+    const user = userEvent.setup();
+    renderSelector({ onRequestCreate: vi.fn() });
+
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+
+    expect(
+      screen.getByRole("menuitem", { name: /nuevo mundo/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("separator")).toBeInTheDocument();
+  });
+
+  it("does NOT render + Nuevo mundo entry when worlds is empty", async () => {
+    const user = userEvent.setup();
+    renderSelector({ onRequestCreate: vi.fn() }, []);
+
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+
+    expect(
+      screen.queryByRole("menuitem", { name: /nuevo mundo/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("No hay mundos")).toBeInTheDocument();
+  });
+
+  it("entry is exposed as role=menuitem, never role=option", async () => {
+    const user = userEvent.setup();
+    renderSelector({ onRequestCreate: vi.fn() });
+
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+
+    const entry = screen.getByRole("menuitem", { name: /nuevo mundo/i });
+    expect(entry).toHaveAttribute("type", "button");
+    expect(screen.queryByRole("option", { name: /nuevo mundo/i })).toBeNull();
+  });
+
+  it("clicking the entry calls onRequestCreate and closes the dropdown", async () => {
+    const onRequestCreate = vi.fn();
+    const user = userEvent.setup();
+    renderSelector({ onRequestCreate });
+
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+    await user.click(
+      screen.getByRole("menuitem", { name: /nuevo mundo/i }),
+    );
+
+    expect(onRequestCreate).toHaveBeenCalledTimes(1);
+    // Dropdown is gone — the entry and the existing-world options are gone too.
+    expect(
+      screen.queryByRole("menuitem", { name: /nuevo mundo/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+  });
+
+  it("keyboard activates the entry with Enter and Space without selecting an existing world", async () => {
+    const onRequestCreate = vi.fn();
+    const user = userEvent.setup();
+    const onWorldChange = vi.fn();
+    renderSelector({ onRequestCreate, onWorldChange });
+
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+
+    const entry = screen.getByRole("menuitem", { name: /nuevo mundo/i });
+    entry.focus();
+
+    await user.keyboard("{Enter}");
+    expect(onRequestCreate).toHaveBeenCalledTimes(1);
+    expect(onWorldChange).not.toHaveBeenCalled();
+
+    // Open again and try Space.
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+    const entryAfter = screen.getByRole("menuitem", { name: /nuevo mundo/i });
+    entryAfter.focus();
+    await user.keyboard(" ");
+    expect(onRequestCreate).toHaveBeenCalledTimes(2);
+    expect(onWorldChange).not.toHaveBeenCalled();
   });
 });

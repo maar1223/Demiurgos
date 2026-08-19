@@ -8,6 +8,14 @@ interface WorldSelectorProps {
   worlds: WorldInfo[];
   currentWorld?: string;
   onWorldChange?: (world: string) => void;
+  /**
+   * Optional callback fired when the user activates the bottom-of-dropdown
+   * `+ Nuevo mundo` entry. Parents use it to render the
+   * `CreateWorldModal`. The entry is only rendered when there is at least
+   * one existing world (spec R9) — first-run onboarding owns the empty
+   * path.
+   */
+  onRequestCreate?: () => void;
 }
 
 /**
@@ -18,11 +26,18 @@ interface WorldSelectorProps {
  * world; Confirm persists the new active world (localStorage) and calls
  * `onWorldChange` when provided. Same-tab subscribers are notified through
  * the shared currentWorld util, so the Navbar label updates in place.
+ *
+ * When `onRequestCreate` is provided AND `worlds.length > 0`, a divider
+ * plus `+ Nuevo mundo` action appears at the bottom of the dropdown. The
+ * action is a `menuitem` (never an `option`) and closes the dropdown
+ * before invoking the callback, so the parent can mount the modal without
+ * leaving the dropdown visible underneath.
  */
 export function WorldSelector({
   worlds,
   currentWorld,
   onWorldChange,
+  onRequestCreate,
 }: WorldSelectorProps) {
   const [open, setOpen] = useState(false);
   const [pendingWorld, setPendingWorld] = useState<string | null>(null);
@@ -33,6 +48,11 @@ export function WorldSelector({
     setOpen(false);
     if (world === effectiveCurrent) return;
     setPendingWorld(world);
+  };
+
+  const handleRequestCreate = () => {
+    setOpen(false);
+    onRequestCreate?.();
   };
 
   const confirmChange = () => {
@@ -75,22 +95,40 @@ export function WorldSelector({
                   No hay mundos
                 </span>
               ) : (
-                worlds.map((w) => (
-                  <button
-                    key={w.name}
-                    type="button"
-                    onClick={() => handleSelect(w.name)}
-                    role="option"
-                    aria-selected={w.name === effectiveCurrent}
-                    className={`block w-full px-3 py-2 text-left text-small transition-colors hover:bg-piedra ${
-                      w.name === effectiveCurrent
-                        ? "text-llamita"
-                        : "text-pergamino"
-                    }`}
-                  >
-                    {w.name}
-                  </button>
-                ))
+                <>
+                  {worlds.map((w) => (
+                    <button
+                      key={w.name}
+                      type="button"
+                      onClick={() => handleSelect(w.name)}
+                      role="option"
+                      aria-selected={w.name === effectiveCurrent}
+                      className={`block w-full px-3 py-2 text-left text-small transition-colors hover:bg-piedra ${
+                        w.name === effectiveCurrent
+                          ? "text-llamita"
+                          : "text-pergamino"
+                      }`}
+                    >
+                      {w.name}
+                    </button>
+                  ))}
+                  {onRequestCreate && (
+                    <>
+                      <div
+                        className="my-1 border-t border-filio"
+                        role="separator"
+                      />
+                      <button
+                        type="button"
+                        role="menuitem"
+                        onClick={handleRequestCreate}
+                        className="block w-full px-3 py-2 text-left text-small text-llamita transition-colors hover:bg-piedra"
+                      >
+                        + Nuevo mundo
+                      </button>
+                    </>
+                  )}
+                </>
               )}
             </div>
           </>
