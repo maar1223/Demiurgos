@@ -1,18 +1,18 @@
 # Taller de Herramientas y Creación Guiada de Personajes — Contrato de Iniciativa
 
-> **Contrato de iniciativa.** Este documento es el contrato de producto y arquitectura de la iniciativa **biblioteca de skills gestionada por el Autor + runtime de creación guiada de personajes nuevos**, como subsistema de la plataforma Demiurgos. **No es un artefacto SDD** ni sustituye a la constitución global. Toda afirmación lleva la etiqueta de estado correspondiente; lo no implementado no se presenta como existente.
+> **Contrato de iniciativa.** Este documento es el contrato de **subsistema técnico** de la iniciativa **biblioteca de skills gestionada por el Autor + runtime de creación guiada de personajes nuevos**, como subsistema de la plataforma Demiurgos. La **superficie/producto del Taller de Herramientas** (selector de Taller, árbol contextual, estados de Skills, categorías, biblioteca global, Skill Madre y co-creación) vive en `docs/architecture/tool-workshop.md`; este documento la referencia sin duplicarla. **No es un artefacto SDD** ni sustituye a la constitución global. Toda afirmación lleva la etiqueta de estado correspondiente; lo no implementado no se presenta como existente.
 
 | Campo | Valor |
 |---|---|
-| Estado | Contrato de iniciativa (revisado — decisiones sincronizadas) |
-| Versión del documento | 2.2 |
+| Estado | Contrato de iniciativa (revisado — superficie separada al contrato de Taller) |
+| Versión del documento | 3.1 |
 | Fecha | 2026-08-16 |
 | Autor | Demiurgos (orquestación) |
 | Idioma | Español neutro (prosa técnica) |
-| Alcance | INICIATIVA (subsistema): **Taller de Herramientas** (metodologías/skills, plantillas y catálogos), compilador/validador, ciclo de vida, import/export/cuarentena/Skool y flujo guiado de personaje nuevo. El resto de la plataforma está cubierto por la constitución global |
+| Alcance | INICIATIVA (subsistema técnico): **biblioteca de skills gestionada por el Autor** (metodologías/skills, plantillas y catálogos), paquete `.zip`/manifest, compilador/validador, runtime, ciclo de vida técnico, import/export/cuarentena/Skool y flujo guiado de personaje nuevo. La **superficie del Taller de Herramientas** se contrata en `docs/architecture/tool-workshop.md` |
 | Depende de | `docs/architecture/demiurgos-platform.md` (constitución global del producto) |
-| Relación con SDD | Requisito previo. Ningún SDD de este dominio debe comenzar sin este contrato aprobado y sus decisiones abiertas resueltas |
-| Documentos relacionados | `docs/architecture/demiurgos-platform.md`, `skills/narrative-character-creation/SKILL.md`, `skills/narrative-character-creation/references/conversation-examples.md`, `skills/crear_personaje.md` (legacy), `AGENTS.md` (límites de dominio), runtime en `src/tools/demiurgos-suite/wiki/` |
+| Relación con SDD | Requisito previo. Ningún SDD de este dominio debe comenzar sin este contrato aprobado, el de superficie (`tool-workshop.md`) y sus decisiones abiertas resueltas |
+| Documentos relacionados | `docs/architecture/demiurgos-platform.md`, `docs/architecture/tool-workshop.md` (contrato de superficie del Taller de Herramientas), `docs/architecture/world-workshop.md` (Taller de Mundo), `skills/narrative-character-creation/SKILL.md`, `skills/narrative-character-creation/references/conversation-examples.md`, `skills/crear_personaje.md` (legacy), `AGENTS.md` (límites de dominio), runtime en `src/tools/demiurgos-suite/wiki/` |
 
 ## Leyenda de etiquetas
 
@@ -28,10 +28,11 @@
 
 ## 0. Relación con la constitución de la plataforma
 
-- La **definición global del producto** (qué es Demiurgos, principios, mapa del sistema, conceptos canónicos, superficies, límites de dominio y decisiones globales G1–G12) vive en `docs/architecture/demiurgos-platform.md`. **Este documento no la duplica.**
+- La **definición global del producto** (qué es Demiurgos, principios, mapa del sistema, conceptos canónicos, superficies, límites de dominio y decisiones globales G1–G15) vive en `docs/architecture/demiurgos-platform.md`. **Este documento no la duplica.**
+- La **superficie y el producto del Taller de Herramientas** (selector de Taller, árbol contextual, estados visibles de Skills, categorías funcionales, biblioteca global de consulta, Skill Madre protegida y la UX de co-creación) viven en `docs/architecture/tool-workshop.md`. **Este documento no la duplica**: la referencia (decisiones de superficie TW1–TW19 en `tool-workshop.md`; no quedan decisiones abiertas de superficie).
 - Este documento asume y referencia esa constitución. Los principios de producto y las reglas de arquitectura de la sección 7 de la constitución aplican aquí íntegramente.
 - En caso de conflicto, prevalece la constitución; la contradicción se reporta al Autor.
-- Esta iniciativa cubre **solo**: la biblioteca de skills gestionada por el Autor, el compilador/validador, el ciclo de vida, la importación/exportación/cuarentena/compartición por Skool, las superficies de frontend de la biblioteca, y el flujo guiado de creación de personajes nuevos.
+- Esta iniciativa cubre **solo** el subsistema técnico: la biblioteca de skills gestionada por el Autor, el paquete `.zip`/manifest, el compilador/validador, el runtime, el ciclo de vida técnico, la importación/exportación/cuarentena/compartición por Skool, las superficies de frontend de la biblioteca técnica y el flujo guiado de creación de personajes nuevos.
 
 ---
 
@@ -44,9 +45,9 @@
 3. Hermes es el **proveedor conversacional**: voz, interpretación semántica y propuestas creativas. Hermes **nunca** escribe, no otorga permisos y no puede saltarse las compuertas del servidor. `[DECISIÓN CERRADA]`
 4. La creación guiada usa el principio **40/60** (sección 11): 40% rieles del sistema, 60% construcción de mundo adaptativa. `[DECISIÓN CERRADA]`
 
-**Referencias a decisiones globales (sin duplicarlas):** la **co-creación** (Hermes conversa/redacta, el backend valida/compila/protege, el Autor aprueba) y la **intención semántica** (Hermes la determina; el backend valida el envelope, resuelve referencias y ensambla contexto, pero no redacta síntesis narrativas ni decide relaciones) son decisiones globales de la constitución (secciones 2.3 y 5). La **Skill Madre** es una capacidad protegida global (constitución, G13 y 10.5) que se usa para co-crear nuevas skills; este documento regula solo la **biblioteca gestionada por el Autor** y la referencia.
+**Referencias a decisiones globales (sin duplicarlas):** la **co-creación** (Hermes conversa/redacta, el backend valida/compila/protege, el Autor aprueba) y la **intención semántica** (Hermes la determina; el backend valida el envelope, resuelve referencias y ensambla contexto, pero no redacta síntesis narrativas ni decide relaciones) son decisiones globales de la constitución (secciones 2.3 y 5). La **Skill Madre** es una capacidad protegida global (constitución, G13 y 10.5) que se usa para co-crear nuevas skills; este documento regula solo la **biblioteca gestionada por el Autor** y la referencia. La **UX de co-creación y la superficie del Taller de Herramientas** viven en `tool-workshop.md` (secciones 5–6). El **nombre visible del asistente es "Asistente de Demiurgos"** (constitución, G15/10.6): aquí se usa "Hermes" como nombre interno del proveedor, nunca como copia visible.
 
-**[ACTUAL]** Hoy el repositorio tiene un protocolo guiado funcional (`guided-character-v1`) que usa prompts de proveedor **hardcodeados** en `guided_character_provider.py` y `semantic_intent.py`, y skills como archivos Markdown estáticos consumidos por Hermes como herramientas. **El runtime actual NO carga dinámicamente las skills**; el puente skill→runtime (compilador/adaptador) es exactamente lo que falta y es el objeto de la sección 8.
+**[ACTUAL]** Hoy el repositorio tiene un protocolo guiado funcional (`guided-character-v1`) que usa prompts de proveedor **hardcodeados** en `guided_character_provider.py` y `semantic_intent.py`. El compilador, la biblioteca y la cuarentena de metodologías existen, pero **el runtime actual todavía no carga dinámicamente la metodología compilada**: el contrato builtin sigue siendo el driver actual. El puente skill→runtime (Phase 3) es exactamente lo que falta y es el objeto de la sección 8.
 
 **[OBJETIVO]** El estado objetivo es: el Autor publica/activa/edita skills; el compilador valida y compila cada skill a un **contrato de runtime**; el runtime ejecuta la skill activa dentro de las invariantes del system kernel. Un SDD futuro debe construir la biblioteca y el compilador **sin tocar** las invariantes de seguridad ya implementadas.
 
@@ -76,21 +77,14 @@
 
 ### 3.1 Objetivo del subsistema
 
-**[DECISIÓN CERRADA]** La interfaz presenta este subsistema como **Taller de Herramientas**, la primera sección del Navbar y la base instrumental de los talleres creativos. El **Taller de Herramientas forma parte del Core gratuito del MVP** junto al Taller de Mundo (constitución, G10); en el Navbar solo se muestran los talleres disponibles y los módulos de pago futuros aparecen como teaser "Próximamente". Dentro contiene las **Metodologías**: métodos que permiten al Autor **crear, editar, publicar (versiones inmutables), activar, importar/exportar, compartir y eliminar** formas de trabajo para dar forma a mundos existentes; “Skill” permanece como nombre técnico del paquete.
+**[DECISIÓN CERRADA]** El **Taller de Herramientas es la superficie** que presenta este subsistema como **Taller de Herramientas**, la primera sección del Navbar y la base instrumental de los talleres creativos; forma parte del **Core gratuito del MVP** junto al Taller de Mundo (constitución, G10). El **contrato de superficie** (presentación, selector de Taller, árbol, estados, categorías, biblioteca global, Skill Madre y co-creación) vive en `tool-workshop.md` (secciones 1–6). Aquí se contrata el **subsistema técnico**: el paquete `.zip`/manifest, el compilador/validador, el runtime y el ciclo de vida que este subsistema expone a la superficie. "Skill" permanece como nombre técnico del paquete.
 
-**`[DECISIÓN CERRADA]`** La **Skill Madre** (capacidad protegida instalada con Demiurgos, constitución G13) **no pertenece a la biblioteca gestionada por el Autor**: no es editable ni eliminable desde este Taller y se actualiza solo mediante **releases oficiales**; se referencia aquí únicamente para delimitar el alcance (ver 9, co-creación).
+**`[DECISIÓN CERRADA]`** La **Skill Madre** (capacidad protegida instalada con Demiurgos, constitución G13) **no pertenece a la biblioteca gestionada por el Autor**: **no es visible en el árbol de skills**, no es editable ni eliminable desde el Taller de Herramientas, **no puede desactivarse** y se actualiza solo mediante **releases oficiales**; se referencia aquí únicamente para delimitar el alcance técnico (ver `tool-workshop.md`, sección 5, co-creación).
 
-### 3.1.1 Clasificación visible y atributos de confianza
+### 3.1.1 Clasificación visible (superficie) y atributos de confianza (subsistema)
 
-**`[DECISIÓN CERRADA]`** La biblioteca presenta tres categorías visibles y simples:
-
-| Categoría | Regla |
-|---|---|
-| **Oficiales** | Skills creadas o aprobadas y firmadas exclusivamente por el Autor de Demiurgos. Una firma comunitaria nunca concede estado Oficial. |
-| **Personalizadas** | Skills creadas por el Autor o derivadas de otra Skill; pueden editarse, versionarse, activarse y eliminarse según su ciclo de vida. |
-| **Comunitarias** | Skills creadas o compartidas por miembros de la comunidad; pueden estar verificadas, en revisión o en cuarentena, pero no son Oficiales sin aprobación/firma del Autor. |
-
-`fundamental`, `derived`, `co-created`, `verified` y `quarantined` son atributos secundarios de procedencia, ciclo de vida o confianza, no categorías visibles excluyentes. Una Skill puede combinar atributos, por ejemplo `Oficial + fundamental + co-created + verified` o `Personalizada + derived + verified`. La Skill Madre queda fuera de estas categorías porque es una capacidad protegida del sistema.
+- La **clasificación visible** (Oficiales / Personalizadas / Comunitarias) y las categorías funcionales + etiquetas son **contrato de superficie**: viven en `tool-workshop.md` (sección 4, decisión TW5/TW6; constitución, G14).
+- A nivel **subsistema técnico**, `fundamental`, `derived`, `co-created`, `verified` y `quarantined` son **atributos de confianza/procedencia** del paquete (manifest/trust) y alimentan esa clasificación visible; una Skill puede combinar atributos, por ejemplo `Oficial + fundamental + co-created + verified` o `Personalizada + derived + verified`. La Skill Madre queda fuera de estas categorías porque es una capacidad protegida del sistema (constitución, G13).
 
 ### 3.2 Kernel del sistema vs metodología de usuario — frontera exacta
 
@@ -104,10 +98,11 @@
 
 ### 3.3 Árbol de skills y scoping por sesión
 
-- **`[DECISIÓN CERRADA]`** Las skills se organizan por **Taller/capacidad** (árbol), no como una lista plana global.
-- **`[OBJETIVO]`** Hermes puede estar presente en cada Taller como asistente de esa capacidad (posibilidad/objetivo; no hay cierre explícito).
-- **`[DECISIÓN CERRADA]`** Cada sesión recibe **solo el alcance** de su Taller: la Skill activa, su versión, el mundo y el contexto autorizado. **Nunca recibe el árbol completo** a la vez.
-- **`[DECISIÓN CERRADA]`** Los cruces entre Talleres requieren un **handoff explícito**; no se asume contexto de otro Taller.
+- **`[DECISIÓN CERRADA]`** Las skills se organizan por **Taller/capacidad** (árbol). El **árbol contextual, el selector de Taller y los estados visibles** son contrato de superficie: viven en `tool-workshop.md` (secciones 2–3, decisiones TW2/TW3/TW4).
+- **`[DECISIÓN CERRADA — 16.s]`** Cada skill declara un **Taller principal** y, opcionalmente, **Talleres compatibles o transversales** donde también puede activarse; su **categoría funcional principal** se complementa con **etiquetas** (tags) — declarados en el manifest (sección 6.2) y presentados según el contrato de superficie (`tool-workshop.md`, sección 4). La **estructura de la skill es independiente del idioma**; la **presentación** (nombres, descripciones, preguntas) se muestra según el idioma configurado.
+- **`[OBJETIVO]`** Hermes puede estar presente en cada Taller como asistente de esa capacidad (posibilidad/objetivo; no hay cierre explícito). La superficie de ese asistente se contrata en `tool-workshop.md`.
+- **`[DECISIÓN CERRADA]`** Cada sesión recibe **solo el alcance** de su Taller: la Skill activa, su versión, el mundo y el contexto autorizado. **Nunca recibe el árbol completo** a la vez. (Regla de runtime: ver `tool-workshop.md`, sección 2.)
+- **`[DECISIÓN CERRADA]`** Los cruces entre Talleres requieren un **handoff explícito**; no se asume contexto de otro Taller. (Regla de runtime y superficie: ver `tool-workshop.md`, secciones 2 y 6.1.)
 
 ---
 
@@ -285,16 +280,16 @@ El runtime actual **NO carga dinámicamente `narrative-character-creation`**:
 
 - `guided_character_provider.py` construye el envelope del proveedor con un **prompt hardcodeado** que referencia `guided-character-v1`.
 - `semantic_intent.py` usa otro **prompt hardcodeado** para el gate semántico.
-- La skill `skills/narrative-character-creation/SKILL.md` vive como **artefacto de metodología estático** consumible por Hermes como tool del orquestador, pero **no existe un compilador ni un adaptador** que traduzca su Markdown fuente + manifest al contrato runtime.
-- Por tanto: la skill es **fuente de contrato de metodología** para el orquestador narrativo, **no** entrada del runtime guiado.
+- La skill `skills/narrative-character-creation/SKILL.md` vive como **artefacto de metodología estático** consumible por Hermes como tool del orquestador. El compilador y la biblioteca existen, pero el runtime guiado aún no consume dinámicamente el contrato compilado de esa skill.
+- Por tanto: la skill sigue siendo **fuente de contrato de metodología** para el orquestador narrativo y todavía no es la entrada efectiva del runtime guiado.
 
 ### 8.2 Desajustes concretos
 
 | Desajuste | Detalle |
 |---|---|
 | Prompt hardcodeado | Las reglas del 40/60 y los rieles de la skill no entran desde el paquete; el texto fijo gobierna el envelope |
-| Sin compilador | No hay validación de manifest ni conversión fuente→contrato |
-| Sin biblioteca | No hay versionado, activación, import/export ni cuarentena |
+| Sin cableado Phase 3 | El compilador y la biblioteca existen, pero el provider/gate todavía usa el contrato builtin en lugar de consumir la metodología compilada |
+| Integración incompleta | La validación de manifest, versionado, activación, import/export y cuarentena existen como subsistema, pero aún deben conectarse al flujo guiado |
 | Semántica léxica secundaria | `route_new_character_intent` existe como derivación post-envelope; el gate semántico es la frontera real |
 
 ### 8.3 Puente requerido `[OBJETIVO]`
@@ -309,11 +304,11 @@ Un componente **importador/compilador/validador** que: (1) valide manifest, (2) 
 
 | Capacidad | Estado | Descripción |
 |---|---|---|
-| Biblioteca | `[OBJETIVO]` | Lista de skills (nombre, versión, estado, fuente), filtros, activación visible |
+| Biblioteca | `[ACTUAL]` | Lista de skills (nombre, versión, estado, fuente), publicación, activación por mundo y rollback; la superficie futura añade filtros y UX completa |
 | Editor de skill | `[OBJETIVO]` | Edición de borradores (manifest + Markdown fuente) con vista previa del contrato compilado |
-| Creación asistida (co-creación) | `[DECISIÓN CERRADA]` | La creación de una skill es un flujo **asistido por Hermes** (chat de co-creación), **no** un formulario técnico de Skill ID/Markdown como flujo principal; con revisión del borrador, validación visible y aprobación explícita del Autor |
+| Creación asistida (co-creación) | `[DECISIÓN CERRADA]` | La creación de una skill es un flujo **asistido por Hermes** (chat de co-creación), **no** un formulario técnico de Skill ID/Markdown como flujo principal; con revisión del borrador, validación visible y aprobación explícita del Autor. Contrato UX detallado en `tool-workshop.md` (sección 6) |
 | Importar/Exportar | `[OBJETIVO]` | Import → cuarentena → revisión; export de versiones publicadas |
-| Activar/Desactivar | `[OBJETIVO]` | Selección de versión activa (ámbito según 16.b) |
+| Activar/Desactivar | `[OBJETIVO]` | Selección de versión activa (ámbito según 16.a) |
 | Versiones/Diff/Rollback | `[OBJETIVO]` | Ver historial de versiones publicadas, diff entre ellas, rollback |
 | Papelera/Restaurar | `[OBJETIVO]` | Soft delete + restaurar + borrado permanente |
 | Compartir Skool | `[OBJETIVO]` | Enviar/recibir paquetes; semántica de identidad/versión según 16.g |
@@ -333,15 +328,18 @@ Un componente **importador/compilador/validador** que: (1) valide manifest, (2) 
 - Versiones: tabla de versiones publicadas; diff seleccionable; botón rollback.
 - Papelera: lista de skills eliminadas; restaurar o borrado permanente.
 
-**Creación asistida por Hermes (co-creación)** `[DECISIÓN CERRADA]`:
-1. El Autor describe la skill en lenguaje natural; Hermes conversa y **redacta la propuesta** de borrador (manifest + contenido).
-2. El backend valida/compila el borrador y presenta la **validación visible** (manifest, contrato compilado, errores).
-3. El Autor **revisa el borrador** y ajusta o aprueba; solo la **aprobación explícita** publica la versión. El formulario técnico de Skill ID/Markdown queda como herramienta secundaria, nunca como flujo principal.
+**Creación asistida por Hermes (co-creación)** `[DECISIÓN CERRADA]`: la co-creación de una skill nueva con la **Skill Madre** (detección/handoff, ritmo conversacional, borrador visual + chat, validación, adaptación, revisión/publicación/activación y transparencia) es **contrato de superficie**: vive en `tool-workshop.md` (sección 6, decisiones TW9–TW16). A nivel subsistema, el borrador se valida/compila con las compuertas del kernel y solo la **aprobación explícita** publica la versión; el formulario técnico de Skill ID/Markdown queda como herramienta secundaria, nunca como flujo principal.
 
 **Import/export/Skool** `[OBJETIVO]`:
 - Import: subir paquete → aparece en cuarentena con aviso → revisar/validar → publicar.
 - Export: elegir versión → generar paquete.
 - Skool: compartir/recibir a través del canal, respetando la semántica 16.g.
+
+### 9.3 Contrato de superficie del Taller de Herramientas y co-creación con la Skill Madre
+
+ La **UX del Taller de Herramientas y de la co-creación con la Skill Madre** es **contrato de superficie** y vive en `docs/architecture/tool-workshop.md` (secciones 1–6, decisiones TW1–TW19): propósito y frontera del Taller, selector de Taller y árbol contextual, estados de Skills (activa/transversal/inactiva/bloqueada), categorías funcionales y etiquetas, biblioteca global de consulta, Skill Madre invisible/protegida, detección/handoff, ritmo conversacional (una pregunta por turno, 15–20 preguntas, progreso por hitos), editor visual + chat sincronizado, adaptación por comparación visual y procedencia, revisión/compilación/publicación/activación con una sola versión activa, y transparencia.
+
+A nivel **subsistema técnico** (este documento), la co-creación se apoya en: las compuertas del kernel (validación/compilación del borrador, aprobación explícita, publicación de versión inmutable), la proyección del contrato compilado por turno (sección 14.1) y las invariantes de escritura (sección 14). El detalle UX no se repite aquí.
 
 ---
 
@@ -562,8 +560,11 @@ Los estados `require_confirmation`/`proposal_ready` son reales **solo** cuando l
 - **C8.** El gate semántico (Hermes) es la frontera de intención; sin fallback léxico autónomo como autoridad.
 - **C9.** La constitución global prevalece sobre este documento; este documento no duplica la definición global (sección 0).
 - **C10.** La co-creación, la intención semántica y la **Skill Madre** son decisiones globales de la constitución (secciones 2.3, 5, G13/10.5); esta iniciativa las referencia sin duplicarlas y regula solo la **biblioteca gestionada por el Autor**.
+- **C11.** El **diseño UX del Taller de Herramientas y de la co-creación con la Skill Madre** está cerrado y consolidado en el contrato de superficie `docs/architecture/tool-workshop.md` (decisiones TW1–TW19): selector/árbol, estados, categorías, Skill Madre, detección/handoff, ritmo conversacional, borrador visual, adaptación, revisión/publicación y transparencia. Este documento referencia ese contrato sin duplicarlo.
 
-### 16.2 Decisiones 16.a–16.m (todas cerradas; solo quedan residuos propuestos o fuera de iniciativa)
+### 16.2 Decisiones 16.a–16.w (todas cerradas; las de superficie 16.l–16.w se consolidan en `tool-workshop.md`, TW1–TW19)
+
+Las decisiones **16.a–16.k** son del subsistema técnico y se detallan a continuación. Las decisiones **16.l–16.w** pertenecen a la **superficie del Taller de Herramientas**; se registran aquí solo como trazabilidad y se consolidan en `docs/architecture/tool-workshop.md` (sección 9, decisiones TW1–TW19), que es la única fuente de su contrato.
 
 | ID | Decisión | Opciones/Propuesta | Depende de |
 |---|---|---|---|
@@ -573,13 +574,23 @@ Los estados `require_confirmation`/`proposal_ready` son reales **solo** cuando l
 | **16.d** | Campos protegidos exactos del kernel | **[DECISIÓN CERRADA]** Son ineditables: autorización, persistencia, tokens/digests, targets allowlist, compatibilidad de runtime, mínimos kernel y máquina de fases. Triggers, preguntas, fases metodológicas y exploración son editables solo dentro de esa validación | Manifest/kernel |
 | **16.e** | Ediciones y versionado | **[DECISIÓN CERRADA]** Toda edición publicada crea una nueva versión inmutable (V1, V2…), con fecha/hora y usuario que la editó; las sesiones fijan su snapshot | Ciclo de vida |
 | **16.f** | Política de anclas mínimas | **[DECISIÓN CERRADA]** La completitud se define por tipo de entidad/entrada; cada tipo tendrá un contrato de mínimos extensible, no una lista universal. En OKF v1 se implementa **personaje primero** (constitución, G1) | Manifest/seguridad |
-| **16.g** | Skool como canal de comunidad y descuentos | **[DECISIÓN CERRADA en producto]** Los usuarios comparten skills `.zip` en la comunidad; Skool no distribuye software ni concede entitlements de módulos. Los módulos se compran una sola vez; inicialmente el Autor verifica manualmente por chat privado la membresía/antigüedad y envía el enlace Stripe con el descuento correspondiente. La comunidad recibe descuentos escalonados por antigüedad (más de 3, 6 y 9 meses) y el descuento máximo por membresía anual; una futura automatización puede reemplazar el paso manual. Quedan fuera de esta iniciativa los porcentajes exactos, la política de antigüedad acumulada/continua y las actualizaciones posteriores | Plataforma/Skool |
+| **16.g** | Skool como canal de comunidad y descuentos | **[DECISIÓN CERRADA en producto]** Los usuarios comparten skills `.zip` en la comunidad; Skool no distribuye software ni concede entitlements de módulos. Los módulos se compran una sola vez; inicialmente el Autor verifica manualmente por chat privado la membresía/antigüedad y envía el enlace del proveedor de cobro inicial con el descuento correspondiente. La comunidad recibe descuentos escalonados por antigüedad (más de 3, 6 y 9 meses) y el descuento máximo por membresía anual; una futura automatización puede reemplazar el paso manual. Quedan fuera de esta iniciativa los porcentajes exactos, la política de antigüedad acumulada/continua y las actualizaciones posteriores | Plataforma/Skool |
 | **16.h** | Relaciones propuestas en creación guiada | **[DECISIÓN CERRADA]** `esposa de Toryn` / `fallecida` son **semilla del Autor** o **interpretación propuesta por Hermes**; Demiurgos solo resuelve/verifica la referencia y mantiene la relación como **propuesta** hasta aprobación; crear personajes relacionados es rama/contexto de la skill general, no una skill separada (sección 10.6) | Flujo guiado |
-| **16.i** | Árbol y scoping por Taller | **[DECISIÓN CERRADA]** Skills organizadas por Taller/capacidad; cada sesión recibe solo su alcance (Taller, skill activa, versión, mundo, contexto autorizado), nunca el árbol completo; cruces entre Talleres requieren **handoff explícito**. Hermes presente en cada Taller queda `[OBJETIVO]` (sección 3.3) | Biblioteca |
+| **16.i** | Árbol y scoping por Taller | **[DECISIÓN CERRADA]** Skills organizadas por Taller/capacidad; cada sesión recibe solo su alcance (Taller, skill activa, versión, mundo, contexto autorizado), nunca el árbol completo; cruces entre Talleres requieren **handoff explícito**. Hermes presente en cada Taller queda `[OBJETIVO]` (sección 3.3). La presentación del árbol/selector es superficie (`tool-workshop.md`, TW2/TW3) | Biblioteca |
 | **16.j** | Activación de la skill activa | **[DECISIÓN CERRADA]** El backend selecciona la skill activa por mundo tras el handoff semántico y **antes de la primera llamada guiada**; snapshot `workshop + world + skill_id + skill_version + contrato compilado`; **no modifica `AGENTS.md`**; el contrato compilado se proyecta **compacto por turno** (secciones 7.2, 14.1, 16.3) | Ciclo de vida/runtime |
 | **16.k** | Versiones y desactivación | **[DECISIÓN CERRADA]** Publicada inmutable; cambios crean nueva versión. Activar una versión nueva exige **nueva conversación** en el Asistente IA del Taller de Mundo. Desactivar conserva versión/historial pero impide **nuevas sesiones**; las sesiones existentes conservan su snapshot y pueden terminar (sección 14.1) | Ciclo de vida |
-| **16.l** | UX del Taller de Herramientas | **[DECISIÓN CERRADA]** La creación de skills es **asistida por Hermes** (co-creación), no un formulario técnico de Skill ID/Markdown como flujo principal; con revisión del borrador, validación visible y aprobación explícita del Autor (sección 9) | Frontend |
-| **16.m** | Clasificación visible de Skills | **[DECISIÓN CERRADA]** La biblioteca muestra **Oficiales**, **Personalizadas** y **Comunitarias**. `Oficial` requiere aprobación/firma exclusiva del Autor de Demiurgos; `fundamental`, `derived`, `co-created`, `verified` y `quarantined` quedan como atributos secundarios. La Skill Madre no aparece en la biblioteca | Trust/biblioteca |
+| **16.l** | UX del Taller de Herramientas y co-creación con la Skill Madre | **[DECISIÓN CERRADA — superficie]** La creación de skills es **asistida por Hermes** (co-creación), no un formulario técnico de Skill ID/Markdown como flujo principal; con revisión del borrador, validación visible y aprobación explícita del Autor. **Consolidado en el contrato de superficie** `tool-workshop.md` (secciones 1–6, decisiones TW1–TW19) | Frontend |
+| **16.m** | Clasificación visible de Skills | **[DECISIÓN CERRADA — superficie]** La biblioteca muestra **Oficiales**, **Personalizadas** y **Comunitarias**; `fundamental`, `derived`, `co-created`, `verified` y `quarantined` son atributos secundarios; la Skill Madre no aparece en la biblioteca. **Consolidado en `tool-workshop.md`** (sección 4, TW5; constitución, G14) | Superficie |
+| **16.n** | Skill Madre en el árbol | **[DECISIÓN CERRADA — superficie]** La Skill Madre es **invisible en el árbol de skills**, no editable, no eliminable y **no desactivable** (constitución, G13/10.5). **Consolidado en `tool-workshop.md`** (sección 5, TW8) | Superficie |
+| **16.o** | Nombramiento visible del asistente | **[DECISIÓN CERRADA — superficie]** El nombre visible es **Asistente de Demiurgos**; "Hermes" es solo el nombre interno del proveedor y nunca aparece en la copia visible (constitución, G15/10.6). **Consolidado en `tool-workshop.md`** (TW16) | Superficie |
+| **16.p** | Ritmo conversacional y progreso | **[DECISIÓN CERRADA — superficie]** Toda skill conversacional hace **una pregunta por turno**; la Skill Madre crea la **primera versión en 15–20 preguntas máximo** (adaptativas); el progreso se reporta **por hitos, no por porcentaje**. **Consolidado en `tool-workshop.md`** (sección 6.2, TW10) | Superficie |
+| **16.q** | Detección y handoff de creación | **[DECISIÓN CERRADA — superficie]** La detección de intención ocurre **desde cualquier Taller**; la **creación formal solo en el Taller de Herramientas** mediante **handoff explícito**; las **candidatas solo se guardan con confirmación**. **Consolidado en `tool-workshop.md`** (sección 6.1, TW9) | Superficie |
+| **16.r** | Método de co-creación | **[DECISIÓN CERRADA — superficie]** Se descubre el **propósito antes de exigir nombre**; se define **Taller/alcance temprano**; se construye el **flujo principal antes de las ramas**; **misma finalidad/metodología = rama**, **diferencia fundamental = Skill distinta**. **Consolidado en `tool-workshop.md`** (sección 6.3, TW11) | Superficie |
+| **16.s** | Organización de la Skill | **[DECISIÓN CERRADA — superficie]** Cada skill declara un **Taller principal** y opcionalmente **Talleres compatibles/transversales**; **categoría funcional principal + etiquetas**; la **estructura es independiente del idioma**, la **presentación sigue el idioma configurado**. **Consolidado en `tool-workshop.md`** (secciones 2 y 4, TW6) | Superficie |
+| **16.t** | Similitudes y derivación | **[DECISIÓN CERRADA — superficie]** Inventario **completo** para detectar similitudes; se **propone copiar/adaptar** con aprobación; la **original queda intacta** y la derivada muestra **procedencia** visible. **Consolidado en `tool-workshop.md`** (secciones 6.1 y 6.5, TW7/TW13/TW14) | Superficie |
+| **16.u** | Edición del borrador | **[DECISIÓN CERRADA — superficie]** **Borrador visual editable + chat sincronizado**; edición **directa del Autor**; validación **centralizada en panel**; advertencias **Pendiente/Resuelta/Aceptada por Autor**; **no se deshace automáticamente**; **undo/redo/restauración e historial**; **autoguardado**. **Consolidado en `tool-workshop.md`** (sección 6.4, TW12) | Superficie |
+| **16.v** | Revisión final y publicación | **[DECISIÓN CERRADA — superficie]** **Revisión final guiada** con resumen humano + detalles completos; **aprobación, validación/compilación, publicación y activación separadas**; **impacto antes de activar**; **una sola versión activa**; versiones anteriores **archivables/restaurables**; estados de borrador **pendiente / lista para publicar**. **Consolidado en `tool-workshop.md`** (sección 6.6, TW15) | Superficie |
+| **16.w** | Transparencia | **[DECISIÓN CERRADA — superficie]** Se **muestran comportamiento, permisos, dependencias y consecuencias**; se **ocultan los mecanismos técnicos internos**. **Consolidado en `tool-workshop.md`** (sección 6.7, TW16) | Superficie |
 
 ### 16.3 Decisión de diseño sobre el snapshot de sesión
 
@@ -594,6 +605,7 @@ Los estados `require_confirmation`/`proposal_ready` son reales **solo** cuando l
 Un SDD de esta área **solo** puede comenzar cuando se cumplan todos:
 
 - [ ] Las partes todavía abiertas quedan resueltas y anotadas en este documento: detalle técnico de los digests del snapshot (16.3 `[PROPUESTO]`), cadena de confianza para terceros no oficiales (16.b `[PROPUESTO]`), y lo declarado fuera de esta iniciativa (porcentajes exactos y política de antigüedad de descuentos en 16.g).
+- [ ] El SDD honra el **contrato de superficie cerrado** del Taller de Herramientas y la co-creación con la Skill Madre (`docs/architecture/tool-workshop.md`, decisiones TW1–TW19) y referencia el Taller de Mundo (`docs/architecture/world-workshop.md`) cuando el cambio toque esa superficie.
 - [ ] Se mantienen intactas las invariantes `[ACTUAL]`: cero escrituras sin aprobación, `apply_delta` no toca `accepted_canon`, revisión+autorización antes de cada mutación, gate semántico fail-closed, targets `personajes/` allowlist, digests server-computed, token de un solo uso, contexto acotado `mundo/ficha/reference/graph`.
 - [ ] El SDD incluye un contrato para el **compilador/validador** (manifest→contrato runtime) sin reescribir el protocolo `guided-character-v1`.
 - [ ] El SDD incluye la biblioteca (versiones publicadas inmutables, activación, rollback, papelera) y la cuarentena de importación.
