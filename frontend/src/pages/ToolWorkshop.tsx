@@ -2,6 +2,8 @@ import { useState } from "react";
 import { useWorlds } from "@/hooks/useWorlds";
 import { Navbar } from "@/components/organisms/Navbar";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
+import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
+import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -14,6 +16,12 @@ import { Spinner } from "@/components/atoms/Spinner";
  * version by world) and lets the Author pick which world receives the
  * activation via the shared world selector.
  *
+ * World creation: this page owns the second `WorldSelector` (the one in the
+ * page body, below the Navbar). It wires the `+ Nuevo mundo` entry, the
+ * `CreateWorldModal`, and the post-creation switch confirmation. Local
+ * `world` is only updated when the user confirms the switch — declined
+ * creation does not change the activation target.
+ *
  * States:
  * - 🟡 Loading: spinner centered on page
  * - 🔴 Error: ErrorBanner with retry
@@ -24,6 +32,21 @@ import { Spinner } from "@/components/atoms/Spinner";
 export default function ToolWorkshop() {
   const { worlds, isLoading, error, mutate } = useWorlds();
   const [world, setWorld] = useState<string>();
+  const [creatingWorld, setCreatingWorld] = useState(false);
+  const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
+
+  const handleWorldCreated = (created: string) => {
+    setCreatingWorld(false);
+    // Local world stays the same until the user confirms the switch.
+    void mutate();
+    setPendingSwitch(created);
+  };
+
+  const confirmSwitch = () => {
+    if (!pendingSwitch) return;
+    setWorld(pendingSwitch);
+    setPendingSwitch(null);
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-cripta">
@@ -55,6 +78,7 @@ export default function ToolWorkshop() {
                 worlds={worlds}
                 currentWorld={world}
                 onWorldChange={setWorld}
+                onRequestCreate={() => setCreatingWorld(true)}
               />
               <p className="text-small text-tinta-desvaida">
                 {world
@@ -68,6 +92,22 @@ export default function ToolWorkshop() {
           </>
         )}
       </main>
+
+      <CreateWorldModal
+        isOpen={creatingWorld}
+        onClose={() => setCreatingWorld(false)}
+        onCreated={(created) => handleWorldCreated(created.name)}
+      />
+
+      {pendingSwitch && (
+        <ConfirmDialog
+          title="Cambiar mundo activo"
+          message={`¿Querés cambiar el mundo activo a «${pendingSwitch}»?`}
+          confirmLabel="Cambiar"
+          onConfirm={confirmSwitch}
+          onClose={() => setPendingSwitch(null)}
+        />
+      )}
     </div>
   );
 }
