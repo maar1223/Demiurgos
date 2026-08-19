@@ -287,10 +287,15 @@ describe("ConfigurationCenter (ONB-1.7)", () => {
     renderCenter();
 
     await screen.findByRole("heading", { name: "Importar mundo" });
-    expect(screen.getByText(/contrato del importador/i)).toBeInTheDocument();
+    // The card copy is truthful (world-importer slice 2): the importer is
+    // operational, the entry point is here. The stale "contrato del
+    // importador está en definición; esta capacidad aún no está disponible"
+    // copy must NOT come back.
+    expect(screen.getByText(/El importador está operativo/i)).toBeInTheDocument();
+    expect(screen.queryByText(/contrato del importador/i)).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Importar mundo" }).closest("section"))
       .toHaveTextContent("Pendiente");
-    // The card links to the Taller de Mundo where the importer will live.
+    // The card links to the Taller de Mundo where the importer lives.
     await user.click(screen.getByRole("button", { name: "Ir al Taller de Mundo" }));
     expect(screen.getByTestId("taller-mundo")).toBeInTheDocument();
   });

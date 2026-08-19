@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS candidates (
     images_json TEXT NOT NULL DEFAULT '[]',
     merge_json TEXT,
     replacement_json TEXT,
+    target_resolution_json TEXT,
     UNIQUE (world, source_hash, normalized_identity));
 CREATE TABLE IF NOT EXISTS items (
     item_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL,
@@ -73,6 +74,44 @@ def _unjson(raw: str) -> Any:
         return json.loads(raw)
     except (TypeError, ValueError):
         return []
+
+
+def _encode_cursor(created_at: str, job_id: str) -> str:
+    """Encode the (created_at, job_id) DESC tuple key as an opaque cursor.
+
+    The cursor is opaque to clients: it is a URL-safe base64 payload of
+    ``{"c": created_at, "j": job_id}``. Padding is stripped so cursors stay
+    compact; ``_decode_cursor`` restores it before decoding.
+    """
+    import base64
+    import json
+
+    payload = json.dumps({"c": created_at, "j": job_id},
+                         separators=(",", ":"), ensure_ascii=True)
+    return base64.urlsafe_b64encode(
+        payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_cursor(cursor: str) -> tuple[str, str]:
+    """Decode an opaque cursor back into the (created_at, job_id) tuple key.
+
+    Validates the payload shape — never trust the client. A malformed cursor
+    raises ``ValueError`` so callers can return HTTP 400 instead of silently
+    returning the wrong page.
+    """
+    import base64
+    import json
+
+    pad = "=" * (-len(cursor) % 4)
+    try:
+        raw = base64.urlsafe_b64decode(cursor + pad).decode("utf-8")
+        payload = json.loads(raw)
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError(f"malformed cursor: {exc}") from exc
+    if (not isinstance(payload, dict)
+            or set(payload.keys()) != {"c", "j"}):
+        raise ValueError("cursor must encode exactly {c, j} keys")
+    return str(payload["c"]), str(payload["j"])
 
 
 class ImportJobStore:
@@ -152,6 +191,57 @@ class ImportJobStore:
             self._conn.commit()
             return self.get_job(job_id)
 
+    def list_jobs(self, *, principal: str, world: str, limit: int = 50,
+                  cursor: str | None = None) -> tuple[list[ImportJob], str | None]:
+        """Principal-scoped, cursor-paginated job history (slice 2, IM-2.2).
+
+        Order: ``(created_at DESC, job_id DESC)`` — the tuple key guarantees
+        deterministic ordering even when many rows share a ``created_at``
+        timestamp. ``limit`` is clamped to ``[1, 100]``; ``cursor`` is opaque
+        (base64-encoded tuple key from ``_encode_cursor``). Authorization is
+        enforced by filtering on ``owner_principal`` — foreign jobs are
+        invisible to this call, never returned.
+
+        Returns ``(jobs, next_cursor)``; ``next_cursor`` is ``None`` when the
+        page exhausts the result set.         Raises ``ValueError`` for a malformed
+        cursor so the router can surface HTTP 400 instead of returning the
+        wrong page.
+        """
+        # Clamp defensively: a 0/negative/None limit must not bypass the page
+        # size, and an oversized value must not be accepted unbounded.
+        try:
+            requested = int(limit)
+        except (TypeError, ValueError):
+            requested = 50
+        if requested <= 0:
+            requested = 50  # treat invalid as the default, not zero
+        bounded = max(1, min(requested, 100))
+        params: list[Any] = [principal, world]
+        where = "owner_principal=? AND world=?"
+        if cursor:
+            try:
+                ca, jid = _decode_cursor(cursor)
+            except ValueError as exc:
+                raise ValueError(f"invalid cursor: {exc}") from exc
+            # DESC seek: rows strictly less than (cursor.created_at, cursor.job_id).
+            where += " AND (created_at < ? OR (created_at = ? AND job_id < ?))"
+            params.extend([ca, ca, jid])
+        # Fetch one extra row to detect "more pages available" without a count.
+        params.append(bounded + 1)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT * FROM jobs WHERE {where}"
+                f" ORDER BY created_at DESC, job_id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        has_more = len(rows) > bounded
+        jobs = [self._job_from_row(r) for r in rows[:bounded]]
+        next_cursor: str | None = None
+        if has_more and jobs:
+            last = jobs[-1]
+            next_cursor = _encode_cursor(last.created_at, last.job_id)
+        return jobs, next_cursor
+
     # -- candidates --------------------------------------------------------
 
     def find_candidate(self, world: str, source_hash: str,
@@ -169,7 +259,8 @@ class ImportJobStore:
                 "INSERT OR IGNORE INTO candidates (candidate_id, job_id, world,"
                 " normalized_identity, source_hash, provenance_json, content_preview,"
                 " status, okf_issues_json, size_bytes, images_json, merge_json,"
-                " replacement_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " replacement_json, target_resolution_json)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (candidate.candidate_id, candidate.job_id, candidate.world,
                  candidate.normalized_identity, candidate.source_hash,
                  candidate.provenance.model_dump_json(), candidate.content_preview,
@@ -177,7 +268,9 @@ class ImportJobStore:
                  _json([i.model_dump() for i in candidate.images]),
                  candidate.merge.model_dump_json() if candidate.merge else None,
                  candidate.replacement.model_dump_json()
-                 if candidate.replacement else None),
+                 if candidate.replacement else None,
+                 _json(candidate.target_resolution)
+                 if candidate.target_resolution else None),
             )
             self._conn.commit()
         return (self.find_candidate(candidate.world, candidate.source_hash,
@@ -205,6 +298,15 @@ class ImportJobStore:
         if row["replacement_json"]:
             replacement = __import__("import_models", fromlist=["ReplacementRecord"]) \
                 .ReplacementRecord.model_validate_json(row["replacement_json"])
+        target_resolution = None
+        # ``target_resolution_json`` was added in slice 1; legacy rows may
+        # not have the column (older databases). Use a defensive lookup.
+        try:
+            tr_json = row["target_resolution_json"]
+        except (IndexError, KeyError):
+            tr_json = None
+        if tr_json:
+            target_resolution = _unjson(tr_json)
         return Candidate(
             candidate_id=row["candidate_id"], job_id=row["job_id"],
             world=row["world"], normalized_identity=row["normalized_identity"],
@@ -212,7 +314,8 @@ class ImportJobStore:
             provenance=Provenance.model_validate_json(row["provenance_json"]),
             content_preview=row["content_preview"], status=row["status"],
             okf_issues=_unjson(row["okf_issues_json"]), size_bytes=row["size_bytes"],
-            images=images, merge=merge, replacement=replacement)
+            images=images, merge=merge, replacement=replacement,
+            target_resolution=target_resolution)
 
     # -- items / events ----------------------------------------------------
 

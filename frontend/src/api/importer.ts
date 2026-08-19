@@ -6,6 +6,7 @@ import type {
   ImportExecuteResponse,
   ImportJobResponse,
   ImportReviewResponse,
+  JobPage,
 } from "@/api/types";
 
 /**
@@ -92,6 +93,23 @@ export function getImportJob(
   jobId: string,
 ): Promise<ImportJobResponse> {
   return apiFetch<ImportJobResponse>(importsUrl(mundo, jobId));
+}
+
+/**
+ * GET /api/{mundo}/imports — list the caller's jobs in this world (newest
+ * first). The server enforces principal scoping: foreign jobs are never
+ * returned. ``cursor`` is opaque (echoed back from ``JobPage.next_cursor``);
+ * clients MUST NOT parse or mutate it.
+ */
+export function listImportJobs(
+  mundo: string,
+  options?: { limit?: number; cursor?: string | null },
+): Promise<JobPage> {
+  const params = new URLSearchParams();
+  if (options?.limit !== undefined) params.set("limit", String(options.limit));
+  if (options?.cursor) params.set("cursor", options.cursor);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return apiFetch<JobPage>(importsUrl(mundo) + suffix);
 }
 
 /** GET /api/{mundo}/imports/{id}/review — candidates + immutable digest. */

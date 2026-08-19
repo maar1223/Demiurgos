@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Mock } from "vitest";
 import WorldImporter from "@/pages/WorldImporter";
+import { ApiError } from "@/api/types";
 import type {
   ImportApprovalResponse,
   ImportCandidate,
@@ -20,6 +21,7 @@ vi.mock("@/api/importer", () => ({
   analyzeImportJob: vi.fn(),
   getImportJob: vi.fn(),
   getImportReview: vi.fn(),
+  listImportJobs: vi.fn(),
   approveImportGroups: vi.fn(),
   executeImport: vi.fn(),
   cancelImportJob: vi.fn(),
@@ -46,6 +48,8 @@ import {
   cancelImportJob,
   createImportJob,
   getImportReview,
+  getImportJob,
+  listImportJobs,
   streamImportFile,
 } from "@/api/importer";
 
@@ -150,6 +154,8 @@ describe("WorldImporter — accessible, preservation-first workflow (slice 3)", 
       error: null,
       mutate: vi.fn(),
     });
+    // Default: no history. Slice 2 tests override per-case.
+    (listImportJobs as Mock).mockResolvedValue({ jobs: [], next_cursor: null });
   });
 
   // The page persists the active job in sessionStorage for resume-after-
@@ -351,5 +357,171 @@ describe("WorldImporter — accessible, preservation-first workflow (slice 3)", 
     expect(
       screen.getByRole("button", { name: /Reanudar revisión/ }),
     ).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 2 — History endpoint + server-driven recovery (IM-2.5 / IM-2.7)
+//
+// The store-level contract lives in wiki/tests/test_import_store.py; here we
+// pin what only the page can prove: history rendering, outage handling, the
+// server-driven recovery flow from both sessionStorage and the history list.
+// ---------------------------------------------------------------------------
+
+describe("WorldImporter — history + recovery (slice 2)", () => {
+  beforeEach(() => {
+    (useWorlds as Mock).mockReturnValue({
+      worlds: [world],
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    (listImportJobs as Mock).mockResolvedValue({ jobs: [], next_cursor: null });
+  });
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("renders an empty state when the history is empty", async () => {
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    expect(screen.getByTestId("history-empty")).toBeInTheDocument();
+    expect(screen.getByText(/No hay importaciones previas/)).toBeInTheDocument();
+  });
+
+  it("renders each history row with date, state, candidate count and open action", async () => {
+    // ``mockImplementation`` (not ``mockResolvedValueOnce``) so StrictMode's
+    // double-mount of the initial fetch effect still gets a real response.
+    (listImportJobs as Mock).mockImplementation(async () => ({
+      jobs: [
+        job({ job_id: "j1", state: "review", file_count: 5 }),
+        job({ job_id: "j2", state: "completed", file_count: 0 }),
+      ],
+      next_cursor: null,
+    }));
+
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+
+    const list = screen.getByTestId("history-list");
+    expect(list).toBeInTheDocument();
+    expect(list.children).toHaveLength(2);
+    expect(screen.getByTestId("history-open-j1")).toBeInTheDocument();
+    expect(screen.getByTestId("history-open-j2")).toBeInTheDocument();
+    // The state badge label is honest — server enum, mapped to UI copy.
+    expect(screen.getByText("en revisión")).toBeInTheDocument();
+    expect(screen.getByText("completado")).toBeInTheDocument();
+  });
+
+  it("shows a stale indicator and retry button on outage, and clears it on success", async () => {
+    // Initial fetch fails: the UI must surface the outage (banner + retry)
+    // rather than silently dropping the user into an empty list.
+    (listImportJobs as Mock).mockImplementation(async () => {
+      throw new ApiError(0, "offline");
+    });
+    renderImporter();
+    await screen.findByTestId("history-outage");
+    expect(screen.getByText(/Datos en caché/)).toBeInTheDocument();
+    // The empty list message must NOT render during outage — the user
+    // sees "no se pudo actualizar", not "no hay historial" (which would
+    // promote a connection error as a negative result).
+    expect(screen.queryByTestId("history-empty")).not.toBeInTheDocument();
+
+    // Retry succeeds: the banner clears and the list renders normally.
+    (listImportJobs as Mock).mockImplementation(async () => ({
+      jobs: [job({ job_id: "j1", state: "review" })],
+      next_cursor: null,
+    }));
+    fireEvent.click(screen.getByRole("button", { name: /Reintentar/ }));
+    await screen.findByTestId("history-open-j1");
+    expect(screen.queryByTestId("history-outage")).not.toBeInTheDocument();
+  });
+
+  it("paginates via 'Cargar más' using the server cursor", async () => {
+    // Cursor-driven mock: StrictMode's double mount of the initial effect
+    // calls listImportJobs twice with no cursor; the click calls it once
+    // with the server cursor.
+    (listImportJobs as Mock).mockImplementation(
+      async (_m: string, opts?: { cursor?: string | null }) => {
+        if (opts?.cursor === "cursor-A") {
+          return { jobs: [job({ job_id: "j3" })], next_cursor: null };
+        }
+        return {
+          jobs: [job({ job_id: "j1" }), job({ job_id: "j2" })],
+          next_cursor: "cursor-A",
+        };
+      },
+    );
+
+    renderImporter();
+    await screen.findByTestId("history-open-j1");
+    expect(screen.getByTestId("history-open-j2")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("history-load-more"));
+    await screen.findByTestId("history-open-j3");
+    // No more pages → button gone.
+    expect(screen.queryByTestId("history-load-more")).not.toBeInTheDocument();
+    // The cursor must be echoed back to the server untouched.
+    expect(listImportJobs).toHaveBeenCalledWith(
+      "mundo",
+      expect.objectContaining({ cursor: "cursor-A" }),
+    );
+  });
+
+  it("sessionStorage recovery surfaces a 404 and clears the stale pointer", async () => {
+    window.sessionStorage.setItem(
+      "demiurgos-importer-job:mundo",
+      JSON.stringify({ jobId: "ghost", sourceKind: "loose" }),
+    );
+    (getImportJob as Mock).mockRejectedValueOnce(
+      new ApiError(404, "not found"),
+    );
+
+    renderImporter();
+
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    // The page must NOT silently swallow the 404: it tells the user the
+    // saved job is gone and the local pointer is cleared.
+    expect(
+      screen.getByText(/ya no existe en el servidor/i),
+    ).toBeInTheDocument();
+    expect(window.sessionStorage.getItem("demiurgos-importer-job:mundo")).toBeNull();
+  });
+
+  it("'Open' from history restores a job in REVIEW state into the review step", async () => {
+    (listImportJobs as Mock).mockImplementation(async () => ({
+      jobs: [job({ job_id: "j-review", state: "review" })],
+      next_cursor: null,
+    }));
+    (getImportReview as Mock).mockResolvedValue({
+      job: job({ job_id: "j-review", state: "review" }),
+      digest: "digest",
+      candidates: [candidate({ candidate_id: "c-hist", job_id: "j-review" })],
+    });
+
+    renderImporter();
+    await screen.findByTestId("history-open-j-review");
+    fireEvent.click(screen.getByTestId("history-open-j-review"));
+
+    // Drives the page to the review step with the server-side candidates.
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    expect(getImportReview).toHaveBeenCalledWith("mundo", "j-review");
+  });
+
+  it("'Open' from history surfaces a terminal job in the result step", async () => {
+    (listImportJobs as Mock).mockImplementation(async () => ({
+      jobs: [job({ job_id: "j-done", state: "completed" })],
+      next_cursor: null,
+    }));
+
+    renderImporter();
+    await screen.findByTestId("history-open-j-done");
+    fireEvent.click(screen.getByTestId("history-open-j-done"));
+
+    await screen.findByRole("heading", { name: "Resultado de la importación" });
+    expect(screen.getByText("Importación completada")).toBeInTheDocument();
+    // A terminal job must NOT keep the recovery pointer around.
+    expect(window.sessionStorage.getItem("demiurgos-importer-job:mundo")).toBeNull();
   });
 });

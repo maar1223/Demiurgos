@@ -31,6 +31,7 @@ import {
   IMPORT_MAX_FILE_BYTES,
   IMPORT_MAX_JOB_BYTES,
   IMPORT_SYSTEM_DIRS,
+  listImportJobs,
   resumeImportJob,
   rollbackImportJob,
   streamImportFile,
@@ -75,6 +76,54 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
   return `${bytes} B`;
+}
+
+/** Locale-friendly date for history rows (slice 2, IM-2.5). */
+function formatHistoryDate(iso: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("es", {
+    year: "numeric", month: "short", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+/** UI copy for import-job states (server enum, kept honest). */
+function historyStateLabel(state: ImportJob["state"]): string {
+  switch (state) {
+    case "pending": return "pendiente";
+    case "intaking": return "subiendo";
+    case "analyzing": return "analizando";
+    case "review": return "en revisión";
+    case "approved": return "aprobado";
+    case "executing": return "ejecutando";
+    case "completed": return "completado";
+    case "cancelled": return "cancelado";
+    case "failed": return "falló";
+    case "rolled_back": return "revertido";
+  }
+}
+
+function historyStateVariant(state: ImportJob["state"]): "default" | "info" | "warning" | "success" | "error" {
+  switch (state) {
+    case "completed":
+    case "approved":
+      return "success";
+    case "failed":
+    case "rolled_back":
+      return "error";
+    case "cancelled":
+      return "warning";
+    case "review":
+    case "executing":
+    case "analyzing":
+    case "intaking":
+      return "info";
+    case "pending":
+    default:
+      return "default";
+  }
 }
 
 /** System/transversal folders and hidden segments are never importable (W10/UI2). */
@@ -154,70 +203,21 @@ export default function WorldImporter() {
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
 
+  // --- history (slice 2, IM-2.5) ----------------------------------------
+  // Server-owned, principal-scoped history surfaced via GET /api/{m}/imports.
+  // The server is authoritative; outage keeps the last good page and shows a
+  // stale-banner so we never promote cached data as fresh.
+  const [history, setHistory] = useState<ImportJob[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyOutage, setHistoryOutage] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   const worldExists = worlds.some((w) => w.name === mundo);
 
   // --- persisted job recovery (cancel/resume across reloads) ------------
-
-  useEffect(() => {
-    if (!mundo || worldsLoading) return;
-    if (!worldExists) {
-      setRestoring(false);
-      return;
-    }
-    let stored: { jobId: string; sourceKind: ImportSourceKind } | null = null;
-    try {
-      stored = JSON.parse(sessionStorage.getItem(storageKey(mundo)) ?? "null");
-    } catch {
-      stored = null;
-    }
-    if (!stored?.jobId) {
-      setRestoring(false);
-      return;
-    }
-    let cancelled = false;
-    (async () => {
-      try {
-        const { job: existing } = await getImportJob(mundo, stored!.jobId);
-        if (cancelled) return;
-        setJobId(existing.job_id);
-        setSourceKind(existing.source_kind);
-        setJob(existing);
-        if (existing.state === "review" || existing.state === "approved") {
-          const review = await getImportReview(mundo, existing.job_id);
-          if (cancelled) return;
-          setCandidates(review.candidates);
-          setStep("review");
-        } else if (
-          existing.state === "pending" ||
-          existing.state === "intaking" ||
-          existing.state === "analyzing"
-        ) {
-          setStep("select");
-          setResumeNotice(
-            "Hay una importación interrumpida. Seleccioná las mismas fuentes y continuá: los archivos ya subidos se retoman sin duplicarse.",
-          );
-        } else {
-          setOutcomes([]);
-          setStep("result");
-        }
-      } catch {
-        sessionStorage.removeItem(storageKey(mundo));
-      } finally {
-        if (!cancelled) setRestoring(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [mundo, worldsLoading, worldExists]);
-
-  // --- focus management: the step heading receives focus on transitions ---
-  useEffect(() => {
-    headingRef.current?.focus();
-  }, [step]);
 
   const persistJob = useCallback(
     (id: string, kind: ImportSourceKind) => {
@@ -242,6 +242,142 @@ export default function WorldImporter() {
       // ignore
     }
   }, [mundo]);
+
+  /**
+   * Drive the page into a known job's UI state from a server-confirmed job.
+   * Shared between sessionStorage recovery and the "open from history"
+   * handler so both paths go through the same branching on
+   * ``ImportJob.state``. The server is the authority — if the job vanished
+   * (404) the caller is responsible for clearing the local pointer.
+   */
+  const restoreJobState = useCallback(
+    async (existing: ImportJob) => {
+      if (!mundo) return;
+      setJobId(existing.job_id);
+      setSourceKind(existing.source_kind);
+      setJob(existing);
+      setResumeNotice(null);
+      if (existing.state === "review" || existing.state === "approved") {
+        try {
+          const review = await getImportReview(mundo, existing.job_id);
+          setCandidates(review.candidates);
+          setStep("review");
+        } catch (err) {
+          setError(importErrorMessage(err));
+          setStep("result");
+        }
+      } else if (
+        existing.state === "pending" ||
+        existing.state === "intaking" ||
+        existing.state === "analyzing" ||
+        existing.state === "executing"
+      ) {
+        setStep("select");
+        setResumeNotice(
+          "Hay una importación interrumpida. Seleccioná las mismas fuentes y continuá: los archivos ya subidos se retoman sin duplicarse.",
+        );
+      } else {
+        // Terminal: completed / failed / cancelled / rolled_back.
+        setOutcomes([]);
+        setStep("result");
+        // Terminal jobs must not keep prompting recovery on every reload.
+        clearPersistedJob();
+      }
+    },
+    [mundo, clearPersistedJob],
+  );
+
+  useEffect(() => {
+    if (!mundo || worldsLoading) {
+      return;
+    }
+    if (!worldExists) {
+      setRestoring(false);
+      return;
+    }
+    let stored: { jobId: string; sourceKind: ImportSourceKind } | null = null;
+    try {
+      stored = JSON.parse(sessionStorage.getItem(storageKey(mundo)) ?? "null");
+    } catch {
+      stored = null;
+    }
+    if (!stored?.jobId) {
+      setRestoring(false);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const { job: existing } = await getImportJob(mundo, stored!.jobId);
+        if (cancelled) return;
+        await restoreJobState(existing);
+      } catch (err) {
+        // 404: the server no longer knows this job (deleted, expired, or
+        // a different session cleared it). Drop the local pointer so we do
+        // not keep retrying on every navigation.
+        if (err instanceof ApiError && err.status === 404) {
+          clearPersistedJob();
+          setError("La importación guardada ya no existe en el servidor.");
+        }
+        // Other failures (network / 5xx): leave sessionStorage intact so
+        // the user can retry on the next mount.
+      } finally {
+        if (!cancelled) setRestoring(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mundo, worldsLoading, worldExists, restoreJobState, clearPersistedJob]);
+
+  // --- history loader (slice 2, IM-2.5) ----------------------------------
+  //
+  // The list is principal-scoped on the server. On outage we keep the last
+  // successful page in state (the server already filtered it for this user)
+  // and surface a "stale" indicator with a retry button — the UI never
+  // promotes cached data as fresh.
+  const loadHistory = useCallback(
+    async (cursor: string | null = null) => {
+      if (!mundo) return;
+      setHistoryLoading(true);
+      try {
+        const page = await listImportJobs(mundo, { limit: 20, cursor });
+        setHistory((prev) =>
+          cursor ? [...prev, ...page.jobs] : page.jobs,
+        );
+        setHistoryCursor(page.next_cursor);
+        setHistoryOutage(false);
+      } catch {
+        // Outage: keep the previous page in state so the user can still
+        // browse what they last saw — but flag it as stale so we never
+        // pretend cached data is authoritative.
+        setHistoryOutage(true);
+      } finally {
+        setHistoryLoading(false);
+      }
+    },
+    [mundo],
+  );
+
+  useEffect(() => {
+    if (!mundo || worldsLoading || !worldExists) return;
+    void loadHistory(null);
+  }, [mundo, worldsLoading, worldExists, loadHistory]);
+
+  /** Resume a job surfaced from the history list (slice 2, IM-2.5). */
+  const handleOpenFromHistory = useCallback(
+    async (entry: ImportJob) => {
+      if (!mundo) return;
+      persistJob(entry.job_id, entry.source_kind);
+      await restoreJobState(entry);
+    },
+    [mundo, persistJob, restoreJobState],
+  );
+
+  // --- focus management: the step heading receives focus on transitions ---
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, [step]);
 
   const resetAll = useCallback(() => {
     setStep("select");
@@ -676,7 +812,114 @@ export default function WorldImporter() {
             </div>
           )}
 
-          <fieldset className="mt-2 rounded-lg border border-filio bg-madero p-4">
+          {/* History (slice 2, IM-2.5): principal-scoped, newest first. The
+              server is authoritative; during outage we keep the last good
+              page and surface a stale indicator rather than promoting cached
+              data as fresh. */}
+          <section
+            aria-labelledby="import-history-title"
+            className="mt-4 rounded-lg border border-filio bg-madero p-4"
+            data-testid="import-history"
+          >
+            <header className="flex flex-wrap items-center justify-between gap-2">
+              <h2
+                id="import-history-title"
+                className="font-heading text-body text-pergamino"
+              >
+                Importaciones previas
+              </h2>
+              {historyOutage && (
+                <span
+                  className="flex items-center gap-2 text-small text-tinta-desvaida"
+                  role="status"
+                  aria-live="polite"
+                  data-testid="history-outage"
+                >
+                  Datos en caché — el servidor no responde.
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => void loadHistory(null)}
+                    disabled={historyLoading}
+                  >
+                    <Icon name="refresh" size={14} />
+                    Reintentar
+                  </Button>
+                </span>
+              )}
+            </header>
+
+            {historyLoading && history.length === 0 && (
+              <div className="mt-3 flex items-center gap-2 text-small text-tinta-desvaida">
+                <Spinner size="sm" />
+                <span>Cargando historial…</span>
+              </div>
+            )}
+
+            {!historyLoading && history.length === 0 && !historyOutage && (
+              <p
+                className="mt-3 text-small text-tinta-desvaida"
+                data-testid="history-empty"
+              >
+                No hay importaciones previas en este mundo.
+              </p>
+            )}
+
+            {history.length > 0 && (
+              <ul
+                className="mt-3 flex flex-col gap-2"
+                data-testid="history-list"
+              >
+                {history.map((entry) => (
+                  <li
+                    key={entry.job_id}
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-filio bg-cripta px-3 py-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-small font-medium text-pergamino">
+                        {formatHistoryDate(entry.created_at)}{" "}
+                        <Badge
+                          variant={historyStateVariant(entry.state)}
+                          className="ml-1"
+                        >
+                          {historyStateLabel(entry.state)}
+                        </Badge>
+                      </p>
+                      <p className="mt-0.5 text-xs text-tinta-desvaida">
+                        {entry.source_kind} · {entry.file_count}{" "}
+                        {entry.file_count === 1 ? "candidato" : "candidatos"}
+                      </p>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void handleOpenFromHistory(entry)}
+                      data-testid={`history-open-${entry.job_id}`}
+                    >
+                      <Icon name="corner-up-right" size={14} />
+                      Abrir
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            {historyCursor && (
+              <div className="mt-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void loadHistory(historyCursor)}
+                  disabled={historyLoading}
+                  data-testid="history-load-more"
+                >
+                  {historyLoading ? "Cargando…" : "Cargar más"}
+                </Button>
+              </div>
+            )}
+          </section>
+
+          <fieldset className="mt-4 rounded-lg border border-filio bg-madero p-4">
             <legend className="px-2 text-small font-medium text-tinta-desvaida">
               Tipo de fuente
             </legend>

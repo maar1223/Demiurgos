@@ -79,7 +79,7 @@ const CARD_DEFS: CardDef[] = [
   { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/onboarding?step=step0" } },
   { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },
   { key: "offline", title: "Offline / dispositivo", description: "Núcleo local (editor, ideas, grafo) sin conexión.", action: null },
-  { key: "import", title: "Importar mundo", description: "Importar contenido a un mundo. El contrato del importador está en definición; esta capacidad aún no está disponible (ONB-3.5).", action: { label: "Ir al Taller de Mundo", to: "/taller-mundo" } },
+  { key: "import", title: "Importar mundo", description: "Importar contenido a un mundo. El importador está operativo: iniciá una nueva importación o retomá una anterior desde el Taller de Mundo.", action: { label: "Ir al Taller de Mundo", to: "/taller-mundo" } },
 ];
 
 export default function ConfigurationCenter() {

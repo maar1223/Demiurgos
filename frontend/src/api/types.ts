@@ -738,6 +738,17 @@ export interface ImportJobResponse {
   job: ImportJob;
 }
 
+/**
+ * Cursor-paginated slice of the caller's import-job history
+ * (GET /api/{mundo}/imports, world-importer slice 2). ``next_cursor`` is an
+ * opaque server token — clients must echo it back unchanged for the next
+ * page, never parse or reconstruct it.
+ */
+export interface JobPage {
+  jobs: ImportJob[];
+  next_cursor: string | null;
+}
+
 /** Response of POST /api/{mundo}/imports/{id}/analyze. */
 export interface ImportAnalyzeResponse {
   job: ImportJob;

@@ -10,18 +10,20 @@ world through the canonical world authority; no canon write occurs here.
 from __future__ import annotations
 
 import base64
+import hashlib
 import secrets
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from import_models import (
     ImportJob,
     ImportJobState,
     INTAKE_STATES,
+    JobPage,
     Candidate,
     utcnow_iso,
 )
@@ -29,6 +31,9 @@ from import_intake import (
     BoundedSpool,
     MalformedProviderError,
     UnsafePathError,
+    ZipBombError,
+    BoundsError,
+    extract_zip_bounded,
     reject_unsafe_path,
 )
 from import_store import ImportJobStore
@@ -108,6 +113,36 @@ def create_import_router(
         _store.add_event(job.job_id, "created")
         return {"job": job.model_dump_redacted()}
 
+    @router.get("", response_model=JobPage)
+    def list_jobs(
+        mundo: str,
+        request: Request,
+        limit: int = Query(50, ge=1, le=100),
+        cursor: str | None = Query(None),
+    ) -> JobPage:
+        """List the caller's jobs in ``mundo``, newest first (slice 2, IM-2.3).
+
+        Authorization is principal-scoped: the query filters on
+        ``owner_principal`` so foreign jobs are never returned. The cursor is
+        opaque (base64-encoded tuple key) — the server validates it before use
+        and returns 400 on a malformed value, never silently serving the
+        wrong page. Each entry is pre-redacted (no ``opaque_token``).
+        """
+        principal = guard(request)
+        resolve_world(mundo)
+        principal_id = str(getattr(principal, "id", str(principal)))
+        try:
+            jobs, next_cursor = _store.list_jobs(
+                principal=principal_id, world=mundo,
+                limit=limit, cursor=cursor,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JobPage(
+            jobs=[j.model_dump_redacted() for j in jobs],
+            next_cursor=next_cursor,
+        )
+
     @router.post("/{job_id}/stream")
     def stream_chunk(mundo: str, job_id: str, request: Request,
                      body: StreamChunkRequest) -> dict:
@@ -147,19 +182,64 @@ def create_import_router(
         if not _store.acquire_lease(job_id, str(principal), job.state):
             raise HTTPException(status_code=409, detail="Job busy or not intaking")
         spool = spool_for(job_id, mundo)
-        files = [
-            {"relative": rel, "sha256": digest, "size": size}
-            for rel in spool.offsets()
-            for digest, size in [spool.finalize_file(rel)]
-        ]
-        files = [f for f in files if f["sha256"]]
+
+        # Source-kind dispatch: ZIP sources extract first (bounded), then we
+        # analyze the extracted entries; loose/folder sources analyze the
+        # spool directly. ZIP extraction reuses the manifest defenses from
+        # ``inspect_zip`` (entry count, size, depth, ratio, path safety) and
+        # is fail-closed: any violation marks the job FAILED before
+        # candidate generation.
+        analysis_root: Path = spool.job_dir
+        extracted_dir: Path | None = None
+        if job.source_kind == "zip":
+            zip_files = [
+                rel for rel in spool.offsets()
+                if rel.lower().endswith(".zip")
+            ]
+            if not zip_files:
+                _store.update_job(job_id, expected_revision=job.revision,
+                                  state=ImportJobState.FAILED,
+                                  error="no zip archive found in spool")
+                _store.add_event(job_id, "failed:missing_zip")
+                _store.release_lease(job_id, str(principal))
+                return {"job": _store.get_job(job_id).model_dump_redacted()}
+            zip_rel = zip_files[0]
+            zip_path = spool.job_dir / zip_rel
+            extracted_dir = spool.job_dir / "extracted"
+            try:
+                spool_files = extract_zip_bounded(zip_path, extracted_dir)
+            except (ZipBombError, UnsafePathError, BoundsError) as exc:
+                _store.update_job(job_id, expected_revision=job.revision,
+                                  state=ImportJobState.FAILED,
+                                  error=f"zip rejected: {type(exc).__name__}")
+                _store.add_event(job_id, "failed:zip_safety")
+                _store.release_lease(job_id, str(principal))
+                return {"job": _store.get_job(job_id).model_dump_redacted()}
+            # Build the files list from the extracted entries (hashed).
+            files: list[dict] = []
+            for sf in spool_files:
+                digest = hashlib.sha256(sf.path.read_bytes()).hexdigest()
+                files.append({"relative": sf.relative_path,
+                              "sha256": digest, "size": sf.size})
+            analysis_root = extracted_dir
+        else:
+            files = [
+                {"relative": rel, "sha256": digest, "size": size}
+                for rel in spool.offsets()
+                for digest, size in [spool.finalize_file(rel)]
+            ]
+            files = [f for f in files if f["sha256"]]
+
         try:
             if provider is not None:
                 candidates = provider(job, files)
                 if not isinstance(candidates, list):
                     raise MalformedProviderError("provider output is not a candidate list")
             elif _service is not None:
-                candidates = _analyze_via_service(job, files, spool)
+                candidates = _analyze_via_service(
+                    job, files, spool,
+                    root_dir=analysis_root, mundos_dir=mundos_dir(),
+                )
             else:
                 raise MalformedProviderError("analysis provider unavailable")
         except MalformedProviderError as exc:
@@ -315,20 +395,26 @@ def create_import_router(
 
 
 def _analyze_via_service(job: ImportJob, files: list[dict],
-                         spool: BoundedSpool) -> list[Candidate]:
+                         spool: BoundedSpool,
+                         *, root_dir: Path | None = None,
+                         mundos_dir: Path | None = None) -> list[Candidate]:
     """Build ordered candidates from spooled files via the analysis facade.
 
     Preserves source path, heading, sequence, nearby/image anchors, and source
     order (2.7); server-owned identity/dedup so analysis stays read-only.
+    ``root_dir`` allows callers to point analysis at a sub-tree (e.g., the
+    extracted directory for ZIP sources); defaults to ``spool.job_dir``.
+    ``mundos_dir`` is the worlds root used to resolve canonical targets; it
+    is optional because ``resolve_target`` is world-agnostic today.
     """
-    from import_analysis import analyze_source
+    from import_analysis import analyze_source, resolve_target
     from import_models import Provenance
 
-    spool_dir = spool.job_dir
+    read_root = root_dir or spool.job_dir
 
     def read_file(relative: str) -> str:
         try:
-            return (spool_dir / relative).read_text(encoding="utf-8")
+            return (read_root / relative).read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             return ""
 
@@ -363,4 +449,9 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     for candidate in candidates:
         validation = okf_contract.validate(candidate.content_preview)
         candidate.okf_issues = [i.to_dict() for i in validation.issues]
+    # Slice 1 (IM-1.2): attach the canonical OKF target resolution so
+    # review can surface legacy aliases and unknown subfolders.
+    for candidate in candidates:
+        resolution = resolve_target(job.world, candidate, mundos_dir=mundos_dir)
+        candidate.target_resolution = resolution.model_dump()
     return candidates
