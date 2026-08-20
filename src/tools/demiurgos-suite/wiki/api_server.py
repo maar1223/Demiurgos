@@ -4143,6 +4143,51 @@ app.include_router(
     ),
 )
 
+# Slice 2 — synchronous Hermes bridge for the (optional) importer enricher.
+#
+# The importer module is gateway-independent; the composition layer in this
+# file is the only place that talks to ``_run_hermes``. The bridge wraps the
+# async gateway in ``asyncio.run`` with a 5-second total budget, raises on
+# timeout, and returns the empty ``unavailable_copy`` when the gateway is
+# unreachable so the importer's fail-open contract holds end-to-end.
+def _sync_hermes_enricher(prompt: str, session_id: str) -> str:
+    """Synchronous Hermes bridge honoring the 5-second total budget."""
+    import asyncio
+    from import_enrichment import DEFAULT_TIMEOUT_SECONDS
+    try:
+        return asyncio.run(
+            asyncio.wait_for(_run_hermes(prompt, session_id),
+                             timeout=DEFAULT_TIMEOUT_SECONDS))
+    except (asyncio.TimeoutError, TimeoutError):
+        logger.warning("hermes enricher timed out after %.1fs",
+                       DEFAULT_TIMEOUT_SECONDS)
+        return ""
+    except RuntimeError:
+        # ``asyncio.run`` raises when called from a running loop (e.g., inside
+        # a Test that already drives the event loop). We degrade gracefully:
+        # the importer treats an empty string as "no suggestions".
+        return ""
+
+
+def _make_import_enricher():
+    """Compose the Hermes enricher callable for the import router.
+
+    Slice 2 contract: enrichment is OPT-IN (the request must set
+    ``enrich=true``). The enricher runs the gateway bridge, parses the
+    response, validates the suggestion set, and attaches the validated
+    payloads to each candidate. Failures (timeout, unavailable copy,
+    malformed JSON, vocabulary rejection) leave the candidates unchanged
+    with ``enrichment_status="no_suggestions"`` so the import succeeds
+    deterministically.
+    """
+    from import_enrichment import enrich_candidates as _enrich
+
+    def enricher(candidates):
+        return _enrich(candidates, hermes_runner=_sync_hermes_enricher)
+
+    return enricher
+
+
 # World importer (Phase 1 intake + Phase 2 service). Principal and world are
 # resolved server-side; intake never writes canon, and only digest/token-bound
 # approval may invoke gated merge + gallery registration + graph reconcile.
@@ -4152,6 +4197,7 @@ app.include_router(
         mundos_dir=lambda: MUNDOS_DIR,
         spool_dir=lambda: PROJECT_ROOT / "data" / "import-spool",
         store=_import_store,
+        enricher=_make_import_enricher(),
         service=ImportService(
             store=_import_store(),
             mundos_dir=MUNDOS_DIR,

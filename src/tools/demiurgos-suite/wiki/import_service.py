@@ -63,6 +63,29 @@ def _markdown_images(content: str) -> list[str]:
     return re.findall(r"!\[[^\]]*\]\(([^)]+)\)", content or "")
 
 
+def _classify_entry(entry: dict) -> str:
+    """Best-effort: is a serialized suggestion dict a classification or a relationship?
+
+    Slice 2 contract: suggestion dicts carry a ``__type__`` discriminator
+    (``"classification"`` / ``"relationship"``) attached at serialization.
+    This fallback uses the Pydantic field shape to recover the kind when
+    the discriminator is absent (e.g., older persisted payloads). Unknown
+    shapes return an empty string and are skipped silently during execute.
+    """
+    if not isinstance(entry, dict):
+        return ""
+    explicit = entry.get("__type__")
+    if explicit in {"classification", "relationship"}:
+        return explicit
+    # Relationship shape: has source_candidate_id + relationship_type.
+    if "source_candidate_id" in entry and "relationship_type" in entry:
+        return "relationship"
+    # Classification shape: has candidate_id + type + tags.
+    if "candidate_id" in entry and "type" in entry and "tags" in entry:
+        return "classification"
+    return ""
+
+
 # Matches the renderer's `#align-size` suffix (e.g. `#left`, `#right-sm`,
 # `#center`, `#lg`, `#sm`). The suffix is display metadata, not part of the
 # media file path; the underlying file is always the clean base path.
@@ -289,8 +312,15 @@ class ImportService:
         return digest_of(ordered)
 
     def issue_approval(self, job: ImportJob, principal: str,
-                       group_ids: list[str]) -> Approval:
-        """Issue a server-owned, digest-bound, expiring approval token."""
+                       group_ids: list[str],
+                       suggestion_ids: list[str] | None = None) -> Approval:
+        """Issue a server-owned, digest-bound, expiring approval token.
+
+        ``suggestion_ids`` (slice 2) is bound to the approval so a stale,
+        expired, or replayed token cannot resurrect a prior decision. An
+        absent/empty list preserves the legacy no-enrichment path; the
+        deterministic digest stays over ``identity:source_hash`` only.
+        """
         digest = self.candidate_digest(job)
         token = secrets.token_hex(16)
         issued = self._now().isoformat()
@@ -299,6 +329,7 @@ class ImportService:
             approval_id=uuid.uuid4().hex,
             job_id=job.job_id, principal=principal, revision=job.revision,
             digest=digest, token=token, group_ids=list(group_ids),
+            suggestion_ids=list(suggestion_ids or []),
             issued_at=issued, expires_at=expires,
         )
         self.store.save_approval(approval)
@@ -332,22 +363,84 @@ class ImportService:
         return approval
 
     def execute(self, job: ImportJob, principal: str, digest: str,
-                token: str) -> list[ExecutionOutcome]:
+                token: str, suggestion_ids: list[str] | None = None) -> list[ExecutionOutcome]:
         """Gated execution: merge + gallery + replacement + graph reconcile.
 
         Only proceeds after ``validate_approval`` passes; each candidate is
         written through the gated merge, image placements are registered in
         the gallery, explicit replacements snapshot the prior ficha, and the
         graph is reconciled before success.
+
+        ``suggestion_ids`` (slice 2) is bound to the approval token: only the
+        IDs listed at approve time can materialize, and only the matching
+        classification + relationship suggestions on each candidate are
+        applied. The patched ``content_preview`` is the single source of
+        truth fed to the canonical write.
         """
         self.validate_approval(job, principal, digest, token)
+        approved_ids = list(suggestion_ids or [])
         self.store.mark_approval_consumed(job.job_id, token)
         self.store.update_job(job.job_id, expected_revision=job.revision,
                               state=ImportJobState.EXECUTING)
+        # Resolve approved suggestions ONCE up front so per-candidate
+        # execution reuses the cached lists (a single batch can produce
+        # many suggestions; classification + relationships are kept
+        # separate because they patch different frontmatter keys).
+        try:
+            from import_enrichment import (
+                ClassificationSuggestion,
+                RelationshipSuggestion,
+                apply_approved_suggestions,
+            )
+        except Exception:  # noqa: BLE001 — never break execute on import drift
+            ClassificationSuggestion = None  # type: ignore
+            RelationshipSuggestion = None  # type: ignore
+            apply_approved_suggestions = None  # type: ignore
+        classifications: list = []
+        relationships: list = []
+        if approved_ids and ClassificationSuggestion is not None:
+            for candidate in self.store.candidates_for(job.job_id):
+                payload = candidate.enrichment_json or []
+                for entry in payload:
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("id") not in approved_ids:
+                        continue
+                    kind = entry.get("__type__") or _classify_entry(entry)
+                    # Strip the wire-side discriminator before re-validation:
+                    # ``ClassificationSuggestion`` / ``RelationshipSuggestion``
+                    # both use ``extra="forbid"`` and would otherwise reject
+                    # the ``__type__`` key that ``enrich_candidates`` attaches
+                    # for shape-based fallback classification.
+                    wire_entry = {k: v for k, v in entry.items() if k != "__type__"}
+                    try:
+                        if kind == "classification":
+                            classifications.append(
+                                ClassificationSuggestion.model_validate(wire_entry))
+                        elif kind == "relationship":
+                            relationships.append(
+                                RelationshipSuggestion.model_validate(wire_entry))
+                    except Exception:  # noqa: BLE001 — skip malformed entries
+                        continue
         outcomes: list[ExecutionOutcome] = []
         try:
             for candidate in self.store.candidates_for(job.job_id):
-                outcome = self._execute_candidate(job, candidate)
+                # Apply approved suggestions to a copy of the candidate so
+                # the gated write sees the patched preview; the stored
+                # candidate row remains advisory-only (digest unchanged).
+                working = candidate
+                if (approved_ids and apply_approved_suggestions is not None
+                        and (classifications or relationships)):
+                    patched = apply_approved_suggestions(
+                        candidate,
+                        classifications=classifications,
+                        relationships=relationships,
+                        approved_classification_ids=approved_ids,
+                        approved_relationship_ids=approved_ids,
+                    )
+                    if patched and patched != candidate.content_preview:
+                        working = candidate.model_copy(update={"content_preview": patched})
+                outcome = self._execute_candidate(job, working)
                 outcomes.append(outcome)
                 self.store.add_item(ItemOutcome(
                     item_id=uuid.uuid4().hex,

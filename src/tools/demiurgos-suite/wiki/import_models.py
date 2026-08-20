@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # Importer-specific bounded upload limits (NOT a relaxation of the generic
 # 10 MB media cap). Enforced on the server-owned intake path only.
@@ -121,6 +121,69 @@ class ReplacementRecord(BaseModel):
     recovery_status: str = "pending"
 
 
+# ---------------------------------------------------------------------------
+# Enrichment contracts (slice 2 — optional Hermes advisory suggestions).
+#
+# Suggestions are NON-AUTHORITATIVE: they ride on a Candidate but never modify
+# its deterministic identity/digest, are surfaced in review as advisory, and
+# only materialize during a gated execute. Status + JSON list are persisted on
+# the candidate so legacy rows remain importable when enrichment is disabled.
+# ---------------------------------------------------------------------------
+
+
+class EnrichmentStatus(str, Enum):
+    """Diagnostic state of an enrichment attempt (slice 2)."""
+
+    DISABLED = "disabled"          # enrichment not requested or not configured
+    OK = "ok"                      # one or more suggestions produced
+    NO_SUGGESTIONS = "no_suggestions"  # gateway reachable, nothing valid returned
+    ERROR = "error"                # timeout / malformed / unavailable gateway
+
+
+class ClassificationSuggestion(BaseModel):
+    """Hermes-suggested classification for one candidate.
+
+    ``provenance`` is server-attached (provider, model, prompt version) so
+    reviewers can attribute the suggestion. ``review_state`` is initially
+    ``pending`` and toggled to ``approved``/``rejected`` via the decisions
+    endpoint. ``review_state`` is preserved in ``enrichment_json`` so the
+    round-trip survives a process restart.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    candidate_id: str
+    type: str = ""                # normalized EntityType value (e.g., "personaje")
+    tags: list[str] = Field(default_factory=list)
+    confidence: float = 0.0       # in [0, 1]
+    evidence: str = ""
+    provenance: dict[str, str] = Field(default_factory=dict)
+    review_state: str = "pending" # pending|approved|rejected
+
+
+class RelationshipSuggestion(BaseModel):
+    """Hermes-suggested relationship between candidates (or to a named target).
+
+    ``target_candidate_id`` is set when the target is another candidate in
+    the same batch; ``target_name`` is set when Hermes names an entity not
+    present in the batch (validation rejects ungrounded names). Self-links
+    are rejected. ``review_state`` round-trips through ``enrichment_json``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    source_candidate_id: str
+    target_candidate_id: str | None = None
+    target_name: str | None = None
+    relationship_type: str = ""
+    confidence: float = 0.0
+    evidence: str = ""
+    provenance: dict[str, str] = Field(default_factory=dict)
+    review_state: str = "pending"
+
+
 class Candidate(BaseModel):
     """A diagnosed, eligible intake candidate (read-only until approved)."""
 
@@ -138,6 +201,12 @@ class Candidate(BaseModel):
     merge: MergeDecision | None = None
     replacement: ReplacementRecord | None = None
     target_resolution: dict[str, Any] | None = None  # TargetResolution-as-dict
+    # Slice 2 (optional Hermes advisory suggestions): enrichment is opt-in and
+    # never affects deterministic identity/digest. Legacy candidates without
+    # enrichment deserialize with ``None``/``disabled``; downstream code MUST
+    # treat absence as "no suggestions", not as an error.
+    enrichment_json: list[dict[str, Any]] | None = None
+    enrichment_status: str = "disabled"   # EnrichmentStatus value
 
 
 class ItemOutcome(BaseModel):
@@ -168,6 +237,10 @@ class Approval(BaseModel):
     issued_at: str = ""
     expires_at: str = ""
     consumed: bool = False
+    # Slice 2: optional IDs of approved suggestions. Bound to the approval
+    # so a replayed token cannot resurrect a prior decision. Empty list
+    # preserves the legacy no-enrichment path.
+    suggestion_ids: list[str] = Field(default_factory=list)
 class ExecutionOutcome(BaseModel):
     """Result of executing one approved candidate (merge/placement/write)."""
 

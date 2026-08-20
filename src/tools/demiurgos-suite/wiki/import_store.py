@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     merge_json TEXT,
     replacement_json TEXT,
     target_resolution_json TEXT,
+    enrichment_json TEXT,
+    enrichment_status TEXT NOT NULL DEFAULT 'disabled',
     UNIQUE (world, source_hash, normalized_identity));
 CREATE TABLE IF NOT EXISTS items (
     item_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL,
@@ -57,6 +59,14 @@ CREATE TABLE IF NOT EXISTS approvals (
     expires_at TEXT NOT NULL DEFAULT '', consumed INTEGER NOT NULL DEFAULT 0,
     UNIQUE (job_id, token));
 """
+
+# Bootstrap migration: SQLite cannot ALTER TABLE ADD COLUMN with a default
+# for legacy databases created before slice 2. Each block is idempotent; the
+# column is added once, then the pragma confirms the schema is current.
+_BOOTSTRAP_COLUMNS = (
+    ("enrichment_json", "TEXT"),
+    ("enrichment_status", "TEXT NOT NULL DEFAULT 'disabled'"),
+)
 
 
 def default_db_path() -> Path:
@@ -126,6 +136,29 @@ class ImportJobStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._bootstrap_columns()
+
+    def _bootstrap_columns(self) -> None:
+        """Idempotently add nullable enrichment columns to legacy databases.
+
+        Each column is added only when the live pragma doesn't already report
+        it, so the migration is safe to run on every open. Defaults match the
+        in-memory schema: ``enrichment_json`` NULL, ``enrichment_status``
+        ``"disabled"``. Slice 2 contract: legacy rows deserialize to
+        ``None``/``disabled`` and downstream code MUST treat absence as
+        "no suggestions".
+        """
+        with self._lock:
+            existing = {
+                row["name"] for row in self._conn.execute(
+                    "PRAGMA table_info(candidates)").fetchall()
+            }
+            for name, decl in _BOOTSTRAP_COLUMNS:
+                if name in existing:
+                    continue
+                self._conn.execute(
+                    f"ALTER TABLE candidates ADD COLUMN {name} {decl}")
+            self._conn.commit()
 
     # -- jobs --------------------------------------------------------------
 
@@ -259,8 +292,9 @@ class ImportJobStore:
                 "INSERT OR IGNORE INTO candidates (candidate_id, job_id, world,"
                 " normalized_identity, source_hash, provenance_json, content_preview,"
                 " status, okf_issues_json, size_bytes, images_json, merge_json,"
-                " replacement_json, target_resolution_json)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " replacement_json, target_resolution_json,"
+                " enrichment_json, enrichment_status)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (candidate.candidate_id, candidate.job_id, candidate.world,
                  candidate.normalized_identity, candidate.source_hash,
                  candidate.provenance.model_dump_json(), candidate.content_preview,
@@ -270,11 +304,68 @@ class ImportJobStore:
                  candidate.replacement.model_dump_json()
                  if candidate.replacement else None,
                  _json(candidate.target_resolution)
-                 if candidate.target_resolution else None),
+                 if candidate.target_resolution else None,
+                 _json(candidate.enrichment_json)
+                 if candidate.enrichment_json is not None else None,
+                 candidate.enrichment_status),
             )
             self._conn.commit()
         return (self.find_candidate(candidate.world, candidate.source_hash,
                                     candidate.normalized_identity) or candidate)
+
+    def update_candidate_enrichment(self, candidate_id: str,
+                                    enrichment_json: list[dict] | None,
+                                    enrichment_status: str) -> None:
+        """Persist the enrichment JSON list + status onto one candidate.
+
+        Called by the analyze flow after the optional Hermes batch. The
+        candidate's deterministic identity/digest is untouched; only the
+        advisory fields are written. Idempotent: re-running enrichment
+        overwrites the prior payload.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE candidates SET enrichment_json=?, enrichment_status=?"
+                " WHERE candidate_id=?",
+                (_json(enrichment_json) if enrichment_json is not None else None,
+                 enrichment_status, candidate_id),
+            )
+            self._conn.commit()
+
+    def update_suggestion_state(self, candidate_id: str, suggestion_id: str,
+                                review_state: str) -> bool:
+        """Toggle the ``review_state`` of one suggestion inside the JSON list.
+
+        Returns True when the suggestion was found and updated, False when
+        no matching candidate/suggestion exists. The JSON list is decoded,
+        patched in place, and re-serialized; the row's other fields are
+        untouched.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT enrichment_json FROM candidates WHERE candidate_id=?",
+                (candidate_id,)).fetchone()
+            if row is None or not row["enrichment_json"]:
+                return False
+            try:
+                payload = _unjson(row["enrichment_json"])
+            except (TypeError, ValueError):
+                return False
+            if not isinstance(payload, list):
+                return False
+            updated = False
+            for entry in payload:
+                if isinstance(entry, dict) and entry.get("id") == suggestion_id:
+                    entry["review_state"] = review_state
+                    updated = True
+                    break
+            if not updated:
+                return False
+            self._conn.execute(
+                "UPDATE candidates SET enrichment_json=? WHERE candidate_id=?",
+                (_json(payload), candidate_id))
+            self._conn.commit()
+            return True
 
     def candidates_for(self, job_id: str) -> list[Candidate]:
         with self._lock:
@@ -307,6 +398,16 @@ class ImportJobStore:
             tr_json = None
         if tr_json:
             target_resolution = _unjson(tr_json)
+        # Slice 2: enrichment columns are nullable; legacy rows must
+        # deserialize to ``None``/``disabled`` and never raise.
+        try:
+            ej_raw = row["enrichment_json"]
+            es_raw = row["enrichment_status"]
+        except (IndexError, KeyError):
+            ej_raw, es_raw = None, "disabled"
+        enrichment_json = _unjson(ej_raw) if ej_raw else None
+        if not isinstance(enrichment_json, list):
+            enrichment_json = None
         return Candidate(
             candidate_id=row["candidate_id"], job_id=row["job_id"],
             world=row["world"], normalized_identity=row["normalized_identity"],
@@ -315,7 +416,9 @@ class ImportJobStore:
             content_preview=row["content_preview"], status=row["status"],
             okf_issues=_unjson(row["okf_issues_json"]), size_bytes=row["size_bytes"],
             images=images, merge=merge, replacement=replacement,
-            target_resolution=target_resolution)
+            target_resolution=target_resolution,
+            enrichment_json=enrichment_json,
+            enrichment_status=es_raw or "disabled")
 
     # -- items / events ----------------------------------------------------
 

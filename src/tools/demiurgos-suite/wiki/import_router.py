@@ -5,12 +5,22 @@ Server-owned import-job contract: create a job from a source selection
 (fail-closed on malformed/unavailable provider output), fetch redacted job
 state, and cancel. Every route requires a trusted principal and resolves the
 world through the canonical world authority; no canon write occurs here.
+
+Slice 2 additions (optional Hermes advisory enrichment):
+- ``analyze`` accepts ``{"enrich": bool}``; when ``True`` and an ``enricher``
+  was injected at composition, the router runs enrichment after the
+  deterministic provider and persists the suggestions on each candidate.
+- ``review`` includes ``enrichment_status`` and ``suggestions`` per candidate.
+- ``/{job_id}/review/decisions`` toggles ``review_state`` per suggestion.
+- ``execute`` accepts ``suggestion_ids`` so approved IDs bind to the
+  approval/execute gate.
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import secrets
 import uuid
 from pathlib import Path
@@ -26,6 +36,7 @@ from import_models import (
     JobPage,
     Candidate,
     utcnow_iso,
+    EnrichmentStatus,
 )
 from import_intake import (
     BoundedSpool,
@@ -38,6 +49,29 @@ from import_intake import (
 )
 from import_store import ImportJobStore
 from import_service import ImportService
+
+logger = logging.getLogger("demiurgos-import-router")
+
+
+def _disable_enrichment(candidates: list[Candidate]) -> list[Candidate]:
+    """Mark a candidate batch as ``disabled`` (used on enricher crash)."""
+    out: list[Candidate] = []
+    for c in candidates:
+        data = c.model_dump()
+        data["enrichment_json"] = None
+        data["enrichment_status"] = EnrichmentStatus.DISABLED.value
+        out.append(Candidate.model_validate(data))
+    return out
+
+
+def _aggregate_status(candidates: list[Candidate]) -> str:
+    """Roll a per-batch enrichment status up to a single reviewer-visible label."""
+    statuses = {getattr(c, "enrichment_status", "disabled") for c in candidates}
+    if "ok" in statuses:
+        return EnrichmentStatus.OK.value
+    if statuses and statuses != {"disabled"}:
+        return EnrichmentStatus.NO_SUGGESTIONS.value
+    return EnrichmentStatus.DISABLED.value
 
 
 class CreateJobRequest(BaseModel):
@@ -55,6 +89,30 @@ class ApproveRequest(BaseModel):
     digest: str = ""
     token: str = ""
     group_ids: list[str] = []
+    # Slice 2: optional IDs of approved suggestions bound to the execution.
+    # Absent / empty list preserves the legacy (no enrichment) execute path.
+    suggestion_ids: list[str] = []
+
+
+class AnalyzeRequest(BaseModel):
+    """Optional ``enrich`` opt-in (slice 2).
+
+    When ``True`` the analyze flow invokes the injected ``enricher`` after
+    deterministic analysis, persisting advisory suggestions on each
+    candidate. ``False`` (default) preserves the legacy deterministic path
+    with no Hermes call.
+    """
+
+    enrich: bool = False
+
+
+class DecisionItem(BaseModel):
+    suggestion_id: str
+    decision: str        # "approve" | "reject"
+
+
+class DecisionsRequest(BaseModel):
+    decisions: list[DecisionItem] = []
 
 
 def create_import_router(
@@ -64,6 +122,7 @@ def create_import_router(
     spool_dir: Callable[[], Path],
     store: ImportJobStore | Callable[[], ImportJobStore],
     provider: Callable[[ImportJob, list[dict[str, Any]]], list[Candidate]] | None = None,
+    enricher: Callable[[list[Candidate]], list[Candidate]] | None = None,
     service: ImportService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/{mundo}/imports", tags=["world-importer"])
@@ -172,7 +231,8 @@ def create_import_router(
         return {"job_id": job_id, "offset": body.offset + len(data)}
 
     @router.post("/{job_id}/analyze")
-    def analyze(mundo: str, job_id: str, request: Request) -> dict:
+    def analyze(mundo: str, job_id: str, request: Request,
+                body: AnalyzeRequest | None = None) -> dict:
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
@@ -182,6 +242,10 @@ def create_import_router(
         if not _store.acquire_lease(job_id, str(principal), job.state):
             raise HTTPException(status_code=409, detail="Job busy or not intaking")
         spool = spool_for(job_id, mundo)
+        # Slice 2: ``enrich`` is an opt-in flag; absent body preserves the
+        # legacy deterministic flow. The router does not validate the flag's
+        # value (Pydantic coerces missing body to defaults).
+        enrich = bool(getattr(body, "enrich", False)) if body is not None else False
 
         # Source-kind dispatch: ZIP sources extract first (bounded), then we
         # analyze the extracted entries; loose/folder sources analyze the
@@ -255,18 +319,59 @@ def create_import_router(
             _store.release_lease(job_id, str(principal))
             return {"job": _store.get_job(job_id).model_dump_redacted()}
 
+        # Slice 2 — optional enrichment: opt-in only, after deterministic
+        # candidate construction and BEFORE persistence, so the persisted
+        # review row carries the suggestions. The enricher is fail-open: any
+        # exception leaves candidates unchanged with status ``disabled``.
+        enrichment_status = EnrichmentStatus.DISABLED.value
+        if enrich and enricher is not None and candidates:
+            try:
+                candidates = enricher(list(candidates))
+                if not isinstance(candidates, list):
+                    raise MalformedProviderError("enricher output is not a candidate list")
+            except MalformedProviderError as exc:
+                _store.update_job(job_id, expected_revision=job.revision,
+                                  state=ImportJobState.FAILED, error=str(exc))
+                _store.add_event(job_id, "failed:malformed_enricher")
+                _store.release_lease(job_id, str(principal))
+                return {"job": _store.get_job(job_id).model_dump_redacted()}
+            except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+                _store.add_event(job_id, f"enrichment_error:{type(exc).__name__}")
+                logger.warning(
+                    "enricher raised during analyze (%s); "
+                    "candidates persisted without suggestions",
+                    type(exc).__name__, exc_info=True)
+                candidates = _disable_enrichment(candidates)
+            # Aggregate the batch status so the response surfaces a single
+            # outcome to the reviewer (ok / no_suggestions / error).
+            enrichment_status = _aggregate_status(candidates)
+
         added = 0
         for candidate in candidates:
-            if _store.find_candidate(candidate.world, candidate.source_hash,
-                                     candidate.normalized_identity) is None:
+            existing = _store.find_candidate(
+                candidate.world, candidate.source_hash,
+                candidate.normalized_identity)
+            if existing is None:
                 _store.add_candidate(candidate)
                 added += 1
+            elif enrich and candidate.enrichment_json is not None:
+                # Re-running enrichment on an existing candidate is allowed:
+                # the new advisory payload overwrites the prior one. The
+                # deterministic identity/digest remains untouched.
+                _store.update_candidate_enrichment(
+                    existing.candidate_id,
+                    candidate.enrichment_json,
+                    candidate.enrichment_status)
         _store.update_job(job_id, expected_revision=job.revision,
                           state=ImportJobState.REVIEW, file_count=added)
-        _store.add_event(job_id, "analysis_complete")
+        _store.add_event(
+            job_id,
+            f"analysis_complete:{enrichment_status}" if enrich
+            else "analysis_complete")
         _store.release_lease(job_id, str(principal))
         return {"job": _store.get_job(job_id).model_dump_redacted(),
-                "candidates": added}
+                "candidates": added,
+                "enrichment_status": enrichment_status}
 
     @router.get("/{job_id}")
     def get_job(mundo: str, job_id: str, request: Request) -> dict:
@@ -280,19 +385,87 @@ def create_import_router(
 
     @router.get("/{job_id}/review")
     def review(mundo: str, job_id: str, request: Request) -> dict:
-        """Read-only reviewed candidates with placements and merge decisions."""
+        """Read-only reviewed candidates with placements and merge decisions.
+
+        Slice 2: the response also exposes the per-candidate
+        ``enrichment_status`` and ``enrichment_json`` (already part of
+        ``Candidate.model_dump``) so the reviewer can render advisory cards.
+        The deterministic ``digest`` is computed from
+        ``normalized_identity:source_hash`` only — enrichment never affects
+        it, so approvals remain bound to the same value across the
+        analyze/review/execute lifecycle.
+        """
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
             raise HTTPException(status_code=404, detail="Import job not found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
             raise HTTPException(status_code=403, detail="Not the job owner")
-        candidates = [
-            c.model_dump() for c in _store.candidates_for(job_id)
-        ]
+        candidates = _store.candidates_for(job_id)
+        suggestions_by_candidate: dict[str, list[dict[str, Any]]] = {}
+        enrichment_statuses: list[str] = []
+        for c in candidates:
+            suggestions_by_candidate[c.candidate_id] = (
+                list(c.enrichment_json) if c.enrichment_json else [])
+            enrichment_statuses.append(
+                getattr(c, "enrichment_status", "disabled"))
+        candidates_payload = [c.model_dump() for c in candidates]
         digest = _service.candidate_digest(job) if _service else ""
-        return {"job": job.model_dump_redacted(), "digest": digest,
-                "candidates": candidates}
+        return {
+            "job": job.model_dump_redacted(),
+            "digest": digest,
+            "candidates": candidates_payload,
+            "enrichment_status": _aggregate_status(candidates),
+            "suggestions": suggestions_by_candidate,
+        }
+
+    @router.post("/{job_id}/review/decisions")
+    def review_decisions(mundo: str, job_id: str, request: Request,
+                         body: DecisionsRequest) -> dict:
+        """Toggle ``review_state`` on one or more suggestions (slice 2).
+
+        Each decision updates the JSON list on its candidate. A missing
+        candidate or unknown suggestion_id is silently skipped (idempotent
+        round-trip across retries); the response reports the count of
+        accepted decisions for observability. The deterministic digest is
+        not recomputed because review is read-only until execute.
+        """
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+        accepted = 0
+        # Map suggestion_id -> (candidate_id, decision) for O(1) lookup.
+        decisions_by_candidate: dict[str, list[tuple[str, str]]] = {}
+        for item in body.decisions:
+            decision = (item.decision or "").strip().lower()
+            if decision not in {"approve", "reject"}:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"invalid decision: {item.decision!r}")
+            # Find the candidate that owns this suggestion by scanning the
+            # stored enrichment payloads. The list is small per batch.
+            owner: str | None = None
+            for candidate in _store.candidates_for(job_id):
+                payload = candidate.enrichment_json or []
+                if any(isinstance(e, dict) and e.get("id") == item.suggestion_id
+                       for e in payload):
+                    owner = candidate.candidate_id
+                    break
+            if owner is None:
+                continue
+            decisions_by_candidate.setdefault(owner, []).append(
+                (item.suggestion_id, "approved" if decision == "approve"
+                 else "rejected"))
+        for candidate_id, updates in decisions_by_candidate.items():
+            for suggestion_id, state in updates:
+                if _store.update_suggestion_state(
+                        candidate_id, suggestion_id, state):
+                    accepted += 1
+        _store.add_event(job_id, f"review_decisions:{accepted}")
+        return {"accepted": accepted}
 
     @router.post("/{job_id}/approve")
     def approve(mundo: str, job_id: str, request: Request,
@@ -313,7 +486,7 @@ def create_import_router(
         try:
             approval = _service.issue_approval(
                 job, str(getattr(principal, "id", str(principal))),
-                list(body.group_ids))
+                list(body.group_ids), list(body.suggestion_ids))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"approval_id": approval.approval_id,
@@ -335,7 +508,8 @@ def create_import_router(
         try:
             outcomes = _service.execute(
                 job, str(getattr(principal, "id", str(principal))),
-                body.digest, body.token)
+                body.digest, body.token,
+                list(body.suggestion_ids))
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"job": _store.get_job(job_id).model_dump_redacted(),
