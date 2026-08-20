@@ -9,9 +9,11 @@ import { Badge } from "@/components/atoms/Badge";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
+import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
 import { getMediaUrl } from "@/api/wiki";
 import { ApiError } from "@/api/types";
+import { VisionSuggestionCard } from "@/components/molecules/VisionSuggestionCard";
 import type {
   ClassificationSuggestion,
   EnrichmentStatus,
@@ -23,12 +25,14 @@ import type {
   ImportSuggestion,
   ImportSourceKind,
   RelationshipSuggestion,
+  VisionSuggestion,
 } from "@/api/types";
 import {
   analyzeImportJob,
   approveImportGroups,
   cancelImportJob,
   createImportJob,
+  deleteImportJob,
   executeImport,
   getImportJob,
   getImportReview,
@@ -131,6 +135,21 @@ function historyStateVariant(state: ImportJob["state"]): "default" | "info" | "w
   }
 }
 
+/**
+ * Opción A — a history row is manually deletable only when it is terminal
+ * (audit/debug kept by default but removable on demand) or an empty review.
+ * A ``review`` with candidates is pending approval and is never deletable;
+ * ``file_count`` mirrors the candidate count for a review job.
+ */
+function canDeleteHistoryJob(entry: ImportJob): boolean {
+  return (
+    entry.state === "completed" ||
+    entry.state === "failed" ||
+    entry.state === "rolled_back" ||
+    (entry.state === "review" && entry.file_count === 0)
+  );
+}
+
 /** System/transversal folders and hidden segments are never importable (W10/UI2). */
 function isExcludedSourcePath(relative: string): boolean {
   const parts = relative.split("/").filter(Boolean);
@@ -207,6 +226,10 @@ export default function WorldImporter() {
   const [error, setError] = useState<string | null>(null);
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
+  // True when the recovered job is stuck in "intaking" — the file is already
+  // on the server spool, so the user can skip re-selection and go straight to
+  // analyze. Cleared on resetAll or when the user picks new files.
+  const [resumeIntaking, setResumeIntaking] = useState(false);
 
   // Slice 2 — optional Hermes advisory enrichment. The toggle lives on the
   // select step; analyze carries the opt-in flag. Suggestions are
@@ -236,6 +259,11 @@ export default function WorldImporter() {
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyOutage, setHistoryOutage] = useState(false);
+
+  // Opción A — manual reaping of terminal jobs. The target is held in state
+  // until the ConfirmDialog is confirmed; a pending delete disables the dialog.
+  const [deleteTarget, setDeleteTarget] = useState<ImportJob | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -291,12 +319,20 @@ export default function WorldImporter() {
           setError(importErrorMessage(err));
           setStep("result");
         }
+      } else if (existing.state === "intaking") {
+        // File is already on the server spool — the user can continue
+        // analysis directly without re-selecting files.
+        setStep("select");
+        setResumeIntaking(true);
+        setResumeNotice(
+          "El archivo ya está subido en el servidor. Podés continuar el análisis directamente sin volver a seleccionar los archivos.",
+        );
       } else if (
         existing.state === "pending" ||
-        existing.state === "intaking" ||
         existing.state === "analyzing" ||
         existing.state === "executing"
       ) {
+        setResumeIntaking(false);
         setStep("select");
         setResumeNotice(
           "Hay una importación interrumpida. Seleccioná las mismas fuentes y continuá: los archivos ya subidos se retoman sin duplicarse.",
@@ -399,6 +435,34 @@ export default function WorldImporter() {
     [mundo, persistJob, restoreJobState],
   );
 
+  /** Opción A — confirm-gated manual delete of a terminal job. */
+  const handleDeleteJob = useCallback(
+    async (entry: ImportJob) => {
+      if (!mundo) return;
+      setDeleting(true);
+      setError(null);
+      try {
+        await deleteImportJob(mundo, entry.job_id);
+        setDeleteTarget(null);
+        // If the deleted job was the one being viewed, drop the local pointer
+        // and return to a fresh selection; otherwise just refresh the history.
+        if (jobId === entry.job_id) {
+          clearPersistedJob();
+          setJob(null);
+          setJobId(null);
+          setStep("select");
+        }
+        await loadHistory(null);
+      } catch (err) {
+        setError(importErrorMessage(err));
+        setDeleteTarget(null);
+      } finally {
+        setDeleting(false);
+      }
+    },
+    [mundo, jobId, loadHistory, clearPersistedJob],
+  );
+
   // --- focus management: the step heading receives focus on transitions ---
   useEffect(() => {
     headingRef.current?.focus();
@@ -425,6 +489,7 @@ export default function WorldImporter() {
     setSuggestionDecisions(new Map());
     setApprovedSuggestionIds([]);
     setDecidingSuggestionId(null);
+    setResumeIntaking(false);
     clearPersistedJob();
   }, [clearPersistedJob]);
 
@@ -442,6 +507,8 @@ export default function WorldImporter() {
   const handleFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const list = Array.from(event.target.files ?? []);
     if (list.length === 0) return;
+    // User picked new files — the resume-intaking shortcut no longer applies.
+    setResumeIntaking(false);
     const selected: SelectedSource[] = [];
     let excluded = 0;
     for (const file of list) {
@@ -484,7 +551,11 @@ export default function WorldImporter() {
   // --- analyze (read-only) ------------------------------------------------
 
   const handleAnalyze = async () => {
-    if (!mundo || sources.length === 0 || precheckError) return;
+    // Resume-intaking: the file is already on the server spool, so skip
+    // create + stream and go straight to analyze.
+    const isResumeIntaking = resumeIntaking && jobId && sources.length === 0;
+    if (!mundo || precheckError) return;
+    if (!isResumeIntaking && sources.length === 0) return;
     setAnalyzing(true);
     setError(null);
     setResumeNotice(null);
@@ -498,37 +569,49 @@ export default function WorldImporter() {
     setApprovedSuggestionIds([]);
     setDecidingSuggestionId(null);
     try {
-      const { job: created } = await createImportJob(mundo, {
-        source_kind: sourceKind,
-        files: sources.map((s) => s.relative),
-      });
-      setJobId(created.job_id);
-      setJob(created);
-      persistJob(created.job_id, sourceKind);
-
-      // Stream every file as durable chunks (idempotent at same offsets).
-      const count = sources.length;
-      for (let i = 0; i < count; i += 1) {
-        const source = sources[i];
+      let activeJobId: string;
+      if (isResumeIntaking) {
+        // File already uploaded — skip create + stream, go to analyze.
+        activeJobId = jobId!;
         setPhaseMessage(
-          `Subiendo ${source.relative} (${i + 1} de ${count})…`,
+          enrichEnabled
+            ? "Analizando contenido y consultando asistente (solo lectura)…"
+            : "Analizando contenido (solo lectura)…",
         );
-        await streamImportFile(mundo, created.job_id, source.file, source.relative, (streamed, total) => {
-          setStreamProgress({ fileIndex: i, fileCount: count, streamed, total });
+      } else {
+        const { job: created } = await createImportJob(mundo, {
+          source_kind: sourceKind,
+          files: sources.map((s) => s.relative),
         });
+        activeJobId = created.job_id;
+        setJobId(created.job_id);
+        setJob(created);
+        persistJob(created.job_id, sourceKind);
+
+        // Stream every file as durable chunks (idempotent at same offsets).
+        const count = sources.length;
+        for (let i = 0; i < count; i += 1) {
+          const source = sources[i];
+          setPhaseMessage(
+            `Subiendo ${source.relative} (${i + 1} de ${count})…`,
+          );
+          await streamImportFile(mundo, created.job_id, source.file, source.relative, (streamed, total) => {
+            setStreamProgress({ fileIndex: i, fileCount: count, streamed, total });
+          });
+        }
+        setStreamProgress(null);
+        setPhaseMessage(
+          enrichEnabled
+            ? "Analizando contenido y consultando asistente (solo lectura)…"
+            : "Analizando contenido (solo lectura)…",
+        );
       }
-      setStreamProgress(null);
-      setPhaseMessage(
-        enrichEnabled
-          ? "Analizando contenido y consultando asistente (solo lectura)…"
-          : "Analizando contenido (solo lectura)…",
-      );
       // Slice 2 — opt-in is a single boolean; absent body preserves the
       // legacy deterministic analyze contract (no Hermes call). The server
       // also treats the absent body as the default ``enrich: false``.
       const analysis = enrichEnabled
-        ? await analyzeImportJob(mundo, created.job_id, { enrich: true })
-        : await analyzeImportJob(mundo, created.job_id);
+        ? await analyzeImportJob(mundo, activeJobId, { enrich: true })
+        : await analyzeImportJob(mundo, activeJobId);
       setJob(analysis.job);
       // Slice 2 — server-attributed enrichment status is batch-level; the
       // fail-open contract guarantees non-blocking even when the gateway
@@ -543,12 +626,13 @@ export default function WorldImporter() {
         );
         return;
       }
-      const review = await getImportReview(mundo, created.job_id);
+      const review = await getImportReview(mundo, activeJobId);
       setCandidates(review.candidates);
       setJob(review.job);
       // Review surfaces a server-rolled-up status; prefer it if the analyze
       // response was missing it (legacy callers or race with the lease).
       setEnrichmentStatus(review.enrichment_status ?? analysis.enrichment_status ?? "disabled");
+      setResumeIntaking(false);
       setStep("review");
     } catch (err) {
       setError(importErrorMessage(err));
@@ -584,6 +668,40 @@ export default function WorldImporter() {
       return;
     }
     if (sources.length === 0) {
+      if (job?.state === "intaking") {
+        // File already on the server spool — skip re-selection and
+        // call analyze directly.
+        setAnalyzing(true);
+        setPhaseMessage("Analizando contenido (solo lectura)…");
+        setStep("analyzing");
+        try {
+          const analysis = await analyzeImportJob(mundo, jobId);
+          setJob(analysis.job);
+          if (analysis.enrichment_status) {
+            setEnrichmentStatus(analysis.enrichment_status);
+          }
+          if (analysis.job.state === "failed") {
+            setStep("result");
+            setError(
+              analysis.job.error || "El análisis falló y la importación quedó bloqueada.",
+            );
+            return;
+          }
+          const review = await getImportReview(mundo, jobId);
+          setCandidates(review.candidates);
+          setJob(review.job);
+          setEnrichmentStatus(review.enrichment_status ?? analysis.enrichment_status ?? "disabled");
+          setResumeIntaking(false);
+          setStep("review");
+        } catch (err) {
+          setError(importErrorMessage(err));
+          setPhaseMessage("");
+          setStep("result");
+        } finally {
+          setAnalyzing(false);
+        }
+        return;
+      }
       setStep("select");
       setResumeNotice(
         "Seleccioná las mismas fuentes y continuá: los archivos ya subidos se retoman sin duplicarse.",
@@ -782,6 +900,10 @@ export default function WorldImporter() {
     setPhaseMessage("Importando contenido…");
     // The step stays "review" — the importing progress panel renders there.
     try {
+      // PR3+ — ``approvedSuggestionIds`` carries BOTH text and vision
+      // suggestion IDs (both families write into the same array via
+      // handleSuggestionDecision), so approved vision images are bound to the
+      // token and reach execute in the same request.
       const result = await executeImport(
         mundo,
         jobId,
@@ -1034,6 +1156,18 @@ export default function WorldImporter() {
                       <Icon name="corner-up-right" size={14} />
                       Abrir
                     </Button>
+                    {canDeleteHistoryJob(entry) && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDeleteTarget(entry)}
+                        data-testid={`history-delete-${entry.job_id}`}
+                        aria-label={`Eliminar importación ${formatHistoryDate(entry.created_at)}`}
+                      >
+                        <Icon name="trash" size={14} />
+                        Eliminar
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -1146,10 +1280,11 @@ export default function WorldImporter() {
             <Button
               variant="secondary"
               onClick={handleAnalyze}
-              disabled={sources.length === 0 || Boolean(precheckError) || analyzing}
+              disabled={(!resumeIntaking && sources.length === 0) || Boolean(precheckError) || analyzing}
+              data-testid={resumeIntaking ? "resume-analyze-btn" : undefined}
             >
-              <Icon name="search" size={16} />
-              Analizar (solo lectura)
+              <Icon name={resumeIntaking ? "corner-up-right" : "search"} size={16} />
+              {resumeIntaking ? "Continuar análisis" : "Analizar (solo lectura)"}
             </Button>
             {sources.length > 0 && (
               <span className="text-small text-tinta-desvaida">
@@ -1276,11 +1411,21 @@ export default function WorldImporter() {
                 icon="empty"
                 message="El análisis no encontró contenido analizable en las fuentes seleccionadas."
               />
-              <div className="mt-4">
+              <div className="mt-4 flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={handleChangeSources}>
                   <Icon name="chevron-left" size={16} />
                   Cambiar fuentes
                 </Button>
+                {job && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => setDeleteTarget(job)}
+                    data-testid="review-delete-job"
+                  >
+                    <Icon name="trash" size={16} />
+                    Eliminar este job
+                  </Button>
+                )}
               </div>
             </div>
           )}
@@ -1468,6 +1613,17 @@ export default function WorldImporter() {
           }
         />
       )}
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Eliminar importación"
+          message={`¿Eliminar la importación ${deleteTarget.job_id}? Esta acción es permanente y no se puede deshacer.`}
+          confirmLabel="Eliminar"
+          isBusy={deleting}
+          onConfirm={() => void handleDeleteJob(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
     </WikiHomeLayout>
   );
 }
@@ -1509,6 +1665,18 @@ function CandidateCard({
   );
   const hasIssues = candidate.okf_issues.length > 0;
   const suggestions = candidate.enrichment_json ?? [];
+  // PR3+ — vision suggestions ride in the same enrichment payload with
+  // ``__type__: "vision"``. They render in their own card family (verdict +
+  // per-image approval) below; the text family keeps classification and
+  // relationship cards.
+  const visionSuggestions = suggestions.filter(
+    (s): s is VisionSuggestion & { __type__: "vision" } =>
+      s.__type__ === "vision",
+  );
+  const textSuggestions = suggestions.filter(
+    (s): s is Exclude<ImportSuggestion, VisionSuggestion & { __type__: "vision" }> =>
+      s.__type__ !== "vision",
+  );
 
   return (
     <details className="group rounded-lg border border-filio bg-madero">
@@ -1608,14 +1776,14 @@ function CandidateCard({
         {/* Slice 2 — advisory enrichment suggestions. Each card is an
             independent decision; visual distinction (border + badge) keeps
             suggested fields separate from the deterministic diagnosis. */}
-        {suggestions.length > 0 && (
+        {textSuggestions.length > 0 && (
           <div className="mt-3" data-testid={`suggestions-${candidate.candidate_id}`}>
             <p className="text-xs text-tinta-desvaida">
               Sugerencias del asistente — son orientativas. Aprobá o rechazá
               cada una antes de importar.
             </p>
             <ul className="mt-2 flex flex-col gap-2">
-              {suggestions.map((suggestion) => (
+              {textSuggestions.map((suggestion) => (
                 <SuggestionCard
                   key={suggestion.id}
                   candidateId={candidate.candidate_id}
@@ -1623,6 +1791,36 @@ function CandidateCard({
                   decision={
                     suggestionDecisions.get(suggestion.id) ?? null
                   }
+                  busy={decidingSuggestionId === suggestion.id}
+                  onDecision={onSuggestionDecision}
+                />
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* PR3+ — vision suggestions (media review). Advisory like the text
+            family, but they approve/reject the IMAGE: approved originals are
+            registered in the gallery at execute and the description becomes
+            the markdown alt-text. Uses the same decisions endpoint + ID
+            commitment as text suggestions. */}
+        {visionSuggestions.length > 0 && (
+          <div
+            className="mt-3"
+            data-testid={`vision-suggestions-${candidate.candidate_id}`}
+          >
+            <p className="text-xs text-tinta-desvaida">
+              Imágenes analizadas con visión — orientativas. Aprobá las que
+              quieras registrar en la galería; la descripción se usará como
+              texto alternativo.
+            </p>
+            <ul className="mt-2 flex flex-col gap-2">
+              {visionSuggestions.map((suggestion) => (
+                <VisionSuggestionCard
+                  key={suggestion.id}
+                  candidateId={candidate.candidate_id}
+                  suggestion={suggestion}
+                  decision={suggestionDecisions.get(suggestion.id) ?? null}
                   busy={decidingSuggestionId === suggestion.id}
                   onDecision={onSuggestionDecision}
                 />

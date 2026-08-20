@@ -33,6 +33,7 @@ from import_models import (
     utcnow_iso,
 )
 from import_analysis import resolve_target
+from import_intake import BoundedSpool
 from import_store import ImportJobStore
 
 if TYPE_CHECKING:
@@ -165,6 +166,29 @@ def _only_additions(current_lines: list[str], incoming_lines: list[str]) -> bool
 # ---------------------------------------------------------------------------
 # Contextual image placement (2.3)
 # ---------------------------------------------------------------------------
+
+def _overlay_alt_text(preview: str, placements: list[dict]) -> str:
+    """Overlay vision descriptions as markdown image alt-text (PR3, task 6.5).
+
+    For every approved placement that carries a vision-derived ``alt_text``,
+    rewrite the matching ``![old](path)`` reference in the preview to
+    ``![description](path)``. The media path is never changed — only the
+    alt-text, so source fidelity and gallery resolution are preserved. If the
+    reference is absent (e.g. the image came from the media bundle and has no
+    markdown ref), the preview is left untouched.
+    """
+    result = preview or ""
+    for placement in placements:
+        path = placement.get("relative_media_path") or ""
+        alt = placement.get("alt_text") or ""
+        if not path or not alt:
+            continue
+        pattern = re.compile(
+            r"!\[[^\]]*\]\(\s*" + re.escape(path) + r"\s*\)"
+        )
+        result = pattern.sub(f"![{alt}]({path})", result)
+    return result
+
 
 def plan_placements(existing_images: list[str],
                     proposed: list[dict]) -> list[dict]:
@@ -422,6 +446,26 @@ class ImportService:
                                 RelationshipSuggestion.model_validate(wire_entry))
                     except Exception:  # noqa: BLE001 — skip malformed entries
                         continue
+        # PR3 — approved vision suggestions: only image suggestions whose id is
+        # bound to the approval token may materialize. ``vision_by_path`` maps
+        # EVERY vision entry (by media path) so execution can distinguish
+        # "approved with description" from "pending/rejected (excluded)" from
+        # "no vision result (reviewable with fallback alt-text)".
+        vision_by_path: dict[str, dict] = {}
+        approved_vision_ids: set[str] = set()
+        if approved_ids:
+            for candidate in self.store.candidates_for(job.job_id):
+                payload = candidate.enrichment_json or []
+                for entry in payload:
+                    if not isinstance(entry, dict):
+                        continue
+                    if entry.get("__type__") != "vision":
+                        continue
+                    path = str(entry.get("relative_media_path") or "")
+                    if path:
+                        vision_by_path[path] = entry
+                    if entry.get("id") in approved_ids:
+                        approved_vision_ids.add(str(entry.get("id") or ""))
         outcomes: list[ExecutionOutcome] = []
         try:
             for candidate in self.store.candidates_for(job.job_id):
@@ -440,7 +484,11 @@ class ImportService:
                     )
                     if patched and patched != candidate.content_preview:
                         working = candidate.model_copy(update={"content_preview": patched})
-                outcome = self._execute_candidate(job, working)
+                outcome = self._execute_candidate(
+                    job, working,
+                    vision_by_path=vision_by_path,
+                    approved_vision_ids=approved_vision_ids,
+                )
                 outcomes.append(outcome)
                 self.store.add_item(ItemOutcome(
                     item_id=uuid.uuid4().hex,
@@ -468,6 +516,7 @@ class ImportService:
             self.store.update_job(job.job_id, expected_revision=job.revision + 1,
                                   state=ImportJobState.FAILED,
                                   error=f"execution dependency failed: {type(exc).__name__}")
+            BoundedSpool(self.spool_dir, job.job_id, job.world).cleanup()
             raise ValueError(
                 f"execution failed closed: {type(exc).__name__}") from exc
         # Bulk graph reconciliation (slice 3, IM-3.1): after preservation-first
@@ -479,6 +528,7 @@ class ImportService:
         self.store.add_event(job.job_id, "execution_complete")
         self.store.update_job(job.job_id, expected_revision=job.revision + 1,
                               state=ImportJobState.COMPLETED)
+        BoundedSpool(self.spool_dir, job.job_id, job.world).cleanup()
         return outcomes
 
     def _reconcile_after_execution(
@@ -539,7 +589,10 @@ class ImportService:
                 f"graph_reconcile_partial:{len(result.failed)}",
             )
 
-    def _execute_candidate(self, job: ImportJob, candidate: Candidate) -> ExecutionOutcome:
+    def _execute_candidate(self, job: ImportJob, candidate: Candidate,
+                           vision_by_path: dict[str, dict] | None = None,
+                           approved_vision_ids: set[str] | None = None
+                           ) -> ExecutionOutcome:
         # Slice 1 (IM-1.2): resolve the canonical OKF target first; only a
         # ``resolved`` mapping is allowed to write. ``review``/``rejected``
         # mappings surface the diagnostic and never mutate canon.
@@ -564,18 +617,45 @@ class ImportService:
                     action="failed", written=False,
                     detail="unable to read current ficha")
 
+        # PR3 — admission gate: a placement whose image has a vision suggestion
+        # is eligible only when that suggestion id is bound to the approval
+        # token ("execute admits only approved image suggestion ids").
+        # Approved descriptions overlay the placement alt-text; images without
+        # a vision result stay reviewable with fallback alt-text (task 6.9).
+        proposed: list[dict] = []
+        for p in candidate.images:
+            entry = (vision_by_path or {}).get(p.relative_media_path)
+            if entry is not None and entry.get("id") not in (
+                    approved_vision_ids or set()):
+                continue  # pending/rejected vision suggestion → not eligible
+            if entry is not None:
+                desc = str(entry.get("description") or "")
+                if desc:
+                    p = p.model_copy(update={"alt_text": desc})
+            proposed.append({
+                "relative_media_path": p.relative_media_path,
+                "target_ficha": p.target_ficha,
+                "alt_text": p.alt_text,
+            })
+
         # Resolve placement statuses against the target's current images.
-        proposed = [
-            {"relative_media_path": p.relative_media_path,
-             "target_ficha": p.target_ficha, "alt_text": p.alt_text}
-            for p in candidate.images
-        ]
         placements = plan_placements(_markdown_images(current), proposed)
         if any(p["placement_status"] == "ambiguous" for p in placements):
             return ExecutionOutcome(
                 candidate_id=candidate.candidate_id, target=str(target),
                 action="review", placement_status="ambiguous", written=False,
                 detail="ambiguous image placement requires review")
+
+        # PR3 — the approved placements carry vision descriptions; overlay
+        # them as alt-text on the markdown the ficha keeps. Computed after
+        # ``plan_placements`` so only placements that will actually be written
+        # are overlaid (a ``skip`` image already present keeps its preview
+        # byte-for-byte, so the merge decision is unaffected).
+        approved_placements = [
+            p for p in placements if p["placement_status"] == "approved"
+        ]
+        preview = _overlay_alt_text(candidate.content_preview,
+                                    approved_placements)
 
         # Explicit replacement (candidate carries a replacement record): the
         # prior ficha is snapshotted to .papelera, then the new content is
@@ -589,7 +669,7 @@ class ImportService:
                 str(target.relative_to(self._mundo_dir(job.world))),
                 current, job.world)
             target.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write(target, candidate.content_preview)
+            atomic_write(target, preview)
             self._register_placements(job.world, job.job_id, placements)
             if self._graph_reconcile_many is None and self._graph_reconcile is not None:
                 rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
@@ -600,7 +680,7 @@ class ImportService:
                 written=True, detail=replacement.papelera_entry,
                 papelera_entry=replacement.papelera_entry)
 
-        decision = plan_merge(current, candidate.content_preview)
+        decision = plan_merge(current, preview)
         if decision.action == "keep":
             return ExecutionOutcome(
                 candidate_id=candidate.candidate_id, target=str(target),
@@ -612,7 +692,7 @@ class ImportService:
                 detail="incoming modifies existing content; requires review")
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(target, candidate.content_preview)
+        atomic_write(target, preview)
         self._register_placements(job.world, job.job_id, placements)
         if self._graph_reconcile_many is None and self._graph_reconcile is not None:
             rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
@@ -654,16 +734,37 @@ class ImportService:
                          ImportJobState.CANCELLED):
             return job
         self.store.add_event(job.job_id, "cancelled")
-        return self.store.update_job(job.job_id, expected_revision=job.revision,
-                                     state=ImportJobState.CANCELLED)
+        updated = self.store.update_job(job.job_id, expected_revision=job.revision,
+                                        state=ImportJobState.CANCELLED)
+        BoundedSpool(self.spool_dir, job.job_id, job.world).cleanup()
+        # Opción A — ``cancelled`` is terminal with no audit value: reap the
+        # DB row (and its cascade) now that the spool is reclaimed. The
+        # in-memory ``updated`` job is still returned for the response.
+        self.store.delete_job(job.job_id)
+        return updated
 
     def resume(self, job: ImportJob, principal: str) -> ImportJob:
-        """Resume only uncommitted boundaries after revalidation (idempotent)."""
+        """Resume only uncommitted boundaries after revalidation (idempotent).
+
+        Handles every non-terminal intermediate state: ``intaking`` (streaming
+        completed but analysis never ran), ``analyzing`` (analysis in flight
+        when the process died), ``executing`` (execution interrupted), plus
+        the explicit terminal ``cancelled``/``failed`` states that the UI
+        allows the user to reopen. ``review`` is already terminal-for-approve
+        and returns as-is.
+        """
         if job.owner_principal != principal:
             raise PermissionError("not the job owner")
         if job.state == ImportJobState.REVIEW:
             return job  # already ready to approve; nothing to resume
-        if job.state in (ImportJobState.CANCELLED, ImportJobState.FAILED):
+        if job.state in (
+            ImportJobState.CANCELLED,
+            ImportJobState.FAILED,
+            ImportJobState.INTAKING,
+            ImportJobState.ANALYZING,
+            ImportJobState.EXECUTING,
+        ):
+            self.store.add_event(job.job_id, f"resumed_from:{job.state.value}")
             return self.store.update_job(
                 job.job_id, expected_revision=job.revision,
                 state=ImportJobState.REVIEW)
@@ -676,5 +777,11 @@ class ImportService:
         if job.state not in (ImportJobState.EXECUTING, ImportJobState.COMPLETED):
             raise ValueError(f"job not rollback-able in state {job.state.value}")
         self.store.add_event(job.job_id, "rolled_back")
-        return self.store.update_job(job.job_id, expected_revision=job.revision,
-                                     state=ImportJobState.ROLLED_BACK)
+        updated = self.store.update_job(job.job_id, expected_revision=job.revision,
+                                        state=ImportJobState.ROLLED_BACK)
+        # Opción A — ``rolled_back`` is terminal with no audit value: reclaim
+        # the spool (best-effort) and reap the DB row + cascade. The in-memory
+        # ``updated`` job is still returned for the response.
+        BoundedSpool(self.spool_dir, job.job_id, job.world).cleanup()
+        self.store.delete_job(job.job_id)
+        return updated

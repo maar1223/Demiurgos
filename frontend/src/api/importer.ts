@@ -243,6 +243,22 @@ export function rollbackImportJob(
   });
 }
 
+/**
+ * DELETE /api/{mundo}/imports/{id} — manually delete a terminal job.
+ *
+ * Allowed server-side for ``completed`` / ``failed`` / ``rolled_back`` jobs
+ * and an empty ``review`` (no candidates). A ``review`` with candidates is
+ * never deletable — the review is pending approval.
+ */
+export function deleteImportJob(
+  mundo: string,
+  jobId: string,
+): Promise<{ success: boolean }> {
+  return apiFetch<{ success: boolean }>(importsUrl(mundo, jobId), {
+    method: "DELETE",
+  });
+}
+
 /** Encode an ArrayBuffer as base64 (used per 512 KiB chunk, no whole-job
  *  buffering — the server spool persists each chunk at its offset). */
 export function bytesToBase64(buffer: ArrayBuffer): string {

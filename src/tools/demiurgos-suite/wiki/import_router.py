@@ -23,8 +23,9 @@ import hashlib
 import logging
 import secrets
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -35,9 +36,13 @@ from import_models import (
     INTAKE_STATES,
     JobPage,
     Candidate,
+    ImagePlacement,
     utcnow_iso,
     EnrichmentStatus,
 )
+
+if TYPE_CHECKING:
+    from sync_lore.schemas import ImageEntry
 from import_intake import (
     BoundedSpool,
     MalformedProviderError,
@@ -72,6 +77,31 @@ def _aggregate_status(candidates: list[Candidate]) -> str:
     if statuses and statuses != {"disabled"}:
         return EnrichmentStatus.NO_SUGGESTIONS.value
     return EnrichmentStatus.DISABLED.value
+
+
+@dataclass
+class VisionMediaEntry:
+    """One extracted image tied to its owning candidate (PR3 vision seam).
+
+    The router preserves the PR1 media bundle through analysis so the vision
+    seam can attribute each analysis back to the candidate that owns it and to
+    the spool-relative path where the original bytes were stored. The sync_lore
+    ``ImageEntry`` annotation is import-time lazy (``TYPE_CHECKING`` only) —
+    this module stays importable without sync_lore installed.
+    """
+
+    candidate_id: str
+    image: ImageEntry
+    spool_relative_path: str
+
+
+# PR3 (sync-lore-in-importer): the vision seam runs after deterministic
+# analysis + text enrichment and before candidate persistence. It receives the
+# candidates and the preserved media bundle and returns candidates whose
+# ``enrichment_json`` carries advisory ``vision`` suggestions. It is
+# fail-open: any exception leaves the candidates unchanged and records a
+# diagnostic event, so the import never blocks on vision.
+VisionCallable = Callable[[list[Candidate], list[VisionMediaEntry]], list[Candidate]]
 
 
 class CreateJobRequest(BaseModel):
@@ -123,6 +153,7 @@ def create_import_router(
     store: ImportJobStore | Callable[[], ImportJobStore],
     provider: Callable[[ImportJob, list[dict[str, Any]]], list[Candidate]] | None = None,
     enricher: Callable[[list[Candidate]], list[Candidate]] | None = None,
+    vision: VisionCallable | None = None,
     service: ImportService | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/{mundo}/imports", tags=["world-importer"])
@@ -241,137 +272,246 @@ def create_import_router(
             raise HTTPException(status_code=403, detail="Not the job owner")
         if not _store.acquire_lease(job_id, str(principal), job.state):
             raise HTTPException(status_code=409, detail="Job busy or not intaking")
-        spool = spool_for(job_id, mundo)
-        # Slice 2: ``enrich`` is an opt-in flag; absent body preserves the
-        # legacy deterministic flow. The router does not validate the flag's
-        # value (Pydantic coerces missing body to defaults).
-        enrich = bool(getattr(body, "enrich", False)) if body is not None else False
-
-        # Source-kind dispatch: ZIP sources extract first (bounded), then we
-        # analyze the extracted entries; loose/folder sources analyze the
-        # spool directly. ZIP extraction reuses the manifest defenses from
-        # ``inspect_zip`` (entry count, size, depth, ratio, path safety) and
-        # is fail-closed: any violation marks the job FAILED before
-        # candidate generation.
-        analysis_root: Path = spool.job_dir
-        extracted_dir: Path | None = None
-        if job.source_kind == "zip":
-            zip_files = [
-                rel for rel in spool.offsets()
-                if rel.lower().endswith(".zip")
-            ]
-            if not zip_files:
-                _store.update_job(job_id, expected_revision=job.revision,
-                                  state=ImportJobState.FAILED,
-                                  error="no zip archive found in spool")
-                _store.add_event(job_id, "failed:missing_zip")
-                _store.release_lease(job_id, str(principal))
-                return {"job": _store.get_job(job_id).model_dump_redacted()}
-            zip_rel = zip_files[0]
-            zip_path = spool.job_dir / zip_rel
-            extracted_dir = spool.job_dir / "extracted"
-            try:
-                spool_files = extract_zip_bounded(zip_path, extracted_dir)
-            except (ZipBombError, UnsafePathError, BoundsError) as exc:
-                _store.update_job(job_id, expected_revision=job.revision,
-                                  state=ImportJobState.FAILED,
-                                  error=f"zip rejected: {type(exc).__name__}")
-                _store.add_event(job_id, "failed:zip_safety")
-                _store.release_lease(job_id, str(principal))
-                return {"job": _store.get_job(job_id).model_dump_redacted()}
-            # Build the files list from the extracted entries (hashed).
-            files: list[dict] = []
-            for sf in spool_files:
-                digest = hashlib.sha256(sf.path.read_bytes()).hexdigest()
-                files.append({"relative": sf.relative_path,
-                              "sha256": digest, "size": sf.size})
-            analysis_root = extracted_dir
-        else:
-            files = [
-                {"relative": rel, "sha256": digest, "size": size}
-                for rel in spool.offsets()
-                for digest, size in [spool.finalize_file(rel)]
-            ]
-            files = [f for f in files if f["sha256"]]
-
         try:
-            if provider is not None:
-                candidates = provider(job, files)
-                if not isinstance(candidates, list):
-                    raise MalformedProviderError("provider output is not a candidate list")
-            elif _service is not None:
-                candidates = _analyze_via_service(
-                    job, files, spool,
-                    root_dir=analysis_root, mundos_dir=mundos_dir(),
-                )
+            spool = spool_for(job_id, mundo)
+
+            def _mark_failed(job_id: str, revision: int, error: str,
+                             event_tag: str) -> None:
+                """Fail the job, record the event, and clean up the spool.
+
+                Cleanup is best-effort: a spool that cannot be removed must
+                never mask the FAILED transition nor abort analyze, so it is
+                always performed after the terminal transition is persisted.
+                """
+                _store.update_job(job_id, expected_revision=revision,
+                                  state=ImportJobState.FAILED, error=error)
+                _store.add_event(job_id, event_tag)
+                spool.cleanup()
+
+            # Slice 2: ``enrich`` is an opt-in flag; absent body preserves the
+            # legacy deterministic flow. The router does not validate the flag's
+            # value (Pydantic coerces missing body to defaults).
+            enrich = bool(getattr(body, "enrich", False)) if body is not None else False
+
+            # PR3 (sync-lore-in-importer): the media bundle from the analysis
+            # facade is preserved through the router so the vision seam can
+            # attribute results to their owning candidate. The ``provider``
+            # path yields no media bundle, so vision is skipped there.
+            media_bundle: list[VisionMediaEntry] = []
+
+            # Source-kind dispatch: ZIP sources extract first (bounded), then we
+            # analyze the extracted entries; loose/folder sources analyze the
+            # spool directly. ZIP extraction reuses the manifest defenses from
+            # ``inspect_zip`` (entry count, size, depth, ratio, path safety) and
+            # is fail-closed: any violation marks the job FAILED before
+            # candidate generation.
+            analysis_root: Path = spool.job_dir
+            extracted_dir: Path | None = None
+            if job.source_kind == "zip":
+                zip_files = [
+                    rel for rel in spool.offsets()
+                    if rel.lower().endswith(".zip")
+                ]
+                if not zip_files:
+                    _mark_failed(job_id, job.revision,
+                                 "no zip archive found in spool", "failed:missing_zip")
+                    return {"job": _store.get_job(job_id).model_dump_redacted()}
+                zip_rel = zip_files[0]
+                zip_path = spool.job_dir / zip_rel
+                extracted_dir = spool.job_dir / "extracted"
+                try:
+                    spool_files = extract_zip_bounded(zip_path, extracted_dir)
+                except (ZipBombError, UnsafePathError, BoundsError) as exc:
+                    _mark_failed(job_id, job.revision,
+                                 f"zip rejected: {type(exc).__name__}", "failed:zip_safety")
+                    return {"job": _store.get_job(job_id).model_dump_redacted()}
+                # Build the files list from the extracted entries (hashed).
+                files: list[dict] = []
+                for sf in spool_files:
+                    digest = hashlib.sha256(sf.path.read_bytes()).hexdigest()
+                    files.append({"relative": sf.relative_path,
+                                  "sha256": digest, "size": sf.size})
+                analysis_root = extracted_dir
             else:
-                raise MalformedProviderError("analysis provider unavailable")
-        except MalformedProviderError as exc:
-            _store.update_job(job_id, expected_revision=job.revision,
-                              state=ImportJobState.FAILED, error=str(exc))
-            _store.add_event(job_id, "failed:malformed_provider")
-            _store.release_lease(job_id, str(principal))
-            return {"job": _store.get_job(job_id).model_dump_redacted()}
-        except Exception as exc:  # fail closed on any unexpected provider error
-            _store.update_job(job_id, expected_revision=job.revision,
-                              state=ImportJobState.FAILED, error=f"{type(exc).__name__}")
-            _store.add_event(job_id, "failed:provider_error")
-            _store.release_lease(job_id, str(principal))
-            return {"job": _store.get_job(job_id).model_dump_redacted()}
+                files = [
+                    {"relative": rel, "sha256": digest, "size": size}
+                    for rel in spool.offsets()
+                    for digest, size in [spool.finalize_file(rel)]
+                ]
+                files = [f for f in files if f["sha256"]]
 
-        # Slice 2 — optional enrichment: opt-in only, after deterministic
-        # candidate construction and BEFORE persistence, so the persisted
-        # review row carries the suggestions. The enricher is fail-open: any
-        # exception leaves candidates unchanged with status ``disabled``.
-        enrichment_status = EnrichmentStatus.DISABLED.value
-        if enrich and enricher is not None and candidates:
             try:
-                candidates = enricher(list(candidates))
-                if not isinstance(candidates, list):
-                    raise MalformedProviderError("enricher output is not a candidate list")
+                if provider is not None:
+                    candidates = provider(job, files)
+                    if not isinstance(candidates, list):
+                        raise MalformedProviderError("provider output is not a candidate list")
+                elif _service is not None:
+                    candidates, media_bundle = _analyze_via_service(
+                        job, files, spool,
+                        root_dir=analysis_root, mundos_dir=mundos_dir(),
+                    )
+                else:
+                    raise MalformedProviderError("analysis provider unavailable")
             except MalformedProviderError as exc:
-                _store.update_job(job_id, expected_revision=job.revision,
-                                  state=ImportJobState.FAILED, error=str(exc))
-                _store.add_event(job_id, "failed:malformed_enricher")
-                _store.release_lease(job_id, str(principal))
+                _mark_failed(job_id, job.revision, str(exc), "failed:malformed_provider")
                 return {"job": _store.get_job(job_id).model_dump_redacted()}
-            except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
-                _store.add_event(job_id, f"enrichment_error:{type(exc).__name__}")
-                logger.warning(
-                    "enricher raised during analyze (%s); "
-                    "candidates persisted without suggestions",
-                    type(exc).__name__, exc_info=True)
-                candidates = _disable_enrichment(candidates)
-            # Aggregate the batch status so the response surfaces a single
-            # outcome to the reviewer (ok / no_suggestions / error).
-            enrichment_status = _aggregate_status(candidates)
+            except Exception as exc:  # fail closed on any unexpected provider error
+                _mark_failed(job_id, job.revision, f"{type(exc).__name__}",
+                             "failed:provider_error")
+                return {"job": _store.get_job(job_id).model_dump_redacted()}
 
-        added = 0
-        for candidate in candidates:
-            existing = _store.find_candidate(
-                candidate.world, candidate.source_hash,
-                candidate.normalized_identity)
-            if existing is None:
-                _store.add_candidate(candidate)
-                added += 1
-            elif enrich and candidate.enrichment_json is not None:
-                # Re-running enrichment on an existing candidate is allowed:
-                # the new advisory payload overwrites the prior one. The
-                # deterministic identity/digest remains untouched.
-                _store.update_candidate_enrichment(
-                    existing.candidate_id,
-                    candidate.enrichment_json,
-                    candidate.enrichment_status)
-        _store.update_job(job_id, expected_revision=job.revision,
-                          state=ImportJobState.REVIEW, file_count=added)
-        _store.add_event(
-            job_id,
-            f"analysis_complete:{enrichment_status}" if enrich
-            else "analysis_complete")
-        _store.release_lease(job_id, str(principal))
-        return {"job": _store.get_job(job_id).model_dump_redacted(),
-                "candidates": added,
-                "enrichment_status": enrichment_status}
+            # Slice 2 — optional enrichment: opt-in only, after deterministic
+            # candidate construction and BEFORE persistence, so the persisted
+            # review row carries the suggestions. The enricher is fail-open: any
+            # exception leaves candidates unchanged with status ``disabled``.
+            #
+            # Enrichment cache: before calling the enricher, check which
+            # candidates already have enrichment from a prior import (same
+            # world + source_hash + normalized_identity). Reuse that cached
+            # enrichment instead of re-running Hermes — this saves tokens on
+            # re-imports of identical content.
+            enrichment_status = EnrichmentStatus.DISABLED.value
+            enriched_from_cache = 0
+            cache_hit_ids: set[str] = set()
+            if enrich and enricher is not None and candidates:
+                # Partition candidates into cache-hit vs cache-miss.
+                cache_hits: list[Candidate] = []
+                cache_misses: list[Candidate] = []
+                for candidate in candidates:
+                    existing = _store.find_candidate(
+                        candidate.world, candidate.source_hash,
+                        candidate.normalized_identity)
+                    if (existing is not None
+                            and existing.enrichment_json is not None
+                            and existing.enrichment_status != "disabled"):
+                        # Reuse cached enrichment — patch the in-memory candidate.
+                        cache_hits.append(candidate.model_copy(update={
+                            "enrichment_json": existing.enrichment_json,
+                            "enrichment_status": existing.enrichment_status,
+                        }))
+                        cache_hit_ids.add(candidate.candidate_id)
+                        enriched_from_cache += 1
+                    else:
+                        cache_misses.append(candidate)
+
+                # Only run the enricher on candidates without cached enrichment.
+                if cache_misses:
+                    try:
+                        enriched_misses = enricher(list(cache_misses))
+                        if not isinstance(enriched_misses, list):
+                            raise MalformedProviderError(
+                                "enricher output is not a candidate list")
+                    except MalformedProviderError as exc:
+                        _mark_failed(job_id, job.revision, str(exc),
+                                     "failed:malformed_enricher")
+                        return {"job": _store.get_job(job_id).model_dump_redacted()}
+                    except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+                        _store.add_event(job_id, f"enrichment_error:{type(exc).__name__}")
+                        logger.warning(
+                            "enricher raised during analyze (%s); "
+                            "candidates persisted without suggestions",
+                            type(exc).__name__, exc_info=True)
+                        enriched_misses = _disable_enrichment(cache_misses)
+                    # Merge cache hits + newly enriched misses.
+                    candidates = cache_hits + list(enriched_misses)
+                else:
+                    # All candidates were cache hits — no enricher call needed.
+                    candidates = cache_hits
+                # Aggregate the batch status so the response surfaces a single
+                # outcome to the reviewer (ok / no_suggestions / error).
+                enrichment_status = _aggregate_status(candidates)
+
+            # PR3 — optional vision enrichment: extracted media goes through
+            # the injected vision seam AFTER deterministic analysis + text
+            # enrichment and BEFORE persistence, so the persisted review row
+            # carries the advisory vision suggestions. Fail-open: any vision
+            # failure (exception or malformed output) leaves the candidates
+            # unchanged and records a diagnostic event — the import never
+            # blocks on vision, and a text-only assistant (``vision=None``)
+            # runs exactly as before.
+            if vision is not None and media_bundle and candidates:
+                try:
+                    vision_result = vision(candidates, media_bundle)
+                    if not isinstance(vision_result, list):
+                        raise MalformedProviderError(
+                            "vision output is not a candidate list")
+                    candidates = vision_result
+                except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+                    _store.add_event(job_id, f"vision_error:{type(exc).__name__}")
+                    logger.warning(
+                        "vision raised during analyze (%s); "
+                        "candidates persisted without vision data",
+                        type(exc).__name__, exc_info=True)
+                else:
+                    # The batch status must reflect the vision outcome even
+                    # when text enrichment was not requested.
+                    enrichment_status = _aggregate_status(candidates)
+
+            added = 0
+            for candidate in candidates:
+                existing = _store.find_candidate(
+                    candidate.world, candidate.source_hash,
+                    candidate.normalized_identity)
+                if existing is None:
+                    _store.add_candidate(candidate)
+                    added += 1
+                elif candidate.candidate_id in cache_hit_ids:
+                    # Cache hit: re-point the existing candidate row at the
+                    # current job so candidates_for(job_id) returns it for
+                    # review/execute. The UNIQUE constraint on
+                    # (world, source_hash, normalized_identity) prevents a
+                    # duplicate insert; reassignment is the correct operation.
+                    _store.reassign_candidate_to_job(
+                        existing.candidate_id, job.job_id)
+                    # PR3: when vision ran, the in-memory candidate carries
+                    # fresh vision suggestions on top of the cached text
+                    # enrichment — persist them so review sees the new
+                    # advisory payload.
+                    if vision is not None and candidate.enrichment_json is not None:
+                        _store.update_candidate_enrichment(
+                            existing.candidate_id,
+                            candidate.enrichment_json,
+                            candidate.enrichment_status)
+                    added += 1
+                elif (enrich or vision is not None) \
+                        and candidate.enrichment_json is not None:
+                    # No cached enrichment (first import or was disabled).
+                    # Persist the new enrichment payload (text suggestions
+                    # and/or PR3 vision suggestions).
+                    _store.update_candidate_enrichment(
+                        existing.candidate_id,
+                        candidate.enrichment_json,
+                        candidate.enrichment_status)
+                    # Re-assign to the current job so candidates_for(job_id)
+                    # returns it for review/execute.
+                    _store.reassign_candidate_to_job(
+                        existing.candidate_id, job.job_id)
+                    added += 1
+                else:
+                    # Candidate exists but no enrichment was requested/available.
+                    # Re-assign to the current job so it appears in review.
+                    _store.reassign_candidate_to_job(
+                        existing.candidate_id, job.job_id)
+                    # If the existing candidate has empty content (e.g., was
+                    # created before markitdown was installed), update it with
+                    # the newly extracted content.
+                    if not existing.content_preview and candidate.content_preview:
+                        _store.update_candidate_content(
+                            existing.candidate_id, candidate.content_preview)
+                    added += 1
+            _store.update_job(job_id, expected_revision=job.revision,
+                              state=ImportJobState.REVIEW, file_count=added)
+            _store.add_event(
+                job_id,
+                f"analysis_complete:{enrichment_status}:cached={enriched_from_cache}"
+                if enrich else "analysis_complete")
+            return {"job": _store.get_job(job_id).model_dump_redacted(),
+                    "candidates": added,
+                    "enrichment_status": enrichment_status,
+                    "enriched_from_cache": enriched_from_cache}
+
+        finally:
+            _store.release_lease(job_id, str(principal))
 
     @router.get("/{job_id}")
     def get_job(mundo: str, job_id: str, request: Request) -> dict:
@@ -530,8 +670,13 @@ def create_import_router(
             raise HTTPException(status_code=409, detail="Job not cancellable")
         _store.update_job(job_id, expected_revision=job.revision,
                           state=ImportJobState.CANCELLED)
+        cancelled = _store.get_job(job_id)
         _store.add_event(job_id, "cancelled")
-        return {"job": _store.get_job(job_id).model_dump_redacted()}
+        spool_for(job_id, mundo).cleanup()
+        # Opción A — the direct-cancel fallback reaps the DB row too. Capture
+        # the CANCELLED job before deletion so the response stays honest.
+        _store.delete_job(job_id)
+        return {"job": cancelled.model_dump_redacted()}
 
     @router.post("/{job_id}/resume")
     def resume(mundo: str, job_id: str, request: Request) -> dict:
@@ -565,14 +710,56 @@ def create_import_router(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"job": job.model_dump_redacted()}
 
+    @router.delete("/{job_id}")
+    def delete_job(mundo: str, job_id: str, request: Request) -> dict:
+        """Manually delete a terminal job (Opción A reaping).
+
+        Only the owner may delete. Allowed states: ``completed`` /
+        ``failed`` / ``rolled_back`` (audit/debug kept by default but
+        deletable on demand) and an empty ``review`` (no candidates). A
+        ``review`` job with candidates is never deletable — the review is
+        pending approval. The spool is cleaned best-effort first; a spool
+        that cannot be removed must never mask the DB delete.
+        """
+        principal = guard(request)
+        job = _store.get_job(job_id)
+        if job is None or job.world != mundo:
+            raise HTTPException(status_code=404, detail="Import job not found")
+        if job.owner_principal != getattr(principal, "id", str(principal)):
+            raise HTTPException(status_code=403, detail="Not the job owner")
+
+        allowed_states = {
+            ImportJobState.COMPLETED,
+            ImportJobState.FAILED,
+            ImportJobState.ROLLED_BACK,
+        }
+        if job.state == ImportJobState.REVIEW:
+            # Allow deleting an empty review (no candidates to lose); a review
+            # with candidates is pending approval and must be kept.
+            if len(_store.candidates_for(job_id)) > 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot delete review job with candidates")
+        elif job.state not in allowed_states:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot delete job in state {job.state.value}")
+
+        # Best-effort spool cleanup — never masks the DB delete.
+        spool_for(job_id, mundo).cleanup()
+
+        _store.delete_job(job_id)
+        return {"success": True}
+
     return router
 
 
 def _analyze_via_service(job: ImportJob, files: list[dict],
                          spool: BoundedSpool,
                          *, root_dir: Path | None = None,
-                         mundos_dir: Path | None = None) -> list[Candidate]:
-    """Build ordered candidates from spooled files via the analysis facade.
+                         mundos_dir: Path | None = None
+                         ) -> tuple[list[Candidate], list[VisionMediaEntry]]:
+    """Build ordered candidates + the preserved media bundle from spooled files.
 
     Preserves source path, heading, sequence, nearby/image anchors, and source
     order (2.7); server-owned identity/dedup so analysis stays read-only.
@@ -580,6 +767,12 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     extracted directory for ZIP sources); defaults to ``spool.job_dir``.
     ``mundos_dir`` is the worlds root used to resolve canonical targets; it
     is optional because ``resolve_target`` is world-agnostic today.
+
+    PR3 (sync-lore-in-importer): ``analyze_source`` receives the ``file_path``
+    resolver and the job spool root so ``.docx``/``.pdf`` sources are converted
+    and their extracted media is persisted under the spool (tasks 5.5). The
+    returned ``media_bundle`` ties every extracted image to its owning
+    candidate so the router can hand it to the vision seam.
     """
     from import_analysis import analyze_source, resolve_target
     from import_models import Provenance
@@ -612,11 +805,46 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
         )
         for chunk in analyzed.chunks:
             candidate.images.extend(chunk.images)
+        # PR3 — attach extracted media to the parent candidate (design:
+        # "each extracted image remains attached to its parent candidate") so
+        # execution can plan placements and register gallery originals for
+        # images the converted markdown did not already reference. Dedup by
+        # spool-relative path: converted sources (markitdown convention) and
+        # chunk extraction already share the ``media/<stem>/<file>`` layout.
+        existing_paths = {p.relative_media_path for p in candidate.images}
+        first_heading = (analyzed.chunks[0].heading_path
+                         if analyzed.chunks else "")
+        for media in analyzed.media:
+            if media.spool_relative_path in existing_paths:
+                continue
+            candidate.images.append(ImagePlacement(
+                gallery_asset_id="",
+                relative_media_path=media.spool_relative_path,
+                alt_text="",
+                target_ficha=first_heading,
+                confidence=1.0,
+                placement_status="proposed",
+            ))
+            existing_paths.add(media.spool_relative_path)
         return candidate
 
-    report = analyze_source(files, read_file)
-    candidates = [build_candidate(f.source_path, f.source_hash, f.size_bytes, f)
-                  for f in report.files]
+    report = analyze_source(
+        files,
+        read_file,
+        file_path=lambda relative: read_root / relative,
+        spool_root=spool.job_dir,
+    )
+    candidates: list[Candidate] = []
+    media_bundle: list[VisionMediaEntry] = []
+    for f in report.files:
+        candidate = build_candidate(f.source_path, f.source_hash, f.size_bytes, f)
+        for media in f.media:
+            media_bundle.append(VisionMediaEntry(
+                candidate_id=candidate.candidate_id,
+                image=media.image,
+                spool_relative_path=media.spool_relative_path,
+            ))
+        candidates.append(candidate)
     # Server-owned OKF authority: diagnose every candidate against the sole
     # contract so only valid candidates are eligible (2.8).
     import okf_contract
@@ -628,4 +856,4 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     for candidate in candidates:
         resolution = resolve_target(job.world, candidate, mundos_dir=mundos_dir)
         candidate.target_resolution = resolution.model_dump()
-    return candidates
+    return candidates, media_bundle

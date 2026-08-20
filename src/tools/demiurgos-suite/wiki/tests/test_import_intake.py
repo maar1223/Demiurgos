@@ -433,3 +433,58 @@ class TestExtractZipBounded:
         extract_zip_bounded(archive, out)
         assert called["extractall"] == 0
         monkeypatch.setattr(_zf.ZipFile, "extractall", original)
+
+
+# ---------------------------------------------------------------------------
+# Spool cleanup — BoundedSpool.cleanup()
+# ---------------------------------------------------------------------------
+
+class TestSpoolCleanup:
+    def test_cleanup_removes_nested_job_spool(self, tmp_path):
+        spool = BoundedSpool(tmp_path / "spool", "job1", "world1")
+        spool.begin_file("lore/a.md", 6)
+        spool.write_chunk("lore/a.md", 0, b"abcdef")
+        job_dir = spool.job_dir
+        assert job_dir.is_dir()
+        assert (job_dir / "lore" / "a.md").is_file()
+        spool.cleanup()
+        assert not job_dir.exists()
+        # The parent spool dir may remain, but the job dir (and its contents)
+        # must be fully gone.
+        assert not (job_dir / "lore" / "a.md").exists()
+
+    def test_cleanup_leaves_sibling_job_dirs_untouched(self, tmp_path):
+        spool = BoundedSpool(tmp_path / "spool", "job1", "world1")
+        spool.begin_file("lore/a.md", 3)
+        spool.write_chunk("lore/a.md", 0, b"abc")
+        sibling = BoundedSpool(tmp_path / "spool", "job2", "world1")
+        sibling.begin_file("lore/b.md", 3)
+        sibling.write_chunk("lore/b.md", 0, b"xyz")
+        spool.cleanup()
+        assert not spool.job_dir.exists()
+        assert sibling.job_dir.is_dir()
+        assert (sibling.job_dir / "lore" / "b.md").is_file()
+
+    def test_cleanup_missing_job_dir_completes_without_exception(self, tmp_path):
+        # No spool was ever written; cleanup must be a silent no-op (and
+        # idempotent across repeated calls).
+        spool = BoundedSpool(tmp_path / "spool", "job1", "world1")
+        spool.cleanup()
+        spool.cleanup()
+
+    def test_cleanup_rmtree_failure_logs_warning_and_returns(
+            self, tmp_path, monkeypatch, caplog):
+        import import_intake as _intake
+        spool = BoundedSpool(tmp_path / "spool", "job1", "world1")
+        job_dir = spool.job_dir
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "a.md").write_text("x")
+
+        def _boom(path):
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(_intake.shutil, "rmtree", _boom)
+        with caplog.at_level("WARNING"):
+            spool.cleanup()  # must not raise
+        assert "spool cleanup failed" in caplog.text
+        assert job_dir.exists()  # untouched after the failure

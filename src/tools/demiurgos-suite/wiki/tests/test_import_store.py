@@ -34,6 +34,7 @@ from import_store import (  # noqa: E402
     _decode_cursor,
     _encode_cursor,
 )
+from import_vision import VisionResult  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -328,3 +329,157 @@ class TestRedaction:
         assert "opaque_token" not in redacted
         assert redacted["job_id"] == "x"
         assert redacted["state"] == "review"
+
+
+# ---------------------------------------------------------------------------
+# Vision cache (PR2 — sync-lore-in-importer, Phase 4: tasks 4.1-4.5)
+# ---------------------------------------------------------------------------
+
+
+class TestVisionCacheStore:
+    """vision_cache: idempotent bootstrap, SHA-256 keys, round trips, fail-open."""
+
+    def test_cache_table_bootstrapped_idempotently(self, store: ImportJobStore) -> None:
+        """Task 4.1/4.2 — the table exists on every open (CREATE IF NOT EXISTS)."""
+        cols = [r[1] for r in store._conn.execute(
+            "PRAGMA table_info(vision_cache)")]
+        assert cols == ["hash", "result_json", "created_at"]
+
+    def test_cache_is_global_world_agnostic(self, store: ImportJobStore) -> None:
+        """Task 4.5 — the schema carries no world/job scoping: the key is the
+        content hash and the result describes image content, not canon."""
+        cols = [r[1] for r in store._conn.execute(
+            "PRAGMA table_info(vision_cache)")]
+        assert "world" not in cols
+        assert "job_id" not in cols
+
+    def test_lookup_miss_returns_none(self, store: ImportJobStore) -> None:
+        assert store.vision_cache_lookup("no-such-hash") is None
+
+    def test_store_and_lookup_roundtrip(self, store: ImportJobStore) -> None:
+        result = VisionResult(
+            image_hash="h1", description="Retrato sombrío",
+            verdict="confirma", analysis="Coincide con el texto",
+            tags=["retrato", "claroscuro"],
+        )
+        store.vision_cache_store("h1", result)
+
+        got = store.vision_cache_lookup("h1")
+        assert got is not None
+        assert got.image_hash == "h1"
+        assert got.description == "Retrato sombrío"
+        assert got.verdict == "confirma"
+        assert got.analysis == "Coincide con el texto"
+        assert got.tags == ["retrato", "claroscuro"]
+
+    def test_store_overwrites_existing_hash(self, store: ImportJobStore) -> None:
+        store.vision_cache_store("h1", VisionResult(
+            image_hash="h1", description="old", verdict="no_aplica",
+            analysis="", tags=[]))
+        store.vision_cache_store("h1", VisionResult(
+            image_hash="h1", description="new", verdict="contradice",
+            analysis="x", tags=["t"]))
+
+        got = store.vision_cache_lookup("h1")
+        assert got is not None
+        assert got.description == "new"
+        assert got.verdict == "contradice"
+        assert got.tags == ["t"]
+
+    def test_lookup_corrupt_json_returns_none(self, store: ImportJobStore) -> None:
+        store._conn.execute(
+            "INSERT INTO vision_cache (hash, result_json, created_at)"
+            " VALUES (?,?,?)", ("h1", "{not json", "2026-01-01T00:00:00"))
+        store._conn.commit()
+        assert store.vision_cache_lookup("h1") is None
+
+    def test_lookup_non_dict_json_returns_none(self, store: ImportJobStore) -> None:
+        store._conn.execute(
+            "INSERT INTO vision_cache (hash, result_json, created_at)"
+            " VALUES (?,?,?)", ("h1", "[]", "2026-01-01T00:00:00"))
+        store._conn.commit()
+        assert store.vision_cache_lookup("h1") is None
+
+    def test_lookup_normalizes_verdict(self, store: ImportJobStore) -> None:
+        """A stored verdict outside the closed vocabulary degrades to no_aplica."""
+        import json as _json
+        payload = _json.dumps({"image_hash": "h1", "description": "d",
+                               "verdict": "quizas", "analysis": "a", "tags": []})
+        store._conn.execute(
+            "INSERT INTO vision_cache (hash, result_json, created_at)"
+            " VALUES (?,?,?)", ("h1", payload, "2026-01-01T00:00:00"))
+        store._conn.commit()
+        got = store.vision_cache_lookup("h1")
+        assert got is not None
+        assert got.verdict == "no_aplica"
+
+
+# ---------------------------------------------------------------------------
+# delete_job — Opción A terminal reaping (job + full cascade)
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteJob:
+    """delete_job must remove the job and every cascade-associated row."""
+
+    def _completed_job_with_cascade(self, store) -> None:
+        from import_models import (  # noqa: PLC0415
+            Approval,
+            Candidate,
+            ItemOutcome,
+            Provenance,
+        )
+        store.create_job(_job(job_id="jobx", state=ImportJobState.COMPLETED))
+        store.add_candidate(Candidate(
+            candidate_id="cand1", job_id="jobx", world="demo",
+            normalized_identity="A", source_hash="sha256:a",
+            provenance=Provenance(source_path="lore/A.md", source_kind="loose",
+                                  source_hash="sha256:a"),
+            content_preview="body"))
+        store.add_item(ItemOutcome(item_id="i1", candidate_id="cand1",
+                                   outcome="inserted", detail=""))
+        store.add_event("jobx", "created")
+        store.save_approval(Approval(
+            approval_id="ap1", job_id="jobx", principal="alice", revision=1,
+            digest="d", token="t", group_ids=[], issued_at="",
+            expires_at="", consumed=False))
+
+    def test_delete_removes_job_and_cascade(self, store) -> None:
+        self._completed_job_with_cascade(store)
+        assert store.get_job("jobx") is not None
+        assert len(store.candidates_for("jobx")) == 1
+
+        store.delete_job("jobx")
+
+        assert store.get_job("jobx") is None
+        assert store.candidates_for("jobx") == []
+        # Cascade: items (via candidates), events, approvals all gone.
+        n_items = store._conn.execute(
+            "SELECT COUNT(*) FROM items WHERE candidate_id='cand1'").fetchone()[0]
+        n_events = store._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE job_id='jobx'").fetchone()[0]
+        n_approvals = store._conn.execute(
+            "SELECT COUNT(*) FROM approvals WHERE job_id='jobx'").fetchone()[0]
+        assert n_items == 0
+        assert n_events == 0
+        assert n_approvals == 0
+
+    def test_delete_leaves_other_jobs_intact(self, store) -> None:
+        from import_models import Candidate, Provenance  # noqa: PLC0415
+        store.create_job(_job(job_id="keep", state=ImportJobState.COMPLETED))
+        store.create_job(_job(job_id="drop", state=ImportJobState.FAILED))
+        store.add_candidate(Candidate(
+            candidate_id="c-keep", job_id="keep", world="demo",
+            normalized_identity="B", source_hash="sha256:b",
+            provenance=Provenance(source_path="lore/B.md", source_kind="loose",
+                                  source_hash="sha256:b"),
+            content_preview="body"))
+
+        store.delete_job("drop")
+
+        assert store.get_job("drop") is None
+        assert store.get_job("keep") is not None
+        assert len(store.candidates_for("keep")) == 1
+
+    def test_delete_unknown_job_is_noop(self, store) -> None:
+        store.delete_job("no-such-job")  # must not raise

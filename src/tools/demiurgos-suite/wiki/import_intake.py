@@ -9,6 +9,8 @@ whole-job buffering. All checks fail closed before any canon write.
 from __future__ import annotations
 
 import hashlib
+import logging
+import shutil
 import threading
 import zipfile
 from dataclasses import dataclass
@@ -32,6 +34,8 @@ ZIP_MIN_COMPRESSED_ENTRY = 1_024  # ignore ratio guard on trivially small entrie
 # System/transversal folders that are never imported as content (W10).
 SYSTEM_DIRS = frozenset({"_context", ".history", ".papelera"})
 TRANSVERSAL_DIRS = frozenset({"relaciones", "canon", "conflictos", "propuestas"})
+
+logger = logging.getLogger("demiurgos-import-intake")
 
 
 class UnsafePathError(ValueError):
@@ -347,3 +351,23 @@ class BoundedSpool:
     def accounting(self) -> tuple[int, int, int]:
         with self._lock:
             return self._uncompressed, self._compressed, self._count
+
+    def cleanup(self) -> None:
+        """Best-effort removal of the job spool directory (idempotent).
+
+        Called once a job reaches a terminal state (COMPLETED/FAILED/CANCELLED)
+        so the durable streamed bytes are reclaimed. ``FileNotFoundError`` is a
+        no-op (nothing to clean); any other ``OSError`` is logged with the job
+        path for diagnostics. Cleanup never raises, so a spool that cannot be
+        removed never masks a successful state transition nor aborts the
+        caller.
+        """
+        try:
+            shutil.rmtree(self.job_dir)
+        except FileNotFoundError:
+            return  # idempotent: nothing to clean
+        except OSError as exc:
+            logger.warning(
+                "spool cleanup failed for %s (%s): %s",
+                self.job_dir, type(exc).__name__, exc,
+            )

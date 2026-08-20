@@ -22,6 +22,11 @@ from import_models import (  # noqa: F401
     ItemOutcome,
     utcnow_iso,
 )
+# PR2 (sync-lore-in-importer): the vision content cache persists
+# :class:`import_vision.VisionResult` payloads keyed by image SHA-256.
+# ``import_vision`` imports only stdlib at module level, so this does not
+# pull sync_lore or the assistant-settings chain into the store.
+from import_vision import VisionResult
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
@@ -58,12 +63,25 @@ CREATE TABLE IF NOT EXISTS approvals (
     group_ids_json TEXT NOT NULL DEFAULT '[]', issued_at TEXT NOT NULL DEFAULT '',
     expires_at TEXT NOT NULL DEFAULT '', consumed INTEGER NOT NULL DEFAULT 0,
     UNIQUE (job_id, token));
+-- PR2 (sync-lore-in-importer, Phase 4): persistent vision content cache.
+-- Global by design — the key is the SHA-256 of the original image bytes and
+-- the result describes image content, not world canon, so it is safe to
+-- reuse across worlds and jobs. ``CREATE TABLE IF NOT EXISTS`` keeps the
+-- bootstrap idempotent on every open (legacy databases included).
+CREATE TABLE IF NOT EXISTS vision_cache (
+    hash TEXT PRIMARY KEY,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL);
 """
 
 # Bootstrap migration: SQLite cannot ALTER TABLE ADD COLUMN with a default
 # for legacy databases created before slice 2. Each block is idempotent; the
 # column is added once, then the pragma confirms the schema is current.
 _BOOTSTRAP_COLUMNS = (
+    ("images_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("merge_json", "TEXT"),
+    ("replacement_json", "TEXT"),
+    ("target_resolution_json", "TEXT"),
     ("enrichment_json", "TEXT"),
     ("enrichment_status", "TEXT NOT NULL DEFAULT 'disabled'"),
 )
@@ -275,7 +293,31 @@ class ImportJobStore:
             next_cursor = _encode_cursor(last.created_at, last.job_id)
         return jobs, next_cursor
 
-    # -- candidates --------------------------------------------------------
+    def delete_job(self, job_id: str) -> None:
+        """Delete a job and all cascade-associated rows (terminal reaping).
+
+        Removes the job plus everything that hangs off it: item outcomes
+        (via their candidates), candidates, events, and approvals. Used for
+        Opción A terminal-job reaping — auto-delete on ``cancelled`` /
+        ``rolled_back`` and the manual DELETE endpoint for ``completed`` /
+        ``failed`` / empty-``review`` jobs. Idempotent: deleting an unknown
+        ``job_id`` is a no-op.
+        """
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM items WHERE candidate_id IN"
+                " (SELECT candidate_id FROM candidates WHERE job_id=?)",
+                (job_id,),
+            )
+            self._conn.execute(
+                "DELETE FROM candidates WHERE job_id=?", (job_id,))
+            self._conn.execute(
+                "DELETE FROM events WHERE job_id=?", (job_id,))
+            self._conn.execute(
+                "DELETE FROM approvals WHERE job_id=?", (job_id,))
+            self._conn.execute(
+                "DELETE FROM jobs WHERE job_id=?", (job_id,))
+            self._conn.commit()
 
     def find_candidate(self, world: str, source_hash: str,
                        normalized_identity: str) -> Candidate | None:
@@ -330,6 +372,40 @@ class ImportJobStore:
                 (_json(enrichment_json) if enrichment_json is not None else None,
                  enrichment_status, candidate_id),
             )
+            self._conn.commit()
+
+    def reassign_candidate_to_job(self, candidate_id: str,
+                                  new_job_id: str) -> None:
+        """Re-point a candidate at a different job (cache-hit re-import).
+
+        The UNIQUE constraint on ``(world, source_hash, normalized_identity)``
+        prevents inserting a duplicate row for the same content. When a
+        re-import hits the enrichment cache, we reuse the existing candidate
+        row but update its ``job_id`` so ``candidates_for(new_job_id)``
+        returns it for review/execute. The prior job loses the candidate
+        from its review surface — acceptable because the prior job already
+        completed or was superseded by this re-import.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE candidates SET job_id=? WHERE candidate_id=?",
+                (new_job_id, candidate_id))
+            self._conn.commit()
+
+    def update_candidate_content(self, candidate_id: str,
+                                 content_preview: str) -> None:
+        """Update the content preview of an existing candidate.
+
+        Used when a candidate was previously created with empty content
+        (e.g., before markitdown was installed) and a re-import extracts
+        the actual content. Only updates if the new content is non-empty.
+        """
+        if not content_preview:
+            return
+        with self._lock:
+            self._conn.execute(
+                "UPDATE candidates SET content_preview=? WHERE candidate_id=?",
+                (content_preview, candidate_id))
             self._conn.commit()
 
     def update_suggestion_state(self, candidate_id: str, suggestion_id: str,
@@ -577,3 +653,42 @@ class ImportJobStore:
                         outcome=r["outcome"], detail=r["detail"])
             for r in rows
         ]
+
+    # -- vision cache (PR2, sync-lore-in-importer) --------------------------
+
+    def vision_cache_lookup(self, image_hash: str) -> VisionResult | None:
+        """Return the cached vision result for an image hash, or ``None``.
+
+        The cache is global by design: the key is the SHA-256 of the
+        original image bytes and the result describes image content, not
+        world canon, so it is safe to reuse across worlds and jobs. Missing
+        or corrupt rows degrade to ``None`` so the vision flow stays
+        fail-open (a corrupt cache entry never blocks an import).
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT result_json FROM vision_cache WHERE hash=?", (image_hash,)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return VisionResult.from_json_dict(_unjson(row["result_json"]), image_hash)
+        except Exception:  # noqa: BLE001 — cache is advisory, never fatal
+            return None
+
+    def vision_cache_store(self, image_hash: str, result: VisionResult) -> None:
+        """Persist a vision result keyed by the image SHA-256.
+
+        Idempotent: re-storing the same hash replaces the prior row (the
+        freshest analysis wins). Only successful analyses reach the cache —
+        callers must never store failures.
+        """
+        payload = result.to_json_dict()
+        payload["image_hash"] = payload.get("image_hash") or image_hash
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO vision_cache (hash, result_json, created_at)"
+                " VALUES (?,?,?)",
+                (image_hash, _json(payload), utcnow_iso()),
+            )
+            self._conn.commit()

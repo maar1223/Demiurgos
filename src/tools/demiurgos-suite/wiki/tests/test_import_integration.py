@@ -585,3 +585,155 @@ def test_list_jobs_unknown_world_returns_404(tmp_path) -> None:
     client, _ = _app_with_principal(tmp_path)
     resp = client.get("/api/does-not-exist/imports")
     assert resp.status_code == 404, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Spool cleanup — analyze FAILED paths + direct cancel reclaim the spool
+# ---------------------------------------------------------------------------
+
+class TestSpoolCleanup:
+    """Every analyze FAILED path and the direct-cancel fallback must remove the
+    job spool, while REVIEW (success) retains it (best-effort cleanup)."""
+
+    def _app(self, tmp_path, *, provider=None, enricher=None, service=True):
+        store = ImportJobStore(":memory:")
+        spool = tmp_path / "spool"
+        mundos = tmp_path / "mundos"
+        (mundos / "world1" / "lore").mkdir(parents=True, exist_ok=True)
+        svc = None
+        if service:
+            svc = ImportService(
+                store=store, mundos_dir=mundos, spool_dir=spool,
+                read_file=lambda rel: (spool / rel).read_text(encoding="utf-8")
+                if (spool / rel).exists() else "",
+                graph_reconcile=lambda rel, mundo: None,
+                register_gallery=lambda world, src, rel: None,
+            )
+        app = FastAPI()
+        app.include_router(create_import_router(
+            require_principal=lambda request: _FakePrincipal(),
+            mundos_dir=lambda: mundos,
+            spool_dir=lambda: spool,
+            store=store,
+            provider=provider,
+            enricher=enricher,
+            service=svc,
+        ))
+        return TestClient(app), store, spool, mundos
+
+    def _loose_job(self, client) -> dict:
+        resp = client.post("/api/world1/imports",
+                           json={"source_kind": "loose", "files": ["lore/A.md"]})
+        assert resp.status_code == 201, resp.text
+        job = resp.json()["job"]
+        _stream(client, job["job_id"], _OKF)
+        return job
+
+    def test_analyze_malformed_provider_removes_spool(self, tmp_path):
+        from import_intake import MalformedProviderError
+
+        def bad_provider(job, files):
+            raise MalformedProviderError("garbage")
+
+        client, _, spool, _ = self._app(tmp_path, provider=bad_provider,
+                                        service=False)
+        job = self._loose_job(client)
+        job_dir = spool / job["job_id"]
+        assert job_dir.exists()
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.json()["job"]["state"] == "failed"
+        assert not job_dir.exists()
+
+    def test_analyze_provider_error_removes_spool(self, tmp_path):
+        def bad_provider(job, files):
+            raise RuntimeError("boom")
+
+        client, _, spool, _ = self._app(tmp_path, provider=bad_provider,
+                                        service=False)
+        job = self._loose_job(client)
+        job_dir = spool / job["job_id"]
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.json()["job"]["state"] == "failed"
+        assert not job_dir.exists()
+
+    def test_analyze_missing_zip_removes_spool(self, tmp_path):
+        client, _, spool, _ = self._app(tmp_path, service=False)
+        resp = client.post("/api/world1/imports",
+                           json={"source_kind": "zip", "files": ["world.zip"]})
+        job = resp.json()["job"]
+        job_dir = spool / job["job_id"]
+        # Simulate a pre-existing spool (e.g. a prior partial stream) that the
+        # failed analyze must reclaim.
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "stale.md").write_bytes(b"x")
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.json()["job"]["state"] == "failed"
+        assert not job_dir.exists()
+
+    def test_analyze_zip_safety_removes_spool(self, tmp_path):
+        client, _, spool, _ = self._app(tmp_path, service=False)
+        archive = tmp_path / "evil.zip"
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("../etc/passwd", "pwn")
+        resp = client.post("/api/world1/imports",
+                           json={"source_kind": "zip", "files": ["world.zip"]})
+        job = resp.json()["job"]
+        _stream_zip(client, job["job_id"], archive)
+        job_dir = spool / job["job_id"]
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.json()["job"]["state"] == "failed"
+        assert not job_dir.exists()
+
+    def test_analyze_malformed_enricher_removes_spool(self, tmp_path):
+        from import_intake import MalformedProviderError
+
+        def bad_enricher(candidates):
+            raise MalformedProviderError("garbage")
+
+        client, _, spool, _ = self._app(tmp_path, enricher=bad_enricher,
+                                        service=True)
+        job = self._loose_job(client)
+        job_dir = spool / job["job_id"]
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze",
+                           json={"enrich": True})
+        assert resp.json()["job"]["state"] == "failed"
+        assert not job_dir.exists()
+
+    def test_analyze_review_retains_spool(self, tmp_path):
+        """A successful analyze -> REVIEW must NOT clean up the spool (the
+        job is not terminal; review/execute still need the bytes)."""
+        client, _, spool, _ = self._app(tmp_path, service=True)
+        job = self._loose_job(client)
+        job_dir = spool / job["job_id"]
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.json()["job"]["state"] == "review"
+        assert (job_dir / "lore" / "A.md").exists()
+
+    def test_direct_cancel_fallback_removes_spool(self, tmp_path):
+        """No-service branch: router cancel transitions to CANCELLED, reclaims
+        the job spool, and reaps the DB row (Opción A)."""
+        client, store, spool, _ = self._app(tmp_path, service=False)
+        job = self._loose_job(client)
+        job_dir = spool / job["job_id"]
+        assert job_dir.exists()
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/cancel")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["job"]["state"] == "cancelled"
+        assert not job_dir.exists()
+        assert store.get_job(job["job_id"]) is None
+
+    def test_service_cancel_deletes_job(self, tmp_path):
+        """Service-branch cancel cleans once and reaps the DB row (Opción A);
+        a second cancel then 404s because the job no longer exists."""
+        client, store, spool, _ = self._app(tmp_path, service=True)
+        job = self._loose_job(client)
+        job_dir = spool / job["job_id"]
+        assert job_dir.exists()
+        r1 = client.post(f"/api/world1/imports/{job['job_id']}/cancel")
+        assert r1.status_code == 200, r1.text
+        assert r1.json()["job"]["state"] == "cancelled"
+        assert not job_dir.exists()
+        assert store.get_job(job["job_id"]) is None
+        # Second cancel: the job was reaped — 404, not a silent no-op.
+        r2 = client.post(f"/api/world1/imports/{job['job_id']}/cancel")
+        assert r2.status_code == 404, r2.text

@@ -271,14 +271,44 @@ class TestReplacementSnapshot:
 # ---------------------------------------------------------------------------
 
 class TestIdempotentLifecycle:
-    def test_cancel_then_resume_keeps_completed_and_revalidates(self, store, service):
+    def test_cancel_deletes_job_automatically(self, store, service):
+        """Opción A — cancel is terminal and reaps the DB row immediately.
+
+        A cancelled job carries no audit value, so it is auto-deleted (job +
+        cascade) instead of being kept for history. ``resume`` is therefore
+        no longer meaningful for a cancelled job.
+        """
         job = _job()
         store.create_job(job)
-        job = service.cancel(job, "tester")
-        assert job.state == ImportJobState.CANCELLED
-        job = store.get_job(job.job_id)
-        job2 = service.resume(job, "tester")
-        assert job2.state == ImportJobState.REVIEW
+        cancelled = service.cancel(job, "tester")
+        assert cancelled.state == ImportJobState.CANCELLED
+        assert store.get_job(job.job_id) is None
+
+    def test_rollback_deletes_job_automatically(self, store, service):
+        """Opción A — rollback is terminal and reaps the DB row immediately."""
+        job = _job()
+        store.create_job(job)
+        job = store.update_job(job.job_id, expected_revision=job.revision,
+                               state=ImportJobState.EXECUTING)
+        rolled = service.rollback(job, "tester")
+        assert rolled.state == ImportJobState.ROLLED_BACK
+        assert store.get_job(job.job_id) is None
+
+    @pytest.mark.parametrize("initial_state", [
+        ImportJobState.INTAKING,
+        ImportJobState.ANALYZING,
+        ImportJobState.EXECUTING,
+    ])
+    def test_resume_from_intermediate_state_transitions_to_review(
+        self, store, service, initial_state
+    ):
+        """Jobs stuck in intaking/analyzing/executing must resume to review."""
+        job = _job()
+        store.create_job(job)
+        job = store.update_job(
+            job.job_id, expected_revision=job.revision, state=initial_state)
+        resumed = service.resume(job, "tester")
+        assert resumed.state == ImportJobState.REVIEW
 
     def test_cancel_is_idempotent(self, store, service):
         job = _job()
@@ -580,3 +610,271 @@ class TestResolveTarget:
         rr = resolve_target("world1", rev, mundos_dir=tmp_path)
         assert rr.status == "review"
         assert rr.status != "resolved"
+
+
+# ---------------------------------------------------------------------------
+# PR3 (sync-lore-in-importer) — vision-gated execution (tasks 6.1-6.9)
+# ---------------------------------------------------------------------------
+
+
+class TestVisionExecution:
+    """Approved vision suggestions gate gallery registration and overlay their
+    description as markdown alt-text; pending/rejected suggestions are not
+    eligible; images without vision results stay reviewable (fallback)."""
+
+    _CONTENT = ("---\ntype: personaje\nname: A\n---\n# Origen\n"
+                "body\n\n![retrato](media/A/retrato.png)")
+
+    def _cand(self, images, enrichment):
+        from import_models import ImagePlacement
+        cand = _candidate(content=self._CONTENT, images=images or [
+            ImagePlacement(gallery_asset_id="",
+                           relative_media_path="media/A/retrato.png",
+                           alt_text="", target_ficha="Origen",
+                           confidence=1.0, placement_status="proposed"),
+        ])
+        cand.enrichment_json = enrichment
+        cand.enrichment_status = "ok" if enrichment else "disabled"
+        return cand
+
+    def _vision_entry(self, vid="vision:abc", review_state="pending",
+                      desc="Retrato de A",
+                      path="media/A/retrato.png"):
+        return {
+            "__type__": "vision", "id": vid, "candidate_id": "cand-A",
+            "relative_media_path": path, "description": desc,
+            "verdict": "confirma", "analysis": "analisis", "tags": ["retrato"],
+            "confidence": 0.0, "provenance": {"provider": "vision"},
+            "evidence": f"image:{path}",
+            "review_state": review_state,
+        }
+
+    def _svc(self, store, tmp_path, registered):
+        spool = tmp_path / "spool"
+        (spool / "job1" / "media" / "A").mkdir(parents=True, exist_ok=True)
+        (spool / "job1" / "media" / "A" / "retrato.png").write_bytes(b"img")
+        (tmp_path / "world1" / "lore").mkdir(parents=True, exist_ok=True)
+        return ImportService(
+            store=store, mundos_dir=tmp_path, spool_dir=spool,
+            register_gallery=lambda world, src, rel: registered.append(
+                (world, str(src), rel)),
+        )
+
+    def test_approved_vision_registers_original_and_overlays_alt_text(
+            self, store, tmp_path):
+        """Task 6.7 — approved image → gallery registration with ORIGINAL
+        spool bytes + vision description as the markdown alt-text."""
+        cand = self._cand(
+            images=None,
+            enrichment=[self._vision_entry(review_state="approved")],
+        )
+        registered = []
+        svc = self._svc(store, tmp_path, registered)
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(cand)
+        approval = svc.issue_approval(job, "tester", ["vision:abc"])
+        outcomes = svc.execute(job, "tester", approval.digest, approval.token,
+                               suggestion_ids=["vision:abc"])
+        assert outcomes[0].written
+        assert registered, "approved image must be registered in the gallery"
+        _, src, rel = registered[0]
+        assert rel == "media/A/retrato.png"
+        assert src == str(tmp_path / "spool" / "job1" / "media" / "A"
+                          / "retrato.png")
+        ficha = (tmp_path / "world1" / "lore" / "A.md").read_text(
+            encoding="utf-8")
+        assert "![Retrato de A](media/A/retrato.png)" in ficha
+        assert "![retrato](media/A/retrato.png)" not in ficha
+
+    @pytest.mark.parametrize("state", ["pending", "rejected"])
+    def test_non_approved_vision_suggestion_not_eligible(
+            self, store, tmp_path, state):
+        """Tasks 6.2/6.8 — pending or rejected suggestions are not admitted:
+        the image is neither placed nor registered in the gallery."""
+        cand = self._cand(
+            images=None,
+            enrichment=[self._vision_entry(review_state=state)],
+        )
+        registered = []
+        svc = self._svc(store, tmp_path, registered)
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(cand)
+        # The token binds a DIFFERENT suggestion id: the vision suggestion is
+        # therefore not approved and its image must not materialize.
+        approval = svc.issue_approval(job, "tester", ["vision:other"])
+        outcomes = svc.execute(job, "tester", approval.digest, approval.token,
+                               suggestion_ids=["vision:other"])
+        assert outcomes[0].written
+        assert registered == [], "unapproved image must not be registered"
+        ficha = (tmp_path / "world1" / "lore" / "A.md").read_text(
+            encoding="utf-8")
+        assert "Retrato de A" not in ficha  # no vision overlay
+
+    def test_image_without_vision_result_placed_with_fallback(
+            self, store, tmp_path):
+        """Task 6.9 — no vision result: image remains reviewable and is
+        placed with its (fallback) alt-text when the job is approved."""
+        cand = self._cand(images=None, enrichment=None)
+        registered = []
+        svc = self._svc(store, tmp_path, registered)
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(cand)
+        approval = svc.issue_approval(job, "tester", [])
+        outcomes = svc.execute(job, "tester", approval.digest, approval.token,
+                               suggestion_ids=[])
+        assert outcomes[0].written
+        assert registered, "image without vision result must still be placed"
+        ficha = (tmp_path / "world1" / "lore" / "A.md").read_text(
+            encoding="utf-8")
+        assert "![retrato](media/A/retrato.png)" in ficha  # unchanged
+
+    def test_legacy_approval_without_ids_preserves_placement_flow(
+            self, store, tmp_path):
+        """Legacy approve without ``suggestion_ids``: no vision gating — the
+        existing placement flow is preserved (image registered, no overlay)."""
+        cand = self._cand(
+            images=None,
+            enrichment=[self._vision_entry(review_state="pending")],
+        )
+        registered = []
+        svc = self._svc(store, tmp_path, registered)
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(cand)
+        approval = svc.issue_approval(job, "tester", [])
+        outcomes = svc.execute(job, "tester", approval.digest, approval.token)
+        assert outcomes[0].written
+        assert registered, "legacy flow must keep placing images"
+        ficha = (tmp_path / "world1" / "lore" / "A.md").read_text(
+            encoding="utf-8")
+        assert "Retrato de A" not in ficha  # no overlay without approval ids
+
+    def test_multiple_images_independent_approval(self, store, tmp_path):
+        """Spec scenario — approve one image, reject another: only the
+        approved original is registered; the rejected one is not."""
+        from import_models import ImagePlacement
+        cand = _candidate(
+            content=("---\ntype: personaje\nname: A\n---\n# Origen\nbody\n\n"
+                     "![retrato](media/A/retrato.png)\n\n"
+                     "![mapa](media/A/mapa.png)"),
+            images=[
+                ImagePlacement(gallery_asset_id="",
+                               relative_media_path="media/A/retrato.png",
+                               alt_text="", target_ficha="Origen",
+                               confidence=1.0, placement_status="proposed"),
+                ImagePlacement(gallery_asset_id="",
+                               relative_media_path="media/A/mapa.png",
+                               alt_text="", target_ficha="Origen",
+                               confidence=1.0, placement_status="proposed"),
+            ],
+        )
+        cand.enrichment_json = [
+            self._vision_entry(vid="vision:abc",
+                               review_state="approved",
+                               desc="Retrato de A",
+                               path="media/A/retrato.png"),
+            self._vision_entry(vid="vision:def",
+                               review_state="rejected",
+                               desc="Mapa del mundo",
+                               path="media/A/mapa.png"),
+        ]
+        cand.enrichment_status = "ok"
+        spool = tmp_path / "spool"
+        (spool / "job1" / "media" / "A").mkdir(parents=True, exist_ok=True)
+        (spool / "job1" / "media" / "A" / "retrato.png").write_bytes(b"r")
+        (spool / "job1" / "media" / "A" / "mapa.png").write_bytes(b"m")
+        (tmp_path / "world1" / "lore").mkdir(parents=True, exist_ok=True)
+        registered = []
+        svc = ImportService(
+            store=store, mundos_dir=tmp_path, spool_dir=spool,
+            register_gallery=lambda world, src, rel: registered.append(rel),
+        )
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(cand)
+        approval = svc.issue_approval(job, "tester", ["vision:abc"])
+        outcomes = svc.execute(job, "tester", approval.digest, approval.token,
+                               suggestion_ids=["vision:abc"])
+        assert outcomes[0].written
+        assert "media/A/retrato.png" in registered
+        assert "media/A/mapa.png" not in registered
+        ficha = (tmp_path / "world1" / "lore" / "A.md").read_text(
+            encoding="utf-8")
+        assert "![Retrato de A](media/A/retrato.png)" in ficha
+        assert "![Mapa del mundo](media/A/mapa.png)" not in ficha
+
+
+# ---------------------------------------------------------------------------
+# Spool cleanup — terminal states reclaim the job spool (best-effort)
+# ---------------------------------------------------------------------------
+
+class TestSpoolCleanupLifecycle:
+    def _spooled(self, tmp_path):
+        """Create a job-scoped spool dir with nested content."""
+        spool_dir = tmp_path / "spool"
+        job_dir = spool_dir / "job1" / "lore"
+        job_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "a.md").write_bytes(b"abc")
+        return spool_dir
+
+    def test_execute_completed_removes_spool_dir(self, store, tmp_path):
+        spool_dir = self._spooled(tmp_path)
+        (tmp_path / "world1" / "lore").mkdir(parents=True, exist_ok=True)
+        svc = ImportService(store=store, mundos_dir=tmp_path, spool_dir=spool_dir)
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(_candidate())
+        approval = svc.issue_approval(job, "tester", [])
+        svc.execute(job, "tester", approval.digest, approval.token)
+        assert store.get_job(job.job_id).state == ImportJobState.COMPLETED
+        assert not (spool_dir / "job1").exists()
+
+    def test_execute_failed_removes_spool_dir(self, store, tmp_path, monkeypatch):
+        spool_dir = self._spooled(tmp_path)
+        (tmp_path / "world1" / "lore").mkdir(parents=True, exist_ok=True)
+        svc = ImportService(store=store, mundos_dir=tmp_path, spool_dir=spool_dir)
+
+        def _boom(self, *args, **kwargs):
+            raise RuntimeError("dependency down")
+
+        monkeypatch.setattr(ImportService, "_execute_candidate", _boom)
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(_candidate())
+        approval = svc.issue_approval(job, "tester", [])
+        with pytest.raises(ValueError):
+            svc.execute(job, "tester", approval.digest, approval.token)
+        assert store.get_job(job.job_id).state == ImportJobState.FAILED
+        assert not (spool_dir / "job1").exists()
+
+    def test_cancel_removes_spool_dir(self, store, tmp_path):
+        spool_dir = self._spooled(tmp_path)
+        svc = ImportService(store=store, mundos_dir=tmp_path, spool_dir=spool_dir)
+        job = _job()
+        store.create_job(job)
+        job = svc.cancel(job, "tester")
+        assert job.state == ImportJobState.CANCELLED
+        assert not (spool_dir / "job1").exists()
+
+    def test_cleanup_failure_does_not_mask_state_or_raise(
+            self, store, tmp_path, monkeypatch):
+        spool_dir = self._spooled(tmp_path)
+        svc = ImportService(store=store, mundos_dir=tmp_path, spool_dir=spool_dir)
+        import import_intake as _intake
+
+        def _boom(path):
+            raise OSError("nope")
+
+        monkeypatch.setattr(_intake.shutil, "rmtree", _boom)
+        job = _job()
+        store.create_job(job)
+        # The CANCELLED transition + DB reap must still happen and cancel must
+        # not raise even though spool cleanup fails.
+        job = svc.cancel(job, "tester")
+        assert job.state == ImportJobState.CANCELLED
+        # Opción A — the DB row is reaped regardless of the spool failure.
+        assert store.get_job(job.job_id) is None
+        assert (spool_dir / "job1").exists()  # cleanup failed but DB reaped

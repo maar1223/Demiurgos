@@ -11,6 +11,7 @@ import type {
   ImportJob,
   ImportSuggestion,
   RelationshipSuggestion,
+  VisionSuggestion,
 } from "@/api/types";
 
 vi.mock("@/hooks/useWorlds", () => ({
@@ -30,6 +31,7 @@ vi.mock("@/api/importer", () => ({
   cancelImportJob: vi.fn(),
   resumeImportJob: vi.fn(),
   rollbackImportJob: vi.fn(),
+  deleteImportJob: vi.fn(),
   postReviewDecisions: vi.fn(),
   IMPORT_CHUNK_BYTES: 512 * 1024,
   IMPORT_MAX_FILE_BYTES: 500 * 1024 * 1024,
@@ -51,6 +53,7 @@ import {
   approveImportGroups,
   cancelImportJob,
   createImportJob,
+  deleteImportJob,
   executeImport,
   getImportReview,
   getImportJob,
@@ -536,6 +539,96 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
   });
 
   // -------------------------------------------------------------------------
+  // Opción A — manual delete of terminal jobs (confirm-gated).
+  // -------------------------------------------------------------------------
+
+  it("shows an Eliminar button only for deletable history states", async () => {
+    (listImportJobs as Mock).mockImplementation(async () => ({
+      jobs: [
+        job({ job_id: "j-completed", state: "completed" }),
+        job({ job_id: "j-failed", state: "failed" }),
+        job({ job_id: "j-empty-review", state: "review", file_count: 0 }),
+        job({ job_id: "j-full-review", state: "review", file_count: 3 }),
+        job({ job_id: "j-intaking", state: "intaking" }),
+      ],
+      next_cursor: null,
+    }));
+
+    renderImporter();
+    await screen.findByTestId("history-delete-j-completed");
+    // Deletable: completed, failed, empty review.
+    expect(screen.getByTestId("history-delete-j-completed")).toBeInTheDocument();
+    expect(screen.getByTestId("history-delete-j-failed")).toBeInTheDocument();
+    expect(screen.getByTestId("history-delete-j-empty-review")).toBeInTheDocument();
+    // NOT deletable: review with candidates, non-terminal states.
+    expect(screen.queryByTestId("history-delete-j-full-review")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("history-delete-j-intaking")).not.toBeInTheDocument();
+  });
+
+  it("requires confirmation before deleting and then calls DELETE + reloads", async () => {
+    (listImportJobs as Mock).mockImplementation(async () => ({
+      jobs: [job({ job_id: "j1", state: "completed" })],
+      next_cursor: null,
+    }));
+    (deleteImportJob as Mock).mockResolvedValue({ success: true });
+
+    renderImporter();
+    const delBtn = await screen.findByTestId("history-delete-j1");
+
+    // No delete happens until the dialog is confirmed.
+    fireEvent.click(delBtn);
+    expect(deleteImportJob).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("dialog", { name: /Eliminar importación/i }),
+    ).toBeInTheDocument();
+
+    // Cancel closes without deleting.
+    fireEvent.click(screen.getByRole("button", { name: /Cancelar/i }));
+    expect(deleteImportJob).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("dialog", { name: /Eliminar importación/i }),
+    ).not.toBeInTheDocument();
+
+    // Reopen and confirm → DELETE called with the job id, history reloaded.
+    fireEvent.click(screen.getByTestId("history-delete-j1"));
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
+    await waitFor(() =>
+      expect(deleteImportJob).toHaveBeenCalledWith("mundo", "j1"),
+    );
+    await waitFor(() => expect(listImportJobs).toHaveBeenCalled());
+  });
+
+  it("reloads and drops the local pointer when the deleted job was being viewed", async () => {
+    // A job whose history row is also the currently open one (empty review).
+    (listImportJobs as Mock).mockImplementation(async () => ({
+      jobs: [job({ job_id: "j-empty", state: "review", file_count: 0 })],
+      next_cursor: null,
+    }));
+    (getImportReview as Mock).mockResolvedValue({
+      job: job({ job_id: "j-empty", state: "review", file_count: 0 }),
+      digest: "digest",
+      candidates: [],
+    });
+    (deleteImportJob as Mock).mockResolvedValue({ success: true });
+
+    renderImporter();
+    await screen.findByTestId("history-open-j-empty");
+    fireEvent.click(screen.getByTestId("history-open-j-empty"));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    // Empty review shows the "Eliminar este job" button.
+    fireEvent.click(screen.getByTestId("review-delete-job"));
+    fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
+
+    await waitFor(() =>
+      expect(deleteImportJob).toHaveBeenCalledWith("mundo", "j-empty"),
+    );
+    // Returns to a fresh selection and clears the persisted pointer.
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    expect(window.sessionStorage.getItem("demiurgos-importer-job:mundo")).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
   // Slice 2 — Hermes advisory enrichment (opt-in, advisory only).
   // -------------------------------------------------------------------------
 
@@ -570,6 +663,29 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
       provenance: { provider: "hermes-gateway", model: "hermes-agent" },
       review_state: "pending",
       __type__: "relationship",
+      ...overrides,
+    };
+  }
+
+  // PR4 — vision suggestions ride in the same enrichment payload with
+  // ``__type__: "vision"`` (server shape from PR3). The media path is the
+  // spool-relative location; no thumbnail_url is servable during review.
+  function visionSuggestion(
+    overrides: Partial<VisionSuggestion> = {},
+  ): VisionSuggestion & { __type__: "vision" } {
+    return {
+      id: "vision:abc",
+      candidate_id: "c1",
+      relative_media_path: "media/Enciclopedia/portada.png",
+      description: "Retrato de la reina en claroscuro",
+      verdict: "confirma",
+      analysis: "La imagen coincide con la descripción del texto.",
+      tags: ["retrato"],
+      confidence: 0.0,
+      provenance: { provider: "vision", capability: "multimodal" },
+      evidence: "image:media/Enciclopedia/portada.png",
+      review_state: "pending",
+      __type__: "vision",
       ...overrides,
     };
   }
@@ -815,6 +931,169 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     );
   });
 
+  it("renders vision suggestion cards with verdict, description, tags and advisory copy (PR4)", async () => {
+    const enriched: ImportCandidate = candidate({
+      enrichment_json: [
+        classificationSuggestion(),
+        visionSuggestion(),
+      ],
+      enrichment_status: "ok",
+    });
+    mockAnalyzeWithEnrichment([enriched]);
+    renderImporter();
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    // The vision card renders inside the candidate detail with its own
+    // section, alongside the text suggestion family.
+    expect(screen.getByTestId("vision-suggestions-c1")).toBeInTheDocument();
+    const card = screen.getByTestId("suggestion-vision:abc");
+    expect(card).toHaveAttribute("data-suggestion-state", "pending");
+
+    // Verdict badge + family badge + advisory copy.
+    expect(screen.getByText("confirma")).toBeInTheDocument();
+    expect(screen.getByText("visión")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Imágenes analizadas con visión — orientativas/),
+    ).toBeInTheDocument();
+
+    // Description (alt-text), spool path, tags, provenance, evidence.
+    expect(
+      screen.getByText("Retrato de la reina en claroscuro"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("media/Enciclopedia/portada.png"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("#retrato")).toBeInTheDocument();
+    expect(screen.getByText(/Origen: vision/)).toBeInTheDocument();
+
+    // Review-time images live in the spool (pre-gallery) — the card shows a
+    // placeholder, never a broken <img>.
+    expect(
+      screen.getByLabelText("Imagen sin vista previa disponible"),
+    ).toBeInTheDocument();
+
+    // The text family still renders alongside (independent families).
+    expect(screen.getByTestId("suggestion-cls-1")).toBeInTheDocument();
+  });
+
+  it("approving a vision suggestion posts the decision and binds the ID to execute (PR4)", async () => {
+    const enriched: ImportCandidate = candidate({
+      enrichment_json: [visionSuggestion()],
+      enrichment_status: "ok",
+    });
+    mockAnalyzeWithEnrichment([enriched]);
+    (postReviewDecisions as Mock).mockResolvedValue({ accepted: 1 });
+
+    renderImporter();
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    // Approve the image via the per-card button (same decisions endpoint
+    // as text suggestions — the vision id is just another suggestion id).
+    fireEvent.click(screen.getByTestId("suggestion-approve-vision:abc"));
+
+    await waitFor(() => {
+      expect(postReviewDecisions).toHaveBeenCalledWith(
+        "mundo",
+        expect.any(String),
+        [{ suggestion_id: "vision:abc", decision: "approve" }],
+      );
+    });
+    expect(screen.getByTestId("suggestion-vision:abc")).toHaveAttribute(
+      "data-suggestion-state",
+      "approved",
+    );
+    expect(screen.getByTestId("approved-suggestions-summary")).toHaveTextContent(
+      "1 sugerencia aprobada",
+    );
+
+    // The approved vision id round-trips through approve AND execute so the
+    // executor registers the original in the gallery with alt-text.
+    const approval: ImportApprovalResponse = {
+      approval_id: "a1",
+      token: "tok-1",
+      digest: "digest1",
+      expires_at: "2026-01-01T00:30:00",
+    };
+    (approveImportGroups as Mock).mockResolvedValue(approval);
+    (executeImport as Mock).mockResolvedValue({
+      job: job({ state: "completed" }),
+      outcomes: [],
+    });
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Imágenes contextuales/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /Aprobar grupos seleccionados/ }),
+    );
+    await waitFor(() => {
+      expect(approveImportGroups).toHaveBeenCalledWith(
+        "mundo",
+        expect.any(String),
+        ["imagenes"],
+        ["vision:abc"],
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Importar" }));
+    await waitFor(() => {
+      expect(executeImport).toHaveBeenCalledWith(
+        "mundo",
+        expect.any(String),
+        "digest1",
+        "tok-1",
+        ["vision:abc"],
+      );
+    });
+  });
+
+  it("rejecting a vision suggestion keeps it out of the approval commitment (PR4)", async () => {
+    const enriched: ImportCandidate = candidate({
+      enrichment_json: [
+        visionSuggestion(),
+        classificationSuggestion({ id: "cls-1" }),
+      ],
+      enrichment_status: "ok",
+    });
+    mockAnalyzeWithEnrichment([enriched]);
+    (postReviewDecisions as Mock).mockResolvedValue({ accepted: 1 });
+
+    renderImporter();
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    fireEvent.click(screen.getByTestId("suggestion-reject-vision:abc"));
+
+    await waitFor(() => {
+      expect(postReviewDecisions).toHaveBeenCalledWith(
+        "mundo",
+        expect.any(String),
+        [{ suggestion_id: "vision:abc", decision: "reject" }],
+      );
+    });
+    expect(screen.getByTestId("suggestion-vision:abc")).toHaveAttribute(
+      "data-suggestion-state",
+      "rejected",
+    );
+    // The text sibling stays pending — independent decisions.
+    expect(screen.getByTestId("suggestion-cls-1")).toHaveAttribute(
+      "data-suggestion-state",
+      "pending",
+    );
+    // No approved suggestions → the summary stays hidden and no ID binds.
+    expect(
+      screen.queryByTestId("approved-suggestions-summary"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows the Hermes-unavailable banner when status is 'error' (fail-open)", async () => {
     mockAnalyzeWithEnrichment([candidate()], "error");
     renderImporter();
@@ -879,5 +1158,62 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     expect(
       alertTexts.some((t) => t.includes("suggestion_digest_mismatch")),
     ).toBe(true);
+  });
+
+  it("shows 'Continuar análisis' for an intaking job and skips create+stream", async () => {
+    // Clear accumulated calls from prior tests so the assertion below is
+    // scoped to THIS test's interactions only.
+    vi.mocked(createImportJob).mockClear();
+    vi.mocked(streamImportFile).mockClear();
+    vi.mocked(analyzeImportJob).mockClear();
+    vi.mocked(getImportReview).mockClear();
+
+    // Simulate sessionStorage recovery of a job stuck in "intaking" state.
+    window.sessionStorage.setItem(
+      "demiurgos-importer-job:mundo",
+      JSON.stringify({ jobId: "j-intaking", sourceKind: "loose" }),
+    );
+    (getImportJob as Mock).mockResolvedValue({
+      job: job({ job_id: "j-intaking", state: "intaking" }),
+    });
+    // Wire analyze → review so the flow completes after the button click.
+    (analyzeImportJob as Mock).mockResolvedValue({
+      job: job({ job_id: "j-intaking", state: "review" }),
+      candidates: 1,
+    });
+    (getImportReview as Mock).mockResolvedValue({
+      job: job({ job_id: "j-intaking", state: "review" }),
+      digest: "digest-intaking",
+      candidates: [candidate({ job_id: "j-intaking" })],
+    });
+
+    renderImporter();
+
+    // Wait for recovery to finish and the select step to render.
+    await screen.findByRole("heading", { name: "Importar contenido" });
+
+    // The resume notice explains the file is already uploaded.
+    expect(
+      screen.getByText(/El archivo ya está subido en el servidor/),
+    ).toBeInTheDocument();
+
+    // The "Continuar análisis" button is present and enabled (no files
+    // selected locally — sources.length === 0).
+    const resumeBtn = screen.getByTestId("resume-analyze-btn");
+    expect(resumeBtn).toBeEnabled();
+    expect(resumeBtn).toHaveTextContent("Continuar análisis");
+
+    // Click it — the flow should skip createImportJob and streamImportFile
+    // and go straight to analyzeImportJob.
+    fireEvent.click(resumeBtn);
+
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    // createImportJob and streamImportFile were NEVER called — the file
+    // was already on the server spool.
+    expect(createImportJob).not.toHaveBeenCalled();
+    expect(streamImportFile).not.toHaveBeenCalled();
+    // analyzeImportJob was called with the recovered job ID.
+    expect(analyzeImportJob).toHaveBeenCalledWith("mundo", "j-intaking");
   });
 });
