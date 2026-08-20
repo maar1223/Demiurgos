@@ -19,10 +19,11 @@ and a diagnostic — never a guessed target.
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from import_intake import UnsafePathError, reject_unsafe_path
 from import_models import (
@@ -30,6 +31,11 @@ from import_models import (
     Provenance,
     TargetResolution,
 )
+
+if TYPE_CHECKING:
+    from sync_lore.schemas import ImageEntry
+
+logger = logging.getLogger(__name__)
 
 _RE_HEADING = re.compile(r"^(#{1,3})\s+(.+)$")
 _RE_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
@@ -55,10 +61,32 @@ class AnalyzedFile:
     source_hash: str
     size_bytes: int
     chunks: list[AnalyzedChunk] = field(default_factory=list)
+    # PR1 (sync-lore-in-importer): extracted media persisted to the job
+    # spool, attached for downstream review/execution (advisory metadata —
+    # never changes candidate identity or digest).
+    media: list[ExtractedMedia] = field(default_factory=list)
+    # PR1: fail-open conversion/extraction diagnostic tokens
+    # (e.g. "conversion_unavailable", "conversion_failed",
+    # "media_extraction_failed"). Empty when no conversion was attempted.
+    diagnostics: list[str] = field(default_factory=list)
 
     def content_preview(self) -> str:
         """Flatten ordered chunks into a candidate body (source order kept)."""
         return "\n\n".join(c.content for c in self.chunks)
+
+
+@dataclass
+class ExtractedMedia:
+    """An extracted image persisted to the job spool (PR1 media bundle).
+
+    Carries the sync_lore ``ImageEntry`` (original bytes, filename, page,
+    chunk reference, source context) plus the spool-relative path where the
+    bytes were stored, so downstream execution can feed ``plan_placements``
+    the original bytes without re-opening the source archive.
+    """
+
+    image: ImageEntry
+    spool_relative_path: str
 
 
 @dataclass
@@ -175,22 +203,194 @@ def analyze_markdown(text: str, source_path: str, source_hash: str,
 def analyze_source(
     files: list[dict],
     read_file: Callable[[str], str],
+    file_path: Callable[[str], Path] | None = None,
+    spool_root: Path | None = None,
 ) -> AnalysisReport:
     """Analyze all intake files in source order, preserving every anchor.
 
     ``files``: list of ``{"relative": str, "sha256": str, "size": int}`` in
     source order. ``read_file`` returns text for a relative path. The service
     maps each analyzed file to a candidate; analysis stays pure.
+
+    PR1 (sync-lore-in-importer): when ``file_path`` is provided — a resolver
+    from a relative path to the on-disk file — ``.docx``/``.pdf`` sources are
+    dispatched through ``safe_convert_to_markdown`` (never letting
+    ``SystemExit`` kill the server) and their extracted media is persisted to
+    the job spool with metadata. Converted candidates use the ``.md``
+    identity path so ``resolve_target`` maps them to the correct OKF section.
+    Markdown sources keep their identity and chunk flow unchanged; media
+    extraction for disk image references is additive metadata only.
+    ``spool_root`` is the job spool root under which media is stored as
+    ``media/<source-stem>/<filename>``; it defaults to each source file's
+    parent directory when omitted. When ``file_path`` is omitted (legacy
+    callers), binary sources yield an empty candidate exactly as before and
+    the markdown flow is untouched.
     """
     report = AnalysisReport()
     for entry in files:
         relative = entry["relative"]
         digest = entry.get("sha256") or ""
         size = entry.get("size") or 0
-        text = read_file(relative) or ""
-        analyzed = analyze_markdown(text, relative, digest, size)
-        report.files.append(analyzed)
+        suffix = Path(relative).suffix.lower()
+        if suffix in _CONVERTIBLE_SUFFIXES and file_path is not None:
+            source = Path(file_path(relative))
+            media_root = spool_root if spool_root is not None else source.parent
+            text, images, diagnostics = _convert_source(source)
+            if text is None:
+                text = ""
+            analyzed = analyze_markdown(
+                text, normalized_identity_path(relative), digest, size)
+            analyzed.media = store_media_in_spool(images, relative, media_root)
+            analyzed.diagnostics = diagnostics
+            report.files.append(analyzed)
+        elif suffix == ".md" and file_path is not None:
+            source = Path(file_path(relative))
+            media_root = spool_root if spool_root is not None else source.parent
+            text = read_file(relative) or ""
+            analyzed = analyze_markdown(text, relative, digest, size)
+            try:
+                images = extract_images_from_file(source)
+            except Exception as exc:  # noqa: BLE001 — media is optional, never fatal
+                analyzed.diagnostics.append("media_extraction_failed")
+                logger.warning(
+                    "Image extraction failed for %s: %s", source, exc)
+                images = []
+            analyzed.media = store_media_in_spool(images, relative, media_root)
+            report.files.append(analyzed)
+        else:
+            text = read_file(relative) or ""
+            analyzed = analyze_markdown(text, relative, digest, size)
+            report.files.append(analyzed)
     return report
+
+
+# ---------------------------------------------------------------------------
+# PR1 — safe format conversion + media extraction (sync-lore-in-importer)
+# ---------------------------------------------------------------------------
+
+_CONVERTIBLE_SUFFIXES = frozenset({".docx", ".pdf"})
+_EXTRACTABLE_SUFFIXES = frozenset({".md", ".docx", ".pdf"})
+
+
+def normalized_identity_path(relative: str) -> str:
+    """Map a source path to its markdown identity path (PR1 identity rule).
+
+    Converted ``.docx``/``.pdf`` candidates must resolve as markdown so
+    ``resolve_target`` maps them to the correct OKF section; ``.md`` and any
+    other source keep their path unchanged.
+    """
+    path = Path(relative)
+    if path.suffix.lower() in _CONVERTIBLE_SUFFIXES:
+        return str(path.with_suffix(".md")).replace("\\", "/")
+    return relative
+
+
+def safe_convert_to_markdown(file_path: Path) -> tuple[str | None, list[ImageEntry]]:
+    """Convert ``.docx``/``.pdf`` to markdown, never letting the server die.
+
+    ``sync_lore.convert_to_markdown`` raises ``SystemExit(1)`` when markitdown
+    is not installed — that would terminate the import server. This wrapper
+    catches it (plus any conversion error) and returns ``(None, [])`` so the
+    caller records a diagnostic and produces an empty, reviewable candidate
+    instead of failing the job. Images are extracted from the original file
+    alongside the conversion.
+    """
+    text, images, _ = _convert_source(file_path)
+    return text, images
+
+
+def _convert_source(file_path: Path) -> tuple[str | None, list[ImageEntry], list[str]]:
+    """Convert + extract with granular diagnostics (internal seam).
+
+    Returns ``(markdown, images, diagnostics)``. Conversion and media are
+    optional and fail-open: any failure yields an empty result plus a
+    diagnostic token, never an exception or process exit.
+    """
+    diagnostics: list[str] = []
+    try:
+        from sync_lore.utils.converter import convert_to_markdown
+        result = convert_to_markdown(file_path)
+        if result is None:
+            diagnostics.append("conversion_failed")
+            logger.warning(
+                "Conversion returned None for %s (markitdown failed)",
+                file_path)
+            return None, [], diagnostics
+        try:
+            images = extract_images_from_file(file_path)
+        except Exception as exc:  # noqa: BLE001 — media is optional, never fatal
+            diagnostics.append("media_extraction_failed")
+            logger.warning(
+                "Image extraction failed for %s: %s", file_path, exc)
+            images = []
+        return result, images, diagnostics
+    except SystemExit:
+        logger.warning("Conversion unavailable: markitdown not installed")
+        diagnostics.append("conversion_unavailable")
+        return None, [], diagnostics
+    except Exception as exc:  # noqa: BLE001 — fail-open never breaks analysis
+        logger.warning("Conversion failed for %s: %s", file_path, exc)
+        diagnostics.append("conversion_failed")
+        return None, [], diagnostics
+
+
+def extract_images_from_file(file_path: Path) -> list[ImageEntry]:
+    """Extract images from ``.md``/``.docx``/``.pdf`` reusing sync_lore.
+
+    Markdown sources yield images referenced on disk; ``.docx``/``.pdf``
+    yield embedded blobs. Any failure is logged and returns no images so
+    analysis never blocks on media.
+    """
+    suffix = file_path.suffix.lower()
+    if suffix not in _EXTRACTABLE_SUFFIXES:
+        return []
+    try:
+        if suffix == ".md":
+            from sync_lore.image_indexer import extract_images_from_md
+            return extract_images_from_md(
+                file_path.read_text(encoding="utf-8"),
+                file_path.parent, chunk_ref="")
+        elif suffix == ".docx":
+            from sync_lore.image_indexer import extract_images_from_docx
+            return extract_images_from_docx(file_path)
+        elif suffix == ".pdf":
+            from sync_lore.image_indexer import extract_images_from_pdf
+            return extract_images_from_pdf(file_path)
+    except Exception as exc:  # noqa: BLE001 — media is optional, never fatal
+        logger.warning("Image extraction failed for %s: %s", file_path, exc)
+    return []
+
+
+def store_media_in_spool(images: list[ImageEntry], source_rel: str,
+                         spool_dir: Path) -> list[ExtractedMedia]:
+    """Persist extracted image bytes under the job spool with metadata.
+
+    Bytes land in ``<spool_dir>/media/<source-stem>/<filename>`` so review
+    and execution can feed the original bytes to ``plan_placements`` without
+    re-opening the source archive. Collisions are avoided by suffixing a
+    counter when the target already exists.
+    """
+    stored: list[ExtractedMedia] = []
+    base = spool_dir / "media" / Path(source_rel).stem
+    base.mkdir(parents=True, exist_ok=True)
+    for image in images:
+        name = image.filename or f"{image.id}.img"
+        target = base / name
+        counter = 1
+        while target.exists():
+            target = base / f"{Path(name).stem}-{counter}{Path(name).suffix}"
+            counter += 1
+        try:
+            target.write_bytes(image.image_bytes)
+        except OSError as exc:
+            logger.warning("Failed to store media %s: %s", target, exc)
+            continue
+        stored.append(ExtractedMedia(
+            image=image,
+            spool_relative_path=str(
+                target.relative_to(spool_dir)).replace("\\", "/"),
+        ))
+    return stored
 
 
 # ---------------------------------------------------------------------------

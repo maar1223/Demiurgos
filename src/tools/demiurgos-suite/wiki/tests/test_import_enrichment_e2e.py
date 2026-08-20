@@ -462,3 +462,100 @@ class TestEnrichmentEndToEnd:
         # valid suggestion was produced — vocabulary filtering is NOT a
         # gateway failure.
         assert review["enrichment_status"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# T12.4 — Enrichment cache: re-importing the same file reuses prior
+# enrichment instead of re-running Hermes (token savings).
+# ---------------------------------------------------------------------------
+
+
+class TestEnrichmentCache:
+    def test_second_import_reuses_cached_enrichment(self, tmp_path):
+        """When the same file (same source_hash + identity) is imported twice
+        with enrichment enabled, the second analyze MUST reuse the cached
+        enrichment from the first import. The enricher callable must NOT be
+        invoked on the second run — this proves token savings.
+        """
+        call_count = {"n": 0}
+
+        def counting_enricher(candidates):
+            call_count["n"] += 1
+            return _classifying_enricher()(candidates)
+
+        client, store, spool, mundos = _build_app(
+            tmp_path, enricher=counting_enricher)
+
+        # First import: enricher runs once.
+        job1 = _create_job(client, "lore/Aldea del Viento.md")
+        resp1 = client.post(
+            f"/api/world1/imports/{job1}/analyze",
+            json={"enrich": True},
+        )
+        assert resp1.status_code == 200, resp1.text
+        assert resp1.json().get("enriched_from_cache", 0) == 0
+        assert call_count["n"] == 1, "enricher must run on first import"
+
+        # Second import of the SAME file: enricher must NOT run again.
+        job2 = _create_job(client, "lore/Aldea del Viento.md")
+        resp2 = client.post(
+            f"/api/world1/imports/{job2}/analyze",
+            json={"enrich": True},
+        )
+        assert resp2.status_code == 200, resp2.text
+        # The cache hit counter must be 1 (one candidate reused).
+        assert resp2.json().get("enriched_from_cache", 0) == 1
+        # The enricher was NOT called a second time.
+        assert call_count["n"] == 1, (
+            "enricher must NOT run on second import — cache hit"
+        )
+
+        # The second job's review must still carry the enrichment from the
+        # first import (same suggestions visible to the reviewer).
+        review2 = client.get(
+            f"/api/world1/imports/{job2}/review",
+        ).json()
+        candidate_id2 = review2["candidates"][0]["candidate_id"]
+        suggestions2 = review2["suggestions"][candidate_id2]
+        assert len(suggestions2) > 0, (
+            "cached enrichment must surface in second job's review"
+        )
+        # The batch status reflects the cached enrichment.
+        assert review2["enrichment_status"] == "ok"
+
+    def test_cache_only_applies_when_enrichment_was_ok(self, tmp_path):
+        """If the first import had enrichment disabled (or failed), the second
+        import with enrich=true MUST run the enricher — there is nothing to
+        cache. The cache only applies when the prior import produced a
+        non-disabled enrichment status.
+        """
+        call_count = {"n": 0}
+
+        def counting_enricher(candidates):
+            call_count["n"] += 1
+            return _classifying_enricher()(candidates)
+
+        client, store, spool, mundos = _build_app(
+            tmp_path, enricher=counting_enricher)
+
+        # First import WITHOUT enrichment.
+        job1 = _create_job(client, "lore/Aldea del Viento.md")
+        resp1 = client.post(
+            f"/api/world1/imports/{job1}/analyze",
+            json={},  # enrich defaults to False
+        )
+        assert resp1.status_code == 200, resp1.text
+        assert call_count["n"] == 0, "no enrichment on first import"
+
+        # Second import WITH enrichment: enricher MUST run (no cache).
+        job2 = _create_job(client, "lore/Aldea del Viento.md")
+        resp2 = client.post(
+            f"/api/world1/imports/{job2}/analyze",
+            json={"enrich": True},
+        )
+        assert resp2.status_code == 200, resp2.text
+        assert call_count["n"] == 1, (
+            "enricher must run when prior import had no enrichment"
+        )
+        # No cache hit because the first import was disabled.
+        assert resp2.json().get("enriched_from_cache", 0) == 0

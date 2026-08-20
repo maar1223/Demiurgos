@@ -360,6 +360,28 @@ def create_import_router(
                              "failed:provider_error")
                 return {"job": _store.get_job(job_id).model_dump_redacted()}
 
+            # Conversion-failure gate (PR: no silent empty previews). A
+            # convertible source (.docx/.pdf) whose markdown conversion failed
+            # yields an empty content_preview. Never let that silently reach
+            # REVIEW as an empty candidate (which surfaces as a confusing
+            # "missing frontmatter 'type'" OKF error) — fail the job with a
+            # clear message and record a diagnostic event so the user sees a
+            # real, actionable error.
+            failed_conversions = [
+                c for c in candidates
+                if not c.content_preview
+                and any(d in ("conversion_failed", "conversion_unavailable")
+                        for d in c.diagnostics)
+            ]
+            if failed_conversions:
+                _mark_failed(
+                    job_id, job.revision,
+                    "Conversion failed: empty content preview for a "
+                    ".docx/.pdf source (the file may be too large or corrupt)",
+                    "failed:conversion",
+                )
+                return {"job": _store.get_job(job_id).model_dump_redacted()}
+
             # Slice 2 — optional enrichment: opt-in only, after deterministic
             # candidate construction and BEFORE persistence, so the persisted
             # review row carries the suggestions. The enricher is fail-open: any
@@ -802,6 +824,7 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
             provenance=provenance,
             content_preview=analyzed.content_preview(),
             size_bytes=size,
+            diagnostics=analyzed.diagnostics,
         )
         for chunk in analyzed.chunks:
             candidate.images.extend(chunk.images)

@@ -7,8 +7,11 @@ Markdown intermediate format. Graceful fallback if not installed.
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def convert_to_markdown(file_path: Path) -> str | None:
@@ -47,10 +50,8 @@ def convert_to_markdown(file_path: Path) -> str | None:
             result = md.convert(str(file_path))
             return result.text_content
         except Exception as exc:
-            print(
-                f"  \u26a0 Failed to convert {file_path.name}: {exc}",
-                file=sys.stderr,
-            )
+            logger.warning(
+                "Failed to convert %s: %s", file_path.name, exc, exc_info=True)
             return None
 
     print(

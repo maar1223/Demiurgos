@@ -194,6 +194,12 @@ class Candidate(BaseModel):
     source_hash: str
     provenance: Provenance
     content_preview: str = ""
+    # Fail-open conversion/extraction diagnostic tokens (e.g.
+    # "conversion_unavailable", "conversion_failed", "media_extraction_failed").
+    # In-memory only (not persisted to the candidates table) — used to gate
+    # the job out of REVIEW when a convertible source failed to convert.
+    # Empty when no conversion was attempted.
+    diagnostics: list[str] = Field(default_factory=list)
     status: str = "pending"     # pending|eligible|conflict|rejected
     okf_issues: list[dict[str, Any]] = Field(default_factory=list)
     size_bytes: int = 0
