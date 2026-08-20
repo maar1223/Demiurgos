@@ -13,12 +13,16 @@ import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
 import { getMediaUrl } from "@/api/wiki";
 import { ApiError } from "@/api/types";
 import type {
+  ClassificationSuggestion,
+  EnrichmentStatus,
   ImportApprovalResponse,
   ImportCandidate,
   ImportExecutionOutcome,
   ImportImagePlacement,
   ImportJob,
+  ImportSuggestion,
   ImportSourceKind,
+  RelationshipSuggestion,
 } from "@/api/types";
 import {
   analyzeImportJob,
@@ -32,6 +36,7 @@ import {
   IMPORT_MAX_JOB_BYTES,
   IMPORT_SYSTEM_DIRS,
   listImportJobs,
+  postReviewDecisions,
   resumeImportJob,
   rollbackImportJob,
   streamImportFile,
@@ -202,6 +207,26 @@ export default function WorldImporter() {
   const [error, setError] = useState<string | null>(null);
   const [resumeNotice, setResumeNotice] = useState<string | null>(null);
   const [restoring, setRestoring] = useState(true);
+
+  // Slice 2 — optional Hermes advisory enrichment. The toggle lives on the
+  // select step; analyze carries the opt-in flag. Suggestions are
+  // NON-AUTHORITATIVE: the reviewer toggles each one via the decisions
+  // endpoint; approved IDs are bound to the approval token.
+  const [enrichEnabled, setEnrichEnabled] = useState(false);
+  const [enrichmentStatus, setEnrichmentStatus] =
+    useState<EnrichmentStatus>("disabled");
+  /** Per-suggestion review state, indexed by suggestion id. */
+  const [suggestionDecisions, setSuggestionDecisions] = useState<
+    Map<string, "approved" | "rejected">
+  >(new Map());
+  /** Set of suggestion IDs the user has actually approved (used by execute). */
+  const [approvedSuggestionIds, setApprovedSuggestionIds] = useState<string[]>(
+    [],
+  );
+  /** True while a decisions POST is in flight (per-suggestion button disables). */
+  const [decidingSuggestionId, setDecidingSuggestionId] = useState<string | null>(
+    null,
+  );
 
   // --- history (slice 2, IM-2.5) ----------------------------------------
   // Server-owned, principal-scoped history surfaced via GET /api/{m}/imports.
@@ -396,6 +421,10 @@ export default function WorldImporter() {
     setStreamProgress(null);
     setAnalyzing(false);
     setImporting(false);
+    setEnrichmentStatus("disabled");
+    setSuggestionDecisions(new Map());
+    setApprovedSuggestionIds([]);
+    setDecidingSuggestionId(null);
     clearPersistedJob();
   }, [clearPersistedJob]);
 
@@ -462,6 +491,12 @@ export default function WorldImporter() {
     setPhaseMessage("Preparando análisis…");
     setStep("analyzing");
     setStreamProgress(null);
+    // Slice 2 — reset advisory state for a fresh analyze. Suggestions live
+    // on the candidate row, so a re-analyze supersedes the prior list.
+    setEnrichmentStatus("disabled");
+    setSuggestionDecisions(new Map());
+    setApprovedSuggestionIds([]);
+    setDecidingSuggestionId(null);
     try {
       const { job: created } = await createImportJob(mundo, {
         source_kind: sourceKind,
@@ -483,9 +518,24 @@ export default function WorldImporter() {
         });
       }
       setStreamProgress(null);
-      setPhaseMessage("Analizando contenido (solo lectura)…");
-      const analysis = await analyzeImportJob(mundo, created.job_id);
+      setPhaseMessage(
+        enrichEnabled
+          ? "Analizando contenido y consultando asistente (solo lectura)…"
+          : "Analizando contenido (solo lectura)…",
+      );
+      // Slice 2 — opt-in is a single boolean; absent body preserves the
+      // legacy deterministic analyze contract (no Hermes call). The server
+      // also treats the absent body as the default ``enrich: false``.
+      const analysis = enrichEnabled
+        ? await analyzeImportJob(mundo, created.job_id, { enrich: true })
+        : await analyzeImportJob(mundo, created.job_id);
       setJob(analysis.job);
+      // Slice 2 — server-attributed enrichment status is batch-level; the
+      // fail-open contract guarantees non-blocking even when the gateway
+      // is unavailable (status === "error").
+      if (analysis.enrichment_status) {
+        setEnrichmentStatus(analysis.enrichment_status);
+      }
       if (analysis.job.state === "failed") {
         setStep("result");
         setError(
@@ -496,6 +546,9 @@ export default function WorldImporter() {
       const review = await getImportReview(mundo, created.job_id);
       setCandidates(review.candidates);
       setJob(review.job);
+      // Review surfaces a server-rolled-up status; prefer it if the analyze
+      // response was missing it (legacy callers or race with the lease).
+      setEnrichmentStatus(review.enrichment_status ?? analysis.enrichment_status ?? "disabled");
       setStep("review");
     } catch (err) {
       setError(importErrorMessage(err));
@@ -626,7 +679,16 @@ export default function WorldImporter() {
     if (!mundo || !jobId || selectedGroupIds.length === 0) return;
     setError(null);
     try {
-      const granted = await approveImportGroups(mundo, jobId, selectedGroupIds);
+      // Slice 2 — bind the approval to the suggestion IDs the reviewer
+      // actually approved (defaults to empty = no enrichment). The server
+      // re-validates each ID's review_state and digest before issuing the
+      // single-use token; stale IDs surface as a 409 here.
+      const granted = await approveImportGroups(
+        mundo,
+        jobId,
+        selectedGroupIds,
+        approvedSuggestionIds,
+      );
       setApproval(granted);
     } catch (err) {
       setError(importErrorMessage(err));
@@ -641,6 +703,78 @@ export default function WorldImporter() {
     }
   };
 
+  /**
+   * Slice 2 — toggle one suggestion's review_state via the decisions
+   * endpoint. Failures revert the local state so the UI never lies about
+   * what the server accepted; we also re-read the review so the candidate
+   * row reflects server-truth on the next render.
+   */
+  const handleSuggestionDecision = async (
+    candidateId: string,
+    suggestionId: string,
+    decision: "approve" | "reject",
+  ) => {
+    if (!mundo || !jobId) return;
+    const priorDecision = suggestionDecisions.get(suggestionId) ?? null;
+    setError(null);
+    setDecidingSuggestionId(suggestionId);
+    // Optimistic local state: reflect the user's choice immediately so the
+    // UI stays responsive. We re-read the row on failure to reconcile.
+    setSuggestionDecisions((prev) => {
+      const next = new Map(prev);
+      if (decision === "reject") {
+        next.set(suggestionId, "rejected");
+      } else {
+        next.set(suggestionId, "approved");
+      }
+      return next;
+    });
+    setApprovedSuggestionIds((prev) => {
+      const without = prev.filter((id) => id !== suggestionId);
+      return decision === "approve" ? [...without, suggestionId] : without;
+    });
+    try {
+      await postReviewDecisions(mundo, jobId, [
+        { suggestion_id: suggestionId, decision },
+      ]);
+      // Refresh the row so the server's review_state is reflected (and any
+      // sibling suggestion decisions stay in sync).
+      try {
+        const review = await getImportReview(mundo, jobId);
+        setCandidates(review.candidates);
+        setEnrichmentStatus(review.enrichment_status ?? enrichmentStatus);
+      } catch {
+        // network outage — keep the optimistic state, the next reload
+        // will reconcile from the server
+      }
+    } catch (err) {
+      // Revert optimistic state so the UI never claims a server failure
+      // succeeded.
+      setSuggestionDecisions((prev) => {
+        const next = new Map(prev);
+        if (priorDecision === null) {
+          next.delete(suggestionId);
+        } else {
+          next.set(suggestionId, priorDecision);
+        }
+        return next;
+      });
+      setApprovedSuggestionIds((prev) => {
+        if (decision !== "approve") return prev;
+        // Remove the freshly-added ID; prior rejections don't matter here
+        // because we only added an "approved" entry optimistically.
+        return prev.filter((id) => id !== suggestionId);
+      });
+      setError(importErrorMessage(err));
+    } finally {
+      setDecidingSuggestionId(null);
+    }
+    // candidateId is reserved for future row-scoped updates (e.g., bulk
+    // approve-all-on-this-candidate); the current single-suggestion path
+    // only needs suggestionId.
+    void candidateId;
+  };
+
   const handleExecute = async () => {
     if (!mundo || !jobId || !approval) return;
     setImporting(true);
@@ -653,6 +787,7 @@ export default function WorldImporter() {
         jobId,
         approval.digest,
         approval.token,
+        approvedSuggestionIds,
       );
       setJob(result.job);
       setOutcomes(result.outcomes);
@@ -1024,6 +1159,37 @@ export default function WorldImporter() {
               </span>
             )}
           </div>
+
+          {/* Slice 2 — optional Hermes advisory enrichment opt-in. The
+              reviewer stays in control: suggestions never mutate the
+              deterministic diagnosis and only materialize on a gated
+              execute when the author approves them. */}
+          <label
+            className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-filio bg-cripta p-3 focus-within:ring-2 focus-within:ring-llamita/50"
+            data-testid="enrich-toggle"
+          >
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 accent-llamita"
+              checked={enrichEnabled}
+              onChange={(e) => setEnrichEnabled(e.target.checked)}
+              aria-describedby="enrich-toggle-desc"
+            />
+            <span>
+              <span className="block text-small font-medium text-pergamino">
+                Pedirle al asistente sugerencias de clasificación y relaciones
+              </span>
+              <span
+                id="enrich-toggle-desc"
+                className="block text-xs text-tinta-desvaida"
+              >
+                Opcional. Las sugerencias son orientativas y requieren tu
+                aprobación individual antes de aplicarse. Si el asistente no
+                responde, el análisis sigue siendo válido y se omite el
+                enriquecimiento.
+              </span>
+            </span>
+          </label>
         </div>
       )}
 
@@ -1079,6 +1245,12 @@ export default function WorldImporter() {
             El análisis es de solo lectura. Elegí qué aprobar y luego confirmá
             la importación: escribir es una acción explícita y separada.
           </p>
+
+          {/* Slice 2 — enrichment status banner. Mirrors the server-attributed
+              state so reviewers never see a different answer than the audit
+              log. "disabled" hides the banner entirely to keep the legacy
+              copy clean. */}
+          <EnrichmentStatusBanner status={enrichmentStatus} />
 
           {/* Impact summary */}
           <div className="mt-4 grid grid-cols-1 gap-3 tablet:grid-cols-3">
@@ -1178,6 +1350,9 @@ export default function WorldImporter() {
                     key={candidate.candidate_id}
                     candidate={candidate}
                     mundo={mundo}
+                    suggestionDecisions={suggestionDecisions}
+                    onSuggestionDecision={handleSuggestionDecision}
+                    decidingSuggestionId={decidingSuggestionId}
                   />
                 ))}
               </div>
@@ -1190,6 +1365,20 @@ export default function WorldImporter() {
                       La aprobación se liga al diagnóstico completo revisado.
                       Cualquier cambio en las fuentes la invalida.
                     </p>
+                    {approvedSuggestionIds.length > 0 && (
+                      <p
+                        className="mt-2 text-small text-pergamino"
+                        data-testid="approved-suggestions-summary"
+                      >
+                        <Icon name="lightbulb" size={14} />
+                        <span className="ml-2">
+                          {approvedSuggestionIds.length}{" "}
+                          sugerencia{approvedSuggestionIds.length === 1 ? "" : "s"}{" "}
+                          aprobada{approvedSuggestionIds.length === 1 ? "" : "s"} se
+                          aplicarán al importar.
+                        </span>
+                      </p>
+                    )}
                     <div className="mt-3">
                       <Button
                         variant="secondary"
@@ -1301,14 +1490,25 @@ function SummaryTile({ label, value }: { label: string; value: string }) {
 function CandidateCard({
   candidate,
   mundo,
+  suggestionDecisions,
+  onSuggestionDecision,
+  decidingSuggestionId,
 }: {
   candidate: ImportCandidate;
   mundo: string;
+  suggestionDecisions: Map<string, "approved" | "rejected">;
+  onSuggestionDecision: (
+    candidateId: string,
+    suggestionId: string,
+    decision: "approve" | "reject",
+  ) => void;
+  decidingSuggestionId: string | null;
 }) {
   const ambiguousImages = candidate.images.filter(
     (i) => i.placement_status === "ambiguous",
   );
   const hasIssues = candidate.okf_issues.length > 0;
+  const suggestions = candidate.enrichment_json ?? [];
 
   return (
     <details className="group rounded-lg border border-filio bg-madero">
@@ -1326,6 +1526,9 @@ function CandidateCard({
           )}
           {candidate.images.length > 0 && candidate.images.length - ambiguousImages.length > 0 && (
             <Badge variant="info">{candidate.images.length} img</Badge>
+          )}
+          {suggestions.length > 0 && (
+            <Badge variant="info">{suggestions.length} sugerencia{suggestions.length === 1 ? "" : "s"}</Badge>
           )}
           <Icon name="chevron-down" size={14} className="transition-transform group-open:rotate-180" />
         </span>
@@ -1401,8 +1604,210 @@ function CandidateCard({
             </ul>
           </div>
         )}
+
+        {/* Slice 2 — advisory enrichment suggestions. Each card is an
+            independent decision; visual distinction (border + badge) keeps
+            suggested fields separate from the deterministic diagnosis. */}
+        {suggestions.length > 0 && (
+          <div className="mt-3" data-testid={`suggestions-${candidate.candidate_id}`}>
+            <p className="text-xs text-tinta-desvaida">
+              Sugerencias del asistente — son orientativas. Aprobá o rechazá
+              cada una antes de importar.
+            </p>
+            <ul className="mt-2 flex flex-col gap-2">
+              {suggestions.map((suggestion) => (
+                <SuggestionCard
+                  key={suggestion.id}
+                  candidateId={candidate.candidate_id}
+                  suggestion={suggestion}
+                  decision={
+                    suggestionDecisions.get(suggestion.id) ?? null
+                  }
+                  busy={decidingSuggestionId === suggestion.id}
+                  onDecision={onSuggestionDecision}
+                />
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </details>
+  );
+}
+
+/** Slice 2 — visually distinct enrichment status banner. */
+function EnrichmentStatusBanner({ status }: { status: EnrichmentStatus }) {
+  if (status === "disabled") return null;
+  if (status === "ok") {
+    return (
+      <div
+        className="mt-4 rounded-lg border border-musgo/40 bg-musgo/10 px-4 py-3 text-small text-pergamino"
+        role="status"
+        aria-live="polite"
+        data-testid="enrichment-banner"
+        data-enrichment-status="ok"
+      >
+        <Icon name="lightbulb" size={16} />
+        <span className="ml-2 font-medium">
+          Asistente: sugerencias listas para revisar.
+        </span>{" "}
+        Cada sugerencia requiere tu aprobación antes de aplicarse.
+      </div>
+    );
+  }
+  if (status === "no_suggestions") {
+    return (
+      <div
+        className="mt-4 rounded-lg border border-filio bg-cripta px-4 py-3 text-small text-tinta-desvaida"
+        role="status"
+        aria-live="polite"
+        data-testid="enrichment-banner"
+        data-enrichment-status="no_suggestions"
+      >
+        <Icon name="lightbulb" size={16} />
+        <span className="ml-2">
+          El asistente respondió pero no produjo sugerencias aplicables.
+          La importación sigue siendo válida sin cambios.
+        </span>
+      </div>
+    );
+  }
+  // error: gateway unavailable / timeout / malformed. Fail-open: analyze
+  // already succeeded; the banner exists so reviewers know enrichment was
+  // attempted but produced nothing.
+  return (
+    <div
+      className="mt-4 rounded-lg border border-llamita/40 bg-llamita/5 px-4 py-3 text-small text-pergamino"
+      role="status"
+      aria-live="polite"
+      data-testid="enrichment-banner"
+      data-enrichment-status="error"
+    >
+      <Icon name="error" size={16} />
+      <span className="ml-2 font-medium">
+        El asistente no respondió.
+      </span>{" "}
+      El análisis sigue siendo válido: se omitió el enriquecimiento para no
+      bloquear la importación.
+    </div>
+  );
+}
+
+/**
+ * Slice 2 — one advisory suggestion card. Visual distinction:
+ * ``border-musgo/40 bg-musgo/5`` for classification, ``border-filio bg-cripta``
+ * for relationship. Approved/rejected states are persisted via the
+ * decisions endpoint and reflected here from server truth.
+ */
+function SuggestionCard({
+  candidateId,
+  suggestion,
+  decision,
+  busy,
+  onDecision,
+}: {
+  candidateId: string;
+  suggestion: ImportSuggestion;
+  decision: "approved" | "rejected" | null;
+  busy: boolean;
+  onDecision: (
+    candidateId: string,
+    suggestionId: string,
+    decision: "approve" | "reject",
+  ) => void;
+}) {
+  const isClassification = suggestion.__type__ === "classification";
+  const cls = isClassification ? (suggestion as ClassificationSuggestion) : null;
+  const rel = !isClassification ? (suggestion as RelationshipSuggestion) : null;
+  const confidencePct = Math.round(
+    (isClassification ? cls!.confidence : rel!.confidence) * 100,
+  );
+  const providerLabel =
+    (isClassification ? cls!.provenance : rel!.provenance)?.provider ??
+    "asistente";
+  const modelLabel =
+    (isClassification ? cls!.provenance : rel!.provenance)?.model ?? "";
+
+  return (
+    <li
+      className={cn(
+        "flex flex-col gap-2 rounded-md border p-3",
+        isClassification
+          ? "border-musgo/40 bg-musgo/5"
+          : "border-filio bg-cripta",
+        decision === "approved" && "ring-1 ring-musgo/40",
+        decision === "rejected" && "opacity-70",
+      )}
+      data-testid={`suggestion-${suggestion.id}`}
+      data-suggestion-state={decision ?? "pending"}
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant={isClassification ? "info" : "default"}>
+            {isClassification ? "clasificación" : "relación"}
+          </Badge>
+          <span className="text-small font-medium text-pergamino">
+            {isClassification
+              ? `tipo: ${cls!.type || "(sin tipo)"}`
+              : `${rel!.relationship_type} → ${
+                  rel!.target_candidate_id ?? rel!.target_name ?? "?"
+                }`}
+          </span>
+          {isClassification && cls!.tags.length > 0 && (
+            <span className="flex flex-wrap gap-1">
+              {cls!.tags.map((tag) => (
+                <Badge key={tag} variant="default">
+                  #{tag}
+                </Badge>
+              ))}
+            </span>
+          )}
+        </div>
+        <span className="text-xs text-tinta-desvaida" title="confianza del asistente">
+          confianza {confidencePct}%
+        </span>
+      </div>
+      {(isClassification ? cls!.evidence : rel!.evidence) && (
+        <p className="text-xs text-tinta-desvaida">
+          {(isClassification ? cls!.evidence : rel!.evidence)}
+        </p>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs text-tinta-desvaida">
+          Origen: {providerLabel}
+          {modelLabel && ` · ${modelLabel}`}
+        </span>
+        <div className="flex gap-2">
+          <Button
+            variant={decision === "approved" ? "primary" : "secondary"}
+            size="sm"
+            disabled={busy || decision === "approved"}
+            onClick={() => onDecision(candidateId, suggestion.id, "approve")}
+            aria-label={`Aprobar sugerencia ${suggestion.id}`}
+            data-testid={`suggestion-approve-${suggestion.id}`}
+          >
+            <Icon name="check" size={14} />
+            Aprobar
+          </Button>
+          <Button
+            variant={decision === "rejected" ? "primary" : "ghost"}
+            size="sm"
+            disabled={busy || decision === "rejected"}
+            onClick={() => onDecision(candidateId, suggestion.id, "reject")}
+            aria-label={`Rechazar sugerencia ${suggestion.id}`}
+            data-testid={`suggestion-reject-${suggestion.id}`}
+          >
+            <Icon name="close" size={14} />
+            Rechazar
+          </Button>
+        </div>
+      </div>
+      {decision === "rejected" && (
+        <p className="text-xs text-tinta-desvaida">
+          Sugerencia rechazada — no se aplicará al importar.
+        </p>
+      )}
+    </li>
   );
 }
 

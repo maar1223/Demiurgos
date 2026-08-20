@@ -381,3 +381,145 @@ Un SDD de implementación del importador **solo** puede comenzar cuando se cumpl
 - [ ] Todo comportamiento nuevo se etiqueta `[ACTUAL]`/`[OBJETIVO]`/`[PROPUESTO]` y no se presenta como implementado.
 - [ ] El SDD declara explícitamente qué NO toca (AGENTS.md, `okf_contract.py` como única capa de validación OKF, carpetas del sistema, escrituras fuera de gating).
 - [ ] Las pruebas cubren las invariantes afectadas (sección 10.2) y las ramas de fallo relevantes.
+
+---
+
+## 13. Slice 2 — Enriquecimiento Hermes opcional `[ACTUAL]`
+
+> **Estado:** implementado en PR 1 + PR 2 del SDD `world-importer-enrichment`. Esta
+> sección describe el contrato observable del enriquecimiento, sin volver a
+> detallar la constitución ni el ciclo base (ya cubiertos arriba).
+
+### 13.1 Principio de diseño: sugerencias, no autoridad
+
+Las sugerencias producidas por el Asistente de Demiurgos (Hermes) son
+**NO autoritativas**: viven sobre el `Candidate` como metadata
+(`enrichment_json` / `enrichment_status`), nunca modifican la identidad
+determinista ni el `candidate_digest`, y solo se materializan en canon
+durante un `execute` con aprobación explícita que las incluya vía
+`suggestion_ids`. Tres garantías que nunca se rompen:
+
+1. **Determinismo**: el mismo input + la misma identidad producen el mismo
+   `candidate_digest` con o sin enriquecimiento. El digest se calcula sobre
+   `normalized_identity:source_hash` exclusivamente.
+2. **Fail-open**: cualquier error del gateway (timeout, JSON malformado,
+   5xx, red caída) deja al candidato con `enrichment_status="disabled"` o
+   `"no_suggestions"`. **Nunca** falla `analyze`.
+3. **Vocabulario alineado**: el `type` de cada clasificación se valida
+   contra el vocabulario cerrado de `EntityType`; los tipos desconocidos
+   se descartan silenciosamente sin propagar el error al revisor.
+
+### 13.2 Contrato de endpoints `[ACTUAL]`
+
+#### `POST /api/{mundo}/imports/{id}/analyze` (slice 2)
+
+Acepta un body opcional con `{ "enrich": bool }`:
+
+| Body                          | Efecto |
+|-------------------------------|--------|
+| Ausente / `{}`                | Camino determinista legacy. **No** se invoca al enricher. |
+| `{ "enrich": false }`         | Igual al anterior. La ausencia de body y `enrich: false` son equivalentes. |
+| `{ "enrich": true }`          | Después del provider determinista y **antes** de persistir, el router invoca al `enricher` inyectado. |
+
+La respuesta añade `enrichment_status` (uno de `disabled` / `ok` /
+`no_suggestions` / `error`).
+
+#### `GET /api/{mundo}/imports/{id}/review` (slice 2)
+
+La respuesta añade dos campos al cuerpo existente:
+
+```jsonc
+{
+  "job": { ... },
+  "digest": "sha256:...",
+  "candidates": [ ... ],
+  "enrichment_status": "ok",      // batch-level, agregado por el router
+  "suggestions": {                // por candidato, lista de sugerencias
+    "<candidate_id>": [
+      { "id": "cls-1", "__type__": "classification", "type": "personaje",
+        "tags": ["mago"], "confidence": 0.92, "evidence": "...",
+        "provenance": {"provider": "hermes-gateway", ...},
+        "review_state": "pending", "candidate_id": "..." },
+      { "id": "rel-1", "__type__": "relationship", "source_candidate_id": "...",
+        "target_name": "Ciudad Alta", "relationship_type": "habita-en",
+        "confidence": 0.83, "evidence": "...",
+        "provenance": {...}, "review_state": "pending" }
+    ]
+  }
+}
+```
+
+#### `POST /api/{mundo}/imports/{id}/review/decisions` (nuevo en slice 2)
+
+Togglea el `review_state` de una o más sugerencias. Acepta:
+
+```json
+{ "decisions": [
+  { "suggestion_id": "cls-1", "decision": "approve" },
+  { "suggestion_id": "rel-1", "decision": "reject" }
+] }
+```
+
+Decisiones inválidas (`decision` que no es `approve` / `reject`) devuelven
+`400`. Una `suggestion_id` desconocida se ignora silenciosamente
+(idempotente para reintentos). La respuesta es `{ "accepted": N }` con el
+conteo de aceptadas (N es 0 si todas eran desconocidas).
+
+El `candidate_digest` **no** se recomputa: el review es de solo lectura
+hasta el execute.
+
+#### `POST /api/{mundo}/imports/{id}/approve` (slice 2)
+
+Acepta un campo opcional `suggestion_ids: string[]` que vincula la
+aprobación al compromiso de ejecutar solo esas IDs. Ausencia o lista
+vacía preserva el camino legacy sin enriquecimiento. Una `suggestion_id`
+cuyo `review_state` no sea `approved` al momento del execute devuelve
+`409` con detalle `suggestion_not_approved`.
+
+#### `POST /api/{mundo}/imports/{id}/execute` (slice 2)
+
+Acepta `suggestion_ids: string[]` opcional. El executor:
+
+1. Lee cada sugerencia aprobada del `enrichment_json` del candidato.
+2. Llama `apply_approved_suggestions(...)` que parchea el frontmatter
+   (`type`, `tags`) y deduplica entradas en `relaciones` con formato
+   `[[Nombre]]`.
+3. Solo una clasificación por candidato se aplica (la primera aprobada);
+   múltiples clasificaciones en el mismo candidato no se acumulan.
+4. El contenido parcheado es la única fuente de verdad para la
+   escritura gated.
+
+### 13.3 Estado del enriquecimiento
+
+| Estado              | Significado | Acción del cliente |
+|---------------------|-------------|--------------------|
+| `disabled`          | El revisor no pidió enriquecimiento, o no hay enricher inyectado | Sin banner; la UI ignora el flujo de sugerencias |
+| `ok`                | El gateway respondió y al menos una sugerencia pasó la validación | Mostrar banner "sugerencias listas para revisar" y los advisory cards |
+| `no_suggestions`    | El gateway respondió pero ninguna sugerencia pasó validación (o el LLM devolvió un payload vacío) | Banner informativo; el import sigue siendo válido sin cambios |
+| `error`             | Timeout, JSON malformado, gateway caído, o cualquier excepción del runner | Banner de aviso: "el asistente no respondió, el análisis sigue siendo válido" |
+
+### 13.4 Superficie en el frontend `[ACTUAL]`
+
+- Toggle de opt-in en el paso "select" (`enrich` solo se envía si el
+  usuario lo activa).
+- Banner de estado en el paso "review" (4 variantes según
+  `enrichment_status`).
+- Por cada sugerencia: card con tipo (`clasificación` / `relación`),
+  badge del valor sugerido, confianza como porcentaje, evidencia y
+  provenance (provider + model).
+- Botones independientes `Aprobar` / `Rechazar` por sugerencia con
+  estado `pending` / `approved` / `rejected` reflejado en el DOM.
+- El resumen de sugerencias aprobadas se muestra antes del botón
+  "Aprobar grupos seleccionados" para que el revisor vea el compromiso
+  que está firmando.
+- Errores del endpoint `decisions` revierten el estado optimista local
+  para que la UI nunca afirme un éxito que el servidor rechazó.
+
+### 13.5 Pruebas `[ACTUAL]`
+
+| Suite | Cobertura |
+|-------|-----------|
+| `tests/test_import_enrichment.py` (31 tests) | Validación de vocabulario, parseo tolerante de JSON, fail-open, digest estable, `apply_approved_suggestions` |
+| `tests/test_import_enrichment_e2e.py` (4 tests) | Flujo completo analyze→review→approve→execute→canon write; legacy sin sugerencias; fail-open con gateway caído; vocabulario que descarta tipos inválidos |
+| `frontend/src/__tests__/WorldImporter.test.tsx` (+7 tests) | Toggle opt-in, banner de status, cards con provenance/confidence, decisiones independientes, resumen de aprobadas, revert optimista, error banner |
+| `frontend/src/__tests__/importer-api.test.ts` (+8 tests) | `analyze` con y sin `enrich`, `decisions`, `approve` / `execute` con y sin `suggestion_ids` |

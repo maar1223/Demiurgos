@@ -8,9 +8,13 @@ vi.mock("@/api/client", () => ({
 // prove URLs, payloads, chunk offsets, and progress without a server.
 import { apiFetch } from "@/api/client";
 import {
+  analyzeImportJob,
+  approveImportGroups,
   bytesToBase64,
   createImportJob,
+  executeImport,
   IMPORT_CHUNK_BYTES,
+  postReviewDecisions,
   streamImportChunk,
   streamImportFile,
 } from "@/api/importer";
@@ -126,5 +130,107 @@ describe("importer API — world-importer slice 3 contract", () => {
     );
     expect(finalOffset).toBe(0);
     expect(mockApiFetch).not.toHaveBeenCalled();
+  });
+
+  it("analyzeImportJob omits the body when enrich is absent (legacy deterministic)", async () => {
+    mockApiFetch.mockResolvedValue({ job: { job_id: "job1" }, candidates: 0 });
+    await analyzeImportJob("mundo", "job1");
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports/job1/analyze",
+      expect.objectContaining({ method: "POST", body: undefined }),
+    );
+  });
+
+  it("analyzeImportJob sends { enrich: true } when opt-in is requested (slice 2)", async () => {
+    mockApiFetch.mockResolvedValue({
+      job: { job_id: "job1" },
+      candidates: 1,
+      enrichment_status: "ok",
+    });
+    await analyzeImportJob("mundo", "job1", { enrich: true });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports/job1/analyze",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ enrich: true }),
+      }),
+    );
+  });
+
+  it("analyzeImportJob omits the body when enrich=false (no Hermes call)", async () => {
+    mockApiFetch.mockResolvedValue({ job: { job_id: "job1" }, candidates: 0 });
+    await analyzeImportJob("mundo", "job1", { enrich: false });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports/job1/analyze",
+      expect.objectContaining({ body: undefined }),
+    );
+  });
+
+  it("postReviewDecisions POSTs the decisions array to /review/decisions", async () => {
+    mockApiFetch.mockResolvedValue({ accepted: 2 });
+    await postReviewDecisions("mundo", "job1", [
+      { suggestion_id: "s1", decision: "approve" },
+      { suggestion_id: "s2", decision: "reject" },
+    ]);
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports/job1/review/decisions",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          decisions: [
+            { suggestion_id: "s1", decision: "approve" },
+            { suggestion_id: "s2", decision: "reject" },
+          ],
+        }),
+      }),
+    );
+  });
+
+  it("approveImportGroups omits suggestion_ids when no suggestions approved", async () => {
+    mockApiFetch.mockResolvedValue({ approval_id: "a1", token: "t", digest: "d", expires_at: "" });
+    await approveImportGroups("mundo", "job1", ["fichas"]);
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports/job1/approve",
+      expect.objectContaining({
+        body: JSON.stringify({ group_ids: ["fichas"] }),
+      }),
+    );
+  });
+
+  it("approveImportGroups binds suggestion_ids when provided (slice 2)", async () => {
+    mockApiFetch.mockResolvedValue({ approval_id: "a1", token: "t", digest: "d", expires_at: "" });
+    await approveImportGroups("mundo", "job1", ["fichas"], ["s1", "s2"]);
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports/job1/approve",
+      expect.objectContaining({
+        body: JSON.stringify({ group_ids: ["fichas"], suggestion_ids: ["s1", "s2"] }),
+      }),
+    );
+  });
+
+  it("executeImport omits suggestion_ids when none provided", async () => {
+    mockApiFetch.mockResolvedValue({ job: { job_id: "job1" }, outcomes: [] });
+    await executeImport("mundo", "job1", "digest1", "tok");
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports/job1/execute",
+      expect.objectContaining({
+        body: JSON.stringify({ digest: "digest1", token: "tok" }),
+      }),
+    );
+  });
+
+  it("executeImport forwards suggestion_ids when provided (slice 2)", async () => {
+    mockApiFetch.mockResolvedValue({ job: { job_id: "job1" }, outcomes: [] });
+    await executeImport("mundo", "job1", "digest1", "tok", ["s1"]);
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports/job1/execute",
+      expect.objectContaining({
+        body: JSON.stringify({
+          digest: "digest1",
+          token: "tok",
+          suggestion_ids: ["s1"],
+        }),
+      }),
+    );
   });
 });

@@ -5,9 +5,12 @@ import type { Mock } from "vitest";
 import WorldImporter from "@/pages/WorldImporter";
 import { ApiError } from "@/api/types";
 import type {
+  ClassificationSuggestion,
   ImportApprovalResponse,
   ImportCandidate,
   ImportJob,
+  ImportSuggestion,
+  RelationshipSuggestion,
 } from "@/api/types";
 
 vi.mock("@/hooks/useWorlds", () => ({
@@ -27,6 +30,7 @@ vi.mock("@/api/importer", () => ({
   cancelImportJob: vi.fn(),
   resumeImportJob: vi.fn(),
   rollbackImportJob: vi.fn(),
+  postReviewDecisions: vi.fn(),
   IMPORT_CHUNK_BYTES: 512 * 1024,
   IMPORT_MAX_FILE_BYTES: 500 * 1024 * 1024,
   IMPORT_MAX_JOB_BYTES: 5 * 1024 * 1024 * 1024,
@@ -47,9 +51,11 @@ import {
   approveImportGroups,
   cancelImportJob,
   createImportJob,
+  executeImport,
   getImportReview,
   getImportJob,
   listImportJobs,
+  postReviewDecisions,
   streamImportFile,
 } from "@/api/importer";
 
@@ -98,6 +104,10 @@ function candidate(overrides: Partial<ImportCandidate> = {}): ImportCandidate {
     images: [],
     merge: null,
     replacement: null,
+    // Slice 2 — default to "no suggestions" so existing assertions stay
+    // clean; per-test overrides attach enrichment payloads where relevant.
+    enrichment_json: null,
+    enrichment_status: "disabled",
     ...overrides,
   };
 }
@@ -523,5 +533,351 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     expect(screen.getByText("Importación completada")).toBeInTheDocument();
     // A terminal job must NOT keep the recovery pointer around.
     expect(window.sessionStorage.getItem("demiurgos-importer-job:mundo")).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
+  // Slice 2 — Hermes advisory enrichment (opt-in, advisory only).
+  // -------------------------------------------------------------------------
+
+  function classificationSuggestion(
+    overrides: Partial<ClassificationSuggestion> = {},
+  ): ClassificationSuggestion & { __type__: "classification" } {
+    return {
+      id: "cls-1",
+      candidate_id: "c1",
+      type: "personaje",
+      tags: ["mago"],
+      confidence: 0.82,
+      evidence: "Nombre propio y rasgos mágicos en el primer párrafo.",
+      provenance: { provider: "hermes-gateway", model: "hermes-agent" },
+      review_state: "pending",
+      __type__: "classification",
+      ...overrides,
+    };
+  }
+
+  function relationshipSuggestion(
+    overrides: Partial<RelationshipSuggestion> = {},
+  ): RelationshipSuggestion & { __type__: "relationship" } {
+    return {
+      id: "rel-1",
+      source_candidate_id: "c1",
+      target_candidate_id: null,
+      target_name: "Ciudad Alta",
+      relationship_type: "habita-en",
+      confidence: 0.71,
+      evidence: "Menciones explícitas a la Ciudad Alta.",
+      provenance: { provider: "hermes-gateway", model: "hermes-agent" },
+      review_state: "pending",
+      __type__: "relationship",
+      ...overrides,
+    };
+  }
+
+  /** Wire analyze→review for tests that need enrichment in the payload. */
+  function mockAnalyzeWithEnrichment(
+    candidates: ImportCandidate[],
+    reviewEnrichmentStatus: "ok" | "no_suggestions" | "error" | "disabled" = "ok",
+  ) {
+    (createImportJob as Mock).mockResolvedValue({ job: job({ state: "pending" }) });
+    (streamImportFile as Mock).mockImplementation(
+      async (
+        _m: string,
+        _j: string,
+        file: File,
+        _rel: string,
+        onProgress?: (streamed: number, total: number) => void,
+      ) => {
+        onProgress?.(file.size, file.size);
+        return file.size;
+      },
+    );
+    (analyzeImportJob as Mock).mockResolvedValue({
+      job: job({ state: "review" }),
+      candidates: candidates.length,
+      enrichment_status: reviewEnrichmentStatus,
+    });
+    const suggestions: Record<string, ImportSuggestion[]> = {};
+    for (const c of candidates) {
+      suggestions[c.candidate_id] = c.enrichment_json ?? [];
+    }
+    (getImportReview as Mock).mockResolvedValue({
+      job: job({ state: "review" }),
+      digest: "digest1",
+      candidates,
+      enrichment_status: reviewEnrichmentStatus,
+      suggestions,
+    });
+  }
+
+  it("renders the opt-in toggle on the select step (slice 2)", async () => {
+    (createImportJob as Mock).mockResolvedValue({ job: job({ state: "pending" }) });
+    (streamImportFile as Mock).mockResolvedValue(3);
+    (analyzeImportJob as Mock).mockResolvedValue({
+      job: job({ state: "review" }),
+      candidates: 0,
+      enrichment_status: "disabled",
+    });
+    (getImportReview as Mock).mockResolvedValue({
+      job: job({ state: "review" }),
+      digest: "digest1",
+      candidates: [candidate()],
+      enrichment_status: "disabled",
+      suggestions: {},
+    });
+
+    renderImporter();
+    const toggle = screen.getByTestId("enrich-toggle");
+    const checkbox = toggle.querySelector(
+      'input[type="checkbox"]',
+    ) as HTMLInputElement;
+    expect(checkbox.checked).toBe(false);
+
+    // Enable enrichment and verify analyzeImportJob receives the opt-in.
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(true);
+
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    expect(analyzeImportJob).toHaveBeenCalledWith(
+      "mundo",
+      expect.any(String),
+      { enrich: true },
+    );
+  });
+
+  it("omits the enrich flag when the toggle is left off (slice 2)", async () => {
+    mockAnalyzeToReview([candidate()]);
+    renderImporter();
+    await selectFileAndAnalyze();
+
+    // The signature is ``analyzeImportJob(mundo, jobId, options?)``; with
+    // the toggle off, no options object is passed at all.
+    expect(analyzeImportJob).toHaveBeenCalledWith("mundo", expect.any(String));
+  });
+
+  it("renders advisory cards with provenance and confidence per suggestion", async () => {
+    const enriched: ImportCandidate = candidate({
+      enrichment_json: [
+        classificationSuggestion(),
+        relationshipSuggestion(),
+      ],
+      enrichment_status: "ok",
+    });
+    mockAnalyzeWithEnrichment([enriched]);
+
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    // Enrichment banner is shown when status is "ok".
+    expect(screen.getByTestId("enrichment-banner")).toHaveAttribute(
+      "data-enrichment-status",
+      "ok",
+    );
+
+    // Both suggestion cards are present with their provenance + confidence.
+    expect(screen.getByTestId("suggestion-cls-1")).toBeInTheDocument();
+    expect(screen.getByTestId("suggestion-rel-1")).toBeInTheDocument();
+    expect(screen.getByText(/confianza 82%/)).toBeInTheDocument();
+    expect(screen.getByText(/confianza 71%/)).toBeInTheDocument();
+    // Both suggestion cards carry the same provenance line; assert at
+    // least one (not exactly one) is present so the test stays robust.
+    expect(screen.getAllByText(/hermes-gateway/).length).toBeGreaterThan(0);
+  });
+
+  it("approving a suggestion posts to decisions and binds the ID to execute (slice 2)", async () => {
+    const enriched: ImportCandidate = candidate({
+      enrichment_json: [classificationSuggestion({ id: "cls-1" })],
+      enrichment_status: "ok",
+    });
+    mockAnalyzeWithEnrichment([enriched]);
+    (postReviewDecisions as Mock).mockResolvedValue({ accepted: 1 });
+
+    renderImporter();
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    // Approve the suggestion via the per-card button.
+    fireEvent.click(screen.getByTestId("suggestion-approve-cls-1"));
+
+    await waitFor(() => {
+      expect(postReviewDecisions).toHaveBeenCalledWith(
+        "mundo",
+        expect.any(String),
+        [{ suggestion_id: "cls-1", decision: "approve" }],
+      );
+    });
+
+    // The summary surfaces the approved-IDs commitment so the reviewer
+    // sees what the approval token will bind to.
+    expect(screen.getByTestId("approved-suggestions-summary")).toHaveTextContent(
+      "1 sugerencia aprobada",
+    );
+
+    // Approve the group → the suggestion_ids round-trip through approve
+    // and execute (server-side they bind to the single-use token).
+    const approval: ImportApprovalResponse = {
+      approval_id: "a1",
+      token: "tok-1",
+      digest: "digest1",
+      expires_at: "2026-01-01T00:30:00",
+    };
+    (approveImportGroups as Mock).mockResolvedValue(approval);
+    (executeImport as Mock).mockResolvedValue({
+      job: job({ state: "completed" }),
+      outcomes: [],
+    });
+
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: /Contenido de fichas/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: /Aprobar grupos seleccionados/ }),
+    );
+    await waitFor(() => {
+      expect(approveImportGroups).toHaveBeenCalledWith(
+        "mundo",
+        expect.any(String),
+        ["fichas"],
+        ["cls-1"],
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Importar" }));
+    await waitFor(() => {
+      expect(executeImport).toHaveBeenCalledWith(
+        "mundo",
+        expect.any(String),
+        "digest1",
+        "tok-1",
+        ["cls-1"],
+      );
+    });
+  });
+
+  it("independent reject on one suggestion does not affect siblings (slice 2)", async () => {
+    const enriched: ImportCandidate = candidate({
+      enrichment_json: [
+        classificationSuggestion({ id: "cls-keep" }),
+        classificationSuggestion({ id: "cls-drop" }),
+      ],
+      enrichment_status: "ok",
+    });
+    mockAnalyzeWithEnrichment([enriched]);
+    (postReviewDecisions as Mock).mockResolvedValue({ accepted: 1 });
+
+    renderImporter();
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    fireEvent.click(screen.getByTestId("suggestion-reject-cls-drop"));
+
+    await waitFor(() => {
+      expect(postReviewDecisions).toHaveBeenCalledWith(
+        "mundo",
+        expect.any(String),
+        [{ suggestion_id: "cls-drop", decision: "reject" }],
+      );
+    });
+
+    // The sibling stays pending — independent decisions are per-suggestion.
+    expect(screen.getByTestId("suggestion-cls-drop")).toHaveAttribute(
+      "data-suggestion-state",
+      "rejected",
+    );
+    expect(screen.getByTestId("suggestion-cls-keep")).toHaveAttribute(
+      "data-suggestion-state",
+      "pending",
+    );
+
+    // Approve the sibling → only its ID ends up in approvedSuggestionIds.
+    fireEvent.click(screen.getByTestId("suggestion-approve-cls-keep"));
+    await waitFor(() => {
+      expect(postReviewDecisions).toHaveBeenCalledWith(
+        "mundo",
+        expect.any(String),
+        [{ suggestion_id: "cls-keep", decision: "approve" }],
+      );
+    });
+    expect(screen.getByTestId("approved-suggestions-summary")).toHaveTextContent(
+      "1 sugerencia aprobada",
+    );
+  });
+
+  it("shows the Hermes-unavailable banner when status is 'error' (fail-open)", async () => {
+    mockAnalyzeWithEnrichment([candidate()], "error");
+    renderImporter();
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    const banner = screen.getByTestId("enrichment-banner");
+    expect(banner).toHaveAttribute("data-enrichment-status", "error");
+    expect(banner).toHaveTextContent(/El asistente no respondió/);
+    // Fail-open: analyze already succeeded — the page is still in review.
+    expect(
+      screen.getByRole("button", { name: /Aprobar grupos seleccionados/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the enrichment banner when status is 'disabled' (legacy path)", async () => {
+    mockAnalyzeWithEnrichment([candidate()], "disabled");
+    renderImporter();
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    expect(screen.queryByTestId("enrichment-banner")).not.toBeInTheDocument();
+  });
+
+  it("reverts optimistic state when the decisions endpoint rejects (slice 2)", async () => {
+    const enriched: ImportCandidate = candidate({
+      enrichment_json: [classificationSuggestion({ id: "cls-1" })],
+      enrichment_status: "ok",
+    });
+    mockAnalyzeWithEnrichment([enriched]);
+    (postReviewDecisions as Mock).mockRejectedValueOnce(
+      // Use a plain Error so importErrorMessage falls through to
+      // ``err.message`` — the 409/422/500 cases in ``getErrorMessage``
+      // overwrite the wire detail with a fixed copy.
+      new Error("suggestion_digest_mismatch"),
+    );
+
+    renderImporter();
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    fireEvent.click(screen.getByTestId("suggestion-approve-cls-1"));
+
+    // Failure path: the card flips back to pending (server is the authority)
+    // and the error banner surfaces the reason.
+    await waitFor(() => {
+      expect(screen.getByTestId("suggestion-cls-1")).toHaveAttribute(
+        "data-suggestion-state",
+        "pending",
+      );
+    });
+    // The ErrorBanner renders role="alert"; assert the server's wire
+    // detail round-trips into the banner copy.
+    const alerts = screen.getAllByRole("alert");
+    const alertTexts = alerts.map((a) => a.textContent ?? "");
+    expect(
+      alertTexts.some((t) => t.includes("suggestion_digest_mismatch")),
+    ).toBe(true);
   });
 });

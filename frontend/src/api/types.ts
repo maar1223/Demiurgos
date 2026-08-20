@@ -699,6 +699,58 @@ export interface ImportReplacementRecord {
   recovery_status: string;
 }
 
+/**
+ * Hermes-suggested classification (advisory only — server is the authority).
+ *
+ * Suggestions are NON-AUTHORITATIVE: they ride on each candidate without
+ * mutating deterministic identity/digest, are surfaced in review as advisory,
+ * and only materialize into canon during a gated execute. ``review_state`` is
+ * initially ``pending`` and toggled to ``approved``/``rejected`` via the
+ * ``POST /{job_id}/review/decisions`` endpoint. ``provenance`` is server-
+ * attached (provider, model, prompt version) so reviewers can attribute.
+ */
+export interface ClassificationSuggestion {
+  id: string;
+  candidate_id: string;
+  type: string;
+  tags: string[];
+  confidence: number;
+  evidence: string;
+  provenance: Record<string, string>;
+  review_state: "pending" | "approved" | "rejected";
+}
+
+/**
+ * Hermes-suggested relationship between candidates (or to a named target).
+ *
+ * ``target_candidate_id`` is set when the target is another candidate in the
+ * same batch; ``target_name`` is set when Hermes names an entity not present
+ * in the batch (validation rejects ungrounded names). Self-links are rejected.
+ */
+export interface RelationshipSuggestion {
+  id: string;
+  source_candidate_id: string;
+  target_candidate_id: string | null;
+  target_name: string | null;
+  relationship_type: string;
+  confidence: number;
+  evidence: string;
+  provenance: Record<string, string>;
+  review_state: "pending" | "approved" | "rejected";
+}
+
+/** Discriminated union for advisory suggestions on a candidate. */
+export type ImportSuggestion =
+  | (ClassificationSuggestion & { __type__: "classification" })
+  | (RelationshipSuggestion & { __type__: "relationship" });
+
+/** Server-attributed diagnostic state of an enrichment attempt. */
+export type EnrichmentStatus =
+  | "disabled"
+  | "ok"
+  | "no_suggestions"
+  | "error";
+
 /** A diagnosed, eligible intake candidate (read-only until approved). */
 export interface ImportCandidate {
   candidate_id: string;
@@ -715,6 +767,15 @@ export interface ImportCandidate {
   images: ImportImagePlacement[];
   merge: ImportMergeDecision | null;
   replacement: ImportReplacementRecord | null;
+  /**
+   * Slice 2 — advisory suggestions from the optional Hermes enricher.
+   * ``null`` when enrichment was not requested or was disabled; the review
+   * row is always populated, so downstream code MUST treat absence as
+   * "no suggestions", not as an error.
+   */
+  enrichment_json: ImportSuggestion[] | null;
+  /** Server-attributed diagnostic state of the enrichment attempt. */
+  enrichment_status: EnrichmentStatus;
 }
 
 /** Public job view — never carries the opaque observability token. */
@@ -749,10 +810,18 @@ export interface JobPage {
   next_cursor: string | null;
 }
 
+/** Request body for POST /api/{mundo}/imports/{id}/analyze. */
+export interface AnalyzeImportRequest {
+  /** Slice 2 — opt into Hermes advisory enrichment after deterministic analysis. */
+  enrich?: boolean;
+}
+
 /** Response of POST /api/{mundo}/imports/{id}/analyze. */
 export interface ImportAnalyzeResponse {
   job: ImportJob;
   candidates: number;
+  /** Slice 2 — server-attributed diagnostic state of the enrichment attempt. */
+  enrichment_status?: EnrichmentStatus;
 }
 
 /** Response of GET /api/{mundo}/imports/{id}/review — candidates + digest. */
@@ -760,6 +829,30 @@ export interface ImportReviewResponse {
   job: ImportJob;
   digest: string;
   candidates: ImportCandidate[];
+  /** Slice 2 — batch-level diagnostic state rolled up from per-candidate. */
+  enrichment_status: EnrichmentStatus;
+  /**
+   * Slice 2 — per-candidate advisory suggestions keyed by ``candidate_id``.
+   * An empty array means no suggestions were produced or were all filtered
+   * during validation; the deterministic digest is unchanged either way.
+   */
+  suggestions: Record<string, ImportSuggestion[]>;
+}
+
+/** A reviewer decision for one suggestion (slice 2). */
+export interface ImportReviewDecision {
+  suggestion_id: string;
+  decision: "approve" | "reject";
+}
+
+/** Request body for POST /api/{mundo}/imports/{id}/review/decisions. */
+export interface ImportDecisionsRequest {
+  decisions: ImportReviewDecision[];
+}
+
+/** Response of POST /api/{mundo}/imports/{id}/review/decisions. */
+export interface ImportDecisionsResponse {
+  accepted: number;
 }
 
 /** Approval issued for a reviewed, unchanged digest (token is single-use). */

@@ -245,3 +245,107 @@ Un SDD de implementación de la superficie del importador **solo** puede comenza
 - [ ] El cambio respeta las invariantes de la constitución (secciones 5, 7) y las fronteras de dominio; la UI no inventa endpoints ni presenta como implementado lo objetivo.
 - [ ] Todo comportamiento nuevo se etiqueta `[ACTUAL]`/`[OBJETIVO]`/`[PROPUESTO]` y no se presenta como implementado.
 - [ ] Las pruebas cubren: cero escrituras sin aprobación, estados/cancelación/reanudación, distinción visual de acciones con efecto, exclusión de carpetas del sistema, accesibilidad (teclado, `aria-live`, contraste) y ramas de fallo.
+
+---
+
+## 11. Slice 2 — Enriquecimiento asesor en la UI `[ACTUAL]`
+
+> **Estado:** implementado en el SDD `world-importer-enrichment` (PR 2).
+> Esta sección describe la superficie UI específica del enriquecimiento,
+> sin duplicar el contrato de producto (`world-importer.md` §13).
+
+### 11.1 Opt-in consciente, no sorpresa
+
+El toggle "Pedirle al asistente sugerencias de clasificación y relaciones"
+vive en el paso de selección, **antes** del botón "Analizar". Su copy
+explica tres hechos clave que el Autor debe entender antes de activarlo:
+
+1. Las sugerencias son **orientativas** y requieren aprobación individual.
+2. La ausencia del asistente no bloquea el análisis (fail-open).
+3. Activar el toggle es una decisión explícita por job, no un default.
+
+El default es **off**: ningún job llama al gateway de Hermes sin el opt-in
+explícito del Autor. El botón "Analizar" no cambia su label ni su icono
+según el toggle, para que el opt-in no parezca una acción diferente.
+
+### 11.2 Banner de estado (4 variantes)
+
+Después del análisis, el paso de revisión muestra **uno** de cuatro
+banners según `enrichment_status`:
+
+| Estado              | Color    | Mensaje clave                                                          |
+|---------------------|----------|------------------------------------------------------------------------|
+| `disabled`          | (oculto) | La UI ignora el flujo; sin banner para no contaminar el camino legacy  |
+| `ok`                | musgo    | "Asistente: sugerencias listas para revisar" + recordatorio de aprobar |
+| `no_suggestions`    | neutro   | "El asistente respondió pero no produjo sugerencias aplicables"        |
+| `error`             | llamita  | "El asistente no respondió. El análisis sigue siendo válido"           |
+
+Los banners usan `role="status"` + `aria-live="polite"` para que lectores
+de pantalla anuncien el resultado del análisis sin interrumpir.
+
+### 11.3 Tarjetas de sugerencia (advisory cards)
+
+Cada sugerencia del `enrichment_json` se renderiza como una tarjeta
+independiente dentro del detalle del candidato. Distinción visual
+obligatoria entre sugerido y determinado:
+
+- **Clasificación** → borde y fondo `musgo` (verde-oliva; "es crecimiento,
+  no es identidad").
+- **Relación** → borde y fondo `filio` (neutro; sigue el patrón de las
+  image placements existentes).
+
+Cada tarjeta muestra:
+
+- **Tipo** de sugerencia (badge): `clasificación` o `relación`.
+- **Valor** sugerido: para clasificaciones, `tipo: <valor>` + badges de
+  `tags`; para relaciones, `<relationship_type> → <target>`.
+- **Confianza** como porcentaje (`Math.round(confidence * 100)`).
+- **Evidencia** textual que el LLM adjuntó como justificación.
+- **Provenance**: `provider` + `model`, derivado del
+  `provenance.provenance` del payload.
+- **Botones independientes**: `Aprobar` y `Rechazar` por sugerencia.
+
+El estado aprobado/rechazado se refleja visualmente (anillo `musgo/40`
+para aprobado, opacidad reducida para rechazado) y via
+`data-suggestion-state` para tests automatizados y herramientas de
+accesibilidad.
+
+### 11.4 Decisiones independientes, sin acoplamiento
+
+Cada botón opera sobre una sola sugerencia. La UI:
+
+1. Hace optimistic update del estado local antes de la llamada al
+   endpoint, para que el botón se sienta instantáneo.
+2. Si el endpoint rechaza (409 stale digest, 401, etc.), revierte el
+   estado optimista y muestra el error en el `ErrorBanner` global.
+3. Re-lee el review después de un éxito para reflejar el estado del
+   servidor (un par de decisiones simultáneas contra la misma lista
+   nunca desincronizan la UI del servidor).
+
+No hay "aprobar todas" ni "rechazar todas" — la decisión granular es la
+única primitiva. Si el Autor quiere aplicar todas, aprueba una por una;
+la fricción es intencional para que cada sugerencia se evalúe.
+
+### 11.5 Compromiso visible antes del execute
+
+Antes del botón "Aprobar grupos seleccionados", la UI muestra un resumen
+"Sugerencias aprobadas: N se aplicarán al importar" con icono `lightbulb`.
+El compromiso nunca es implícito: si el revisor aprobó sugerencias, las
+ve escritas en el panel antes de confirmar el grupo.
+
+El execute envía `suggestion_ids` con esos IDs. Si el servidor los
+rechaza (por ejemplo, porque otra pestaña cambió el `review_state`), el
+ErrorBanner explica el motivo y el flujo vuelve a revisión con el estado
+actualizado.
+
+### 11.6 Accesibilidad
+
+- Cada botón `Aprobar` / `Rechazar` tiene `aria-label="Aprobar
+  sugerencia <id>"` / `aria-label="Rechazar sugerencia <id>"` para que
+  lectores de pantalla anuncien la acción concreta.
+- Los banners usan `aria-live="polite"` (no `assertive`) para no
+  interrumpir la navegación.
+- El opt-in toggle tiene `aria-describedby` apuntando al texto
+  explicativo, así el lector anuncia la descripción al recibir foco.
+- Las tarjetas sugieren colores con contraste WCAG AA sobre fondo
+  `cripta` (probado en `frontend/src/components/atoms/Badge.tsx`).

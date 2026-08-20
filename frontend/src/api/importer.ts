@@ -1,8 +1,11 @@
 import { apiFetch } from "@/api/client";
 import type {
+  AnalyzeImportRequest,
   ImportAnalyzeResponse,
   ImportApprovalResponse,
   ImportCreateJobInput,
+  ImportDecisionsRequest,
+  ImportDecisionsResponse,
   ImportExecuteResponse,
   ImportJobResponse,
   ImportReviewResponse,
@@ -10,13 +13,16 @@ import type {
 } from "@/api/types";
 
 /**
- * World Importer — typed REST lifecycle client (world-importer slice 3).
+ * World Importer — typed REST lifecycle client (world-importer slice 3 +
+ * slice 2 enrichment opt-in).
  *
  * Mirrors the server-owned import-job contract in
  * `src/tools/demiurgos-suite/wiki/import_router.py`: create a job from a
  * source selection (folders/loose/ZIP), stream durable base64 chunks with
- * resumable offsets, analyze (fail-closed), review candidates with the
- * immutable digest, approve groups, execute with the single-use token, and
+ * resumable offsets, analyze (fail-closed) — optionally opt into Hermes
+ * advisory enrichment — review candidates with the immutable digest,
+ * toggle per-suggestion decisions, approve groups (optionally bound to a
+ * suggestion-IDs commitment), execute with the single-use token, and
  * cancel/resume/rollback. Every call requires the local session cookie
  * (same-origin fetch default).
  */
@@ -76,13 +82,22 @@ export function streamImportChunk(
   );
 }
 
-/** POST /api/{mundo}/imports/{id}/analyze — read-only analysis → REVIEW. */
+/**
+ * POST /api/{mundo}/imports/{id}/analyze — read-only analysis → REVIEW.
+ *
+ * Pass ``enrich: true`` in the request body to opt into the optional Hermes
+ * advisory enrichment (slice 2). Absent/``false`` preserves the legacy
+ * deterministic flow — no Hermes call, no suggestions.
+ */
 export function analyzeImportJob(
   mundo: string,
   jobId: string,
+  options?: AnalyzeImportRequest,
 ): Promise<ImportAnalyzeResponse> {
+  const body = options && options.enrich ? JSON.stringify({ enrich: true }) : undefined;
   return apiFetch<ImportAnalyzeResponse>(importsUrl(mundo, jobId, "/analyze"), {
     method: "POST",
+    body,
     timeout: 120_000,
   });
 }
@@ -120,30 +135,82 @@ export function getImportReview(
   return apiFetch<ImportReviewResponse>(importsUrl(mundo, jobId, "/review"));
 }
 
-/** POST /api/{mundo}/imports/{id}/approve — issue a digest-bound token. */
+/**
+ * POST /api/{mundo}/imports/{id}/approve — issue a digest-bound token.
+ *
+ * Pass ``suggestionIds`` to bind the approval to a specific set of approved
+ * suggestion IDs (slice 2). Absent/empty preserves the legacy (no
+ * enrichment) execute path; ``issue_approval`` rejects any suggestion ID
+ * whose ``review_state`` is not ``approved`` or whose candidate's digest
+ * changed (replay protection comes from the existing consumed flag).
+ */
 export function approveImportGroups(
   mundo: string,
   jobId: string,
   groupIds: string[],
+  suggestionIds: string[] = [],
 ): Promise<ImportApprovalResponse> {
+  const body: { group_ids: string[]; suggestion_ids?: string[] } = {
+    group_ids: groupIds,
+  };
+  if (suggestionIds.length > 0) {
+    body.suggestion_ids = suggestionIds;
+  }
   return apiFetch<ImportApprovalResponse>(importsUrl(mundo, jobId, "/approve"), {
     method: "POST",
-    body: JSON.stringify({ group_ids: groupIds }),
+    body: JSON.stringify(body),
   });
 }
 
-/** POST /api/{mundo}/imports/{id}/execute — gated writes with token+digest. */
+/**
+ * POST /api/{mundo}/imports/{id}/execute — gated writes with token+digest.
+ *
+ * Pass ``suggestionIds`` so the executor applies the approved suggestions
+ * (type/tags patch + deduplicated ``[[target]]`` entries) before the
+ * existing canon write. Absent/empty preserves the legacy deterministic
+ * execute path.
+ */
 export function executeImport(
   mundo: string,
   jobId: string,
   digest: string,
   token: string,
+  suggestionIds: string[] = [],
 ): Promise<ImportExecuteResponse> {
+  const body: { digest: string; token: string; suggestion_ids?: string[] } = {
+    digest,
+    token,
+  };
+  if (suggestionIds.length > 0) {
+    body.suggestion_ids = suggestionIds;
+  }
   return apiFetch<ImportExecuteResponse>(importsUrl(mundo, jobId, "/execute"), {
     method: "POST",
-    body: JSON.stringify({ digest, token }),
+    body: JSON.stringify(body),
     timeout: 120_000,
   });
+}
+
+/**
+ * POST /api/{mundo}/imports/{id}/review/decisions — toggle review_state on
+ * one or more suggestions (slice 2). Each decision updates the JSON list on
+ * its candidate. A missing candidate or unknown suggestion_id is silently
+ * skipped (idempotent round-trip across retries); the response reports the
+ * count of accepted decisions for observability. The deterministic digest
+ * is NOT recomputed because review is read-only until execute.
+ */
+export function postReviewDecisions(
+  mundo: string,
+  jobId: string,
+  decisions: ImportDecisionsRequest["decisions"],
+): Promise<ImportDecisionsResponse> {
+  return apiFetch<ImportDecisionsResponse>(
+    importsUrl(mundo, jobId, "/review/decisions"),
+    {
+      method: "POST",
+      body: JSON.stringify({ decisions }),
+    },
+  );
 }
 
 /** POST /api/{mundo}/imports/{id}/cancel — cancel at item boundaries. */
