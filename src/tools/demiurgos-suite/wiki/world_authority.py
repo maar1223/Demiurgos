@@ -54,6 +54,13 @@ RESERVED_NAMES = frozenset({"Ideas"})
 # case-sensitive paths do not recognize.
 LEGACY_FOLDERS = ("Lore", "Personajes")
 
+# Canonical OKF content sections the importer may write fichas into. This is
+# the section/path authority for importer H1 scopes: ``resolve_target``
+# validates every structured-import target against these sections
+# (importador-auto-frontmatter). System dirs and transversal views are never
+# content sections and are therefore never permitted (OC7/W9/W10).
+IMPORTER_SCOPE_SECTIONS = ("lore", "personajes", "sagas", "referencias")
+
 
 class WorldResultKind(Enum):
     """Machine-readable outcome of a world-creation request."""
@@ -281,6 +288,19 @@ def canonical_dirs() -> tuple[str, ...]:
 
 def oc8_skeleton_dirs() -> tuple[str, ...]:
     return OC8_LORE_SKELETON
+
+
+def is_importer_scope_permitted(canonical_section: str) -> bool:
+    """Permit an importer H1 scope only under a canonical OKF section.
+
+    The structured importer (importador-auto-frontmatter) may only materialize
+    fichas under the canonical content sections (``lore``/``personajes``/
+    ``sagas``/``referencias``). Any other top-level target — a system dir
+    (``_context``/``.history``/``.papelera``), a transversal view
+    (``relaciones``/``canon``/``conflictos``/``propuestas``), or an unknown
+    section — is rejected: the importer never guesses a path (OC7/W9/W10).
+    """
+    return (canonical_section or "").strip().lower() in IMPORTER_SCOPE_SECTIONS
 
 
 def forbidden_dir_names() -> Iterable[str]:

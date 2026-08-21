@@ -42,6 +42,7 @@ from import_models import (
     canonical_identity_from_segments,
     normalize_identity_segment,
 )
+from world_authority import is_importer_scope_permitted
 
 if TYPE_CHECKING:
     from sync_lore.schemas import ImageEntry
@@ -423,8 +424,9 @@ LEGACY_SUBFOLDER_ALIASES: dict[str, str] = {
     "history": "historia",
 }
 
-# Canonical OKF top-level sections (lowercase, case-sensitive).
-_CANONICAL_SECTIONS = frozenset({"lore", "personajes", "sagas", "referencias"})
+# Canonical OKF top-level sections (lowercase, case-sensitive). Membership is
+# delegated to ``world_authority.is_importer_scope_permitted`` so the importer
+# shares ONE section/path authority with world creation (OC7/W9/W10).
 
 # Legacy uppercase sections normalized to their canonical lowercase form.
 _LEGACY_SECTIONS = {
@@ -524,7 +526,7 @@ def resolve_target(world: str, candidate,
     # they are unknown -> review (never guessed). The diagnostic carries
     # the original subfolder name for the reviewer's reference.
     if rest:
-        if section in _CANONICAL_SECTIONS:
+        if is_importer_scope_permitted(section):
             normalized_path = f"{section}/{'/'.join(rest)}/{identity}.md"
             return TargetResolution(
                 canonical_path=normalized_path,
@@ -541,9 +543,10 @@ def resolve_target(world: str, candidate,
             diagnostic=f"unknown section: {parts[0]!r}",
         )
 
-    # No subfolders. The top-level section itself must be a known canonical
-    # OKF section; anything else is reported for review (never guessed).
-    if section not in _CANONICAL_SECTIONS:
+    # No subfolders. The top-level section itself must be a canonical OKF
+    # section (authority-validated); anything else is reported for review
+    # (never guessed).
+    if not is_importer_scope_permitted(section):
         return TargetResolution(
             canonical_path=source, normalized_source=source,
             status="review",

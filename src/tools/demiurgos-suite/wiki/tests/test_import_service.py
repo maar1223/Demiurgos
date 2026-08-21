@@ -808,6 +808,43 @@ class TestVisionExecution:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 (importador-auto-frontmatter) — importer H1 scope authority (3.4)
+# ---------------------------------------------------------------------------
+
+class TestImporterScopeAuthority:
+    """world_authority.is_importer_scope_permitted permits only canonical OKF
+    content sections; system/transversal dirs are never permitted."""
+
+    def _permitted(self, section):
+        from world_authority import is_importer_scope_permitted
+        return is_importer_scope_permitted(section)
+
+    def test_canonical_sections_permitted(self):
+        for section in ("lore", "personajes", "sagas", "referencias"):
+            assert self._permitted(section)
+        # Case-insensitive on input.
+        assert self._permitted("Lore")
+
+    def test_system_and_transversal_dirs_rejected(self):
+        for section in ("_context", ".history", ".papelera",
+                        "relaciones", "canon", "conflictos", "propuestas",
+                        "ideas", "unknown"):
+            assert not self._permitted(section)
+
+    def test_unknown_section_rejected_by_resolve_target(self, tmp_path):
+        # resolve_target now routes through the shared authority: an unknown
+        # top-level section is reported for review (never guessed).
+        cand = Candidate(
+            candidate_id="cand-x", job_id="job1", world="world1",
+            normalized_identity="x", source_hash="sha256:x",
+            provenance=Provenance(source_path="Mystery/X.md",
+                                  source_kind="loose", source_hash="sha256:x"),
+        )
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "review"
+
+
+# ---------------------------------------------------------------------------
 # Spool cleanup — terminal states reclaim the job spool (best-effort)
 # ---------------------------------------------------------------------------
 
