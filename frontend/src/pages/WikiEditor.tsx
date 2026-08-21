@@ -1083,6 +1083,12 @@ export default function WikiEditor() {
     );
   }
 
+  const handleWorldChange = (newWorld: string) => {
+    // Preserve the current section when switching worlds
+    const targetSection = section || "lore";
+    navigate(`/wiki/${encodeURIComponent(newWorld)}/${targetSection}`, { replace: true });
+  };
+
   // Ready state
   return (
     <EditorLayout
@@ -1090,6 +1096,7 @@ export default function WikiEditor() {
         <Navbar
           worlds={worlds}
           currentWorld={mundo}
+          onWorldChange={handleWorldChange}
         />
       }
       sidebar={

@@ -55,12 +55,17 @@ export default function WikiWorld() {
     navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
   };
 
+  const handleWorldChange = (newWorld: string) => {
+    navigate(`/wiki/${encodeURIComponent(newWorld)}`, { replace: true });
+  };
+
   return (
     <WikiHomeLayout
       header={
         <Navbar
           worlds={worlds}
           currentWorld={mundo}
+          onWorldChange={handleWorldChange}
         />
       }
     >
