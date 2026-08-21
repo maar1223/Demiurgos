@@ -775,15 +775,72 @@ export type EnrichmentStatus =
   | "no_suggestions"
   | "error";
 
+/**
+ * Enrichment state of a candidate's frontmatter (design Step 4).
+ *
+ * Mirrors ``import_models.FrontmatterState``:
+ * - ``generated`` — produced by Hermes enrichment.
+ * - ``manual`` — author decision / no enrichment requested.
+ * - ``fallback`` — fail-open (timeout, malformed, or unavailable Hermes).
+ */
+export type FrontmatterState = "generated" | "manual" | "fallback";
+
+/**
+ * Reviewable OKF frontmatter for one ficha (analysis output, not the body).
+ *
+ * ``relaciones`` carry canonical ids (``::``-qualified), never ambiguous leaf
+ * names. ``state`` lets review attribute the metadata. The candidate body
+ * stays the original source text — frontmatter never replaces it.
+ */
+export interface FrontmatterCandidate {
+  title: string;
+  type: string | null;
+  description: string;
+  relaciones: string[];
+  state: FrontmatterState;
+}
+
+/**
+ * Diagnostic for one reference-style image placement (``![..][key]``).
+ *
+ * The original span is preserved verbatim in ``reference`` so execution can
+ * render it untouched. ``status`` is ``resolved`` when a matching
+ * ``[key]: path`` definition exists in the same ficha, otherwise
+ * ``unresolved`` — that placement is excluded from gallery registration but
+ * never blocks the ficha or the job (review warning only).
+ */
+export interface MediaDiagnostic {
+  reference: string;
+  image_key: string;
+  alt_text: string;
+  status: "resolved" | "unresolved";
+  target_path: string;
+  target_ficha: string;
+  message: string;
+}
+
 /** A diagnosed, eligible intake candidate (read-only until approved). */
 export interface ImportCandidate {
   candidate_id: string;
   job_id: string;
   world: string;
   normalized_identity: string;
+  /** Parent-qualified "::"-joined identity (analysis). */
+  canonical_id: string;
   source_hash: string;
   provenance: ImportProvenance;
   content_preview: string;
+  /**
+   * Importador-auto-frontmatter — analyzed metadata for the ficha:
+   * ``display_title`` (ficha title, covers the implicit single-ficha path),
+   * the dense per-ficha ``summary`` (Step 2), the reviewable
+   * ``frontmatter`` (Step 4) and the reference-image ``media_diagnostics``.
+   * All advisory; ``content_preview`` stays the original body text.
+   */
+  display_title: string;
+  summary: string;
+  frontmatter: FrontmatterCandidate | null;
+  media_diagnostics: MediaDiagnostic[];
   /** pending | eligible | conflict | rejected — server is the authority. */
   status: string;
   okf_issues: Array<Record<string, unknown>>;
