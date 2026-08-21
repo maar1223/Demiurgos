@@ -26,7 +26,7 @@ import yaml
 from rank_bm25 import BM25Okapi  # noqa: E402
 
 from .graph_models import EntityDetail, EntityHit
-from .okf_contract import validate as okf_validate
+from .okf_contract import is_canonical_id, validate as okf_validate
 
 # ---------------------------------------------------------------------------
 # Constants (mirror migrate_okf.py exclusions)
@@ -203,6 +203,14 @@ class EntityGraphIndex:
             body = content[body_start + 4:]
 
         name = fm.get("title") or filepath.stem.replace("_", " ")
+        # importador-auto-frontmatter (3.3): the OKF ``id`` is the canonical
+        # importer identity (``::``-qualified). It is the precise relationship
+        # key — consistent with ``okf_contract.is_canonical_id`` — so wikilinks
+        # and bare ``relaciones`` entries anchored to it resolve exactly.
+        raw_id = fm.get("id")
+        canonical_id = (
+            raw_id if isinstance(raw_id, str) and is_canonical_id(raw_id) else ""
+        )
         forward_links = self._extract_wikilinks(body)
         # Also extract from relaciones frontmatter field
         relaciones_raw = fm.get("relaciones", [])
@@ -214,6 +222,13 @@ class EntityGraphIndex:
                         link = m.group(1).strip()
                         if link not in forward_links:
                             forward_links.append(link)
+                    else:
+                        # A bare canonical-id entry (importer-written OKF):
+                        # the relationship identity is the ``id`` itself, not a
+                        # display name — recognize and index it directly.
+                        bare = rel.strip()
+                        if is_canonical_id(bare) and bare not in forward_links:
+                            forward_links.append(bare)
 
         # OKF v1 diagnostics: surface missing minimums on the entity without
         # ever changing what gets indexed (tolerant existing-world behavior).
@@ -226,6 +241,7 @@ class EntityGraphIndex:
 
         entity: dict[str, Any] = {
             "name": name,
+            "id": canonical_id,
             "type": fm.get("type", "Ficha"),
             "path": rel_path,
             "title": fm.get("title", ""),
@@ -310,6 +326,12 @@ class EntityGraphIndex:
         """
         name_lower = link_name.lower().replace("_", " ").strip()
         for path, entity in self._cache["entities"].items():
+            # Canonical identity (frontmatter ``id``) is the precise
+            # relationship key (importador-auto-frontmatter): match it exactly
+            # before falling back to display-name/stem matching.
+            ent_id = entity.get("id") or ""
+            if ent_id and ent_id == link_name:
+                return path
             entity_name_lower = entity["name"].lower().replace("_", " ").strip()
             if entity_name_lower == name_lower:
                 return path
@@ -330,6 +352,11 @@ class EntityGraphIndex:
         name_lower = link_name.lower().replace("_", " ").strip()
         matches: list[str] = []
         for path, entity in self._cache["entities"].items():
+            # Canonical identity (frontmatter ``id``) matches exactly first.
+            ent_id = entity.get("id") or ""
+            if ent_id and ent_id == link_name:
+                matches.append(path)
+                continue
             entity_name_lower = entity["name"].lower().replace("_", " ").strip()
             if entity_name_lower == name_lower:
                 matches.append(path)

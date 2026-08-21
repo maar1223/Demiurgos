@@ -218,5 +218,91 @@ class TestUpdateReadOnly(unittest.TestCase):
             self.assertTrue(index.dirty)
 
 
+class TestCanonicalIdParsing(unittest.TestCase):
+    """importador-auto-frontmatter (3.3) — the graph index parses the OKF
+    canonical ``id`` and resolves relationship identities consistently with
+    ``okf_contract.is_canonical_id``."""
+
+    def _world(self, tmpdir: str) -> tuple[Path, Path]:
+        mundos_path = Path(tmpdir) / "mundos"
+        mundo_dir = mundos_path / "canonworld"
+        (mundo_dir / "lore").mkdir(parents=True, exist_ok=True)
+        return mundos_path, mundo_dir
+
+    def _write(self, mundo_dir: Path, rel: str, content: str) -> Path:
+        target = mundo_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return target
+
+    def test_entity_exposes_canonical_id_from_frontmatter(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "lore/Ayagares.md",
+                "---\ntype: personaje\ntitle: Ayagares\n"
+                "id: Ayagares::Descripción Física\n---\n# Ayagares\n")
+            index = EntityGraphIndex(mundos_path)
+            index.build("canonworld")
+            ent = index.get_entity("lore/Ayagares.md")
+            self.assertIsNotNone(ent)
+            self.assertEqual(index._cache["entities"]["lore/Ayagares.md"]["id"],
+                             "Ayagares::Descripción Física")
+
+    def test_forward_links_from_bare_canonical_id_relaciones(self) -> None:
+        """A bare canonical-id ``relaciones`` entry (no ``[[ ]]`` wrapper)
+        is indexed as a forward link and resolves by ``id``."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "lore/Ayagares.md",
+                "---\ntype: lugar\ntitle: Ayagares\n"
+                "id: Ayagares::Descripción Física\n"
+                "relaciones: [Ayagares::Palacios]\n---\n# Ayagares\n")
+            self._write(
+                mundo_dir, "lore/Palacios.md",
+                "---\ntype: lugar\ntitle: Palacios\n"
+                "id: Ayagares::Palacios\n---\n# Palacios\n")
+            index = EntityGraphIndex(mundos_path)
+            index.build("canonworld")
+            ayagares = index.get_entity("lore/Ayagares.md")
+            self.assertIn("Ayagares::Palacios", ayagares.forward_links)
+            # Backlink computed across the canonical-id boundary.
+            palacios = index.get_entity("lore/Palacios.md")
+            self.assertIn("lore/Ayagares.md", palacios.backlinks)
+
+    def test_link_resolves_by_canonical_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "lore/Ayagares.md",
+                "---\ntype: lugar\ntitle: Ayagares\n"
+                "id: Ayagares::Descripción Física\n---\n"
+                "# Ayagares\n\n[[Ayagares::Palacios]]\n")
+            self._write(
+                mundo_dir, "lore/Palacios.md",
+                "---\ntype: lugar\ntitle: Palacios\n"
+                "id: Ayagares::Palacios\n---\n# Palacios\n")
+            index = EntityGraphIndex(mundos_path)
+            index.build("canonworld")
+            forward = index.get_links("lore/Ayagares.md", kind="forward")
+            self.assertTrue(
+                any(l["path"] == "lore/Palacios.md" for l in forward))
+
+    def test_non_canonical_id_not_treated_as_identity(self) -> None:
+        """A non-canonical ``id`` value (double whitespace — not a canonical
+        identity) is not exposed as the relationship key; the entity still
+        indexes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "lore/A.md",
+                "---\ntype: personaje\ntitle: A\nid: Dos  Espacios\n---\n# A\n")
+            index = EntityGraphIndex(mundos_path)
+            index.build("canonworld")
+            ent = index._cache["entities"]["lore/A.md"]
+            self.assertEqual(ent["id"], "")
+
+
 if __name__ == "__main__":
     unittest.main()
