@@ -4147,11 +4147,13 @@ app.include_router(
 #
 # The importer module is gateway-independent; the composition layer in this
 # file is the only place that talks to ``_run_hermes``. The bridge wraps the
-# async gateway in ``asyncio.run`` with a 5-second total budget, raises on
-# timeout, and returns the empty ``unavailable_copy`` when the gateway is
-# unreachable so the importer's fail-open contract holds end-to-end.
+# async gateway in ``asyncio.run`` with the extended 120-second total budget
+# (``DEFAULT_TIMEOUT_SECONDS`` — design risk 4: large per-ficha summaries and
+# the relationship batch need the extended budget), raises on timeout, and
+# returns the empty ``unavailable_copy`` when the gateway is unreachable so
+# the importer's fail-open contract holds end-to-end.
 def _sync_hermes_enricher(prompt: str, session_id: str) -> str:
-    """Synchronous Hermes bridge honoring the 5-second total budget."""
+    """Synchronous Hermes bridge honoring the extended total budget."""
     import asyncio
     from import_enrichment import DEFAULT_TIMEOUT_SECONDS
     try:
@@ -4170,22 +4172,83 @@ def _sync_hermes_enricher(prompt: str, session_id: str) -> str:
 
 
 def _make_import_enricher():
-    """Compose the Hermes enricher callable for the import router.
+    """Compose the Hermes enrichment-funnel callable for the import router.
 
-    Slice 2 contract: enrichment is OPT-IN (the request must set
-    ``enrich=true``). The enricher runs the gateway bridge, parses the
-    response, validates the suggestion set, and attaches the validated
-    payloads to each candidate. Failures (timeout, unavailable copy,
-    malformed JSON, vocabulary rejection) leave the candidates unchanged
-    with ``enrichment_status="no_suggestions"`` so the import succeeds
-    deterministically.
+    importador-auto-frontmatter (Phase 2): the enricher runs the funnel —
+    per-ficha summaries (Step 2), one batched canonical-id relationship pass
+    (Step 3), and type/frontmatter with manual fallback (Step 4) — instead of
+    the legacy one-shot classification batch. Enrichment is OPT-IN (the
+    request must set ``enrich=true``). Failures (timeout, unavailable copy,
+    malformed JSON, vocabulary rejection) leave the candidates reviewable with
+    ``manual``/``fallback`` frontmatter so the import succeeds deterministically.
     """
-    from import_enrichment import enrich_candidates as _enrich
+    from import_enrichment import analyze_ficha_funnel as _funnel
 
     def enricher(candidates):
-        return _enrich(candidates, hermes_runner=_sync_hermes_enricher)
+        return _funnel(candidates, hermes_runner=_sync_hermes_enricher)
 
     return enricher
+
+
+def _make_structure_inference():
+    """Compose the concrete Hermes H1-H5 structure-inference callable.
+
+    Wired to the deterministic splitter's Step 0 fallback seam (task 1.2):
+    consulted ONLY when the deterministic heading scan finds no headings. The
+    callable asks Hermes for a JSON ``headings`` array and converts each entry
+    into a ``HeadingSpan``; on any failure it returns ``[]`` so the splitter
+    falls back to a single implicit ficha (fail-open — the import path never
+    blocks on inference).
+    """
+    from import_analysis import HeadingSpan
+
+    def structure_inference(text: str) -> list:
+        import asyncio
+        from import_enrichment import DEFAULT_TIMEOUT_SECONDS
+
+        prompt = json.dumps({
+            "task": "structure_inference",
+            "instructions": (
+                "Infer the H1-H5 heading structure of the supplied document "
+                "text (it has no detectable markdown headings). Return a JSON "
+                "object with a 'headings' array; each entry has 'level' "
+                "(integer 1-5) and 'title' (the heading text). Preserve "
+                "document order and original titles verbatim. Return an empty "
+                "array if the text has no discernible structure."
+            ),
+            "text": (text or "")[:8000],
+        }, ensure_ascii=False)
+        try:
+            raw = asyncio.run(
+                asyncio.wait_for(_run_hermes(prompt, "import-structure"),
+                                 timeout=DEFAULT_TIMEOUT_SECONDS))
+        except Exception:  # noqa: BLE001 — inference is optional, fail-open
+            return []
+        try:
+            data = json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
+        except (TypeError, ValueError):
+            return []
+        entries = data.get("headings", []) if isinstance(data, dict) else []
+        if not isinstance(entries, list):
+            return []
+        spans: list = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            level = entry.get("level")
+            title = entry.get("title")
+            if not isinstance(level, int) or not isinstance(title, str) or not title.strip():
+                continue
+            title = title.strip()
+            spans.append(HeadingSpan(
+                level=max(1, min(5, level)),
+                title=title,
+                source_text=f"{'#' * level} {title}",
+                line_index=-1,  # synthetic — inferred spans have no source line
+            ))
+        return spans
+
+    return structure_inference
 
 
 def _make_vision_callable():
@@ -4278,6 +4341,7 @@ app.include_router(
         store=_import_store,
         enricher=_make_import_enricher(),
         vision=_make_vision_callable(),
+        structure_inference=_make_structure_inference(),
         service=ImportService(
             store=_import_store(),
             mundos_dir=MUNDOS_DIR,
