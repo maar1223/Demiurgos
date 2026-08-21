@@ -68,6 +68,14 @@ frontend/node_modules/
 frontend/dist/
 
 # ============================================================
+# Datos runtime locales (SQLite / estado) — no se versionan
+# ============================================================
+data/*.sqlite3
+data/*.sqlite3-*
+data/*.lock
+data/local-state.json
+
+# ============================================================
 # OpenCode Telegram bridge — tooling personal del Autor para
 # programar desde el celular. NO forma parte de Demiurgos:
 # vive solo en local (fuera del repo).
