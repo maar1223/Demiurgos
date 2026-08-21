@@ -358,7 +358,7 @@ class TestFullDocxVisionFlow:
         monkeypatch.setattr(
             "sync_lore.providers.llm.LlmProvider", _CountingVisionProvider)
 
-        registered: list[tuple[str, str, str]] = []
+        registered: list[tuple[str, str, str, bytes]] = []
         store = ImportJobStore(":memory:")
         client, store, spool, mundos = _app(
             tmp_path,
@@ -366,7 +366,7 @@ class TestFullDocxVisionFlow:
                 _settings_file(tmp_path), thumb, store,
                 provider_cls=_CountingVisionProvider),
             register_gallery=lambda world, src, rel: registered.append(
-                (world, str(src), rel)),
+                (world, str(src), rel, Path(src).read_bytes())),
             store=store,
         )
 
@@ -398,11 +398,14 @@ class TestFullDocxVisionFlow:
 
         # Gallery: the ORIGINAL spool bytes were registered (not the thumb).
         assert len(registered) == 1
-        _, src, rel = registered[0]
+        _, src, rel, original_bytes = registered[0]
         assert rel == "media/Enciclopedia/portada.png"
         assert src == str(
             spool / job["job_id"] / "media" / "Enciclopedia" / "portada.png")
-        assert Path(src).read_bytes() == b"PORTADA-BYTES"
+        # The bytes are captured at registration time (during execute, before
+        # the spool is reclaimed on the terminal COMPLETED transition) —
+        # mirroring production's `_register_import_gallery` copy.
+        assert original_bytes == b"PORTADA-BYTES"
 
         # The written ficha carries the vision description as alt-text.
         fichas = list((mundos / "world1").rglob("*.md"))
@@ -429,14 +432,15 @@ class TestFullDocxVisionFlow:
         monkeypatch.setattr(
             "sync_lore.providers.llm.LlmProvider", _CountingVisionProvider)
 
-        registered: list[str] = []
+        registered: list[tuple[str, bytes]] = []
         store = ImportJobStore(":memory:")
         client, store, spool, mundos = _app(
             tmp_path,
             vision=_vision_seam(
                 _settings_file(tmp_path), thumb, store,
                 provider_cls=_CountingVisionProvider),
-            register_gallery=lambda world, src, rel: registered.append(rel),
+            register_gallery=lambda world, src, rel: registered.append(
+                (rel, Path(src).read_bytes())),
             store=store,
         )
 
@@ -457,10 +461,10 @@ class TestFullDocxVisionFlow:
         assert provider.calls[0][0] == b"THUMB-BYTES-NOT-ORIGINAL"
         assert b"ORIGINAL-BYTES" not in provider.calls[0][0]
 
-        # Gallery boundary: the registered file is the ORIGINAL spool bytes.
-        assert registered == ["media/Enciclopedia/portada.png"]
-        spooled = spool / job["job_id"] / "media" / "Enciclopedia" / "portada.png"
-        assert spooled.read_bytes() == b"ORIGINAL-BYTES"
+        # Gallery boundary: the registered file is the ORIGINAL spool bytes,
+        # captured at registration time (during execute, before the spool is
+        # reclaimed on the terminal COMPLETED transition).
+        assert registered == [("media/Enciclopedia/portada.png", b"ORIGINAL-BYTES")]
 
     def test_rejected_image_not_registered_import_continues(
             self, tmp_path, monkeypatch):
