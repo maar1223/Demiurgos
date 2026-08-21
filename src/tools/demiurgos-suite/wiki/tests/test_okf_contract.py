@@ -451,5 +451,43 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         self.assertEqual(detect_legacy_layout(self._mundos()), [])
 
 
+class TestCanonicalIdentity(unittest.TestCase):
+    """IM — canonical ``id`` (``::``-qualified) recognition and safe slugs."""
+
+    def test_canonical_id_with_segments_is_recognized(self) -> None:
+        from wiki.okf_contract import is_canonical_id
+        self.assertTrue(is_canonical_id(
+            "Ayagares::Descripción Física::Forma Base"))
+        self.assertTrue(is_canonical_id("Ayagares"))
+        self.assertTrue(is_canonical_id("Ayagares::Descripción Física#2"))
+
+    def test_non_canonical_ids_are_rejected(self) -> None:
+        from wiki.okf_contract import is_canonical_id
+        for bad in ("", "  ", "A::", "::A", "A:: B", "A  B",
+                    "e\u0301"):  # decomposed accent -> not NFC
+            self.assertFalse(is_canonical_id(bad), bad)
+
+    def test_safe_slug_from_id(self) -> None:
+        from wiki.okf_contract import safe_slug_from_id
+        # Project-wide ASCII slug alphabet: accented characters drop out and
+        # any run of non-alphanumerics collapses to a single ``-``.
+        self.assertEqual(
+            safe_slug_from_id("Ayagares::Descripción Física#2"),
+            "ayagares-descripci-n-f-sica-2")
+        self.assertEqual(safe_slug_from_id("Ayagares"), "ayagares")
+        self.assertEqual(safe_slug_from_id("A::B::C"), "a-b-c")
+        self.assertEqual(safe_slug_from_id("Vibrantes::Río Secreto"),
+                         "vibrantes-r-o-secreto")
+
+    def test_id_field_satisfies_identity_minimum(self) -> None:
+        content = (
+            "---\ntype: Personaje\n"
+            "id: Ayagares::Descripción Física\n"
+            "desire: completar algo\n---\nCuerpo.\n"
+        )
+        validation = validate(content)
+        self.assertTrue(validation.ok, validation.issues)
+
+
 if __name__ == "__main__":
     unittest.main()

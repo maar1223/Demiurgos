@@ -8,6 +8,8 @@ until an explicit gated approval runs (Phase 2).
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -22,6 +24,40 @@ MAX_JOB_AGGREGATE_BYTES = 5 * 1024 * 1024 * 1024  # 5 GB per job, incl. ZIP
 
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Canonical identity contract (importador-auto-frontmatter, Phase 1).
+#
+# ``normalized_identity`` becomes a parent-qualified ID: NFC-normalized,
+# whitespace-collapsed heading segments joined by ``::``; duplicate
+# same-title siblings receive deterministic ``#2``, ``#3`` ordinals in source
+# order (design identity decision). ``Candidate.canonical_id`` is the single
+# relationship key; ``normalized_identity`` remains its uniqueness-compatible
+# alias for legacy rows.
+# ---------------------------------------------------------------------------
+
+
+def normalize_identity_segment(text: str) -> str:
+    """NFC-normalize and whitespace-collapse one heading segment.
+
+    This is the identity contract's per-segment normalization. ``#N``
+    ordinal markers added for duplicate same-title siblings survive
+    normalization unchanged (``Descripción Física#2`` stays as-is).
+    """
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
+
+
+def canonical_identity_from_segments(segments: list[str]) -> str:
+    """Parent-qualified canonical identity from heading segments.
+
+    Joins the normalized segments with ``::``; empty segments are dropped so
+    an implicit document root (no heading segments) yields ``""``.
+    """
+    return "::".join(
+        s for s in (normalize_identity_segment(x) for x in segments) if s)
 
 
 class ImportJobState(str, Enum):
@@ -184,6 +220,62 @@ class RelationshipSuggestion(BaseModel):
     review_state: str = "pending"
 
 
+# ---------------------------------------------------------------------------
+# Analysis contracts (importador-auto-frontmatter, Phase 1).
+#
+# Reviewable frontmatter and reference-image diagnostics produced by the
+# analysis funnel. Candidates retain the original body; these contracts
+# expose the analyzed metadata without ever replacing author text.
+# ---------------------------------------------------------------------------
+
+
+class FrontmatterState(str, Enum):
+    """Enrichment state of a frontmatter candidate (design Step 4)."""
+
+    GENERATED = "generated"   # produced by Hermes enrichment
+    MANUAL = "manual"         # author decision / no enrichment requested
+    FALLBACK = "fallback"     # fail-open: timeout/malformed/unavailable
+
+
+class FrontmatterCandidate(BaseModel):
+    """Reviewable OKF frontmatter for one ficha.
+
+    ``relaciones`` carry canonical ids (``::``-qualified), never ambiguous
+    leaf names. ``state`` records generated/manual/fallback so review can
+    attribute the metadata. The candidate body remains the original source
+    text — frontmatter never replaces it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    type: str | None = None
+    description: str = ""
+    relaciones: list[str] = Field(default_factory=list)
+    state: FrontmatterState = FrontmatterState.MANUAL
+
+
+class MediaDiagnostic(BaseModel):
+    """Diagnostic for one reference-style image placement (``![..][key]``).
+
+    The original span is preserved verbatim in ``reference`` so execution can
+    render it untouched. ``status`` is ``resolved`` when a matching
+    ``[key]: path`` definition exists in the same ficha, otherwise
+    ``unresolved`` — that placement is excluded from gallery registration but
+    never blocks the ficha or the job (review warning only).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reference: str            # verbatim span, e.g. "![][image1]"
+    image_key: str            # e.g. "image1"
+    alt_text: str = ""
+    status: str = "unresolved"  # resolved|unresolved
+    target_path: str = ""     # definition target when resolved
+    target_ficha: str = ""    # canonical id of the owning ficha
+    message: str = ""         # human-readable diagnostic for review
+
+
 class Candidate(BaseModel):
     """A diagnosed, eligible intake candidate (read-only until approved)."""
 
@@ -191,6 +283,7 @@ class Candidate(BaseModel):
     job_id: str
     world: str
     normalized_identity: str
+    canonical_id: str = ""  # parent-qualified "::"-joined identity (analysis)
     source_hash: str
     provenance: Provenance
     content_preview: str = ""
