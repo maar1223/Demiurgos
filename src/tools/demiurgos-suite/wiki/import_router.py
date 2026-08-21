@@ -374,10 +374,24 @@ def create_import_router(
                         for d in c.diagnostics)
             ]
             if failed_conversions:
+                # Distinguish "converter not installed" (environment, actionable
+                # install hint) from "converter ran but produced nothing"
+                # (suspect file), so the user sees the actual cause instead of a
+                # generic "too large or corrupt" guess.
+                if any("conversion_unavailable" in c.diagnostics
+                       for c in failed_conversions):
+                    error = (
+                        "Conversion unavailable: the document converter "
+                        "(.docx/.pdf) is not installed on the server. "
+                        "Install it with: pip install 'markitdown[docx]'"
+                    )
+                else:
+                    error = (
+                        "Conversion failed: the .docx/.pdf file could not be "
+                        "converted (the file may be too large or corrupt)"
+                    )
                 _mark_failed(
-                    job_id, job.revision,
-                    "Conversion failed: empty content preview for a "
-                    ".docx/.pdf source (the file may be too large or corrupt)",
+                    job_id, job.revision, error,
                     "failed:conversion",
                 )
                 return {"job": _store.get_job(job_id).model_dump_redacted()}

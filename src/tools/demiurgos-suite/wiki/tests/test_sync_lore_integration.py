@@ -729,7 +729,10 @@ class TestConversionFailureSurvival:
         # clear error (no silent empty preview reaching REVIEW).
         stored = store.get_job(job["job_id"])
         assert stored.state.value == "failed"
-        assert "empty content preview" in stored.error
+        # SystemExit (markitdown missing) => conversion_unavailable => the
+        # message must name the missing converter, not guess a corrupt file.
+        assert "Conversion unavailable" in stored.error
+        assert "markitdown[docx]" in stored.error
         assert store.candidates_for(job["job_id"]) == []
         assert "failed:conversion" in _events(store, job["job_id"])
         # A new request still works (the server process survived the SystemExit).

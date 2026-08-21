@@ -580,7 +580,9 @@ class TestConversionFailureGate:
 
         stored = store.get_job(job["job_id"])
         assert stored.state.value == "failed"
-        assert "empty content preview" in stored.error
+        # Conversion returned None => conversion_failed => "Conversion failed".
+        assert "Conversion failed" in stored.error
+        assert "not installed" not in stored.error
         # No candidate was persisted for a failed conversion.
         assert store.candidates_for(job["job_id"]) == []
         assert "failed:conversion" in _events(store, job)
