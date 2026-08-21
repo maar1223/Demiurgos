@@ -287,6 +287,17 @@ class Candidate(BaseModel):
     source_hash: str
     provenance: Provenance
     content_preview: str = ""
+    # importador-auto-frontmatter (Phase 2 — enrichment funnel): candidates
+    # retain the ficha's display title, the dense per-ficha summary (Step 2),
+    # the reviewable ``FrontmatterCandidate`` (Step 4), and the reference-image
+    # diagnostics (``![][key]`` spans). All are advisory metadata produced by
+    # the funnel; ``content_preview`` stays the original body text and is never
+    # replaced. ``display_title`` also covers the implicit single-ficha path
+    # (a document with no usable headings) via the file stem.
+    display_title: str = ""
+    summary: str = ""
+    frontmatter: FrontmatterCandidate | None = None
+    media_diagnostics: list[MediaDiagnostic] = Field(default_factory=list)
     # Fail-open conversion/extraction diagnostic tokens (e.g.
     # "conversion_unavailable", "conversion_failed", "media_extraction_failed").
     # In-memory only (not persisted to the candidates table) — used to gate

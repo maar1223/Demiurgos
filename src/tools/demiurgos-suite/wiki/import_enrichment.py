@@ -40,6 +40,8 @@ from import_models import (
     Candidate,
     ClassificationSuggestion,
     EnrichmentStatus,
+    FrontmatterCandidate,
+    FrontmatterState,
     RelationshipSuggestion,
 )
 
@@ -52,10 +54,13 @@ DEFAULT_PROMPT_VERSION = "import-enrichment/v1"
 DEFAULT_PROVIDER = "hermes-gateway"
 DEFAULT_MODEL = "hermes-agent"
 
-# Hard per-call budget: a 5-second total budget keeps enrichment optional and
-# bounded. The runner is responsible for honoring it (async runners wrap the
-# underlying Hermes gateway with an httpx timeout).
-DEFAULT_TIMEOUT_SECONDS = 5.0
+# Extended per-call budget for the enrichment funnel (importador-auto-
+# frontmatter, design risk 4): per-ficha summaries and a relationship pass can
+# carry large bodies, so the total Hermes budget is 120 seconds (including the
+# async bridge/client budget). The runner is responsible for honoring it
+# (async runners wrap the gateway with an httpx timeout); on timeout the
+# funnel fails open to manual/fallback and never blocks the import path.
+DEFAULT_TIMEOUT_SECONDS = 120.0
 
 # Prompt bounds: a candidate preview is bounded so a large source file can
 # never blow up the LLM context window. The total bound guards against an
@@ -454,6 +459,422 @@ def _copy_candidate(candidate: Candidate, **overrides: Any) -> Candidate:
 
 
 # ---------------------------------------------------------------------------
+# importador-auto-frontmatter — enrichment funnel (Steps 2-4).
+#
+# The funnel turns complete-ficha candidates into reviewable frontmatter:
+#   Step 2 — per-ficha dense summaries from the FULL body (200-400 tokens),
+#            carrying ``{candidate_id, canonical_id, display_title}``.
+#   Step 3 — ONE batched relationship pass over the summaries, anchored to
+#            exact canonical ids; ambiguous leaf names are rejected.
+#   Step 4 — type/frontmatter per ficha (``FrontmatterCandidate``) with
+#            ``generated`` / ``manual`` / ``fallback`` state.
+# Every step is fail-open (design risks 3 & 4): a timeout, unavailable
+# gateway, malformed, or invalid output marks the affected candidates
+# ``manual``/``fallback`` and preserves them — the import path never blocks on
+# enrichment. Reuses ``validate_suggestions``, ``RelationshipSuggestion``,
+# ``_REL_VOCAB_DEFAULT``, and the ``_copy_candidate`` fail-open pattern.
+# ---------------------------------------------------------------------------
+
+
+# Dense summary length guidance (tokens) surfaced to the model in Step 2.
+_SUMMARY_WORD_BUDGET = (200, 400)
+
+
+def _default_provenance() -> dict[str, str]:
+    """Server-attached provenance dict for a funnel prompt (not LLM-derived)."""
+    return {
+        "prompt_version": DEFAULT_PROMPT_VERSION,
+        "provider": DEFAULT_PROVIDER,
+        "model": DEFAULT_MODEL,
+    }
+
+
+def _strip_code_fence(text: str) -> str:
+    """Strip a single ```json ... ``` fence (Hermes' most common deviation)."""
+    text = (text or "").strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    return text
+
+
+def _parse_json_object(raw: str) -> dict[str, Any] | None:
+    """Tolerantly parse a Hermes reply into a JSON object, or ``None``."""
+    text = _strip_code_fence(raw)
+    if not text:
+        return None
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def build_summary_prompt(candidates: list[Candidate]) -> dict[str, Any]:
+    """Step 2 — per-ficha summary prompt from each candidate's full body.
+
+    Each payload entry carries ``{candidate_id, canonical_id, display_title}``
+    so Hermes never has to guess an identity, plus the complete body (the
+    ficha's original text — preservation-first). The dense 200-400 token
+    summary is what Step 3 relationships and Step 4 frontmatter reason over.
+    """
+    payload_candidates = [
+        {
+            "candidate_id": c.candidate_id,
+            "canonical_id": c.canonical_id or c.normalized_identity,
+            "display_title": c.display_title or c.normalized_identity,
+            "body": (c.content_preview or "").strip(),
+        }
+        for c in candidates
+    ]
+    lo, hi = _SUMMARY_WORD_BUDGET
+    instructions = (
+        "You are summarizing imported worldbuilding fichas. For each supplied "
+        f"candidate write a dense summary of {lo}-{hi} tokens that captures "
+        "the essential, non-redundant facts of its body. Return a JSON object "
+        "with a 'summaries' array; each entry must reference one candidate_id "
+        "exactly and have a 'summary' string. NEVER invent facts or "
+        "identities not present in the body."
+    )
+    return {
+        "instructions": instructions,
+        "provenance": _default_provenance(),
+        "candidates": payload_candidates,
+    }
+
+
+def parse_summary_response(raw: str) -> dict[str, str]:
+    """Step 2 parser: map ``candidate_id`` -> non-empty trimmed summary."""
+    data = _parse_json_object(raw)
+    if data is None:
+        return {}
+    entries = data.get("summaries", [])
+    if not isinstance(entries, list):
+        return {}
+    out: dict[str, str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        cid = entry.get("candidate_id")
+        summary = entry.get("summary")
+        if not isinstance(cid, str) or not isinstance(summary, str):
+            continue
+        summary = summary.strip()
+        if cid and summary:
+            out[cid] = summary
+    return out
+
+
+def build_relationship_batch_prompt(
+    candidates: list[Candidate],
+    *,
+    rel_vocab: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Step 3 — one relationship pass over the per-ficha summaries.
+
+    Anchored to canonical ids: in-batch relationships reference an exact
+    ``canonical_id`` (or candidate_id); ``validate_relationship_batch`` maps
+    those back to candidates and rejects ambiguous leaf names. Reuses
+    ``_REL_VOCAB_DEFAULT`` for the relationship vocabulary.
+    """
+    rel_vocab_set = frozenset(rel_vocab) if rel_vocab is not None else _REL_VOCAB_DEFAULT
+    payload_candidates = [
+        {
+            "candidate_id": c.candidate_id,
+            "canonical_id": c.canonical_id or c.normalized_identity,
+            "display_title": c.display_title or c.normalized_identity,
+            "summary": c.summary or "",
+        }
+        for c in candidates
+    ]
+    instructions = (
+        "You are suggesting relationships between imported worldbuilding "
+        "fichas based on their summaries. Return a JSON object with a "
+        "'relationships' array. Each relationship must use "
+        "'source_candidate_id' and 'target_canonical_id' referencing the "
+        "EXACT canonical_id values supplied (never a bare or ambiguous "
+        "display title). Use 'relationship_type' from the vocabulary, "
+        "'confidence' in [0,1], and a short 'evidence' quote. NEVER invent "
+        "canonical ids or targets outside the batch."
+    )
+    return {
+        "instructions": instructions,
+        "rel_vocab": sorted(rel_vocab_set),
+        "provenance": _default_provenance(),
+        "candidates": payload_candidates,
+    }
+
+
+def validate_relationship_batch(
+    parsed: dict[str, Any],
+    candidates: list[Candidate],
+    *,
+    rel_vocab: Iterable[str] | None = None,
+) -> list[RelationshipSuggestion]:
+    """Step 3 validator: canonical-id-anchored relationships, reusing
+    ``validate_suggestions`` safety rules (vocabulary, confidence, self-link,
+    grounding).
+
+    Canonical ids are first mapped back to candidate ids so an ambiguous leaf
+    name (e.g. ``"Descripción Física"`` when two branches share the title)
+    never survives — only an exact ``canonical_id`` (fully qualified, e.g.
+    ``"Ayagares::Descripción Física"``) matches a candidate. Returns
+    ``RelationshipSuggestion`` objects anchored to ``candidate_id``.
+    """
+    rel_list = parsed.get("relationships", []) if isinstance(parsed, dict) else []
+    by_canonical = {
+        (c.canonical_id or c.normalized_identity): c.candidate_id for c in candidates
+    }
+    by_candidate = {c.candidate_id: c.candidate_id for c in candidates}
+    remapped: list[dict[str, Any]] = []
+    for entry in rel_list:
+        if not isinstance(entry, dict):
+            continue
+        src = entry.get("source_candidate_id") or entry.get("source_canonical_id")
+        tgt = (entry.get("target_candidate_id")
+               or entry.get("target_canonical_id")
+               or entry.get("target_name"))
+        if not isinstance(src, str) or not isinstance(tgt, str):
+            continue
+        src_id = by_canonical.get(src) or by_candidate.get(src)
+        tgt_id = by_canonical.get(tgt) or by_candidate.get(tgt)
+        if src_id is None or tgt_id is None:
+            continue  # ungrounded / ambiguous target — rejected
+        if src_id == tgt_id:
+            continue  # self-link rejected
+        remapped.append({
+            "id": entry.get("id"),
+            "source_candidate_id": src_id,
+            "target_candidate_id": tgt_id,
+            "relationship_type": entry.get("relationship_type"),
+            "confidence": entry.get("confidence"),
+            "evidence": entry.get("evidence"),
+        })
+    _, relationships = validate_suggestions(
+        {"classifications": [], "relationships": remapped},
+        candidates,
+        rel_vocab=rel_vocab,
+    )
+    return relationships
+
+
+def build_type_frontmatter_prompt(candidates: list[Candidate]) -> dict[str, Any]:
+    """Step 4 — per-ficha type/frontmatter prompt.
+
+    Generates a ``FrontmatterCandidate`` (``title``, ``type``, ``description``,
+    ``relaciones``) from each ficha's summary. ``title`` defaults to the
+    display title unless the body clearly implies a better canonical title.
+    """
+    payload_candidates = [
+        {
+            "candidate_id": c.candidate_id,
+            "canonical_id": c.canonical_id or c.normalized_identity,
+            "display_title": c.display_title or c.normalized_identity,
+            "summary": c.summary or "",
+        }
+        for c in candidates
+    ]
+    instructions = (
+        "You are writing OKF frontmatter for imported worldbuilding fichas. "
+        "Return a JSON object with a 'frontmatter' array. Each entry must "
+        "reference one candidate_id and provide 'title', 'type' (one of the "
+        "entity types or null), a concise 'description', and 'relaciones' (an "
+        "array of canonical ids from the supplied set). 'title' should match "
+        "the display_title unless the body clearly implies a better canonical "
+        "title. NEVER invent canonical ids outside the batch."
+    )
+    return {
+        "instructions": instructions,
+        "entity_vocab": list(entity_type_vocabulary()),
+        "provenance": _default_provenance(),
+        "candidates": payload_candidates,
+    }
+
+
+def parse_frontmatter_response(raw: str) -> dict[str, dict[str, Any]]:
+    """Step 4 parser: map ``candidate_id`` -> ``FrontmatterCandidate`` dict.
+
+    Only entries with a non-empty title are kept; ``type`` is normalized to
+    ``None`` when absent/invalid. The returned dicts carry ``state`` equal to
+    ``"generated"`` (the caller upgrades/degrades per candidate outcome).
+    """
+    data = _parse_json_object(raw)
+    if data is None:
+        return {}
+    entries = data.get("frontmatter", [])
+    if not isinstance(entries, list):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        cid = entry.get("candidate_id")
+        if not isinstance(cid, str) or not cid:
+            continue
+        title = entry.get("title")
+        if not isinstance(title, str) or not title.strip():
+            continue
+        description = entry.get("description")
+        if not isinstance(description, str):
+            description = ""
+        rel = entry.get("relaciones")
+        rel_list = [r for r in rel if isinstance(r, str)] if isinstance(rel, list) else []
+        fm_type = entry.get("type")
+        if not isinstance(fm_type, str) or not fm_type:
+            fm_type = None
+        out[cid] = {
+            "title": title.strip(),
+            "type": fm_type,
+            "description": description,
+            "relaciones": rel_list,
+            "state": FrontmatterState.GENERATED.value,
+        }
+    return out
+
+
+def _fallback_frontmatter(candidate: Candidate) -> FrontmatterCandidate:
+    """Reviewable fallback frontmatter for a candidate that failed enrichment."""
+    return FrontmatterCandidate(
+        title=candidate.display_title or candidate.normalized_identity,
+        type=None,
+        description="",
+        relaciones=[],
+        state=FrontmatterState.FALLBACK,
+    )
+
+
+def analyze_ficha_funnel(
+    candidates: list[Candidate],
+    hermes_runner: Callable[[str, str], str] | None,
+    *,
+    rel_vocab: Iterable[str] | None = None,
+    provenance: dict[str, str] | None = None,
+) -> list[Candidate]:
+    """Run Steps 2-4 of the enrichment funnel over complete-ficha candidates.
+
+    ``hermes_runner`` is the injected sync ``Callable[[prompt, session_id], str]``
+    (gateway-independent, trivially mockable). Returns a NEW list; the input is
+    never mutated. Each candidate is patched with ``summary``, ``frontmatter``
+    (``FrontmatterCandidate``), and ``enrichment_json`` (relationship
+    suggestions). Fail-open: a timeout, unavailable gateway, malformed, or
+    invalid output at any step marks the affected candidates ``fallback`` and
+    preserves them — the import path never blocks on enrichment (design risks
+    3 & 4). Candidates are left ``manual`` only when no runner was supplied
+    (enrichment not requested).
+    """
+    if hermes_runner is None or not candidates:
+        # Enrichment not requested: leave candidates reviewable with a manual
+        # frontmatter (guaranteeing frontmatter is never None after analysis).
+        out: list[Candidate] = []
+        for c in candidates:
+            if c.frontmatter is None:
+                c = _copy_candidate(c, frontmatter=FrontmatterCandidate(
+                    title=c.display_title or c.normalized_identity,
+                    type=None, description="", relaciones=[],
+                    state=FrontmatterState.MANUAL))
+            out.append(c)
+        return out
+    session_id = f"import-funnel:{candidates[0].job_id}"
+    prov = dict(provenance or _default_provenance())
+    # Enrichment WAS attempted: any candidate that ends up without generated
+    # frontmatter is an affected candidate -> fallback (fail-open), never a
+    # silent ``manual`` (manual is reserved for "no enrichment requested").
+
+    # Step 2 — per-ficha summaries from the full body.
+    summaries: dict[str, str] = {}
+    try:
+        raw = hermes_runner(
+            json.dumps(build_summary_prompt(candidates), ensure_ascii=False),
+            session_id,
+        )
+        summaries = parse_summary_response(raw)
+    except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+        logger.warning("funnel step 2 (summaries) failed: %s",
+                       type(exc).__name__, exc_info=True)
+
+    summarized: list[Candidate] = []
+    out: list[Candidate] = []
+    for c in candidates:
+        summary = summaries.get(c.candidate_id, "")
+        patched = _copy_candidate(c, summary=summary)
+        out.append(patched)
+        if summary:
+            summarized.append(patched)
+
+    # Step 3 — one batched relationship pass over the summaries.
+    relationships: list[RelationshipSuggestion] = []
+    if summarized:
+        try:
+            raw = hermes_runner(
+                json.dumps(
+                    build_relationship_batch_prompt(summarized, rel_vocab=rel_vocab),
+                    ensure_ascii=False,
+                ),
+                session_id,
+            )
+            parsed = _parse_json_object(raw) or {}
+            relationships = validate_relationship_batch(
+                parsed, summarized, rel_vocab=rel_vocab)
+        except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+            logger.warning("funnel step 3 (relationships) failed: %s",
+                           type(exc).__name__, exc_info=True)
+
+    # Step 4 — type/frontmatter per ficha.
+    frontmatter: dict[str, dict[str, Any]] = {}
+    if summarized:
+        try:
+            raw = hermes_runner(
+                json.dumps(
+                    build_type_frontmatter_prompt(summarized),
+                    ensure_ascii=False,
+                ),
+                session_id,
+            )
+            frontmatter = parse_frontmatter_response(raw)
+        except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+            logger.warning("funnel step 4 (frontmatter) failed: %s",
+                           type(exc).__name__, exc_info=True)
+
+    rel_by_candidate: dict[str, list[dict[str, Any]]] = {}
+    for rel in relationships:
+        rel_by_candidate.setdefault(rel.source_candidate_id, []).append(
+            rel.model_dump()
+            | {"provenance": dict(prov), "__type__": "relationship"})
+
+    final: list[Candidate] = []
+    for c in out:
+        fm_data = frontmatter.get(c.candidate_id)
+        if fm_data is not None:
+            candidate_fm = FrontmatterCandidate(
+                title=fm_data["title"],
+                type=fm_data["type"],
+                description=fm_data["description"],
+                relaciones=fm_data["relaciones"],
+                state=FrontmatterState.GENERATED,
+            )
+        elif c.summary:
+            # Enrichment was attempted but produced no generated frontmatter.
+            candidate_fm = _fallback_frontmatter(c)
+        else:
+            # No summary at all: enrichment was attempted (Step 2 failed /
+            # omitted this candidate) -> fallback, reviewable and importable.
+            candidate_fm = _fallback_frontmatter(c)
+        own = rel_by_candidate.get(c.candidate_id, [])
+        final.append(_copy_candidate(
+            c,
+            frontmatter=candidate_fm,
+            enrichment_json=own or None,
+            enrichment_status=(EnrichmentStatus.OK.value if own
+                               else EnrichmentStatus.NO_SUGGESTIONS.value),
+        ))
+    return final
+
+
+# ---------------------------------------------------------------------------
 # Pure content patch (used during execute, not analyze)
 # ---------------------------------------------------------------------------
 
@@ -617,4 +1038,12 @@ __all__ = [
     "entity_type_vocabulary",
     "parse_hermes_response",
     "validate_suggestions",
+    # importador-auto-frontmatter enrichment funnel (Steps 2-4).
+    "build_summary_prompt",
+    "parse_summary_response",
+    "build_relationship_batch_prompt",
+    "validate_relationship_batch",
+    "build_type_frontmatter_prompt",
+    "parse_frontmatter_response",
+    "analyze_ficha_funnel",
 ]
