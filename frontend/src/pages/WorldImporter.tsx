@@ -17,6 +17,7 @@ import { VisionSuggestionCard } from "@/components/molecules/VisionSuggestionCar
 import type {
   ClassificationSuggestion,
   EnrichmentStatus,
+  FrontmatterState,
   ImportApprovalResponse,
   ImportCandidate,
   ImportExecutionOutcome,
@@ -24,6 +25,7 @@ import type {
   ImportJob,
   ImportSuggestion,
   ImportSourceKind,
+  MediaDiagnostic,
   RelationshipSuggestion,
   VisionSuggestion,
 } from "@/api/types";
@@ -133,6 +135,26 @@ function historyStateVariant(state: ImportJob["state"]): "default" | "info" | "w
     default:
       return "default";
   }
+}
+
+/** UI copy + badge variant for a candidate's frontmatter enrichment state. */
+function frontmatterStateBadge(
+  state: FrontmatterState,
+): { label: string; variant: "default" | "success" | "warning" } {
+  switch (state) {
+    case "generated":
+      return { label: "generado", variant: "success" };
+    case "fallback":
+      return { label: "respaldo", variant: "warning" };
+    case "manual":
+    default:
+      return { label: "manual", variant: "default" };
+  }
+}
+
+/** Unresolved reference-style media spans (``![][key]`` without definition). */
+function unresolvedMedia(candidate: ImportCandidate): MediaDiagnostic[] {
+  return candidate.media_diagnostics.filter((d) => d.status === "unresolved");
 }
 
 /**
@@ -1381,6 +1403,54 @@ export default function WorldImporter() {
             la importación: escribir es una acción explícita y separada.
           </p>
 
+          {/* Importador-auto-frontmatter (Phase 4) — on-screen H1-H5 authoring
+              guide. Explains how headings map to roots/folders/fichas and how
+              empty scaffolding is preserved, so the author sees the mapping
+              and empty-section behavior before approving. */}
+          <details
+            className="mt-4 rounded-lg border border-filio bg-madero"
+            data-testid="authoring-guide"
+          >
+            <summary className="flex cursor-pointer items-center justify-between gap-2 px-4 py-3 text-small font-medium text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 [&::-webkit-details-marker]:hidden">
+              <span>Guía de estructura H1–H5</span>
+              <Icon
+                name="chevron-down"
+                size={14}
+                className="transition-transform group-open:rotate-180"
+              />
+            </summary>
+            <div className="border-t border-filio px-4 py-3 text-xs text-tinta-desvaida">
+              <p className="text-pergamino">
+                El análisis arma una jerarquía real a partir de los encabezados
+                del documento. Cada ficha conserva su texto original completo.
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-4">
+                <li>
+                  <span className="text-pergamino">H1</span> — raíz/índice del
+                  mundo. Toda sección H1 queda como carpeta raíz, incluso si
+                  está vacía (el andamiaje intencional se preserva, nunca se
+                  borra).
+                </li>
+                <li>
+                  <span className="text-pergamino">H2–H5</span> — encabezados
+                  anidados bajo su H1. Un encabezado con subsecciones se
+                  convierte en una <span className="text-pergamino">ficha</span>{" "}
+                  (carpeta con sus fichas hijas).
+                </li>
+                <li>
+                  <span className="text-pergamino">Texto sin subsecciones</span>{" "}
+                  — el texto plano de un encabezado sin hijos queda en la ficha
+                  padre, nunca se descarta ni se crea una ficha vacía.
+                </li>
+                <li>
+                  <span className="text-pergamino">Sin encabezados</span> — si
+                  el documento no tiene encabezados útiles, se crea una sola
+                  ficha implícita con el nombre del archivo.
+                </li>
+              </ul>
+            </div>
+          </details>
+
           {/* Slice 2 — enrichment status banner. Mirrors the server-attributed
               state so reviewers never see a different answer than the audit
               log. "disabled" hides the banner entirely to keep the legacy
@@ -1677,20 +1747,45 @@ function CandidateCard({
     (s): s is Exclude<ImportSuggestion, VisionSuggestion & { __type__: "vision" }> =>
       s.__type__ !== "vision",
   );
+  // Importador-auto-frontmatter (Phase 4) — analyzed metadata for the ficha.
+  const fmBadge = candidate.frontmatter
+    ? frontmatterStateBadge(candidate.frontmatter.state)
+    : null;
+  const unresolvedMediaSpans = unresolvedMedia(candidate);
+  const resolvedMediaCount =
+    candidate.media_diagnostics.length - unresolvedMediaSpans.length;
+  // Canonical identity: the ficha's stable ``::``-qualified identity. Prefer
+  // the display title for the human label; fall back to the identity itself.
+  const fichaTitle =
+    candidate.display_title || candidate.normalized_identity;
 
   return (
     <details className="group rounded-lg border border-filio bg-madero">
       <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 px-4 py-3 text-small font-medium text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 [&::-webkit-details-marker]:hidden">
         <span className="min-w-0 truncate">
-          {candidate.normalized_identity}
+          {fichaTitle}
           <span className="ml-2 text-xs font-normal text-tinta-desvaida">
             {candidate.provenance.source_path}
           </span>
         </span>
         <span className="flex items-center gap-2">
+          {fmBadge && (
+            <span
+              data-testid={`frontmatter-state-${candidate.candidate_id}`}
+            >
+              <Badge variant={fmBadge.variant}>{fmBadge.label}</Badge>
+            </span>
+          )}
           {hasIssues && <Badge variant="warning">validación</Badge>}
           {ambiguousImages.length > 0 && (
             <Badge variant="warning">ubicación ambigua</Badge>
+          )}
+          {unresolvedMediaSpans.length > 0 && (
+            <span data-testid={`media-warning-${candidate.candidate_id}`}>
+              <Badge variant="warning">
+                {unresolvedMediaSpans.length} media sin resolver
+              </Badge>
+            </span>
           )}
           {candidate.images.length > 0 && candidate.images.length - ambiguousImages.length > 0 && (
             <Badge variant="info">{candidate.images.length} img</Badge>
@@ -1707,6 +1802,14 @@ function CandidateCard({
             <dt className="text-xs text-tinta-desvaida">Origen</dt>
             <dd className="text-pergamino">{candidate.provenance.source_path}</dd>
           </div>
+          {candidate.canonical_id && (
+            <div data-testid={`canonical-id-${candidate.candidate_id}`}>
+              <dt className="text-xs text-tinta-desvaida">Identidad canónica</dt>
+              <dd className="break-words font-mono text-pergamino">
+                {candidate.canonical_id}
+              </dd>
+            </div>
+          )}
           {candidate.provenance.heading_path && (
             <div>
               <dt className="text-xs text-tinta-desvaida">Sección de origen</dt>
@@ -1735,6 +1838,104 @@ function CandidateCard({
             <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-filio bg-cripta p-3 text-xs text-tinta-desvaida">
               {candidate.content_preview}
             </pre>
+          </div>
+        )}
+
+        {/* Importador-auto-frontmatter (Phase 4) — reviewed frontmatter, dense
+            summary, and isolated media diagnostics. The frontmatter is the
+            analysis output the author approves; the summary is the Step 2
+            dense text; unresolved ``![][key]`` spans surface as non-blocking
+            warnings (excluded from the gallery, never failing the ficha). */}
+        {candidate.summary && (
+          <div className="mt-3" data-testid={`summary-${candidate.candidate_id}`}>
+            <p className="text-xs text-tinta-desvaida">Resumen</p>
+            <p className="mt-1 text-xs text-pergamino">{candidate.summary}</p>
+          </div>
+        )}
+
+        {candidate.frontmatter && (
+          <div
+            className="mt-3 rounded-md border border-filio bg-cripta p-3"
+            data-testid={`frontmatter-${candidate.candidate_id}`}
+          >
+            <p className="text-xs text-tinta-desvaida">Frontmatter propuesto</p>
+            <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-small tablet:grid-cols-2">
+              <div>
+                <dt className="text-xs text-tinta-desvaida">Título</dt>
+                <dd className="text-pergamino">{candidate.frontmatter.title}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-tinta-desvaida">Tipo</dt>
+                <dd className="text-pergamino">
+                  {candidate.frontmatter.type || "—"}
+                </dd>
+              </div>
+              {candidate.frontmatter.description && (
+                <div className="tablet:col-span-2">
+                  <dt className="text-xs text-tinta-desvaida">Descripción</dt>
+                  <dd className="text-pergamino">
+                    {candidate.frontmatter.description}
+                  </dd>
+                </div>
+              )}
+              {candidate.frontmatter.relaciones.length > 0 && (
+                <div className="tablet:col-span-2">
+                  <dt className="text-xs text-tinta-desvaida">Relaciones</dt>
+                  <dd className="flex flex-wrap gap-1">
+                    {candidate.frontmatter.relaciones.map((rel) => (
+                      <span
+                        key={rel}
+                        className="rounded-full border border-filio bg-madero px-2 py-0.5 font-mono text-xs text-pergamino"
+                      >
+                        {rel}
+                      </span>
+                    ))}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        )}
+
+        {candidate.media_diagnostics.length > 0 && (
+          <div className="mt-3" data-testid={`media-diagnostics-${candidate.candidate_id}`}>
+            <p className="text-xs text-tinta-desvaida">
+              Imágenes referenciadas{" "}
+              {resolvedMediaCount > 0 && (
+                <span className="text-musgo">
+                  · {resolvedMediaCount} resuelta{resolvedMediaCount === 1 ? "" : "s"}
+                </span>
+              )}
+              {unresolvedMediaSpans.length > 0 && (
+                <span className="text-llamita">
+                  {" "}
+                  · {unresolvedMediaSpans.length} sin resolver
+                </span>
+              )}
+            </p>
+            <ul className="mt-2 flex flex-col gap-2">
+              {candidate.media_diagnostics.map((diag) => (
+                <li
+                  key={diag.image_key}
+                  className="rounded-md border border-filio bg-cripta px-3 py-2"
+                >
+                  <span className="font-mono text-xs text-pergamino">
+                    {diag.reference}
+                  </span>
+                  {diag.status === "unresolved" && (
+                    <span className="ml-2 text-xs text-llamita">
+                      no hay definición — se conserva tal cual, no se registra
+                      en la galería
+                    </span>
+                  )}
+                  {diag.status === "resolved" && (
+                    <span className="ml-2 text-xs text-musgo">
+                      {diag.target_path}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 
