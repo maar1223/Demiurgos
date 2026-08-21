@@ -906,7 +906,10 @@ def _ficha_from(
         else:
             body_lines.append(child.heading_text)
             body_lines.extend(child.body_lines)
-    node.body = clean_markdown_body("\n".join(body_lines)).strip()
+    # Body stays VERBATIM markdown: emphasis markers are the document's real
+    # formatting (bold/italic/code from the original Word source) and the
+    # viewer renders them. Only derived metadata (title/identity) is cleaned.
+    node.body = "\n".join(body_lines).strip()
     node.media_diagnostics = reference_image_diagnostics(
         node.body, node.canonical_id)
     return node

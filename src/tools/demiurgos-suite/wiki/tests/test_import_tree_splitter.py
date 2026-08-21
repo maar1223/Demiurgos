@@ -284,8 +284,8 @@ class TestReferenceImageDiagnostics:
 
 class TestMarkdownCleaning:
     """Converted .docx/.pdf sources carry ``**``/image noise that must be
-    cleaned from titles/identities and unwrapped in the body (markers only;
-    real images and text are preserved)."""
+    cleaned from derived TITLES/IDENTITIES only. The ficha BODY stays
+    verbatim markdown so the viewer keeps rendering bold/italic/code."""
 
     def test_bold_title_is_unwrapped_in_identity(self):
         tree = split_heading_tree(
@@ -303,17 +303,19 @@ class TestMarkdownCleaning:
         assert ficha.title == "Sección"
         assert ficha.canonical_id == "Sección"
 
-    def test_body_unwraps_emphasis_but_keeps_images(self):
+    def test_body_preserves_markdown_formatting_verbatim(self):
+        # Emphasis markers are REAL document formatting (bold/italic/code from
+        # the original Word source) — the viewer renders them. Only derived
+        # metadata (title/identity) is cleaned, never the body.
         tree = split_heading_tree(
             "# Ayagares\n\n"
             "Los **Ayagares** son *seres* de `luz`.\n\n"
             "![portada](media/portada.png)\n")
         body = tree.fichas[0].body
-        assert "**Ayagares**" not in body
-        assert "Ayagares" in body
-        assert "*seres*" not in body
-        assert "`luz`" not in body
-        assert "![portada](media/portada.png)" in body  # images preserved
+        assert "**Ayagares**" in body
+        assert "*seres*" in body
+        assert "`luz`" in body
+        assert "![portada](media/portada.png)" in body
 
     def test_identity_contract_also_strips_markdown(self):
         from import_models import normalize_identity_segment
