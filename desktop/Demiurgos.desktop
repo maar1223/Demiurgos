@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Demiurgos
+Comment=Start or restart the Demiurgos local services
+Exec=@PROJECT_ROOT@/scripts/start-demiurgos-linux.sh restart
+Icon=utilities-terminal
+Terminal=true
+Categories=Development;Utility;
+StartupNotify=true

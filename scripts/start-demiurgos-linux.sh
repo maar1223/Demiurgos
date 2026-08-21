@@ -237,9 +237,14 @@ show_status() {
 install_desktop() {
     [ -f "$DESKTOP_SOURCE" ] || { printf 'Desktop file missing: %s\n' "$DESKTOP_SOURCE" >&2; return 1; }
     mkdir -p "$APPLICATIONS_DIR"
-    install -m 0644 "$DESKTOP_SOURCE" "$APPLICATIONS_DIR/Demiurgos.desktop"
+    # Substitute the project-root placeholder so the launcher survives moves.
+    sed "s|@PROJECT_ROOT@|$PROJECT_ROOT|g" "$DESKTOP_SOURCE" \
+        > "$APPLICATIONS_DIR/Demiurgos.desktop"
+    chmod 0644 "$APPLICATIONS_DIR/Demiurgos.desktop"
     if [ -d "$DESKTOP_DIR" ]; then
-        install -m 0755 "$DESKTOP_SOURCE" "$DESKTOP_DIR/Demiurgos.desktop"
+        sed "s|@PROJECT_ROOT@|$PROJECT_ROOT|g" "$DESKTOP_SOURCE" \
+            > "$DESKTOP_DIR/Demiurgos.desktop"
+        chmod 0755 "$DESKTOP_DIR/Demiurgos.desktop"
     fi
     printf 'Installed: %s/Demiurgos.desktop\n' "$APPLICATIONS_DIR"
     [ -d "$DESKTOP_DIR" ] && printf 'Installed: %s/Demiurgos.desktop\n' "$DESKTOP_DIR"
