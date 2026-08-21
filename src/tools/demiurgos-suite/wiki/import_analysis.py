@@ -53,6 +53,60 @@ _RE_HEADING = re.compile(r"^(#{1,3})\s+(.+)$")
 _RE_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]+)\)")
 _RE_WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 
+# ---------------------------------------------------------------------------
+# Markdown noise cleaning (converted .docx/.pdf sources).
+#
+# markitdown-style conversions wrap Word formatting as markdown markers, so
+# the splitter output can carry ``**bold**`` in headings/titles and even a
+# heading that is only an inline image. Cleaning is applied to derived
+# metadata (title, canonical identity) and to the ficha BODY for a clean
+# review/OKF output — only the formatting MARKERS are removed, the
+# underlying text and real images are preserved.
+# ---------------------------------------------------------------------------
+
+_RE_BODY_REF_IMAGE = re.compile(r"!\[([^\]]*)\]\[([^\]]*)\]")
+_RE_BODY_INLINE_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]*)\)")
+_RE_BODY_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+_RE_BODY_BOLD_UNDER = re.compile(r"__(.+?)__", re.S)
+_RE_BODY_ITALIC = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+_RE_BODY_ITALIC_UNDER = re.compile(r"(?<!_)_([^_\n]+?)_(?!_)")
+_RE_BODY_CODE = re.compile(r"`([^`\n]+?)`")
+
+
+def clean_markdown_body(text: str) -> str:
+    """Remove emphasis/code markers from a ficha body, preserving images.
+
+    ``**bold**``/``__bold__``/``*italic*``/``_italic_``/`` `code` `` are
+    unwrapped to their inner text. Inline and reference images are KEPT
+    (they are real content the gallery renders); only the formatting
+    markers disappear, so the review and the written OKF body read clean.
+    """
+    if not text:
+        return ""
+    text = _RE_BODY_BOLD.sub(r"\1", text)
+    text = _RE_BODY_BOLD_UNDER.sub(r"\1", text)
+    text = _RE_BODY_ITALIC.sub(r"\1", text)
+    text = _RE_BODY_ITALIC_UNDER.sub(r"\1", text)
+    text = _RE_BODY_CODE.sub(r"\1", text)
+    return text
+
+
+def clean_markdown_title(text: str) -> str:
+    """Clean a heading-derived title: images → alt, emphasis unwrapped.
+
+    Unlike the body cleaner, inline images are REMOVED from a title because
+    an identity cannot contain an image payload; the alt text (when
+    present) is kept, otherwise the segment is empty.
+    """
+    if not text:
+        return ""
+    text = _RE_BODY_REF_IMAGE.sub(lambda m: m.group(1).strip(), text)
+    text = _RE_BODY_INLINE_IMAGE.sub(lambda m: m.group(1).strip(), text)
+    # An image-only heading leaves orphaned wrapping markers (``**``) with no
+    # inner text; drop the marker characters outright in the title context.
+    text = text.replace("**", "").replace("__", "")
+    return clean_markdown_body(text).strip()
+
 
 @dataclass
 class AnalyzedChunk:
@@ -788,7 +842,8 @@ def _build_raw_tree(
                 preamble.append(line)
             continue
         node = _RawNode(
-            level=span.level, title=span.title,
+            level=span.level,
+            title=clean_markdown_title(span.title) or "Sección",
             heading_text=span.source_text, source_line=idx,
         )
         while stack and stack[-1].level >= node.level:
@@ -851,7 +906,7 @@ def _ficha_from(
         else:
             body_lines.append(child.heading_text)
             body_lines.extend(child.body_lines)
-    node.body = "\n".join(body_lines).strip()
+    node.body = clean_markdown_body("\n".join(body_lines)).strip()
     node.media_diagnostics = reference_image_diagnostics(
         node.body, node.canonical_id)
     return node

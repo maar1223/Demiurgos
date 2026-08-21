@@ -281,3 +281,46 @@ class TestReferenceImageDiagnostics:
         assert by_key["a"].status == "unresolved"
         assert by_key["b"].status == "resolved"
         assert by_key["b"].target_path == "media/b.png"
+
+class TestMarkdownCleaning:
+    """Converted .docx/.pdf sources carry ``**``/image noise that must be
+    cleaned from titles/identities and unwrapped in the body (markers only;
+    real images and text are preserved)."""
+
+    def test_bold_title_is_unwrapped_in_identity(self):
+        tree = split_heading_tree(
+            "# **El Origen | Breve Historia De Los Vibrantes**\n\nTexto.\n")
+        ficha = tree.fichas[0]
+        assert ficha.title == "El Origen | Breve Historia De Los Vibrantes"
+        assert ficha.canonical_id == "El Origen | Breve Historia De Los Vibrantes"
+        assert "**" not in ficha.title
+        assert "**" not in ficha.canonical_id
+
+    def test_heading_with_only_image_falls_back_to_seccion(self):
+        tree = split_heading_tree(
+            "# **![](data:image/png;base64,AAAA)![]()**\n\nCuerpo.\n")
+        ficha = tree.fichas[0]
+        assert ficha.title == "Sección"
+        assert ficha.canonical_id == "Sección"
+
+    def test_body_unwraps_emphasis_but_keeps_images(self):
+        tree = split_heading_tree(
+            "# Ayagares\n\n"
+            "Los **Ayagares** son *seres* de `luz`.\n\n"
+            "![portada](media/portada.png)\n")
+        body = tree.fichas[0].body
+        assert "**Ayagares**" not in body
+        assert "Ayagares" in body
+        assert "*seres*" not in body
+        assert "`luz`" not in body
+        assert "![portada](media/portada.png)" in body  # images preserved
+
+    def test_identity_contract_also_strips_markdown(self):
+        from import_models import normalize_identity_segment
+        assert normalize_identity_segment(
+            "**Descripción Física**") == "Descripción Física"
+        # Image alt text is preserved (it is the only human text); the base64
+        # payload and markdown markers disappear.
+        assert normalize_identity_segment(
+            "![logo](data:image/png;base64,xxx) Sección") == "logo Sección"
+        assert normalize_identity_segment("![]() Sección") == "Sección"

@@ -38,15 +38,50 @@ def utcnow_iso() -> str:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Canonical identity contract (importador-auto-frontmatter, Phase 1).
+# ---------------------------------------------------------------------------
+
+# Markdown noise stripping for heading-derived identities (see
+# ``normalize_identity_segment``). Matches the splitter cleaning in
+# ``import_analysis`` so identities and titles agree.
+_RE_IDENTITY_INLINE_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]*)\)")
+_RE_IDENTITY_REF_IMAGE = re.compile(r"!\[([^\]]*)\]\[([^\]]*)\]")
+_RE_IDENTITY_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+_RE_IDENTITY_BOLD_UNDER = re.compile(r"__(.+?)__", re.S)
+_RE_IDENTITY_ITALIC = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+_RE_IDENTITY_ITALIC_UNDER = re.compile(r"(?<!_)_([^_\n]+?)_(?!_)")
+_RE_IDENTITY_CODE = re.compile(r"`([^`\n]+?)`")
+
+
 def normalize_identity_segment(text: str) -> str:
     """NFC-normalize and whitespace-collapse one heading segment.
 
     This is the identity contract's per-segment normalization. ``#N``
     ordinal markers added for duplicate same-title siblings survive
     normalization unchanged (``Descripción Física#2`` stays as-is).
+
+    Markdown formatting noise from converted sources (``.docx``/``.pdf`` via
+    markitdown) is stripped so identities never carry ``**bold**`` markers or
+    inline image payloads (e.g. a heading that is only a logo image). Only
+    the formatting markers are removed; the underlying text (or image alt)
+    is preserved.
     """
     if not text:
         return ""
+    # Inline images `![alt](url)` and reference images `![alt][key]` → alt
+    # text (fall back to empty when no alt is present).
+    text = _RE_IDENTITY_REF_IMAGE.sub(lambda m: m.group(1).strip(), text)
+    text = _RE_IDENTITY_INLINE_IMAGE.sub(lambda m: m.group(1).strip(), text)
+    # An image-only heading leaves orphaned wrapping markers (``**``) with
+    # no inner text; drop the marker characters outright.
+    text = text.replace("**", "").replace("__", "")
+    # Unwrap emphasis markers: **bold**, __bold__, *italic*, _italic_, `code`.
+    text = _RE_IDENTITY_BOLD.sub(r"\1", text)
+    text = _RE_IDENTITY_BOLD_UNDER.sub(r"\1", text)
+    text = _RE_IDENTITY_ITALIC.sub(r"\1", text)
+    text = _RE_IDENTITY_ITALIC_UNDER.sub(r"\1", text)
+    text = _RE_IDENTITY_CODE.sub(r"\1", text)
     return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
 
 
