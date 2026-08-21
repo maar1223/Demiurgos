@@ -67,6 +67,13 @@ DEFAULT_TIMEOUT_SECONDS = 120.0
 # accidental "thousands of candidates" batch.
 _PREVIEW_CHAR_BUDGET = 1500
 _MAX_CANDIDATES_PER_BATCH = 100
+# Funnel chunk size (importador-auto-frontmatter): keep each Hermes call's
+# prompt AND expected output small enough to avoid response truncation on
+# large imports. A single giant batch (e.g. 51 fichas) makes Hermes cut its
+# output after ~10-15 entries (the observed "respaldo desde el 9no Stal"
+# failure) or time out; chunking isolates a failure to one chunk — the rest
+# still get generated metadata, and affected candidates fail open.
+_FUNNEL_CHUNK_SIZE = 12
 
 # Relationship-type vocabulary: lowercase, hyphen-separated, ASCII only.
 # Open allowlist: projects can extend by passing a custom ``rel_vocab`` to
@@ -784,93 +791,98 @@ def analyze_ficha_funnel(
     # frontmatter is an affected candidate -> fallback (fail-open), never a
     # silent ``manual`` (manual is reserved for "no enrichment requested").
 
-    # Step 2 — per-ficha summaries from the full body.
-    summaries: dict[str, str] = {}
-    try:
-        raw = hermes_runner(
-            json.dumps(build_summary_prompt(candidates), ensure_ascii=False),
-            session_id,
-        )
-        summaries = parse_summary_response(raw)
-    except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
-        logger.warning("funnel step 2 (summaries) failed: %s",
-                       type(exc).__name__, exc_info=True)
-
-    summarized: list[Candidate] = []
-    out: list[Candidate] = []
-    for c in candidates:
-        summary = summaries.get(c.candidate_id, "")
-        patched = _copy_candidate(c, summary=summary)
-        out.append(patched)
-        if summary:
-            summarized.append(patched)
-
-    # Step 3 — one batched relationship pass over the summaries.
-    relationships: list[RelationshipSuggestion] = []
-    if summarized:
-        try:
-            raw = hermes_runner(
-                json.dumps(
-                    build_relationship_batch_prompt(summarized, rel_vocab=rel_vocab),
-                    ensure_ascii=False,
-                ),
-                session_id,
-            )
-            parsed = _parse_json_object(raw) or {}
-            relationships = validate_relationship_batch(
-                parsed, summarized, rel_vocab=rel_vocab)
-        except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
-            logger.warning("funnel step 3 (relationships) failed: %s",
-                           type(exc).__name__, exc_info=True)
-
-    # Step 4 — type/frontmatter per ficha.
-    frontmatter: dict[str, dict[str, Any]] = {}
-    if summarized:
-        try:
-            raw = hermes_runner(
-                json.dumps(
-                    build_type_frontmatter_prompt(summarized),
-                    ensure_ascii=False,
-                ),
-                session_id,
-            )
-            frontmatter = parse_frontmatter_response(raw)
-        except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
-            logger.warning("funnel step 4 (frontmatter) failed: %s",
-                           type(exc).__name__, exc_info=True)
-
-    rel_by_candidate: dict[str, list[dict[str, Any]]] = {}
-    for rel in relationships:
-        rel_by_candidate.setdefault(rel.source_candidate_id, []).append(
-            rel.model_dump()
-            | {"provenance": dict(prov), "__type__": "relationship"})
-
+    # Process the funnel per bounded chunk. Each chunk runs Steps 2-4
+    # independently so a truncated/timed-out call only affects its own
+    # candidates; earlier chunks keep their generated metadata (the observed
+    # "fallback from 9no Stal onward" was a single 51-candidate batch whose
+    # Hermes response was cut after ~12 summaries).
     final: list[Candidate] = []
-    for c in out:
-        fm_data = frontmatter.get(c.candidate_id)
-        if fm_data is not None:
-            candidate_fm = FrontmatterCandidate(
-                title=fm_data["title"],
-                type=fm_data["type"],
-                description=fm_data["description"],
-                relaciones=fm_data["relaciones"],
-                state=FrontmatterState.GENERATED,
+    for start in range(0, len(candidates), _FUNNEL_CHUNK_SIZE):
+        chunk = candidates[start:start + _FUNNEL_CHUNK_SIZE]
+
+        # Step 2 — per-ficha summaries from the full body (this chunk).
+        summaries: dict[str, str] = {}
+        try:
+            raw = hermes_runner(
+                json.dumps(build_summary_prompt(chunk), ensure_ascii=False),
+                session_id,
             )
-        elif c.summary:
-            # Enrichment was attempted but produced no generated frontmatter.
-            candidate_fm = _fallback_frontmatter(c)
-        else:
-            # No summary at all: enrichment was attempted (Step 2 failed /
-            # omitted this candidate) -> fallback, reviewable and importable.
-            candidate_fm = _fallback_frontmatter(c)
-        own = rel_by_candidate.get(c.candidate_id, [])
-        final.append(_copy_candidate(
-            c,
-            frontmatter=candidate_fm,
-            enrichment_json=own or None,
-            enrichment_status=(EnrichmentStatus.OK.value if own
-                               else EnrichmentStatus.NO_SUGGESTIONS.value),
-        ))
+            summaries = parse_summary_response(raw)
+        except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+            logger.warning("funnel step 2 (summaries) failed: %s",
+                           type(exc).__name__, exc_info=True)
+
+        summarized: list[Candidate] = []
+        for c in chunk:
+            patched = _copy_candidate(c, summary=summaries.get(c.candidate_id, ""))
+            if patched.summary:
+                summarized.append(patched)
+        summarized_by_id = {c.candidate_id: c for c in summarized}
+
+        # Step 3 — one batched relationship pass over this chunk's summaries.
+        relationships: list[RelationshipSuggestion] = []
+        if summarized:
+            try:
+                raw = hermes_runner(
+                    json.dumps(
+                        build_relationship_batch_prompt(summarized, rel_vocab=rel_vocab),
+                        ensure_ascii=False,
+                    ),
+                    session_id,
+                )
+                parsed = _parse_json_object(raw) or {}
+                relationships = validate_relationship_batch(
+                    parsed, summarized, rel_vocab=rel_vocab)
+            except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+                logger.warning("funnel step 3 (relationships) failed: %s",
+                               type(exc).__name__, exc_info=True)
+
+        # Step 4 — type/frontmatter per ficha (this chunk).
+        frontmatter: dict[str, dict[str, Any]] = {}
+        if summarized:
+            try:
+                raw = hermes_runner(
+                    json.dumps(
+                        build_type_frontmatter_prompt(summarized),
+                        ensure_ascii=False,
+                    ),
+                    session_id,
+                )
+                frontmatter = parse_frontmatter_response(raw)
+            except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+                logger.warning("funnel step 4 (frontmatter) failed: %s",
+                               type(exc).__name__, exc_info=True)
+
+        rel_by_candidate: dict[str, list[dict[str, Any]]] = {}
+        for rel in relationships:
+            rel_by_candidate.setdefault(rel.source_candidate_id, []).append(
+                rel.model_dump()
+                | {"provenance": dict(prov), "__type__": "relationship"})
+
+        for c in chunk:
+            sc = summarized_by_id.get(c.candidate_id)
+            fm_data = frontmatter.get(c.candidate_id)
+            if fm_data is not None:
+                candidate_fm = FrontmatterCandidate(
+                    title=fm_data["title"],
+                    type=fm_data["type"],
+                    description=fm_data["description"],
+                    relaciones=fm_data["relaciones"],
+                    state=FrontmatterState.GENERATED,
+                )
+            else:
+                # Enrichment was attempted but produced no generated
+                # frontmatter for this candidate -> fallback, reviewable and
+                # importable (fail-open).
+                candidate_fm = _fallback_frontmatter(sc or c)
+            own = rel_by_candidate.get(c.candidate_id, [])
+            final.append(_copy_candidate(
+                sc or c,
+                frontmatter=candidate_fm,
+                enrichment_json=own or None,
+                enrichment_status=(EnrichmentStatus.OK.value if own
+                                   else EnrichmentStatus.NO_SUGGESTIONS.value),
+            ))
     return final
 
 

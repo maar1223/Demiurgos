@@ -755,11 +755,12 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const checkbox = toggle.querySelector(
       'input[type="checkbox"]',
     ) as HTMLInputElement;
-    expect(checkbox.checked).toBe(false);
-
-    // Enable enrichment and verify analyzeImportJob receives the opt-in.
-    fireEvent.click(checkbox);
+    // Enrichment is ON by default (it produces the graph metadata).
     expect(checkbox.checked).toBe(true);
+
+    // Opt out and verify analyzeImportJob receives the explicit skip.
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
 
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
@@ -769,18 +770,22 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     expect(analyzeImportJob).toHaveBeenCalledWith(
       "mundo",
       expect.any(String),
-      { enrich: true },
+      { enrich: false },
     );
   });
 
-  it("omits the enrich flag when the toggle is left off (slice 2)", async () => {
+  it("sends the enrich flag explicitly when the toggle is left on (slice 2)", async () => {
     mockAnalyzeToReview([candidate()]);
     renderImporter();
     await selectFileAndAnalyze();
 
-    // The signature is ``analyzeImportJob(mundo, jobId, options?)``; with
-    // the toggle off, no options object is passed at all.
-    expect(analyzeImportJob).toHaveBeenCalledWith("mundo", expect.any(String));
+    // The flag is ALWAYS explicit: the default (toggle on) sends
+    // ``{enrich: true}`` rather than omitting the body.
+    expect(analyzeImportJob).toHaveBeenCalledWith(
+      "mundo",
+      expect.any(String),
+      { enrich: true },
+    );
   });
 
   it("renders advisory cards with provenance and confidence per suggestion", async () => {
@@ -1221,8 +1226,11 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     // was already on the server spool.
     expect(createImportJob).not.toHaveBeenCalled();
     expect(streamImportFile).not.toHaveBeenCalled();
-    // analyzeImportJob was called with the recovered job ID.
-    expect(analyzeImportJob).toHaveBeenCalledWith("mundo", "j-intaking");
+    // analyzeImportJob was called with the recovered job ID and the
+    // explicit enrich flag (default ON).
+    expect(analyzeImportJob).toHaveBeenCalledWith(
+      "mundo", "j-intaking", { enrich: true },
+    );
   });
 });
 

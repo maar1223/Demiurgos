@@ -578,11 +578,26 @@ class TestAnalyzeEnrichFlow:
         client.post(f"/api/world1/imports/{job['job_id']}/stream",
                     json=StreamChunkRequest(relative="lore/A.md", offset=0,
                                             data_b64=base64.b64encode(_OKF).decode()).model_dump())
-        # Default body (no enrich flag) MUST NOT invoke the enricher.
+        # Enrichment is ON by default: an absent body MUST invoke the enricher.
         resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
         assert resp.status_code == 200, resp.text
+        assert calls == [1]
+        # The stub returns candidates unchanged (no enrichment_json), so the
+        # rolled-up status stays "disabled" — the CALL is what matters here.
+
+        # An explicit ``enrich: false`` is the opt-out: no enricher call.
+        job2 = client.post("/api/world1/imports",
+                           json={"source_kind": "loose",
+                                 "files": ["lore/A.md"]}).json()["job"]
+        client.post(f"/api/world1/imports/{job2['job_id']}/stream",
+                    json=StreamChunkRequest(relative="lore/A.md", offset=0,
+                                            data_b64=base64.b64encode(_OKF).decode()).model_dump())
+        calls.clear()
+        resp2 = client.post(f"/api/world1/imports/{job2['job_id']}/analyze",
+                            json={"enrich": False})
+        assert resp2.status_code == 200, resp2.text
         assert calls == []
-        assert resp.json()["enrichment_status"] == "disabled"
+        assert resp2.json()["enrichment_status"] == "disabled"
 
     def test_analyze_with_enrich_false_skips_enricher(self, tmp_path):
         """Explicit ``enrich=false`` preserves the legacy deterministic path."""

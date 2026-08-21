@@ -417,6 +417,48 @@ class TestFichaFunnel:
         assert by_id[b.candidate_id].summary == ""
         assert by_id[b.candidate_id].frontmatter.state == FrontmatterState.FALLBACK
 
+    def test_funnel_chunks_large_batches_and_isolates_failures(self):
+        """13 fichas split into 2 chunks (12 + 1); a timeout on chunk 2 must
+        NOT kill chunk 1's generated metadata.
+
+        This pins the fix for the observed live failure (a single giant
+        batch of 51 fichas whose Hermes response was cut after ~12 entries,
+        leaving "respaldo" from the 9no Stal onward): bounded chunks keep
+        each call small enough and isolate a failure to its own chunk.
+        """
+        fichas = [_ficha(f"Ficha {i:02d}") for i in range(13)]
+        summary_calls = {"n": 0}
+
+        def failing_runner(prompt: str, _session: str) -> str:
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            if cands and "body" in cands[0]:
+                summary_calls["n"] += 1
+                if summary_calls["n"] > 1:
+                    raise TimeoutError("chunk 2 timed out")
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            if "rel_vocab" in data:
+                return json.dumps({"relationships": []})
+            return json.dumps({"frontmatter": [
+                {"candidate_id": c["candidate_id"], "title": c["display_title"],
+                 "type": "lugar", "description": "d", "relaciones": []}
+                for c in cands]})
+
+        out = analyze_ficha_funnel(fichas, failing_runner)
+        # The funnel actually chunked: 2 separate summary calls happened.
+        assert summary_calls["n"] == 2
+        generated = [c for c in out
+                     if c.frontmatter.state == FrontmatterState.GENERATED]
+        fallback = [c for c in out
+                    if c.frontmatter.state == FrontmatterState.FALLBACK]
+        assert len(generated) == 12
+        assert len(fallback) == 1
+        assert next(c for c in out
+                    if c.candidate_id == fichas[12].candidate_id).summary == ""
+
 
 # ---------------------------------------------------------------------------
 # Store — idempotent bootstrap + metadata round trip (task 2.6)

@@ -270,11 +270,10 @@ export default function WorldImporter() {
   // analyze. Cleared on resetAll or when the user picks new files.
   const [resumeIntaking, setResumeIntaking] = useState(false);
 
-  // Slice 2 — optional Hermes advisory enrichment. The toggle lives on the
-  // select step; analyze carries the opt-in flag. Suggestions are
-  // NON-AUTHORITATIVE: the reviewer toggles each one via the decisions
-  // endpoint; approved IDs are bound to the approval token.
-  const [enrichEnabled, setEnrichEnabled] = useState(false);
+  // Enrichment (Hermes summaries/type/relationships) is ON by default — it
+  // produces the indexable OKF metadata the graph needs. The toggle is an
+  // opt-OUT for cost/privacy; the deterministic analysis always runs.
+  const [enrichEnabled, setEnrichEnabled] = useState(true);
   const [enrichmentStatus, setEnrichmentStatus] =
     useState<EnrichmentStatus>("disabled");
   /** Per-suggestion review state, indexed by suggestion id. */
@@ -712,12 +711,11 @@ export default function WorldImporter() {
             : "Analizando contenido (solo lectura)…",
         );
       }
-      // Slice 2 — opt-in is a single boolean; absent body preserves the
-      // legacy deterministic analyze contract (no Hermes call). The server
-      // also treats the absent body as the default ``enrich: false``.
-      const analysis = enrichEnabled
-        ? await analyzeImportJob(mundo, activeJobId, { enrich: true })
-        : await analyzeImportJob(mundo, activeJobId);
+      // The flag is ALWAYS explicit so an opt-out (unchecked) sends
+      // ``enrich: false`` rather than relying on the server default.
+      const analysis = await analyzeImportJob(mundo, activeJobId, {
+        enrich: enrichEnabled,
+      });
       setJob(analysis.job);
       setAnalysisProgress({
         stage: analysis.job.progress_stage || "Analizando",
@@ -796,7 +794,9 @@ export default function WorldImporter() {
         setPhaseMessage("Analizando contenido (solo lectura)…");
         setStep("analyzing");
         try {
-          const analysis = await analyzeImportJob(mundo, jobId);
+          const analysis = await analyzeImportJob(mundo, jobId, {
+            enrich: enrichEnabled,
+          });
           setJob(analysis.job);
           if (analysis.enrichment_status) {
             setEnrichmentStatus(analysis.enrichment_status);
@@ -1416,10 +1416,11 @@ export default function WorldImporter() {
             )}
           </div>
 
-          {/* Slice 2 — optional Hermes advisory enrichment opt-in. The
-              reviewer stays in control: suggestions never mutate the
-              deterministic diagnosis and only materialize on a gated
-              execute when the author approves them. */}
+          {/* Hermes advisory enrichment — ON by default (produces the
+              type/relationships the graph needs). The reviewer stays in
+              control: suggestions never mutate the deterministic diagnosis
+              and only materialize on a gated execute when the author
+              approves them. Unchecking is a cost/privacy opt-out. */}
           <label
             className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-filio bg-cripta p-3 focus-within:ring-2 focus-within:ring-llamita/50"
             data-testid="enrich-toggle"
@@ -1433,16 +1434,18 @@ export default function WorldImporter() {
             />
             <span>
               <span className="block text-small font-medium text-pergamino">
-                Pedirle al asistente sugerencias de clasificación y relaciones
+                Consultar al asistente para clasificar y relacionar las fichas
               </span>
               <span
                 id="enrich-toggle-desc"
                 className="block text-xs text-tinta-desvaida"
               >
-                Opcional. Las sugerencias son orientativas y requieren tu
-                aprobación individual antes de aplicarse. Si el asistente no
-                responde, el análisis sigue siendo válido y se omite el
-                enriquecimiento.
+                Activado por defecto: genera el tipo y las relaciones que el
+                grafo necesita. Las sugerencias son orientativas y requieren tu
+                aprobación antes de aplicarse. Si el asistente no responde, el
+                análisis sigue siendo válido y esas fichas quedan en respaldo.
+                Desactivalo solo para ahorrar tiempo o si preferís no consultar
+                al asistente.
               </span>
             </span>
           </label>

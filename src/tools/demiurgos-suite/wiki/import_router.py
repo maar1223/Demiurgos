@@ -144,15 +144,15 @@ class ApproveRequest(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
-    """Optional ``enrich`` opt-in (slice 2).
+    """Enrichment flag for the analyze flow (slice 2, default ON).
 
-    When ``True`` the analyze flow invokes the injected ``enricher`` after
-    deterministic analysis, persisting advisory suggestions on each
-    candidate. ``False`` (default) preserves the legacy deterministic path
-    with no Hermes call.
+    Enrichment (Hermes summaries, type/frontmatter, relationships) is the
+    DEFAULT behavior — it is what produces indexable OKF metadata. ``False``
+    explicitly skips the assistant call (a cost/privacy opt-out); an absent
+    body also enriches (enrich=True), so legacy clients get the full flow.
     """
 
-    enrich: bool = False
+    enrich: bool = True
 
 
 class DecisionItem(BaseModel):
@@ -322,10 +322,10 @@ def create_import_router(
                 _store.add_event(job_id, event_tag)
                 spool.cleanup()
 
-            # Slice 2: ``enrich`` is an opt-in flag; absent body preserves the
-            # legacy deterministic flow. The router does not validate the flag's
-            # value (Pydantic coerces missing body to defaults).
-            enrich = bool(getattr(body, "enrich", False)) if body is not None else False
+            # ``enrich`` defaults to True: Hermes enrichment is the default
+            # flow (it produces the type/relationships the graph needs).
+            # An explicit ``False`` skips the assistant call.
+            enrich = True if body is None else bool(body.enrich)
 
             # PR3 (sync-lore-in-importer): the media bundle from the analysis
             # facade is preserved through the router so the vision seam can

@@ -538,11 +538,11 @@ class TestEnrichmentCache:
         client, store, spool, mundos = _build_app(
             tmp_path, enricher=counting_enricher)
 
-        # First import WITHOUT enrichment.
+        # First import WITHOUT enrichment (explicit opt-out).
         job1 = _create_job(client, "lore/Aldea del Viento.md")
         resp1 = client.post(
             f"/api/world1/imports/{job1}/analyze",
-            json={},  # enrich defaults to False
+            json={"enrich": False},
         )
         assert resp1.status_code == 200, resp1.text
         assert call_count["n"] == 0, "no enrichment on first import"
