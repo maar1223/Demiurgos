@@ -15,21 +15,32 @@ candidate's source path to its canonical OKF target (IM-1.2). Legacy
 uppercase sections and supported subfolder aliases are mapped; unknown or
 ambiguous candidates are returned with a ``review``/``rejected`` status
 and a diagnostic — never a guessed target.
+
+importador-auto-frontmatter (Phase 1) adds the deterministic H1-H5 tree
+splitter: ``detect_heading_structure`` (Step 0, with a Hermes structure-
+inference fallback seam) and ``split_heading_tree`` (Step 1), which produce
+complete-ficha candidates with parent-qualified canonical identities,
+empty-scaffold preservation, childless prose folding, and reference-image
+diagnostics. This is additive — the legacy chunk flow stays untouched.
 """
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Iterator
 
 from import_intake import UnsafePathError, reject_unsafe_path
 from import_models import (
     ImagePlacement,
+    MediaDiagnostic,
     Provenance,
     TargetResolution,
+    canonical_identity_from_segments,
+    normalize_identity_segment,
 )
 
 if TYPE_CHECKING:
@@ -547,3 +558,336 @@ def resolve_target(world: str, candidate,
         canonical_path=canonical, normalized_source=canonical,
         status="resolved", alias_used="",
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 1 — deterministic H1-H5 tree splitter (importador-auto-frontmatter)
+#
+# Step 0 detects a usable H1-H5 heading tree; Step 1 splits the source into
+# complete-ficha candidates. Every H1 is a valid root/index ficha (including
+# empty scaffolds); siblings with children become fichas; childless prose
+# folds verbatim into the parent ficha; a source without usable headings
+# yields a single implicit ficha (legacy single-candidate path). Canonical
+# identities are parent-qualified ``::``-joined, NFC-normalized,
+# whitespace-collapsed heading segments with ``#N`` ordinals for duplicate
+# same-title siblings.
+# ---------------------------------------------------------------------------
+
+_RE_HEADING_TREE = re.compile(r"^(#{1,5})\s+(.+)$")
+_RE_REF_IMAGE = re.compile(r"!\[([^\]]*)\]\[([^\]]+)\]")
+_RE_REF_DEFINITION = re.compile(r"^\[([^\]]+)\]:\s*(\S+)(?:\s+.*)?$")
+
+
+@dataclass
+class HeadingSpan:
+    """One detected H1-H5 heading (Step 0)."""
+
+    level: int
+    title: str
+    source_text: str
+    line_index: int
+
+
+@dataclass
+class HeadingStructure:
+    """Step 0 detection result for a source text."""
+
+    spans: list[HeadingSpan] = field(default_factory=list)
+    usable: bool = True
+    diagnostic: str = ""
+    inferred: bool = False    # True when spans came from the inference seam
+
+
+@dataclass
+class StructureNode:
+    """One complete-ficha node of the deterministic H1-H5 split (Step 1).
+
+    ``canonical_id`` is the parent-qualified identity (``::``-joined
+    normalized heading segments, ``#N`` ordinals for duplicate same-title
+    siblings). ``body`` is the ficha's own prose plus every childless
+    descendant folded in verbatim (heading line included); ``children`` are
+    the ficha children in source order. ``media_diagnostics`` carries the
+    reference-image placements found in the ficha body.
+    """
+
+    level: int
+    title: str                  # raw heading title (display)
+    heading_text: str           # verbatim heading line
+    source_line: int            # 0-based line index of the heading
+    canonical_segment: str = ""
+    canonical_id: str = ""
+    body: str = ""
+    children: list["StructureNode"] = field(default_factory=list)
+    is_ficha: bool = False
+    is_implicit: bool = False   # document-level fallback root (no headings)
+    source_order: int = -1      # document order among fichas
+    media_diagnostics: list[MediaDiagnostic] = field(default_factory=list)
+
+
+@dataclass
+class HeadingTree:
+    """Step 1 result — the complete-ficha tree of a source document.
+
+    ``fichas`` are in source order; ``usable_structure``/``diagnostic``
+    mirror the Step 0 detection outcome so callers can decide whether the
+    Hermes inference seam should be consulted.
+    """
+
+    fichas: list[StructureNode] = field(default_factory=list)
+    usable_structure: bool = True
+    diagnostic: str = ""
+
+
+@dataclass
+class _RawNode:
+    """Internal tree node used while building the H1-H5 tree."""
+
+    level: int
+    title: str
+    heading_text: str
+    source_line: int
+    body_lines: list[str] = field(default_factory=list)
+    children: list["_RawNode"] = field(default_factory=list)
+    canonical_segment: str = ""
+    is_ficha: bool = False
+
+
+def detect_heading_structure(
+    text: str,
+    *,
+    structure_inference: Callable[[str], list[HeadingSpan]] | None = None,
+) -> HeadingStructure:
+    """Step 0 — detect a usable H1-H5 heading tree.
+
+    Deterministic scan first (``#{1,5}`` headings). When no heading is found
+    and ``structure_inference`` is provided (Phase 2 wires the Hermes
+    structure-inference prompt here), the callback supplies the spans.
+    Without a callback the structure is reported unusable so the splitter
+    falls back to a single implicit ficha (legacy single-candidate path).
+    """
+    spans = _scan_headings(text)
+    if spans:
+        return HeadingStructure(spans=spans, usable=True, diagnostic="")
+    if structure_inference is not None:
+        try:
+            inferred = list(structure_inference(text))
+        except Exception as exc:  # noqa: BLE001 — inference is optional, fail-open
+            logger.warning("Structure inference failed: %s", exc)
+            inferred = []
+        if inferred:
+            return HeadingStructure(
+                spans=inferred, usable=True,
+                diagnostic="structure_inferred", inferred=True,
+            )
+    return HeadingStructure(
+        spans=[], usable=False, diagnostic="no_heading_structure",
+    )
+
+
+def _scan_headings(text: str) -> list[HeadingSpan]:
+    """Deterministic H1-H5 heading scan (line order preserved)."""
+    spans: list[HeadingSpan] = []
+    for idx, line in enumerate(text.split("\n")):
+        m = _RE_HEADING_TREE.match(line.strip())
+        if m:
+            spans.append(HeadingSpan(
+                level=len(m.group(1)),
+                title=m.group(2).strip(),
+                source_text=line.strip(),
+                line_index=idx,
+            ))
+    return spans
+
+
+def split_heading_tree(
+    text: str,
+    *,
+    structure: HeadingStructure | None = None,
+    structure_inference: Callable[[str], list[HeadingSpan]] | None = None,
+) -> HeadingTree:
+    """Step 1 — deterministic H1-H5 split into complete-ficha candidates.
+
+    Rules (design, Step 1): every H1 is a valid root/index ficha — including
+    an empty scaffold, which is review-visible and never dropped; a sibling
+    with children becomes a ficha; childless prose folds verbatim into the
+    parent ficha (its heading line included, so nothing is lost); a source
+    with no usable headings yields one implicit ficha holding the whole text
+    (legacy single-candidate path). Each ficha carries the parent-qualified
+    canonical identity, source order, and reference-image diagnostics.
+
+    ``structure`` short-circuits Step 0 (callers that already detected can
+    pass the result); otherwise detection runs with the
+    ``structure_inference`` fallback seam.
+    """
+    if structure is None:
+        structure = detect_heading_structure(
+            text, structure_inference=structure_inference)
+    fichas = _split_into_fichas(text, structure.spans)
+    return HeadingTree(
+        fichas=fichas,
+        usable_structure=structure.usable,
+        diagnostic=structure.diagnostic,
+    )
+
+
+def _split_into_fichas(text: str, spans: list[HeadingSpan]) -> list[StructureNode]:
+    """Build the ficha list from heading spans (pure, deterministic)."""
+    if not spans:
+        body = text.strip()
+        implicit = StructureNode(
+            level=0, title="", heading_text="", source_line=-1,
+            body=body, is_ficha=True, is_implicit=True, source_order=0,
+        )
+        implicit.media_diagnostics = reference_image_diagnostics(
+            body, implicit.canonical_id)
+        return [implicit]
+
+    roots, preamble = _build_raw_tree(text, spans)
+    counts: dict[str, int] = {}
+    for root in roots:
+        segment = normalize_identity_segment(root.title)
+        counts[segment] = counts.get(segment, 0) + 1
+        root.canonical_segment = (
+            segment if counts[segment] == 1 else f"{segment}#{counts[segment]}")
+        # Every root is a scope: an H1 always, or the first heading of a
+        # document that lacks H1s (no parent exists to fold into).
+        root.is_ficha = True
+        _assign_tree(root)
+    if preamble:
+        roots[0].body_lines = preamble + roots[0].body_lines
+
+    fichas: list[StructureNode] = []
+    order: Iterator[int] = itertools.count()
+    for root in roots:
+        _ficha_from(root, [], order, fichas)
+    return fichas
+
+
+def _build_raw_tree(
+    text: str, spans: list[HeadingSpan],
+) -> tuple[list[_RawNode], list[str]]:
+    """Build the raw H1-H5 tree; return ``(roots, preamble_lines)``.
+
+    A heading attaches under the nearest ancestor with a strictly smaller
+    level. Lines before the first heading are the preamble and fold into the
+    first root ficha (preservation-first; the legacy flow dropped them).
+    """
+    spans_by_line = {span.line_index: span for span in spans}
+    roots: list[_RawNode] = []
+    stack: list[_RawNode] = []
+    preamble: list[str] = []
+    for idx, line in enumerate(text.split("\n")):
+        span = spans_by_line.get(idx)
+        if span is None:
+            if stack:
+                stack[-1].body_lines.append(line)
+            else:
+                preamble.append(line)
+            continue
+        node = _RawNode(
+            level=span.level, title=span.title,
+            heading_text=span.source_text, source_line=idx,
+        )
+        while stack and stack[-1].level >= node.level:
+            stack.pop()
+        if stack:
+            stack[-1].children.append(node)
+        else:
+            roots.append(node)
+        stack.append(node)
+    return roots, preamble
+
+
+def _assign_tree(raw: _RawNode) -> None:
+    """Assign canonical segments (+``#N`` ordinals) and ficha flags.
+
+    Duplicate same-title siblings receive ``#2``, ``#3`` ordinals in source
+    order (design identity decision); the first occurrence keeps the plain
+    segment. A child is a ficha when it is an H1 or has children of its own;
+    childless prose folds into the parent ficha.
+    """
+    counts: dict[str, int] = {}
+    for child in raw.children:
+        segment = normalize_identity_segment(child.title)
+        counts[segment] = counts.get(segment, 0) + 1
+        child.canonical_segment = (
+            segment if counts[segment] == 1 else f"{segment}#{counts[segment]}")
+        child.is_ficha = child.level == 1 or bool(child.children)
+        _assign_tree(child)
+
+
+def _ficha_from(
+    raw: _RawNode,
+    parent_segments: list[str],
+    order: Iterator[int],
+    fichas: list[StructureNode],
+) -> StructureNode:
+    """Emit the ficha node for ``raw`` (must already be flagged a ficha).
+
+    The node is appended to ``fichas`` (pre-order = source order); childless
+    descendants fold into this ficha's body verbatim (heading line included);
+    ficha children recurse and are attached in source order.
+    """
+    segments = [*parent_segments, raw.canonical_segment]
+    node = StructureNode(
+        level=raw.level,
+        title=raw.title,
+        heading_text=raw.heading_text,
+        source_line=raw.source_line,
+        canonical_segment=raw.canonical_segment,
+        canonical_id=canonical_identity_from_segments(segments),
+        is_ficha=True,
+        source_order=next(order),
+    )
+    fichas.append(node)
+    body_lines = list(raw.body_lines)
+    for child in raw.children:
+        if child.is_ficha:
+            node.children.append(_ficha_from(
+                child, segments, order, fichas))
+        else:
+            body_lines.append(child.heading_text)
+            body_lines.extend(child.body_lines)
+    node.body = "\n".join(body_lines).strip()
+    node.media_diagnostics = reference_image_diagnostics(
+        node.body, node.canonical_id)
+    return node
+
+
+def reference_image_diagnostics(
+    content: str, target_ficha: str,
+) -> list[MediaDiagnostic]:
+    """Scan ``content`` for reference-style image spans (``![..][key]``).
+
+    Reference spans are preserved verbatim in the diagnostic. A matching
+    ``[key]: target`` definition line in the same ficha resolves the
+    placement; otherwise the placement is marked unresolved — excluded from
+    gallery registration, surfaced as a review warning, and never blocking
+    the ficha or the job (design: reference-image diagnostics).
+    """
+    definitions: dict[str, str] = {}
+    for line in content.split("\n"):
+        m = _RE_REF_DEFINITION.match(line.strip())
+        if m:
+            definitions.setdefault(m.group(1), m.group(2))
+    diagnostics: list[MediaDiagnostic] = []
+    for m in _RE_REF_IMAGE.finditer(content):
+        alt, key = m.group(1).strip(), m.group(2).strip()
+        target = definitions.get(key)
+        if target is not None:
+            diagnostics.append(MediaDiagnostic(
+                reference=m.group(0), image_key=key, alt_text=alt,
+                status="resolved", target_path=target,
+                target_ficha=target_ficha,
+                message="reference image placement resolved",
+            ))
+        else:
+            diagnostics.append(MediaDiagnostic(
+                reference=m.group(0), image_key=key, alt_text=alt,
+                status="unresolved", target_ficha=target_ficha,
+                message=(
+                    "reference image placement unresolved: "
+                    f"no definition for [{key}]"
+                ),
+            ))
+    return diagnostics
