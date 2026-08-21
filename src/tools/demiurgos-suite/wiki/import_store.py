@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     aggregate_compressed_bytes INTEGER NOT NULL DEFAULT 0,
     file_count INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0,
     error TEXT NOT NULL DEFAULT '', opaque_token TEXT NOT NULL DEFAULT '',
-    lease_owner TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+    lease_owner TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+    progress_stage TEXT NOT NULL DEFAULT '', progress_pct INTEGER);
 CREATE TABLE IF NOT EXISTS candidates (
     candidate_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, world TEXT NOT NULL,
     normalized_identity TEXT NOT NULL, canonical_id TEXT NOT NULL DEFAULT '',
@@ -98,6 +99,13 @@ _BOOTSTRAP_COLUMNS = (
     ("summary", "TEXT NOT NULL DEFAULT ''"),
     ("frontmatter_json", "TEXT"),
     ("media_diagnostics_json", "TEXT NOT NULL DEFAULT '[]'"),
+)
+
+# Analysis-progress columns added idempotently to the ``jobs`` table for
+# legacy databases (see ``_bootstrap_job_columns``).
+_JOB_BOOTSTRAP_COLUMNS = (
+    ("progress_stage", "TEXT NOT NULL DEFAULT ''"),
+    ("progress_pct", "INTEGER"),
 )
 
 
@@ -169,6 +177,26 @@ class ImportJobStore:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         self._bootstrap_columns()
+        self._bootstrap_job_columns()
+
+    def _bootstrap_job_columns(self) -> None:
+        """Idempotently add analysis-progress columns to legacy job rows.
+
+        Runs on every open so old ``import-jobs.sqlite3`` databases get the
+        new nullable ``progress_*`` columns without a destructive migration.
+        Legacy rows deserialize to ``""``/``None``.
+        """
+        with self._lock:
+            existing = {
+                row["name"] for row in self._conn.execute(
+                    "PRAGMA table_info(jobs)").fetchall()
+            }
+            for name, decl in _JOB_BOOTSTRAP_COLUMNS:
+                if name in existing:
+                    continue
+                self._conn.execute(
+                    f"ALTER TABLE jobs ADD COLUMN {name} {decl}")
+            self._conn.commit()
 
     def _bootstrap_columns(self) -> None:
         """Idempotently add nullable enrichment columns to legacy databases.
@@ -199,12 +227,14 @@ class ImportJobStore:
             self._conn.execute(
                 "INSERT INTO jobs (job_id, world, owner_principal, state, source_kind,"
                 " aggregate_uncompressed_bytes, aggregate_compressed_bytes, file_count,"
-                " revision, error, opaque_token, lease_owner, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " revision, error, opaque_token, lease_owner, created_at, updated_at,"
+                " progress_stage, progress_pct)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (job.job_id, job.world, job.owner_principal, job.state.value,
                  job.source_kind, job.aggregate_uncompressed_bytes,
                  job.aggregate_compressed_bytes, job.file_count, job.revision,
-                 job.error, job.opaque_token, lease_owner, job.created_at, job.updated_at),
+                 job.error, job.opaque_token, lease_owner, job.created_at, job.updated_at,
+                 job.progress_stage, job.progress_pct),
             )
             self._conn.commit()
             return self.get_job(job.job_id)
@@ -217,6 +247,11 @@ class ImportJobStore:
         return self._job_from_row(row) if row else None
 
     def _job_from_row(self, row: sqlite3.Row) -> ImportJob:
+        try:
+            progress_stage = row["progress_stage"]
+            progress_pct = row["progress_pct"]
+        except (IndexError, KeyError):
+            progress_stage, progress_pct = "", None
         return ImportJob(
             job_id=row["job_id"], world=row["world"],
             owner_principal=row["owner_principal"],
@@ -226,6 +261,7 @@ class ImportJobStore:
             file_count=row["file_count"], revision=row["revision"],
             error=row["error"], opaque_token=row["opaque_token"],
             created_at=row["created_at"], updated_at=row["updated_at"],
+            progress_stage=progress_stage, progress_pct=progress_pct,
         )
 
     def update_job(self, job_id: str, *, expected_revision: int | None,
@@ -233,7 +269,8 @@ class ImportJobStore:
         """Optimistic revision-guarded update; raises ValueError on mismatch."""
         _ALLOWED = {"state", "source_kind", "aggregate_uncompressed_bytes",
                     "aggregate_compressed_bytes", "file_count", "error",
-                    "opaque_token", "lease_owner"}
+                    "opaque_token", "lease_owner", "progress_stage",
+                    "progress_pct"}
         with self._lock:
             row = self._conn.execute(
                 "SELECT revision FROM jobs WHERE job_id=?", (job_id,)
@@ -255,6 +292,23 @@ class ImportJobStore:
                 f"UPDATE jobs SET {', '.join(sets)} WHERE job_id=?", values)
             self._conn.commit()
             return self.get_job(job_id)
+
+    def update_progress(self, job_id: str, stage: str,
+                        pct: int | None) -> None:
+        """Persist a coarse analysis-progress checkpoint without a revision bump.
+
+        Called from the synchronous ``analyze`` request thread while the job
+        is being processed. ``pct`` is an honest coarse estimate or ``None``
+        for indeterminate phases. It deliberately does not guard on the
+        revision (so a long analysis can keep reporting while the lease is
+        held) and does not bump ``revision``.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE jobs SET progress_stage=?, progress_pct=?, updated_at=?"
+                " WHERE job_id=?",
+                (stage, pct, utcnow_iso(), job_id))
+            self._conn.commit()
 
     def list_jobs(self, *, principal: str, world: str, limit: int = 50,
                   cursor: str | None = None) -> tuple[list[ImportJob], str | None]:

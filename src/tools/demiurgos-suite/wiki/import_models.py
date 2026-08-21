@@ -383,6 +383,11 @@ class ImportJob(BaseModel):
     opaque_token: str = ""
     created_at: str = ""
     updated_at: str = ""
+    # Server-owned analysis progress (surfaced to the live Web App). ``stage``
+    # is a human-readable phase; ``pct`` is an honest estimate (0..100) or
+    # ``None`` when the phase has no countable total (indeterminate).
+    progress_stage: str = ""
+    progress_pct: int | None = None
 
     def model_dump_redacted(self) -> dict[str, Any]:
         """Public view: never leaks the opaque observability token."""

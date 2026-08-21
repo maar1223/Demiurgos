@@ -538,3 +538,58 @@ class TestUpdateCandidateImages:
         existing = store.find_candidate("demo", "sha256:same", "Enciclopedia")
         assert existing is not None
         assert existing.images == []
+
+
+class TestJobProgressContract:
+    """Analysis-progress persistence (long-import live-monitoring fix).
+
+    ``progress_stage``/``progress_pct`` are server-owned, survive round-trips,
+    and ``update_progress`` writes them without bumping the optimistic
+    revision (so a long synchronous analyze can keep reporting while the
+    lease is held).
+    """
+
+    def test_round_trip_defaults_empty(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="p1"))
+        job = store.get_job("p1")
+        assert job is not None
+        assert job.progress_stage == ""
+        assert job.progress_pct is None
+
+    def test_update_progress_persists_without_revision_bump(
+            self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="p2", state=ImportJobState.ANALYZING))
+        before = store.get_job("p2")
+        assert before is not None
+
+        store.update_progress("p2", "Analizando fuentes", 30)
+
+        after = store.get_job("p2")
+        assert after is not None
+        assert after.progress_stage == "Analizando fuentes"
+        assert after.progress_pct == 30
+        # No optimistic-guard bump: the analysis thread can keep reporting
+        # while the terminal transition still owns the revision.
+        assert after.revision == before.revision
+
+    def test_update_progress_indeterminate(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="p3", state=ImportJobState.ANALYZING))
+        store.update_progress("p3", "Consultando asistente", None)
+        job = store.get_job("p3")
+        assert job is not None
+        assert job.progress_stage == "Consultando asistente"
+        assert job.progress_pct is None
+
+    def test_update_job_accepts_progress_fields(
+            self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="p4", state=ImportJobState.ANALYZING))
+        job = store.get_job("p4")
+        assert job is not None
+        store.update_job(
+            "p4", expected_revision=job.revision,
+            progress_stage="Construyendo fichas", progress_pct=60)
+        after = store.get_job("p4")
+        assert after is not None
+        assert after.progress_stage == "Construyendo fichas"
+        assert after.progress_pct == 60
+        assert after.revision == job.revision + 1

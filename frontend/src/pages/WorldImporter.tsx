@@ -46,6 +46,7 @@ import {
   resumeImportJob,
   rollbackImportJob,
   streamImportFile,
+  waitForJobTerminal,
 } from "@/api/importer";
 import { VALID_SECTIONS } from "@/lib/constants";
 import { getErrorMessage } from "@/lib/utils";
@@ -98,6 +99,13 @@ function formatHistoryDate(iso: string): string {
     year: "numeric", month: "short", day: "2-digit",
     hour: "2-digit", minute: "2-digit",
   });
+}
+
+/** mm:ss elapsed counter for the live analysis/monitoring view. */
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 /** UI copy for import-job states (server enum, kept honest). */
@@ -238,6 +246,15 @@ export default function WorldImporter() {
     streamed: number;
     total: number;
   } | null>(null);
+  /** Server-owned analysis progress (stage + honest coarse percent). */
+  const [analysisProgress, setAnalysisProgress] = useState<{
+    stage: string;
+    pct: number | null;
+  } | null>(null);
+  /** True while monitoring a job whose analyze POST timed out/lost connection. */
+  const [monitoringAfterTimeout, setMonitoringAfterTimeout] = useState(false);
+  /** Elapsed seconds since the analysis step started (monitoring UX). */
+  const [elapsedSec, setElapsedSec] = useState(0);
 
   const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
   // The review digest is never displayed; the approval response carries the
@@ -319,6 +336,54 @@ export default function WorldImporter() {
   }, [mundo]);
 
   /**
+   * Monitor a job whose analysis is still processing on the server.
+   *
+   * Shared by two paths: (1) reload/recovery of a job found in
+   * ``pending``/``analyzing``, and (2) the analyze POST that timed out or
+   * lost connection. Both poll GET until the job leaves the processing
+   * states, render the server-owned stage/percentage, and land on review
+   * (or a terminal error) without asking the user to reselect sources.
+   */
+  const monitorJob = useCallback(
+    async (id: string, message: string) => {
+      if (!mundo) return;
+      setAnalyzing(true);
+      setMonitoringAfterTimeout(true);
+      setPhaseMessage(message);
+      try {
+        const terminal = await waitForJobTerminal(mundo, id, (job) => {
+          setAnalysisProgress({
+            stage: job.progress_stage || "Analizando",
+            pct: job.progress_pct ?? null,
+          });
+        });
+        setJob(terminal);
+        if (terminal.state === "failed") {
+          setStep("result");
+          setError(
+            terminal.error || "El análisis falló y la importación quedó bloqueada.",
+          );
+          return;
+        }
+        const review = await getImportReview(mundo, id);
+        setCandidates(review.candidates);
+        setJob(review.job);
+        setEnrichmentStatus(review.enrichment_status ?? "disabled");
+        setResumeIntaking(false);
+        setStep("review");
+      } catch (monitorErr) {
+        setError(importErrorMessage(monitorErr));
+        setPhaseMessage("");
+        setStep("result");
+      } finally {
+        setAnalyzing(false);
+        setMonitoringAfterTimeout(false);
+      }
+    },
+    [mundo],
+  );
+
+  /**
    * Drive the page into a known job's UI state from a server-confirmed job.
    * Shared between sessionStorage recovery and the "open from history"
    * handler so both paths go through the same branching on
@@ -349,11 +414,13 @@ export default function WorldImporter() {
         setResumeNotice(
           "El archivo ya está subido en el servidor. Podés continuar el análisis directamente sin volver a seleccionar los archivos.",
         );
-      } else if (
-        existing.state === "pending" ||
-        existing.state === "analyzing" ||
-        existing.state === "executing"
-      ) {
+      } else if (existing.state === "pending" || existing.state === "analyzing") {
+        // The server is still processing this job — monitor it live instead
+        // of asking the user to reselect sources.
+        setResumeIntaking(false);
+        setStep("analyzing");
+        void monitorJob(existing.job_id, "Retomando el análisis en curso…");
+      } else if (existing.state === "executing") {
         setResumeIntaking(false);
         setStep("select");
         setResumeNotice(
@@ -367,7 +434,7 @@ export default function WorldImporter() {
         clearPersistedJob();
       }
     },
-    [mundo, clearPersistedJob],
+    [mundo, clearPersistedJob, monitorJob],
   );
 
   useEffect(() => {
@@ -490,6 +557,18 @@ export default function WorldImporter() {
     headingRef.current?.focus();
   }, [step]);
 
+  // --- analysis elapsed timer (monitoring UX) -----------------------------
+  useEffect(() => {
+    if (step !== "analyzing") {
+      setElapsedSec(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setElapsedSec((s) => s + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [step]);
+
   const resetAll = useCallback(() => {
     setStep("select");
     setSources([]);
@@ -505,6 +584,9 @@ export default function WorldImporter() {
     setResumeNotice(null);
     setPhaseMessage("");
     setStreamProgress(null);
+    setAnalysisProgress(null);
+    setMonitoringAfterTimeout(false);
+    setElapsedSec(0);
     setAnalyzing(false);
     setImporting(false);
     setEnrichmentStatus("disabled");
@@ -584,14 +666,16 @@ export default function WorldImporter() {
     setPhaseMessage("Preparando análisis…");
     setStep("analyzing");
     setStreamProgress(null);
+    setAnalysisProgress(null);
+    setMonitoringAfterTimeout(false);
     // Slice 2 — reset advisory state for a fresh analyze. Suggestions live
     // on the candidate row, so a re-analyze supersedes the prior list.
     setEnrichmentStatus("disabled");
     setSuggestionDecisions(new Map());
     setApprovedSuggestionIds([]);
     setDecidingSuggestionId(null);
+    let activeJobId: string | null = null;
     try {
-      let activeJobId: string;
       if (isResumeIntaking) {
         // File already uploaded — skip create + stream, go to analyze.
         activeJobId = jobId!;
@@ -635,6 +719,10 @@ export default function WorldImporter() {
         ? await analyzeImportJob(mundo, activeJobId, { enrich: true })
         : await analyzeImportJob(mundo, activeJobId);
       setJob(analysis.job);
+      setAnalysisProgress({
+        stage: analysis.job.progress_stage || "Analizando",
+        pct: analysis.job.progress_pct ?? null,
+      });
       // Slice 2 — server-attributed enrichment status is batch-level; the
       // fail-open contract guarantees non-blocking even when the gateway
       // is unavailable (status === "error").
@@ -657,9 +745,20 @@ export default function WorldImporter() {
       setResumeIntaking(false);
       setStep("review");
     } catch (err) {
-      setError(importErrorMessage(err));
-      setPhaseMessage("");
-      setStep("result");
+      // A timeout/connection drop on the long synchronous analyze does NOT
+      // mean the job failed — the server keeps working and reports
+      // ``analyzing``. Monitor the same job by polling instead of declaring
+      // a false server outage.
+      if (activeJobId) {
+        await monitorJob(
+          activeJobId,
+          "Se perdió la conexión mientras el servidor analizaba. Sigo monitoreando el trabajo…",
+        );
+      } else {
+        setError(importErrorMessage(err));
+        setPhaseMessage("");
+        setStep("result");
+      }
     } finally {
       setAnalyzing(false);
     }
@@ -1365,6 +1464,18 @@ export default function WorldImporter() {
                     {streamProgress.fileCount}
                   </p>
                 )}
+                {analysisProgress && !streamProgress && (
+                  <>
+                    <p className="mt-1 text-small text-tinta-desvaida">
+                      Etapa: {analysisProgress.stage}
+                    </p>
+                    <p className="mt-1 text-small text-tinta-desvaida">
+                      {monitoringAfterTimeout
+                        ? "Reconectando con el servidor…"
+                        : `Tiempo transcurrido: ${formatElapsed(elapsedSec)}`}
+                    </p>
+                  </>
+                )}
               </div>
             </div>
             {streamProgress && streamProgress.total > 0 && (
@@ -1382,6 +1493,30 @@ export default function WorldImporter() {
                     width: `${Math.round(
                       (streamProgress.streamed / streamProgress.total) * 100,
                     )}%`,
+                  }}
+                />
+              </div>
+            )}
+            {analysisProgress && !streamProgress && (
+              <div
+                className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-filio"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={analysisProgress.pct ?? 0}
+                aria-valuetext={
+                  analysisProgress.pct === null
+                    ? "Progreso indeterminado"
+                    : `${analysisProgress.pct}%`
+                }
+                aria-label="Progreso del análisis"
+              >
+                <div
+                  className="h-full bg-llamita transition-all"
+                  style={{
+                    width: `${
+                      analysisProgress.pct === null ? 18 : analysisProgress.pct
+                    }%`,
                   }}
                 />
               </div>

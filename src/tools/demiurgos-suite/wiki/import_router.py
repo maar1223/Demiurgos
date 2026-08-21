@@ -295,16 +295,30 @@ def create_import_router(
         try:
             spool = spool_for(job_id, mundo)
 
-            def _mark_failed(job_id: str, revision: int, error: str,
+            # The job is now actively processing: surface the true state so a
+            # live client polling GET sees ``analyzing`` (not a misleading
+            # ``pending``) while the long synchronous work runs below.
+            _store.update_job(
+                job_id, expected_revision=job.revision,
+                state=ImportJobState.ANALYZING,
+                progress_stage="Preparando análisis", progress_pct=5)
+            _store.add_event(job_id, "analyzing")
+
+            def _mark_failed(job_id: str, error: str,
                              event_tag: str) -> None:
                 """Fail the job, record the event, and clean up the spool.
 
-                Cleanup is best-effort: a spool that cannot be removed must
-                never mask the FAILED transition nor abort analyze, so it is
-                always performed after the terminal transition is persisted.
+                The current revision is read just before the terminal write so
+                the earlier ``analyzing`` transition (which bumped the
+                revision) never trips the optimistic guard. Cleanup is
+                best-effort: a spool that cannot be removed must never mask
+                the FAILED transition nor abort analyze, so it is always
+                performed after the terminal transition is persisted.
                 """
-                _store.update_job(job_id, expected_revision=revision,
-                                  state=ImportJobState.FAILED, error=error)
+                current = _store.get_job(job_id)
+                _store.update_job(
+                    job_id, expected_revision=current.revision,
+                    state=ImportJobState.FAILED, error=error)
                 _store.add_event(job_id, event_tag)
                 spool.cleanup()
 
@@ -333,7 +347,7 @@ def create_import_router(
                     if rel.lower().endswith(".zip")
                 ]
                 if not zip_files:
-                    _mark_failed(job_id, job.revision,
+                    _mark_failed(job_id,
                                  "no zip archive found in spool", "failed:missing_zip")
                     return {"job": _store.get_job(job_id).model_dump_redacted()}
                 zip_rel = zip_files[0]
@@ -342,7 +356,7 @@ def create_import_router(
                 try:
                     spool_files = extract_zip_bounded(zip_path, extracted_dir)
                 except (ZipBombError, UnsafePathError, BoundsError) as exc:
-                    _mark_failed(job_id, job.revision,
+                    _mark_failed(job_id,
                                  f"zip rejected: {type(exc).__name__}", "failed:zip_safety")
                     return {"job": _store.get_job(job_id).model_dump_redacted()}
                 # Build the files list from the extracted entries (hashed).
@@ -361,6 +375,7 @@ def create_import_router(
                 files = [f for f in files if f["sha256"]]
 
             try:
+                _store.update_progress(job_id, "Analizando fuentes", 30)
                 if provider is not None:
                     candidates = provider(job, files)
                     if not isinstance(candidates, list):
@@ -374,12 +389,14 @@ def create_import_router(
                 else:
                     raise MalformedProviderError("analysis provider unavailable")
             except MalformedProviderError as exc:
-                _mark_failed(job_id, job.revision, str(exc), "failed:malformed_provider")
+                _mark_failed(job_id, str(exc), "failed:malformed_provider")
                 return {"job": _store.get_job(job_id).model_dump_redacted()}
             except Exception as exc:  # fail closed on any unexpected provider error
-                _mark_failed(job_id, job.revision, f"{type(exc).__name__}",
+                _mark_failed(job_id, f"{type(exc).__name__}",
                              "failed:provider_error")
                 return {"job": _store.get_job(job_id).model_dump_redacted()}
+
+            _store.update_progress(job_id, "Construyendo fichas", 60)
 
             # Conversion-failure gate (PR: no silent empty previews). A
             # convertible source (.docx/.pdf) whose markdown conversion failed
@@ -412,7 +429,7 @@ def create_import_router(
                         "converted (the file may be too large or corrupt)"
                     )
                 _mark_failed(
-                    job_id, job.revision, error,
+                    job_id, error,
                     "failed:conversion",
                 )
                 return {"job": _store.get_job(job_id).model_dump_redacted()}
@@ -431,6 +448,7 @@ def create_import_router(
             enriched_from_cache = 0
             cache_hit_ids: set[str] = set()
             if enrich and enricher is not None and candidates:
+                _store.update_progress(job_id, "Consultando asistente", 80)
                 # Partition candidates into cache-hit vs cache-miss.
                 cache_hits: list[Candidate] = []
                 cache_misses: list[Candidate] = []
@@ -468,7 +486,7 @@ def create_import_router(
                             raise MalformedProviderError(
                                 "enricher output is not a candidate list")
                     except MalformedProviderError as exc:
-                        _mark_failed(job_id, job.revision, str(exc),
+                        _mark_failed(job_id, str(exc),
                                      "failed:malformed_enricher")
                         return {"job": _store.get_job(job_id).model_dump_redacted()}
                     except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
@@ -586,7 +604,8 @@ def create_import_router(
                         _store.update_candidate_images(
                             existing.candidate_id, candidate.images)
                     added += 1
-            _store.update_job(job_id, expected_revision=job.revision,
+            current = _store.get_job(job_id)
+            _store.update_job(job_id, expected_revision=current.revision,
                               state=ImportJobState.REVIEW, file_count=added)
             _store.add_event(
                 job_id,

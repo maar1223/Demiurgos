@@ -873,6 +873,11 @@ export interface ImportJob {
   error: string;
   created_at: string;
   updated_at: string;
+  /** Server-owned analysis progress (live Web App). ``pct`` is ``null`` when
+   *  the current phase is indeterminate. Optional for legacy fixtures; the
+   *  server always sends it after the progress contract landed. */
+  progress_stage?: string;
+  progress_pct?: number | null;
 }
 
 /** Response of POST /api/{mundo}/imports and GET /api/{mundo}/imports/{id}. */

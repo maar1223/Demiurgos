@@ -106,6 +106,15 @@ def test_full_lifecycle_upload_to_result(tmp_path):
     assert analyze.status_code == 200, analyze.text
     assert analyze.json()["candidates"] == 1
 
+    # Long-import live-monitoring fix: the analyze response reflects the
+    # server-owned progress stage, and the persisted job carries it too so
+    # GET polling during a slow analysis is truthful.
+    assert analyze.json()["job"]["progress_stage"]
+    persisted = store.get_job(job["job_id"])
+    assert persisted is not None
+    assert persisted.progress_stage
+    assert persisted.state == ImportJobState.REVIEW
+
     review = client.get(f"/api/world1/imports/{job['job_id']}/review")
     assert review.status_code == 200
     digest = review.json()["digest"]
