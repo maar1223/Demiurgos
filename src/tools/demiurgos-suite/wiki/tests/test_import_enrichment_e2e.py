@@ -138,7 +138,7 @@ def _classifying_enricher(
     include_invalid_classification: bool = False,
     include_invalid_relationship: bool = False,
     relationship_id: str = "rel-near",
-    grounded_target: str = "Aldea del Viento",
+    grounded_target: str = "Origen",
 ):
     """Build a fake enricher that injects one valid classification plus,
     optionally, an invalid entry of each kind to test vocabulary rejection.
@@ -305,7 +305,7 @@ class TestEnrichmentEndToEnd:
         assert "pueblo" in written, (
             "approved classification's tag must be patched into frontmatter"
         )
-        assert "# Origen" in written, (
+        assert "La aldea fue fundada en el 1200 AE" in written, (
             "the executor must not strip the body when patching frontmatter"
         )
 

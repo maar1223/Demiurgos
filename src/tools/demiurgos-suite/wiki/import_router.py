@@ -37,6 +37,8 @@ from import_models import (
     JobPage,
     Candidate,
     ImagePlacement,
+    FrontmatterCandidate,
+    FrontmatterState,
     utcnow_iso,
     EnrichmentStatus,
 )
@@ -77,6 +79,23 @@ def _aggregate_status(candidates: list[Candidate]) -> str:
     if statuses and statuses != {"disabled"}:
         return EnrichmentStatus.NO_SUGGESTIONS.value
     return EnrichmentStatus.DISABLED.value
+
+
+def _ficha_anchor(body: str) -> str:
+    """First meaningful body line (up to 120 chars) as a nearby-text anchor.
+
+    Heading lines and image lines are skipped so the anchor points at prose,
+    never the section title or an image markdown. Mirrors the analysis facade's
+    ``_first_anchor`` so ficha candidates carry a stable nearby-text anchor.
+    """
+    for line in (body or "").split("\n"):
+        stripped = line.strip().lstrip("#").strip()
+        if not stripped or stripped.startswith("!"):
+            continue
+        if line.strip().startswith("#"):
+            continue
+        return stripped[:120]
+    return ""
 
 
 @dataclass
@@ -155,6 +174,7 @@ def create_import_router(
     enricher: Callable[[list[Candidate]], list[Candidate]] | None = None,
     vision: VisionCallable | None = None,
     service: ImportService | None = None,
+    structure_inference: Callable[[str], Any] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/{mundo}/imports", tags=["world-importer"])
     _store = store if isinstance(store, ImportJobStore) else store()
@@ -349,6 +369,7 @@ def create_import_router(
                     candidates, media_bundle = _analyze_via_service(
                         job, files, spool,
                         root_dir=analysis_root, mundos_dir=mundos_dir(),
+                        structure_inference=structure_inference,
                     )
                 else:
                     raise MalformedProviderError("analysis provider unavailable")
@@ -420,10 +441,19 @@ def create_import_router(
                     if (existing is not None
                             and existing.enrichment_json is not None
                             and existing.enrichment_status != "disabled"):
-                        # Reuse cached enrichment — patch the in-memory candidate.
+                        # Reuse cached enrichment + funnel metadata — patch the
+                        # in-memory candidate so review shows the persisted
+                        # summary/frontmatter without re-running Hermes.
                         cache_hits.append(candidate.model_copy(update={
                             "enrichment_json": existing.enrichment_json,
                             "enrichment_status": existing.enrichment_status,
+                            "summary": existing.summary or candidate.summary,
+                            "frontmatter": existing.frontmatter
+                            or candidate.frontmatter,
+                            "display_title": existing.display_title
+                            or candidate.display_title,
+                            "media_diagnostics": existing.media_diagnostics
+                            or candidate.media_diagnostics,
                         }))
                         cache_hit_ids.add(candidate.candidate_id)
                         enriched_from_cache += 1
@@ -524,6 +554,10 @@ def create_import_router(
                         existing.candidate_id,
                         candidate.enrichment_json,
                         candidate.enrichment_status)
+                    # Persist the fresh funnel metadata (frontmatter/summary/
+                    # media diagnostics) so the review row carries it.
+                    _store.update_candidate_funnel(
+                        existing.candidate_id, candidate)
                     # Re-assign to the current job so candidates_for(job_id)
                     # returns it for review/execute.
                     _store.reassign_candidate_to_job(
@@ -810,7 +844,8 @@ def create_import_router(
 def _analyze_via_service(job: ImportJob, files: list[dict],
                          spool: BoundedSpool,
                          *, root_dir: Path | None = None,
-                         mundos_dir: Path | None = None
+                         mundos_dir: Path | None = None,
+                         structure_inference: Callable[[str], Any] | None = None
                          ) -> tuple[list[Candidate], list[VisionMediaEntry]]:
     """Build ordered candidates + the preserved media bundle from spooled files.
 
@@ -820,6 +855,17 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     extracted directory for ZIP sources); defaults to ``spool.job_dir``.
     ``mundos_dir`` is the worlds root used to resolve canonical targets; it
     is optional because ``resolve_target`` is world-agnostic today.
+    ``structure_inference`` (importador-auto-frontmatter, task 1.2 seam) is the
+    concrete Hermes H1-H5 inference callable used only when the deterministic
+    scan finds no headings; wired from the composition layer.
+
+    importador-auto-frontmatter (Phase 2): candidates are now built ONE PER
+    complete ficha from the deterministic H1-H5 tree splitter (Step 0/1), so a
+    single source file yields one candidate per ficha instead of one oversized
+    file-sized candidate. Each candidate carries the parent-qualified
+    ``canonical_id``, ``display_title``, the original ficha body, reference-
+    image diagnostics, and a ``manual`` frontmatter the enrichment funnel
+    (Step 2-4) upgrades.
 
     PR3 (sync-lore-in-importer): ``analyze_source`` receives the ``file_path``
     resolver and the job spool root so ``.docx``/``.pdf`` sources are converted
@@ -827,7 +873,7 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     returned ``media_bundle`` ties every extracted image to its owning
     candidate so the router can hand it to the vision seam.
     """
-    from import_analysis import analyze_source, resolve_target
+    from import_analysis import analyze_source, resolve_target, split_heading_tree
     from import_models import Provenance
 
     read_root = root_dir or spool.job_dir
@@ -838,49 +884,43 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
         except (OSError, UnicodeDecodeError):
             return ""
 
-    def build_candidate(relative: str, digest: str, size: int,
-                        analyzed) -> Candidate:
-        identity = Path(relative).stem
+    def build_ficha_candidate(relative: str, digest: str, size: int,
+                              analyzed, ficha) -> Candidate:
+        """Build one Candidate per complete-ficha node (importador-auto-
+        frontmatter).
+
+        ``content_preview`` is the ficha's ORIGINAL body (preservation-first);
+        ``canonical_id`` and ``display_title`` carry the ficha identity;
+        ``media_diagnostics`` surface the reference-image placements
+        (``![][key]``). Frontmatter starts ``manual`` (title = display title)
+        — the enrichment funnel upgrades it to ``generated``/``fallback``.
+        An implicit ficha (no usable headings) falls back to the file stem so
+        the legacy single-candidate path keeps its identity/digest semantics.
+        """
+        identity = ficha.canonical_id or Path(relative).stem
+        display_title = ficha.title or Path(relative).stem
         provenance = Provenance(
             source_path=relative, source_kind=job.source_kind,
-            source_hash=f"sha256:{digest}", source_sequence=0,
-            nearby_text_anchor=(analyzed.chunks[0].nearby_text_anchor
-                                if analyzed.chunks else ""),
+            source_hash=f"sha256:{digest}",
+            source_sequence=ficha.source_order,
+            nearby_text_anchor=_ficha_anchor(ficha.body),
         )
-        candidate = Candidate(
+        return Candidate(
             candidate_id=uuid.uuid4().hex,
             job_id=job.job_id, world=job.world,
             normalized_identity=identity,
+            canonical_id=ficha.canonical_id,
+            display_title=display_title,
             source_hash=f"sha256:{digest}",
             provenance=provenance,
-            content_preview=analyzed.content_preview(),
-            size_bytes=size,
-            diagnostics=analyzed.diagnostics,
+            content_preview=ficha.body,
+            size_bytes=len(ficha.body),
+            diagnostics=list(analyzed.diagnostics),
+            media_diagnostics=list(ficha.media_diagnostics),
+            frontmatter=FrontmatterCandidate(
+                title=display_title, type=None, description="", relaciones=[],
+                state=FrontmatterState.MANUAL),
         )
-        for chunk in analyzed.chunks:
-            candidate.images.extend(chunk.images)
-        # PR3 — attach extracted media to the parent candidate (design:
-        # "each extracted image remains attached to its parent candidate") so
-        # execution can plan placements and register gallery originals for
-        # images the converted markdown did not already reference. Dedup by
-        # spool-relative path: converted sources (markitdown convention) and
-        # chunk extraction already share the ``media/<stem>/<file>`` layout.
-        existing_paths = {p.relative_media_path for p in candidate.images}
-        first_heading = (analyzed.chunks[0].heading_path
-                         if analyzed.chunks else "")
-        for media in analyzed.media:
-            if media.spool_relative_path in existing_paths:
-                continue
-            candidate.images.append(ImagePlacement(
-                gallery_asset_id="",
-                relative_media_path=media.spool_relative_path,
-                alt_text="",
-                target_ficha=first_heading,
-                confidence=1.0,
-                placement_status="proposed",
-            ))
-            existing_paths.add(media.spool_relative_path)
-        return candidate
 
     report = analyze_source(
         files,
@@ -891,14 +931,57 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     candidates: list[Candidate] = []
     media_bundle: list[VisionMediaEntry] = []
     for f in report.files:
-        candidate = build_candidate(f.source_path, f.source_hash, f.size_bytes, f)
+        text = f.content_preview()
+        tree = split_heading_tree(text, structure_inference=structure_inference)
+        fichas = tree.fichas
+        if not fichas:
+            continue
+        # One candidate per ficha, in source order.
+        ficha_candidates: list[Candidate] = []
+        for ficha in fichas:
+            ficha_candidates.append(
+                build_ficha_candidate(f.source_path, f.source_hash,
+                                      f.size_bytes, f, ficha))
+        # Distribute the file's inline image placements to the ficha whose body
+        # references them; unmatched placements fold into the first ficha
+        # (preservation-first — an extracted image is never dropped).
+        inline = [p for chunk in f.chunks for p in chunk.images]
+        unmatched: list[ImagePlacement] = []
+        for placement in inline:
+            owner = next(
+                (c for c in ficha_candidates
+                 if placement.relative_media_path
+                 and placement.relative_media_path in c.content_preview),
+                None)
+            if owner is None:
+                unmatched.append(placement)
+            else:
+                owner.images.append(placement)
+        for placement in unmatched:
+            ficha_candidates[0].images.append(placement)
+        # PR3 — attach extracted media to the owning ficha (by spool path) and
+        # preserve the media bundle tied to the candidate that owns each image.
         for media in f.media:
+            owner = next(
+                (c for c in ficha_candidates
+                 if media.spool_relative_path in c.content_preview),
+                ficha_candidates[0])
+            if not any(p.relative_media_path == media.spool_relative_path
+                       for p in owner.images):
+                owner.images.append(ImagePlacement(
+                    gallery_asset_id="",
+                    relative_media_path=media.spool_relative_path,
+                    alt_text="",
+                    target_ficha=owner.canonical_id,
+                    confidence=1.0,
+                    placement_status="proposed",
+                ))
             media_bundle.append(VisionMediaEntry(
-                candidate_id=candidate.candidate_id,
+                candidate_id=owner.candidate_id,
                 image=media.image,
                 spool_relative_path=media.spool_relative_path,
             ))
-        candidates.append(candidate)
+        candidates.extend(ficha_candidates)
     # Server-owned OKF authority: diagnose every candidate against the sole
     # contract so only valid candidates are eligible (2.8).
     import okf_contract

@@ -40,8 +40,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     lease_owner TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS candidates (
     candidate_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, world TEXT NOT NULL,
-    normalized_identity TEXT NOT NULL, source_hash TEXT NOT NULL,
+    normalized_identity TEXT NOT NULL, canonical_id TEXT NOT NULL DEFAULT '',
+    source_hash TEXT NOT NULL,
     provenance_json TEXT NOT NULL, content_preview TEXT NOT NULL DEFAULT '',
+    display_title TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    frontmatter_json TEXT,
+    media_diagnostics_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL DEFAULT 'pending', okf_issues_json TEXT NOT NULL DEFAULT '[]',
     size_bytes INTEGER NOT NULL DEFAULT 0,
     images_json TEXT NOT NULL DEFAULT '[]',
@@ -85,6 +90,14 @@ _BOOTSTRAP_COLUMNS = (
     ("target_resolution_json", "TEXT"),
     ("enrichment_json", "TEXT"),
     ("enrichment_status", "TEXT NOT NULL DEFAULT 'disabled'"),
+    # importador-auto-frontmatter (Phase 2): ficha metadata columns. Each is
+    # added idempotently so legacy databases bootstrap on every open; the
+    # UNIQUE (world, source_hash, normalized_identity) constraint is retained.
+    ("canonical_id", "TEXT NOT NULL DEFAULT ''"),
+    ("display_title", "TEXT NOT NULL DEFAULT ''"),
+    ("summary", "TEXT NOT NULL DEFAULT ''"),
+    ("frontmatter_json", "TEXT"),
+    ("media_diagnostics_json", "TEXT NOT NULL DEFAULT '[]'"),
 )
 
 
@@ -333,14 +346,21 @@ class ImportJobStore:
         with self._lock:
             self._conn.execute(
                 "INSERT OR IGNORE INTO candidates (candidate_id, job_id, world,"
-                " normalized_identity, source_hash, provenance_json, content_preview,"
+                " normalized_identity, canonical_id, source_hash,"
+                " provenance_json, content_preview,"
+                " display_title, summary, frontmatter_json, media_diagnostics_json,"
                 " status, okf_issues_json, size_bytes, images_json, merge_json,"
                 " replacement_json, target_resolution_json,"
                 " enrichment_json, enrichment_status)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (candidate.candidate_id, candidate.job_id, candidate.world,
-                 candidate.normalized_identity, candidate.source_hash,
+                 candidate.normalized_identity, candidate.canonical_id,
+                 candidate.source_hash,
                  candidate.provenance.model_dump_json(), candidate.content_preview,
+                 candidate.display_title, candidate.summary,
+                 candidate.frontmatter.model_dump_json()
+                 if candidate.frontmatter else None,
+                 _json([m.model_dump() for m in candidate.media_diagnostics]),
                  candidate.status, _json(candidate.okf_issues), candidate.size_bytes,
                  _json([i.model_dump() for i in candidate.images]),
                  candidate.merge.model_dump_json() if candidate.merge else None,
@@ -372,6 +392,30 @@ class ImportJobStore:
                 " WHERE candidate_id=?",
                 (_json(enrichment_json) if enrichment_json is not None else None,
                  enrichment_status, candidate_id),
+            )
+            self._conn.commit()
+
+    def update_candidate_funnel(self, candidate_id: str,
+                                candidate: Candidate) -> None:
+        """Persist importador-auto-frontmatter ficha metadata on an existing row.
+
+        Called when a re-import persists fresh funnel output onto an already-
+        existing candidate row. Only the advisory fields (``canonical_id``,
+        ``display_title``, ``summary``, ``frontmatter_json``,
+        ``media_diagnostics_json``) are written; identity/digest/body are
+        untouched. Idempotent.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE candidates SET canonical_id=?, display_title=?, summary=?,"
+                " frontmatter_json=?, media_diagnostics_json=?"
+                " WHERE candidate_id=?",
+                (candidate.canonical_id, candidate.display_title,
+                 candidate.summary,
+                 candidate.frontmatter.model_dump_json()
+                 if candidate.frontmatter else None,
+                 _json([m.model_dump() for m in candidate.media_diagnostics]),
+                 candidate_id),
             )
             self._conn.commit()
 
@@ -505,12 +549,39 @@ class ImportJobStore:
         enrichment_json = _unjson(ej_raw) if ej_raw else None
         if not isinstance(enrichment_json, list):
             enrichment_json = None
+        # importador-auto-frontmatter (Phase 2): ficha metadata columns were
+        # added via idempotent bootstrap; legacy rows may predate them.
+        try:
+            canonical_id = row["canonical_id"]
+            display_title = row["display_title"]
+            summary = row["summary"]
+            fm_raw = row["frontmatter_json"]
+            md_raw = row["media_diagnostics_json"]
+        except (IndexError, KeyError):
+            canonical_id, display_title, summary, fm_raw, md_raw = "", "", "", None, "[]"
+        frontmatter = None
+        if fm_raw:
+            from import_models import FrontmatterCandidate
+            try:
+                frontmatter = FrontmatterCandidate.model_validate(_unjson(fm_raw))
+            except Exception:  # noqa: BLE001 — advisory metadata, never fatal
+                frontmatter = None
+        try:
+            media_diagnostics = [
+                __import__("import_models", fromlist=["MediaDiagnostic"])
+                .MediaDiagnostic.model_validate(m)
+                for m in _unjson(md_raw or "[]")
+            ]
+        except Exception:  # noqa: BLE001 — advisory metadata, never fatal
+            media_diagnostics = []
         return Candidate(
             candidate_id=row["candidate_id"], job_id=row["job_id"],
             world=row["world"], normalized_identity=row["normalized_identity"],
-            source_hash=row["source_hash"],
+            canonical_id=canonical_id, source_hash=row["source_hash"],
             provenance=Provenance.model_validate_json(row["provenance_json"]),
             content_preview=row["content_preview"], status=row["status"],
+            display_title=display_title, summary=summary,
+            frontmatter=frontmatter, media_diagnostics=media_diagnostics,
             okf_issues=_unjson(row["okf_issues_json"]), size_bytes=row["size_bytes"],
             images=images, merge=merge, replacement=replacement,
             target_resolution=target_resolution,
