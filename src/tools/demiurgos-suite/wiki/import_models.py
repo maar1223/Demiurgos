@@ -361,6 +361,10 @@ class ExecutionOutcome(BaseModel):
     written: bool = False
     detail: str = ""
     papelera_entry: str = ""
+    # importador-auto-frontmatter (Phase 3): non-blocking review warnings for
+    # unresolved reference-style media (``![][key]`` with no definition).
+    # The ficha/job still succeeds; these surface for review only.
+    media_warnings: list[str] = Field(default_factory=list)
 
 
 class ImportJob(BaseModel):
