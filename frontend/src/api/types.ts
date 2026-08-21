@@ -739,10 +739,34 @@ export interface RelationshipSuggestion {
   review_state: "pending" | "approved" | "rejected";
 }
 
+/**
+ * Hermes-suggested vision analysis for an image (advisory only).
+ *
+ * ``verdict`` is one of: ``confirma`` (image matches text), ``no_aplica``
+ * (not relevant), or ``rechaza`` (contradicts). ``description`` is the
+ * alt-text candidate; ``analysis`` is the full reasoning; ``tags`` are
+ * auto-extracted labels. ``relative_media_path`` points to the spool-
+ * relative location of the original image.
+ */
+export interface VisionSuggestion {
+  id: string;
+  candidate_id: string;
+  relative_media_path: string;
+  description: string;
+  verdict: "confirma" | "no_aplica" | "rechaza";
+  analysis: string;
+  tags: string[];
+  confidence: number;
+  provenance: Record<string, string>;
+  evidence: string;
+  review_state: "pending" | "approved" | "rejected";
+}
+
 /** Discriminated union for advisory suggestions on a candidate. */
 export type ImportSuggestion =
   | (ClassificationSuggestion & { __type__: "classification" })
-  | (RelationshipSuggestion & { __type__: "relationship" });
+  | (RelationshipSuggestion & { __type__: "relationship" })
+  | (VisionSuggestion & { __type__: "vision" });
 
 /** Server-attributed diagnostic state of an enrichment attempt. */
 export type EnrichmentStatus =

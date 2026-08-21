@@ -4188,6 +4188,85 @@ def _make_import_enricher():
     return enricher
 
 
+def _make_vision_callable():
+    """Compose the vision seam callable for the import router (PR2/PR3).
+
+    Reads the active Hermes profile's ``config.yaml``, wires the PR2
+    ``import_vision.build_vision_callable`` with the existing 300px
+    thumbnailer and the SAME singleton store that backs the job lifecycle
+    (so the vision content cache is shared with the router). Returns ``None``
+    (vision disabled) when the profile is missing/invalid, the assistant is
+    text-only, or the settings gate fails closed.
+
+    The returned ``vision(candidates, media_entries)`` adapter mirrors the
+    integration-test seam: it runs the batch analysis over the preserved
+    media bundle and turns each result into an advisory ``vision:<sha256>``
+    suggestion on its owning candidate. Vision is advisory and fail-open —
+    any analysis failure returns the candidates unchanged.
+    """
+    try:
+        from assistant_settings import _resolve_profile_paths
+        from import_vision import build_vision_callable
+
+        config_path = _resolve_profile_paths().config
+        store = _import_store()
+        analyze_images = build_vision_callable(
+            settings_path=config_path,
+            generate_thumbnail=generate_thumbnail,
+            vision_cache_lookup=store.vision_cache_lookup,
+            vision_cache_store=store.vision_cache_store,
+        )
+    except Exception:  # noqa: BLE001 — vision is advisory, fail-closed at setup
+        return None
+    if analyze_images is None:
+        return None
+
+    def vision(candidates, media_entries):
+        if not candidates or not media_entries:
+            return candidates
+        try:
+            results = analyze_images([m.image for m in media_entries], "")
+        except Exception:  # noqa: BLE001 — vision is advisory, fail-open
+            return candidates
+        by_hash = {r.image_hash: r for r in results}
+        by_candidate: dict[str, list[dict]] = {}
+        for m in media_entries:
+            result = by_hash.get(
+                hashlib.sha256(m.image.image_bytes).hexdigest())
+            if result is None:
+                continue
+            by_candidate.setdefault(m.candidate_id, []).append({
+                "__type__": "vision",
+                "id": f"vision:{result.image_hash}",
+                "candidate_id": m.candidate_id,
+                "relative_media_path": m.spool_relative_path,
+                "description": result.description,
+                "verdict": result.verdict,
+                "analysis": result.analysis,
+                "tags": list(result.tags),
+                "confidence": 0.0,
+                "provenance": {"provider": "vision", "capability": "multimodal"},
+                "evidence": f"image:{m.spool_relative_path}",
+                "review_state": "pending",
+            })
+        out: list = []
+        for candidate in candidates:
+            entries = by_candidate.get(candidate.candidate_id)
+            if not entries:
+                out.append(candidate)
+                continue
+            payload = (list(candidate.enrichment_json)
+                       if candidate.enrichment_json else [])
+            payload.extend(entries)
+            out.append(candidate.model_copy(update={
+                "enrichment_json": payload,
+                "enrichment_status": "ok",
+            }))
+        return out
+
+    return vision
+
+
 # World importer (Phase 1 intake + Phase 2 service). Principal and world are
 # resolved server-side; intake never writes canon, and only digest/token-bound
 # approval may invoke gated merge + gallery registration + graph reconcile.
@@ -4198,6 +4277,7 @@ app.include_router(
         spool_dir=lambda: PROJECT_ROOT / "data" / "import-spool",
         store=_import_store,
         enricher=_make_import_enricher(),
+        vision=_make_vision_callable(),
         service=ImportService(
             store=_import_store(),
             mundos_dir=MUNDOS_DIR,
