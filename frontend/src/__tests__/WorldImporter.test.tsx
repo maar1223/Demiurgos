@@ -734,53 +734,17 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     });
   }
 
-  it("renders the opt-in toggle on the select step (slice 2)", async () => {
-    (createImportJob as Mock).mockResolvedValue({ job: job({ state: "pending" }) });
-    (streamImportFile as Mock).mockResolvedValue(3);
-    (analyzeImportJob as Mock).mockResolvedValue({
-      job: job({ state: "review" }),
-      candidates: 0,
-      enrichment_status: "disabled",
-    });
-    (getImportReview as Mock).mockResolvedValue({
-      job: job({ state: "review" }),
-      digest: "digest1",
-      candidates: [candidate()],
-      enrichment_status: "disabled",
-      suggestions: {},
-    });
-
-    renderImporter();
-    const toggle = screen.getByTestId("enrich-toggle");
-    const checkbox = toggle.querySelector(
-      'input[type="checkbox"]',
-    ) as HTMLInputElement;
-    // Enrichment is ON by default (it produces the graph metadata).
-    expect(checkbox.checked).toBe(true);
-
-    // Opt out and verify analyzeImportJob receives the explicit skip.
-    fireEvent.click(checkbox);
-    expect(checkbox.checked).toBe(false);
-
-    const input = screen.getByLabelText("Selección de fuentes");
-    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
-    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
-
-    expect(analyzeImportJob).toHaveBeenCalledWith(
-      "mundo",
-      expect.any(String),
-      { enrich: false },
-    );
-  });
-
-  it("sends the enrich flag explicitly when the toggle is left on (slice 2)", async () => {
+  it("always sends the enrich flag (enrichment is not user-toggleable)", async () => {
     mockAnalyzeToReview([candidate()]);
     renderImporter();
-    await selectFileAndAnalyze();
 
-    // The flag is ALWAYS explicit: the default (toggle on) sends
-    // ``{enrich: true}`` rather than omitting the body.
+    // There is no enrichment checkbox on the select step: enrichment always
+    // runs (the graph needs the resulting type/relationships) and the user
+    // cannot opt out by accident.
+    expect(screen.queryByTestId("enrich-toggle")).not.toBeInTheDocument();
+
+    await selectFileAndAnalyze();
+    // The flag is explicit ``{enrich: true}`` — no toggle can send false.
     expect(analyzeImportJob).toHaveBeenCalledWith(
       "mundo",
       expect.any(String),
