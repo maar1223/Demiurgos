@@ -20,6 +20,7 @@ from import_models import (  # noqa: F401
     ImportJobState,
     Candidate,
     ItemOutcome,
+    ImagePlacement,
     utcnow_iso,
 )
 # PR2 (sync-lore-in-importer): the vision content cache persists
@@ -406,6 +407,26 @@ class ImportJobStore:
             self._conn.execute(
                 "UPDATE candidates SET content_preview=? WHERE candidate_id=?",
                 (content_preview, candidate_id))
+            self._conn.commit()
+
+    def update_candidate_images(self, candidate_id: str,
+                                images: list[ImagePlacement]) -> None:
+        """Backfill the image placements of an existing candidate.
+
+        Mirrors ``update_candidate_content`` for the media bundle: a
+        candidate created while media extraction was unavailable (e.g.,
+        before python-docx was installed) carries ``images_json = []`` even
+        though a re-import now extracts real images. A re-import that finds
+        the same (world, source_hash, identity) reassigns the row; this
+        update persists the newly extracted placements so review/execute
+        see them. Only updates when the new list is non-empty.
+        """
+        if not images:
+            return
+        with self._lock:
+            self._conn.execute(
+                "UPDATE candidates SET images_json=? WHERE candidate_id=?",
+                (_json([i.model_dump() for i in images]), candidate_id))
             self._conn.commit()
 
     def update_suggestion_state(self, candidate_id: str, suggestion_id: str,

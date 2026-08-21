@@ -508,6 +508,12 @@ def create_import_router(
                             existing.candidate_id,
                             candidate.enrichment_json,
                             candidate.enrichment_status)
+                    # Backfill the media bundle when the cached row predates
+                    # media extraction (e.g., before python-docx was
+                    # installed) but the fresh analysis extracted images.
+                    if not existing.images and candidate.images:
+                        _store.update_candidate_images(
+                            existing.candidate_id, candidate.images)
                     added += 1
                 elif (enrich or vision is not None) \
                         and candidate.enrichment_json is not None:
@@ -522,6 +528,10 @@ def create_import_router(
                     # returns it for review/execute.
                     _store.reassign_candidate_to_job(
                         existing.candidate_id, job.job_id)
+                    # Backfill the media bundle on the same condition.
+                    if not existing.images and candidate.images:
+                        _store.update_candidate_images(
+                            existing.candidate_id, candidate.images)
                     added += 1
                 else:
                     # Candidate exists but no enrichment was requested/available.
@@ -534,6 +544,13 @@ def create_import_router(
                     if not existing.content_preview and candidate.content_preview:
                         _store.update_candidate_content(
                             existing.candidate_id, candidate.content_preview)
+                    # Same for the media bundle: a candidate created while
+                    # media extraction was unavailable (e.g., before
+                    # python-docx was installed) carries no image placements;
+                    # backfill them from the fresh analysis.
+                    if not existing.images and candidate.images:
+                        _store.update_candidate_images(
+                            existing.candidate_id, candidate.images)
                     added += 1
             _store.update_job(job_id, expected_revision=job.revision,
                               state=ImportJobState.REVIEW, file_count=added)

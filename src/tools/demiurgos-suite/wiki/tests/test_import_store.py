@@ -483,3 +483,58 @@ class TestDeleteJob:
 
     def test_delete_unknown_job_is_noop(self, store) -> None:
         store.delete_job("no-such-job")  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# update_candidate_images — media backfill on re-import
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateCandidateImages:
+    """A candidate persisted while media extraction was unavailable (empty
+    images_json) must be backfillable from a fresh analysis."""
+
+    def test_backfills_images_on_existing_candidate(self, store) -> None:
+        from import_models import Candidate, ImagePlacement, Provenance  # noqa: PLC0415
+        store.create_job(_job(job_id="job1", state=ImportJobState.REVIEW))
+        store.add_candidate(Candidate(
+            candidate_id="cand1", job_id="job1", world="demo",
+            normalized_identity="Enciclopedia", source_hash="sha256:same",
+            provenance=Provenance(source_path="Lore/Enciclopedia.docx",
+                                  source_kind="loose",
+                                  source_hash="sha256:same"),
+            content_preview="body"))
+
+        # Initially no image placements.
+        existing = store.find_candidate("demo", "sha256:same", "Enciclopedia")
+        assert existing is not None
+        assert existing.images == []
+
+        store.update_candidate_images("cand1", [
+            ImagePlacement(gallery_asset_id="",
+                           relative_media_path="media/Enciclopedia/img1.png",
+                           target_ficha="El Origen"),
+        ])
+
+        updated = store.find_candidate("demo", "sha256:same", "Enciclopedia")
+        assert updated is not None
+        assert len(updated.images) == 1
+        assert updated.images[0].relative_media_path == (
+            "media/Enciclopedia/img1.png")
+
+    def test_empty_list_is_noop(self, store) -> None:
+        from import_models import Candidate, Provenance  # noqa: PLC0415
+        store.create_job(_job(job_id="job1", state=ImportJobState.REVIEW))
+        store.add_candidate(Candidate(
+            candidate_id="cand1", job_id="job1", world="demo",
+            normalized_identity="Enciclopedia", source_hash="sha256:same",
+            provenance=Provenance(source_path="Lore/Enciclopedia.docx",
+                                  source_kind="loose",
+                                  source_hash="sha256:same"),
+            content_preview="body"))
+
+        store.update_candidate_images("cand1", [])
+
+        existing = store.find_candidate("demo", "sha256:same", "Enciclopedia")
+        assert existing is not None
+        assert existing.images == []

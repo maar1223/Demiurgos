@@ -344,6 +344,35 @@ class TestRouterVisionSeam:
         assert any(p.relative_media_path == "media/Enciclopedia/portada.png"
                    for p in cand.images)
 
+    def test_reimport_backfills_media_on_candidate_created_without_images(
+            self, tmp_path, monkeypatch):
+        """A candidate persisted while media extraction was unavailable (e.g.
+        before python-docx was installed) carries empty images. A re-import of
+        the same bytes now extracts media: the existing row must be
+        backfilled so review/execute see the placements."""
+        monkeypatch.setattr(
+            "sync_lore.utils.converter.convert_to_markdown",
+            lambda _p: "# Enciclopedia\n\nBody without image refs",
+        )
+        # First analysis: no media extraction (unavailable dependency).
+        monkeypatch.setattr(
+            "import_analysis.extract_images_from_file", lambda _p: [])
+        client, store, spool, _ = _make_app(tmp_path)
+        job = _create_job(client)
+        _stream(client, job["job_id"], b"PK..fake")
+        _analyze(client, job["job_id"])
+        first = store.candidates_for(job["job_id"])[0]
+        assert first.images == []
+
+        # Second analysis of the same bytes: media extraction now works.
+        monkeypatch.setattr(
+            "import_analysis.extract_images_from_file",
+            lambda _p: [_entry(filename="portada.png")])
+        _analyze(client, job["job_id"])
+        cand = store.candidates_for(job["job_id"])[0]
+        assert any(p.relative_media_path == "media/Enciclopedia/portada.png"
+                   for p in cand.images)
+
 
 # ---------------------------------------------------------------------------
 # Phase 7 — API composition of the vision callable (task 7.4)
