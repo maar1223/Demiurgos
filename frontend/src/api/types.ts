@@ -878,6 +878,10 @@ export interface ImportJob {
    *  server always sends it after the progress contract landed. */
   progress_stage?: string;
   progress_pct?: number | null;
+  /** Classifier (BLOQUE 1 piece 1): author-chosen section per relative
+   *  source path, persisted server-side as ``sections_json``. Surfaced so a
+   *  resumed job can re-populate the selection dropdowns. */
+  sections?: Record<string, string>;
 }
 
 /** Response of POST /api/{mundo}/imports and GET /api/{mundo}/imports/{id}. */
@@ -970,6 +974,11 @@ export interface ImportExecuteResponse {
 export interface ImportCreateJobInput {
   source_kind: ImportSourceKind;
   files: string[];
+  /** Classifier (BLOQUE 1 piece 1): author-chosen section per relative
+   *  source path (`lore` | `personajes` | `referencias`). Optional — legacy
+   *  clients omit it and the server defaults to `{}` (all candidates fall
+   *  through to the legacy resolve_target branch). */
+  sections?: Record<string, string>;
 }
 
 // ---------------------------------------------------------------------------

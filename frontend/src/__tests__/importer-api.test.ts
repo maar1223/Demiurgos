@@ -58,6 +58,26 @@ describe("importer API — world-importer slice 3 contract", () => {
     );
   });
 
+  it("createImportJob forwards the classifier sections map when provided (BLOQUE 1 piece 1)", async () => {
+    mockApiFetch.mockResolvedValue({ job: { job_id: "job1", state: "pending" } });
+    await createImportJob("mundo", {
+      source_kind: "loose",
+      files: ["a.md", "b.md"],
+      sections: { "a.md": "personajes", "b.md": "referencias" },
+    });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          source_kind: "loose",
+          files: ["a.md", "b.md"],
+          sections: { "a.md": "personajes", "b.md": "referencias" },
+        }),
+      }),
+    );
+  });
+
   it("streamImportChunk targets the job-scoped URL with offset and base64 payload", async () => {
     mockApiFetch.mockResolvedValue({ job_id: "job1", offset: 3 });
     await streamImportChunk("mundo", "job1", "a.md", 0, "YWJj");

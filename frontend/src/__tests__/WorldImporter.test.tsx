@@ -379,6 +379,102 @@ describe("WorldImporter — accessible, preservation-first workflow (slice 3)", 
       screen.getByRole("button", { name: /Reanudar revisión/ }),
     ).toBeInTheDocument();
   });
+
+  it("renders a section dropdown per selected file with the classifier options (BLOQUE 1 piece 1)", async () => {
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File(["abc"], "planos.md"),
+          new File(["def"], "personas.md"),
+        ],
+      },
+    });
+
+    const selects = await screen.findAllByRole("combobox");
+    expect(selects).toHaveLength(2);
+    const options = Array.from(selects[0].querySelectorAll("option")).map(
+      (o) => o.value,
+    );
+    expect(options).toEqual(["lore", "personajes", "referencias"]);
+    // ``sagas`` must NOT be offered (its retirement is a separate change).
+    expect(options).not.toContain("sagas");
+  });
+
+  it("pre-fills the dropdown from the content heuristic (BLOQUE 1 piece 1)", async () => {
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["El glosario de términos"], "referencias.md")],
+      },
+    });
+
+    const dropdown = await screen.findByLabelText("Sección de referencias.md");
+    await waitFor(() => expect(dropdown).toHaveValue("referencias"));
+  });
+
+  it("defaults the dropdown to lore when the content has no signal (BLOQUE 1 piece 1)", async () => {
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: { files: [new File(["Un texto neutro"], "neutral.md")] },
+    });
+
+    const dropdown = await screen.findByLabelText("Sección de neutral.md");
+    expect(dropdown).toHaveValue("lore");
+  });
+
+  it("keeps the author's manual override and sends it in the create body (BLOQUE 1 piece 1)", async () => {
+    mockAnalyzeToReview([candidate()]);
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: { files: [new File(["abc"], "planos.md")] },
+    });
+
+    const dropdown = await screen.findByLabelText("Sección de planos.md");
+    fireEvent.change(dropdown, { target: { value: "personajes" } });
+    expect(dropdown).toHaveValue("personajes");
+
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    expect(createImportJob).toHaveBeenCalledWith(
+      "mundo",
+      expect.objectContaining({
+        source_kind: "loose",
+        files: ["planos.md"],
+        sections: { "planos.md": "personajes" },
+      }),
+    );
+  });
+
+  it("sends the heuristic suggestion in the create body when the author keeps it (BLOQUE 1 piece 1)", async () => {
+    mockAnalyzeToReview([candidate()]);
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: { files: [new File(["El glosario"], "glosario.md")] },
+    });
+
+    const dropdown = await screen.findByLabelText("Sección de glosario.md");
+    await waitFor(() => expect(dropdown).toHaveValue("referencias"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    expect(createImportJob).toHaveBeenCalledWith(
+      "mundo",
+      expect.objectContaining({
+        sections: { "glosario.md": "referencias" },
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

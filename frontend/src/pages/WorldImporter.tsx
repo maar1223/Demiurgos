@@ -61,12 +61,100 @@ import { cn } from "@/lib/utils";
 // every state and the UI never implies success early.
 // ---------------------------------------------------------------------------
 
+// Classifier (BLOQUE 1 piece 1): per-document section choice offered by the
+// importer. Local on purpose — deliberately NOT shared with VALID_SECTIONS,
+// which still carries ``sagas`` pending its retirement as a separate change.
+// The server validates the same allow-list (CLASSIFIER_SECTIONS in
+// import_router.py); this constant only pre-fills the dropdown (advisory, D2).
+export const CLASSIFIER_SECTIONS = ["lore", "personajes", "referencias"] as const;
+export type ClassifierSection = (typeof CLASSIFIER_SECTIONS)[number];
+
+/** Bytes of file head scanned by the classifier heuristic. */
+export const SUGGESTION_SCAN_BYTES = 8 * 1024;
+
+const _PERSONAJES_KEYWORDS = [
+  "personaje",
+  "protagonista",
+  "antagonista",
+  "héroe",
+  "villano",
+  "criatura",
+  "raza",
+  "linaje",
+  "clan",
+  "familia",
+];
+
+const _REFERENCIAS_KEYWORDS = [
+  "glosario",
+  "índice",
+  "apéndice",
+  "términos",
+  "vocabulario",
+  "tabla de",
+  "cronología",
+  "bibliografía",
+  "anexo",
+];
+
+/** Extract ``#``/``##`` heading lines (H1/H2) from a document. */
+function extractHeadings(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => /^(#{1,2})\s+/.test(line))
+    .map((line) => line.replace(/^#{1,2}\s+/, "").trim());
+}
+
+/**
+ * Deterministic, offline classifier suggestion for one source document.
+ *
+ * Scans the first ~8KB of text plus the H1/H2 heading lines (headings are
+ * structure, so they count regardless of position). Spanish keyword tables
+ * match case-insensitively; ``personajes`` signals win over ``referencias``,
+ * and weak/no signal defaults to ``lore`` (neutral catch-all). Advisory only
+ * (D2) — the author's explicit choice always wins; the server is the
+ * authority for validation.
+ */
+export function suggestDocumentSection(text: string): string {
+  const head = text.slice(0, SUGGESTION_SCAN_BYTES);
+  const haystack = [head, ...extractHeadings(text)].join("\n").toLowerCase();
+  if (_PERSONAJES_KEYWORDS.some((k) => haystack.includes(k))) {
+    return "personajes";
+  }
+  if (_REFERENCIAS_KEYWORDS.some((k) => haystack.includes(k))) {
+    return "referencias";
+  }
+  return "lore";
+}
+
+/** Display label for a classifier section (values stay lowercase). */
+function sectionLabel(section: string): string {
+  return section.charAt(0).toUpperCase() + section.slice(1);
+}
+
+/** Read the first ``limit`` bytes of a File as text (advisory input).
+ *  Uses FileReader — supported by every browser and jsdom (Blob.text() is
+ *  not available in jsdom and degrades the heuristic to an empty string).
+ *  Fail-open: any read error yields ``""`` → the heuristic defaults to lore. */
+function readFileHead(file: File, limit: number): Promise<string> {
+  const blob = file.slice(0, limit);
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => resolve("");
+    reader.readAsText(blob);
+  });
+}
+
 type Step = "select" | "analyzing" | "review" | "result";
 
 interface SelectedSource {
   file: File;
   relative: string;
   size: number;
+  /** Classifier (BLOQUE 1 piece 1): lore | personajes | referencias. */
+  section: string;
 }
 
 interface ApprovalGroup {
@@ -269,6 +357,13 @@ export default function WorldImporter() {
   // on the server spool, so the user can skip re-selection and go straight to
   // analyze. Cleared on resetAll or when the user picks new files.
   const [resumeIntaking, setResumeIntaking] = useState(false);
+  // Classifier (BLOQUE 1 piece 1): author-chosen sections of the resumed job
+  // (relative_path → section). Overlaid on top of the heuristic suggestion
+  // when the author re-selects the same sources after a resume, so the
+  // dropdowns re-populate exactly as they were persisted server-side.
+  const [persistedSections, setPersistedSections] = useState<
+    Record<string, string>
+  >({});
 
   // Enrichment (Hermes summaries/type/relationships) ALWAYS runs — it
   // produces the indexable OKF metadata the graph needs. There is no UI
@@ -312,12 +407,12 @@ export default function WorldImporter() {
   // --- persisted job recovery (cancel/resume across reloads) ------------
 
   const persistJob = useCallback(
-    (id: string, kind: ImportSourceKind) => {
+    (id: string, kind: ImportSourceKind, sections?: Record<string, string>) => {
       if (!mundo) return;
       try {
         sessionStorage.setItem(
           storageKey(mundo),
-          JSON.stringify({ jobId: id, sourceKind: kind }),
+          JSON.stringify({ jobId: id, sourceKind: kind, sections }),
         );
       } catch {
         // storage unavailable — the flow continues without reload recovery
@@ -397,6 +492,9 @@ export default function WorldImporter() {
       setSourceKind(existing.source_kind);
       setJob(existing);
       setResumeNotice(null);
+      // Classifier (BLOQUE 1 piece 1): re-populate the dropdowns from the
+      // job's persisted sections when the author re-selects the same files.
+      setPersistedSections(existing.sections ?? {});
       if (existing.state === "review" || existing.state === "approved") {
         try {
           const review = await getImportReview(mundo, existing.job_id);
@@ -445,7 +543,11 @@ export default function WorldImporter() {
       setRestoring(false);
       return;
     }
-    let stored: { jobId: string; sourceKind: ImportSourceKind } | null = null;
+    let stored: {
+      jobId: string;
+      sourceKind: ImportSourceKind;
+      sections?: Record<string, string>;
+    } | null = null;
     try {
       stored = JSON.parse(sessionStorage.getItem(storageKey(mundo)) ?? "null");
     } catch {
@@ -455,6 +557,10 @@ export default function WorldImporter() {
       setRestoring(false);
       return;
     }
+    // Classifier (BLOQUE 1 piece 1): seed the dropdowns from the persisted
+    // sections even before the server round-trip (restoreJobState re-applies
+    // the authoritative job.sections once the fetch resolves).
+    setPersistedSections(stored.sections ?? {});
     let cancelled = false;
     (async () => {
       try {
@@ -518,7 +624,7 @@ export default function WorldImporter() {
   const handleOpenFromHistory = useCallback(
     async (entry: ImportJob) => {
       if (!mundo) return;
-      persistJob(entry.job_id, entry.source_kind);
+      persistJob(entry.job_id, entry.source_kind, entry.sections);
       await restoreJobState(entry);
     },
     [mundo, persistJob, restoreJobState],
@@ -594,6 +700,7 @@ export default function WorldImporter() {
     setApprovedSuggestionIds([]);
     setDecidingSuggestionId(null);
     setResumeIntaking(false);
+    setPersistedSections({});
     clearPersistedJob();
   }, [clearPersistedJob]);
 
@@ -608,7 +715,7 @@ export default function WorldImporter() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFilesChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const list = Array.from(event.target.files ?? []);
     if (list.length === 0) return;
     // User picked new files — the resume-intaking shortcut no longer applies.
@@ -626,7 +733,16 @@ export default function WorldImporter() {
         excluded += 1;
         continue;
       }
-      selected.push({ file, relative, size: file.size });
+      // Classifier (BLOQUE 1 piece 1): start from the persisted section of a
+      // resumed job (relative paths match exactly) or the neutral default;
+      // the content heuristic upgrades the value right after.
+      const section =
+        persistedSections[relative] && CLASSIFIER_SECTIONS.includes(
+          persistedSections[relative] as ClassifierSection,
+        )
+          ? persistedSections[relative]
+          : "lore";
+      selected.push({ file, relative, size: file.size, section });
     }
     setExcludedCount(excluded);
     setSources(selected);
@@ -648,9 +764,34 @@ export default function WorldImporter() {
     }
     // Reset the input value so re-selecting the same files fires change again.
     event.target.value = "";
+    // Classifier (BLOQUE 1 piece 1): advisory heuristic pre-fill — read the
+    // head of each file and upgrade the section when the author has not
+    // explicitly chosen one for that file yet. Persisted sections of a
+    // resumed job win over the heuristic (D2: the author's prior decision is
+    // final); an in-flight manual override also keeps its value.
+    for (const s of selected) {
+      const head = await readFileHead(s.file, SUGGESTION_SCAN_BYTES);
+      setSources((prev) =>
+        prev.map((p) =>
+          p.relative === s.relative && !persistedSections[p.relative] && p.section === "lore"
+            ? { ...p, section: suggestDocumentSection(head) }
+            : p,
+        ),
+      );
+    }
   };
 
   const openPicker = () => fileInputRef.current?.click();
+
+  // --- classifier (BLOQUE 1 piece 1) --------------------------------------
+
+  /** Author override: the author's explicit choice is final (D2) — the
+   *  heuristic suggestion is discarded for that file. */
+  const handleSectionChange = (relative: string, section: string) => {
+    setSources((prev) =>
+      prev.map((s) => (s.relative === relative ? { ...s, section } : s)),
+    );
+  };
 
   // --- analyze (read-only) ------------------------------------------------
 
@@ -683,14 +824,22 @@ export default function WorldImporter() {
           "Analizando contenido y consultando asistente (solo lectura)…",
         );
       } else {
+        // Classifier (BLOQUE 1 piece 1): thread the author-chosen sections
+        // (relative_path → section) into the create-job request; the server
+        // validates them and persists them on the job for resume.
+        const sections: Record<string, string> = {};
+        for (const s of sources) {
+          if (s.section) sections[s.relative] = s.section;
+        }
         const { job: created } = await createImportJob(mundo, {
           source_kind: sourceKind,
           files: sources.map((s) => s.relative),
+          sections,
         });
         activeJobId = created.job_id;
         setJobId(created.job_id);
         setJob(created);
-        persistJob(created.job_id, sourceKind);
+        persistJob(created.job_id, sourceKind, sections);
 
         // Stream every file as durable chunks (idempotent at same offsets).
         const count = sources.length;
@@ -1386,8 +1535,26 @@ export default function WorldImporter() {
                   <span className="min-w-0 truncate" title={s.relative}>
                     {s.relative}
                   </span>
-                  <span className="shrink-0 text-xs text-tinta-desvaida">
-                    {formatBytes(s.size)}
+                  <span className="flex shrink-0 items-center gap-3">
+                    {/* Classifier (BLOQUE 1 piece 1): per-file section
+                        choice. Pre-filled by the heuristic (or the persisted
+                        job sections on resume); the author may override —
+                        the choice is final (D2). */}
+                    <select
+                      value={s.section}
+                      onChange={(e) => handleSectionChange(s.relative, e.target.value)}
+                      aria-label={`Sección de ${s.relative}`}
+                      className="rounded border border-filio bg-cripta px-1.5 py-0.5 text-xs text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50"
+                    >
+                      {CLASSIFIER_SECTIONS.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {sectionLabel(opt)}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-xs text-tinta-desvaida">
+                      {formatBytes(s.size)}
+                    </span>
                   </span>
                 </li>
               ))}
