@@ -1609,7 +1609,11 @@ class TestGuidedSessionDurability:
 
             def start(self, request):
                 assert request.request_id
-                assert request.prompt.startswith("[Mundo: test_mundo]\n")
+                # The identity override replaces the legacy "[Mundo: ...]" prefix
+                # (commit 82c7a8c): the prompt now opens with the Demiurgos
+                # assistant identity prompt naming the world.
+                assert request.prompt.startswith("[SYSTEM OVERRIDE — IDENTITY]")
+                assert "test_mundo" in request.prompt
                 assert "1-3 short paragraphs or bullets" in request.prompt
                 assert request.prompt.endswith("\n\nHola")
                 self.request_id = request.request_id
