@@ -216,6 +216,37 @@ class TestSafeConversion:
         assert rejected.status == "review"
         assert "non-markdown" in rejected.diagnostic
 
+    def test_resolve_target_section_priority_branch(self):
+        """BLOQUE 1 piece 1 — a non-empty ``candidate.section`` roots the
+        target under that section (before the legacy source-path branch);
+        an empty section falls through to the legacy branch unchanged."""
+        def candidate_with(source_path: str, section: str = "") -> Candidate:
+            return Candidate(
+                candidate_id="c1", job_id="j1", world="w1",
+                normalized_identity="Enciclopedia",
+                source_hash="sha256:abc",
+                provenance=Provenance(
+                    source_path=source_path, source_kind="loose",
+                    source_hash="sha256:abc"),
+                content_preview="x",
+                section=section,
+            )
+        from import_analysis import resolve_target
+        # Non-empty section → root = section.
+        chosen = resolve_target(
+            "w1", candidate_with("Enciclopedia.md", section="personajes"))
+        assert chosen.status == "resolved"
+        assert chosen.canonical_path == "personajes/Enciclopedia.md"
+        # Section wins even over a conflicting legacy alias path.
+        wins = resolve_target(
+            "w1", candidate_with("Lore/Places/City.md", section="referencias"))
+        assert wins.status == "resolved"
+        assert wins.canonical_path == "referencias/City.md"
+        # Empty section → legacy branch (uppercase normalization) unchanged.
+        legacy = resolve_target("w1", candidate_with("Lore/Dottua.md"))
+        assert legacy.status == "resolved"
+        assert legacy.canonical_path == "lore/Dottua.md"
+
 
 # ---------------------------------------------------------------------------
 # Phase 2 — image extraction integration

@@ -352,6 +352,11 @@ class Candidate(BaseModel):
     # treat absence as "no suggestions", not as an error.
     enrichment_json: list[dict[str, Any]] | None = None
     enrichment_status: str = "disabled"   # EnrichmentStatus value
+    # Classifier (BLOQUE 1 piece 1): author-chosen target section
+    # (``lore``/``personajes``/``referencias``) stamped at build time from the
+    # job's ``sections`` map. Empty for legacy jobs or files without a map
+    # entry — ``resolve_target`` then falls through to the source-path branch.
+    section: str = ""
 
 
 class ItemOutcome(BaseModel):
@@ -423,6 +428,11 @@ class ImportJob(BaseModel):
     # ``None`` when the phase has no countable total (indeterminate).
     progress_stage: str = ""
     progress_pct: int | None = None
+    # Classifier (BLOQUE 1 piece 1): author-chosen section per relative source
+    # path (``{relative_path: section}``). Persisted as ``sections_json`` so a
+    # resumed job re-stamps its candidates with the same sections. Empty for
+    # legacy jobs.
+    sections: dict[str, str] = {}
 
     def model_dump_redacted(self) -> dict[str, Any]:
         """Public view: never leaks the opaque observability token."""

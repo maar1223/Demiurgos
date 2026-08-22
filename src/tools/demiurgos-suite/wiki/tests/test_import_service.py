@@ -499,12 +499,14 @@ class TestResolveTarget:
     guessed target.
     """
 
-    def _candidate(self, ident: str, source_path: str) -> Candidate:
+    def _candidate(self, ident: str, source_path: str,
+                   section: str = "") -> Candidate:
         return Candidate(
             candidate_id=f"cand-{ident}", job_id="job1", world="world1",
             normalized_identity=ident, source_hash=f"sha256:{ident}",
             provenance=Provenance(source_path=source_path, source_kind="loose",
                                   source_hash=f"sha256:{ident}"),
+            section=section,
         )
 
     def test_uppercase_lore_normalized_to_lowercase(self, tmp_path):
@@ -610,6 +612,35 @@ class TestResolveTarget:
         rr = resolve_target("world1", rev, mundos_dir=tmp_path)
         assert rr.status == "review"
         assert rr.status != "resolved"
+
+    def test_author_section_wins_over_source_path(self, tmp_path):
+        # BLOQUE 1 piece 1 — the classifier's author-chosen section roots the
+        # canonical target, even when the legacy source-path derivation would
+        # have produced a different (or unknown) section.
+        cand = self._candidate("Enciclopedia", "Enciclopedia.md",
+                               section="personajes")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "personajes/Enciclopedia.md"
+        assert r.alias_used == ""
+
+    def test_author_section_wins_over_legacy_alias(self, tmp_path):
+        # A conflicting legacy alias path (Lore/Places → lore/lugares) must
+        # NOT win when the author chose a different section explicitly.
+        cand = self._candidate("City", "Lore/Places/City.md",
+                               section="referencias")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "referencias/City.md"
+        assert r.alias_used == ""
+
+    def test_empty_section_falls_back_to_legacy_source_path(self, tmp_path):
+        # Empty section (legacy jobs / files with no map entry) → the legacy
+        # source-path branch runs unchanged.
+        cand = self._candidate("Dottua", "Lore/Dottua.md", section="")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Dottua.md"
 
 
 # ---------------------------------------------------------------------------

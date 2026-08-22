@@ -550,6 +550,17 @@ def resolve_target(world: str, candidate,
         )
     identity = Path(filename).stem
 
+    # Classifier (BLOQUE 1 piece 1): the author-chosen section wins over the
+    # legacy source-path derivation. Empty section (legacy jobs / files with
+    # no map entry) falls through to the legacy branch unchanged.
+    section_choice = getattr(candidate, "section", "") or ""
+    if section_choice:
+        canonical = f"{section_choice}/{identity}.md"
+        return TargetResolution(
+            canonical_path=canonical, normalized_source=canonical,
+            status="resolved", alias_used="",
+        )
+
     # Normalize the top-level section (case-insensitive Lore/Personajes).
     head = parts[0]
     head_lower = head.lower()

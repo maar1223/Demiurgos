@@ -123,9 +123,21 @@ class VisionMediaEntry:
 VisionCallable = Callable[[list[Candidate], list[VisionMediaEntry]], list[Candidate]]
 
 
+# Per-document classifier sections (BLOQUE 1 piece 1). Local to the
+# classifier on purpose: ``VALID_SECTIONS``/``IMPORTER_SCOPE_SECTIONS`` still
+# carry ``sagas`` pending its retirement as a separate change, while the
+# classifier offers only the three canonical worldbuilding sections. The
+# server is the authority for validation; the client heuristic is advisory.
+CLASSIFIER_SECTIONS = ("lore", "personajes", "referencias")
+
+
 class CreateJobRequest(BaseModel):
     source_kind: str = "loose"   # folder | loose | zip
     files: list[str] = []
+    # Classifier (BLOQUE 1 piece 1): author-chosen section per relative
+    # source path. Absent/empty preserves the legacy flow (all sections
+    # empty → resolve_target falls through to the source-path branch).
+    sections: dict[str, str] = {}
 
 
 class StreamChunkRequest(BaseModel):
@@ -209,6 +221,12 @@ def create_import_router(
                 reject_unsafe_path(path)
             except UnsafePathError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+        for relative, section in body.sections.items():
+            if section not in CLASSIFIER_SECTIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid section for {relative}: {section!r}",
+                )
         job = ImportJob(
             job_id=uuid.uuid4().hex,
             world=mundo,
@@ -218,6 +236,7 @@ def create_import_router(
             opaque_token=secrets.token_hex(16),
             created_at=utcnow_iso(),
             updated_at=utcnow_iso(),
+            sections=body.sections,
         )
         _store.create_job(job)
         _store.add_event(job.job_id, "created")
@@ -385,6 +404,7 @@ def create_import_router(
                         job, files, spool,
                         root_dir=analysis_root, mundos_dir=mundos_dir(),
                         structure_inference=structure_inference,
+                        sections=job.sections,
                     )
                 else:
                     raise MalformedProviderError("analysis provider unavailable")
@@ -865,7 +885,8 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
                          spool: BoundedSpool,
                          *, root_dir: Path | None = None,
                          mundos_dir: Path | None = None,
-                         structure_inference: Callable[[str], Any] | None = None
+                         structure_inference: Callable[[str], Any] | None = None,
+                         sections: dict[str, str] | None = None
                          ) -> tuple[list[Candidate], list[VisionMediaEntry]]:
     """Build ordered candidates + the preserved media bundle from spooled files.
 
@@ -878,6 +899,12 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     ``structure_inference`` (importador-auto-frontmatter, task 1.2 seam) is the
     concrete Hermes H1-H5 inference callable used only when the deterministic
     scan finds no headings; wired from the composition layer.
+    ``sections`` (BLOQUE 1 piece 1) is the author-chosen per-file classifier
+    section map (``{relative_path: section}``); each candidate is stamped with
+    ``sections.get(relative_path, "")`` so ``resolve_target`` can root the
+    target under the chosen section. The caller passes the job's persisted
+    ``sections``, which makes the stamp resume-safe (the analyze endpoint
+    reloads the job from the store first).
 
     importador-auto-frontmatter (Phase 2): candidates are now built ONE PER
     complete ficha from the deterministic H1-H5 tree splitter (Step 0/1), so a
@@ -940,6 +967,7 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
             frontmatter=FrontmatterCandidate(
                 title=display_title, type=None, description="", relaciones=[],
                 state=FrontmatterState.MANUAL),
+            section=(sections or {}).get(relative, ""),
         )
 
     report = analyze_source(

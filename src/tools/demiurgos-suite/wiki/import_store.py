@@ -99,6 +99,10 @@ _BOOTSTRAP_COLUMNS = (
     ("summary", "TEXT NOT NULL DEFAULT ''"),
     ("frontmatter_json", "TEXT"),
     ("media_diagnostics_json", "TEXT NOT NULL DEFAULT '[]'"),
+    # Classifier (BLOQUE 1 piece 1): author-chosen target section on the
+    # candidate. Legacy rows default to ``""`` → resolve_target falls through
+    # to the legacy source-path branch (zero behavior change).
+    ("section", "TEXT NOT NULL DEFAULT ''"),
 )
 
 # Analysis-progress columns added idempotently to the ``jobs`` table for
@@ -106,6 +110,10 @@ _BOOTSTRAP_COLUMNS = (
 _JOB_BOOTSTRAP_COLUMNS = (
     ("progress_stage", "TEXT NOT NULL DEFAULT ''"),
     ("progress_pct", "INTEGER"),
+    # Classifier (BLOQUE 1 piece 1): author-chosen per-file sections,
+    # persisted as JSON. Legacy rows default to ``{}`` (empty map → every
+    # candidate falls through to the legacy resolve_target branch).
+    ("sections_json", "TEXT NOT NULL DEFAULT '{}'"),
 )
 
 
@@ -228,13 +236,13 @@ class ImportJobStore:
                 "INSERT INTO jobs (job_id, world, owner_principal, state, source_kind,"
                 " aggregate_uncompressed_bytes, aggregate_compressed_bytes, file_count,"
                 " revision, error, opaque_token, lease_owner, created_at, updated_at,"
-                " progress_stage, progress_pct)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " progress_stage, progress_pct, sections_json)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (job.job_id, job.world, job.owner_principal, job.state.value,
                  job.source_kind, job.aggregate_uncompressed_bytes,
                  job.aggregate_compressed_bytes, job.file_count, job.revision,
                  job.error, job.opaque_token, lease_owner, job.created_at, job.updated_at,
-                 job.progress_stage, job.progress_pct),
+                 job.progress_stage, job.progress_pct, _json(job.sections)),
             )
             self._conn.commit()
             return self.get_job(job.job_id)
@@ -252,6 +260,16 @@ class ImportJobStore:
             progress_pct = row["progress_pct"]
         except (IndexError, KeyError):
             progress_stage, progress_pct = "", None
+        # Classifier (BLOQUE 1 piece 1): ``sections_json`` was added via
+        # idempotent bootstrap; legacy rows may predate it. Defensive read
+        # defaults to ``{}`` (empty map → legacy resolve_target branch).
+        try:
+            sections_raw = row["sections_json"]
+        except (IndexError, KeyError):
+            sections_raw = "{}"
+        sections = _unjson(sections_raw)
+        if not isinstance(sections, dict):
+            sections = {}
         return ImportJob(
             job_id=row["job_id"], world=row["world"],
             owner_principal=row["owner_principal"],
@@ -262,6 +280,7 @@ class ImportJobStore:
             error=row["error"], opaque_token=row["opaque_token"],
             created_at=row["created_at"], updated_at=row["updated_at"],
             progress_stage=progress_stage, progress_pct=progress_pct,
+            sections=sections,
         )
 
     def update_job(self, job_id: str, *, expected_revision: int | None,
@@ -405,8 +424,8 @@ class ImportJobStore:
                 " display_title, summary, frontmatter_json, media_diagnostics_json,"
                 " status, okf_issues_json, size_bytes, images_json, merge_json,"
                 " replacement_json, target_resolution_json,"
-                " enrichment_json, enrichment_status)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " enrichment_json, enrichment_status, section)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (candidate.candidate_id, candidate.job_id, candidate.world,
                  candidate.normalized_identity, candidate.canonical_id,
                  candidate.source_hash,
@@ -424,7 +443,8 @@ class ImportJobStore:
                  if candidate.target_resolution else None,
                  _json(candidate.enrichment_json)
                  if candidate.enrichment_json is not None else None,
-                 candidate.enrichment_status),
+                 candidate.enrichment_status,
+                 candidate.section),
             )
             self._conn.commit()
         return (self.find_candidate(candidate.world, candidate.source_hash,
@@ -613,6 +633,13 @@ class ImportJobStore:
             md_raw = row["media_diagnostics_json"]
         except (IndexError, KeyError):
             canonical_id, display_title, summary, fm_raw, md_raw = "", "", "", None, "[]"
+        # Classifier (BLOQUE 1 piece 1): ``section`` column added via
+        # idempotent bootstrap; legacy rows default to ``""`` (→ the legacy
+        # resolve_target source-path branch).
+        try:
+            section = row["section"]
+        except (IndexError, KeyError):
+            section = ""
         frontmatter = None
         if fm_raw:
             from import_models import FrontmatterCandidate
@@ -640,7 +667,8 @@ class ImportJobStore:
             images=images, merge=merge, replacement=replacement,
             target_resolution=target_resolution,
             enrichment_json=enrichment_json,
-            enrichment_status=es_raw or "disabled")
+            enrichment_status=es_raw or "disabled",
+            section=section)
 
     # -- items / events ----------------------------------------------------
 

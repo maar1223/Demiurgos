@@ -629,3 +629,112 @@ class TestConversionFailureGate:
         cands = store.candidates_for(job["job_id"])
         assert len(cands) == 1
         assert cands[0].content_preview
+
+
+# ---------------------------------------------------------------------------
+# BLOQUE 1 piece 1 — per-document classifier (sections map)
+# ---------------------------------------------------------------------------
+
+
+class TestClassifierSections:
+    """The per-document classifier contract.
+
+    The server is the authority for validation: values outside
+    ``{lore, personajes, referencias}`` are rejected with HTTP 400 and no job
+    is persisted. Valid maps are persisted on the job (``sections_json``) and
+    stamped onto each candidate so ``resolve_target`` roots the target under
+    the chosen section.
+    """
+
+    def _create(self, client, files, sections=None):
+        payload = {"source_kind": "loose", "files": files}
+        if sections is not None:
+            payload["sections"] = sections
+        return client.post("/api/world1/imports", json=payload)
+
+    def _stream(self, client, job_id, relative, data):
+        resp = client.post(
+            f"/api/world1/imports/{job_id}/stream",
+            json={"relative": relative, "offset": 0,
+                  "data_b64": base64.b64encode(data).decode()})
+        assert resp.status_code == 200, resp.text
+
+    def test_invalid_section_rejected_400(self, tmp_path):
+        client, store, _, _ = _make_app(tmp_path)
+        resp = self._create(client, ["a.md"], {"a.md": "sagas"})
+        assert resp.status_code == 400, resp.text
+        assert "Invalid section" in resp.json()["detail"]
+        # No job may be persisted for an invalid request.
+        assert store.list_jobs(principal="tester", world="world1",
+                               limit=10)[0] == []
+
+    def test_invalid_section_any_map_entry_rejected_400(self, tmp_path):
+        """Validation covers every map value, not just selected files."""
+        client, _, _, _ = _make_app(tmp_path)
+        resp = self._create(client, ["a.md"],
+                            {"a.md": "lore", "b.md": "glosario"})
+        assert resp.status_code == 400, resp.text
+        assert "b.md" in resp.json()["detail"]
+
+    def test_empty_sections_accepted_201(self, tmp_path):
+        client, store, _, _ = _make_app(tmp_path)
+        resp = self._create(client, ["a.md"], {})
+        assert resp.status_code == 201, resp.text
+        job = store.get_job(resp.json()["job"]["job_id"])
+        assert job is not None
+        assert job.sections == {}
+
+    def test_legacy_client_without_sections_accepted_201(self, tmp_path):
+        """Pre-change clients omit ``sections`` entirely — still 201, map {}."""
+        client, store, _, _ = _make_app(tmp_path)
+        resp = self._create(client, ["a.md"])
+        assert resp.status_code == 201, resp.text
+        job = store.get_job(resp.json()["job"]["job_id"])
+        assert job is not None
+        assert job.sections == {}
+
+    def test_valid_sections_accepted_201_and_persisted(self, tmp_path):
+        client, store, _, _ = _make_app(tmp_path)
+        resp = self._create(client, ["a.md", "b.md"],
+                            {"a.md": "personajes", "b.md": "referencias"})
+        assert resp.status_code == 201, resp.text
+        job = store.get_job(resp.json()["job"]["job_id"])
+        assert job is not None
+        assert job.sections == {"a.md": "personajes", "b.md": "referencias"}
+        # The API response exposes the persisted map (resume re-population).
+        assert resp.json()["job"]["sections"] == \
+            {"a.md": "personajes", "b.md": "referencias"}
+
+    def test_candidates_stamped_from_sections_map(self, tmp_path):
+        client, store, _, _ = _make_app(tmp_path)
+        resp = self._create(client, ["Enciclopedia.md"],
+                            {"Enciclopedia.md": "personajes"})
+        assert resp.status_code == 201, resp.text
+        job_id = resp.json()["job"]["job_id"]
+        self._stream(client, job_id, "Enciclopedia.md",
+                     b"# Protagonista\n\nEl clan del linaje.")
+        result = _analyze(client, job_id)
+        assert result["job"]["state"] == "review", result
+        cands = store.candidates_for(job_id)
+        assert len(cands) == 1
+        assert cands[0].section == "personajes"
+        # The chosen section roots the canonical target.
+        assert cands[0].target_resolution["canonical_path"] == \
+            "personajes/Enciclopedia.md"
+
+    def test_candidate_without_map_entry_gets_empty_section(self, tmp_path):
+        """Empty sections → candidate.section ``""`` → legacy branch derives
+        the root from the source path (zero behavior change)."""
+        client, store, _, _ = _make_app(tmp_path)
+        resp = self._create(client, ["Lore/Enciclopedia.md"], {})
+        assert resp.status_code == 201, resp.text
+        job_id = resp.json()["job"]["job_id"]
+        self._stream(client, job_id, "Lore/Enciclopedia.md",
+                     b"# Enciclopedia\n\nCuerpo.")
+        result = _analyze(client, job_id)
+        assert result["job"]["state"] == "review", result
+        cands = store.candidates_for(job_id)
+        assert len(cands) == 1
+        assert cands[0].section == ""
+        assert cands[0].target_resolution["canonical_path"] == \
+            "lore/Enciclopedia.md"

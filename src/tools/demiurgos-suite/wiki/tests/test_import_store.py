@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -719,3 +720,141 @@ class TestUpdateCandidateFunnelNoSuggestions:
         assert row_after is not None
         assert row_after.enrichment_json is None
         assert row_after.enrichment_status == "no_suggestions"
+
+
+# ---------------------------------------------------------------------------
+# BLOQUE 1 piece 1 — per-document classifier persistence (sections_json on the
+# job, section on the candidate)
+# ---------------------------------------------------------------------------
+
+
+class TestClassifierSectionsPersistence:
+    """Classifier sections survive store round-trips and legacy rows default
+    to ``{}``/``""`` (→ the legacy resolve_target branch, zero regression)."""
+
+    def test_job_sections_json_roundtrip(self, store: ImportJobStore) -> None:
+        job = _job(job_id="cls-1")
+        job.sections = {"a.md": "personajes", "b.md": "referencias"}
+        store.create_job(job)
+        loaded = store.get_job("cls-1")
+        assert loaded is not None
+        assert loaded.sections == {"a.md": "personajes", "b.md": "referencias"}
+
+    def test_job_sections_default_empty(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="cls-2"))
+        loaded = store.get_job("cls-2")
+        assert loaded is not None
+        assert loaded.sections == {}
+
+    def test_candidate_section_roundtrip(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="cls-3"))
+        cand = Candidate(
+            candidate_id="cand-cls", job_id="cls-3", world="demo",
+            normalized_identity="Enciclopedia",
+            source_hash="sha256:enc",
+            provenance=Provenance(
+                source_path="Enciclopedia.md", source_kind="loose",
+                source_hash="sha256:enc"),
+            content_preview="body",
+            section="personajes",
+        )
+        store.add_candidate(cand)
+        row = store.find_candidate("demo", "sha256:enc", "Enciclopedia")
+        assert row is not None
+        assert row.section == "personajes"
+
+    def test_candidate_section_default_empty(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="cls-4"))
+        cand = Candidate(
+            candidate_id="cand-cls4", job_id="cls-4", world="demo",
+            normalized_identity="Origen",
+            source_hash="sha256:origen",
+            provenance=Provenance(
+                source_path="Lore/Origen.md", source_kind="loose",
+                source_hash="sha256:origen"),
+            content_preview="body",
+        )
+        store.add_candidate(cand)
+        row = store.find_candidate("demo", "sha256:origen", "Origen")
+        assert row is not None
+        assert row.section == ""
+
+    def test_legacy_db_bootstraps_classifier_columns(self, tmp_path) -> None:
+        """Legacy databases (no ``sections_json``/``section`` columns) get
+        both columns via idempotent bootstrap; legacy rows read back as
+        ``{}``/``""`` and reopening stays idempotent."""
+        db_path = tmp_path / "legacy.sqlite3"
+        conn = sqlite3.connect(db_path)
+        conn.executescript(_LEGACY_SCHEMA)
+        conn.execute(
+            "INSERT INTO jobs (job_id, world, owner_principal, state,"
+            " created_at, updated_at)"
+            " VALUES ('legacy-job', 'demo', 'alice', 'pending', 't', 't')")
+        conn.execute(
+            "INSERT INTO candidates (candidate_id, job_id, world,"
+            " normalized_identity, source_hash, provenance_json, content_preview)"
+            " VALUES ('legacy-cand', 'legacy-job', 'demo', 'Origen',"
+            " 'sha256:abc',"
+            " '{\"source_path\": \"lore/Origen.md\", \"source_kind\": \"loose\","
+            " \"source_hash\": \"sha256:abc\"}', 'body')")
+        conn.commit()
+        conn.close()
+
+        store = ImportJobStore(db_path)  # bootstrap runs on open
+        job_cols = {
+            row[1] for row in store._conn.execute(
+                "PRAGMA table_info(jobs)").fetchall()
+        }
+        cand_cols = {
+            row[1] for row in store._conn.execute(
+                "PRAGMA table_info(candidates)").fetchall()
+        }
+        assert "sections_json" in job_cols
+        assert "section" in cand_cols
+
+        # Legacy rows deserialize defensively (fail-open defaults).
+        job = store.get_job("legacy-job")
+        assert job is not None
+        assert job.sections == {}
+        cand = store.find_candidate("demo", "sha256:abc", "Origen")
+        assert cand is not None
+        assert cand.section == ""
+
+        # Reopening is idempotent (no duplicate-column crash).
+        store2 = ImportJobStore(db_path)
+        assert {
+            row[1] for row in store2._conn.execute(
+                "PRAGMA table_info(jobs)").fetchall()
+        } == job_cols
+
+
+_LEGACY_SCHEMA = """
+CREATE TABLE jobs (
+    job_id TEXT PRIMARY KEY, world TEXT NOT NULL, owner_principal TEXT NOT NULL,
+    state TEXT NOT NULL, source_kind TEXT NOT NULL DEFAULT 'loose',
+    aggregate_uncompressed_bytes INTEGER NOT NULL DEFAULT 0,
+    aggregate_compressed_bytes INTEGER NOT NULL DEFAULT 0,
+    file_count INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '', opaque_token TEXT NOT NULL DEFAULT '',
+    lease_owner TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE candidates (
+    candidate_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, world TEXT NOT NULL,
+    normalized_identity TEXT NOT NULL, source_hash TEXT NOT NULL,
+    provenance_json TEXT NOT NULL, content_preview TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending', okf_issues_json TEXT NOT NULL DEFAULT '[]',
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (world, source_hash, normalized_identity));
+CREATE TABLE items (
+    item_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL,
+    outcome TEXT NOT NULL DEFAULT 'pending', detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL);
+CREATE TABLE events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL,
+    event TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE approvals (
+    approval_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, principal TEXT NOT NULL,
+    revision INTEGER NOT NULL, digest TEXT NOT NULL, token TEXT NOT NULL,
+    group_ids_json TEXT NOT NULL DEFAULT '[]', issued_at TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL DEFAULT '', consumed INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (job_id, token));
+"""
