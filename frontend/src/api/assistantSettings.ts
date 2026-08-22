@@ -30,6 +30,7 @@ export function validateAssistantConnection(
     method: "POST",
     body: JSON.stringify(input),
     ...CREDENTIALS,
+    timeout: 15_000,
   });
 }
 
@@ -40,6 +41,7 @@ export function discoverAssistantModels(
     method: "POST",
     body: JSON.stringify(input),
     ...CREDENTIALS,
+    timeout: 15_000,
   });
 }
 
@@ -48,6 +50,7 @@ export function runAssistantTextProbe(input: AssistantProbeInput): Promise<Assis
     method: "POST",
     body: JSON.stringify(input),
     ...CREDENTIALS,
+    timeout: 90_000,
   });
 }
 
@@ -56,6 +59,7 @@ export function runAssistantVisionProbe(input: AssistantProbeInput): Promise<Ass
     method: "POST",
     body: JSON.stringify(input),
     ...CREDENTIALS,
+    timeout: 180_000,
   });
 }
 
@@ -66,6 +70,7 @@ export function saveAssistantConfiguration(
     method: "PUT",
     body: JSON.stringify(input),
     ...CREDENTIALS,
+    timeout: 240_000,
   });
 }
 

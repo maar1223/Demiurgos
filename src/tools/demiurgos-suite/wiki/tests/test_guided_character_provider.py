@@ -305,6 +305,36 @@ def test_version_alias_is_normalized_before_strict_protocol_validation() -> None
     asyncio.run(scenario())
 
 
+def test_fenced_json_output_is_accepted() -> None:
+    async def scenario() -> None:
+        class Runs:
+            async def start(self, _request: object) -> str:
+                return "run-1"
+
+            async def events(self, _run_id: str):
+                payload = {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "request_id": "request-1",
+                    "session_id": "session-1",
+                    "outcome": "question",
+                    "question": "What drives them?",
+                }
+                fenced = "```json\n" + json.dumps(payload) + "\n```"
+                yield {"event": "run.completed", "run_id": "run-1", "output": fenced}
+
+        result = await invoke_bounded(
+            HermesGuidedProvider(Runs()).invoke,
+            guided_request(),
+            Capabilities(PROTOCOL_VERSION, True, True, True, 8_000),
+        )
+
+        assert result.error is None
+        assert result.outcome.value == "question"
+        assert result.question == "What drives them?"
+
+    asyncio.run(scenario())
+
+
 def test_structured_question_is_normalized_without_exposing_provider_metadata() -> None:
     async def scenario() -> None:
         class Runs:
