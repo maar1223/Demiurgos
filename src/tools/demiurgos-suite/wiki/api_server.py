@@ -4418,6 +4418,13 @@ app.include_router(
         enricher=_make_import_enricher(),
         vision=_make_vision_callable(),
         structure_inference=_make_structure_inference(),
+        # BLOQUE 3 — collision detection seam: expose the world's graph link
+        # resolver when the index exists, else None (fail-open → checks
+        # skipped). ``_get_graph`` lazily builds/returns the cached index.
+        graph_resolver=lambda mundo: (
+            _get_graph(mundo)._resolve_link_candidates
+            if _get_graph(mundo) else None
+        ),
         service=ImportService(
             store=_import_store(),
             mundos_dir=MUNDOS_DIR,

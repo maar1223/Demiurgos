@@ -187,6 +187,14 @@ def create_import_router(
     vision: VisionCallable | None = None,
     service: ImportService | None = None,
     structure_inference: Callable[[str], Any] | None = None,
+    # BLOQUE 3 — collision detection seam (same injection pattern as the
+    # enricher/vision seams). The outer callable maps a world name to the
+    # world's link-resolution function (graph index
+    # ``_resolve_link_candidates``), or ``None`` when the index is
+    # unavailable. ``None`` / a raising callable / a world with no index →
+    # every analyze-time collision check is skipped (fail-open, §6.3
+    # soft-gate: signals are advisory, never silent auto-merge).
+    graph_resolver: Callable[[str], Callable[[str], list[str]] | None] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/{mundo}/imports", tags=["world-importer"])
     _store = store if isinstance(store, ImportJobStore) else store()
@@ -393,6 +401,20 @@ def create_import_router(
                 ]
                 files = [f for f in files if f["sha256"]]
 
+            # --- Collision detection (BLOQUE 3) ---
+            # Resolve the per-world link resolver ONCE, fail-open. The outer
+            # callable maps a world name to the graph index's
+            # ``_resolve_link_candidates`` bound method (api_server wiring);
+            # ``None`` (or a raising outer callable) means the index is
+            # unavailable → every collision check below is skipped, preserving
+            # the pre-BLOQUE-3 behavior exactly.
+            _resolver_fn: Callable[[str], list[str]] | None = None
+            if graph_resolver is not None:
+                try:
+                    _resolver_fn = graph_resolver(mundo)
+                except Exception:  # noqa: BLE001 — fail-open never breaks analyze
+                    _resolver_fn = None
+
             try:
                 _store.update_progress(job_id, "Analizando fuentes", 30)
                 if provider is not None:
@@ -405,6 +427,7 @@ def create_import_router(
                         root_dir=analysis_root, mundos_dir=mundos_dir(),
                         structure_inference=structure_inference,
                         sections=job.sections,
+                        graph_resolver=_resolver_fn,
                     )
                 else:
                     raise MalformedProviderError("analysis provider unavailable")
@@ -886,7 +909,8 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
                          *, root_dir: Path | None = None,
                          mundos_dir: Path | None = None,
                          structure_inference: Callable[[str], Any] | None = None,
-                         sections: dict[str, str] | None = None
+                         sections: dict[str, str] | None = None,
+                         graph_resolver: Callable[[str], list[str]] | None = None
                          ) -> tuple[list[Candidate], list[VisionMediaEntry]]:
     """Build ordered candidates + the preserved media bundle from spooled files.
 
@@ -905,6 +929,15 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     target under the chosen section. The caller passes the job's persisted
     ``sections``, which makes the stamp resume-safe (the analyze endpoint
     reloads the job from the store first).
+    ``graph_resolver`` (BLOQUE 3) is the per-world link-resolution function
+    produced by the router's fail-open resolution of the injected
+    ``graph_resolver`` seam (``graph_resolver(mundo)``). The facade carries it
+    as part of the collision-detection contract; the actual collision stamping
+    runs in the analyze endpoint after enrichment/vision and before
+    persistence, where ``mundo`` and ``mundos_dir()`` are in scope (design
+    BLOQUE 3). The basic OKF validation below stays resolve-less on purpose:
+    reference checks are scoped to indexed sections by the endpoint, and
+    ``referencias`` targets must never receive reference issues.
 
     importador-auto-frontmatter (Phase 2): candidates are now built ONE PER
     complete ficha from the deterministic H1-H5 tree splitter (Step 0/1), so a
