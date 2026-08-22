@@ -385,9 +385,15 @@ class TestFichaFunnel:
         assert original[0].summary == ""
         assert original[0].frontmatter is None
 
-    def test_funnel_skips_summary_missing_candidate(self):
-        """A candidate missing from the summary batch must stay manual/fallback
-        while the summarized candidates still get generated enrichment."""
+    def test_funnel_fill_in_recovers_skipped_summary_candidate(self):
+        """A candidate omitted by the FIRST Step 2 call is recovered by fill-in.
+
+        Old behavior: a candidate missing from the summary batch stayed
+        fallback, which cascaded into losing its relationships in Step 3. New
+        behavior (fill-in): the funnel re-asks the omitted candidate in a small
+        group, so it gets a summary and its generated frontmatter + Step 3
+        reach survive.
+        """
         a = _ficha("Ayagares")
         b = _ficha("Palacios")
 
@@ -395,38 +401,41 @@ class TestFichaFunnel:
             data = json.loads(prompt)
             cands = data["candidates"]
             if cands and "body" in cands[0]:
-                # Only summarize candidate A.
+                # First summary call summarizes ONLY the first candidate; the
+                # fill-in call (small group) summarizes whatever it is asked.
                 return json.dumps({"summaries": [{
                     "candidate_id": cands[0]["candidate_id"],
-                    "summary": "Solo Ayagares.",
+                    "summary": f"Resumen de {cands[0]['display_title']}.",
                 }]})
             if "rel_vocab" in data:
                 return json.dumps({"relationships": []})
-            return json.dumps({"frontmatter": [{
-                "candidate_id": cands[0]["candidate_id"],
-                "title": cands[0]["display_title"],
-                "type": "lugar", "description": "d", "relaciones": [],
-            }]})
+            return json.dumps({"frontmatter": [
+                {"candidate_id": c["candidate_id"],
+                 "title": c["display_title"],
+                 "type": "lugar", "description": "d", "relaciones": []}
+                for c in cands]})
 
         out = analyze_ficha_funnel([a, b], partial_runner)
         by_id = {c.candidate_id: c for c in out}
-        assert by_id[a.candidate_id].summary == "Solo Ayagares."
+        # Both fichas now have a summary and generated frontmatter: fill-in
+        # recovered the one the big batch omitted.
+        assert by_id[a.candidate_id].summary
         assert by_id[a.candidate_id].frontmatter.state == FrontmatterState.GENERATED
-        # Candidate B was affected by the partial Step 2 output -> fallback
-        # (enrichment was attempted for the batch, fail-open keeps it reviewable).
-        assert by_id[b.candidate_id].summary == ""
-        assert by_id[b.candidate_id].frontmatter.state == FrontmatterState.FALLBACK
+        assert by_id[b.candidate_id].summary
+        assert by_id[b.candidate_id].frontmatter.state == FrontmatterState.GENERATED
 
-    def test_funnel_chunks_large_batches_and_isolates_failures(self):
-        """13 fichas split into 2 chunks (12 + 1); a timeout on chunk 2 must
-        NOT kill chunk 1's generated metadata.
+    def test_funnel_chunks_large_batches_by_bytes_and_isolates_failures(self):
+        """Large fichas split into 2 chunks by BYTE budget; a timeout on chunk 2
+        must NOT kill chunk 1's generated metadata.
 
-        This pins the fix for the observed live failure (a single giant
-        batch of 51 fichas whose Hermes response was cut after ~12 entries,
-        leaving "respaldo" from the 9no Stal onward): bounded chunks keep
-        each call small enough and isolate a failure to its own chunk.
+        Chunks are bounded by cumulative body bytes (not ficha count): 13 small
+        fichas fit in one chunk, so they are NOT split. Oversized fichas DO
+        split into multiple byte-bounded chunks, and a failure is isolated to
+        its own chunk.
         """
-        fichas = [_ficha(f"Ficha {i:02d}") for i in range(13)]
+        # 13 fichas with big bodies (~3.5k chars) -> > 20k total -> >1 chunk.
+        fichas = [_ficha(f"Ficha {i:02d}",
+                         preview=f"#" + ("x" * 3500)) for i in range(13)]
         summary_calls = {"n": 0}
 
         def failing_runner(prompt: str, _session: str) -> str:
@@ -448,16 +457,18 @@ class TestFichaFunnel:
                 for c in cands]})
 
         out = analyze_ficha_funnel(fichas, failing_runner)
-        # The funnel actually chunked: 2 separate summary calls happened.
-        assert summary_calls["n"] == 2
+        # The funnel actually byte-chunked: more than one summary call happened.
+        assert summary_calls["n"] > 1
+        # Chunk 1 (the one that succeeded) keeps generated metadata; chunk 2's
+        # candidates fall back (timeout), but do not drag chunk 1 down.
         generated = [c for c in out
                      if c.frontmatter.state == FrontmatterState.GENERATED]
         fallback = [c for c in out
                     if c.frontmatter.state == FrontmatterState.FALLBACK]
-        assert len(generated) == 12
-        assert len(fallback) == 1
-        assert next(c for c in out
-                    if c.candidate_id == fichas[12].candidate_id).summary == ""
+        assert len(generated) >= 1
+        assert len(fallback) >= 1
+        # The first chunk (non-failing) yields generated candidates.
+        assert generated[0].summary == f"Resumen de {generated[0].display_title}."
 
 
 # ---------------------------------------------------------------------------

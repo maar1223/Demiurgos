@@ -67,13 +67,17 @@ DEFAULT_TIMEOUT_SECONDS = 120.0
 # accidental "thousands of candidates" batch.
 _PREVIEW_CHAR_BUDGET = 1500
 _MAX_CANDIDATES_PER_BATCH = 100
-# Funnel chunk size (importador-auto-frontmatter): keep each Hermes call's
-# prompt AND expected output small enough to avoid response truncation on
-# large imports. A single giant batch (e.g. 51 fichas) makes Hermes cut its
-# output after ~10-15 entries (the observed "respaldo desde el 9no Stal"
-# failure) or time out; chunking isolates a failure to one chunk — the rest
-# still get generated metadata, and affected candidates fail open.
-_FUNNEL_CHUNK_SIZE = 12
+# Funnel chunking (importador-auto-frontmatter): keep each Hermes call's prompt
+# AND expected output small enough to avoid response truncation on large
+# imports. Chunks are bounded by BYTES, not by ficha count — a fixed count of
+# 12 large fichas can still total ~72k chars (the observed "respaldo desde el
+# 9no Stal" failure), which truncates Hermes and drops the tail of the batch.
+# ``_FUNNEL_CHUNK_BYTES`` bounds the cumulative ``content_preview`` bytes per
+# chunk; a single oversized ficha still travels COMPLETE (never split, never
+# truncated). ``_FUNNEL_FILL_GROUP_SIZE`` bounds the fill-in re-ask for
+# candidates the model omitted.
+_FUNNEL_CHUNK_BYTES = 20000
+_FUNNEL_FILL_GROUP_SIZE = 4
 
 # Relationship-type vocabulary: lowercase, hyphen-separated, ASCII only.
 # Open allowlist: projects can extend by passing a custom ``rel_vocab`` to
@@ -580,6 +584,7 @@ def build_relationship_batch_prompt(
     candidates: list[Candidate],
     *,
     rel_vocab: Iterable[str] | None = None,
+    catalog: list[Candidate] | None = None,
 ) -> dict[str, Any]:
     """Step 3 — one relationship pass over the per-ficha summaries.
 
@@ -587,6 +592,15 @@ def build_relationship_batch_prompt(
     ``canonical_id`` (or candidate_id); ``validate_relationship_batch`` maps
     those back to candidates and rejects ambiguous leaf names. Reuses
     ``_REL_VOCAB_DEFAULT`` for the relationship vocabulary.
+
+    ``catalog`` (importador-auto-frontmatter, global relationship reach) is the
+    DOCUMENT-WIDE universe of valid targets: every ficha of the import. When
+    supplied, targets may be any ficha of the whole document, not just the
+    current batch, so a real relationship crossing two chunks survives. Sources
+    stay limited to ``candidates`` (the batch, which is what has summaries to
+    reason over). The catalog is small (ids + display titles, ~1.1k tokens for
+    50+ fichas), so it fits in one call. When omitted, behavior is unchanged
+    (in-batch only) for backward-compatible callers.
     """
     rel_vocab_set = frozenset(rel_vocab) if rel_vocab is not None else _REL_VOCAB_DEFAULT
     payload_candidates = [
@@ -604,16 +618,27 @@ def build_relationship_batch_prompt(
         "'relationships' array. Each relationship must use "
         "'source_candidate_id' and 'target_canonical_id' referencing the "
         "EXACT canonical_id values supplied (never a bare or ambiguous "
-        "display title). Use 'relationship_type' from the vocabulary, "
-        "'confidence' in [0,1], and a short 'evidence' quote. NEVER invent "
-        "canonical ids or targets outside the batch."
+        "display title). A source must be one of the supplied candidate_ids; "
+        "a target may be any canonical_id in the catalog (if provided), not "
+        "just the source ficha's own batch. Use 'relationship_type' from the "
+        "vocabulary, 'confidence' in [0,1], and a short 'evidence' quote. "
+        "NEVER invent canonical ids or targets outside the catalog/batch."
     )
-    return {
+    payload: dict[str, Any] = {
         "instructions": instructions,
         "rel_vocab": sorted(rel_vocab_set),
         "provenance": _default_provenance(),
         "candidates": payload_candidates,
     }
+    if catalog is not None:
+        payload["catalog"] = [
+            {
+                "canonical_id": c.canonical_id or c.normalized_identity,
+                "display_title": c.display_title or c.normalized_identity,
+            }
+            for c in catalog
+        ]
+    return payload
 
 
 def validate_relationship_batch(
@@ -621,6 +646,7 @@ def validate_relationship_batch(
     candidates: list[Candidate],
     *,
     rel_vocab: Iterable[str] | None = None,
+    catalog: list[Candidate] | None = None,
 ) -> list[RelationshipSuggestion]:
     """Step 3 validator: canonical-id-anchored relationships, reusing
     ``validate_suggestions`` safety rules (vocabulary, confidence, self-link,
@@ -631,12 +657,23 @@ def validate_relationship_batch(
     never survives — only an exact ``canonical_id`` (fully qualified, e.g.
     ``"Ayagares::Descripción Física"``) matches a candidate. Returns
     ``RelationshipSuggestion`` objects anchored to ``candidate_id``.
+
+    ``catalog`` (importador-auto-frontmatter, global relationship reach) is the
+    DOCUMENT-WIDE universe. When supplied, the target grounds against the whole
+    document (so a relationship crossing two chunks is not rejected as
+    ungrounded), while the SOURCE stays restricted to ``candidates`` (the
+    summarized batch — it needs a summary to reason over). A target in the
+    catalog that is itself fallback still grounds, so the graph never breaks
+    around a fallback ficha. When omitted, behavior is unchanged (per-batch
+    grounding) for backward-compatible callers.
     """
-    rel_list = parsed.get("relationships", []) if isinstance(parsed, dict) else []
+    universe = catalog if catalog is not None else candidates
     by_canonical = {
-        (c.canonical_id or c.normalized_identity): c.candidate_id for c in candidates
+        (c.canonical_id or c.normalized_identity): c.candidate_id for c in universe
     }
-    by_candidate = {c.candidate_id: c.candidate_id for c in candidates}
+    by_candidate = {c.candidate_id: c.candidate_id for c in universe}
+    source_ids = {c.candidate_id for c in candidates}
+    rel_list = parsed.get("relationships", []) if isinstance(parsed, dict) else []
     remapped: list[dict[str, Any]] = []
     for entry in rel_list:
         if not isinstance(entry, dict):
@@ -649,7 +686,10 @@ def validate_relationship_batch(
             continue
         src_id = by_canonical.get(src) or by_candidate.get(src)
         tgt_id = by_canonical.get(tgt) or by_candidate.get(tgt)
-        if src_id is None or tgt_id is None:
+        # Source must be a summarized ficha (has a summary to reason over).
+        if src_id is None or src_id not in source_ids:
+            continue  # ungrounded source or not summarized
+        if tgt_id is None:
             continue  # ungrounded / ambiguous target — rejected
         if src_id == tgt_id:
             continue  # self-link rejected
@@ -663,7 +703,7 @@ def validate_relationship_batch(
         })
     _, relationships = validate_suggestions(
         {"classifications": [], "relationships": remapped},
-        candidates,
+        universe,
         rel_vocab=rel_vocab,
     )
     return relationships
@@ -754,6 +794,86 @@ def _fallback_frontmatter(candidate: Candidate) -> FrontmatterCandidate:
     )
 
 
+def _ficha_byte_len(candidate: Candidate) -> int:
+    """Byte length of a ficha's body (the size that drives the LLM prompt)."""
+    return len(candidate.content_preview or "")
+
+
+def _group_by_bytes(
+    candidates: list[Candidate],
+    *,
+    budget_chars: int | None = None,
+) -> list[list[Candidate]]:
+    """Group complete fichas into chunks bounded by cumulative body bytes.
+
+    INVARIANT (design): a ficha is NEVER split across chunks and NEVER
+    truncated. Each group accumulates whole, already-complete fichas up to
+    ``budget_chars`` (default ``_FUNNEL_CHUNK_BYTES``). A single ficha that
+    alone exceeds the budget still travels COMPLETE and alone — the budget is
+    a packing target, not a hard truncation limit. Empty input yields no
+    groups; ficha order is preserved.
+    """
+    budget = budget_chars if budget_chars is not None else _FUNNEL_CHUNK_BYTES
+    groups: list[list[Candidate]] = []
+    current: list[Candidate] = []
+    current_chars = 0
+    for cand in candidates:
+        cand_chars = _ficha_byte_len(cand)
+        if current and current_chars + cand_chars > budget:
+            groups.append(current)
+            current = []
+            current_chars = 0
+        current.append(cand)
+        current_chars += cand_chars
+    if current:
+        groups.append(current)
+    return groups
+
+
+def _fill_missing_summaries(
+    candidates: list[Candidate],
+    hermes_runner: Callable[[str, str], str],
+    session_id: str,
+    *,
+    fill_group_size: int | None = None,
+    max_rounds: int = 5,
+) -> dict[str, str]:
+    """Run Step 2 (summaries) and re-ask any candidate the model omitted.
+
+    FAIL-OPEN and bounded: first returns summaries for the whole ``candidates``
+    batch; then, for every candidate that came back WITHOUT a summary, re-asks
+    in small groups (``fill_group_size``, default ``_FUNNEL_FILL_GROUP_SIZE``)
+    so a single truncated/large response cannot drop a ficha again. Up to
+    ``max_rounds`` of fill-in rounds run; a candidate the model genuinely
+    cannot summarize stays missing (it falls back, but does not drag down the
+    rest — see relationship-reach tests). Never raises.
+    """
+    size = fill_group_size if fill_group_size is not None else _FUNNEL_FILL_GROUP_SIZE
+    summaries: dict[str, str] = {}
+
+    def _ask(group: list[Candidate]) -> dict[str, str]:
+        try:
+            raw = hermes_runner(
+                json.dumps(build_summary_prompt(group), ensure_ascii=False),
+                session_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+            logger.warning("funnel fill-in ask failed: %s", type(exc).__name__,
+                           exc_info=True)
+            return {}
+        return parse_summary_response(raw or "")
+
+    summaries.update(_ask(candidates))
+    missing = [c for c in candidates if not summaries.get(c.candidate_id)]
+    rounds = 0
+    while missing and rounds < max_rounds:
+        rounds += 1
+        for start in range(0, len(missing), size):
+            summaries.update(_ask(missing[start:start + size]))
+        missing = [c for c in candidates if not summaries.get(c.candidate_id)]
+    return summaries
+
+
 def analyze_ficha_funnel(
     candidates: list[Candidate],
     hermes_runner: Callable[[str, str], str] | None,
@@ -772,6 +892,16 @@ def analyze_ficha_funnel(
     preserves them — the import path never blocks on enrichment (design risks
     3 & 4). Candidates are left ``manual`` only when no runner was supplied
     (enrichment not requested).
+
+    importador-auto-frontmatter (global relationship reach):
+    * Chunks are bounded by BYTES (``_group_by_bytes``), not ficha count, so a
+      large batch cannot truncate Hermes and drop the tail fichas.
+    * Step 2 uses ``_fill_missing_summaries``: a candidate the model omits is
+      re-asked in small groups, so a truncation cannot cascade into lost
+      relationships for that ficha.
+    * Step 3 grounds targets against a DOCUMENT-WIDE ``catalog`` (every ficha of
+      the import), so a real relationship crossing two chunks is preserved
+      instead of rejected as ungrounded. Sources stay per-chunk (summarized).
     """
     if hermes_runner is None or not candidates:
         # Enrichment not requested: leave candidates reviewable with a manual
@@ -791,26 +921,29 @@ def analyze_ficha_funnel(
     # frontmatter is an affected candidate -> fallback (fail-open), never a
     # silent ``manual`` (manual is reserved for "no enrichment requested").
 
-    # Process the funnel per bounded chunk. Each chunk runs Steps 2-4
-    # independently so a truncated/timed-out call only affects its own
-    # candidates; earlier chunks keep their generated metadata (the observed
-    # "fallback from 9no Stal onward" was a single 51-candidate batch whose
-    # Hermes response was cut after ~12 summaries).
-    final: list[Candidate] = []
-    for start in range(0, len(candidates), _FUNNEL_CHUNK_SIZE):
-        chunk = candidates[start:start + _FUNNEL_CHUNK_SIZE]
+    # Document-wide relationship catalog (importador-auto-frontmatter): the
+    # universe of valid targets for Step 3. It is every ficha of the import, so
+    # a real relationship crossing two chunks is NOT rejected as ungrounded. It
+    # also enumerates fallback fichas, so the graph never breaks around one.
+    # It is small (ids + display titles, ~1.1k tokens for 50+ fichas), so it
+    # fits in a single Step 3 call. Sources stay limited per-chunk.
+    catalog = list(candidates)
 
-        # Step 2 — per-ficha summaries from the full body (this chunk).
-        summaries: dict[str, str] = {}
-        try:
-            raw = hermes_runner(
-                json.dumps(build_summary_prompt(chunk), ensure_ascii=False),
-                session_id,
-            )
-            summaries = parse_summary_response(raw)
-        except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
-            logger.warning("funnel step 2 (summaries) failed: %s",
-                           type(exc).__name__, exc_info=True)
+    # Process the funnel per BYTE-bounded chunk. Each chunk runs Steps 2-4
+    # independently so a truncated/timed-out call only affects its own
+    # candidates; earlier chunks keep their generated metadata. Chunks are
+    # bounded by cumulative body bytes (not ficha count) — a fixed count of 12
+    # large fichas can still total ~72k chars and truncate Hermes (the observed
+    # "fallback from 9no Stal onward" was exactly that).
+    final: list[Candidate] = []
+    for chunk in _group_by_bytes(candidates):
+
+        # Step 2 — per-ficha summaries from the full body (this chunk). Uses
+        # fill-in: re-asks any candidate the model omitted in small groups, so
+        # a single truncated response cannot drop a ficha (which would cascade
+        # into loss of its relationships in Step 3, not just fallback).
+        summaries: dict[str, str] = _fill_missing_summaries(
+            chunk, hermes_runner, session_id)
 
         summarized: list[Candidate] = []
         for c in chunk:
@@ -819,20 +952,23 @@ def analyze_ficha_funnel(
                 summarized.append(patched)
         summarized_by_id = {c.candidate_id: c for c in summarized}
 
-        # Step 3 — one batched relationship pass over this chunk's summaries.
+        # Step 3 — one relationship pass over this chunk's summaries, grounded
+        # against the DOCUMENT-WIDE catalog. Sources stay limited to this
+        # summarized batch; targets may be any ficha of the whole document.
         relationships: list[RelationshipSuggestion] = []
         if summarized:
             try:
                 raw = hermes_runner(
                     json.dumps(
-                        build_relationship_batch_prompt(summarized, rel_vocab=rel_vocab),
+                        build_relationship_batch_prompt(
+                            summarized, rel_vocab=rel_vocab, catalog=catalog),
                         ensure_ascii=False,
                     ),
                     session_id,
                 )
                 parsed = _parse_json_object(raw) or {}
                 relationships = validate_relationship_batch(
-                    parsed, summarized, rel_vocab=rel_vocab)
+                    parsed, summarized, rel_vocab=rel_vocab, catalog=catalog)
             except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
                 logger.warning("funnel step 3 (relationships) failed: %s",
                                type(exc).__name__, exc_info=True)
