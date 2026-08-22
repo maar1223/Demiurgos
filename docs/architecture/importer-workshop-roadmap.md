@@ -93,7 +93,7 @@ contratos existentes. Son vinculantes para el diseño del importador.
 
 ## 3. Mapa de bloques a construir (en orden de dependencia)
 
-### BLOQUE 1 — El importador materializa el árbol  `[PENDIENTE]` ★ ARRANCAR ACÁ
+### BLOQUE 1 — El importador materializa el árbol  `[EN CURSO]` ★ PIEZA 1 ✅ (2026-08-22)
 
 **Problema:** hoy "Contenido de fichas: 0" y todo cae en "Requiere tu decisión (52)". La causa raíz es el
 **gap identidad-vs-ruta**: `resolve_target` deriva la ruta solo del `source_path`
@@ -110,8 +110,13 @@ contratos existentes. Son vinculantes para el diseño del importador.
 
 **Qué desbloquea:** que las fichas se materialicen realmente en `lore/…`, `personajes/…`. Fin del "Contenido: 0".
 
-**Decisión abierta:** dónde vive el dropdown del clasificador — propuesta: en la selección de archivos,
-**antes** del análisis. Validar con el Autor.
+**Pieza 1 (✅ 2026-08-22):** clasificador por documento implementado y archivado (`importer-document-classifier`,
+17/17 tareas, verify PASS). Dropdown por archivo en la selección (antes del análisis, §6.1) con sugerencia
+determinística confirmable (D2/D3); secciones fijas `lore/personajes/referencias` (§6.2, `CLASSIFIER_SECTIONS`
+local, sin `sagas`/D5); threading `sections` → job → candidate → rama raíz en `resolve_target`. Entrega: 2 PRs
+encadenados (feature-branch-chain) sobre pr4.
+**Piezas pendientes:** 2 (mapeo `canonical_id`→subcarpetas con `safe_slug_from_id`) y 3 (jerarquía interna del
+`canonical_id` en `resolve_target` — la pieza 1 ya usa la sección raíz, falta la subcarpeta por segmento).
 
 ---
 
@@ -227,9 +232,11 @@ Lo que consume el Taller de Mundo ya funcionando. Menos urgente; su contrato viv
 
 ## 6. Decisiones que siguen ABIERTAS (necesitan acuerdo del Autor)
 
-1. **¿Clasificador antes del análisis o en el paso de revisión?** → Recomendado: antes, dropdown por archivo.
-2. **¿Se permiten secciones de primer nivel nuevas, o solo subcarpetas dentro de lore/personajes?**
-   → Recomendado: solo subcarpetas (las secciones de primer nivel son fijas del Taller). Validar.
+1. **¿Clasificador antes del análisis o en el paso de revisión?** [CERRADA] → **Antes del análisis**: dropdown
+   por archivo en el paso de selección. La categoría elegida condiciona el mapeo `canonical_id → ruta` desde el inicio.
+2. **¿Se permiten secciones de primer nivel nuevas, o solo subcarpetas dentro de lore/personajes?** [CERRADA]
+   → **Solo subcarpetas**: el primer nivel es fijo del Taller (`lore/`, `personajes/`, `referencias/`); el Autor
+   elige UNA sección raíz por documento y la jerarquía interna del `canonical_id` genera las subcarpetas.
 3. **¿Cómo resolver "este documento va a lore pero la ficha ya existe"?** → Recomendado: marcar colisión →
    el Autor decide (mantener/fusionar/reemplazar). Nunca merge automático silencioso.
 4. **¿Cómo se ve el estado borrador/canon dentro del árbol?** → badge por ficha, filtro "ver solo canon",
@@ -240,9 +247,8 @@ Lo que consume el Taller de Mundo ya funcionando. Menos urgente; su contrato viv
 
 ## 7. Próximo paso recomendado
 
-**Empezar por BLOQUE 1** (el importador materializa el árbol), y dentro de él, la primera pieza es el
-**clasificador por documento** (decisión del Autor al cargar), porque la raíz de la ruta depende de la
-categoría elegida. Sin esa decisión, no se puede mapear `canonical_id → ruta` correctamente.
-
-Antes de tocar código del Bloque 1, cerrar las decisiones abiertas §6.1 y §6.2 (clasificador antes/análisis
-y secciones de primer nivel) — son de producto, no técnicas.
+**Empezar por BLOQUE 1** (el importador materializa el árbol). Las decisiones §6.1 y §6.2 ya están cerradas
+(clasificador antes del análisis, solo subcarpetas) y la **pieza 1 (clasificador por documento) está hecha**
+(`importer-document-classifier`, archivada 2026-08-22, entrega en 2 PRs encadenados sobre pr4). La siguiente pieza
+es el **mapeo identidad→ruta** (pieza 2): usar la jerarquía del `canonical_id` con `safe_slug_from_id`
+(`okf_contract.py:103`) para generar subcarpetas dentro de la sección raíz elegida por el clasificador.
