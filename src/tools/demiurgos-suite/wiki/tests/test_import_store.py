@@ -25,8 +25,12 @@ for _p in (str(_WIKI),):
         sys.path.insert(0, _p)
 
 from import_models import (  # noqa: E402
+    Candidate,
+    FrontmatterCandidate,
+    FrontmatterState,
     ImportJob,
     ImportJobState,
+    Provenance,
     utcnow_iso,
 )
 from import_store import (  # noqa: E402
@@ -593,3 +597,125 @@ class TestJobProgressContract:
         assert after.progress_stage == "Construyendo fichas"
         assert after.progress_pct == 60
         assert after.revision == job.revision + 1
+
+
+# ---------------------------------------------------------------------------
+# update_candidate_funnel — persistence of generated frontmatter/summary
+# even when enrichment_json is None (zero relationships)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateCandidateFunnelNoSuggestions:
+    """Regression: when Hermes returns summary + frontmatter but zero
+    relationships, enrichment_json is None and enrichment_status is
+    ``no_suggestions``.  The router must still persist the funnel metadata
+    (summary, frontmatter) onto the existing row.  Prior to the fix, the
+    ``and candidate.enrichment_json is not None`` gate caused these fields
+    to be silently discarded — the row kept its old fallback frontmatter.
+    """
+
+    @staticmethod
+    def _make_candidate(
+        job_id: str = "job-old",
+        summary: str = "",
+        frontmatter: FrontmatterCandidate | None = None,
+        enrichment_json: list | None = None,
+        enrichment_status: str = "disabled",
+    ) -> Candidate:
+        return Candidate(
+            candidate_id="cand-v1",
+            job_id=job_id,
+            world="demo",
+            normalized_identity="Seccion/Test",
+            source_hash="sha256:test",
+            provenance=Provenance(
+                source_path="Lore/Test.md",
+                source_kind="loose",
+                source_hash="sha256:test",
+            ),
+            content_preview="body",
+            summary=summary,
+            frontmatter=frontmatter,
+            enrichment_json=enrichment_json,
+            enrichment_status=enrichment_status,
+        )
+
+    def test_update_candidate_funnel_persists_generated_frontmatter(
+            self, store: ImportJobStore) -> None:
+        """update_candidate_funnel writes the new frontmatter/summary even
+        when enrichment_json is None."""
+        job = _job(job_id="job-old")
+        store.create_job(job)
+
+        # Simulate a row from a prior import with fallback frontmatter.
+        old = self._make_candidate(
+            summary="",
+            frontmatter=FrontmatterCandidate(
+                title="Old", state=FrontmatterState.FALLBACK),
+            enrichment_status="no_suggestions",
+        )
+        store.add_candidate(old)
+        row_old = store.find_candidate(
+            "demo", "sha256:test", "Seccion/Test")
+        assert row_old is not None
+        assert row_old.summary == ""
+        assert row_old.frontmatter is not None
+        assert row_old.frontmatter.state == FrontmatterState.FALLBACK
+
+        # New in-memory candidate: summary + generated frontmatter, but
+        # enrichment_json=None (zero relationships). This is exactly the
+        # funnel output for a card where Hermes returned useful metadata
+        # but no link suggestions.
+        new = self._make_candidate(
+            job_id="job-new",
+            summary="Some summary from Hermes",
+            frontmatter=FrontmatterCandidate(
+                title="Sección Test", type=None,
+                state=FrontmatterState.GENERATED),
+            enrichment_json=None,
+            enrichment_status="no_suggestions",
+        )
+
+        # The router's fixed path: always persist enrichment + funnel
+        # when (enrich or vision is not None).
+        store.update_candidate_enrichment(
+            row_old.candidate_id, new.enrichment_json, new.enrichment_status)
+        store.update_candidate_funnel(row_old.candidate_id, new)
+        store.reassign_candidate_to_job(row_old.candidate_id, "job-new")
+
+        row_after = store.find_candidate("demo", "sha256:test", "Seccion/Test")
+        assert row_after is not None
+        # Summary must be updated to the new value.
+        assert row_after.summary == "Some summary from Hermes"
+        # Frontmatter must be the GENERATED one, not the old FALLBACK.
+        assert row_after.frontmatter is not None
+        assert row_after.frontmatter.state == FrontmatterState.GENERATED
+        assert row_after.frontmatter.title == "Sección Test"
+        # enrichment_json stays None (no relationships), but status is
+        # persisted as no_suggestions.
+        assert row_after.enrichment_json is None
+        assert row_after.enrichment_status == "no_suggestions"
+        # Row must be reassigned to the new job.
+        assert row_after.job_id == "job-new"
+
+    def test_update_candidate_enrichment_persists_none_status(
+            self, store: ImportJobStore) -> None:
+        """update_candidate_enrichment must persist enrichment_status
+        (e.g. ``no_suggestions``) even when enrichment_json is None."""
+        job = _job(job_id="job-a")
+        store.create_job(job)
+
+        old = self._make_candidate(enrichment_status="disabled")
+        store.add_candidate(old)
+        row = store.find_candidate("demo", "sha256:test", "Seccion/Test")
+        assert row is not None
+        assert row.enrichment_status == "disabled"
+
+        # Persist enrichment with None JSON but no_suggestions status.
+        store.update_candidate_enrichment(
+            row.candidate_id, None, "no_suggestions")
+
+        row_after = store.find_candidate("demo", "sha256:test", "Seccion/Test")
+        assert row_after is not None
+        assert row_after.enrichment_json is None
+        assert row_after.enrichment_status == "no_suggestions"

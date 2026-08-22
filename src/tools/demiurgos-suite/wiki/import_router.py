@@ -563,17 +563,18 @@ def create_import_router(
                         _store.update_candidate_images(
                             existing.candidate_id, candidate.images)
                     added += 1
-                elif (enrich or vision is not None) \
-                        and candidate.enrichment_json is not None:
-                    # No cached enrichment (first import or was disabled).
-                    # Persist the new enrichment payload (text suggestions
-                    # and/or PR3 vision suggestions).
+                elif (enrich or vision is not None):
+                    # No cached enrichment — persist whatever the funnel
+                    # produced, even when it produced no relationships
+                    # (enrichment_json is None but frontmatter/summary may
+                    # be GENERATED).  The old condition
+                    # ``and candidate.enrichment_json is not None`` silently
+                    # discarded generated frontmatter for cards with zero
+                    # relationships.
                     _store.update_candidate_enrichment(
                         existing.candidate_id,
                         candidate.enrichment_json,
                         candidate.enrichment_status)
-                    # Persist the fresh funnel metadata (frontmatter/summary/
-                    # media diagnostics) so the review row carries it.
                     _store.update_candidate_funnel(
                         existing.candidate_id, candidate)
                     # Re-assign to the current job so candidates_for(job_id)
