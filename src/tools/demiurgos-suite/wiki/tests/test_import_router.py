@@ -718,9 +718,13 @@ class TestClassifierSections:
         cands = store.candidates_for(job_id)
         assert len(cands) == 1
         assert cands[0].section == "personajes"
-        # The chosen section roots the canonical target.
+        # The chosen section roots the canonical target; BLOQUE 1 piece 2
+        # (identity-path-mapping) makes the candidate's canonical_id drive
+        # the path: the H1 ficha "Protagonista" → personajes/protagonista.md
+        # (the source filename stem no longer wins when a valid
+        # canonical_id exists).
         assert cands[0].target_resolution["canonical_path"] == \
-            "personajes/Enciclopedia.md"
+            "personajes/protagonista.md"
 
     def test_candidate_without_map_entry_gets_empty_section(self, tmp_path):
         """Empty sections → candidate.section ``""`` → legacy branch derives

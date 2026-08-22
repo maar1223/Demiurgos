@@ -28,7 +28,9 @@ from import_analysis import (  # noqa: E402
     analyze_source,
     extract_images_from_file,
     normalized_identity_path,
+    resolve_target,
     safe_convert_to_markdown,
+    slug_segment,
     store_media_in_spool,
 )
 from import_models import (  # noqa: E402
@@ -246,6 +248,176 @@ class TestSafeConversion:
         legacy = resolve_target("w1", candidate_with("Lore/Dottua.md"))
         assert legacy.status == "resolved"
         assert legacy.canonical_path == "lore/Dottua.md"
+
+
+# ---------------------------------------------------------------------------
+# BLOQUE 1 piece 2 — slug_segment helper (identity-path-mapping)
+# ---------------------------------------------------------------------------
+
+
+class TestSlugSegment:
+    """``slug_segment`` — NFD decompose, drop combining marks (Mn),
+    lowercase, collapse runs of non-[a-z0-9] to ``-``, trim. Pure and
+    deterministic; empty/all-punctuation input returns ""."""
+
+    def test_accent_stripped(self):
+        assert slug_segment("Política") == "politica"
+
+    def test_leading_accent(self):
+        assert slug_segment("Áyagars") == "ayagars"
+
+    def test_ordinal_preserved(self):
+        assert slug_segment("1er Stal#2") == "1er-stal-2"
+
+    def test_spaces_collapsed(self):
+        assert slug_segment("Distribución Y Territorios") == \
+            "distribucion-y-territorios"
+
+    def test_pipe_collapsed(self):
+        assert slug_segment("Política | Distribución") == \
+            "politica-distribucion"
+
+    def test_empty_returns_empty(self):
+        assert slug_segment("") == ""
+
+    def test_all_punctuation_returns_empty(self):
+        assert slug_segment("---") == ""
+        assert slug_segment("!!!") == ""
+
+    def test_already_slug_passthrough(self):
+        assert slug_segment("sistema-stal") == "sistema-stal"
+
+
+# ---------------------------------------------------------------------------
+# BLOQUE 1 piece 2 — resolve_target canonical_id hierarchy (identity-path-mapping)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveTargetHierarchy:
+    """``resolve_target`` section branch — each ``::`` segment of a valid
+    canonical_id becomes a slugged path component (all but last are
+    subfolders, last is the filename stem); empty/invalid canonical_id or
+    all-empty slugs fall back to the piece-1 ``{section}/{identity}.md``
+    mapping; empty section falls through to the legacy branch."""
+
+    def _candidate(self, source_path: str, section: str = "",
+                   canonical_id: str = "") -> Candidate:
+        return Candidate(
+            candidate_id="c1", job_id="j1", world="w1",
+            normalized_identity="Enciclopedia",
+            source_hash="sha256:abc",
+            provenance=Provenance(
+                source_path=source_path, source_kind="loose",
+                source_hash="sha256:abc"),
+            content_preview="x",
+            section=section,
+            canonical_id=canonical_id,
+        )
+
+    def test_multi_segment_canonical_id(self):
+        """3-segment canonical_id → subfolder chain under the section."""
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Áyagars::Impacto Social::Áyagar del 9no Stal")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == \
+            "lore/ayagars/impacto-social/ayagar-del-9no-stal.md"
+        assert r.alias_used == ""
+
+    def test_single_segment_canonical_id(self):
+        """Single-segment canonical_id → file directly under the section."""
+        cand = self._candidate("Enciclopedia de los Vibrantes.md",
+                               section="lore", canonical_id="Dottua")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/dottua.md"
+
+    def test_ordinal_suffix(self):
+        """Ordinal ``#N`` participates as a ``-N`` suffix in the slug."""
+        cand = self._candidate("Enciclopedia de los Vibrantes.md",
+                               section="lore",
+                               canonical_id="Sistema Stal::1er Stal#2")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/sistema-stal/1er-stal-2.md"
+
+    def test_deep_hierarchy(self):
+        """5 segments → 4 subfolders + filename stem."""
+        cand = self._candidate("Enciclopedia de los Vibrantes.md",
+                               section="lore",
+                               canonical_id="A::B::C::D::E")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/a/b/c/d/e.md"
+
+    def test_empty_canonical_id_fallback(self):
+        """Empty canonical_id → piece-1 ``{section}/{identity}.md``."""
+        cand = self._candidate("Enciclopedia de los Vibrantes.md",
+                               section="lore", canonical_id="")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Enciclopedia de los Vibrantes.md"
+
+    def test_invalid_canonical_id_fallback(self):
+        """``:::broken`` has empty segments → is_canonical_id False →
+        piece-1 fallback."""
+        cand = self._candidate("Enciclopedia de los Vibrantes.md",
+                               section="lore", canonical_id=":::broken")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Enciclopedia de los Vibrantes.md"
+
+    def test_all_segments_collapse_fallback(self):
+        """``:::`` fails is_canonical_id (all segments empty) → piece-1."""
+        cand = self._candidate("Enciclopedia de los Vibrantes.md",
+                               section="lore", canonical_id=":::")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Enciclopedia de los Vibrantes.md"
+
+    def test_all_segments_slug_empty_fallback(self):
+        """Defensive branch: ``---`` IS a canonical id (is_canonical_id True)
+        but every segment slugs to "" → piece-1 fallback, never
+        ``{section}/.md``."""
+        cand = self._candidate("Enciclopedia de los Vibrantes.md",
+                               section="lore", canonical_id="---")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Enciclopedia de los Vibrantes.md"
+
+    def test_empty_section_ignores_canonical_id(self):
+        """Empty section → legacy source-path branch; canonical_id unused."""
+        cand = self._candidate("lore/old/x.md", section="",
+                               canonical_id="Áyagars::Impacto Social")
+        r = resolve_target("w1", cand)
+        assert r.status == "review"
+        assert r.canonical_path == "lore/old/x.md"
+        assert "ayagars" not in r.canonical_path
+
+    def test_52_ficha_distinctness(self):
+        """Enciclopedia 52-ficha: two distinct canonical ids under the same
+        section root map to two distinct paths (injective over the last
+        segment)."""
+        first = resolve_target(
+            "w1", self._candidate(
+                "Enciclopedia de los Vibrantes.md", section="lore",
+                canonical_id="Política | Distribución Y Territorios::Dottua"))
+        second = resolve_target(
+            "w1", self._candidate(
+                "Enciclopedia de los Vibrantes.md", section="lore",
+                canonical_id="Política | Distribución Y Territorios::Vex"))
+        assert first.status == "resolved"
+        assert second.status == "resolved"
+        assert first.canonical_path == \
+            "lore/politica-distribucion-y-territorios/dottua.md"
+        assert second.canonical_path == \
+            "lore/politica-distribucion-y-territorios/vex.md"
+        assert first.canonical_path != second.canonical_path
+        assert first.canonical_path.startswith(
+            "lore/politica-distribucion-y-territorios/")
+        assert second.canonical_path.startswith(
+            "lore/politica-distribucion-y-territorios/")
 
 
 # ---------------------------------------------------------------------------

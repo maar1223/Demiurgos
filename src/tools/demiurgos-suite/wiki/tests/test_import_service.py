@@ -500,13 +500,14 @@ class TestResolveTarget:
     """
 
     def _candidate(self, ident: str, source_path: str,
-                   section: str = "") -> Candidate:
+                   section: str = "", canonical_id: str = "") -> Candidate:
         return Candidate(
             candidate_id=f"cand-{ident}", job_id="job1", world="world1",
             normalized_identity=ident, source_hash=f"sha256:{ident}",
             provenance=Provenance(source_path=source_path, source_kind="loose",
                                   source_hash=f"sha256:{ident}"),
             section=section,
+            canonical_id=canonical_id,
         )
 
     def test_uppercase_lore_normalized_to_lowercase(self, tmp_path):
@@ -641,6 +642,59 @@ class TestResolveTarget:
         r = resolve_target("world1", cand, mundos_dir=tmp_path)
         assert r.status == "resolved"
         assert r.canonical_path == "lore/Dottua.md"
+
+    # BLOQUE 1 piece 2 — canonical_id hierarchy (identity-path-mapping):
+    # section + valid canonical_id → slugged subfolder chain + filename;
+    # empty/invalid canonical_id → piece-1 fallback.
+
+    def test_section_with_canonical_id_multi_segment(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Áyagars::Impacto Social::Áyagar del 9no Stal")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == \
+            "lore/ayagars/impacto-social/ayagar-del-9no-stal.md"
+        assert r.normalized_source == r.canonical_path
+        assert r.alias_used == ""
+
+    def test_section_with_empty_canonical_id_piece1_fallback(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Enciclopedia de los Vibrantes.md"
+
+    def test_section_with_invalid_canonical_id_fallback(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id=":::broken")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Enciclopedia de los Vibrantes.md"
+
+    def test_section_with_ordinal(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Sistema Stal::1er Stal#2")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/sistema-stal/1er-stal-2.md"
+
+    def test_section_with_accent(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Política | Distribución Y Territorios::Dottua")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == \
+            "lore/politica-distribucion-y-territorios/dottua.md"
 
 
 # ---------------------------------------------------------------------------

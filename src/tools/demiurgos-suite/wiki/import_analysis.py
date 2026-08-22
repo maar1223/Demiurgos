@@ -29,6 +29,7 @@ from __future__ import annotations
 import itertools
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator
@@ -42,6 +43,7 @@ from import_models import (
     canonical_identity_from_segments,
     normalize_identity_segment,
 )
+from okf_contract import CANONICAL_ID_SEPARATOR, is_canonical_id
 from world_authority import is_importer_scope_permitted
 
 if TYPE_CHECKING:
@@ -488,6 +490,31 @@ _LEGACY_SECTIONS = {
     "personajes": "personajes",
 }
 
+# ---------------------------------------------------------------------------
+# identity-path-mapping (BLOQUE 1 piece 2) — canonical_id hierarchy slugs.
+#
+# ``slug_segment`` turns one ``::``-separated canonical_id segment into an
+# ASCII-safe, human-readable path component. It is a DIFFERENT transform from
+# ``okf_contract.safe_slug_from_id`` (whole-id flat slug); that helper stays
+# untouched. Pure and deterministic: no I/O, no external state.
+# ---------------------------------------------------------------------------
+
+_RE_NON_ALNUM = re.compile(r"[^a-z0-9]+")
+
+
+def slug_segment(segment: str) -> str:
+    """ASCII-safe slug from one canonical_id segment.
+
+    NFD-decompose → drop combining marks (category Mn) → lowercase →
+    collapse runs of non-[a-z0-9] to a single '-' → trim leading/trailing '-'.
+    Pure and deterministic. Empty input or all-punctuation input returns "".
+    """
+    nfd = unicodedata.normalize("NFD", segment)
+    stripped = "".join(ch for ch in nfd if unicodedata.category(ch) != "Mn")
+    lowered = stripped.lower()
+    collapsed = _RE_NON_ALNUM.sub("-", lowered).strip("-")
+    return collapsed
+
 
 def resolve_target(world: str, candidate,
                    *, mundos_dir: Path | None = None) -> TargetResolution:
@@ -507,6 +534,18 @@ def resolve_target(world: str, candidate,
       - ``diagnostic`` — reason for ``review``/``rejected``; safe to surface.
       - ``alias_used`` — which legacy alias produced the canonical target
         (e.g., ``"Lore/Places"``); empty when no alias was applied.
+
+    When ``candidate.section`` is non-empty (BLOQUE 1 piece 1 classifier),
+    the author-chosen section roots the target. BLOQUE 1 piece 2 extends that
+    branch with the ``canonical_id`` hierarchy: when ``canonical_id`` is
+    non-empty AND a valid canonical id (``okf_contract.is_canonical_id``),
+    each ``::``-separated segment is slugged via ``slug_segment`` and becomes
+    a path component — all but the last are subfolders, the last is the
+    filename stem (``{section}/{slug0}/.../{slugN}.md``). Empty or invalid
+    ``canonical_id``, or one whose segments all collapse to empty slugs,
+    falls back to the piece-1 mapping ``{section}/{identity}.md`` where
+    ``identity`` is the source filename stem. Empty ``section`` falls
+    through to the legacy source-path branch below, unchanged.
 
     The ``world`` parameter is accepted to mirror the design contract; it is
     not currently needed for resolution (the canonical path is world-agnostic)
@@ -553,8 +592,31 @@ def resolve_target(world: str, candidate,
     # Classifier (BLOQUE 1 piece 1): the author-chosen section wins over the
     # legacy source-path derivation. Empty section (legacy jobs / files with
     # no map entry) falls through to the legacy branch unchanged.
+    #
+    # identity-path-mapping (BLOQUE 1 piece 2): when the section is set AND
+    # the candidate carries a valid hierarchical canonical_id, each ``::``
+    # segment becomes a slugged path component — all but the last are
+    # subfolders, the last is the filename stem. Empty or invalid
+    # canonical_id (or one whose segments all collapse to empty slugs) falls
+    # back to the piece-1 ``{section}/{identity}.md`` mapping (byte-identical).
     section_choice = getattr(candidate, "section", "") or ""
     if section_choice:
+        canonical_id = getattr(candidate, "canonical_id", "") or ""
+        if canonical_id and is_canonical_id(canonical_id):
+            raw_segments = canonical_id.split(CANONICAL_ID_SEPARATOR)
+            slugs = [s for s in (slug_segment(seg) for seg in raw_segments) if s]
+            if slugs:
+                folders = "/".join(slugs[:-1])
+                stem = slugs[-1]
+                canonical = (
+                    f"{section_choice}/{folders}/{stem}.md"
+                    if folders else f"{section_choice}/{stem}.md"
+                )
+                return TargetResolution(
+                    canonical_path=canonical, normalized_source=canonical,
+                    status="resolved", alias_used="",
+                )
+        # Fallback: empty/invalid canonical_id or all-segments-collapsed.
         canonical = f"{section_choice}/{identity}.md"
         return TargetResolution(
             canonical_path=canonical, normalized_source=canonical,
