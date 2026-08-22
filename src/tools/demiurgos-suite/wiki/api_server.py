@@ -3468,14 +3468,28 @@ def _build_ai_ask_prompt(
     mundo: str, body: AskRequest, ficha_context: str | None = None,
     reference_name: str | None = None,
 ) -> str:
-    parts = [
+    from demiurgos_personality import build_identity_prompt, build_graph_context
+
+    parts: list[str] = []
+
+    # Demiurgos assistant identity (world-agnostic)
+    if mundo:
+        parts.append(build_identity_prompt(mundo))
+
+    # Entity graph context (search for entities matching the prompt)
+    graph_index = _get_graph(mundo) if mundo else None
+    graph_ctx = build_graph_context(body.prompt, graph_index)
+    if graph_ctx:
+        parts.append(graph_ctx)
+
+    # Response guidance
+    parts.append(
         "[Visible response guidance: Answer directly in 1-3 short paragraphs or bullets. "
         "Ask at most one question at a time. Use the verified context silently, answer only "
         "the relevant point, and do not repeat the full ficha or internal context. Expand only "
-        "when requested. Keep factual answers grounded in the provided evidence.]",
-    ]
-    if mundo:
-        parts.insert(0, f"[Mundo: {mundo}]")
+        "when requested. Keep factual answers grounded in the provided evidence.]"
+    )
+
     if body.file_path:
         title = None
         resolved = _resolve_path(mundo, body.section, body.file_path)
@@ -3829,6 +3843,58 @@ async def _run_hermes(prompt: str, session_id: str = "") -> str:
         return unavailable_copy()
 
 
+def _run_hermes_sync(prompt: str, session_id: str = "") -> str:
+    """Synchronous mirror of ``_run_hermes`` for the importer's sync bridge.
+
+    Uses a FRESH ``httpx.Client`` per call — never the module-level async
+    singleton (``_get_hermes_client``) — so the bridge can run from a worker
+    thread (FastAPI sync endpoints) without reusing the main event loop's
+    connection pool, which httpx forbids (cross-event-loop RuntimeError).
+    Payload, ``X-Hermes-Session-Id`` header, timeout, logging, and failure
+    handling mirror ``_run_hermes`` exactly; failures return the localized
+    unavailable copy, never raw provider text.
+    """
+    import time
+    t0 = time.monotonic()
+    logger.info("Hermes GW START len=%d session=%s preview=%r", len(prompt), session_id or "-", prompt[:120].replace("\n", " "))
+    try:
+        payload = {
+            # Hermes resolves the active profile's model.default on the next
+            # request. Do not pass a browser-controlled model override here.
+            "model": "hermes-agent",
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        headers = {}
+        if session_id:
+            # Opt-in session continuity: gateway keeps the conversation state.
+            headers["X-Hermes-Session-Id"] = session_id
+        with httpx.Client(
+            headers={
+                "Authorization": f"Bearer {_GATEWAY_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(_GATEWAY_TIMEOUT, connect=10.0),
+        ) as client:
+            resp = client.post(_GATEWAY_URL, json=payload, headers=headers)
+        elapsed = time.monotonic() - t0
+        if resp.status_code != 200:
+            logger.error("Hermes GW HTTP %d %.1fs: %s", resp.status_code, elapsed, resp.text[:500])
+            return unavailable_copy()
+        data = resp.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "") if "choices" in data else str(data)
+        logger.info("Hermes GW DONE %.1fs len=%d preview=%r", elapsed, len(content), content[:200].replace("\n", " "))
+        return content or unavailable_copy()
+    except httpx.ConnectError:
+        logger.error("Hermes GW UNREACHABLE — is gateway running on %s?", _GATEWAY_URL)
+        return unavailable_copy()
+    except httpx.TimeoutException:
+        logger.error("Hermes GW TIMEOUT after %.1fs", time.monotonic() - t0)
+        return unavailable_copy()
+    except Exception as exc:
+        logger.exception("Hermes GW CRASH: %s", exc)
+        return unavailable_copy()
+
+
 # ---------------------------------------------------------------------------
 # AI edit proposals — diskless Hermes suggestions with bounded retry (PR 2)
 #
@@ -4146,29 +4212,39 @@ app.include_router(
 # Slice 2 — synchronous Hermes bridge for the (optional) importer enricher.
 #
 # The importer module is gateway-independent; the composition layer in this
-# file is the only place that talks to ``_run_hermes``. The bridge wraps the
-# async gateway in ``asyncio.run`` with the extended 120-second total budget
-# (``DEFAULT_TIMEOUT_SECONDS`` — design risk 4: large per-ficha summaries and
-# the relationship batch need the extended budget), raises on timeout, and
-# returns the empty ``unavailable_copy`` when the gateway is unreachable so
-# the importer's fail-open contract holds end-to-end.
+# file is the only place that talks to the Hermes gateway for the importer.
+# The bridge runs the SYNCHRONOUS ``_run_hermes_sync`` (a fresh per-call
+# ``httpx.Client``, never the module-level async singleton) on a worker thread
+# with the extended 120-second total budget (``DEFAULT_TIMEOUT_SECONDS`` —
+# design risk 4: large per-ficha summaries and the relationship batch need the
+# extended budget), returns ``""`` on budget timeout, and returns the
+# localized ``unavailable_copy`` when the gateway is unreachable so the
+# importer's fail-open contract holds end-to-end. The sync path never reuses
+# the async client singleton, so the bridge is safe to run from FastAPI's
+# sync-endpoint threadpool (the old ``asyncio.run`` bridge crashed with a
+# cross-event-loop RuntimeError that was silently swallowed, masking every
+# import-card enrichment).
 def _sync_hermes_enricher(prompt: str, session_id: str) -> str:
-    """Synchronous Hermes bridge honoring the extended total budget."""
-    import asyncio
+    """Synchronous Hermes bridge honoring the extended total budget.
+
+    Runs ``_run_hermes_sync`` on a worker thread so the extended total budget
+    can be enforced synchronously: a call exceeding ``DEFAULT_TIMEOUT_SECONDS``
+    returns ``""`` (the importer treats it as "no suggestions"), and gateway
+    failures surface as the localized unavailable copy. The bridge never
+    raises and never touches the async client singleton.
+    """
+    import concurrent.futures
     from import_enrichment import DEFAULT_TIMEOUT_SECONDS
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        return asyncio.run(
-            asyncio.wait_for(_run_hermes(prompt, session_id),
-                             timeout=DEFAULT_TIMEOUT_SECONDS))
-    except (asyncio.TimeoutError, TimeoutError):
+        future = pool.submit(_run_hermes_sync, prompt, session_id)
+        return future.result(timeout=DEFAULT_TIMEOUT_SECONDS)
+    except TimeoutError:
         logger.warning("hermes enricher timed out after %.1fs",
                        DEFAULT_TIMEOUT_SECONDS)
         return ""
-    except RuntimeError:
-        # ``asyncio.run`` raises when called from a running loop (e.g., inside
-        # a Test that already drives the event loop). We degrade gracefully:
-        # the importer treats an empty string as "no suggestions".
-        return ""
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _make_import_enricher():
