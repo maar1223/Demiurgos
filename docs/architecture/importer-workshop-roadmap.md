@@ -93,7 +93,7 @@ contratos existentes. Son vinculantes para el diseño del importador.
 
 ## 3. Mapa de bloques a construir (en orden de dependencia)
 
-### BLOQUE 1 — El importador materializa el árbol  `[EN CURSO]` ★ PIEZA 1 ✅ (2026-08-22)
+### BLOQUE 1 — El importador materializa el árbol  `[HECHO — entrega pendiente]` ★ PIEZA 1 ✅ · PIEZA 2 ✅ (2026-08-22)
 
 **Problema:** hoy "Contenido de fichas: 0" y todo cae en "Requiere tu decisión (52)". La causa raíz es el
 **gap identidad-vs-ruta**: `resolve_target` deriva la ruta solo del `source_path`
@@ -115,8 +115,15 @@ contratos existentes. Son vinculantes para el diseño del importador.
 determinística confirmable (D2/D3); secciones fijas `lore/personajes/referencias` (§6.2, `CLASSIFIER_SECTIONS`
 local, sin `sagas`/D5); threading `sections` → job → candidate → rama raíz en `resolve_target`. Entrega: 2 PRs
 encadenados (feature-branch-chain) sobre pr4.
-**Piezas pendientes:** 2 (mapeo `canonical_id`→subcarpetas con `safe_slug_from_id`) y 3 (jerarquía interna del
-`canonical_id` en `resolve_target` — la pieza 1 ya usa la sección raíz, falta la subcarpeta por segmento).
+**Pieza 2 (✅ 2026-08-22):** mapeo identidad→ruta implementado y archivado (`importer-identity-path-mapping`,
+11/11 tareas, verify PASS). Helper `slug_segment` (NFD + drop marcas combinantes) y rama `canonical_id`
+jerárquica en `resolve_target`: `Política | Distribución Y Territorios::Dottua` →
+`lore/politica-distribucion-y-territorios/dottua.md`; ordinal `#N` → sufijo `-N`; `canonical_id` vacío/inválido
+y sección vacía preservan pieza 1/legacy byte-idéntico. **La "pieza 3" (jerarquía interna del `canonical_id`
+en `resolve_target`) queda absorbida por esta pieza.**
+**Estado:** implementación + verify de las piezas 1-2 completos. Pendiente solo entrega: PR único de la pieza 2
+(dentro de presupuesto) sobre `feat/importer-document-classifier-frontend`, y merge del stack (#22-25 + #27-28).
+Residuos en otros bloques: colisiones post-slug → BLOQUE 3, `sagas` → D5, estado borrador → BLOQUE 2.
 
 ---
 
