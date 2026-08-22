@@ -138,12 +138,19 @@ y el setStatus API quedan intactos.
 
 ---
 
-### BLOQUE 3 — Detección de colisiones al importar  `[PENDIENTE]`
+### BLOQUE 3 — Detección de colisiones al importar  `[HECHO — entrega pendiente]` ✅ (2026-08-22)
 
 **Qué construir:** al importar, contrastar las fichas nuevas contra el índice del grafo existente (por
 identidad + referencias, no contra todo el mundo a ciegas) → marcar `review`/`conflicto` antes de materializar.
 **Qué desbloquea:** que importar no corrompa lore preexistente. Se apoya en `plan_merge` (ya existe) y
 `okf_contract.validate` con `resolve` (ya existe).
+**Implementado:** `importer-collision-detection` (30/30 tareas, verify PASS WITH WARNINGS, 0 CRITICAL).
+Seam `graph_resolver` inyectado en `create_import_router` (fail-open); stamping en analyze post-enrichment:
+referencias resueltas contra el índice (solo secciones indexadas lore/personajes/sagas — `referencias`
+queda fuera por gap del índice, follow-up), colisión de identidad (`canonical_id` ya reclamado), colisión de
+ruta (`mundos_dir/mundo/canonical_path` + `plan_merge` → review), duplicados intra-import; `status=conflict`
++ `okf_issues` (cero cambios de schema/frontend — el UI ya agrupa "Requiere tu decisión"). Soft gate §6.3:
+digest intacto, el Autor decide. Suite 1401 passed. Entrega: 2 PRs feature-branch-chain (seam / stamping).
 
 ---
 

@@ -1000,3 +1000,52 @@ class TestSpoolCleanupLifecycle:
         # Opción A — the DB row is reaped regardless of the spool failure.
         assert store.get_job(job.job_id) is None
         assert (spool_dir / "job1").exists()  # cleanup failed but DB reaped
+
+
+# ---------------------------------------------------------------------------
+# BLOQUE 3 — shared plan_merge helper + execute backstop (collision design)
+# ---------------------------------------------------------------------------
+
+
+class TestCollisionSharedHelper:
+    def test_plan_merge_shared_helper_analyze_and_execute(self):
+        """BLOQUE 3 — the analyze-time path preflight (import_router stamping)
+        and the execute-time backstop (import_service._execute_candidate) call
+        the SAME module-level ``plan_merge`` — no duplicated merge logic."""
+        import import_router
+        import import_service as import_service_mod
+        # Both call sites import the identical function object from
+        # import_service; drift between analyze prediction and execute
+        # enforcement is structurally impossible.
+        assert import_router.plan_merge is import_service_mod.plan_merge
+
+    def test_execute_backstop_unchanged(self, store, service, tmp_path):
+        """BLOQUE 3 — execute-time plan_merge enforcement is byte-identical:
+        a candidate approved despite an analyze-time path-collision advisory
+        is still refused at execute time when plan_merge says review (spec:
+        Execute still enforces plan_merge)."""
+        job = _job()
+        store.create_job(job)
+        target = tmp_path / "world1" / "lore" / "A.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        prior = "---\ntype: personaje\nname: A\n---\nold body"
+        target.write_text(prior, encoding="utf-8")
+        candidate = _candidate()
+        # Simulate the analyze-time collision stamp: the candidate reached
+        # review with a path-collision advisory and status=conflict, and the
+        # Author approved it anyway. Execute must STILL enforce plan_merge.
+        candidate.okf_issues = [{
+            "code": "path-collision",
+            "message": "Target ficha exists with different content; "
+                       "merge requires review.",
+            "field": "target",
+            "reference": "lore/A.md",
+        }]
+        candidate.status = "conflict"
+        store.add_candidate(candidate)
+        approval = service.issue_approval(job, "tester", [])
+        outcomes = service.execute(job, "tester", approval.digest,
+                                   approval.token)
+        assert outcomes[0].action == "review"
+        assert not outcomes[0].written
+        assert target.read_text(encoding="utf-8") == prior  # no canon write

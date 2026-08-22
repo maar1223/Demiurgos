@@ -55,7 +55,13 @@ from import_intake import (
     reject_unsafe_path,
 )
 from import_store import ImportJobStore
-from import_service import ImportService
+from import_service import (
+    ImportService,
+    _is_funnel_frontmatter,
+    plan_merge,
+    render_frontmatter_document,
+)
+import okf_contract
 
 logger = logging.getLogger("demiurgos-import-router")
 
@@ -573,6 +579,125 @@ def create_import_router(
                     # The batch status must reflect the vision outcome even
                     # when text enrichment was not requested.
                     enrichment_status = _aggregate_status(candidates)
+
+            # --- Collision detection (BLOQUE 3) ---
+            # Analyze-time collision stamping: after enrichment + vision and
+            # BEFORE persistence, every candidate is checked against the
+            # world's entity graph for identity / reference / path collisions,
+            # so the Author sees explicit issues at review and decides. The
+            # signals are advisory (soft-gate §6.3): ``candidate_digest``
+            # never incorporates them and execute-time ``plan_merge``
+            # enforcement is unchanged. ``_resolver_fn`` was resolved above
+            # (fail-open); ``None`` → only the filesystem-based path checks
+            # run.
+            INDEXED_SECTIONS = ("lore", "personajes", "sagas")
+            COLLISION_CODES = {
+                "identity-collision", "path-collision", "duplicate-target",
+                "unresolved-reference", "ambiguous-reference",
+            }
+
+            # Intra-import duplicate detection: group candidates by their
+            # canonical target path (O(n) dict grouping).
+            _target_groups: dict[str, list[Candidate]] = {}
+            for c in candidates:
+                if (c.target_resolution
+                        and c.target_resolution.get("status") == "resolved"):
+                    _target_groups.setdefault(
+                        c.target_resolution["canonical_path"], []).append(c)
+
+            for candidate in candidates:
+                # Rendered document for validation: a funnel-frontmatter
+                # candidate materializes like execute-time (so ``resolve``
+                # sees the same wikilinks, including ``relaciones``); the rest
+                # validate the original body.
+                if _is_funnel_frontmatter(candidate):
+                    rendered = render_frontmatter_document(
+                        candidate.frontmatter, candidate.content_preview,
+                        canonical_id=candidate.canonical_id or "")
+                else:
+                    rendered = candidate.content_preview
+
+                collision_found = False
+
+                if _resolver_fn is not None:
+                    # (a) Reference check — indexed sections only.
+                    # ``referencias`` targets are excluded from the graph
+                    # index, so they never receive reference issues.
+                    if candidate.section in INDEXED_SECTIONS:
+                        try:
+                            ref_validation = okf_contract.validate(
+                                rendered, resolve=_resolver_fn)
+                            for issue in ref_validation.issues:
+                                if issue.code in (
+                                        "unresolved-reference",
+                                        "ambiguous-reference"):
+                                    candidate.okf_issues.append(issue.to_dict())
+                                    collision_found = True
+                        except Exception:  # noqa: BLE001 — fail-open
+                            pass
+
+                    # (b) Identity collision — another ficha already claims
+                    # this canonical identity.
+                    if candidate.canonical_id:
+                        try:
+                            matches = _resolver_fn(candidate.canonical_id)
+                            if matches:
+                                candidate.okf_issues.append({
+                                    "code": "identity-collision",
+                                    "message": (
+                                        f"Identity '{candidate.canonical_id}' "
+                                        "is already claimed by another ficha."),
+                                    "field": "canonical_id",
+                                    "reference": candidate.canonical_id,
+                                })
+                                collision_found = True
+                        except Exception:  # noqa: BLE001 — fail-open
+                            pass
+
+                # (c) Path collision — existing target with review-needed
+                # merge. The ficha path is mundos_dir / world / canonical_path
+                # (execute-time resolution at import_service.py:384-385).
+                if (candidate.target_resolution
+                        and candidate.target_resolution.get("status")
+                        == "resolved"):
+                    target_path = (
+                        mundos_dir() / mundo
+                        / candidate.target_resolution["canonical_path"])
+                    if target_path.exists():
+                        try:
+                            current = target_path.read_text(encoding="utf-8")
+                            decision = plan_merge(current, rendered)
+                            if decision.action == "review":
+                                candidate.okf_issues.append({
+                                    "code": "path-collision",
+                                    "message": (
+                                        "Target ficha exists with different "
+                                        "content; merge requires review."),
+                                    "field": "target",
+                                    "reference": candidate.target_resolution[
+                                        "canonical_path"],
+                                })
+                                collision_found = True
+                        except Exception:  # noqa: BLE001 — fail-open
+                            pass
+
+                if collision_found:
+                    candidate.status = "conflict"
+
+            # (d) Intra-import duplicates — every candidate targeting the same
+            # path within this job is a conflict.
+            for target_path, group in _target_groups.items():
+                if len(group) > 1:
+                    for c in group:
+                        c.okf_issues.append({
+                            "code": "duplicate-target",
+                            "message": (
+                                f"Multiple candidates in this job target the "
+                                f"same path: {target_path}"),
+                            "field": "target",
+                            "reference": target_path,
+                        })
+                        c.status = "conflict"
 
             added = 0
             for candidate in candidates:
