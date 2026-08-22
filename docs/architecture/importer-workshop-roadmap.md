@@ -127,10 +127,14 @@ Residuos en otros bloques: colisiones post-slug → BLOQUE 3, `sagas` → D5, es
 
 ---
 
-### BLOQUE 2 — Estado inicial de las fichas importadas  `[PENDIENTE]`
+### BLOQUE 2 — Estado inicial de las fichas importadas  `[HECHO — entrega pendiente]` ✅ (2026-08-22)
 
 **Qué construir:** que las fichas importadas entren como **borrador** (`status: draft`) por defecto.
 **Qué desbloquea:** que el panel Relaciones y Canon tenga fichas con estado para filtrar (D4).
+**Implementado:** `render_frontmatter_document` (import_service.py) emite `status: draft` en toda
+materialización aprobada (orden: id, title, type, description, status, relaciones). Tests: determinista
+actualizado + 2 nuevos (unit y execute-level). Suite 1383 passed. La ruta del guided writer (`status: proposed`)
+y el setStatus API quedan intactos.
 
 ---
 

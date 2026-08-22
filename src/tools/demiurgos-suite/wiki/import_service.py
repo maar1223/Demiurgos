@@ -288,11 +288,14 @@ def render_frontmatter_document(
 
     Approved execution materializes the reviewable ``FrontmatterCandidate``
     as the OKF frontmatter block (``title``/``type``/``description``/
-    ``relaciones``) followed by the ficha's original body verbatim — never a
-    truncated or generated replacement of author text. ``relaciones`` are
-    serialized as OKF ``[[canonical_id]]`` wikilinks. When the candidate
-    carries a parent-qualified ``canonical_id``, it is emitted as the ``id``
-    so the OKF/graph identity contract recognizes the same key (task 3.3).
+    ``status``/``relaciones``) followed by the ficha's original body verbatim
+    — never a truncated or generated replacement of author text. Approved
+    materialization always emits ``status: draft`` so imported fichas enter
+    as borrador (BLOQUE 2), which the tree/graph/panel can consume.
+    ``relaciones`` are serialized as OKF ``[[canonical_id]]`` wikilinks. When
+    the candidate carries a parent-qualified ``canonical_id``, it is emitted
+    as the ``id`` so the OKF/graph identity contract recognizes the same key
+    (task 3.3).
 
     ``canonical_id`` is omitted when empty or not a canonical identity (e.g.
     an implicit single-ficha candidate), so the emitted document stays a
@@ -306,6 +309,9 @@ def render_frontmatter_document(
         lines.append(f"type: {frontmatter.type}")
     if frontmatter.description:
         lines.append(f"description: {frontmatter.description}")
+    # BLOQUE 2 — imported fichas always enter as borrador: the tree badge,
+    # the graph and the Relaciones y Canon panel consume this status.
+    lines.append("status: draft")
     if frontmatter.relaciones:
         # Block-form quoted wikilinks (matching the existing OKF corpus) so the
         # YAML is unambiguous: each entry is a ``[[canonical_id]]`` string that

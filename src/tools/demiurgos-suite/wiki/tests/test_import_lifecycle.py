@@ -165,8 +165,39 @@ class TestFrontmatterMaterialization:
             "\n  Cuerpo\n", canonical_id="Ayagares")
         expected = (
             "---\nid: Ayagares\ntitle: Ayagares\ntype: lugar\ndescription: d\n"
+            "status: draft\n"
             "relaciones:\n  - \"[[Ayagares::X]]\"\n---\n\n  Cuerpo\n")
         assert doc == expected
+
+    def test_minimal_candidate_always_emits_status_draft(self):
+        """BLOQUE 2 — even a minimal approved frontmatter (no type,
+        description, relaciones or canonical id) always emits
+        ``status: draft`` so the imported ficha enters as borrador."""
+        doc = render_frontmatter_document(
+            FrontmatterCandidate(
+                title="Solo", type=None, description="",
+                relaciones=[], state=FrontmatterState.GENERATED),
+            "Cuerpo")
+        head = doc.split("\n---")[0]
+        assert "status: draft" in head
+        assert head == "---\ntitle: Solo\nstatus: draft"
+        assert doc.endswith("\n\nCuerpo")
+
+    def test_approved_materialization_writes_status_draft(self, store, service):
+        """BLOQUE 2 — an approved funnel candidate materializes with
+        ``status: draft`` in the frontmatter block, after ``description`` and
+        before ``relaciones`` (stable field order for the tree/panel)."""
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(_candidate())
+        approval = service.issue_approval(job, "tester", [])
+        outcomes = service.execute(job, "tester", approval.digest, approval.token)
+        assert outcomes[0].written
+        content = _written(service)
+        head = content.split("\n---")[0]
+        assert "description: Ciudad amurallada\nstatus: draft\nrelaciones:" \
+            in head
+        assert head.count("status: draft") == 1
 
 
 # ---------------------------------------------------------------------------
