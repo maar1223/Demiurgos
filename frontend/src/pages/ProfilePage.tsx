@@ -1,14 +1,20 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Navbar } from "@/components/organisms/Navbar";
+import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
+import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
+import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
+import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
+import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
+import type { WorldInfo } from "@/api/types";
 import { cn } from "@/lib/utils";
 
-type ProfileSection = "sesion" | "integraciones" | "asistente";
+type ProfileSection = "sesion" | "integraciones" | "asistente" | "mundos";
 
 /** Sesión de edición — the same local-dev session controls as the Navbar
  *  dropdown, kept accessible from the full Profile page. */
@@ -122,10 +128,144 @@ function AssistantSection() {
 }
 
 /**
+ * Perfil → Mundos — world management: the "Zona peligrosa" delete flow and
+ * the world-level recycle bin ("Papelera de mundos").
+ *
+ * The delete button mirrors the backend guards: it is disabled for the active
+ * world (idea-capture config) and when the world is the only one left. A
+ * successful delete refreshes the worlds list and bumps the trash panel's
+ * refresh token so the new entry appears immediately.
+ */
+function WorldsSection() {
+  const { worlds, isLoading, error, mutate } = useWorlds();
+  const [deleteTarget, setDeleteTarget] = useState<WorldInfo | null>(null);
+  const [trashRefresh, setTrashRefresh] = useState(0);
+  const [activeWorld, setActiveWorld] = useState("");
+
+  // The backend refuses to delete the active world; mirror that rule in the
+  // UI with a disabled button + tooltip. Fail-open: if the idea-capture
+  // status cannot be read, no world is treated as active.
+  useEffect(() => {
+    let active = true;
+    void getIdeaCaptureStatus()
+      .then((status) => {
+        if (active) setActiveWorld(status.config.active_world);
+      })
+      .catch(() => {
+        if (active) setActiveWorld("");
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const onlyWorld = worlds.length <= 1;
+
+  const handleDeleted = useCallback(() => {
+    void mutate();
+    setTrashRefresh((n) => n + 1);
+    setDeleteTarget(null);
+  }, [mutate]);
+
+  const handleTrashChanged = useCallback(() => {
+    // A restore makes a world reappear; a purge only empties the trash.
+    void mutate();
+  }, [mutate]);
+
+  return (
+    <div>
+      <h3 className="font-heading text-body text-pergamino">Mundos</h3>
+      <p className="mt-1 text-small text-tinta-desvaida">
+        Gestioná los mundos del taller: eliminá uno (queda recuperable 30 días en la papelera) o
+        restaurá mundos eliminados.
+      </p>
+
+      {/* Zona peligrosa — 3-step confirmation before any delete. */}
+      <div className="mt-4 rounded-lg border border-sangre/30 bg-sangre/10 p-4">
+        <h4 className="flex items-center gap-2 font-heading text-body text-sangre">
+          <Icon name="trash" size={18} />
+          Zona peligrosa
+        </h4>
+        <p className="mt-1 text-small text-tinta-desvaida">
+          Eliminar un mundo lo mueve a la papelera durante 30 días; no se destruye de inmediato.
+        </p>
+
+        {error && (
+          <div
+            role="alert"
+            className="mt-3 rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-small text-sangre"
+          >
+            {error.message}
+          </div>
+        )}
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-6">
+            <Spinner size="md" />
+          </div>
+        ) : worlds.length === 0 ? (
+          <p className="mt-3 text-small text-tinta-desvaida">No hay mundos creados todavía.</p>
+        ) : (
+          <ul className="mt-3 flex flex-col gap-2">
+            {worlds.map((world) => {
+              const isActive = activeWorld.toLowerCase() === world.name.toLowerCase();
+              const disabledReason = isActive
+                ? "No se puede eliminar el mundo activo"
+                : onlyWorld
+                  ? "Debe existir al menos un mundo"
+                  : null;
+              return (
+                <li
+                  key={world.name}
+                  className="flex items-center gap-3 rounded-lg border border-filio bg-cripta/50 px-3 py-2"
+                >
+                  <Icon name="world" size={18} className="shrink-0 text-plata" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-mono text-small text-pergamino">{world.name}</p>
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      <Badge>Lore {world.lore_count}</Badge>
+                      <Badge>Personajes {world.character_count}</Badge>
+                      <Badge>Sagas {world.saga_count}</Badge>
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={disabledReason !== null}
+                    title={disabledReason ?? undefined}
+                    onClick={() => setDeleteTarget(world)}
+                  >
+                    Borrar
+                  </Button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {/* Papelera de mundos — restore / permanent delete. */}
+      <div className="mt-6">
+        <WorldTrashPanel refreshToken={trashRefresh} onChanged={handleTrashChanged} />
+      </div>
+
+      {deleteTarget && (
+        <DeleteWorldModal
+          world={deleteTarget}
+          onDeleted={handleDeleted}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
  * Profile page (`/perfil`).
  *
  * Sections: Sesión de edición (local-dev auth, same controls as the Navbar
- * dropdown) and Integraciones (idea capture configuration panel). The whole
+ * dropdown), Integraciones (idea capture configuration panel), Asistente IA
+ * (assistant settings) and Mundos (world delete + recycle bin). The whole
  * page sits behind the same local-dev auth boundary as wiki editing.
  */
 export default function ProfilePage() {
@@ -136,6 +276,7 @@ export default function ProfilePage() {
     { id: "sesion", label: "Sesión de edición" },
     { id: "integraciones", label: "Integraciones" },
     { id: "asistente", label: "Asistente IA" },
+    { id: "mundos", label: "Mundos" },
   ];
 
   return (
@@ -170,6 +311,8 @@ export default function ProfilePage() {
               <SessionSection />
             ) : section === "integraciones" ? (
               <IntegrationsSection />
+            ) : section === "mundos" ? (
+              <WorldsSection />
             ) : (
               <AssistantSection />
             )}

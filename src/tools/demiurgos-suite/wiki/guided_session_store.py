@@ -223,6 +223,28 @@ class GuidedSessionStore:
         with self._lock:
             return self._discard_expired(now)
 
+    def delete_for_world(self, world: str) -> int:
+        """Drop every durable session bound to *world*; returns the number removed.
+
+        Used when a world is deleted or purged so its guided sessions stop
+        resolving (associated data hidden/cleaned per world-delete spec). The
+        matching in-process ids are cleared too so recovery cannot resurrect
+        them.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id FROM guided_sessions WHERE world = ?",
+                (world,),
+            ).fetchall()
+            doomed = [row["session_id"] for row in rows]
+            if doomed:
+                self._conn.execute(
+                    "DELETE FROM guided_sessions WHERE world = ?", (world,),
+                )
+                self._conn.commit()
+                self._in_process.difference_update(doomed)
+            return len(doomed)
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

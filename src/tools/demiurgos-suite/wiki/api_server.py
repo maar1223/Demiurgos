@@ -105,6 +105,8 @@ from semantic_intent import (
     unavailable_copy,
 )
 
+import world_recycle_bin  # flat sibling module (world-level recycle bin)
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
 
@@ -149,6 +151,12 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[4]  # Demiurgos/ (wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> root)
 MUNDOS_DIR = PROJECT_ROOT / "mundos"
+TRASH_ROOT = world_recycle_bin.TRASH_ROOT  # data/world-trash — monkeypatchable seam
+
+# Names that can never be treated as worlds. ``trash`` is reserved so a world
+# literally named "trash" can never collide with the world recycle-bin routes
+# (GET /api/worlds/trash, DELETE /api/worlds/trash/{name}).
+_RESERVED_WORLD_NAMES = frozenset({"Ideas", "trash"})
 
 
 _LOCAL_STATE: LocalState | None = None
@@ -168,7 +176,7 @@ def _local_state() -> LocalState:
 
 
 def _list_worlds() -> list[dict]:
-    """List available worlds in mundos/ (skip Ideas, hidden dirs)."""
+    """List available worlds in mundos/ (skip reserved names, hidden dirs)."""
     worlds = []
     if not MUNDOS_DIR.is_dir():
         return worlds
@@ -177,7 +185,7 @@ def _list_worlds() -> list[dict]:
             continue
         if entry.name.startswith(".") or entry.name.startswith("_"):
             continue
-        if entry.name == "Ideas":
+        if entry.name in _RESERVED_WORLD_NAMES:
             continue
         # Count files in lore + personajes
         lore_count = len(list((entry / "lore").rglob("*.md"))) if (entry / "lore").is_dir() else 0
@@ -207,7 +215,7 @@ def _resolve_mundo_dir(mundo: str) -> Path | None:
         return None
     if Path(mundo).name != mundo:  # separators / absolute paths / dot segments
         return None
-    if mundo.startswith((".", "_")) or mundo == "Ideas":
+    if mundo.startswith((".", "_")) or mundo in _RESERVED_WORLD_NAMES:
         return None
     mundo_dir = (MUNDOS_DIR / mundo).resolve()
     if not mundo_dir.is_dir():
@@ -397,6 +405,177 @@ def _record_assistant_acceptance(runtime_state: str) -> None:
         "runtime": "accepted" if runtime_state == "active" else runtime_state,
     }
     registry.atomic_commit(state)
+
+
+# ---------------------------------------------------------------------------
+# World recycle bin (REQ-001..007) — world delete, trash list, restore, purge
+#
+# Auth: every route requires a trusted principal (`_resolve_principal`), the
+# same fail-closed gate as every other gated write. Purge is lazy on
+# GET /api/worlds/trash (house style — the only scheduled cleanup in this
+# codebase, `_prune_local_sessions`/`.papelera` TTL, runs on the read path),
+# guarded by a module-level timestamp + lock so it runs at most once per 24h
+# and only when the trash is non-empty.
+# ---------------------------------------------------------------------------
+
+class WorldDeleteRequest(BaseModel):
+    confirm_name: str
+
+
+_last_purge_at: datetime | None = None
+_purge_lock = threading.Lock()
+
+
+def _active_world() -> str:
+    """Configured active world (idea-capture config); '' when unset.
+
+    The idea-capture config is the only active-world concept in this
+    codebase. Resolved lazily so this module never hard-depends on the
+    config router at import time.
+    """
+    try:
+        from idea_capture_ui import read_config
+        config, _errors = read_config()
+        value = config.get("active_world")
+        return value.strip() if isinstance(value, str) else ""
+    except Exception:
+        return ""
+
+
+def _hide_world_data(world_name: str) -> None:
+    """Make a world's in-process associated data invisible (REQ-002).
+
+    Graph cache entries are popped unconditionally (a world never opened has
+    no entry — house style is ``.pop(name, None)``); guided sessions bound to
+    the world are dropped from the in-memory store.
+    """
+    _graph_indices.pop(world_name, None)
+    _GUIDED_SESSIONS.delete_for_world(world_name)
+
+
+def _purge_world_associated_data(world_name: str) -> None:
+    """Clean every association of a permanently purged world (REQ-006).
+
+    Hides the in-process data (graph cache, guided sessions), removes
+    idea-capture rows, and deletes the world's import jobs. Idea capture runs
+    as a separate runtime process; when its package is not importable from
+    this server, cleanup is delegated to that runtime and logged — this server
+    never fabricates a connection to a database it does not own. Each store
+    cleanup is guarded so a failure never breaks the purge.
+    """
+    _hide_world_data(world_name)
+    try:
+        from idea_capture.store import CaptureStore
+    except ImportError:
+        logger.warning(
+            "World purge: idea_capture package not importable; idea-capture rows for '%s' are cleaned by the idea-capture runtime",
+            world_name,
+        )
+    else:
+        try:
+            store = CaptureStore(PROJECT_ROOT / "data" / "idea-capture.sqlite3")
+            cleaned = store.delete_for_world(world_name)
+            store.close()
+            logger.info("World purge: cleaned %d idea-capture rows for '%s'", cleaned, world_name)
+        except Exception as exc:
+            logger.warning("World purge: idea-capture cleanup failed for '%s': %s", world_name, exc)
+    try:
+        jobs = _import_store().delete_jobs_for_world(world_name)
+        logger.info("World purge: cleaned %d import jobs for '%s'", jobs, world_name)
+    except Exception as exc:
+        logger.warning("World purge: import-jobs cleanup failed for '%s': %s", world_name, exc)
+
+
+def _maybe_purge_expired() -> None:
+    """Lazy 24h-guarded purge; runs only when trash is non-empty and stale."""
+    global _last_purge_at
+    now = datetime.now(timezone.utc)
+    with _purge_lock:
+        if _last_purge_at is not None and (now - _last_purge_at) < timedelta(hours=24):
+            return
+        if not world_recycle_bin.list_trash(trash_root=TRASH_ROOT):
+            _last_purge_at = now
+            return
+        purged = world_recycle_bin.purge_expired(
+            trash_root=TRASH_ROOT,
+            on_purge=_purge_world_associated_data,
+        )
+        _last_purge_at = now
+        if purged:
+            logger.info("World trash: lazily purged %d expired entries", purged)
+
+
+@app.delete("/api/worlds/{name}")
+def delete_world(name: str, body: WorldDeleteRequest, request: Request):
+    """Move a world to the recycle bin (REQ-001)."""
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    if _resolve_mundo_dir(name) is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    if body.confirm_name.strip().lower() != name.strip().lower():
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "confirm_name_mismatch", "message": "El nombre de confirmación no coincide"},
+        )
+    if _active_world().lower() == name.lower():
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "active_world", "message": "No se puede eliminar el mundo activo"},
+        )
+    if len(_list_worlds()) <= 1:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "only_world", "message": "Debe existir al menos un mundo"},
+        )
+    try:
+        entry = world_recycle_bin.move_to_trash(name, trash_root=TRASH_ROOT, mundos_dir=MUNDOS_DIR)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado") from exc
+    _hide_world_data(name)
+    logger.info("DELETE /api/worlds/%s -> trash", name)
+    return entry.as_dict()
+
+
+@app.get("/api/worlds/trash")
+def get_world_trash(request: Request):
+    """List recycle bin entries, lazily purging expired ones (REQ-004/006)."""
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    _maybe_purge_expired()
+    entries = world_recycle_bin.list_trash(trash_root=TRASH_ROOT)
+    return [entry.as_dict() for entry in entries]
+
+
+@app.post("/api/worlds/{name}/restore")
+def restore_world(name: str, request: Request):
+    """Restore the most recent trash entry for a world (REQ-005)."""
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    try:
+        world_recycle_bin.restore_from_trash(name, trash_root=TRASH_ROOT, mundos_dir=MUNDOS_DIR)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado en la papelera") from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "world_exists", "message": "El mundo ya existe en mundos/"},
+        ) from exc
+    logger.info("POST /api/worlds/%s/restore -> restored", name)
+    return {"status": "restored", "world_name": name}
+
+
+@app.delete("/api/worlds/trash/{name}")
+def purge_trash_world(name: str, request: Request):
+    """Permanently delete a world's trash entries and associated data (REQ-010)."""
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    try:
+        world_recycle_bin.purge_world(name, trash_root=TRASH_ROOT)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado en la papelera") from exc
+    _purge_world_associated_data(name)
+    logger.info("DELETE /api/worlds/trash/%s -> purged", name)
+    return {"status": "purged", "world_name": name}
 
 
 # ---------------------------------------------------------------------------

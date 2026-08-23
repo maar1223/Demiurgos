@@ -116,6 +116,17 @@ class CaptureStore:
         self._connection().commit()
         return self.get(capture_id)
 
+    def delete_for_world(self, world: str) -> int:
+        """Permanently delete every capture row scoped to *world*.
+
+        Returns the number of rows removed. Used by the world recycle-bin
+        purge so idea-capture entries of a purged world are cleaned.
+        """
+        db = self._connection()
+        cursor = db.execute("DELETE FROM captures WHERE world=?", (world,))
+        db.commit()
+        return cursor.rowcount
+
     def mark_retryable(self, capture_id: str, error: str) -> CaptureRecord:
         record = self.get(capture_id)
         state = CaptureState.ERROR if record.attempt + 1 >= 5 else CaptureState.RETRYABLE

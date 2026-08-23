@@ -245,22 +245,7 @@ class ImportJobStore:
 
     def list_jobs(self, *, principal: str, world: str, limit: int = 50,
                   cursor: str | None = None) -> tuple[list[ImportJob], str | None]:
-        """Principal-scoped, cursor-paginated job history (slice 2, IM-2.2).
-
-        Order: ``(created_at DESC, job_id DESC)`` — the tuple key guarantees
-        deterministic ordering even when many rows share a ``created_at``
-        timestamp. ``limit`` is clamped to ``[1, 100]``; ``cursor`` is opaque
-        (base64-encoded tuple key from ``_encode_cursor``). Authorization is
-        enforced by filtering on ``owner_principal`` — foreign jobs are
-        invisible to this call, never returned.
-
-        Returns ``(jobs, next_cursor)``; ``next_cursor`` is ``None`` when the
-        page exhausts the result set.         Raises ``ValueError`` for a malformed
-        cursor so the router can surface HTTP 400 instead of returning the
-        wrong page.
-        """
-        # Clamp defensively: a 0/negative/None limit must not bypass the page
-        # size, and an oversized value must not be accepted unbounded.
+        """Principal-scoped, cursor-paginated job history (slice 2, IM-2.2)."""
         try:
             requested = int(limit)
         except (TypeError, ValueError):
@@ -275,10 +260,8 @@ class ImportJobStore:
                 ca, jid = _decode_cursor(cursor)
             except ValueError as exc:
                 raise ValueError(f"invalid cursor: {exc}") from exc
-            # DESC seek: rows strictly less than (cursor.created_at, cursor.job_id).
             where += " AND (created_at < ? OR (created_at = ? AND job_id < ?))"
             params.extend([ca, ca, jid])
-        # Fetch one extra row to detect "more pages available" without a count.
         params.append(bounded + 1)
         with self._lock:
             rows = self._conn.execute(
@@ -295,15 +278,7 @@ class ImportJobStore:
         return jobs, next_cursor
 
     def delete_job(self, job_id: str) -> None:
-        """Delete a job and all cascade-associated rows (terminal reaping).
-
-        Removes the job plus everything that hangs off it: item outcomes
-        (via their candidates), candidates, events, and approvals. Used for
-        Opción A terminal-job reaping — auto-delete on ``cancelled`` /
-        ``rolled_back`` and the manual DELETE endpoint for ``completed`` /
-        ``failed`` / empty-``review`` jobs. Idempotent: deleting an unknown
-        ``job_id`` is a no-op.
-        """
+        """Delete a job and all cascade-associated rows (terminal reaping)."""
         with self._lock:
             self._conn.execute(
                 "DELETE FROM items WHERE candidate_id IN"
@@ -319,6 +294,35 @@ class ImportJobStore:
             self._conn.execute(
                 "DELETE FROM jobs WHERE job_id=?", (job_id,))
             self._conn.commit()
+
+    def delete_jobs_for_world(self, world: str) -> int:
+        """Delete every import job bound to *world*; returns the number removed.
+        Manual cascade (items -> candidates -> events -> approvals -> jobs).
+        Used when a world is deleted or purged so its import jobs stop resolving.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT job_id FROM jobs WHERE world=?", (world,),
+            ).fetchall()
+            doomed = [row["job_id"] for row in rows]
+            for job_id in doomed:
+                self._conn.execute(
+                    "DELETE FROM items WHERE candidate_id IN"
+                    " (SELECT candidate_id FROM candidates WHERE job_id=?)",
+                    (job_id,),
+                )
+                self._conn.execute(
+                    "DELETE FROM candidates WHERE job_id=?", (job_id,))
+                self._conn.execute(
+                    "DELETE FROM events WHERE job_id=?", (job_id,))
+                self._conn.execute(
+                    "DELETE FROM approvals WHERE job_id=?", (job_id,))
+                self._conn.execute(
+                    "DELETE FROM jobs WHERE job_id=?", (job_id,))
+            self._conn.commit()
+            return len(doomed)
+
+    # -- candidates --------------------------------------------------------
 
     def find_candidate(self, world: str, source_hash: str,
                        normalized_identity: str) -> Candidate | None:

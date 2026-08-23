@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
@@ -50,6 +50,16 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const { status, isLoading: sessionLoading, error: sessionError, start, logout } =
     useLocalDevAuth(profileOpen);
+
+  // Keep the local worlds list in sync with the parent prop. `useState`
+  // initialization alone would freeze the list at first render — on a hard
+  // reload SWR still has `worldsProp === []` while fetching, so without this
+  // sync the selector would stay empty forever (both the world list and the
+  // `+ Nuevo mundo` entry). Appends from `handleWorldCreated` are preserved
+  // because the refreshed prop includes the newly-created world.
+  useEffect(() => {
+    setWorlds(worldsProp);
+  }, [worldsProp]);
 
   const handleWorldCreated = (world: WorldInfo) => {
     setWorlds((prev) => (prev.some((w) => w.name === world.name) ? prev : [...prev, world]));
