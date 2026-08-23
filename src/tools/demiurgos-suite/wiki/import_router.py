@@ -37,6 +37,8 @@ from import_models import (
     JobPage,
     Candidate,
     ImagePlacement,
+    FrontmatterCandidate,
+    FrontmatterState,
     utcnow_iso,
     EnrichmentStatus,
 )
@@ -53,7 +55,13 @@ from import_intake import (
     reject_unsafe_path,
 )
 from import_store import ImportJobStore
-from import_service import ImportService
+from import_service import (
+    ImportService,
+    _is_funnel_frontmatter,
+    plan_merge,
+    render_frontmatter_document,
+)
+import okf_contract
 
 logger = logging.getLogger("demiurgos-import-router")
 
@@ -77,6 +85,23 @@ def _aggregate_status(candidates: list[Candidate]) -> str:
     if statuses and statuses != {"disabled"}:
         return EnrichmentStatus.NO_SUGGESTIONS.value
     return EnrichmentStatus.DISABLED.value
+
+
+def _ficha_anchor(body: str) -> str:
+    """First meaningful body line (up to 120 chars) as a nearby-text anchor.
+
+    Heading lines and image lines are skipped so the anchor points at prose,
+    never the section title or an image markdown. Mirrors the analysis facade's
+    ``_first_anchor`` so ficha candidates carry a stable nearby-text anchor.
+    """
+    for line in (body or "").split("\n"):
+        stripped = line.strip().lstrip("#").strip()
+        if not stripped or stripped.startswith("!"):
+            continue
+        if line.strip().startswith("#"):
+            continue
+        return stripped[:120]
+    return ""
 
 
 @dataclass
@@ -104,9 +129,21 @@ class VisionMediaEntry:
 VisionCallable = Callable[[list[Candidate], list[VisionMediaEntry]], list[Candidate]]
 
 
+# Per-document classifier sections (BLOQUE 1 piece 1). Local to the
+# classifier on purpose: ``VALID_SECTIONS``/``IMPORTER_SCOPE_SECTIONS`` still
+# carry ``sagas`` pending its retirement as a separate change, while the
+# classifier offers only the three canonical worldbuilding sections. The
+# server is the authority for validation; the client heuristic is advisory.
+CLASSIFIER_SECTIONS = ("lore", "personajes", "referencias")
+
+
 class CreateJobRequest(BaseModel):
     source_kind: str = "loose"   # folder | loose | zip
     files: list[str] = []
+    # Classifier (BLOQUE 1 piece 1): author-chosen section per relative
+    # source path. Absent/empty preserves the legacy flow (all sections
+    # empty → resolve_target falls through to the source-path branch).
+    sections: dict[str, str] = {}
 
 
 class StreamChunkRequest(BaseModel):
@@ -125,15 +162,15 @@ class ApproveRequest(BaseModel):
 
 
 class AnalyzeRequest(BaseModel):
-    """Optional ``enrich`` opt-in (slice 2).
+    """Enrichment flag for the analyze flow (slice 2, default ON).
 
-    When ``True`` the analyze flow invokes the injected ``enricher`` after
-    deterministic analysis, persisting advisory suggestions on each
-    candidate. ``False`` (default) preserves the legacy deterministic path
-    with no Hermes call.
+    Enrichment (Hermes summaries, type/frontmatter, relationships) is the
+    DEFAULT behavior — it is what produces indexable OKF metadata. ``False``
+    explicitly skips the assistant call (a cost/privacy opt-out); an absent
+    body also enriches (enrich=True), so legacy clients get the full flow.
     """
 
-    enrich: bool = False
+    enrich: bool = True
 
 
 class DecisionItem(BaseModel):
@@ -155,6 +192,15 @@ def create_import_router(
     enricher: Callable[[list[Candidate]], list[Candidate]] | None = None,
     vision: VisionCallable | None = None,
     service: ImportService | None = None,
+    structure_inference: Callable[[str], Any] | None = None,
+    # BLOQUE 3 — collision detection seam (same injection pattern as the
+    # enricher/vision seams). The outer callable maps a world name to the
+    # world's link-resolution function (graph index
+    # ``_resolve_link_candidates``), or ``None`` when the index is
+    # unavailable. ``None`` / a raising callable / a world with no index →
+    # every analyze-time collision check is skipped (fail-open, §6.3
+    # soft-gate: signals are advisory, never silent auto-merge).
+    graph_resolver: Callable[[str], Callable[[str], list[str]] | None] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/{mundo}/imports", tags=["world-importer"])
     _store = store if isinstance(store, ImportJobStore) else store()
@@ -189,6 +235,12 @@ def create_import_router(
                 reject_unsafe_path(path)
             except UnsafePathError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+        for relative, section in body.sections.items():
+            if section not in CLASSIFIER_SECTIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid section for {relative}: {section!r}",
+                )
         job = ImportJob(
             job_id=uuid.uuid4().hex,
             world=mundo,
@@ -198,6 +250,7 @@ def create_import_router(
             opaque_token=secrets.token_hex(16),
             created_at=utcnow_iso(),
             updated_at=utcnow_iso(),
+            sections=body.sections,
         )
         _store.create_job(job)
         _store.add_event(job.job_id, "created")
@@ -275,23 +328,37 @@ def create_import_router(
         try:
             spool = spool_for(job_id, mundo)
 
-            def _mark_failed(job_id: str, revision: int, error: str,
+            # The job is now actively processing: surface the true state so a
+            # live client polling GET sees ``analyzing`` (not a misleading
+            # ``pending``) while the long synchronous work runs below.
+            _store.update_job(
+                job_id, expected_revision=job.revision,
+                state=ImportJobState.ANALYZING,
+                progress_stage="Preparando análisis", progress_pct=5)
+            _store.add_event(job_id, "analyzing")
+
+            def _mark_failed(job_id: str, error: str,
                              event_tag: str) -> None:
                 """Fail the job, record the event, and clean up the spool.
 
-                Cleanup is best-effort: a spool that cannot be removed must
-                never mask the FAILED transition nor abort analyze, so it is
-                always performed after the terminal transition is persisted.
+                The current revision is read just before the terminal write so
+                the earlier ``analyzing`` transition (which bumped the
+                revision) never trips the optimistic guard. Cleanup is
+                best-effort: a spool that cannot be removed must never mask
+                the FAILED transition nor abort analyze, so it is always
+                performed after the terminal transition is persisted.
                 """
-                _store.update_job(job_id, expected_revision=revision,
-                                  state=ImportJobState.FAILED, error=error)
+                current = _store.get_job(job_id)
+                _store.update_job(
+                    job_id, expected_revision=current.revision,
+                    state=ImportJobState.FAILED, error=error)
                 _store.add_event(job_id, event_tag)
                 spool.cleanup()
 
-            # Slice 2: ``enrich`` is an opt-in flag; absent body preserves the
-            # legacy deterministic flow. The router does not validate the flag's
-            # value (Pydantic coerces missing body to defaults).
-            enrich = bool(getattr(body, "enrich", False)) if body is not None else False
+            # ``enrich`` defaults to True: Hermes enrichment is the default
+            # flow (it produces the type/relationships the graph needs).
+            # An explicit ``False`` skips the assistant call.
+            enrich = True if body is None else bool(body.enrich)
 
             # PR3 (sync-lore-in-importer): the media bundle from the analysis
             # facade is preserved through the router so the vision seam can
@@ -313,7 +380,7 @@ def create_import_router(
                     if rel.lower().endswith(".zip")
                 ]
                 if not zip_files:
-                    _mark_failed(job_id, job.revision,
+                    _mark_failed(job_id,
                                  "no zip archive found in spool", "failed:missing_zip")
                     return {"job": _store.get_job(job_id).model_dump_redacted()}
                 zip_rel = zip_files[0]
@@ -322,7 +389,7 @@ def create_import_router(
                 try:
                     spool_files = extract_zip_bounded(zip_path, extracted_dir)
                 except (ZipBombError, UnsafePathError, BoundsError) as exc:
-                    _mark_failed(job_id, job.revision,
+                    _mark_failed(job_id,
                                  f"zip rejected: {type(exc).__name__}", "failed:zip_safety")
                     return {"job": _store.get_job(job_id).model_dump_redacted()}
                 # Build the files list from the extracted entries (hashed).
@@ -340,7 +407,22 @@ def create_import_router(
                 ]
                 files = [f for f in files if f["sha256"]]
 
+            # --- Collision detection (BLOQUE 3) ---
+            # Resolve the per-world link resolver ONCE, fail-open. The outer
+            # callable maps a world name to the graph index's
+            # ``_resolve_link_candidates`` bound method (api_server wiring);
+            # ``None`` (or a raising outer callable) means the index is
+            # unavailable → every collision check below is skipped, preserving
+            # the pre-BLOQUE-3 behavior exactly.
+            _resolver_fn: Callable[[str], list[str]] | None = None
+            if graph_resolver is not None:
+                try:
+                    _resolver_fn = graph_resolver(mundo)
+                except Exception:  # noqa: BLE001 — fail-open never breaks analyze
+                    _resolver_fn = None
+
             try:
+                _store.update_progress(job_id, "Analizando fuentes", 30)
                 if provider is not None:
                     candidates = provider(job, files)
                     if not isinstance(candidates, list):
@@ -349,16 +431,21 @@ def create_import_router(
                     candidates, media_bundle = _analyze_via_service(
                         job, files, spool,
                         root_dir=analysis_root, mundos_dir=mundos_dir(),
+                        structure_inference=structure_inference,
+                        sections=job.sections,
+                        graph_resolver=_resolver_fn,
                     )
                 else:
                     raise MalformedProviderError("analysis provider unavailable")
             except MalformedProviderError as exc:
-                _mark_failed(job_id, job.revision, str(exc), "failed:malformed_provider")
+                _mark_failed(job_id, str(exc), "failed:malformed_provider")
                 return {"job": _store.get_job(job_id).model_dump_redacted()}
             except Exception as exc:  # fail closed on any unexpected provider error
-                _mark_failed(job_id, job.revision, f"{type(exc).__name__}",
+                _mark_failed(job_id, f"{type(exc).__name__}",
                              "failed:provider_error")
                 return {"job": _store.get_job(job_id).model_dump_redacted()}
+
+            _store.update_progress(job_id, "Construyendo fichas", 60)
 
             # Conversion-failure gate (PR: no silent empty previews). A
             # convertible source (.docx/.pdf) whose markdown conversion failed
@@ -391,7 +478,7 @@ def create_import_router(
                         "converted (the file may be too large or corrupt)"
                     )
                 _mark_failed(
-                    job_id, job.revision, error,
+                    job_id, error,
                     "failed:conversion",
                 )
                 return {"job": _store.get_job(job_id).model_dump_redacted()}
@@ -410,6 +497,7 @@ def create_import_router(
             enriched_from_cache = 0
             cache_hit_ids: set[str] = set()
             if enrich and enricher is not None and candidates:
+                _store.update_progress(job_id, "Consultando asistente", 80)
                 # Partition candidates into cache-hit vs cache-miss.
                 cache_hits: list[Candidate] = []
                 cache_misses: list[Candidate] = []
@@ -420,10 +508,19 @@ def create_import_router(
                     if (existing is not None
                             and existing.enrichment_json is not None
                             and existing.enrichment_status != "disabled"):
-                        # Reuse cached enrichment — patch the in-memory candidate.
+                        # Reuse cached enrichment + funnel metadata — patch the
+                        # in-memory candidate so review shows the persisted
+                        # summary/frontmatter without re-running Hermes.
                         cache_hits.append(candidate.model_copy(update={
                             "enrichment_json": existing.enrichment_json,
                             "enrichment_status": existing.enrichment_status,
+                            "summary": existing.summary or candidate.summary,
+                            "frontmatter": existing.frontmatter
+                            or candidate.frontmatter,
+                            "display_title": existing.display_title
+                            or candidate.display_title,
+                            "media_diagnostics": existing.media_diagnostics
+                            or candidate.media_diagnostics,
                         }))
                         cache_hit_ids.add(candidate.candidate_id)
                         enriched_from_cache += 1
@@ -438,7 +535,7 @@ def create_import_router(
                             raise MalformedProviderError(
                                 "enricher output is not a candidate list")
                     except MalformedProviderError as exc:
-                        _mark_failed(job_id, job.revision, str(exc),
+                        _mark_failed(job_id, str(exc),
                                      "failed:malformed_enricher")
                         return {"job": _store.get_job(job_id).model_dump_redacted()}
                     except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
@@ -483,6 +580,125 @@ def create_import_router(
                     # when text enrichment was not requested.
                     enrichment_status = _aggregate_status(candidates)
 
+            # --- Collision detection (BLOQUE 3) ---
+            # Analyze-time collision stamping: after enrichment + vision and
+            # BEFORE persistence, every candidate is checked against the
+            # world's entity graph for identity / reference / path collisions,
+            # so the Author sees explicit issues at review and decides. The
+            # signals are advisory (soft-gate §6.3): ``candidate_digest``
+            # never incorporates them and execute-time ``plan_merge``
+            # enforcement is unchanged. ``_resolver_fn`` was resolved above
+            # (fail-open); ``None`` → only the filesystem-based path checks
+            # run.
+            INDEXED_SECTIONS = ("lore", "personajes", "sagas")
+            COLLISION_CODES = {
+                "identity-collision", "path-collision", "duplicate-target",
+                "unresolved-reference", "ambiguous-reference",
+            }
+
+            # Intra-import duplicate detection: group candidates by their
+            # canonical target path (O(n) dict grouping).
+            _target_groups: dict[str, list[Candidate]] = {}
+            for c in candidates:
+                if (c.target_resolution
+                        and c.target_resolution.get("status") == "resolved"):
+                    _target_groups.setdefault(
+                        c.target_resolution["canonical_path"], []).append(c)
+
+            for candidate in candidates:
+                # Rendered document for validation: a funnel-frontmatter
+                # candidate materializes like execute-time (so ``resolve``
+                # sees the same wikilinks, including ``relaciones``); the rest
+                # validate the original body.
+                if _is_funnel_frontmatter(candidate):
+                    rendered = render_frontmatter_document(
+                        candidate.frontmatter, candidate.content_preview,
+                        canonical_id=candidate.canonical_id or "")
+                else:
+                    rendered = candidate.content_preview
+
+                collision_found = False
+
+                if _resolver_fn is not None:
+                    # (a) Reference check — indexed sections only.
+                    # ``referencias`` targets are excluded from the graph
+                    # index, so they never receive reference issues.
+                    if candidate.section in INDEXED_SECTIONS:
+                        try:
+                            ref_validation = okf_contract.validate(
+                                rendered, resolve=_resolver_fn)
+                            for issue in ref_validation.issues:
+                                if issue.code in (
+                                        "unresolved-reference",
+                                        "ambiguous-reference"):
+                                    candidate.okf_issues.append(issue.to_dict())
+                                    collision_found = True
+                        except Exception:  # noqa: BLE001 — fail-open
+                            pass
+
+                    # (b) Identity collision — another ficha already claims
+                    # this canonical identity.
+                    if candidate.canonical_id:
+                        try:
+                            matches = _resolver_fn(candidate.canonical_id)
+                            if matches:
+                                candidate.okf_issues.append({
+                                    "code": "identity-collision",
+                                    "message": (
+                                        f"Identity '{candidate.canonical_id}' "
+                                        "is already claimed by another ficha."),
+                                    "field": "canonical_id",
+                                    "reference": candidate.canonical_id,
+                                })
+                                collision_found = True
+                        except Exception:  # noqa: BLE001 — fail-open
+                            pass
+
+                # (c) Path collision — existing target with review-needed
+                # merge. The ficha path is mundos_dir / world / canonical_path
+                # (execute-time resolution at import_service.py:384-385).
+                if (candidate.target_resolution
+                        and candidate.target_resolution.get("status")
+                        == "resolved"):
+                    target_path = (
+                        mundos_dir() / mundo
+                        / candidate.target_resolution["canonical_path"])
+                    if target_path.exists():
+                        try:
+                            current = target_path.read_text(encoding="utf-8")
+                            decision = plan_merge(current, rendered)
+                            if decision.action == "review":
+                                candidate.okf_issues.append({
+                                    "code": "path-collision",
+                                    "message": (
+                                        "Target ficha exists with different "
+                                        "content; merge requires review."),
+                                    "field": "target",
+                                    "reference": candidate.target_resolution[
+                                        "canonical_path"],
+                                })
+                                collision_found = True
+                        except Exception:  # noqa: BLE001 — fail-open
+                            pass
+
+                if collision_found:
+                    candidate.status = "conflict"
+
+            # (d) Intra-import duplicates — every candidate targeting the same
+            # path within this job is a conflict.
+            for target_path, group in _target_groups.items():
+                if len(group) > 1:
+                    for c in group:
+                        c.okf_issues.append({
+                            "code": "duplicate-target",
+                            "message": (
+                                f"Multiple candidates in this job target the "
+                                f"same path: {target_path}"),
+                            "field": "target",
+                            "reference": target_path,
+                        })
+                        c.status = "conflict"
+
             added = 0
             for candidate in candidates:
                 existing = _store.find_candidate(
@@ -515,15 +731,20 @@ def create_import_router(
                         _store.update_candidate_images(
                             existing.candidate_id, candidate.images)
                     added += 1
-                elif (enrich or vision is not None) \
-                        and candidate.enrichment_json is not None:
-                    # No cached enrichment (first import or was disabled).
-                    # Persist the new enrichment payload (text suggestions
-                    # and/or PR3 vision suggestions).
+                elif (enrich or vision is not None):
+                    # No cached enrichment — persist whatever the funnel
+                    # produced, even when it produced no relationships
+                    # (enrichment_json is None but frontmatter/summary may
+                    # be GENERATED).  The old condition
+                    # ``and candidate.enrichment_json is not None`` silently
+                    # discarded generated frontmatter for cards with zero
+                    # relationships.
                     _store.update_candidate_enrichment(
                         existing.candidate_id,
                         candidate.enrichment_json,
                         candidate.enrichment_status)
+                    _store.update_candidate_funnel(
+                        existing.candidate_id, candidate)
                     # Re-assign to the current job so candidates_for(job_id)
                     # returns it for review/execute.
                     _store.reassign_candidate_to_job(
@@ -552,7 +773,8 @@ def create_import_router(
                         _store.update_candidate_images(
                             existing.candidate_id, candidate.images)
                     added += 1
-            _store.update_job(job_id, expected_revision=job.revision,
+            current = _store.get_job(job_id)
+            _store.update_job(job_id, expected_revision=current.revision,
                               state=ImportJobState.REVIEW, file_count=added)
             _store.add_event(
                 job_id,
@@ -810,7 +1032,10 @@ def create_import_router(
 def _analyze_via_service(job: ImportJob, files: list[dict],
                          spool: BoundedSpool,
                          *, root_dir: Path | None = None,
-                         mundos_dir: Path | None = None
+                         mundos_dir: Path | None = None,
+                         structure_inference: Callable[[str], Any] | None = None,
+                         sections: dict[str, str] | None = None,
+                         graph_resolver: Callable[[str], list[str]] | None = None
                          ) -> tuple[list[Candidate], list[VisionMediaEntry]]:
     """Build ordered candidates + the preserved media bundle from spooled files.
 
@@ -820,6 +1045,32 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     extracted directory for ZIP sources); defaults to ``spool.job_dir``.
     ``mundos_dir`` is the worlds root used to resolve canonical targets; it
     is optional because ``resolve_target`` is world-agnostic today.
+    ``structure_inference`` (importador-auto-frontmatter, task 1.2 seam) is the
+    concrete Hermes H1-H5 inference callable used only when the deterministic
+    scan finds no headings; wired from the composition layer.
+    ``sections`` (BLOQUE 1 piece 1) is the author-chosen per-file classifier
+    section map (``{relative_path: section}``); each candidate is stamped with
+    ``sections.get(relative_path, "")`` so ``resolve_target`` can root the
+    target under the chosen section. The caller passes the job's persisted
+    ``sections``, which makes the stamp resume-safe (the analyze endpoint
+    reloads the job from the store first).
+    ``graph_resolver`` (BLOQUE 3) is the per-world link-resolution function
+    produced by the router's fail-open resolution of the injected
+    ``graph_resolver`` seam (``graph_resolver(mundo)``). The facade carries it
+    as part of the collision-detection contract; the actual collision stamping
+    runs in the analyze endpoint after enrichment/vision and before
+    persistence, where ``mundo`` and ``mundos_dir()`` are in scope (design
+    BLOQUE 3). The basic OKF validation below stays resolve-less on purpose:
+    reference checks are scoped to indexed sections by the endpoint, and
+    ``referencias`` targets must never receive reference issues.
+
+    importador-auto-frontmatter (Phase 2): candidates are now built ONE PER
+    complete ficha from the deterministic H1-H5 tree splitter (Step 0/1), so a
+    single source file yields one candidate per ficha instead of one oversized
+    file-sized candidate. Each candidate carries the parent-qualified
+    ``canonical_id``, ``display_title``, the original ficha body, reference-
+    image diagnostics, and a ``manual`` frontmatter the enrichment funnel
+    (Step 2-4) upgrades.
 
     PR3 (sync-lore-in-importer): ``analyze_source`` receives the ``file_path``
     resolver and the job spool root so ``.docx``/``.pdf`` sources are converted
@@ -827,7 +1078,7 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     returned ``media_bundle`` ties every extracted image to its owning
     candidate so the router can hand it to the vision seam.
     """
-    from import_analysis import analyze_source, resolve_target
+    from import_analysis import analyze_source, resolve_target, split_heading_tree
     from import_models import Provenance
 
     read_root = root_dir or spool.job_dir
@@ -838,49 +1089,44 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
         except (OSError, UnicodeDecodeError):
             return ""
 
-    def build_candidate(relative: str, digest: str, size: int,
-                        analyzed) -> Candidate:
-        identity = Path(relative).stem
+    def build_ficha_candidate(relative: str, digest: str, size: int,
+                              analyzed, ficha) -> Candidate:
+        """Build one Candidate per complete-ficha node (importador-auto-
+        frontmatter).
+
+        ``content_preview`` is the ficha's ORIGINAL body (preservation-first);
+        ``canonical_id`` and ``display_title`` carry the ficha identity;
+        ``media_diagnostics`` surface the reference-image placements
+        (``![][key]``). Frontmatter starts ``manual`` (title = display title)
+        — the enrichment funnel upgrades it to ``generated``/``fallback``.
+        An implicit ficha (no usable headings) falls back to the file stem so
+        the legacy single-candidate path keeps its identity/digest semantics.
+        """
+        identity = ficha.canonical_id or Path(relative).stem
+        display_title = ficha.title or Path(relative).stem
         provenance = Provenance(
             source_path=relative, source_kind=job.source_kind,
-            source_hash=f"sha256:{digest}", source_sequence=0,
-            nearby_text_anchor=(analyzed.chunks[0].nearby_text_anchor
-                                if analyzed.chunks else ""),
+            source_hash=f"sha256:{digest}",
+            source_sequence=ficha.source_order,
+            nearby_text_anchor=_ficha_anchor(ficha.body),
         )
-        candidate = Candidate(
+        return Candidate(
             candidate_id=uuid.uuid4().hex,
             job_id=job.job_id, world=job.world,
             normalized_identity=identity,
+            canonical_id=ficha.canonical_id,
+            display_title=display_title,
             source_hash=f"sha256:{digest}",
             provenance=provenance,
-            content_preview=analyzed.content_preview(),
-            size_bytes=size,
-            diagnostics=analyzed.diagnostics,
+            content_preview=ficha.body,
+            size_bytes=len(ficha.body),
+            diagnostics=list(analyzed.diagnostics),
+            media_diagnostics=list(ficha.media_diagnostics),
+            frontmatter=FrontmatterCandidate(
+                title=display_title, type=None, description="", relaciones=[],
+                state=FrontmatterState.MANUAL),
+            section=(sections or {}).get(relative, ""),
         )
-        for chunk in analyzed.chunks:
-            candidate.images.extend(chunk.images)
-        # PR3 — attach extracted media to the parent candidate (design:
-        # "each extracted image remains attached to its parent candidate") so
-        # execution can plan placements and register gallery originals for
-        # images the converted markdown did not already reference. Dedup by
-        # spool-relative path: converted sources (markitdown convention) and
-        # chunk extraction already share the ``media/<stem>/<file>`` layout.
-        existing_paths = {p.relative_media_path for p in candidate.images}
-        first_heading = (analyzed.chunks[0].heading_path
-                         if analyzed.chunks else "")
-        for media in analyzed.media:
-            if media.spool_relative_path in existing_paths:
-                continue
-            candidate.images.append(ImagePlacement(
-                gallery_asset_id="",
-                relative_media_path=media.spool_relative_path,
-                alt_text="",
-                target_ficha=first_heading,
-                confidence=1.0,
-                placement_status="proposed",
-            ))
-            existing_paths.add(media.spool_relative_path)
-        return candidate
 
     report = analyze_source(
         files,
@@ -891,14 +1137,57 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     candidates: list[Candidate] = []
     media_bundle: list[VisionMediaEntry] = []
     for f in report.files:
-        candidate = build_candidate(f.source_path, f.source_hash, f.size_bytes, f)
+        text = f.content_preview()
+        tree = split_heading_tree(text, structure_inference=structure_inference)
+        fichas = tree.fichas
+        if not fichas:
+            continue
+        # One candidate per ficha, in source order.
+        ficha_candidates: list[Candidate] = []
+        for ficha in fichas:
+            ficha_candidates.append(
+                build_ficha_candidate(f.source_path, f.source_hash,
+                                      f.size_bytes, f, ficha))
+        # Distribute the file's inline image placements to the ficha whose body
+        # references them; unmatched placements fold into the first ficha
+        # (preservation-first — an extracted image is never dropped).
+        inline = [p for chunk in f.chunks for p in chunk.images]
+        unmatched: list[ImagePlacement] = []
+        for placement in inline:
+            owner = next(
+                (c for c in ficha_candidates
+                 if placement.relative_media_path
+                 and placement.relative_media_path in c.content_preview),
+                None)
+            if owner is None:
+                unmatched.append(placement)
+            else:
+                owner.images.append(placement)
+        for placement in unmatched:
+            ficha_candidates[0].images.append(placement)
+        # PR3 — attach extracted media to the owning ficha (by spool path) and
+        # preserve the media bundle tied to the candidate that owns each image.
         for media in f.media:
+            owner = next(
+                (c for c in ficha_candidates
+                 if media.spool_relative_path in c.content_preview),
+                ficha_candidates[0])
+            if not any(p.relative_media_path == media.spool_relative_path
+                       for p in owner.images):
+                owner.images.append(ImagePlacement(
+                    gallery_asset_id="",
+                    relative_media_path=media.spool_relative_path,
+                    alt_text="",
+                    target_ficha=owner.canonical_id,
+                    confidence=1.0,
+                    placement_status="proposed",
+                ))
             media_bundle.append(VisionMediaEntry(
-                candidate_id=candidate.candidate_id,
+                candidate_id=owner.candidate_id,
                 image=media.image,
                 spool_relative_path=media.spool_relative_path,
             ))
-        candidates.append(candidate)
+        candidates.extend(ficha_candidates)
     # Server-owned OKF authority: diagnose every candidate against the sole
     # contract so only valid candidates are eligible (2.8).
     import okf_contract

@@ -92,8 +92,9 @@ class HermesGuidedProvider:
             if request.methodology else ""
         )
         prompt = (
-            "Act as the guided character provider. Return ONLY one JSON object matching "
-            f"the {PROTOCOL_VERSION} response envelope. Use request_id "
+            "Act as the guided character provider. Return ONLY one JSON object — "
+            f"no markdown fences, no code blocks — matching the "
+            f"{PROTOCOL_VERSION} response envelope. Use request_id "
             f"{json.dumps(request.request_id)} and session_id {json.dumps(request.session_id)}. "
             "The outcome must be question or delta; never claim author acceptance. "
             "For a question, ask exactly one concise question at a time. Keep it to one or "
@@ -135,8 +136,16 @@ class HermesGuidedProvider:
                 if status.get("status") == "completed":
                     output = status.get("output")
             if isinstance(output, str):
+                text = output.strip()
+                if text.startswith("```"):
+                    lines = text.splitlines()
+                    if lines and lines[0].strip().startswith("```"):
+                        lines = lines[1:]
+                    if lines and lines[-1].strip() == "```":
+                        lines = lines[:-1]
+                    text = "\n".join(lines).strip()
                 try:
-                    output = json.loads(output)
+                    output = json.loads(text)
                 except (TypeError, ValueError):
                     pass
             if isinstance(output, Mapping):

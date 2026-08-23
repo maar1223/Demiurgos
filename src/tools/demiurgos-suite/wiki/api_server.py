@@ -3647,21 +3647,39 @@ def _build_ai_ask_prompt(
     mundo: str, body: AskRequest, ficha_context: str | None = None,
     reference_name: str | None = None,
 ) -> str:
-    parts = [
+    from demiurgos_personality import build_identity_prompt, build_graph_context
+
+    parts: list[str] = []
+
+    # Demiurgos assistant identity (world-agnostic)
+    if mundo:
+        parts.append(build_identity_prompt(mundo))
+
+    # Tool usage guidance: use the graph tools, never generic file/lore tools
+    parts.append(
         "[Tool usage guidance: For questions about this world, use the Demiurgos graph "
         "tools, not generic file tools. Prefer this flow: call graph_search to locate an "
         "entity, then graph_read to read its ficha, then answer using only what was read. "
         "Use graph_links only when the question is about connections between entities. Do "
         "NOT use generic search/read file tools (search_files, read_file) or lore_search "
         "for world lore when the graph tools allow answering directly. If the graph returns "
-        "nothing for the world, say so plainly instead of inventing facts.]",
+        "nothing for the world, say so plainly instead of inventing facts.]"
+    )
+
+    # Entity graph context (search for entities matching the prompt)
+    graph_index = _get_graph(mundo) if mundo else None
+    graph_ctx = build_graph_context(body.prompt, graph_index)
+    if graph_ctx:
+        parts.append(graph_ctx)
+
+    # Response guidance
+    parts.append(
         "[Visible response guidance: Answer directly in 1-3 short paragraphs or bullets. "
         "Ask at most one question at a time. Use the verified context silently, answer only "
         "the relevant point, and do not repeat the full ficha or internal context. Expand only "
-        "when requested. Keep factual answers grounded in the provided evidence.]",
-    ]
-    if mundo:
-        parts.insert(0, f"[Mundo: {mundo}]")
+        "when requested. Keep factual answers grounded in the provided evidence.]"
+    )
+
     if body.file_path:
         title = None
         resolved = _resolve_path(mundo, body.section, body.file_path)
@@ -4015,6 +4033,58 @@ async def _run_hermes(prompt: str, session_id: str = "") -> str:
         return unavailable_copy()
 
 
+def _run_hermes_sync(prompt: str, session_id: str = "") -> str:
+    """Synchronous mirror of ``_run_hermes`` for the importer's sync bridge.
+
+    Uses a FRESH ``httpx.Client`` per call — never the module-level async
+    singleton (``_get_hermes_client``) — so the bridge can run from a worker
+    thread (FastAPI sync endpoints) without reusing the main event loop's
+    connection pool, which httpx forbids (cross-event-loop RuntimeError).
+    Payload, ``X-Hermes-Session-Id`` header, timeout, logging, and failure
+    handling mirror ``_run_hermes`` exactly; failures return the localized
+    unavailable copy, never raw provider text.
+    """
+    import time
+    t0 = time.monotonic()
+    logger.info("Hermes GW START len=%d session=%s preview=%r", len(prompt), session_id or "-", prompt[:120].replace("\n", " "))
+    try:
+        payload = {
+            # Hermes resolves the active profile's model.default on the next
+            # request. Do not pass a browser-controlled model override here.
+            "model": "hermes-agent",
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        headers = {}
+        if session_id:
+            # Opt-in session continuity: gateway keeps the conversation state.
+            headers["X-Hermes-Session-Id"] = session_id
+        with httpx.Client(
+            headers={
+                "Authorization": f"Bearer {_GATEWAY_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(_GATEWAY_TIMEOUT, connect=10.0),
+        ) as client:
+            resp = client.post(_GATEWAY_URL, json=payload, headers=headers)
+        elapsed = time.monotonic() - t0
+        if resp.status_code != 200:
+            logger.error("Hermes GW HTTP %d %.1fs: %s", resp.status_code, elapsed, resp.text[:500])
+            return unavailable_copy()
+        data = resp.json()
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "") if "choices" in data else str(data)
+        logger.info("Hermes GW DONE %.1fs len=%d preview=%r", elapsed, len(content), content[:200].replace("\n", " "))
+        return content or unavailable_copy()
+    except httpx.ConnectError:
+        logger.error("Hermes GW UNREACHABLE — is gateway running on %s?", _GATEWAY_URL)
+        return unavailable_copy()
+    except httpx.TimeoutException:
+        logger.error("Hermes GW TIMEOUT after %.1fs", time.monotonic() - t0)
+        return unavailable_copy()
+    except Exception as exc:
+        logger.exception("Hermes GW CRASH: %s", exc)
+        return unavailable_copy()
+
+
 # ---------------------------------------------------------------------------
 # AI edit proposals — diskless Hermes suggestions with bounded retry (PR 2)
 #
@@ -4332,46 +4402,119 @@ app.include_router(
 # Slice 2 — synchronous Hermes bridge for the (optional) importer enricher.
 #
 # The importer module is gateway-independent; the composition layer in this
-# file is the only place that talks to ``_run_hermes``. The bridge wraps the
-# async gateway in ``asyncio.run`` with a 5-second total budget, raises on
-# timeout, and returns the empty ``unavailable_copy`` when the gateway is
-# unreachable so the importer's fail-open contract holds end-to-end.
+# file is the only place that talks to the Hermes gateway for the importer.
+# The bridge runs the SYNCHRONOUS ``_run_hermes_sync`` (a fresh per-call
+# ``httpx.Client``, never the module-level async singleton) on a worker thread
+# with the extended 120-second total budget (``DEFAULT_TIMEOUT_SECONDS`` —
+# design risk 4: large per-ficha summaries and the relationship batch need the
+# extended budget), returns ``""`` on budget timeout, and returns the
+# localized ``unavailable_copy`` when the gateway is unreachable so the
+# importer's fail-open contract holds end-to-end. The sync path never reuses
+# the async client singleton, so the bridge is safe to run from FastAPI's
+# sync-endpoint threadpool (the old ``asyncio.run`` bridge crashed with a
+# cross-event-loop RuntimeError that was silently swallowed, masking every
+# import-card enrichment).
 def _sync_hermes_enricher(prompt: str, session_id: str) -> str:
-    """Synchronous Hermes bridge honoring the 5-second total budget."""
-    import asyncio
+    """Synchronous Hermes bridge honoring the extended total budget.
+
+    Runs ``_run_hermes_sync`` on a worker thread so the extended total budget
+    can be enforced synchronously: a call exceeding ``DEFAULT_TIMEOUT_SECONDS``
+    returns ``""`` (the importer treats it as "no suggestions"), and gateway
+    failures surface as the localized unavailable copy. The bridge never
+    raises and never touches the async client singleton.
+    """
+    import concurrent.futures
     from import_enrichment import DEFAULT_TIMEOUT_SECONDS
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        return asyncio.run(
-            asyncio.wait_for(_run_hermes(prompt, session_id),
-                             timeout=DEFAULT_TIMEOUT_SECONDS))
-    except (asyncio.TimeoutError, TimeoutError):
+        future = pool.submit(_run_hermes_sync, prompt, session_id)
+        return future.result(timeout=DEFAULT_TIMEOUT_SECONDS)
+    except TimeoutError:
         logger.warning("hermes enricher timed out after %.1fs",
                        DEFAULT_TIMEOUT_SECONDS)
         return ""
-    except RuntimeError:
-        # ``asyncio.run`` raises when called from a running loop (e.g., inside
-        # a Test that already drives the event loop). We degrade gracefully:
-        # the importer treats an empty string as "no suggestions".
-        return ""
+    finally:
+        pool.shutdown(wait=False)
 
 
 def _make_import_enricher():
-    """Compose the Hermes enricher callable for the import router.
+    """Compose the Hermes enrichment-funnel callable for the import router.
 
-    Slice 2 contract: enrichment is OPT-IN (the request must set
-    ``enrich=true``). The enricher runs the gateway bridge, parses the
-    response, validates the suggestion set, and attaches the validated
-    payloads to each candidate. Failures (timeout, unavailable copy,
-    malformed JSON, vocabulary rejection) leave the candidates unchanged
-    with ``enrichment_status="no_suggestions"`` so the import succeeds
-    deterministically.
+    importador-auto-frontmatter (Phase 2): the enricher runs the funnel —
+    per-ficha summaries (Step 2), one batched canonical-id relationship pass
+    (Step 3), and type/frontmatter with manual fallback (Step 4) — instead of
+    the legacy one-shot classification batch. Enrichment is OPT-IN (the
+    request must set ``enrich=true``). Failures (timeout, unavailable copy,
+    malformed JSON, vocabulary rejection) leave the candidates reviewable with
+    ``manual``/``fallback`` frontmatter so the import succeeds deterministically.
     """
-    from import_enrichment import enrich_candidates as _enrich
+    from import_enrichment import analyze_ficha_funnel as _funnel
 
     def enricher(candidates):
-        return _enrich(candidates, hermes_runner=_sync_hermes_enricher)
+        return _funnel(candidates, hermes_runner=_sync_hermes_enricher)
 
     return enricher
+
+
+def _make_structure_inference():
+    """Compose the concrete Hermes H1-H5 structure-inference callable.
+
+    Wired to the deterministic splitter's Step 0 fallback seam (task 1.2):
+    consulted ONLY when the deterministic heading scan finds no headings. The
+    callable asks Hermes for a JSON ``headings`` array and converts each entry
+    into a ``HeadingSpan``; on any failure it returns ``[]`` so the splitter
+    falls back to a single implicit ficha (fail-open — the import path never
+    blocks on inference).
+    """
+    from import_analysis import HeadingSpan
+
+    def structure_inference(text: str) -> list:
+        import asyncio
+        from import_enrichment import DEFAULT_TIMEOUT_SECONDS
+
+        prompt = json.dumps({
+            "task": "structure_inference",
+            "instructions": (
+                "Infer the H1-H5 heading structure of the supplied document "
+                "text (it has no detectable markdown headings). Return a JSON "
+                "object with a 'headings' array; each entry has 'level' "
+                "(integer 1-5) and 'title' (the heading text). Preserve "
+                "document order and original titles verbatim. Return an empty "
+                "array if the text has no discernible structure."
+            ),
+            "text": (text or "")[:8000],
+        }, ensure_ascii=False)
+        try:
+            raw = asyncio.run(
+                asyncio.wait_for(_run_hermes(prompt, "import-structure"),
+                                 timeout=DEFAULT_TIMEOUT_SECONDS))
+        except Exception:  # noqa: BLE001 — inference is optional, fail-open
+            return []
+        try:
+            data = json.loads(raw.strip().removeprefix("```json").removesuffix("```").strip())
+        except (TypeError, ValueError):
+            return []
+        entries = data.get("headings", []) if isinstance(data, dict) else []
+        if not isinstance(entries, list):
+            return []
+        spans: list = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            level = entry.get("level")
+            title = entry.get("title")
+            if not isinstance(level, int) or not isinstance(title, str) or not title.strip():
+                continue
+            title = title.strip()
+            spans.append(HeadingSpan(
+                level=max(1, min(5, level)),
+                title=title,
+                source_text=f"{'#' * level} {title}",
+                line_index=-1,  # synthetic — inferred spans have no source line
+            ))
+        return spans
+
+    return structure_inference
 
 
 def _make_vision_callable():
@@ -4464,6 +4607,14 @@ app.include_router(
         store=_import_store,
         enricher=_make_import_enricher(),
         vision=_make_vision_callable(),
+        structure_inference=_make_structure_inference(),
+        # BLOQUE 3 — collision detection seam: expose the world's graph link
+        # resolver when the index exists, else None (fail-open → checks
+        # skipped). ``_get_graph`` lazily builds/returns the cached index.
+        graph_resolver=lambda mundo: (
+            _get_graph(mundo)._resolve_link_candidates
+            if _get_graph(mundo) else None
+        ),
         service=ImportService(
             store=_import_store(),
             mundos_dir=MUNDOS_DIR,

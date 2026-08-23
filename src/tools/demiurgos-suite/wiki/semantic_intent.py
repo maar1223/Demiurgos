@@ -412,9 +412,10 @@ class SemanticIntentProvider:
         context_block = self._render_context(normalize_context(context))
         return (
             "Act as the Hermes semantic intent interpreter. Return ONLY one JSON "
-            "object with exactly: state (one of allow, clarify, "
-            "require_confirmation, proposal_ready, blocked), response (a bounded "
-            "string under 4096 characters), request_id "
+            "object — no markdown fences, no code blocks — with exactly: state "
+            "(one of allow, clarify, require_confirmation, proposal_ready, "
+            "blocked), response (a bounded string under 4096 characters), "
+            "request_id "
             f"{json.dumps(request_id)}{session_instruction}, and guided (boolean). "
             "When state is require_confirmation include continuation "
             "{\"outcome\": \"question\", \"question\": \"<one concise confirmation "
@@ -453,8 +454,16 @@ class SemanticIntentProvider:
 
     def _normalize_output(self, output: object) -> object:
         if isinstance(output, str):
+            text = output.strip()
+            if text.startswith("```"):
+                lines = text.splitlines()
+                if lines and lines[0].strip().startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                text = "\n".join(lines).strip()
             try:
-                output = json.loads(output)
+                output = json.loads(text)
             except (TypeError, ValueError):
                 return None
         return output
@@ -478,7 +487,8 @@ class SemanticIntentProvider:
                         session_id=session_id or "",
                     )
                 )
-                output = self._normalize_output(await self._collect_output(run_id))
+                raw_output = await self._collect_output(run_id)
+                output = self._normalize_output(raw_output)
                 validation = validate_semantic_decision(output)
             except Exception:
                 validation = SemanticValidation(False, PROVIDER_UNAVAILABLE_REASON)

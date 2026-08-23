@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -25,8 +26,12 @@ for _p in (str(_WIKI),):
         sys.path.insert(0, _p)
 
 from import_models import (  # noqa: E402
+    Candidate,
+    FrontmatterCandidate,
+    FrontmatterState,
     ImportJob,
     ImportJobState,
+    Provenance,
     utcnow_iso,
 )
 from import_store import (  # noqa: E402
@@ -538,3 +543,318 @@ class TestUpdateCandidateImages:
         existing = store.find_candidate("demo", "sha256:same", "Enciclopedia")
         assert existing is not None
         assert existing.images == []
+
+
+class TestJobProgressContract:
+    """Analysis-progress persistence (long-import live-monitoring fix).
+
+    ``progress_stage``/``progress_pct`` are server-owned, survive round-trips,
+    and ``update_progress`` writes them without bumping the optimistic
+    revision (so a long synchronous analyze can keep reporting while the
+    lease is held).
+    """
+
+    def test_round_trip_defaults_empty(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="p1"))
+        job = store.get_job("p1")
+        assert job is not None
+        assert job.progress_stage == ""
+        assert job.progress_pct is None
+
+    def test_update_progress_persists_without_revision_bump(
+            self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="p2", state=ImportJobState.ANALYZING))
+        before = store.get_job("p2")
+        assert before is not None
+
+        store.update_progress("p2", "Analizando fuentes", 30)
+
+        after = store.get_job("p2")
+        assert after is not None
+        assert after.progress_stage == "Analizando fuentes"
+        assert after.progress_pct == 30
+        # No optimistic-guard bump: the analysis thread can keep reporting
+        # while the terminal transition still owns the revision.
+        assert after.revision == before.revision
+
+    def test_update_progress_indeterminate(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="p3", state=ImportJobState.ANALYZING))
+        store.update_progress("p3", "Consultando asistente", None)
+        job = store.get_job("p3")
+        assert job is not None
+        assert job.progress_stage == "Consultando asistente"
+        assert job.progress_pct is None
+
+    def test_update_job_accepts_progress_fields(
+            self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="p4", state=ImportJobState.ANALYZING))
+        job = store.get_job("p4")
+        assert job is not None
+        store.update_job(
+            "p4", expected_revision=job.revision,
+            progress_stage="Construyendo fichas", progress_pct=60)
+        after = store.get_job("p4")
+        assert after is not None
+        assert after.progress_stage == "Construyendo fichas"
+        assert after.progress_pct == 60
+        assert after.revision == job.revision + 1
+
+
+# ---------------------------------------------------------------------------
+# update_candidate_funnel — persistence of generated frontmatter/summary
+# even when enrichment_json is None (zero relationships)
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateCandidateFunnelNoSuggestions:
+    """Regression: when Hermes returns summary + frontmatter but zero
+    relationships, enrichment_json is None and enrichment_status is
+    ``no_suggestions``.  The router must still persist the funnel metadata
+    (summary, frontmatter) onto the existing row.  Prior to the fix, the
+    ``and candidate.enrichment_json is not None`` gate caused these fields
+    to be silently discarded — the row kept its old fallback frontmatter.
+    """
+
+    @staticmethod
+    def _make_candidate(
+        job_id: str = "job-old",
+        summary: str = "",
+        frontmatter: FrontmatterCandidate | None = None,
+        enrichment_json: list | None = None,
+        enrichment_status: str = "disabled",
+    ) -> Candidate:
+        return Candidate(
+            candidate_id="cand-v1",
+            job_id=job_id,
+            world="demo",
+            normalized_identity="Seccion/Test",
+            source_hash="sha256:test",
+            provenance=Provenance(
+                source_path="Lore/Test.md",
+                source_kind="loose",
+                source_hash="sha256:test",
+            ),
+            content_preview="body",
+            summary=summary,
+            frontmatter=frontmatter,
+            enrichment_json=enrichment_json,
+            enrichment_status=enrichment_status,
+        )
+
+    def test_update_candidate_funnel_persists_generated_frontmatter(
+            self, store: ImportJobStore) -> None:
+        """update_candidate_funnel writes the new frontmatter/summary even
+        when enrichment_json is None."""
+        job = _job(job_id="job-old")
+        store.create_job(job)
+
+        # Simulate a row from a prior import with fallback frontmatter.
+        old = self._make_candidate(
+            summary="",
+            frontmatter=FrontmatterCandidate(
+                title="Old", state=FrontmatterState.FALLBACK),
+            enrichment_status="no_suggestions",
+        )
+        store.add_candidate(old)
+        row_old = store.find_candidate(
+            "demo", "sha256:test", "Seccion/Test")
+        assert row_old is not None
+        assert row_old.summary == ""
+        assert row_old.frontmatter is not None
+        assert row_old.frontmatter.state == FrontmatterState.FALLBACK
+
+        # New in-memory candidate: summary + generated frontmatter, but
+        # enrichment_json=None (zero relationships). This is exactly the
+        # funnel output for a card where Hermes returned useful metadata
+        # but no link suggestions.
+        new = self._make_candidate(
+            job_id="job-new",
+            summary="Some summary from Hermes",
+            frontmatter=FrontmatterCandidate(
+                title="Sección Test", type=None,
+                state=FrontmatterState.GENERATED),
+            enrichment_json=None,
+            enrichment_status="no_suggestions",
+        )
+
+        # The router's fixed path: always persist enrichment + funnel
+        # when (enrich or vision is not None).
+        store.update_candidate_enrichment(
+            row_old.candidate_id, new.enrichment_json, new.enrichment_status)
+        store.update_candidate_funnel(row_old.candidate_id, new)
+        store.reassign_candidate_to_job(row_old.candidate_id, "job-new")
+
+        row_after = store.find_candidate("demo", "sha256:test", "Seccion/Test")
+        assert row_after is not None
+        # Summary must be updated to the new value.
+        assert row_after.summary == "Some summary from Hermes"
+        # Frontmatter must be the GENERATED one, not the old FALLBACK.
+        assert row_after.frontmatter is not None
+        assert row_after.frontmatter.state == FrontmatterState.GENERATED
+        assert row_after.frontmatter.title == "Sección Test"
+        # enrichment_json stays None (no relationships), but status is
+        # persisted as no_suggestions.
+        assert row_after.enrichment_json is None
+        assert row_after.enrichment_status == "no_suggestions"
+        # Row must be reassigned to the new job.
+        assert row_after.job_id == "job-new"
+
+    def test_update_candidate_enrichment_persists_none_status(
+            self, store: ImportJobStore) -> None:
+        """update_candidate_enrichment must persist enrichment_status
+        (e.g. ``no_suggestions``) even when enrichment_json is None."""
+        job = _job(job_id="job-a")
+        store.create_job(job)
+
+        old = self._make_candidate(enrichment_status="disabled")
+        store.add_candidate(old)
+        row = store.find_candidate("demo", "sha256:test", "Seccion/Test")
+        assert row is not None
+        assert row.enrichment_status == "disabled"
+
+        # Persist enrichment with None JSON but no_suggestions status.
+        store.update_candidate_enrichment(
+            row.candidate_id, None, "no_suggestions")
+
+        row_after = store.find_candidate("demo", "sha256:test", "Seccion/Test")
+        assert row_after is not None
+        assert row_after.enrichment_json is None
+        assert row_after.enrichment_status == "no_suggestions"
+
+
+# ---------------------------------------------------------------------------
+# BLOQUE 1 piece 1 — per-document classifier persistence (sections_json on the
+# job, section on the candidate)
+# ---------------------------------------------------------------------------
+
+
+class TestClassifierSectionsPersistence:
+    """Classifier sections survive store round-trips and legacy rows default
+    to ``{}``/``""`` (→ the legacy resolve_target branch, zero regression)."""
+
+    def test_job_sections_json_roundtrip(self, store: ImportJobStore) -> None:
+        job = _job(job_id="cls-1")
+        job.sections = {"a.md": "personajes", "b.md": "referencias"}
+        store.create_job(job)
+        loaded = store.get_job("cls-1")
+        assert loaded is not None
+        assert loaded.sections == {"a.md": "personajes", "b.md": "referencias"}
+
+    def test_job_sections_default_empty(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="cls-2"))
+        loaded = store.get_job("cls-2")
+        assert loaded is not None
+        assert loaded.sections == {}
+
+    def test_candidate_section_roundtrip(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="cls-3"))
+        cand = Candidate(
+            candidate_id="cand-cls", job_id="cls-3", world="demo",
+            normalized_identity="Enciclopedia",
+            source_hash="sha256:enc",
+            provenance=Provenance(
+                source_path="Enciclopedia.md", source_kind="loose",
+                source_hash="sha256:enc"),
+            content_preview="body",
+            section="personajes",
+        )
+        store.add_candidate(cand)
+        row = store.find_candidate("demo", "sha256:enc", "Enciclopedia")
+        assert row is not None
+        assert row.section == "personajes"
+
+    def test_candidate_section_default_empty(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="cls-4"))
+        cand = Candidate(
+            candidate_id="cand-cls4", job_id="cls-4", world="demo",
+            normalized_identity="Origen",
+            source_hash="sha256:origen",
+            provenance=Provenance(
+                source_path="Lore/Origen.md", source_kind="loose",
+                source_hash="sha256:origen"),
+            content_preview="body",
+        )
+        store.add_candidate(cand)
+        row = store.find_candidate("demo", "sha256:origen", "Origen")
+        assert row is not None
+        assert row.section == ""
+
+    def test_legacy_db_bootstraps_classifier_columns(self, tmp_path) -> None:
+        """Legacy databases (no ``sections_json``/``section`` columns) get
+        both columns via idempotent bootstrap; legacy rows read back as
+        ``{}``/``""`` and reopening stays idempotent."""
+        db_path = tmp_path / "legacy.sqlite3"
+        conn = sqlite3.connect(db_path)
+        conn.executescript(_LEGACY_SCHEMA)
+        conn.execute(
+            "INSERT INTO jobs (job_id, world, owner_principal, state,"
+            " created_at, updated_at)"
+            " VALUES ('legacy-job', 'demo', 'alice', 'pending', 't', 't')")
+        conn.execute(
+            "INSERT INTO candidates (candidate_id, job_id, world,"
+            " normalized_identity, source_hash, provenance_json, content_preview)"
+            " VALUES ('legacy-cand', 'legacy-job', 'demo', 'Origen',"
+            " 'sha256:abc',"
+            " '{\"source_path\": \"lore/Origen.md\", \"source_kind\": \"loose\","
+            " \"source_hash\": \"sha256:abc\"}', 'body')")
+        conn.commit()
+        conn.close()
+
+        store = ImportJobStore(db_path)  # bootstrap runs on open
+        job_cols = {
+            row[1] for row in store._conn.execute(
+                "PRAGMA table_info(jobs)").fetchall()
+        }
+        cand_cols = {
+            row[1] for row in store._conn.execute(
+                "PRAGMA table_info(candidates)").fetchall()
+        }
+        assert "sections_json" in job_cols
+        assert "section" in cand_cols
+
+        # Legacy rows deserialize defensively (fail-open defaults).
+        job = store.get_job("legacy-job")
+        assert job is not None
+        assert job.sections == {}
+        cand = store.find_candidate("demo", "sha256:abc", "Origen")
+        assert cand is not None
+        assert cand.section == ""
+
+        # Reopening is idempotent (no duplicate-column crash).
+        store2 = ImportJobStore(db_path)
+        assert {
+            row[1] for row in store2._conn.execute(
+                "PRAGMA table_info(jobs)").fetchall()
+        } == job_cols
+
+
+_LEGACY_SCHEMA = """
+CREATE TABLE jobs (
+    job_id TEXT PRIMARY KEY, world TEXT NOT NULL, owner_principal TEXT NOT NULL,
+    state TEXT NOT NULL, source_kind TEXT NOT NULL DEFAULT 'loose',
+    aggregate_uncompressed_bytes INTEGER NOT NULL DEFAULT 0,
+    aggregate_compressed_bytes INTEGER NOT NULL DEFAULT 0,
+    file_count INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0,
+    error TEXT NOT NULL DEFAULT '', opaque_token TEXT NOT NULL DEFAULT '',
+    lease_owner TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE candidates (
+    candidate_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, world TEXT NOT NULL,
+    normalized_identity TEXT NOT NULL, source_hash TEXT NOT NULL,
+    provenance_json TEXT NOT NULL, content_preview TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending', okf_issues_json TEXT NOT NULL DEFAULT '[]',
+    size_bytes INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (world, source_hash, normalized_identity));
+CREATE TABLE items (
+    item_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL,
+    outcome TEXT NOT NULL DEFAULT 'pending', detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL);
+CREATE TABLE events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT, job_id TEXT NOT NULL,
+    event TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE approvals (
+    approval_id TEXT PRIMARY KEY, job_id TEXT NOT NULL, principal TEXT NOT NULL,
+    revision INTEGER NOT NULL, digest TEXT NOT NULL, token TEXT NOT NULL,
+    group_ids_json TEXT NOT NULL DEFAULT '[]', issued_at TEXT NOT NULL DEFAULT '',
+    expires_at TEXT NOT NULL DEFAULT '', consumed INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (job_id, token));
+"""

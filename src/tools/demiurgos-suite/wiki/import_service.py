@@ -24,6 +24,8 @@ from import_models import (
     Approval,
     Candidate,
     ExecutionOutcome,
+    FrontmatterCandidate,
+    FrontmatterState,
     ImportJob,
     ImportJobState,
     ItemOutcome,
@@ -274,6 +276,89 @@ def atomic_write(full: Path, content: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Approved-only frontmatter materialization (importador-auto-frontmatter, 3.1)
+# ---------------------------------------------------------------------------
+
+def render_frontmatter_document(
+    frontmatter: FrontmatterCandidate,
+    body: str,
+    canonical_id: str = "",
+) -> str:
+    """Render an approved OKF document: frontmatter + the untouched body.
+
+    Approved execution materializes the reviewable ``FrontmatterCandidate``
+    as the OKF frontmatter block (``title``/``type``/``description``/
+    ``status``/``relaciones``) followed by the ficha's original body verbatim
+    — never a truncated or generated replacement of author text. Approved
+    materialization always emits ``status: draft`` so imported fichas enter
+    as borrador (BLOQUE 2), which the tree/graph/panel can consume.
+    ``relaciones`` are serialized as OKF ``[[canonical_id]]`` wikilinks. When
+    the candidate carries a parent-qualified ``canonical_id``, it is emitted
+    as the ``id`` so the OKF/graph identity contract recognizes the same key
+    (task 3.3).
+
+    ``canonical_id`` is omitted when empty or not a canonical identity (e.g.
+    an implicit single-ficha candidate), so the emitted document stays a
+    valid OKF document whose identity the graph can parse.
+    """
+    lines = ["---"]
+    if canonical_id:
+        lines.append(f"id: {canonical_id}")
+    lines.append(f"title: {frontmatter.title}")
+    if frontmatter.type:
+        lines.append(f"type: {frontmatter.type}")
+    if frontmatter.description:
+        lines.append(f"description: {frontmatter.description}")
+    # BLOQUE 2 — imported fichas always enter as borrador: the tree badge,
+    # the graph and the Relaciones y Canon panel consume this status.
+    lines.append("status: draft")
+    if frontmatter.relaciones:
+        # Block-form quoted wikilinks (matching the existing OKF corpus) so the
+        # YAML is unambiguous: each entry is a ``[[canonical_id]]`` string that
+        # both okf_contract and the graph index parse as one link.
+        lines.append("relaciones:")
+        for relation in frontmatter.relaciones:
+            lines.append(f'  - "[[{relation}]]"')
+    lines.append("---")
+    head = "\n".join(lines)
+    body_clean = (body or "").lstrip("\n")
+    return f"{head}\n\n{body_clean}"
+
+
+def _unresolved_media_warnings(candidate: Candidate) -> list[str]:
+    """Non-blocking review warnings for unresolved reference-style media.
+
+    Reference-style placements (``![][key]``) with no matching ``[key]: path``
+    definition are isolated: they are never part of ``candidate.images`` (the
+    inline-placement/gallery path), never fail the ficha or the job, and each
+    surfaces as a review warning only (design: media isolation, 3.2).
+    """
+    return [
+        d.message or f"unresolved media reference [{d.image_key}]"
+        for d in candidate.media_diagnostics
+        if d.status == "unresolved"
+    ]
+
+
+def _is_funnel_frontmatter(candidate: Candidate) -> bool:
+    """True when the candidate carries funnel-produced reviewable frontmatter.
+
+    The enrichment funnel (``analyze_ficha_funnel``) guarantees every analyzed
+    candidate has a ``FrontmatterCandidate`` in ``generated`` (Step 4 produced
+    it) or ``fallback`` (enrichment attempted but failed — fail-open) state.
+    Those are materialized during execute (task 3.1). A ``manual`` frontmatter
+    is the legacy default stub (no enrichment requested, or the legacy
+    ``enrich_candidates`` enricher) and keeps the legacy suggestion-patch /
+    body-only write path.
+    """
+    if candidate.frontmatter is None:
+        return False
+    return candidate.frontmatter.state in (
+        FrontmatterState.GENERATED, FrontmatterState.FALLBACK,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Lifecycle service
 # ---------------------------------------------------------------------------
 
@@ -473,8 +558,17 @@ class ImportService:
                 # the gated write sees the patched preview; the stored
                 # candidate row remains advisory-only (digest unchanged).
                 working = candidate
+                # importador-auto-frontmatter (3.1): only the LEGACY path (a
+                # candidate with no funnel frontmatter — ``manual`` stub or
+                # ``frontmatter`` None, e.g. a body that already carries its
+                # own frontmatter) is patched by approved suggestions. Funnel
+                # candidates carry ``generated``/``fallback`` frontmatter;
+                # their approved metadata is materialized from
+                # ``candidate.frontmatter`` instead, never from a suggestion
+                # patch onto the raw body.
                 if (approved_ids and apply_approved_suggestions is not None
-                        and (classifications or relationships)):
+                        and (classifications or relationships)
+                        and not _is_funnel_frontmatter(candidate)):
                     patched = apply_approved_suggestions(
                         candidate,
                         classifications=classifications,
@@ -617,6 +711,11 @@ class ImportService:
                     action="failed", written=False,
                     detail="unable to read current ficha")
 
+        # importador-auto-frontmatter (3.2): unresolved reference-style media
+        # never fails the ficha or the job — it is isolated from gallery
+        # registration and surfaced as a review warning on the outcome.
+        media_warnings = _unresolved_media_warnings(candidate)
+
         # PR3 — admission gate: a placement whose image has a vision suggestion
         # is eligible only when that suggestion id is bound to the approval
         # token ("execute admits only approved image suggestion ids").
@@ -644,7 +743,8 @@ class ImportService:
             return ExecutionOutcome(
                 candidate_id=candidate.candidate_id, target=str(target),
                 action="review", placement_status="ambiguous", written=False,
-                detail="ambiguous image placement requires review")
+                detail="ambiguous image placement requires review",
+                media_warnings=media_warnings)
 
         # PR3 — the approved placements carry vision descriptions; overlay
         # them as alt-text on the markdown the ficha keeps. Computed after
@@ -656,6 +756,19 @@ class ImportService:
         ]
         preview = _overlay_alt_text(candidate.content_preview,
                                     approved_placements)
+
+        # importador-auto-frontmatter (3.1): approved-only frontmatter
+        # materialization. A candidate with funnel-produced frontmatter
+        # (``generated``/``fallback``) renders the approved metadata + the
+        # untouched original body; a legacy candidate (``manual`` stub or
+        # ``frontmatter`` None) writes its body as-is (possibly patched by
+        # approved suggestions).
+        if _is_funnel_frontmatter(candidate):
+            document = render_frontmatter_document(
+                candidate.frontmatter, preview,
+                canonical_id=candidate.canonical_id or "")
+        else:
+            document = preview
 
         # Explicit replacement (candidate carries a replacement record): the
         # prior ficha is snapshotted to .papelera, then the new content is
@@ -669,7 +782,7 @@ class ImportService:
                 str(target.relative_to(self._mundo_dir(job.world))),
                 current, job.world)
             target.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write(target, preview)
+            atomic_write(target, document)
             self._register_placements(job.world, job.job_id, placements)
             if self._graph_reconcile_many is None and self._graph_reconcile is not None:
                 rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
@@ -678,21 +791,24 @@ class ImportService:
                 candidate_id=candidate.candidate_id, target=str(target),
                 action="replace", placement_status="inserted",
                 written=True, detail=replacement.papelera_entry,
-                papelera_entry=replacement.papelera_entry)
+                papelera_entry=replacement.papelera_entry,
+                media_warnings=media_warnings)
 
-        decision = plan_merge(current, preview)
+        decision = plan_merge(current, document)
         if decision.action == "keep":
             return ExecutionOutcome(
                 candidate_id=candidate.candidate_id, target=str(target),
-                action="keep", written=False, detail="ficha unchanged")
+                action="keep", written=False, detail="ficha unchanged",
+                media_warnings=media_warnings)
         if decision.action == "review":
             return ExecutionOutcome(
                 candidate_id=candidate.candidate_id, target=str(target),
                 action="review", written=False,
-                detail="incoming modifies existing content; requires review")
+                detail="incoming modifies existing content; requires review",
+                media_warnings=media_warnings)
 
         target.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(target, preview)
+        atomic_write(target, document)
         self._register_placements(job.world, job.job_id, placements)
         if self._graph_reconcile_many is None and self._graph_reconcile is not None:
             rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
@@ -703,6 +819,7 @@ class ImportService:
             placement_status="inserted" if placements else "approved",
             written=True,
             detail="", papelera_entry="",
+            media_warnings=media_warnings,
         )
 
     def _register_placements(self, world: str, job_id: str,
@@ -712,6 +829,13 @@ class ImportService:
         Spooled source files live under ``spool_dir/{job_id}/{clean}`` (the
         job-scoped ``BoundedSpool`` layout); the clean path strips any
         ``#align-size`` suffix from the Markdown reference.
+
+        Reference-style media (``![][key]``) is ISOLATED from this gallery
+        path by construction: only inline ``![alt](path)`` placements from
+        ``candidate.images`` reach ``placements``, never the reference-style
+        spans carried in ``candidate.media_diagnostics``. Unresolved
+        reference placements are therefore never registered and never fail
+        the job (task 3.2).
         """
         if self._register_gallery is None:
             return

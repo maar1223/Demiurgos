@@ -17,10 +17,11 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit, urlunsplit
 import uuid
 
+import httpx
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
@@ -30,6 +31,7 @@ if str(_TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(_TOOLS_ROOT))
 
 from assistant_provider_adapters import (
+    ProviderCandidate,
     ProviderRegistry,
     candidate_from_payload,
     default_base_url,
@@ -297,6 +299,47 @@ def _env_has_key(path: Path, provider: str = "opencode-go") -> bool:
     return False
 
 
+def _env_key_value(path: Path, provider: str = "opencode-go") -> str:
+    if not path.is_file():
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
+        return ""
+    env_key = _provider_key_env(provider)
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(f"{env_key}="):
+            return stripped.split("=", 1)[1].strip().strip('"').strip("'")
+    return ""
+
+
+def _stored_api_key(provider: str) -> str:
+    try:
+        paths = _resolve_profile_paths()
+        return _env_key_value(paths.env, provider)
+    except AssistantSettingsError:
+        return ""
+
+
+def _candidate_from_payload_with_fallback(payload: Mapping[str, Any]) -> ProviderCandidate | None:
+    candidate = candidate_from_payload(payload)
+    if candidate is not None:
+        return candidate
+    key = payload.get("api_key")
+    if isinstance(key, str) and key.strip():
+        return None
+    provider = payload.get("provider")
+    if not isinstance(provider, str):
+        return None
+    stored = _stored_api_key(provider)
+    if not stored:
+        return None
+    augmented = dict(payload)
+    augmented["api_key"] = stored
+    return candidate_from_payload(augmented)
+
+
 def _validate_model(value: Any) -> str:
     if not isinstance(value, str) or value not in _ALLOWED_MODELS:
         raise ValueError("modelo no permitido; elegí uno del catálogo del asistente")
@@ -427,7 +470,7 @@ def _status(
 
 
 def _persist_provider_configuration(payload: dict[str, Any], model: AssistantModel) -> dict[str, Any]:
-    candidate = candidate_from_payload(payload)
+    candidate = _candidate_from_payload_with_fallback(payload)
     if candidate is None:
         raise ValueError("Provider, endpoint, and API key are required")
     paths = _resolve_profile_paths()
@@ -446,12 +489,14 @@ def _persist_provider_configuration(payload: dict[str, Any], model: AssistantMod
         config_content, model.id, candidate.provider, candidate.base_url
     )
     next_config = _set_normalized_content(next_config, next_status)
-    if candidate.api_key:
+    payload_had_key = isinstance(payload.get("api_key"), str) and bool(payload.get("api_key").strip())
+    if payload_had_key and candidate.api_key:
         next_env, env_changed = _set_env_content(
             env_content, candidate.api_key, _provider_key_env(candidate.provider)
         )
     else:
-        # Local providers require no secret; leave the env file untouched.
+        # Model-only save (or a local provider with no secret): the stored
+        # key was resolved from the env file, so leave the env untouched.
         next_env, env_changed = env_content, False
     config_changed = next_config != config_content
     try:
@@ -470,7 +515,7 @@ def _persist_provider_configuration(payload: dict[str, Any], model: AssistantMod
 
 
 def _default_probe_factory(payload: dict[str, Any], model_id: str) -> ProbeRunner:
-    candidate = candidate_from_payload(payload)
+    candidate = _candidate_from_payload_with_fallback(payload)
     if candidate is None:
         raise ValueError("Provider, endpoint, and API key are required")
     return ProbeRunner(candidate.base_url, model_id, api_key=candidate.api_key)
@@ -491,7 +536,41 @@ def create_assistant_settings_router(
     It is never called when probes fail or the save is rejected.
     """
     router = APIRouter(prefix="/api/profile/assistant", tags=["assistant-settings"])
-    registry = provider_registry or PROVIDER_REGISTRY
+    if provider_registry is None:
+        def _resolver(provider: str) -> str:
+            return _stored_api_key(provider)
+
+        # The router owns an isolated registry: the stored-key resolver never
+        # lands on the shared PROVIDER_REGISTRY (injected-test registries stay
+        # untouched). Transport/telemetry are read LIVE from the shared global
+        # at call time so doubles attached to it at runtime (e.g. the test
+        # transport monkeypatched on PROVIDER_REGISTRY) still apply; when the
+        # global carries none, fall back to the default HTTP client path that
+        # ProviderRegistry._request would use.
+        def _shared_transport(method: str, url: str, headers: dict[str, str]) -> tuple[int, Any]:
+            transport = getattr(PROVIDER_REGISTRY, "transport", None)
+            if transport is not None:
+                return transport(method, url, headers)
+            with httpx.Client(timeout=httpx.Timeout(8.0, connect=3.0)) as client:
+                response = client.get(url, headers=headers)
+                try:
+                    body = response.json()
+                except ValueError:
+                    body = None
+                return response.status_code, body
+
+        def _shared_telemetry(event: dict[str, Any]) -> None:
+            telemetry = getattr(PROVIDER_REGISTRY, "telemetry", None)
+            if telemetry is not None:
+                telemetry(event)
+
+        registry = ProviderRegistry(
+            transport=_shared_transport,
+            telemetry=_shared_telemetry,
+            key_resolver=_resolver,
+        )
+    else:
+        registry = provider_registry
     seam = runtime_seam or HermesRuntimeSeam()
     probe_factory = probe_factory or _default_probe_factory
 

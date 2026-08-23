@@ -177,11 +177,50 @@ def _parse_discovery(provider: str, body: Any) -> list[dict[str, Any]] | None:
 
 
 class ProviderRegistry:
-    """Registry with bounded backend transport and categorical telemetry only."""
+    """Registry with bounded backend transport and categorical telemetry only.
 
-    def __init__(self, transport: Transport | None = None, telemetry: Callable[[dict[str, Any]], None] | None = None):
+    ``key_resolver`` (optional) supplies the stored API key for a provider
+    when a payload omits it, so the registry can validate against an already
+    configured secret (e.g. a model-only change from the settings wizard).
+    The resolver receives the provider name and must return the key value;
+    resolution failures degrade to the plain candidate path.
+    """
+
+    def __init__(
+        self,
+        transport: Transport | None = None,
+        telemetry: Callable[[dict[str, Any]], None] | None = None,
+        key_resolver: Callable[[str], str] | None = None,
+    ):
         self.transport = transport
         self.telemetry = telemetry
+        self._key_resolver = key_resolver
+
+    def _candidate(self, payload: Mapping[str, Any]) -> ProviderCandidate | None:
+        candidate = candidate_from_payload(payload)
+        if candidate is not None:
+            return candidate
+        if self._key_resolver is None:
+            return None
+        provider = payload.get("provider")
+        if not isinstance(provider, str) or provider not in _PROVIDERS:
+            return None
+        if _is_local(provider):
+            return None  # local never fails due to key
+        key = payload.get("api_key")
+        if isinstance(key, str) and key.strip():
+            return None  # had a key but still failed -> not a key issue
+        try:
+            stored = self._key_resolver(provider)
+        except Exception:
+            return None
+        if not isinstance(stored, str) or not stored.strip():
+            return None
+        if any(c.isspace() for c in stored) or len(stored) > 2048:
+            return None
+        augmented = dict(payload)
+        augmented["api_key"] = stored
+        return candidate_from_payload(augmented)
 
     def _record(self, outcome: str, candidate: ProviderCandidate, category: str | None, started: float) -> None:
         if self.telemetry:
@@ -274,7 +313,7 @@ class ProviderRegistry:
 
     def validate(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         started = time.monotonic()
-        candidate = candidate_from_payload(payload)
+        candidate = self._candidate(payload)
         if candidate is None:
             provider = payload.get("provider") if isinstance(payload.get("provider"), str) else "unknown"
             result = {"outcome": "failed", "category": "invalid-request", "provider": provider,
@@ -305,7 +344,7 @@ class ProviderRegistry:
         validation = self.validate(payload)
         if validation["outcome"] != "validated":
             return {**validation, "models": [], "loaded_models": [], "jit_load_allowed": False}
-        candidate = candidate_from_payload(payload)
+        candidate = self._candidate(payload)
         assert candidate is not None
         started = time.monotonic()
         models, error = self._discover_models(candidate)
@@ -328,7 +367,7 @@ class ProviderRegistry:
         validation = self.validate(payload)
         if validation["outcome"] != "validated":
             return {**validation, "available_models": [], "loaded_models": [], "jit_load_allowed": False}
-        candidate = candidate_from_payload(payload)
+        candidate = self._candidate(payload)
         assert candidate is not None
         models, _ = self._discover_models(candidate)
         available = [model["id"] for model in models]

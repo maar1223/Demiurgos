@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 import sys
@@ -166,6 +167,20 @@ def test_valid_decision_on_first_attempt() -> None:
         assert result.action == "answer"
         assert result.attempts == 1
         assert result.unavailable is False
+        assert runs.starts == 1
+
+    asyncio.run(scenario())
+
+
+def test_fenced_json_output_is_admitted() -> None:
+    async def scenario() -> None:
+        fenced = "```json\n" + json.dumps(valid_payload("allow")) + "\n```"
+        runs = Runs(fenced)
+        result = await decide_once(SemanticIntentProvider(runs), runs)
+        assert result.decision is not None
+        assert result.state == "allow"
+        assert result.unavailable is False
+        assert result.attempts == 1
         assert runs.starts == 1
 
     asyncio.run(scenario())

@@ -17,6 +17,7 @@ import {
   postReviewDecisions,
   streamImportChunk,
   streamImportFile,
+  waitForJobTerminal,
 } from "@/api/importer";
 
 const mockApiFetch = apiFetch as unknown as ReturnType<typeof vi.fn>;
@@ -53,6 +54,26 @@ describe("importer API — world-importer slice 3 contract", () => {
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ source_kind: "loose", files: ["a.md", "b.md"] }),
+      }),
+    );
+  });
+
+  it("createImportJob forwards the classifier sections map when provided (BLOQUE 1 piece 1)", async () => {
+    mockApiFetch.mockResolvedValue({ job: { job_id: "job1", state: "pending" } });
+    await createImportJob("mundo", {
+      source_kind: "loose",
+      files: ["a.md", "b.md"],
+      sections: { "a.md": "personajes", "b.md": "referencias" },
+    });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/mundo/imports",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          source_kind: "loose",
+          files: ["a.md", "b.md"],
+          sections: { "a.md": "personajes", "b.md": "referencias" },
+        }),
       }),
     );
   });
@@ -232,5 +253,45 @@ describe("importer API — world-importer slice 3 contract", () => {
         }),
       }),
     );
+  });
+
+  it("waitForJobTerminal polls while analyzing and stops at review, reporting progress", async () => {
+    mockApiFetch
+      .mockResolvedValueOnce({
+        job: { job_id: "job1", state: "analyzing", progress_stage: "Analizando fuentes", progress_pct: 30 },
+      })
+      .mockResolvedValueOnce({
+        job: { job_id: "job1", state: "analyzing", progress_stage: "Construyendo fichas", progress_pct: 60 },
+      })
+      .mockResolvedValueOnce({
+        job: { job_id: "job1", state: "review", progress_stage: "", progress_pct: null },
+      });
+    const seen: Array<{ stage: string; pct: number | null }> = [];
+    const job = await waitForJobTerminal("mundo", "job1", (j) => {
+      seen.push({ stage: j.progress_stage ?? "", pct: j.progress_pct ?? null });
+    }, { intervalMs: 1, maxWaitMs: 10_000 });
+
+    expect(job.state).toBe("review");
+    expect(seen.map((s) => s.stage)).toEqual([
+      "Analizando fuentes",
+      "Construyendo fichas",
+    ]);
+    // Three polls total: two processing + one terminal.
+    expect(mockApiFetch).toHaveBeenCalledTimes(3);
+    expect(mockApiFetch).toHaveBeenCalledWith("/api/mundo/imports/job1");
+  });
+
+  it("waitForJobTerminal surfaces the failed job instead of declaring a false outage", async () => {
+    mockApiFetch.mockResolvedValueOnce({
+      job: { job_id: "job1", state: "analyzing", progress_stage: "Analizando", progress_pct: 5 },
+    }).mockResolvedValueOnce({
+      job: { job_id: "job1", state: "failed", error: "conversion failed" },
+    });
+    const job = await waitForJobTerminal("mundo", "job1", undefined, {
+      intervalMs: 1,
+      maxWaitMs: 10_000,
+    });
+    expect(job.state).toBe("failed");
+    expect(job.error).toBe("conversion failed");
   });
 });

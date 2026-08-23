@@ -16,6 +16,7 @@ field, or directory is coupled to a specific fictional universe.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -28,14 +29,22 @@ OKF_VERSION = "1"
 RELACIONES_FIELD = "relaciones"
 VERSION_FIELD = "okf_version"
 
+# Canonical identity convention (importer): a parent-qualified ``id`` built
+# from NFC-normalized, whitespace-collapsed heading segments joined by ``::``,
+# with ``#N`` ordinals for duplicate same-title siblings. Simple single-
+# segment ids (a lone H1 root) are valid canonical ids too.
+CANONICAL_ID_SEPARATOR = "::"
+
 _RE_FRONTMATTER_START = re.compile(r"^---\s*$")
 _RE_WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 
 # Server-owned minimum identity anchors, aligned with the guided character
 # contract (guided_character_domain.MINIMUM_IDENTITY_FIELDS /
 # MINIMUM_DESIRE_FIELDS).  A group is satisfied when at least one of its
-# alternative fields is present in frontmatter.
-MINIMUM_IDENTITY_FIELDS = frozenset({"name", "nombre", "title"})
+# alternative fields is present in frontmatter.  ``id`` is the canonical
+# importer identity (``::``-qualified); the guided ficha writer already emits
+# ``id: <slug>``, so ``id`` participates in identity as a first-class anchor.
+MINIMUM_IDENTITY_FIELDS = frozenset({"name", "nombre", "title", "id"})
 MINIMUM_DESIRE_FIELDS = frozenset({
     "desire", "deseo", "motivacion", "motivations", "motivation", "motivaciones",
 })
@@ -68,6 +77,42 @@ def register_minimums(entity_type: str, *groups: Iterable[str]) -> None:
 def minimums_for(entity_type: str) -> tuple[frozenset[str], ...]:
     """Return the minimum groups for an entity type (empty when unregistered)."""
     return OKF_MINIMUM_GROUPS_BY_TYPE.get(entity_type.strip().lower(), ())
+
+
+def is_canonical_id(value: str) -> bool:
+    """True when ``value`` is a valid canonical importer identity.
+
+    A canonical id is one or more non-empty segments joined by ``::``. Each
+    segment must already be NFC-normalized and whitespace-collapsed (no
+    leading/trailing whitespace, no internal whitespace runs). Recognition is
+    conservative: anything else (empty, decomposed, or un-collapsed input) is
+    not a canonical id.
+    """
+    if not isinstance(value, str) or not value:
+        return False
+    for segment in value.split(CANONICAL_ID_SEPARATOR):
+        if not segment:
+            return False
+        if segment != segment.strip() or re.search(r"\s{2,}", segment):
+            return False
+        if unicodedata.normalize("NFC", segment) != segment:
+            return False
+    return True
+
+
+def safe_slug_from_id(canonical_id: str) -> str:
+    """Deterministic safe-slug target derived from a canonical id.
+
+    Uses the project-wide slug alphabet (the same transform as the guided
+    character/API convention): ASCII lowercase alphanumerics joined by ``-``;
+    any other run of characters collapses to a single ``-``, trimmed of
+    leading/trailing ``-``. ``::`` separators and ``#N`` ordinals collapse
+    into the same runs — ``Ayagares::Descripción Física#2`` becomes
+    ``ayagares-descripcion-fisica-2``. Distinct canonical ids that slug
+    identically are disambiguated by target authority during execution; the
+    canonical id itself remains the unique identity key.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", canonical_id.strip().lower()).strip("-")
 
 
 # ---------------------------------------------------------------------------

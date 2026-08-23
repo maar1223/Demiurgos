@@ -86,3 +86,4 @@ start-opencode-bridge.ps1
 start-opencode-serve.ps1
 # Local AI runtime state
 .atl/
+data/import-spool/

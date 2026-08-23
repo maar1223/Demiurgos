@@ -138,7 +138,7 @@ def _classifying_enricher(
     include_invalid_classification: bool = False,
     include_invalid_relationship: bool = False,
     relationship_id: str = "rel-near",
-    grounded_target: str = "Aldea del Viento",
+    grounded_target: str = "Origen",
 ):
     """Build a fake enricher that injects one valid classification plus,
     optionally, an invalid entry of each kind to test vocabulary rejection.
@@ -305,7 +305,7 @@ class TestEnrichmentEndToEnd:
         assert "pueblo" in written, (
             "approved classification's tag must be patched into frontmatter"
         )
-        assert "# Origen" in written, (
+        assert "La aldea fue fundada en el 1200 AE" in written, (
             "the executor must not strip the body when patching frontmatter"
         )
 
@@ -538,11 +538,11 @@ class TestEnrichmentCache:
         client, store, spool, mundos = _build_app(
             tmp_path, enricher=counting_enricher)
 
-        # First import WITHOUT enrichment.
+        # First import WITHOUT enrichment (explicit opt-out).
         job1 = _create_job(client, "lore/Aldea del Viento.md")
         resp1 = client.post(
             f"/api/world1/imports/{job1}/analyze",
-            json={},  # enrich defaults to False
+            json={"enrich": False},
         )
         assert resp1.status_code == 200, resp1.text
         assert call_count["n"] == 0, "no enrichment on first import"
@@ -559,3 +559,152 @@ class TestEnrichmentCache:
         )
         # No cache hit because the first import was disabled.
         assert resp2.json().get("enriched_from_cache", 0) == 0
+
+
+# ---------------------------------------------------------------------------
+# T12.5 — Sync Hermes bridge regression (Option 1): the importer enricher
+# must never reuse the module-level async ``httpx.AsyncClient`` across event
+# loops.
+#
+# Production topology: ``_get_hermes_client()`` is bound to the main event
+# loop (async endpoints / ACTIVITY_ADAPTER), while ``POST .../analyze`` is a
+# SYNC endpoint running in FastAPI's threadpool. The old bridge called
+# ``asyncio.run(_run_hermes(...))`` from that thread, which reused the
+# loop-bound async singleton and crashed with httpx's cross-event-loop
+# RuntimeError — silently swallowed as "" (fail-open, but enrichment never
+# ran, hence 52/52 fallback cards). The fix gives the bridge its own
+# synchronous ``httpx.Client`` per call.
+# ---------------------------------------------------------------------------
+
+
+class TestSyncHermesBridge:
+    def test_sync_bridge_reaches_gateway_while_async_client_bound_elsewhere(
+        self, monkeypatch,
+    ):
+        """Real-topology regression: bind the module-level async client on one
+        event loop, then run ``_sync_hermes_enricher`` from the main thread (a
+        different loop) against a REAL local gateway. The request must go out
+        over a fresh sync client and return the gateway content — before the
+        fix this returned "" (the masked cross-event-loop RuntimeError)."""
+        import asyncio
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        import api_server
+
+        captured: dict = {}
+
+        class _Gateway(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"  # keep-alive: the async pool keeps
+            # the connection alive, so its asyncio primitives stay bound to
+            # the loop that first used it — the exact production trigger.
+
+            def do_POST(self):  # noqa: N802 — stdlib handler API
+                length = int(self.headers.get("Content-Length") or 0)
+                body = json.loads(self.rfile.read(length) or b"{}")
+                captured["model"] = body.get("model")
+                captured["session"] = self.headers.get("X-Hermes-Session-Id")
+                captured["authorization"] = self.headers.get("Authorization")
+                content = '{"classifications": [], "relationships": []}'
+                payload = json.dumps({
+                    "choices": [{"message": {"content": content}}],
+                }).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+            def log_message(self, *args):  # silence default stderr logging
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _Gateway)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            monkeypatch.setattr(
+                api_server, "_GATEWAY_URL",
+                f"http://127.0.0.1:{server.server_port}/v1/chat/completions",
+            )
+            monkeypatch.setattr(api_server, "_GATEWAY_KEY", "test-key")
+
+            # Use the REAL async path on loop A so the module-level singleton
+            # holds a live keep-alive connection whose asyncio primitives are
+            # bound to loop A — the topology the production server has after
+            # any async endpoint/activity probe. Reusing that client from a
+            # different loop is what raised the masked RuntimeError.
+            async def _use_async_path() -> None:
+                out = await api_server._run_hermes("probe", "probe-s")
+                captured["async_out"] = out
+
+            asyncio.run(_use_async_path())
+            assert api_server._hermes_client is not None, (
+                "test precondition: async singleton must be bound elsewhere"
+            )
+            assert captured["async_out"] == (
+                '{"classifications": [], "relationships": []}'
+            ), "test precondition: async path must reach the gateway"
+
+            # The sync bridge now runs from the main thread (loop B).
+            out = api_server._sync_hermes_enricher("prompt", "sess-1")
+            assert out == '{"classifications": [], "relationships": []}', (
+                "sync bridge must return the gateway content via its own sync "
+                "client — NOT the localized unavailable copy that the old "
+                "bridge produced when the cross-event-loop RuntimeError was "
+                "swallowed by _run_hermes' except-Exception branch"
+            )
+            assert captured["model"] == "hermes-agent"
+            assert captured["session"] == "sess-1"
+            assert captured["authorization"] == "Bearer test-key"
+        finally:
+            _bound = api_server._hermes_client
+            api_server._hermes_client = None  # do not leak a loop-bound client
+            if _bound is not None:
+                try:
+                    asyncio.run(_bound.aclose())
+                except RuntimeError:
+                    pass  # its loop is closed — nothing left to clean up
+            server.shutdown()
+            server.server_close()
+
+    def test_sync_bridge_timeout_returns_empty_string(self, monkeypatch):
+        """The extended total budget is enforced on the sync path: a call that
+        exceeds ``DEFAULT_TIMEOUT_SECONDS`` returns "" so the funnel treats it
+        as "no suggestions" (fail-open contract preserved from the old
+        ``asyncio.wait_for`` bridge)."""
+        import time
+
+        import api_server
+        import import_enrichment
+
+        monkeypatch.setattr(import_enrichment, "DEFAULT_TIMEOUT_SECONDS", 0.05)
+
+        def slow(_prompt: str, _session: str) -> str:
+            time.sleep(0.5)
+            return "late content"
+
+        monkeypatch.setattr(api_server, "_run_hermes_sync", slow)
+        out = api_server._sync_hermes_enricher("prompt", "sess-1")
+        assert out == "", (
+            "budget timeout must fail open with '' (no suggestions)"
+        )
+
+    def test_sync_bridge_unreachable_is_fail_open(self, monkeypatch):
+        """Gateway down: the sync bridge returns the localized unavailable
+        copy — never raises, never the old masked RuntimeError path. The copy
+        is not funnel JSON, so the funnel fail-opens to fallback frontmatter
+        and the importer sees "no suggestions"."""
+        import json as _json
+
+        import api_server
+
+        monkeypatch.setattr(
+            api_server, "_GATEWAY_URL",
+            "http://127.0.0.1:1/v1/chat/completions",  # nothing listens on TCP/1
+        )
+        out = api_server._sync_hermes_enricher("prompt", "sess-1")
+        assert out, (
+            "unreachable gateway must yield the localized unavailable copy"
+        )
+        with pytest.raises(_json.JSONDecodeError):
+            _json.loads(out)  # non-JSON → funnel fail-open

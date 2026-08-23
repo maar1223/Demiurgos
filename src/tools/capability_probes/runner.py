@@ -81,12 +81,77 @@ def chat_completions_url(base_url: str) -> str:
 
 
 def _yes_no(answer: str) -> bool | None:
-    token = answer.strip().lower().split()[0].rstrip(",.!?") if answer.strip() else ""
-    if token == "yes":
-        return True
-    if token == "no":
-        return False
+    # Be tolerant of reasoning wrappers like "<think>...</think> yes" — the
+    # vision oracle requires a clear final yes/no, so look for the last
+    # isolated yes/no token in the (think-stripped) answer rather than only
+    # the first word.
+    stripped_think = re.sub(r"<think>.*?</think>", " ", answer, flags=re.DOTALL | re.IGNORECASE)
+    matches = re.findall(r"\b(yes|no)\b", stripped_think.lower())
+    if not matches:
+        return None
+    return matches[-1] == "yes"
+
+
+def _coerce_content_value(value: Any) -> str | None:
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if not isinstance(item, Mapping):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                parts.append(text.strip())
+            elif isinstance(item.get("content"), str) and item["content"].strip():
+                parts.append(item["content"].strip())
+        if parts:
+            return " ".join(parts)
+    if isinstance(value, Mapping):
+        # Some providers wrap text as {"text": "..."} or {"value": "..."}
+        for key in ("text", "value", "content"):
+            inner = value.get(key)
+            if isinstance(inner, str) and inner.strip():
+                return inner.strip()
     return None
+
+
+def _deep_collect_strings(value: Any, *, depth: int = 0, max_depth: int = 7, seen: int = 0) -> list[str]:
+    """Exhaustive, bounded collection of all strings in a JSON value.
+
+    This is the definitive fallback — future field names or nesting levels
+    are covered without per-model patches. Bounded to avoid blowup on huge
+    payloads; image data URIs, bearer shapes, and structural type tags are
+    skipped.
+    """
+    if seen > 400 or depth > max_depth:
+        return []
+    if isinstance(value, str):
+        if not value.strip():
+            return []
+        if "data:image" in value and "base64," in value:
+            return []
+        if len(value) > 2000:
+            value = value[:2000] + "…"
+        return [value.strip()]
+    if isinstance(value, Mapping):
+        out: list[str] = []
+        for k, v in value.items():
+            # Structural tags like "type": "image_url" are not answer text.
+            if k == "type" and isinstance(v, str) and v in ("image_url", "text", "image", "audio", "video", "input_text", "output_text"):
+                continue
+            out.extend(_deep_collect_strings(v, depth=depth + 1, max_depth=max_depth, seen=len(out)))
+            if len(out) > 400:
+                break
+        return out
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            out.extend(_deep_collect_strings(item, depth=depth + 1, max_depth=max_depth, seen=len(out)))
+            if len(out) > 400:
+                break
+        return out
+    return []
 
 
 def _extract_content(body: Any) -> str | None:
@@ -100,11 +165,74 @@ def _extract_content(body: Any) -> str | None:
         return None
     message = first.get("message")
     if not isinstance(message, Mapping):
+        # Some completions-style providers put the text directly on the choice
+        for alt in ("text", "content"):
+            alt_val = first.get(alt)
+            coerced = _coerce_content_value(alt_val)
+            if coerced:
+                return coerced
+        # Last resort: deep search inside the choice itself
+        deep = _deep_collect_strings(first)
+        if deep:
+            joined = " ".join(deep)
+            if joined.strip():
+                return joined.strip()
         return None
+    # Primary: message.content in its various shapes.
     content = message.get("content")
-    if isinstance(content, str) and content.strip():
-        return content
+    coerced = _coerce_content_value(content)
+    if coerced:
+        return coerced
+    # Fallback for reasoning models that put the answer in reasoning fields
+    # while returning content as null/empty (e.g. MiMo, DeepSeek-reasoner).
+    for fallback_key in ("reasoning_content", "reasoning", "reasoning_text", "thinking", "thought", "output_text", "response", "answer"):
+        fallback = message.get(fallback_key)
+        coerced = _coerce_content_value(fallback)
+        if coerced:
+            return coerced
+    # Definitive fallback: exhaustive recursive search inside the message
+    # (and the whole choice) — any future field name or nesting is covered
+    # without a per-model patch. Only used when the known paths failed.
+    deep = _deep_collect_strings(message)
+    if deep:
+        joined = " ".join(deep)
+        if joined.strip():
+            return joined.strip()
+    deep_choice = _deep_collect_strings(first)
+    if deep_choice:
+        joined = " ".join(deep_choice)
+        if joined.strip() and joined.strip() != " ".join(_deep_collect_strings(message)).strip():
+            return joined.strip()
     return None
+
+
+def _malformed_hint(body: Any) -> str:
+    """One-line redacted shape hint for malformed responses (no secrets, no image blobs)."""
+    try:
+        if not isinstance(body, Mapping):
+            return f"body_type={type(body).__name__}"
+        choices = body.get("choices")
+        if not isinstance(choices, list):
+            return "choices_missing_or_not_list"
+        if not choices:
+            return "choices_empty"
+        first = choices[0] if isinstance(choices[0], Mapping) else {}
+        message = first.get("message", {}) if isinstance(first, Mapping) else {}
+        if not isinstance(message, Mapping):
+            return f"message_type={type(message).__name__}"
+        keys = ",".join(sorted(str(k) for k in message.keys()))[:80]
+        content = message.get("content")
+        ctype = type(content).__name__
+        if isinstance(content, list):
+            return f"message_keys=[{keys}] content=list[{len(content)}] ctype={ctype}"
+        if isinstance(content, str):
+            preview = content.strip()[:40].replace("\n", " ")
+            preview = _REDACT_DATA_URI.sub("<image-data>", preview)
+            preview = _REDACT_BEARER.sub("<bearer-token>", preview)
+            return f"message_keys=[{keys}] content=str:{preview!r} ctype={ctype}"
+        return f"message_keys=[{keys}] content_type={ctype}"
+    except Exception:
+        return "unavailable"
 
 
 def _provider_rejection_message(status: int, body: Any) -> str:
@@ -151,7 +279,7 @@ class ProbeRunner:
         transport: ProbeTransport | None = None,
         fixture: Path | None = None,
         variant: Path | None = None,
-        timeout: float = 30.0,
+        timeout: float = 75.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -184,7 +312,10 @@ class ProbeRunner:
         payload = {
             "model": self.model,
             "messages": [{"role": "user", "content": content}],
-            "max_tokens": 32,
+            # 512 covers heavy reasoning preambles (MiMo, DeepSeek-reasoner)
+            # without truncating the oracle answer; the cost is negligible
+            # for a one-shot probe and the 45s timeout absorbs the latency.
+            "max_tokens": 512,
             "temperature": 0,
         }
         try:
@@ -201,10 +332,15 @@ class ProbeRunner:
             )
         content_text = _extract_content(body)
         if content_text is None:
-            raise ProbeFailure(OUTCOME_MALFORMED, "The provider returned a malformed probe response.")
+            hint = _malformed_hint(body)
+            raise ProbeFailure(
+                OUTCOME_MALFORMED,
+                f"The provider returned a malformed probe response. Hint: {hint}",
+            )
         return content_text
 
     def _image_content(self, path: Path) -> Mapping[str, Any]:
+        """Legacy direct-string form (some providers like Ollama/LM Studio)."""
         try:
             encoded = base64.b64encode(path.read_bytes()).decode("ascii")
         except OSError as exc:
@@ -213,6 +349,42 @@ class ProbeRunner:
             "type": "image_url",
             "image_url": f"data:image/jpeg;base64,{encoded}",
         }
+
+    def _image_content_object(self, path: Path) -> Mapping[str, Any]:
+        """Spec-compliant object form {"url": data_uri} (OpenAI + strict gateways)."""
+        try:
+            encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        except OSError as exc:
+            raise ProbeFailure(OUTCOME_PROVIDER_FAILURE, "The probe fixture could not be read.") from exc
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+        }
+
+    def _chat_vision(self, vision_question: str, path: Path) -> str:
+        """Vision chat with automatic fallback between image encodings.
+
+        Definitive: first tries the legacy direct-string form (Ollama/LM
+        Studio + current OpenCode Go path), and on a 400 rejection retries
+        with the spec-compliant {"url": data_uri} object form (strict
+        gateways like MiMo/Console Go). This covers both without per-model
+        patches.
+        """
+        try:
+            return self._chat(
+                [{"type": "text", "text": vision_question}, self._image_content(path)]
+            )
+        except ProbeFailure as exc:
+            if exc.outcome != OUTCOME_PROVIDER_FAILURE or "400" not in exc.message:
+                raise
+            # Retry with object form on any 400 that looks like a format issue
+            lower_msg = exc.message.lower()
+            retry_triggers = ("param", "deserialize", "format", "invalid", "malformed")
+            if not any(trigger in lower_msg for trigger in retry_triggers):
+                raise
+            return self._chat(
+                [{"type": "text", "text": vision_question}, self._image_content_object(path)]
+            )
 
     # -- oracles -----------------------------------------------------------
 
@@ -232,9 +404,7 @@ class ProbeRunner:
         """Prove causal vision: correct answers on the fixture AND the variant."""
         for oracle, path, expected in _VISION_CASES:
             try:
-                content = self._chat(
-                    [{"type": "text", "text": VISION_QUESTION}, self._image_content(path)]
-                )
+                content = self._chat_vision(VISION_QUESTION, path)
             except ProbeFailure as exc:
                 return ProbeResult(exc.outcome, oracle, exc.message)
             verdict = _yes_no(content)

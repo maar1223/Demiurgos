@@ -17,6 +17,7 @@ import { VisionSuggestionCard } from "@/components/molecules/VisionSuggestionCar
 import type {
   ClassificationSuggestion,
   EnrichmentStatus,
+  FrontmatterState,
   ImportApprovalResponse,
   ImportCandidate,
   ImportExecutionOutcome,
@@ -24,6 +25,7 @@ import type {
   ImportJob,
   ImportSuggestion,
   ImportSourceKind,
+  MediaDiagnostic,
   RelationshipSuggestion,
   VisionSuggestion,
 } from "@/api/types";
@@ -44,6 +46,7 @@ import {
   resumeImportJob,
   rollbackImportJob,
   streamImportFile,
+  waitForJobTerminal,
 } from "@/api/importer";
 import { VALID_SECTIONS } from "@/lib/constants";
 import { getErrorMessage } from "@/lib/utils";
@@ -58,12 +61,100 @@ import { cn } from "@/lib/utils";
 // every state and the UI never implies success early.
 // ---------------------------------------------------------------------------
 
+// Classifier (BLOQUE 1 piece 1): per-document section choice offered by the
+// importer. Local on purpose — deliberately NOT shared with VALID_SECTIONS,
+// which still carries ``sagas`` pending its retirement as a separate change.
+// The server validates the same allow-list (CLASSIFIER_SECTIONS in
+// import_router.py); this constant only pre-fills the dropdown (advisory, D2).
+export const CLASSIFIER_SECTIONS = ["lore", "personajes", "referencias"] as const;
+export type ClassifierSection = (typeof CLASSIFIER_SECTIONS)[number];
+
+/** Bytes of file head scanned by the classifier heuristic. */
+export const SUGGESTION_SCAN_BYTES = 8 * 1024;
+
+const _PERSONAJES_KEYWORDS = [
+  "personaje",
+  "protagonista",
+  "antagonista",
+  "héroe",
+  "villano",
+  "criatura",
+  "raza",
+  "linaje",
+  "clan",
+  "familia",
+];
+
+const _REFERENCIAS_KEYWORDS = [
+  "glosario",
+  "índice",
+  "apéndice",
+  "términos",
+  "vocabulario",
+  "tabla de",
+  "cronología",
+  "bibliografía",
+  "anexo",
+];
+
+/** Extract ``#``/``##`` heading lines (H1/H2) from a document. */
+function extractHeadings(text: string): string[] {
+  return text
+    .split("\n")
+    .filter((line) => /^(#{1,2})\s+/.test(line))
+    .map((line) => line.replace(/^#{1,2}\s+/, "").trim());
+}
+
+/**
+ * Deterministic, offline classifier suggestion for one source document.
+ *
+ * Scans the first ~8KB of text plus the H1/H2 heading lines (headings are
+ * structure, so they count regardless of position). Spanish keyword tables
+ * match case-insensitively; ``personajes`` signals win over ``referencias``,
+ * and weak/no signal defaults to ``lore`` (neutral catch-all). Advisory only
+ * (D2) — the author's explicit choice always wins; the server is the
+ * authority for validation.
+ */
+export function suggestDocumentSection(text: string): string {
+  const head = text.slice(0, SUGGESTION_SCAN_BYTES);
+  const haystack = [head, ...extractHeadings(text)].join("\n").toLowerCase();
+  if (_PERSONAJES_KEYWORDS.some((k) => haystack.includes(k))) {
+    return "personajes";
+  }
+  if (_REFERENCIAS_KEYWORDS.some((k) => haystack.includes(k))) {
+    return "referencias";
+  }
+  return "lore";
+}
+
+/** Display label for a classifier section (values stay lowercase). */
+function sectionLabel(section: string): string {
+  return section.charAt(0).toUpperCase() + section.slice(1);
+}
+
+/** Read the first ``limit`` bytes of a File as text (advisory input).
+ *  Uses FileReader — supported by every browser and jsdom (Blob.text() is
+ *  not available in jsdom and degrades the heuristic to an empty string).
+ *  Fail-open: any read error yields ``""`` → the heuristic defaults to lore. */
+function readFileHead(file: File, limit: number): Promise<string> {
+  const blob = file.slice(0, limit);
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      resolve(typeof reader.result === "string" ? reader.result : "");
+    reader.onerror = () => resolve("");
+    reader.readAsText(blob);
+  });
+}
+
 type Step = "select" | "analyzing" | "review" | "result";
 
 interface SelectedSource {
   file: File;
   relative: string;
   size: number;
+  /** Classifier (BLOQUE 1 piece 1): lore | personajes | referencias. */
+  section: string;
 }
 
 interface ApprovalGroup {
@@ -96,6 +187,13 @@ function formatHistoryDate(iso: string): string {
     year: "numeric", month: "short", day: "2-digit",
     hour: "2-digit", minute: "2-digit",
   });
+}
+
+/** mm:ss elapsed counter for the live analysis/monitoring view. */
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 /** UI copy for import-job states (server enum, kept honest). */
@@ -133,6 +231,26 @@ function historyStateVariant(state: ImportJob["state"]): "default" | "info" | "w
     default:
       return "default";
   }
+}
+
+/** UI copy + badge variant for a candidate's frontmatter enrichment state. */
+function frontmatterStateBadge(
+  state: FrontmatterState,
+): { label: string; variant: "default" | "success" | "warning" } {
+  switch (state) {
+    case "generated":
+      return { label: "generado", variant: "success" };
+    case "fallback":
+      return { label: "respaldo", variant: "warning" };
+    case "manual":
+    default:
+      return { label: "manual", variant: "default" };
+  }
+}
+
+/** Unresolved reference-style media spans (``![][key]`` without definition). */
+function unresolvedMedia(candidate: ImportCandidate): MediaDiagnostic[] {
+  return candidate.media_diagnostics.filter((d) => d.status === "unresolved");
 }
 
 /**
@@ -216,6 +334,15 @@ export default function WorldImporter() {
     streamed: number;
     total: number;
   } | null>(null);
+  /** Server-owned analysis progress (stage + honest coarse percent). */
+  const [analysisProgress, setAnalysisProgress] = useState<{
+    stage: string;
+    pct: number | null;
+  } | null>(null);
+  /** True while monitoring a job whose analyze POST timed out/lost connection. */
+  const [monitoringAfterTimeout, setMonitoringAfterTimeout] = useState(false);
+  /** Elapsed seconds since the analysis step started (monitoring UX). */
+  const [elapsedSec, setElapsedSec] = useState(0);
 
   const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
   // The review digest is never displayed; the approval response carries the
@@ -230,12 +357,19 @@ export default function WorldImporter() {
   // on the server spool, so the user can skip re-selection and go straight to
   // analyze. Cleared on resetAll or when the user picks new files.
   const [resumeIntaking, setResumeIntaking] = useState(false);
+  // Classifier (BLOQUE 1 piece 1): author-chosen sections of the resumed job
+  // (relative_path → section). Overlaid on top of the heuristic suggestion
+  // when the author re-selects the same sources after a resume, so the
+  // dropdowns re-populate exactly as they were persisted server-side.
+  const [persistedSections, setPersistedSections] = useState<
+    Record<string, string>
+  >({});
 
-  // Slice 2 — optional Hermes advisory enrichment. The toggle lives on the
-  // select step; analyze carries the opt-in flag. Suggestions are
-  // NON-AUTHORITATIVE: the reviewer toggles each one via the decisions
-  // endpoint; approved IDs are bound to the approval token.
-  const [enrichEnabled, setEnrichEnabled] = useState(false);
+  // Enrichment (Hermes summaries/type/relationships) ALWAYS runs — it
+  // produces the indexable OKF metadata the graph needs. There is no UI
+  // opt-out: a checkbox the user could uncheck by accident would silently
+  // strip fichas of type/relationships. (The API still honors an explicit
+  // ``enrich: false`` for future power-user surfaces.)
   const [enrichmentStatus, setEnrichmentStatus] =
     useState<EnrichmentStatus>("disabled");
   /** Per-suggestion review state, indexed by suggestion id. */
@@ -273,12 +407,12 @@ export default function WorldImporter() {
   // --- persisted job recovery (cancel/resume across reloads) ------------
 
   const persistJob = useCallback(
-    (id: string, kind: ImportSourceKind) => {
+    (id: string, kind: ImportSourceKind, sections?: Record<string, string>) => {
       if (!mundo) return;
       try {
         sessionStorage.setItem(
           storageKey(mundo),
-          JSON.stringify({ jobId: id, sourceKind: kind }),
+          JSON.stringify({ jobId: id, sourceKind: kind, sections }),
         );
       } catch {
         // storage unavailable — the flow continues without reload recovery
@@ -297,6 +431,54 @@ export default function WorldImporter() {
   }, [mundo]);
 
   /**
+   * Monitor a job whose analysis is still processing on the server.
+   *
+   * Shared by two paths: (1) reload/recovery of a job found in
+   * ``pending``/``analyzing``, and (2) the analyze POST that timed out or
+   * lost connection. Both poll GET until the job leaves the processing
+   * states, render the server-owned stage/percentage, and land on review
+   * (or a terminal error) without asking the user to reselect sources.
+   */
+  const monitorJob = useCallback(
+    async (id: string, message: string) => {
+      if (!mundo) return;
+      setAnalyzing(true);
+      setMonitoringAfterTimeout(true);
+      setPhaseMessage(message);
+      try {
+        const terminal = await waitForJobTerminal(mundo, id, (job) => {
+          setAnalysisProgress({
+            stage: job.progress_stage || "Analizando",
+            pct: job.progress_pct ?? null,
+          });
+        });
+        setJob(terminal);
+        if (terminal.state === "failed") {
+          setStep("result");
+          setError(
+            terminal.error || "El análisis falló y la importación quedó bloqueada.",
+          );
+          return;
+        }
+        const review = await getImportReview(mundo, id);
+        setCandidates(review.candidates);
+        setJob(review.job);
+        setEnrichmentStatus(review.enrichment_status ?? "disabled");
+        setResumeIntaking(false);
+        setStep("review");
+      } catch (monitorErr) {
+        setError(importErrorMessage(monitorErr));
+        setPhaseMessage("");
+        setStep("result");
+      } finally {
+        setAnalyzing(false);
+        setMonitoringAfterTimeout(false);
+      }
+    },
+    [mundo],
+  );
+
+  /**
    * Drive the page into a known job's UI state from a server-confirmed job.
    * Shared between sessionStorage recovery and the "open from history"
    * handler so both paths go through the same branching on
@@ -310,6 +492,9 @@ export default function WorldImporter() {
       setSourceKind(existing.source_kind);
       setJob(existing);
       setResumeNotice(null);
+      // Classifier (BLOQUE 1 piece 1): re-populate the dropdowns from the
+      // job's persisted sections when the author re-selects the same files.
+      setPersistedSections(existing.sections ?? {});
       if (existing.state === "review" || existing.state === "approved") {
         try {
           const review = await getImportReview(mundo, existing.job_id);
@@ -327,11 +512,13 @@ export default function WorldImporter() {
         setResumeNotice(
           "El archivo ya está subido en el servidor. Podés continuar el análisis directamente sin volver a seleccionar los archivos.",
         );
-      } else if (
-        existing.state === "pending" ||
-        existing.state === "analyzing" ||
-        existing.state === "executing"
-      ) {
+      } else if (existing.state === "pending" || existing.state === "analyzing") {
+        // The server is still processing this job — monitor it live instead
+        // of asking the user to reselect sources.
+        setResumeIntaking(false);
+        setStep("analyzing");
+        void monitorJob(existing.job_id, "Retomando el análisis en curso…");
+      } else if (existing.state === "executing") {
         setResumeIntaking(false);
         setStep("select");
         setResumeNotice(
@@ -345,7 +532,7 @@ export default function WorldImporter() {
         clearPersistedJob();
       }
     },
-    [mundo, clearPersistedJob],
+    [mundo, clearPersistedJob, monitorJob],
   );
 
   useEffect(() => {
@@ -356,7 +543,11 @@ export default function WorldImporter() {
       setRestoring(false);
       return;
     }
-    let stored: { jobId: string; sourceKind: ImportSourceKind } | null = null;
+    let stored: {
+      jobId: string;
+      sourceKind: ImportSourceKind;
+      sections?: Record<string, string>;
+    } | null = null;
     try {
       stored = JSON.parse(sessionStorage.getItem(storageKey(mundo)) ?? "null");
     } catch {
@@ -366,6 +557,10 @@ export default function WorldImporter() {
       setRestoring(false);
       return;
     }
+    // Classifier (BLOQUE 1 piece 1): seed the dropdowns from the persisted
+    // sections even before the server round-trip (restoreJobState re-applies
+    // the authoritative job.sections once the fetch resolves).
+    setPersistedSections(stored.sections ?? {});
     let cancelled = false;
     (async () => {
       try {
@@ -429,7 +624,7 @@ export default function WorldImporter() {
   const handleOpenFromHistory = useCallback(
     async (entry: ImportJob) => {
       if (!mundo) return;
-      persistJob(entry.job_id, entry.source_kind);
+      persistJob(entry.job_id, entry.source_kind, entry.sections);
       await restoreJobState(entry);
     },
     [mundo, persistJob, restoreJobState],
@@ -468,6 +663,18 @@ export default function WorldImporter() {
     headingRef.current?.focus();
   }, [step]);
 
+  // --- analysis elapsed timer (monitoring UX) -----------------------------
+  useEffect(() => {
+    if (step !== "analyzing") {
+      setElapsedSec(0);
+      return;
+    }
+    const id = window.setInterval(() => {
+      setElapsedSec((s) => s + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [step]);
+
   const resetAll = useCallback(() => {
     setStep("select");
     setSources([]);
@@ -483,6 +690,9 @@ export default function WorldImporter() {
     setResumeNotice(null);
     setPhaseMessage("");
     setStreamProgress(null);
+    setAnalysisProgress(null);
+    setMonitoringAfterTimeout(false);
+    setElapsedSec(0);
     setAnalyzing(false);
     setImporting(false);
     setEnrichmentStatus("disabled");
@@ -490,6 +700,7 @@ export default function WorldImporter() {
     setApprovedSuggestionIds([]);
     setDecidingSuggestionId(null);
     setResumeIntaking(false);
+    setPersistedSections({});
     clearPersistedJob();
   }, [clearPersistedJob]);
 
@@ -504,7 +715,7 @@ export default function WorldImporter() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
-  const handleFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFilesChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const list = Array.from(event.target.files ?? []);
     if (list.length === 0) return;
     // User picked new files — the resume-intaking shortcut no longer applies.
@@ -522,7 +733,16 @@ export default function WorldImporter() {
         excluded += 1;
         continue;
       }
-      selected.push({ file, relative, size: file.size });
+      // Classifier (BLOQUE 1 piece 1): start from the persisted section of a
+      // resumed job (relative paths match exactly) or the neutral default;
+      // the content heuristic upgrades the value right after.
+      const section =
+        persistedSections[relative] && CLASSIFIER_SECTIONS.includes(
+          persistedSections[relative] as ClassifierSection,
+        )
+          ? persistedSections[relative]
+          : "lore";
+      selected.push({ file, relative, size: file.size, section });
     }
     setExcludedCount(excluded);
     setSources(selected);
@@ -544,9 +764,34 @@ export default function WorldImporter() {
     }
     // Reset the input value so re-selecting the same files fires change again.
     event.target.value = "";
+    // Classifier (BLOQUE 1 piece 1): advisory heuristic pre-fill — read the
+    // head of each file and upgrade the section when the author has not
+    // explicitly chosen one for that file yet. Persisted sections of a
+    // resumed job win over the heuristic (D2: the author's prior decision is
+    // final); an in-flight manual override also keeps its value.
+    for (const s of selected) {
+      const head = await readFileHead(s.file, SUGGESTION_SCAN_BYTES);
+      setSources((prev) =>
+        prev.map((p) =>
+          p.relative === s.relative && !persistedSections[p.relative] && p.section === "lore"
+            ? { ...p, section: suggestDocumentSection(head) }
+            : p,
+        ),
+      );
+    }
   };
 
   const openPicker = () => fileInputRef.current?.click();
+
+  // --- classifier (BLOQUE 1 piece 1) --------------------------------------
+
+  /** Author override: the author's explicit choice is final (D2) — the
+   *  heuristic suggestion is discarded for that file. */
+  const handleSectionChange = (relative: string, section: string) => {
+    setSources((prev) =>
+      prev.map((s) => (s.relative === relative ? { ...s, section } : s)),
+    );
+  };
 
   // --- analyze (read-only) ------------------------------------------------
 
@@ -562,31 +807,39 @@ export default function WorldImporter() {
     setPhaseMessage("Preparando análisis…");
     setStep("analyzing");
     setStreamProgress(null);
+    setAnalysisProgress(null);
+    setMonitoringAfterTimeout(false);
     // Slice 2 — reset advisory state for a fresh analyze. Suggestions live
     // on the candidate row, so a re-analyze supersedes the prior list.
     setEnrichmentStatus("disabled");
     setSuggestionDecisions(new Map());
     setApprovedSuggestionIds([]);
     setDecidingSuggestionId(null);
+    let activeJobId: string | null = null;
     try {
-      let activeJobId: string;
       if (isResumeIntaking) {
         // File already uploaded — skip create + stream, go to analyze.
         activeJobId = jobId!;
         setPhaseMessage(
-          enrichEnabled
-            ? "Analizando contenido y consultando asistente (solo lectura)…"
-            : "Analizando contenido (solo lectura)…",
+          "Analizando contenido y consultando asistente (solo lectura)…",
         );
       } else {
+        // Classifier (BLOQUE 1 piece 1): thread the author-chosen sections
+        // (relative_path → section) into the create-job request; the server
+        // validates them and persists them on the job for resume.
+        const sections: Record<string, string> = {};
+        for (const s of sources) {
+          if (s.section) sections[s.relative] = s.section;
+        }
         const { job: created } = await createImportJob(mundo, {
           source_kind: sourceKind,
           files: sources.map((s) => s.relative),
+          sections,
         });
         activeJobId = created.job_id;
         setJobId(created.job_id);
         setJob(created);
-        persistJob(created.job_id, sourceKind);
+        persistJob(created.job_id, sourceKind, sections);
 
         // Stream every file as durable chunks (idempotent at same offsets).
         const count = sources.length;
@@ -601,18 +854,19 @@ export default function WorldImporter() {
         }
         setStreamProgress(null);
         setPhaseMessage(
-          enrichEnabled
-            ? "Analizando contenido y consultando asistente (solo lectura)…"
-            : "Analizando contenido (solo lectura)…",
+          "Analizando contenido y consultando asistente (solo lectura)…",
         );
       }
-      // Slice 2 — opt-in is a single boolean; absent body preserves the
-      // legacy deterministic analyze contract (no Hermes call). The server
-      // also treats the absent body as the default ``enrich: false``.
-      const analysis = enrichEnabled
-        ? await analyzeImportJob(mundo, activeJobId, { enrich: true })
-        : await analyzeImportJob(mundo, activeJobId);
+      // Enrichment always runs (the graph needs the resulting metadata); the
+      // flag is explicit for clarity and to honor a future ``enrich: false``.
+      const analysis = await analyzeImportJob(mundo, activeJobId, {
+        enrich: true,
+      });
       setJob(analysis.job);
+      setAnalysisProgress({
+        stage: analysis.job.progress_stage || "Analizando",
+        pct: analysis.job.progress_pct ?? null,
+      });
       // Slice 2 — server-attributed enrichment status is batch-level; the
       // fail-open contract guarantees non-blocking even when the gateway
       // is unavailable (status === "error").
@@ -635,9 +889,20 @@ export default function WorldImporter() {
       setResumeIntaking(false);
       setStep("review");
     } catch (err) {
-      setError(importErrorMessage(err));
-      setPhaseMessage("");
-      setStep("result");
+      // A timeout/connection drop on the long synchronous analyze does NOT
+      // mean the job failed — the server keeps working and reports
+      // ``analyzing``. Monitor the same job by polling instead of declaring
+      // a false server outage.
+      if (activeJobId) {
+        await monitorJob(
+          activeJobId,
+          "Se perdió la conexión mientras el servidor analizaba. Sigo monitoreando el trabajo…",
+        );
+      } else {
+        setError(importErrorMessage(err));
+        setPhaseMessage("");
+        setStep("result");
+      }
     } finally {
       setAnalyzing(false);
     }
@@ -675,7 +940,9 @@ export default function WorldImporter() {
         setPhaseMessage("Analizando contenido (solo lectura)…");
         setStep("analyzing");
         try {
-          const analysis = await analyzeImportJob(mundo, jobId);
+          const analysis = await analyzeImportJob(mundo, jobId, {
+            enrich: true,
+          });
           setJob(analysis.job);
           if (analysis.enrichment_status) {
             setEnrichmentStatus(analysis.enrichment_status);
@@ -1268,8 +1535,26 @@ export default function WorldImporter() {
                   <span className="min-w-0 truncate" title={s.relative}>
                     {s.relative}
                   </span>
-                  <span className="shrink-0 text-xs text-tinta-desvaida">
-                    {formatBytes(s.size)}
+                  <span className="flex shrink-0 items-center gap-3">
+                    {/* Classifier (BLOQUE 1 piece 1): per-file section
+                        choice. Pre-filled by the heuristic (or the persisted
+                        job sections on resume); the author may override —
+                        the choice is final (D2). */}
+                    <select
+                      value={s.section}
+                      onChange={(e) => handleSectionChange(s.relative, e.target.value)}
+                      aria-label={`Sección de ${s.relative}`}
+                      className="rounded border border-filio bg-cripta px-1.5 py-0.5 text-xs text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50"
+                    >
+                      {CLASSIFIER_SECTIONS.map((opt) => (
+                        <option key={opt} value={opt}>
+                          {sectionLabel(opt)}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-xs text-tinta-desvaida">
+                      {formatBytes(s.size)}
+                    </span>
                   </span>
                 </li>
               ))}
@@ -1294,37 +1579,6 @@ export default function WorldImporter() {
               </span>
             )}
           </div>
-
-          {/* Slice 2 — optional Hermes advisory enrichment opt-in. The
-              reviewer stays in control: suggestions never mutate the
-              deterministic diagnosis and only materialize on a gated
-              execute when the author approves them. */}
-          <label
-            className="mt-4 flex cursor-pointer items-start gap-3 rounded-lg border border-filio bg-cripta p-3 focus-within:ring-2 focus-within:ring-llamita/50"
-            data-testid="enrich-toggle"
-          >
-            <input
-              type="checkbox"
-              className="mt-0.5 h-4 w-4 accent-llamita"
-              checked={enrichEnabled}
-              onChange={(e) => setEnrichEnabled(e.target.checked)}
-              aria-describedby="enrich-toggle-desc"
-            />
-            <span>
-              <span className="block text-small font-medium text-pergamino">
-                Pedirle al asistente sugerencias de clasificación y relaciones
-              </span>
-              <span
-                id="enrich-toggle-desc"
-                className="block text-xs text-tinta-desvaida"
-              >
-                Opcional. Las sugerencias son orientativas y requieren tu
-                aprobación individual antes de aplicarse. Si el asistente no
-                responde, el análisis sigue siendo válido y se omite el
-                enriquecimiento.
-              </span>
-            </span>
-          </label>
         </div>
       )}
 
@@ -1342,6 +1596,18 @@ export default function WorldImporter() {
                     {streamProgress.fileIndex + 1} de{" "}
                     {streamProgress.fileCount}
                   </p>
+                )}
+                {analysisProgress && !streamProgress && (
+                  <>
+                    <p className="mt-1 text-small text-tinta-desvaida">
+                      Etapa: {analysisProgress.stage}
+                    </p>
+                    <p className="mt-1 text-small text-tinta-desvaida">
+                      {monitoringAfterTimeout
+                        ? "Reconectando con el servidor…"
+                        : `Tiempo transcurrido: ${formatElapsed(elapsedSec)}`}
+                    </p>
+                  </>
                 )}
               </div>
             </div>
@@ -1364,6 +1630,30 @@ export default function WorldImporter() {
                 />
               </div>
             )}
+            {analysisProgress && !streamProgress && (
+              <div
+                className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-filio"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={analysisProgress.pct ?? 0}
+                aria-valuetext={
+                  analysisProgress.pct === null
+                    ? "Progreso indeterminado"
+                    : `${analysisProgress.pct}%`
+                }
+                aria-label="Progreso del análisis"
+              >
+                <div
+                  className="h-full bg-llamita transition-all"
+                  style={{
+                    width: `${
+                      analysisProgress.pct === null ? 18 : analysisProgress.pct
+                    }%`,
+                  }}
+                />
+              </div>
+            )}
             <div className="mt-5">
               <Button variant="ghost" onClick={handleCancel}>
                 <Icon name="stop" size={16} />
@@ -1380,6 +1670,54 @@ export default function WorldImporter() {
             El análisis es de solo lectura. Elegí qué aprobar y luego confirmá
             la importación: escribir es una acción explícita y separada.
           </p>
+
+          {/* Importador-auto-frontmatter (Phase 4) — on-screen H1-H5 authoring
+              guide. Explains how headings map to roots/folders/fichas and how
+              empty scaffolding is preserved, so the author sees the mapping
+              and empty-section behavior before approving. */}
+          <details
+            className="mt-4 rounded-lg border border-filio bg-madero"
+            data-testid="authoring-guide"
+          >
+            <summary className="flex cursor-pointer items-center justify-between gap-2 px-4 py-3 text-small font-medium text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 [&::-webkit-details-marker]:hidden">
+              <span>Guía de estructura H1–H5</span>
+              <Icon
+                name="chevron-down"
+                size={14}
+                className="transition-transform group-open:rotate-180"
+              />
+            </summary>
+            <div className="border-t border-filio px-4 py-3 text-xs text-tinta-desvaida">
+              <p className="text-pergamino">
+                El análisis arma una jerarquía real a partir de los encabezados
+                del documento. Cada ficha conserva su texto original completo.
+              </p>
+              <ul className="mt-2 list-disc space-y-1 pl-4">
+                <li>
+                  <span className="text-pergamino">H1</span> — raíz/índice del
+                  mundo. Toda sección H1 queda como carpeta raíz, incluso si
+                  está vacía (el andamiaje intencional se preserva, nunca se
+                  borra).
+                </li>
+                <li>
+                  <span className="text-pergamino">H2–H5</span> — encabezados
+                  anidados bajo su H1. Un encabezado con subsecciones se
+                  convierte en una <span className="text-pergamino">ficha</span>{" "}
+                  (carpeta con sus fichas hijas).
+                </li>
+                <li>
+                  <span className="text-pergamino">Texto sin subsecciones</span>{" "}
+                  — el texto plano de un encabezado sin hijos queda en la ficha
+                  padre, nunca se descarta ni se crea una ficha vacía.
+                </li>
+                <li>
+                  <span className="text-pergamino">Sin encabezados</span> — si
+                  el documento no tiene encabezados útiles, se crea una sola
+                  ficha implícita con el nombre del archivo.
+                </li>
+              </ul>
+            </div>
+          </details>
 
           {/* Slice 2 — enrichment status banner. Mirrors the server-attributed
               state so reviewers never see a different answer than the audit
@@ -1677,20 +2015,45 @@ function CandidateCard({
     (s): s is Exclude<ImportSuggestion, VisionSuggestion & { __type__: "vision" }> =>
       s.__type__ !== "vision",
   );
+  // Importador-auto-frontmatter (Phase 4) — analyzed metadata for the ficha.
+  const fmBadge = candidate.frontmatter
+    ? frontmatterStateBadge(candidate.frontmatter.state)
+    : null;
+  const unresolvedMediaSpans = unresolvedMedia(candidate);
+  const resolvedMediaCount =
+    candidate.media_diagnostics.length - unresolvedMediaSpans.length;
+  // Canonical identity: the ficha's stable ``::``-qualified identity. Prefer
+  // the display title for the human label; fall back to the identity itself.
+  const fichaTitle =
+    candidate.display_title || candidate.normalized_identity;
 
   return (
     <details className="group rounded-lg border border-filio bg-madero">
       <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 px-4 py-3 text-small font-medium text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 [&::-webkit-details-marker]:hidden">
         <span className="min-w-0 truncate">
-          {candidate.normalized_identity}
+          {fichaTitle}
           <span className="ml-2 text-xs font-normal text-tinta-desvaida">
             {candidate.provenance.source_path}
           </span>
         </span>
         <span className="flex items-center gap-2">
+          {fmBadge && (
+            <span
+              data-testid={`frontmatter-state-${candidate.candidate_id}`}
+            >
+              <Badge variant={fmBadge.variant}>{fmBadge.label}</Badge>
+            </span>
+          )}
           {hasIssues && <Badge variant="warning">validación</Badge>}
           {ambiguousImages.length > 0 && (
             <Badge variant="warning">ubicación ambigua</Badge>
+          )}
+          {unresolvedMediaSpans.length > 0 && (
+            <span data-testid={`media-warning-${candidate.candidate_id}`}>
+              <Badge variant="warning">
+                {unresolvedMediaSpans.length} media sin resolver
+              </Badge>
+            </span>
           )}
           {candidate.images.length > 0 && candidate.images.length - ambiguousImages.length > 0 && (
             <Badge variant="info">{candidate.images.length} img</Badge>
@@ -1707,6 +2070,14 @@ function CandidateCard({
             <dt className="text-xs text-tinta-desvaida">Origen</dt>
             <dd className="text-pergamino">{candidate.provenance.source_path}</dd>
           </div>
+          {candidate.canonical_id && (
+            <div data-testid={`canonical-id-${candidate.candidate_id}`}>
+              <dt className="text-xs text-tinta-desvaida">Identidad canónica</dt>
+              <dd className="break-words font-mono text-pergamino">
+                {candidate.canonical_id}
+              </dd>
+            </div>
+          )}
           {candidate.provenance.heading_path && (
             <div>
               <dt className="text-xs text-tinta-desvaida">Sección de origen</dt>
@@ -1735,6 +2106,104 @@ function CandidateCard({
             <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-filio bg-cripta p-3 text-xs text-tinta-desvaida">
               {candidate.content_preview}
             </pre>
+          </div>
+        )}
+
+        {/* Importador-auto-frontmatter (Phase 4) — reviewed frontmatter, dense
+            summary, and isolated media diagnostics. The frontmatter is the
+            analysis output the author approves; the summary is the Step 2
+            dense text; unresolved ``![][key]`` spans surface as non-blocking
+            warnings (excluded from the gallery, never failing the ficha). */}
+        {candidate.summary && (
+          <div className="mt-3" data-testid={`summary-${candidate.candidate_id}`}>
+            <p className="text-xs text-tinta-desvaida">Resumen</p>
+            <p className="mt-1 text-xs text-pergamino">{candidate.summary}</p>
+          </div>
+        )}
+
+        {candidate.frontmatter && (
+          <div
+            className="mt-3 rounded-md border border-filio bg-cripta p-3"
+            data-testid={`frontmatter-${candidate.candidate_id}`}
+          >
+            <p className="text-xs text-tinta-desvaida">Frontmatter propuesto</p>
+            <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-small tablet:grid-cols-2">
+              <div>
+                <dt className="text-xs text-tinta-desvaida">Título</dt>
+                <dd className="text-pergamino">{candidate.frontmatter.title}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-tinta-desvaida">Tipo</dt>
+                <dd className="text-pergamino">
+                  {candidate.frontmatter.type || "—"}
+                </dd>
+              </div>
+              {candidate.frontmatter.description && (
+                <div className="tablet:col-span-2">
+                  <dt className="text-xs text-tinta-desvaida">Descripción</dt>
+                  <dd className="text-pergamino">
+                    {candidate.frontmatter.description}
+                  </dd>
+                </div>
+              )}
+              {candidate.frontmatter.relaciones.length > 0 && (
+                <div className="tablet:col-span-2">
+                  <dt className="text-xs text-tinta-desvaida">Relaciones</dt>
+                  <dd className="flex flex-wrap gap-1">
+                    {candidate.frontmatter.relaciones.map((rel) => (
+                      <span
+                        key={rel}
+                        className="rounded-full border border-filio bg-madero px-2 py-0.5 font-mono text-xs text-pergamino"
+                      >
+                        {rel}
+                      </span>
+                    ))}
+                  </dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        )}
+
+        {candidate.media_diagnostics.length > 0 && (
+          <div className="mt-3" data-testid={`media-diagnostics-${candidate.candidate_id}`}>
+            <p className="text-xs text-tinta-desvaida">
+              Imágenes referenciadas{" "}
+              {resolvedMediaCount > 0 && (
+                <span className="text-musgo">
+                  · {resolvedMediaCount} resuelta{resolvedMediaCount === 1 ? "" : "s"}
+                </span>
+              )}
+              {unresolvedMediaSpans.length > 0 && (
+                <span className="text-llamita">
+                  {" "}
+                  · {unresolvedMediaSpans.length} sin resolver
+                </span>
+              )}
+            </p>
+            <ul className="mt-2 flex flex-col gap-2">
+              {candidate.media_diagnostics.map((diag) => (
+                <li
+                  key={diag.image_key}
+                  className="rounded-md border border-filio bg-cripta px-3 py-2"
+                >
+                  <span className="font-mono text-xs text-pergamino">
+                    {diag.reference}
+                  </span>
+                  {diag.status === "unresolved" && (
+                    <span className="ml-2 text-xs text-llamita">
+                      no hay definición — se conserva tal cual, no se registra
+                      en la galería
+                    </span>
+                  )}
+                  {diag.status === "resolved" && (
+                    <span className="ml-2 text-xs text-musgo">
+                      {diag.target_path}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
           </div>
         )}
 

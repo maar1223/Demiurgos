@@ -78,6 +78,58 @@ class TestTextOracle:
 
         assert runner.run_text().outcome == OUTCOME_MALFORMED
 
+    def test_content_parts_array_passes_text_oracle(self):
+        # Multimodal OpenAI-compatible endpoints return content as an array of
+        # content parts even for plain text answers.
+        answer = {"choices": [{"message": {"content": [{"type": "text", "text": TEXT_MARKER}]}}]}
+        runner = ProbeRunner("http://x.test/v1", "m", transport=_transport([], [answer]))
+
+        assert runner.run_text() == ProbeResult(OUTCOME_PASSED, "text-marker", "Text oracle passed.")
+
+    def test_content_parts_array_skips_non_text_parts(self):
+        answer = {
+            "choices": [{
+                "message": {
+                    "content": [
+                        {"type": "image_url", "image_url": "data:image/jpeg;base64,AAAA=="},
+                        {"type": "text", "text": f"the {TEXT_MARKER} word"},
+                    ],
+                },
+            }],
+        }
+        runner = ProbeRunner("http://x.test/v1", "m", transport=_transport([], [answer]))
+
+        assert runner.run_text().outcome == OUTCOME_PASSED
+
+    def test_content_parts_array_without_text_is_malformed(self):
+        answer = {"choices": [{"message": {"content": [{"type": "image_url", "image_url": "data:image/jpeg;base64,AAAA=="}]}}]}
+        runner = ProbeRunner("http://x.test/v1", "m", transport=_transport([], [answer]))
+
+        assert runner.run_text().outcome == OUTCOME_MALFORMED
+
+    def test_reasoning_content_fallback_passes_text_oracle(self):
+        # Reasoning models (MiMo, DeepSeek-reasoner) put the answer in
+        # reasoning_content while content is null.
+        answer = {"choices": [{"message": {"content": None, "reasoning_content": TEXT_MARKER}}]}
+        runner = ProbeRunner("http://x.test/v1", "m", transport=_transport([], [answer]))
+
+        assert runner.run_text() == ProbeResult(OUTCOME_PASSED, "text-marker", "Text oracle passed.")
+
+    def test_reasoning_text_wrapped_in_think_tag_still_passes(self):
+        answer = {"choices": [{"message": {"content": f"<think>some reasoning</think> {TEXT_MARKER}"}}]}
+        runner = ProbeRunner("http://x.test/v1", "m", transport=_transport([], [answer]))
+
+        assert runner.run_text().outcome == OUTCOME_PASSED
+
+    def test_malformed_hint_is_redacted_and_bounded(self):
+        answer = {"choices": [{"message": {"content": None}}]}
+        runner = ProbeRunner("http://x.test/v1", "m", transport=_transport([], [answer]))
+
+        result = runner.run_text()
+        assert result.outcome == OUTCOME_MALFORMED
+        assert "Hint:" in result.message
+        assert len(result.message) < 300
+
     def test_http_error_is_provider_failure(self):
         def failing(method, url, headers, payload):
             return 503, {"error": "unavailable"}
@@ -183,6 +235,14 @@ class TestVisionOracle:
         runner = ProbeRunner("http://x.test/v1", "m", transport=_transport([], [_text_answer("maybe")]))
 
         assert runner.run_vision().outcome == OUTCOME_NOT_CAUSAL
+
+    def test_vision_with_think_wrapper_still_passes(self):
+        # Reasoning models wrap the binary answer in <think>...</think>.
+        runner = ProbeRunner(
+            "http://x.test/v1", "m",
+            transport=_transport([], [_text_answer("<think>let me see</think> no"), _text_answer("<think>checking</think> Yes.")]),
+        )
+        assert runner.run_vision().outcome == OUTCOME_PASSED
 
     def test_failure_on_first_image_stops_early(self):
         import httpx

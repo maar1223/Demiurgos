@@ -499,12 +499,15 @@ class TestResolveTarget:
     guessed target.
     """
 
-    def _candidate(self, ident: str, source_path: str) -> Candidate:
+    def _candidate(self, ident: str, source_path: str,
+                   section: str = "", canonical_id: str = "") -> Candidate:
         return Candidate(
             candidate_id=f"cand-{ident}", job_id="job1", world="world1",
             normalized_identity=ident, source_hash=f"sha256:{ident}",
             provenance=Provenance(source_path=source_path, source_kind="loose",
                                   source_hash=f"sha256:{ident}"),
+            section=section,
+            canonical_id=canonical_id,
         )
 
     def test_uppercase_lore_normalized_to_lowercase(self, tmp_path):
@@ -610,6 +613,88 @@ class TestResolveTarget:
         rr = resolve_target("world1", rev, mundos_dir=tmp_path)
         assert rr.status == "review"
         assert rr.status != "resolved"
+
+    def test_author_section_wins_over_source_path(self, tmp_path):
+        # BLOQUE 1 piece 1 — the classifier's author-chosen section roots the
+        # canonical target, even when the legacy source-path derivation would
+        # have produced a different (or unknown) section.
+        cand = self._candidate("Enciclopedia", "Enciclopedia.md",
+                               section="personajes")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "personajes/Enciclopedia.md"
+        assert r.alias_used == ""
+
+    def test_author_section_wins_over_legacy_alias(self, tmp_path):
+        # A conflicting legacy alias path (Lore/Places → lore/lugares) must
+        # NOT win when the author chose a different section explicitly.
+        cand = self._candidate("City", "Lore/Places/City.md",
+                               section="referencias")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "referencias/City.md"
+        assert r.alias_used == ""
+
+    def test_empty_section_falls_back_to_legacy_source_path(self, tmp_path):
+        # Empty section (legacy jobs / files with no map entry) → the legacy
+        # source-path branch runs unchanged.
+        cand = self._candidate("Dottua", "Lore/Dottua.md", section="")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Dottua.md"
+
+    # BLOQUE 1 piece 2 — canonical_id hierarchy (identity-path-mapping):
+    # section + valid canonical_id → slugged subfolder chain + filename;
+    # empty/invalid canonical_id → piece-1 fallback.
+
+    def test_section_with_canonical_id_multi_segment(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Áyagars::Impacto Social::Áyagar del 9no Stal")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == \
+            "lore/ayagars/impacto-social/ayagar-del-9no-stal.md"
+        assert r.normalized_source == r.canonical_path
+        assert r.alias_used == ""
+
+    def test_section_with_empty_canonical_id_piece1_fallback(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Enciclopedia de los Vibrantes.md"
+
+    def test_section_with_invalid_canonical_id_fallback(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id=":::broken")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Enciclopedia de los Vibrantes.md"
+
+    def test_section_with_ordinal(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Sistema Stal::1er Stal#2")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/sistema-stal/1er-stal-2.md"
+
+    def test_section_with_accent(self, tmp_path):
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md",
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Política | Distribución Y Territorios::Dottua")
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "resolved"
+        assert r.canonical_path == \
+            "lore/politica-distribucion-y-territorios/dottua.md"
 
 
 # ---------------------------------------------------------------------------
@@ -808,6 +893,43 @@ class TestVisionExecution:
 
 
 # ---------------------------------------------------------------------------
+# Phase 3 (importador-auto-frontmatter) — importer H1 scope authority (3.4)
+# ---------------------------------------------------------------------------
+
+class TestImporterScopeAuthority:
+    """world_authority.is_importer_scope_permitted permits only canonical OKF
+    content sections; system/transversal dirs are never permitted."""
+
+    def _permitted(self, section):
+        from world_authority import is_importer_scope_permitted
+        return is_importer_scope_permitted(section)
+
+    def test_canonical_sections_permitted(self):
+        for section in ("lore", "personajes", "sagas", "referencias"):
+            assert self._permitted(section)
+        # Case-insensitive on input.
+        assert self._permitted("Lore")
+
+    def test_system_and_transversal_dirs_rejected(self):
+        for section in ("_context", ".history", ".papelera",
+                        "relaciones", "canon", "conflictos", "propuestas",
+                        "ideas", "unknown"):
+            assert not self._permitted(section)
+
+    def test_unknown_section_rejected_by_resolve_target(self, tmp_path):
+        # resolve_target now routes through the shared authority: an unknown
+        # top-level section is reported for review (never guessed).
+        cand = Candidate(
+            candidate_id="cand-x", job_id="job1", world="world1",
+            normalized_identity="x", source_hash="sha256:x",
+            provenance=Provenance(source_path="Mystery/X.md",
+                                  source_kind="loose", source_hash="sha256:x"),
+        )
+        r = resolve_target("world1", cand, mundos_dir=tmp_path)
+        assert r.status == "review"
+
+
+# ---------------------------------------------------------------------------
 # Spool cleanup — terminal states reclaim the job spool (best-effort)
 # ---------------------------------------------------------------------------
 
@@ -878,3 +1000,52 @@ class TestSpoolCleanupLifecycle:
         # Opción A — the DB row is reaped regardless of the spool failure.
         assert store.get_job(job.job_id) is None
         assert (spool_dir / "job1").exists()  # cleanup failed but DB reaped
+
+
+# ---------------------------------------------------------------------------
+# BLOQUE 3 — shared plan_merge helper + execute backstop (collision design)
+# ---------------------------------------------------------------------------
+
+
+class TestCollisionSharedHelper:
+    def test_plan_merge_shared_helper_analyze_and_execute(self):
+        """BLOQUE 3 — the analyze-time path preflight (import_router stamping)
+        and the execute-time backstop (import_service._execute_candidate) call
+        the SAME module-level ``plan_merge`` — no duplicated merge logic."""
+        import import_router
+        import import_service as import_service_mod
+        # Both call sites import the identical function object from
+        # import_service; drift between analyze prediction and execute
+        # enforcement is structurally impossible.
+        assert import_router.plan_merge is import_service_mod.plan_merge
+
+    def test_execute_backstop_unchanged(self, store, service, tmp_path):
+        """BLOQUE 3 — execute-time plan_merge enforcement is byte-identical:
+        a candidate approved despite an analyze-time path-collision advisory
+        is still refused at execute time when plan_merge says review (spec:
+        Execute still enforces plan_merge)."""
+        job = _job()
+        store.create_job(job)
+        target = tmp_path / "world1" / "lore" / "A.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        prior = "---\ntype: personaje\nname: A\n---\nold body"
+        target.write_text(prior, encoding="utf-8")
+        candidate = _candidate()
+        # Simulate the analyze-time collision stamp: the candidate reached
+        # review with a path-collision advisory and status=conflict, and the
+        # Author approved it anyway. Execute must STILL enforce plan_merge.
+        candidate.okf_issues = [{
+            "code": "path-collision",
+            "message": "Target ficha exists with different content; "
+                       "merge requires review.",
+            "field": "target",
+            "reference": "lore/A.md",
+        }]
+        candidate.status = "conflict"
+        store.add_candidate(candidate)
+        approval = service.issue_approval(job, "tester", [])
+        outcomes = service.execute(job, "tester", approval.digest,
+                                   approval.token)
+        assert outcomes[0].action == "review"
+        assert not outcomes[0].written
+        assert target.read_text(encoding="utf-8") == prior  # no canon write

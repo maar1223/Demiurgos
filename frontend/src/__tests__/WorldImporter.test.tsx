@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import type { Mock } from "vitest";
 import WorldImporter from "@/pages/WorldImporter";
@@ -101,6 +101,14 @@ function candidate(overrides: Partial<ImportCandidate> = {}): ImportCandidate {
       source_order: 0,
     },
     content_preview: "Las murallas de la Ciudad Alta…",
+    // Importador-auto-frontmatter (Phase 4) — analyzed metadata. Default to
+    // empty/no-analysis so existing assertions stay clean; per-test overrides
+    // attach canonical identity, summaries, frontmatter, and media diagnostics.
+    canonical_id: "",
+    display_title: "",
+    summary: "",
+    frontmatter: null,
+    media_diagnostics: [],
     status: "pending",
     okf_issues: [],
     size_bytes: 1024,
@@ -370,6 +378,102 @@ describe("WorldImporter — accessible, preservation-first workflow (slice 3)", 
     expect(
       screen.getByRole("button", { name: /Reanudar revisión/ }),
     ).toBeInTheDocument();
+  });
+
+  it("renders a section dropdown per selected file with the classifier options (BLOQUE 1 piece 1)", async () => {
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: {
+        files: [
+          new File(["abc"], "planos.md"),
+          new File(["def"], "personas.md"),
+        ],
+      },
+    });
+
+    const selects = await screen.findAllByRole("combobox");
+    expect(selects).toHaveLength(2);
+    const options = Array.from(selects[0].querySelectorAll("option")).map(
+      (o) => o.value,
+    );
+    expect(options).toEqual(["lore", "personajes", "referencias"]);
+    // ``sagas`` must NOT be offered (its retirement is a separate change).
+    expect(options).not.toContain("sagas");
+  });
+
+  it("pre-fills the dropdown from the content heuristic (BLOQUE 1 piece 1)", async () => {
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: {
+        files: [new File(["El glosario de términos"], "referencias.md")],
+      },
+    });
+
+    const dropdown = await screen.findByLabelText("Sección de referencias.md");
+    await waitFor(() => expect(dropdown).toHaveValue("referencias"));
+  });
+
+  it("defaults the dropdown to lore when the content has no signal (BLOQUE 1 piece 1)", async () => {
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: { files: [new File(["Un texto neutro"], "neutral.md")] },
+    });
+
+    const dropdown = await screen.findByLabelText("Sección de neutral.md");
+    expect(dropdown).toHaveValue("lore");
+  });
+
+  it("keeps the author's manual override and sends it in the create body (BLOQUE 1 piece 1)", async () => {
+    mockAnalyzeToReview([candidate()]);
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: { files: [new File(["abc"], "planos.md")] },
+    });
+
+    const dropdown = await screen.findByLabelText("Sección de planos.md");
+    fireEvent.change(dropdown, { target: { value: "personajes" } });
+    expect(dropdown).toHaveValue("personajes");
+
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    expect(createImportJob).toHaveBeenCalledWith(
+      "mundo",
+      expect.objectContaining({
+        source_kind: "loose",
+        files: ["planos.md"],
+        sections: { "planos.md": "personajes" },
+      }),
+    );
+  });
+
+  it("sends the heuristic suggestion in the create body when the author keeps it (BLOQUE 1 piece 1)", async () => {
+    mockAnalyzeToReview([candidate()]);
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, {
+      target: { files: [new File(["El glosario"], "glosario.md")] },
+    });
+
+    const dropdown = await screen.findByLabelText("Sección de glosario.md");
+    await waitFor(() => expect(dropdown).toHaveValue("referencias"));
+
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    expect(createImportJob).toHaveBeenCalledWith(
+      "mundo",
+      expect.objectContaining({
+        sections: { "glosario.md": "referencias" },
+      }),
+    );
   });
 });
 
@@ -726,53 +830,22 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     });
   }
 
-  it("renders the opt-in toggle on the select step (slice 2)", async () => {
-    (createImportJob as Mock).mockResolvedValue({ job: job({ state: "pending" }) });
-    (streamImportFile as Mock).mockResolvedValue(3);
-    (analyzeImportJob as Mock).mockResolvedValue({
-      job: job({ state: "review" }),
-      candidates: 0,
-      enrichment_status: "disabled",
-    });
-    (getImportReview as Mock).mockResolvedValue({
-      job: job({ state: "review" }),
-      digest: "digest1",
-      candidates: [candidate()],
-      enrichment_status: "disabled",
-      suggestions: {},
-    });
-
+  it("always sends the enrich flag (enrichment is not user-toggleable)", async () => {
+    mockAnalyzeToReview([candidate()]);
     renderImporter();
-    const toggle = screen.getByTestId("enrich-toggle");
-    const checkbox = toggle.querySelector(
-      'input[type="checkbox"]',
-    ) as HTMLInputElement;
-    expect(checkbox.checked).toBe(false);
 
-    // Enable enrichment and verify analyzeImportJob receives the opt-in.
-    fireEvent.click(checkbox);
-    expect(checkbox.checked).toBe(true);
+    // There is no enrichment checkbox on the select step: enrichment always
+    // runs (the graph needs the resulting type/relationships) and the user
+    // cannot opt out by accident.
+    expect(screen.queryByTestId("enrich-toggle")).not.toBeInTheDocument();
 
-    const input = screen.getByLabelText("Selección de fuentes");
-    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
-    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
-
+    await selectFileAndAnalyze();
+    // The flag is explicit ``{enrich: true}`` — no toggle can send false.
     expect(analyzeImportJob).toHaveBeenCalledWith(
       "mundo",
       expect.any(String),
       { enrich: true },
     );
-  });
-
-  it("omits the enrich flag when the toggle is left off (slice 2)", async () => {
-    mockAnalyzeToReview([candidate()]);
-    renderImporter();
-    await selectFileAndAnalyze();
-
-    // The signature is ``analyzeImportJob(mundo, jobId, options?)``; with
-    // the toggle off, no options object is passed at all.
-    expect(analyzeImportJob).toHaveBeenCalledWith("mundo", expect.any(String));
   });
 
   it("renders advisory cards with provenance and confidence per suggestion", async () => {
@@ -1213,7 +1286,163 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     // was already on the server spool.
     expect(createImportJob).not.toHaveBeenCalled();
     expect(streamImportFile).not.toHaveBeenCalled();
-    // analyzeImportJob was called with the recovered job ID.
-    expect(analyzeImportJob).toHaveBeenCalledWith("mundo", "j-intaking");
+    // analyzeImportJob was called with the recovered job ID and the
+    // explicit enrich flag (default ON).
+    expect(analyzeImportJob).toHaveBeenCalledWith(
+      "mundo", "j-intaking", { enrich: true },
+    );
+  });
+});
+
+describe("WorldImporter — structured frontmatter review (Phase 4)", () => {
+  beforeEach(() => {
+    (useWorlds as Mock).mockReturnValue({
+      worlds: [world],
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    (listImportJobs as Mock).mockResolvedValue({ jobs: [], next_cursor: null });
+  });
+
+  afterEach(() => {
+    window.sessionStorage.clear();
+  });
+
+  it("shows the H1-H5 authoring guide with empty-section behavior in review", async () => {
+    mockAnalyzeToReview([candidate()]);
+    renderImporter();
+    await selectFileAndAnalyze();
+
+    const guide = screen.getByTestId("authoring-guide");
+    expect(guide).toBeInTheDocument();
+    expect(
+      within(guide).getByText("Guía de estructura H1–H5"),
+    ).toBeInTheDocument();
+    // H1 maps to a root/índice folder.
+    expect(within(guide).getByText(/raíz\/índice del mundo/)).toBeInTheDocument();
+    // H2–H5 map to fichas.
+    expect(within(guide).getByText(/se convierte en una/)).toBeInTheDocument();
+    // Empty scaffolding is preserved, never deleted.
+    expect(
+      within(guide).getByText(/andamiaje intencional se preserva/),
+    ).toBeInTheDocument();
+    // Childless text folds into the parent ficha.
+    expect(
+      within(guide).getByText(/texto plano de un encabezado sin hijos/),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the generated frontmatter state badge and canonical identity", async () => {
+    mockAnalyzeToReview([
+      candidate({
+        canonical_id: "Ayagares::Descripción Física::Forma Base",
+        display_title: "Forma Base",
+        summary:
+          "La Forma Base es la morfología corporal estándar de la especie.",
+        frontmatter: {
+          title: "Forma Base",
+          type: "lore",
+          description: "Morfología corporal estándar.",
+          relaciones: ["Ayagares::Especies"],
+          state: "generated",
+        },
+      }),
+    ]);
+    renderImporter();
+    await selectFileAndAnalyze();
+
+    // Display title labels the row; canonical identity is shown in the body.
+    // (The title appears in the row header and again in the frontmatter block.)
+    expect(screen.getAllByText("Forma Base").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("canonical-id-c1")).toHaveTextContent(
+      "Ayagares::Descripción Física::Forma Base",
+    );
+
+    // State badge reads "generado" for the generated state.
+    expect(screen.getByTestId("frontmatter-state-c1")).toHaveTextContent(
+      "generado",
+    );
+
+    // The reviewed frontmatter (title/type/description/relaciones) is visible.
+    const fm = screen.getByTestId("frontmatter-c1");
+    expect(within(fm).getByText("lore")).toBeInTheDocument();
+    expect(
+      within(fm).getByText("Morfología corporal estándar."),
+    ).toBeInTheDocument();
+    expect(
+      within(fm).getByText("Ayagares::Especies"),
+    ).toBeInTheDocument();
+
+    // The dense summary is surfaced.
+    expect(screen.getByTestId("summary-c1")).toHaveTextContent(
+      "morfología corporal",
+    );
+  });
+
+  it("renders a fallback state badge when enrichment failed open", async () => {
+    mockAnalyzeToReview([
+      candidate({
+        display_title: "Manual Ficha",
+        frontmatter: {
+          title: "Manual Ficha",
+          type: null,
+          description: "",
+          relaciones: [],
+          state: "fallback",
+        },
+      }),
+    ]);
+    renderImporter();
+    await selectFileAndAnalyze();
+
+    expect(screen.getByTestId("frontmatter-state-c1")).toHaveTextContent(
+      "respaldo",
+    );
+  });
+
+  it("isolates unresolved media as a non-blocking review warning", async () => {
+    mockAnalyzeToReview([
+      candidate({
+        canonical_id: "Ayagares::Bestiario::Dragón",
+        display_title: "Dragón",
+        media_diagnostics: [
+          {
+            reference: "![][imagen1]",
+            image_key: "imagen1",
+            alt_text: "",
+            status: "unresolved",
+            target_path: "",
+            target_ficha: "Ayagares::Bestiario::Dragón",
+            message: "no hay definición para [imagen1]",
+          },
+          {
+            reference: "![][mapa]",
+            image_key: "mapa",
+            alt_text: "",
+            status: "resolved",
+            target_path: "wiki/media/mapa.png",
+            target_ficha: "Ayagares::Bestiario::Dragón",
+            message: "",
+          },
+        ],
+      }),
+    ]);
+    renderImporter();
+    await selectFileAndAnalyze();
+
+    // Header: the unresolved span is flagged for review.
+    expect(screen.getByTestId("media-warning-c1")).toHaveTextContent(
+      "1 media sin resolver",
+    );
+
+    // Body: both diagnostics render; the unresolved one explains the isolation.
+    const diags = screen.getByTestId("media-diagnostics-c1");
+    expect(within(diags).getByText("![][imagen1]")).toBeInTheDocument();
+    expect(within(diags).getByText("![][mapa]")).toBeInTheDocument();
+    expect(
+      within(diags).getByText(/no hay definición/),
+    ).toBeInTheDocument();
+    expect(within(diags).getByText("wiki/media/mapa.png")).toBeInTheDocument();
   });
 });

@@ -8,6 +8,8 @@ until an explicit gated approval runs (Phase 2).
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -22,6 +24,75 @@ MAX_JOB_AGGREGATE_BYTES = 5 * 1024 * 1024 * 1024  # 5 GB per job, incl. ZIP
 
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Canonical identity contract (importador-auto-frontmatter, Phase 1).
+#
+# ``normalized_identity`` becomes a parent-qualified ID: NFC-normalized,
+# whitespace-collapsed heading segments joined by ``::``; duplicate
+# same-title siblings receive deterministic ``#2``, ``#3`` ordinals in source
+# order (design identity decision). ``Candidate.canonical_id`` is the single
+# relationship key; ``normalized_identity`` remains its uniqueness-compatible
+# alias for legacy rows.
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Canonical identity contract (importador-auto-frontmatter, Phase 1).
+# ---------------------------------------------------------------------------
+
+# Markdown noise stripping for heading-derived identities (see
+# ``normalize_identity_segment``). Matches the splitter cleaning in
+# ``import_analysis`` so identities and titles agree.
+_RE_IDENTITY_INLINE_IMAGE = re.compile(r"!\[([^\]]*)\]\(([^)]*)\)")
+_RE_IDENTITY_REF_IMAGE = re.compile(r"!\[([^\]]*)\]\[([^\]]*)\]")
+_RE_IDENTITY_BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
+_RE_IDENTITY_BOLD_UNDER = re.compile(r"__(.+?)__", re.S)
+_RE_IDENTITY_ITALIC = re.compile(r"(?<!\*)\*([^*\n]+?)\*(?!\*)")
+_RE_IDENTITY_ITALIC_UNDER = re.compile(r"(?<!_)_([^_\n]+?)_(?!_)")
+_RE_IDENTITY_CODE = re.compile(r"`([^`\n]+?)`")
+
+
+def normalize_identity_segment(text: str) -> str:
+    """NFC-normalize and whitespace-collapse one heading segment.
+
+    This is the identity contract's per-segment normalization. ``#N``
+    ordinal markers added for duplicate same-title siblings survive
+    normalization unchanged (``Descripción Física#2`` stays as-is).
+
+    Markdown formatting noise from converted sources (``.docx``/``.pdf`` via
+    markitdown) is stripped so identities never carry ``**bold**`` markers or
+    inline image payloads (e.g. a heading that is only a logo image). Only
+    the formatting markers are removed; the underlying text (or image alt)
+    is preserved.
+    """
+    if not text:
+        return ""
+    # Inline images `![alt](url)` and reference images `![alt][key]` → alt
+    # text (fall back to empty when no alt is present).
+    text = _RE_IDENTITY_REF_IMAGE.sub(lambda m: m.group(1).strip(), text)
+    text = _RE_IDENTITY_INLINE_IMAGE.sub(lambda m: m.group(1).strip(), text)
+    # An image-only heading leaves orphaned wrapping markers (``**``) with
+    # no inner text; drop the marker characters outright.
+    text = text.replace("**", "").replace("__", "")
+    # Unwrap emphasis markers: **bold**, __bold__, *italic*, _italic_, `code`.
+    text = _RE_IDENTITY_BOLD.sub(r"\1", text)
+    text = _RE_IDENTITY_BOLD_UNDER.sub(r"\1", text)
+    text = _RE_IDENTITY_ITALIC.sub(r"\1", text)
+    text = _RE_IDENTITY_ITALIC_UNDER.sub(r"\1", text)
+    text = _RE_IDENTITY_CODE.sub(r"\1", text)
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", text)).strip()
+
+
+def canonical_identity_from_segments(segments: list[str]) -> str:
+    """Parent-qualified canonical identity from heading segments.
+
+    Joins the normalized segments with ``::``; empty segments are dropped so
+    an implicit document root (no heading segments) yields ``""``.
+    """
+    return "::".join(
+        s for s in (normalize_identity_segment(x) for x in segments) if s)
 
 
 class ImportJobState(str, Enum):
@@ -184,6 +255,62 @@ class RelationshipSuggestion(BaseModel):
     review_state: str = "pending"
 
 
+# ---------------------------------------------------------------------------
+# Analysis contracts (importador-auto-frontmatter, Phase 1).
+#
+# Reviewable frontmatter and reference-image diagnostics produced by the
+# analysis funnel. Candidates retain the original body; these contracts
+# expose the analyzed metadata without ever replacing author text.
+# ---------------------------------------------------------------------------
+
+
+class FrontmatterState(str, Enum):
+    """Enrichment state of a frontmatter candidate (design Step 4)."""
+
+    GENERATED = "generated"   # produced by Hermes enrichment
+    MANUAL = "manual"         # author decision / no enrichment requested
+    FALLBACK = "fallback"     # fail-open: timeout/malformed/unavailable
+
+
+class FrontmatterCandidate(BaseModel):
+    """Reviewable OKF frontmatter for one ficha.
+
+    ``relaciones`` carry canonical ids (``::``-qualified), never ambiguous
+    leaf names. ``state`` records generated/manual/fallback so review can
+    attribute the metadata. The candidate body remains the original source
+    text — frontmatter never replaces it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str
+    type: str | None = None
+    description: str = ""
+    relaciones: list[str] = Field(default_factory=list)
+    state: FrontmatterState = FrontmatterState.MANUAL
+
+
+class MediaDiagnostic(BaseModel):
+    """Diagnostic for one reference-style image placement (``![..][key]``).
+
+    The original span is preserved verbatim in ``reference`` so execution can
+    render it untouched. ``status`` is ``resolved`` when a matching
+    ``[key]: path`` definition exists in the same ficha, otherwise
+    ``unresolved`` — that placement is excluded from gallery registration but
+    never blocks the ficha or the job (review warning only).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    reference: str            # verbatim span, e.g. "![][image1]"
+    image_key: str            # e.g. "image1"
+    alt_text: str = ""
+    status: str = "unresolved"  # resolved|unresolved
+    target_path: str = ""     # definition target when resolved
+    target_ficha: str = ""    # canonical id of the owning ficha
+    message: str = ""         # human-readable diagnostic for review
+
+
 class Candidate(BaseModel):
     """A diagnosed, eligible intake candidate (read-only until approved)."""
 
@@ -191,9 +318,21 @@ class Candidate(BaseModel):
     job_id: str
     world: str
     normalized_identity: str
+    canonical_id: str = ""  # parent-qualified "::"-joined identity (analysis)
     source_hash: str
     provenance: Provenance
     content_preview: str = ""
+    # importador-auto-frontmatter (Phase 2 — enrichment funnel): candidates
+    # retain the ficha's display title, the dense per-ficha summary (Step 2),
+    # the reviewable ``FrontmatterCandidate`` (Step 4), and the reference-image
+    # diagnostics (``![][key]`` spans). All are advisory metadata produced by
+    # the funnel; ``content_preview`` stays the original body text and is never
+    # replaced. ``display_title`` also covers the implicit single-ficha path
+    # (a document with no usable headings) via the file stem.
+    display_title: str = ""
+    summary: str = ""
+    frontmatter: FrontmatterCandidate | None = None
+    media_diagnostics: list[MediaDiagnostic] = Field(default_factory=list)
     # Fail-open conversion/extraction diagnostic tokens (e.g.
     # "conversion_unavailable", "conversion_failed", "media_extraction_failed").
     # In-memory only (not persisted to the candidates table) — used to gate
@@ -213,6 +352,11 @@ class Candidate(BaseModel):
     # treat absence as "no suggestions", not as an error.
     enrichment_json: list[dict[str, Any]] | None = None
     enrichment_status: str = "disabled"   # EnrichmentStatus value
+    # Classifier (BLOQUE 1 piece 1): author-chosen target section
+    # (``lore``/``personajes``/``referencias``) stamped at build time from the
+    # job's ``sections`` map. Empty for legacy jobs or files without a map
+    # entry — ``resolve_target`` then falls through to the source-path branch.
+    section: str = ""
 
 
 class ItemOutcome(BaseModel):
@@ -257,6 +401,10 @@ class ExecutionOutcome(BaseModel):
     written: bool = False
     detail: str = ""
     papelera_entry: str = ""
+    # importador-auto-frontmatter (Phase 3): non-blocking review warnings for
+    # unresolved reference-style media (``![][key]`` with no definition).
+    # The ficha/job still succeeds; these surface for review only.
+    media_warnings: list[str] = Field(default_factory=list)
 
 
 class ImportJob(BaseModel):
@@ -275,6 +423,16 @@ class ImportJob(BaseModel):
     opaque_token: str = ""
     created_at: str = ""
     updated_at: str = ""
+    # Server-owned analysis progress (surfaced to the live Web App). ``stage``
+    # is a human-readable phase; ``pct`` is an honest estimate (0..100) or
+    # ``None`` when the phase has no countable total (indeterminate).
+    progress_stage: str = ""
+    progress_pct: int | None = None
+    # Classifier (BLOQUE 1 piece 1): author-chosen section per relative source
+    # path (``{relative_path: section}``). Persisted as ``sections_json`` so a
+    # resumed job re-stamps its candidates with the same sections. Empty for
+    # legacy jobs.
+    sections: dict[str, str] = {}
 
     def model_dump_redacted(self) -> dict[str, Any]:
         """Public view: never leaks the opaque observability token."""

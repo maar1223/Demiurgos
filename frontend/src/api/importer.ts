@@ -1,4 +1,5 @@
 import { apiFetch } from "@/api/client";
+import { ApiError } from "@/api/types";
 import type {
   AnalyzeImportRequest,
   ImportAnalyzeResponse,
@@ -7,7 +8,9 @@ import type {
   ImportDecisionsRequest,
   ImportDecisionsResponse,
   ImportExecuteResponse,
+  ImportJob,
   ImportJobResponse,
+  ImportJobState,
   ImportReviewResponse,
   JobPage,
 } from "@/api/types";
@@ -88,6 +91,12 @@ export function streamImportChunk(
  * Pass ``enrich: true`` in the request body to opt into the optional Hermes
  * advisory enrichment (slice 2). Absent/``false`` preserves the legacy
  * deterministic flow — no Hermes call, no suggestions.
+ *
+ * The server performs the work synchronously and reports ``analyzing`` +
+ * progress while it runs, so the client waits a generous bounded window
+ * (30 min) for very large lore documents. If the request still times out or
+ * the connection drops, the caller MUST poll ``getImportJob`` instead of
+ * treating the job as failed (see ``waitForJobTerminal``).
  */
 export function analyzeImportJob(
   mundo: string,
@@ -98,8 +107,55 @@ export function analyzeImportJob(
   return apiFetch<ImportAnalyzeResponse>(importsUrl(mundo, jobId, "/analyze"), {
     method: "POST",
     body,
-    timeout: 120_000,
+    timeout: 30 * 60_000,
   });
+}
+
+/** A non-terminal, still-processing analysis state. */
+function isProcessing(state: ImportJobState): boolean {
+  return state === "pending" || state === "intaking" || state === "analyzing";
+}
+
+/**
+ * Poll GET /api/{mundo}/imports/{id} until the job leaves the processing
+ * states (``pending``/``intaking``/``analyzing``).
+ *
+ * Used after an analyze POST times out or loses connection so the live Web
+ * App keeps monitoring a job the server is still working on, instead of
+ * declaring a false server failure. ``onProgress`` receives each poll so the
+ * UI can render the server-owned stage/percentage. Throws the last network
+ * error only when polling itself fails; a terminal ``failed`` job returns
+ * the job (the caller surfaces ``job.error``).
+ */
+export async function waitForJobTerminal(
+  mundo: string,
+  jobId: string,
+  onProgress?: (job: ImportJob) => void,
+  opts?: { intervalMs?: number; maxWaitMs?: number },
+): Promise<ImportJob> {
+  const intervalMs = opts?.intervalMs ?? 2_000;
+  const maxWaitMs = opts?.maxWaitMs ?? 30 * 60_000;
+  const deadline = Date.now() + maxWaitMs;
+  let lastError: unknown = null;
+  for (;;) {
+    if (Date.now() >= deadline) {
+      throw lastError ?? new ApiError(0, "El análisis sigue en curso en el servidor");
+    }
+    try {
+      const { job } = await getImportJob(mundo, jobId);
+      lastError = null;
+      if (isProcessing(job.state)) {
+        onProgress?.(job);
+      } else {
+        return job;
+      }
+    } catch (err) {
+      // Transient polling failure: keep the deadline, keep waiting. Only the
+      // deadline exhaustion surfaces an error.
+      lastError = err;
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
 }
 
 /** GET /api/{mundo}/imports/{id} — current job state. */
