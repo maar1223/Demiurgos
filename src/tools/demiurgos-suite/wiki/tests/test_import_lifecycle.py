@@ -183,6 +183,23 @@ class TestFrontmatterMaterialization:
         assert head == "---\ntitle: Solo\nstatus: draft"
         assert doc.endswith("\n\nCuerpo")
 
+    def test_render_quotes_yaml_special_chars(self):
+        """Bug B — a title/id with a YAML-special char (``|``) must be quoted so
+        the emitted OKF frontmatter round-trips through yaml.safe_load instead of
+        breaking the document (which would falsely flag it as missing `type`)."""
+        import okf_contract
+        doc = render_frontmatter_document(
+            FrontmatterCandidate(
+                title="El Origen | Breve Historia", type="evento",
+                description="d", relaciones=[], state=FrontmatterState.GENERATED),
+            "\n  Cuerpo\n", canonical_id="El Origen | Breve Historia")
+        assert 'title: "El Origen | Breve Historia"' in doc
+        assert 'id: "El Origen | Breve Historia"' in doc
+        # The rendered document is a valid OKF v1 document (Bug A's correct view).
+        v = okf_contract.validate(doc)
+        assert v.ok, [i.message for i in v.issues]
+        assert v.entity_type == "evento"
+
     def test_approved_materialization_writes_status_draft(self, store, service):
         """BLOQUE 2 — an approved funnel candidate materializes with
         ``status: draft`` in the frontmatter block, after ``description`` and

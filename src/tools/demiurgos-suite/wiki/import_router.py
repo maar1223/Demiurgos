@@ -171,6 +171,11 @@ class AnalyzeRequest(BaseModel):
     """
 
     enrich: bool = True
+    # ``vision`` separates image analysis from text enrichment. It is ON by
+    # default (backward compatible); an explicit ``False`` skips the expensive
+    # per-image LLM pass while keeping the deterministic analysis + text
+    # enrichment — a cost/privacy opt-out for text-only re-imports.
+    vision: bool = True
 
 
 class DecisionItem(BaseModel):
@@ -359,6 +364,9 @@ def create_import_router(
             # flow (it produces the type/relationships the graph needs).
             # An explicit ``False`` skips the assistant call.
             enrich = True if body is None else bool(body.enrich)
+            # ``vision`` defaults to True (legacy clients); ``False`` skips the
+            # per-image analysis so a re-import is text-only (cost opt-out).
+            vision_on = True if body is None else bool(body.vision)
 
             # PR3 (sync-lore-in-importer): the media bundle from the analysis
             # facade is preserved through the router so the vision seam can
@@ -562,7 +570,7 @@ def create_import_router(
             # unchanged and records a diagnostic event — the import never
             # blocks on vision, and a text-only assistant (``vision=None``)
             # runs exactly as before.
-            if vision is not None and media_bundle and candidates:
+            if vision_on and vision is not None and media_bundle and candidates:
                 try:
                     vision_result = vision(candidates, media_bundle)
                     if not isinstance(vision_result, list):
@@ -1192,7 +1200,18 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     # contract so only valid candidates are eligible (2.8).
     import okf_contract
     for candidate in candidates:
-        validation = okf_contract.validate(candidate.content_preview)
+        # Server-owned OKF authority (§2.8): validate the SAME document that
+        # will be materialized at execution, not the raw body preview. Funnel-
+        # frontmatter candidates render their OKF frontmatter (``type``,
+        # ``title``, …) via ``render_frontmatter_document``; validating the raw
+        # ``content_preview`` would falsely flag every one of them as "missing
+        # frontmatter `type`" and push them all into manual review.
+        doc = candidate.content_preview
+        if _is_funnel_frontmatter(candidate):
+            doc = render_frontmatter_document(
+                candidate.frontmatter, candidate.content_preview,
+                canonical_id=candidate.canonical_id or "")
+        validation = okf_contract.validate(doc)
         candidate.okf_issues = [i.to_dict() for i in validation.issues]
     # Slice 1 (IM-1.2): attach the canonical OKF target resolution so
     # review can surface legacy aliases and unknown subfolders.

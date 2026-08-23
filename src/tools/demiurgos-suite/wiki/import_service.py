@@ -279,6 +279,32 @@ def atomic_write(full: Path, content: str) -> None:
 # Approved-only frontmatter materialization (importador-auto-frontmatter, 3.1)
 # ---------------------------------------------------------------------------
 
+# Reserved YAML indicator / flow characters that would reinterpret a plain
+# scalar in the OKF frontmatter block. A value containing any of them must be
+# quoted or YAML breaks the document: ``|`` starts a literal block (and
+# swallows the rest), ``#`` opens a comment, ``: `` is a mapping separator,
+# and flow indicators (``[]{} , & * ? % @ ` " '``) are not plain-scalar safe.
+# Empty and whitespace-edged scalars are quoted too, so the emitted frontmatter
+# always round-trips through ``yaml.safe_load`` unchanged.
+_UNSAFE_YAML_SCALAR = re.compile(
+    r"[\u0000-\u0008\u000b\u000c\u000e-\u001f]"
+    r"|[:#|&*!?%>`@,\[\]{}\"']"
+    r"|^\s|\s$"
+)
+
+
+def _yaml_scalar(value: str) -> str:
+    """Emit a frontmatter value as a valid YAML scalar.
+
+    Returns ``value`` unquoted when it is a safe plain scalar, otherwise a
+    double-quoted YAML string (JSON string escaping is valid YAML) so special
+    characters like ``|`` or ``: `` never break the OKF frontmatter parse.
+    """
+    if not _UNSAFE_YAML_SCALAR.search(value):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
 def render_frontmatter_document(
     frontmatter: FrontmatterCandidate,
     body: str,
@@ -303,12 +329,12 @@ def render_frontmatter_document(
     """
     lines = ["---"]
     if canonical_id:
-        lines.append(f"id: {canonical_id}")
-    lines.append(f"title: {frontmatter.title}")
+        lines.append(f"id: {_yaml_scalar(canonical_id)}")
+    lines.append(f"title: {_yaml_scalar(frontmatter.title)}")
     if frontmatter.type:
-        lines.append(f"type: {frontmatter.type}")
+        lines.append(f"type: {_yaml_scalar(frontmatter.type)}")
     if frontmatter.description:
-        lines.append(f"description: {frontmatter.description}")
+        lines.append(f"description: {_yaml_scalar(frontmatter.description)}")
     # BLOQUE 2 — imported fichas always enter as borrador: the tree badge,
     # the graph and the Relaciones y Canon panel consume this status.
     lines.append("status: draft")

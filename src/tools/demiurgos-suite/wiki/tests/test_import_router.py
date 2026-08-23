@@ -211,6 +211,29 @@ class TestRouterVisionSeam:
         assert any(e.get("__type__") == "vision" and e.get("id") == "vision:abc"
                    for e in (cand["enrichment_json"] or []))
 
+    def test_vision_false_skips_seam(self, tmp_path, monkeypatch):
+        """``AnalyzeRequest.vision=False`` opts out of the per-image pass: the
+        vision seam is never called, yet the deterministic analysis still runs
+        and candidates persist (text-only re-import, cost opt-out)."""
+        _docx_seams(monkeypatch, [_entry()])
+        called = {"vision": False}
+
+        def fake_vision(candidates, media_entries):
+            called["vision"] = True
+            return candidates
+
+        client, store, spool, _ = _make_app(tmp_path, vision=fake_vision)
+        job = _create_job(client)
+        _stream(client, job["job_id"], b"PK..fake")
+        resp = client.post(
+            f"/api/world1/imports/{job['job_id']}/analyze",
+            json={"enrich": True, "vision": False})
+        assert resp.status_code == 200, resp.text
+        assert called["vision"] is False
+        # candidates were still built + persisted by the deterministic flow
+        assert store.candidates_for(job["job_id"])
+        assert resp.json()["job"]["state"] == "review"
+
     def test_vision_runs_after_text_enrichment(self, tmp_path, monkeypatch):
         """Task 5.3 — vision merges AFTER text enrichment so both suggestion
         families coexist in the persisted enrichment payload."""
