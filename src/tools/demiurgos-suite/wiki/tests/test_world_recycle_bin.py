@@ -190,6 +190,23 @@ class TestPurgeExpired:
     def test_empty_trash(self, env):
         assert wrb.purge_expired(trash_root=env["trash"]) == 0
 
+    def test_on_purge_callback_invoked_per_world(self, env):
+        _write_old_entry(
+            env["trash"], "OldWorld",
+            datetime.now(timezone.utc) - timedelta(days=31),
+        )
+        _write_old_entry(
+            env["trash"], "RecentWorld",
+            datetime.now(timezone.utc) - timedelta(days=10),
+        )
+        purged_worlds = []
+        purged = wrb.purge_expired(
+            trash_root=env["trash"],
+            on_purge=purged_worlds.append,
+        )
+        assert purged == 1
+        assert purged_worlds == ["OldWorld"]
+
 
 class TestPurgeWorld:
     def test_removes_all_entries(self, env):

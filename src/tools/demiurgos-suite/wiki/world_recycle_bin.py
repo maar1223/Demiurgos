@@ -256,11 +256,20 @@ def _entry_is_expired(entry_dir: Path, threshold: datetime) -> bool:
         return False
 
 
-def purge_expired(*, trash_root: Path | None = None) -> int:
+def purge_expired(
+    *,
+    trash_root: Path | None = None,
+    on_purge: "Callable[[str], None] | None" = None,
+) -> int:
     """Permanently delete trash entries older than ``RETENTION_DAYS``.
 
     Returns the number of entries purged. Malformed entries (unreadable
     ``meta.json``) are kept, matching the ``.papelera`` house policy.
+
+    ``on_purge`` is an optional callback invoked once per world that had at
+    least one expired entry removed. The API server uses it to re-assert
+    associated-data cleanup (graph cache, guided sessions) without this
+    filesystem module ever touching server state.
     """
     root = Path(trash_root) if trash_root is not None else TRASH_ROOT
     if not root.is_dir():
@@ -270,12 +279,17 @@ def purge_expired(*, trash_root: Path | None = None) -> int:
     for world_dir in list(root.iterdir()):
         if not world_dir.is_dir():
             continue
+        world_purged = 0
         for entry_dir in list(world_dir.iterdir()):
             if not entry_dir.is_dir():
                 continue
             if _entry_is_expired(entry_dir, threshold):
                 shutil.rmtree(entry_dir, ignore_errors=True)
-                purged += 1
+                world_purged += 1
+        if world_purged:
+            purged += world_purged
+            if on_purge is not None:
+                on_purge(world_dir.name)
         _prune_empty_world_dir(root, world_dir.name)
     return purged
 
