@@ -844,7 +844,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     expect(analyzeImportJob).toHaveBeenCalledWith(
       "mundo",
       expect.any(String),
-      { enrich: true },
+      { enrich: true, vision: true },
     );
   });
 
@@ -1289,7 +1289,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     // analyzeImportJob was called with the recovered job ID and the
     // explicit enrich flag (default ON).
     expect(analyzeImportJob).toHaveBeenCalledWith(
-      "mundo", "j-intaking", { enrich: true },
+      "mundo", "j-intaking", { enrich: true, vision: true },
     );
   });
 });

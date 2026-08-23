@@ -103,7 +103,13 @@ export function analyzeImportJob(
   jobId: string,
   options?: AnalyzeImportRequest,
 ): Promise<ImportAnalyzeResponse> {
-  const body = options && options.enrich ? JSON.stringify({ enrich: true }) : undefined;
+  // Always send an explicit body so the server honors the flags; an absent
+  // body would default EVERYTHING ON (enrich=true, vision=true). Sending the
+  // full envelope keeps a text-only re-import (vision=false) faithful.
+  const body = JSON.stringify({
+    enrich: options?.enrich ?? true,
+    vision: options?.vision ?? true,
+  });
   return apiFetch<ImportAnalyzeResponse>(importsUrl(mundo, jobId, "/analyze"), {
     method: "POST",
     body,

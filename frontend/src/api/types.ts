@@ -904,6 +904,11 @@ export interface JobPage {
 export interface AnalyzeImportRequest {
   /** Slice 2 — opt into Hermes advisory enrichment after deterministic analysis. */
   enrich?: boolean;
+  /**
+   * Vision opt-out — when ``false`` the per-image analysis is skipped and the
+   * import is text-only (cheaper, no vision model). Defaults to ``true``.
+   */
+  vision?: boolean;
 }
 
 /** Response of POST /api/{mundo}/imports/{id}/analyze. */
