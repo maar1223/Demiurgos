@@ -303,6 +303,29 @@ describe("Navbar", () => {
     expect(screen.getByText("No hay mundos")).toBeInTheDocument();
   });
 
+  it("syncs worlds into the selector when the prop arrives after mount (F5 reload)", async () => {
+    const user = userEvent.setup();
+    // On a hard reload, SWR mounts with an empty list and the real worlds
+    // arrive after the fetch resolves — the selector must show them (and the
+    // `+ Nuevo mundo` entry), not stay frozen on the initial empty state.
+    const view = renderNavbar({ worlds: [] });
+
+    view.rerender(
+      <MemoryRouter initialEntries={["/start"]}>
+        <Navbar worlds={worlds} onWorldChange={undefined} />
+        <Routes>
+          <Route path="*" element={<LocationProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+
+    expect(screen.getByRole("option", { name: "Vibrantes" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Sombras" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "+ Nuevo mundo" })).toBeInTheDocument();
+  });
+
   it("mobile toggle opens the nav menu (links duplicated)", async () => {
     const user = userEvent.setup();
     renderNavbar({ worlds });

@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
+import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
+import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import type { WorldInfo } from "@/api/types";
 import {
   GENERIC_TEASER_LABEL,
@@ -12,6 +14,7 @@ import {
 } from "@/lib/constants";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
 import { useCurrentWorld } from "@/hooks/useCurrentWorld";
+import { setCurrentWorld } from "@/lib/currentWorld";
 
 interface NavbarProps {
   worlds: WorldInfo[];
@@ -28,17 +31,48 @@ interface NavbarProps {
  * teaser (label "Próximamente") is never routable; the redundant badge is
  * suppressed when the label already says "Próximamente". Rightmost-marked
  * links (Taller de Publicación, when enabled) always render last.
+ *
+ * World creation: Navbar hosts the `+ Nuevo mundo` flow. Worlds are kept in
+ * local state so a successful creation appears in the selector immediately;
+ * the existing switch-confirm flow takes over for the optional
+ * "¿Cambiar a {nombre}?" handoff.
  */
-export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
+export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: NavbarProps) {
   const navigate = useNavigate();
   const { world: activeWorld } = useCurrentWorld();
   const resolvedWorld = currentWorld ?? activeWorld ?? undefined;
+  const [worlds, setWorlds] = useState<WorldInfo[]>(worldsProp);
+  const [creatingWorld, setCreatingWorld] = useState(false);
+  const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [sessionActionLoading, setSessionActionLoading] = useState(false);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
   const { status, isLoading: sessionLoading, error: sessionError, start, logout } =
     useLocalDevAuth(profileOpen);
+
+  // Keep the local worlds list in sync with the parent prop. `useState`
+  // initialization alone would freeze the list at first render — on a hard
+  // reload SWR still has `worldsProp === []` while fetching, so without this
+  // sync the selector would stay empty forever (both the world list and the
+  // `+ Nuevo mundo` entry). Appends from `handleWorldCreated` are preserved
+  // because the refreshed prop includes the newly-created world.
+  useEffect(() => {
+    setWorlds(worldsProp);
+  }, [worldsProp]);
+
+  const handleWorldCreated = (world: WorldInfo) => {
+    setWorlds((prev) => (prev.some((w) => w.name === world.name) ? prev : [...prev, world]));
+    setCreatingWorld(false);
+    setPendingSwitch(world.name);
+  };
+
+  const confirmSwitch = () => {
+    if (!pendingSwitch) return;
+    setCurrentWorld(pendingSwitch);
+    onWorldChange?.(pendingSwitch);
+    setPendingSwitch(null);
+  };
 
   // Taller de Publicación (rightmost) always renders last — never hidden
   // behind future teasers regardless of the constant ordering.
@@ -134,6 +168,7 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
             worlds={worlds}
             currentWorld={resolvedWorld}
             onWorldChange={onWorldChange}
+            onRequestCreate={() => setCreatingWorld(true)}
           />
 
           {/* Avatar */}
@@ -256,6 +291,28 @@ export function Navbar({ worlds, currentWorld, onWorldChange }: NavbarProps) {
             ))}
           </nav>
         </div>
+      )}
+
+      {/* World creation modal — opened from the WorldSelector's
+          `+ Nuevo mundo` entry. Parent-rendered so the modal lifecycle stays
+          explicit and the dropdown remains closed underneath. */}
+      <CreateWorldModal
+        isOpen={creatingWorld}
+        onClose={() => setCreatingWorld(false)}
+        onCreated={handleWorldCreated}
+      />
+
+      {/* Post-creation switch confirmation. Reuses the existing
+          ConfirmDialog pattern so the user can decline switching to the
+          newly-created world without losing it. */}
+      {pendingSwitch && (
+        <ConfirmDialog
+          title="Cambiar mundo activo"
+          message={`¿Querés cambiar el mundo activo a «${pendingSwitch}»?`}
+          confirmLabel="Cambiar"
+          onConfirm={confirmSwitch}
+          onClose={() => setPendingSwitch(null)}
+        />
       )}
     </header>
   );
