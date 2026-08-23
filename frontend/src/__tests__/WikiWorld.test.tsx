@@ -23,12 +23,21 @@ function SectionProbe() {
   return <div data-testid="section">{section}</div>;
 }
 
+/** Probe for the Relaciones y Canon page route. */
+function RelacionesProbe() {
+  return <div data-testid="relaciones-page">relaciones</div>;
+}
+
 function renderWikiWorld(initialEntry = "/wiki/Vibrantes") {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/wiki/:mundo" element={<WikiWorld />} />
         <Route path="/wiki/:mundo/:section" element={<SectionProbe />} />
+        <Route
+          path="/taller-mundo/:mundo/relaciones-canon"
+          element={<RelacionesProbe />}
+        />
       </Routes>
     </MemoryRouter>,
   );
@@ -84,6 +93,25 @@ describe("WikiWorld", () => {
     );
 
     expect(screen.getByTestId("section")).toHaveTextContent("personajes");
+  });
+
+  it("shows the Relaciones y Canon card in the section grid", () => {
+    renderWikiWorld();
+
+    expect(
+      screen.getByRole("heading", { name: "Relaciones y Canon" }),
+    ).toBeInTheDocument();
+  });
+
+  it("navigates to Relaciones y Canon when the card is clicked", async () => {
+    const user = userEvent.setup();
+    renderWikiWorld();
+
+    await user.click(
+      screen.getByRole("button", { name: /Relaciones y Canon/ }),
+    );
+
+    expect(screen.getByTestId("relaciones-page")).toBeInTheDocument();
   });
 
   it("shows loading spinner when loading", () => {

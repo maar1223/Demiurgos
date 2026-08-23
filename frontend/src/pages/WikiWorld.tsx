@@ -10,8 +10,9 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
-import { VALID_SECTIONS, SECTION_LABELS, type Section } from "@/lib/constants";
+import { VALID_SECTIONS, SECTION_LABELS, ROUTES, type Section } from "@/lib/constants";
 import type { WorldInfo } from "@/api/types";
+import { cn } from "@/lib/utils";
 
 /**
  * Wiki World page (`/wiki/:mundo`) — section cards landing page.
@@ -53,6 +54,13 @@ export default function WikiWorld() {
   const handleSectionClick = (section: Section) => {
     if (!mundo) return;
     navigate(`/wiki/${encodeURIComponent(mundo)}/${section}`);
+  };
+
+  /** Relaciones y Canon entry (BLOQUE 4, W9): the relations graph lives
+   *  under the Taller de Mundo surface, not a content section. */
+  const handleRelacionesClick = () => {
+    if (!mundo) return;
+    navigate(ROUTES.RELACIONES_CANON.replace(":mundo", encodeURIComponent(mundo)));
   };
 
   const handleWorldChange = (newWorld: string) => {
@@ -124,6 +132,35 @@ export default function WikiWorld() {
               onClick={() => handleSectionClick(section)}
             />
           ))}
+          {/* Relaciones y Canon — W9/W12: semantic relations graph entry.
+              Inline card (SectionCard meta is fixed to content sections). */}
+          <button
+            type="button"
+            onClick={handleRelacionesClick}
+            className={cn(
+              "group flex w-full flex-col gap-3 rounded-xl border border-filio bg-madero p-5 text-left transition-all",
+              "hover:border-llamita/40 hover:bg-piedra",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
+              "focus-visible:ring-offset-2 focus-visible:ring-offset-cripta",
+            )}
+          >
+            <div className="flex h-32 items-center justify-center rounded-lg bg-filio/50 text-llamita transition-colors group-hover:bg-filio">
+              <Icon name="world" size={48} />
+            </div>
+            <div className="flex items-center justify-between">
+              <h3 className="font-heading text-h4 text-pergamino transition-colors group-hover:text-llamita">
+                Relaciones y Canon
+              </h3>
+              <Icon
+                name="chevron-right"
+                size={16}
+                className="text-plata/50 transition-colors group-hover:text-llamita"
+              />
+            </div>
+            <p className="text-small text-tinta-desvaida">
+              Grafo de entidades, estados de certeza y conexiones
+            </p>
+          </button>
         </>
       )}
     </WikiHomeLayout>

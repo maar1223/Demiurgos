@@ -81,3 +81,24 @@ export async function getGraphStatus(
     apiUrl(["api", mundo, "graph", "status"], { mundo }),
   );
 }
+
+// ---------------------------------------------------------------------------
+// Bulk Entities + Links (BLOQUE 4 — Relaciones y Canon)
+// ---------------------------------------------------------------------------
+
+/** Status filter for the bulk entities endpoint. */
+export type GraphStatusFilter = "all" | "draft" | "stable";
+
+/**
+ * GET /api/{mundo}/graph/entities?status= — bulk entities + links for
+ * graph consumption. Each entity carries `status` (draft|stable); the
+ * server excludes referencias content (not indexed by _SCAN_SECTIONS).
+ */
+export async function fetchGraphEntities(
+  mundo: string,
+  status: GraphStatusFilter = "all",
+): Promise<{ entities: GraphEntity[]; links: EntityLink[] }> {
+  return apiFetch<{ entities: GraphEntity[]; links: EntityLink[] }>(
+    apiUrl(["api", mundo, "graph", "entities"], { status }),
+  );
+}

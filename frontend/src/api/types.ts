@@ -999,9 +999,13 @@ export interface SearchResult {
 
 /** Full entity detail from the knowledge graph. */
 export interface GraphEntity {
+  /** Canonical importer identity (frontmatter ``id``); empty for legacy files. */
+  id: string;
   name: string;
   type: string;
   path: string;
+  /** OKF ficha status (draft|stable); null when the source omits it. */
+  status: FichaStatus | null;
   content: string;
   forward_links: string[];
   backlinks: string[];
