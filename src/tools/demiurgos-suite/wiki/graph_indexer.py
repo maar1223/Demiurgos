@@ -242,6 +242,9 @@ class EntityGraphIndex:
         entity: dict[str, Any] = {
             "name": name,
             "id": canonical_id,
+            # OKF ficha status (draft|stable); legacy entities without a
+            # frontmatter ``status:`` default to draft (BLOQUE 4, D4).
+            "status": fm.get("status", "draft"),
             "type": fm.get("type", "Ficha"),
             "path": rel_path,
             "title": fm.get("title", ""),
@@ -766,6 +769,8 @@ class EntityGraphIndex:
 
             return EntityDetail(
                 name=ent["name"],
+                id=ent.get("id", ""),
+                status=ent.get("status", "draft"),
                 type=ent["type"],
                 path=ent["path"],
                 title=ent["title"],

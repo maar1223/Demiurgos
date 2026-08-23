@@ -7,6 +7,7 @@ import ProfilePage from "@/pages/ProfilePage";
 import ToolWorkshop from "@/pages/ToolWorkshop";
 import WorldWorkshop from "@/pages/WorldWorkshop";
 import WorldImporter from "@/pages/WorldImporter";
+import RelacionesCanon from "@/pages/RelacionesCanon";
 import Onboarding from "@/pages/Onboarding";
 import ConfigurationCenter from "@/pages/ConfigurationCenter";
 import LoginScreen from "@/pages/LoginScreen";
@@ -121,6 +122,10 @@ export default function App() {
               }
             />
             <Route path="/wiki/:mundo" element={<WikiWorld />} />
+            <Route
+              path="/taller-mundo/:mundo/relaciones-canon"
+              element={<RelacionesCanon />}
+            />
             <Route path="/wiki/:mundo/importer" element={<WorldImporter />} />
             <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
           </Route>

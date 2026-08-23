@@ -39,6 +39,10 @@ class EntityDetail:
     backlinks: list[str] = field(default_factory=list)
     relaciones: list[dict] = field(default_factory=list)
     word_count: int = 0
+    # Canonical importer identity (frontmatter ``id``); "" for legacy files.
+    id: str = ""
+    # OKF ficha status (draft|stable); legacy entities default to draft.
+    status: str = "draft"
 
 
 @dataclass

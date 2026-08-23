@@ -2758,6 +2758,74 @@ def graph_status(mundo: str):
     }
 
 
+@app.get("/api/{mundo}/graph/entities")
+def graph_entities(
+    mundo: str,
+    status: str = Query(default="all", description="Filter: all|draft|stable"),
+):
+    """Bulk entities + links for graph consumption (BLOQUE 4).
+
+    Returns ``{ entities: [...], links: [...] }``.
+    Each entity: id, name, type, path, status, description, tags,
+    forward_links, backlinks. Each link: ``{source, target}`` node keys —
+    the entity id when present, falling back to the entity path so legacy
+    entities (empty id) still emit edges GraphView can match (id || path).
+    ``status`` filter: "all" (default) returns every entity; "draft"|"stable"
+    filter on ``entity.status``. Invalid status -> 422. Unknown mundo ->
+    ``{ entities: [], links: [] }`` (same soft-empty contract as
+    /graph/search). Referencias excluded (not indexed by _SCAN_SECTIONS).
+    """
+    if status not in {"all", "draft", "stable"}:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Estado inválido: '{status}'. Válidos: all, draft, stable",
+        )
+    idx = _get_graph(mundo)
+    if idx is None:
+        return {"entities": [], "links": []}
+
+    with idx._lock:
+        entities = idx._cache.get("entities", {})
+        entity_list: list[dict] = []
+        link_list: list[dict] = []
+        for ent in sorted(entities.values(), key=lambda e: e.get("path", "")):
+            ent_status = ent.get("status", "draft")
+            if status != "all" and ent_status != status:
+                continue
+            entity_list.append(
+                {
+                    "id": ent.get("id", ""),
+                    "name": ent["name"],
+                    "type": ent["type"],
+                    "path": ent["path"],
+                    "status": ent_status,
+                    "description": ent.get("description", ""),
+                    "tags": ent.get("tags", []),
+                    "forward_links": ent.get("forward_links", []),
+                    "backlinks": ent.get("backlinks", []),
+                }
+            )
+            for link_name in ent.get("forward_links", []):
+                target_path = idx._resolve_link(link_name)
+                if target_path and target_path in entities:
+                    target = entities[target_path]
+                    # Edges to/from hidden nodes are removed too (spec S2.5).
+                    if status == "all" or target.get("status", "draft") == status:
+                        # Legacy entities without a canonical id emit their
+                        # path so source/target always reference a node key
+                        # GraphView matches (nodeKey = id || path). Fixes
+                        # WARNING 1 (relaciones-canon-panel, BLOQUE 4 Slice A):
+                        # legacy worlds rendered with zero edges.
+                        link_list.append(
+                            {
+                                "source": ent.get("id") or ent["path"],
+                                "target": target.get("id") or target["path"],
+                            }
+                        )
+
+    return {"entities": entity_list, "links": link_list}
+
+
 # ---------------------------------------------------------------------------
 # Media endpoints — serve, upload, list, and delete wiki media (images)
 # ---------------------------------------------------------------------------

@@ -41,6 +41,7 @@ export const ROUTES = {
   ENTITY: "/wiki/:mundo/entity/*path",
   IMPORTER: "/wiki/:mundo/importer",
   EDITOR: "/wiki/:mundo/:section/*path",
+  RELACIONES_CANON: "/taller-mundo/:mundo/relaciones-canon",
   WILDCARD: "*",
 } as const;
 

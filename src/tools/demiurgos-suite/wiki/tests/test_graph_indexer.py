@@ -304,5 +304,65 @@ class TestCanonicalIdParsing(unittest.TestCase):
             self.assertEqual(ent["id"], "")
 
 
+class TestEntityStatus(unittest.TestCase):
+    """Entity dict carries the OKF ``status`` (BLOQUE 4, D4)."""
+
+    def _world(self, tmpdir: str) -> tuple[Path, Path]:
+        mundos_path = Path(tmpdir) / "mundos"
+        mundo_dir = mundos_path / "statusworld"
+        (mundo_dir / "lore").mkdir(parents=True, exist_ok=True)
+        (mundo_dir / "personajes").mkdir(parents=True, exist_ok=True)
+        return mundos_path, mundo_dir
+
+    def test_status_from_frontmatter_and_default_draft(self) -> None:
+        """``status: stable`` frontmatter is indexed; missing status -> draft."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            (mundo_dir / "lore" / "A.md").write_text(
+                "---\ntype: lugar\ntitle: Alpha\nstatus: stable\n---\n# Alpha\n",
+                encoding="utf-8",
+            )
+            (mundo_dir / "lore" / "B.md").write_text(
+                "---\ntype: lugar\ntitle: Beta\n---\n# Beta\n",
+                encoding="utf-8",
+            )
+            index = EntityGraphIndex(mundos_path)
+            index.build("statusworld")
+            entities = index._cache["entities"]
+            self.assertEqual(entities["lore/A.md"]["status"], "stable")
+            self.assertEqual(entities["lore/B.md"]["status"], "draft")
+
+    def test_get_entity_populates_id_and_status(self) -> None:
+        """EntityDetail built by get_entity carries id and status."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            (mundo_dir / "personajes" / "Rhyz.md").write_text(
+                "---\ntype: personaje\ntitle: Rhyz\n"
+                "id: Sistema Stal::Rhyz\nstatus: stable\n---\n# Rhyz\n",
+                encoding="utf-8",
+            )
+            index = EntityGraphIndex(mundos_path)
+            index.build("statusworld")
+            detail = index.get_entity("personajes/Rhyz.md")
+            self.assertIsNotNone(detail)
+            self.assertEqual(detail.id, "Sistema Stal::Rhyz")
+            self.assertEqual(detail.status, "stable")
+
+    def test_get_entity_legacy_defaults(self) -> None:
+        """Legacy entities without id/status fall back to "" and "draft"."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            (mundo_dir / "lore" / "B.md").write_text(
+                "---\ntype: lugar\ntitle: Beta\n---\n# Beta\n",
+                encoding="utf-8",
+            )
+            index = EntityGraphIndex(mundos_path)
+            index.build("statusworld")
+            detail = index.get_entity("lore/B.md")
+            self.assertIsNotNone(detail)
+            self.assertEqual(detail.id, "")
+            self.assertEqual(detail.status, "draft")
+
+
 if __name__ == "__main__":
     unittest.main()

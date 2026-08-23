@@ -7,6 +7,7 @@ import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Badge } from "@/components/atoms/Badge";
 import { Spinner } from "@/components/atoms/Spinner";
+import { Switch } from "@/components/atoms/Switch";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
@@ -343,6 +344,12 @@ export default function WorldImporter() {
   const [monitoringAfterTimeout, setMonitoringAfterTimeout] = useState(false);
   /** Elapsed seconds since the analysis step started (monitoring UX). */
   const [elapsedSec, setElapsedSec] = useState(0);
+  /**
+   * Whether analysis includes the per-image (vision) pass. ON by default
+   * (backward compatible); the author can disable it for a cheaper, text-only
+   * import. Sent as ``vision`` in the analyze request.
+   */
+  const [analyzeImages, setAnalyzeImages] = useState(true);
 
   const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
   // The review digest is never displayed; the approval response carries the
@@ -476,6 +483,52 @@ export default function WorldImporter() {
       }
     },
     [mundo],
+  );
+
+  /**
+   * Mirror live analysis progress from the server while the blocking ``analyze``
+   * POST is in flight.
+   *
+   * The analyze endpoint is a long synchronous POST that only returns when the
+   * analysis is terminal, but the server writes ``progress_stage`` /
+   * ``progress_pct`` to the store as each phase completes. Without this loop the
+   * Web App shows only a static spinner and then flashes a <1s progress bar from
+   * the terminal job right before review. This poller reads the server-owned
+   * progress during the POST and stops when the caller's ``finally`` runs. The
+   * POST stays the authority for the terminal state; poll failures are ignored,
+   * never treated as a server failure.
+   */
+  const startLiveProgressPoll = useCallback(
+    (mundo: string, jobId: string): (() => void) => {
+      let stopped = false;
+      const poll = async () => {
+        while (!stopped) {
+          try {
+            const { job: live } = await getImportJob(mundo, jobId);
+            setAnalysisProgress({
+              stage: live.progress_stage || "Analizando",
+              pct: live.progress_pct ?? null,
+            });
+            if (
+              live.state !== "pending" &&
+              live.state !== "intaking" &&
+              live.state !== "analyzing"
+            ) {
+              // Terminal — the POST is about to resolve; stop polling.
+              break;
+            }
+          } catch {
+            // Transient poll failure — the POST is the source of truth.
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1_500));
+        }
+      };
+      void poll();
+      return () => {
+        stopped = true;
+      };
+    },
+    [],
   );
 
   /**
@@ -816,6 +869,7 @@ export default function WorldImporter() {
     setApprovedSuggestionIds([]);
     setDecidingSuggestionId(null);
     let activeJobId: string | null = null;
+    let stopLiveProgress: (() => void) | null = null;
     try {
       if (isResumeIntaking) {
         // File already uploaded — skip create + stream, go to analyze.
@@ -859,8 +913,12 @@ export default function WorldImporter() {
       }
       // Enrichment always runs (the graph needs the resulting metadata); the
       // flag is explicit for clarity and to honor a future ``enrich: false``.
+      // Mirror live server progress while the long POST runs — the analyze
+      // endpoint only returns at terminal, but the store carries each phase.
+      stopLiveProgress = startLiveProgressPoll(mundo, activeJobId);
       const analysis = await analyzeImportJob(mundo, activeJobId, {
         enrich: true,
+        vision: analyzeImages,
       });
       setJob(analysis.job);
       setAnalysisProgress({
@@ -893,6 +951,7 @@ export default function WorldImporter() {
       // mean the job failed — the server keeps working and reports
       // ``analyzing``. Monitor the same job by polling instead of declaring
       // a false server outage.
+      stopLiveProgress?.();
       if (activeJobId) {
         await monitorJob(
           activeJobId,
@@ -904,6 +963,7 @@ export default function WorldImporter() {
         setStep("result");
       }
     } finally {
+      stopLiveProgress?.();
       setAnalyzing(false);
     }
   };
@@ -939,9 +999,11 @@ export default function WorldImporter() {
         setAnalyzing(true);
         setPhaseMessage("Analizando contenido (solo lectura)…");
         setStep("analyzing");
+        const stopLiveProgress = startLiveProgressPoll(mundo, jobId);
         try {
           const analysis = await analyzeImportJob(mundo, jobId, {
             enrich: true,
+            vision: analyzeImages,
           });
           setJob(analysis.job);
           if (analysis.enrichment_status) {
@@ -965,6 +1027,7 @@ export default function WorldImporter() {
           setPhaseMessage("");
           setStep("result");
         } finally {
+          stopLiveProgress();
           setAnalyzing(false);
         }
         return;
@@ -1560,6 +1623,31 @@ export default function WorldImporter() {
               ))}
             </ul>
           )}
+
+          <div className="mt-5 flex w-full items-start justify-between gap-4 rounded-lg border border-filio bg-cripta/40 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-small text-pergamino">Analizar imágenes del documento</p>
+              <p className="mt-0.5 text-xs text-tinta-desvaida">
+                {analyzeImages
+                  ? "Se analiza el texto y las imágenes (más lento y costoso)."
+                  : "Solo texto: se salta el análisis de imágenes (más rápido y barato)."}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-col items-center gap-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-tinta-desvaida">Solo texto</span>
+                <Switch
+                  checked={analyzeImages}
+                  onChange={setAnalyzeImages}
+                  aria-label="Analizar imágenes del documento"
+                />
+                <span className="text-[11px] text-tinta-desvaida">Con imágenes</span>
+              </div>
+              <span className="text-[11px] font-medium" aria-live="polite">
+                {analyzeImages ? "Encendido" : "Apagado"}
+              </span>
+            </div>
+          </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <Button
