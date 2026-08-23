@@ -150,6 +150,11 @@ app.add_middleware(
 PROJECT_ROOT = Path(__file__).resolve().parents[4]  # Demiurgos/ (wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> root)
 MUNDOS_DIR = PROJECT_ROOT / "mundos"
 
+# Names that can never be treated as worlds. ``trash`` is reserved so a world
+# literally named "trash" can never collide with the world recycle-bin routes
+# (GET /api/worlds/trash, DELETE /api/worlds/trash/{name}).
+_RESERVED_WORLD_NAMES = frozenset({"Ideas", "trash"})
+
 
 _LOCAL_STATE: LocalState | None = None
 
@@ -168,7 +173,7 @@ def _local_state() -> LocalState:
 
 
 def _list_worlds() -> list[dict]:
-    """List available worlds in mundos/ (skip Ideas, hidden dirs)."""
+    """List available worlds in mundos/ (skip reserved names, hidden dirs)."""
     worlds = []
     if not MUNDOS_DIR.is_dir():
         return worlds
@@ -177,7 +182,7 @@ def _list_worlds() -> list[dict]:
             continue
         if entry.name.startswith(".") or entry.name.startswith("_"):
             continue
-        if entry.name == "Ideas":
+        if entry.name in _RESERVED_WORLD_NAMES:
             continue
         # Count files in lore + personajes
         lore_count = len(list((entry / "lore").rglob("*.md"))) if (entry / "lore").is_dir() else 0
@@ -207,7 +212,7 @@ def _resolve_mundo_dir(mundo: str) -> Path | None:
         return None
     if Path(mundo).name != mundo:  # separators / absolute paths / dot segments
         return None
-    if mundo.startswith((".", "_")) or mundo == "Ideas":
+    if mundo.startswith((".", "_")) or mundo in _RESERVED_WORLD_NAMES:
         return None
     mundo_dir = (MUNDOS_DIR / mundo).resolve()
     if not mundo_dir.is_dir():

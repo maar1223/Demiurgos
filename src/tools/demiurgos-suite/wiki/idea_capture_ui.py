@@ -77,7 +77,9 @@ def list_world_names() -> list[str]:
     for entry in sorted(root.iterdir()):
         if not entry.is_dir():
             continue
-        if entry.name.startswith((".", "_")) or entry.name == "Ideas":
+        # Same visibility rules as api_server._list_worlds: hidden dirs,
+        # `_`-prefixed dirs, and reserved names (Ideas, trash) are excluded.
+        if entry.name.startswith((".", "_")) or entry.name in {"Ideas", "trash"}:
             continue
         names.append(entry.name)
     return names

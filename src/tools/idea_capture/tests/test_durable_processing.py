@@ -68,6 +68,19 @@ class DurableProcessingTests(unittest.TestCase):
                 processor.process(receipt.capture_id)
         self.assertEqual(self.store.get(receipt.capture_id).state.value, "ERROR")
 
+    def test_delete_for_world_scopes_rows(self):
+        first = self.service.accept(self.update())
+        second = self.service.accept(self.update(update_id=2))
+        self.store.set_world(first.capture_id, "Avalor")
+        self.store.set_world(second.capture_id, "Kaelia")
+        removed = self.store.delete_for_world("Avalor")
+        self.assertEqual(removed, 1)
+        self.assertEqual(self.store.count(), 1)
+        self.assertEqual(self.store.get(second.capture_id).world, "Kaelia")
+        self.assertEqual(self.store.delete_for_world("Kaelia"), 1)
+        self.assertEqual(self.store.count(), 0)
+        self.assertEqual(self.store.delete_for_world("Avalor"), 0)
+
     def test_outbox_publish_is_idempotent(self):
         receipt = self.service.accept(self.update())
         self.service.confirm(receipt.capture_id, WorldAction.SAVE)

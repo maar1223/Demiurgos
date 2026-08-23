@@ -385,6 +385,17 @@ class GuidedSessionStore:
         self._sessions[session_id] = next_state
         return deepcopy(next_state)
 
+    def delete_for_world(self, world: str) -> int:
+        """Drop every session bound to *world*; returns the number removed.
+
+        Used when a world is deleted or purged so its guided sessions stop
+        resolving (associated data hidden/cleaned per world-delete spec).
+        """
+        doomed = [sid for sid, state in self._sessions.items() if state.world == world]
+        for sid in doomed:
+            del self._sessions[sid]
+        return len(doomed)
+
 
 async def invoke_bounded(provider: Provider | Callable[..., Awaitable[object]], request: GuidedRequest,
                          capabilities: Capabilities | None, cancellation: CancellationToken | None = None) -> GuidedResponse:
