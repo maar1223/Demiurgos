@@ -60,7 +60,13 @@ def init(
     engram_enabled: bool = True,
     engram_cmd: str = "engram",
 ) -> tuple[int, str | None]:
-    """Initialise the entity graph index, build it, and wire the adapter.
+    """Initialise the entity graph index and wire the adapter.
+
+    The index build is deliberately LAZY: it runs on first tool use (via
+    ``GraphMCPAdapter._index_for``), not here. Building synchronously at
+    startup delays the stdio handshake by ~1s, which makes Hermes' gateway
+    lose the initial MCP connection ("connection closed"). An empty
+    ``entity_count`` is expected until the first query.
 
     Returns (entity_count, error_message).  error_message is None on success.
     Must be called before the MCP server starts accepting connections.
@@ -71,18 +77,6 @@ def init(
     _engram_enabled = engram_enabled
     _engram_cmd = engram_cmd
     _index = EntityGraphIndex(_mundos_path)
-    _count = _index.build(mundo)
-    print(
-        f"[demiurgos-mcp] Indexed {_count} entities from mundo '{mundo}'",
-        file=sys.stderr,
-    )
-
-    # Start file watcher for live updates (non-critical — continues if watchdog missing)
-    try:
-        _index.start_watch(mundo)
-        print("[demiurgos-mcp] File watcher started", file=sys.stderr)
-    except ImportError:
-        print("[demiurgos-mcp] watchdog not installed — file watching disabled", file=sys.stderr)
 
     _adapter = GraphMCPAdapter(
         _index,
@@ -96,7 +90,7 @@ def init(
     else:
         print("[demiurgos-mcp] Engram integration disabled", file=sys.stderr)
 
-    return _count, None
+    return _index.entity_count, None
 
 
 # ---------------------------------------------------------------------------

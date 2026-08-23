@@ -78,6 +78,17 @@ class GraphMCPAdapter:
         """
         mundo = (mundo or "").strip()
         if not mundo or mundo == self._project:
+            # The default index may not be built yet when the server starts
+            # (lazy-first-build). Build it on first use so the MCP server does
+            # not block its stdio handshake with a synchronous index build at
+            # startup (which loses the gateway's initial connection).
+            with self._indexes_lock:
+                if self._default_index.entity_count == 0:
+                    self._default_index.build(self._project)
+                    try:
+                        self._default_index.start_watch(self._project)
+                    except ImportError:
+                        pass  # watchdog not installed — live updates disabled
             return self._default_index
 
         with self._indexes_lock:

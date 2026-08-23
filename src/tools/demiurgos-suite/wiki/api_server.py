@@ -3648,6 +3648,13 @@ def _build_ai_ask_prompt(
     reference_name: str | None = None,
 ) -> str:
     parts = [
+        "[Tool usage guidance: For questions about this world, use the Demiurgos graph "
+        "tools, not generic file tools. Prefer this flow: call graph_search to locate an "
+        "entity, then graph_read to read its ficha, then answer using only what was read. "
+        "Use graph_links only when the question is about connections between entities. Do "
+        "NOT use generic search/read file tools (search_files, read_file) or lore_search "
+        "for world lore when the graph tools allow answering directly. If the graph returns "
+        "nothing for the world, say so plainly instead of inventing facts.]",
         "[Visible response guidance: Answer directly in 1-3 short paragraphs or bullets. "
         "Ask at most one question at a time. Use the verified context silently, answer only "
         "the relevant point, and do not repeat the full ficha or internal context. Expand only "

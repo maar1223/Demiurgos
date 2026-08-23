@@ -181,6 +181,7 @@ start_component() {
                 --host 127.0.0.1 --port "$FRONTEND_PORT" >>"$FRONTEND_LOG" 2>&1) & ;;
         gateway)
             (cd "$PROJECT_ROOT" && exec nohup env \
+                DEMIURGOS_ROOT="$PROJECT_ROOT" \
                 HERMES_GATEWAY_HOST=127.0.0.1 HERMES_GATEWAY_PORT="$GATEWAY_PORT" \
                 "$HERMES_BIN" gateway run >>"$GATEWAY_LOG" 2>&1) & ;;
         *) return 1 ;;

@@ -460,7 +460,16 @@ class ActivityTranslator:
     def _canonical_tool(raw_tool: object) -> str | None:
         if not _single_string(raw_tool):
             return None
-        return raw_tool if raw_tool in _ALLOWLIST else None
+        # Hermes prefixes MCP tools as ``mcp__<server>__<tool>``. Normalize so
+        # the graph tools (graph_search / graph_read) are recognized regardless
+        # of the MCP server name, and the activity chips still surface. Only
+        # strip the MCP prefix; a bare ``graph_search`` stays as-is.
+        normalized = raw_tool
+        if normalized.startswith("mcp__") and "__" in normalized:
+            parts = normalized.split("__", 2)
+            if len(parts) == 3:
+                normalized = parts[2]
+        return normalized if normalized in _ALLOWLIST else None
 
 
 def validate_structured_world_path(world_root: Path, raw_path: object) -> str | None:
