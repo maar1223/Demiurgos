@@ -127,6 +127,21 @@ export interface WorldCreateResult {
   message: string;
 }
 
+/**
+ * A single entry in the world-level recycle bin (data/world-trash/), returned
+ * by DELETE /api/worlds/{name} and GET /api/worlds/trash.
+ */
+export interface WorldTrashEntry {
+  world_name: string;
+  deleted_at: string; // ISO 8601
+  size_bytes: number;
+  lore_count: number;
+  character_count: number;
+  saga_count: number;
+  /** Days left before the 30-day purge permanently deletes the entry. */
+  days_remaining: number;
+}
+
 /** Configuration Center card states (OC12). */
 export type CardState =
   | "pending"
