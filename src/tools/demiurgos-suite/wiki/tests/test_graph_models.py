@@ -108,6 +108,25 @@ class TestEntityDetail(unittest.TestCase):
         self.assertEqual(d["backlinks"], ["B"])
         self.assertEqual(d["relaciones"], [{"tipo": "aliado", "objetivo": "Vael"}])
 
+    def test_id_and_status_defaults(self) -> None:
+        """id defaults to "" and status defaults to "draft" (BLOQUE 4)."""
+        detail = EntityDetail(
+            name="Rhyz", type="Ficha", path="personajes/rhyz.md",
+            title="Rhyz", description="", tags=[], content="Base content.",
+        )
+        self.assertEqual(detail.id, "")
+        self.assertEqual(detail.status, "draft")
+
+    def test_id_and_status_populated(self) -> None:
+        """id and status are preserved when provided."""
+        detail = EntityDetail(
+            name="Rhyz", type="Ficha", path="personajes/rhyz.md",
+            title="Rhyz", description="", tags=[], content="Base content.",
+            id="Sistema Stal::Rhyz", status="stable",
+        )
+        self.assertEqual(detail.id, "Sistema Stal::Rhyz")
+        self.assertEqual(detail.status, "stable")
+
 
 # =============================================================================
 # New dataclasses — EngramMatch, LoreConflict, TagResult, IdeaLinkResult

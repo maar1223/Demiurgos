@@ -38,6 +38,7 @@ from guided_session_store import SESSION_TTL  # noqa: E402
 import idea_capture_ui  # noqa: E402
 import telegram_settings  # noqa: E402
 from wiki import migration as migration_module  # noqa: E402
+from wiki.graph_indexer import EntityGraphIndex  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 
 
@@ -4961,3 +4962,170 @@ class TestAssistantEvidence:
         api_server._record_assistant_acceptance("saved-not-active")
         body = empty_client.get("/api/onboarding/readiness").json()
         assert body["cards"]["assistant"] == "pending"
+
+
+# ---------------------------------------------------------------------------
+# BLOQUE 4 — GET /api/{mundo}/graph/entities (bulk entities + links)
+# ---------------------------------------------------------------------------
+
+
+class TestGraphEntitiesEndpoint:
+    """GET /api/{mundo}/graph/entities — status field + status filter contract.
+
+    Filter/link tests preload a REAL EntityGraphIndex with synthetic entity
+    dicts so the endpoint exercises the actual ``_resolve_link`` resolution
+    against the cache (ids/names) instead of a stub. Backward-compat and
+    empty-world tests run against the natural fixture world (no stubbing).
+    """
+
+    @staticmethod
+    def _index_with(entities: list[dict]) -> EntityGraphIndex:
+        idx = EntityGraphIndex(mundos_path=Path("/nonexistent"))
+        idx._cache["entities"] = {e["path"]: e for e in entities}
+        return idx
+
+    @staticmethod
+    def _synthetic_world() -> list[dict]:
+        """52 entities (26 stable, 26 draft) with same-parity ring links."""
+        entities = []
+        for i in range(52):
+            name = f"Entidad {i:02d}"
+            status = "stable" if i % 2 == 0 else "draft"
+            entities.append({
+                "name": name,
+                "id": f"Catalogo::{name}",
+                "type": "personaje" if i % 2 == 0 else "lugar",
+                "path": f"personajes/{name}.md" if i % 2 == 0 else f"lore/{name}.md",
+                "title": name,
+                "description": f"Descripción de {name}",
+                "tags": ["prueba"],
+                "status": status,
+                # Same-parity ring: every entity links to the next of its own
+                # status class, so a single-status filter keeps exactly its
+                # own subgraph edges (spec S2.5).
+                "forward_links": [f"Entidad {(i + 2) % 52:02d}"],
+                "backlinks": [],
+                "content": "",
+            })
+        return entities
+
+    def test_graph_entities_status_field(self, client: TestClient, monkeypatch):
+        index = self._index_with(self._synthetic_world())
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: index)
+        resp = client.get("/api/test_mundo/graph/entities?status=all")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert set(body.keys()) == {"entities", "links"}
+        assert len(body["entities"]) == 52
+        for ent in body["entities"]:
+            assert set(ent.keys()) == {
+                "id", "name", "type", "path", "status",
+                "description", "tags", "forward_links", "backlinks",
+            }
+        assert body["entities"][0]["status"] in ("draft", "stable")
+
+    def test_graph_entities_filter_all(self, client: TestClient, monkeypatch):
+        index = self._index_with(self._synthetic_world())
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: index)
+        body = client.get("/api/test_mundo/graph/entities?status=all").json()
+        assert len(body["entities"]) == 52
+        # Same-parity ring: 52 entities, each with one forward link → 52 links.
+        assert len(body["links"]) == 52
+
+    def test_graph_entities_filter_stable(self, client: TestClient, monkeypatch):
+        index = self._index_with(self._synthetic_world())
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: index)
+        body = client.get("/api/test_mundo/graph/entities?status=stable").json()
+        assert len(body["entities"]) == 26
+        assert all(e["status"] == "stable" for e in body["entities"])
+        assert len(body["links"]) == 26
+        assert all(l["source"] != l["target"] for l in body["links"])
+
+    def test_graph_entities_filter_draft(self, client: TestClient, monkeypatch):
+        index = self._index_with(self._synthetic_world())
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: index)
+        body = client.get("/api/test_mundo/graph/entities?status=draft").json()
+        assert len(body["entities"]) == 26
+        assert all(e["status"] == "draft" for e in body["entities"])
+        assert len(body["links"]) == 26
+
+    def test_graph_entities_invalid_status_422(self, client: TestClient, monkeypatch):
+        index = self._index_with(self._synthetic_world())
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: index)
+        resp = client.get("/api/test_mundo/graph/entities?status=banana")
+        assert resp.status_code == 422
+
+    def test_graph_entities_empty_world(self, client: TestClient):
+        # Unknown mundo: _get_graph returns None → soft-empty contract
+        # (same as /graph/search, spec S1.6).
+        resp = client.get("/api/mundo_fantasma/graph/entities?status=all")
+        assert resp.status_code == 200
+        assert resp.json() == {"entities": [], "links": []}
+
+    def test_graph_entities_backward_compat(self, client: TestClient):
+        """Existing per-entity graph endpoints keep their contract unchanged.
+
+        The fixture world has exactly one OKF ficha (lore/00_inicio.md, no
+        status frontmatter → draft).
+        """
+        # /graph/search keeps the EntityHit shape (no status/id).
+        search = client.get("/api/test_mundo/graph/search?q=inicio").json()
+        assert search and "status" not in search[0] and "id" not in search[0]
+
+        # /graph/entity keeps its detail shape (no status/id required there).
+        detail = client.get("/api/test_mundo/graph/entity?name=Inicio").json()
+        assert detail["path"] == "lore/00_inicio.md"
+        assert "status" not in detail and "id" not in detail
+
+        # /graph/links still responds for the entity.
+        links = client.get("/api/test_mundo/graph/links?name=Inicio").json()
+        assert isinstance(links, list)
+
+        # /graph/status still reports node/link counts.
+        status = client.get("/api/test_mundo/graph/status").json()
+        assert status["node_count"] == 1
+
+        # The new bulk endpoint reports the same single entity as draft.
+        body = client.get("/api/test_mundo/graph/entities?status=all").json()
+        assert len(body["entities"]) == 1
+        assert body["entities"][0]["path"] == "lore/00_inicio.md"
+        assert body["entities"][0]["status"] == "draft"
+
+    def test_graph_entities_legacy_no_id_links_use_path(
+            self, client: TestClient, monkeypatch):
+        """Legacy entities (empty canonical id) emit links keyed by path.
+
+        WARNING 1 (relaciones-canon-panel, BLOQUE 4 Slice A): worlds whose
+        entities have no canonical ``id`` used to emit ``{source:"",target:""}``
+        edges, which GraphView (nodeKey = id || path) filters out — legacy
+        worlds rendered with zero edges despite having forward_links. The
+        endpoint must fall back to the entity ``path`` so every edge references
+        a node key the frontend matches.
+        """
+        entities = []
+        for i in range(4):
+            name = f"Legacy {i:02d}"
+            entities.append({
+                "name": name,
+                "id": "",  # legacy world: no canonical id
+                "type": "personaje",
+                "path": f"lore/{name}.md",
+                "title": name,
+                "description": "",
+                "tags": [],
+                "status": "draft",
+                "forward_links": [f"Legacy {(i + 1) % 4:02d}"],
+                "backlinks": [],
+                "content": "",
+            })
+        index = self._index_with(entities)
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: index)
+        body = client.get("/api/test_mundo/graph/entities?status=all").json()
+        paths = {e["path"] for e in body["entities"]}
+        assert len(body["entities"]) == 4
+        assert len(body["links"]) == 4
+        for link in body["links"]:
+            # source/target reference node keys the frontend matches (paths).
+            assert link["source"] in paths
+            assert link["target"] in paths
+            assert link["source"] != link["target"]

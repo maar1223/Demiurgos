@@ -154,11 +154,20 @@ digest intacto, el Autor decide. Suite 1401 passed. Entrega: 2 PRs feature-branc
 
 ---
 
-### BLOQUE 4 — Panel "Relaciones y Canon"  `[PENDIENTE]` (subimos al Taller de Mundo)
+### BLOQUE 4 — Panel "Relaciones y Canon"  `[EN CURSO]` — Slice A ✅ (2026-08-22), Slices B/C pendientes
 
-**Qué construir:** grafo visual + panel de conflictos + vista de propuestas; filtrar por borrador/canon (D4).
-**Qué desbloquea:** la vista semántica que decidimos (memoria #2061). Es "objetivo de producto, no
-capacidad actual completa".
+**Slice A (grafo + filtro borrador/canon, D4/W12) — `relaciones-canon-panel`, implementado y archivado,**
+entrega pendiente en 2 PRs feature-branch-chain (PR 1 backend ~278+remediation, PR 2 frontend ~340).
+17/17 tareas, verify PASS WITH WARNINGS (24/24 reqs, 21/21 escenarios, 0 CRITICAL); W-1 (edges de mundos
+legacy sin `id`) remediado. Endpoint `GET /api/{mundo}/graph/entities?status=all|draft|stable` + `status`
+en el índice + página RelacionesCanon con pestañas (Grafo activo con React Flow `@xyflow/react@^12`, filtro
+canon, toggle huérfanas, click→ficha; Conflictos/Propuestas "Próximamente"). Grafo v1 acotado por W12
+(sin edición, sin multi-mundo). ⚠️ Bundle: main chunk 259KB gzip; lazy-load de GraphView como follow-up.
+**Slice B (Conflictos) — pendiente.** Requiere construir el **detector semántico de contradicciones**: el
+claim del §4 ("`_TEXT_SYSTEM_PROMPT` extrae `contradictions`") es **STALE** — no existe detector ficha-vs-ficha.
+Señales disponibles: dead links, orphans, `okf_issues`.
+**Slice C (Propuestas) — pendiente.** Requiere endpoint de propuestas a nivel mundo + persistencia W11
+(no implementada).
 
 ---
 
