@@ -179,15 +179,27 @@ class TestTrashList:
         assert body[1]["days_remaining"] == 20
         assert older.exists()
 
-    def test_lazy_purge_removes_expired(self, authed: TestClient):
+    def test_lazy_purge_removes_expired(self, authed: TestClient, monkeypatch):
         _seed_trash_entry(api_server.TRASH_ROOT, "Expired",
                           datetime.now(timezone.utc) - timedelta(days=31))
         api_server._graph_indices["Expired"] = object()
+        api_server._GUIDED_SESSIONS.create("s1", "Expired", "local")
+        # C-1 regression guard: the automatic purge must run the FULL
+        # associated-data cleanup (`_purge_world_associated_data`), not just
+        # `_hide_world_data`, so idea-capture rows are not left orphaned.
+        calls: list[str] = []
+
+        def spy(world: str) -> None:
+            calls.append(world)
+            api_server._hide_world_data(world)
+
+        monkeypatch.setattr(api_server, "_purge_world_associated_data", spy)
         response = authed.get("/api/worlds/trash")
         assert response.status_code == 200
         assert response.json() == []
         assert not (api_server.TRASH_ROOT / "Expired").exists()
         assert "Expired" not in api_server._graph_indices
+        assert calls == ["Expired"]
 
     def test_lazy_purge_skips_recent(self, authed: TestClient):
         _seed_trash_entry(api_server.TRASH_ROOT, "Recent",

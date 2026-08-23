@@ -490,7 +490,7 @@ def _maybe_purge_expired() -> None:
             return
         purged = world_recycle_bin.purge_expired(
             trash_root=TRASH_ROOT,
-            on_purge=_hide_world_data,
+            on_purge=_purge_world_associated_data,
         )
         _last_purge_at = now
         if purged:
