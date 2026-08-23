@@ -152,6 +152,36 @@ class ImportJobStore:
             self._conn.commit()
             return self.get_job(job_id)
 
+    def delete_jobs_for_world(self, world: str) -> int:
+        """Delete every import job bound to *world*; returns the number removed.
+
+        Manual cascade (items -> candidates -> events -> approvals -> jobs):
+        items link through candidates, so they are removed first via the
+        candidate join before the candidate rows themselves go. Used when a
+        world is deleted or purged so its import jobs stop resolving.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT job_id FROM jobs WHERE world=?", (world,),
+            ).fetchall()
+            doomed = [row["job_id"] for row in rows]
+            for job_id in doomed:
+                self._conn.execute(
+                    "DELETE FROM items WHERE candidate_id IN"
+                    " (SELECT candidate_id FROM candidates WHERE job_id=?)",
+                    (job_id,),
+                )
+                self._conn.execute(
+                    "DELETE FROM candidates WHERE job_id=?", (job_id,))
+                self._conn.execute(
+                    "DELETE FROM events WHERE job_id=?", (job_id,))
+                self._conn.execute(
+                    "DELETE FROM approvals WHERE job_id=?", (job_id,))
+                self._conn.execute(
+                    "DELETE FROM jobs WHERE job_id=?", (job_id,))
+            self._conn.commit()
+            return len(doomed)
+
     # -- candidates --------------------------------------------------------
 
     def find_candidate(self, world: str, source_hash: str,

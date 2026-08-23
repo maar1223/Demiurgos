@@ -39,7 +39,14 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(api_server, "TRASH_ROOT", trash)
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     api_server._graph_indices.clear()
-    api_server._GUIDED_SESSIONS._sessions.clear()
+    # The durable guided-session store is SQLite-backed (no in-memory
+    # `_sessions` dict): reset the server store to a fresh tmp db so each test
+    # starts isolated and never touches the repo-local data/ database.
+    api_server._GUIDED_SESSIONS = api_server.DurableGuidedSessionStore(
+        db_path=tmp_path / "guided-sessions.sqlite3")
+    # Re-create the importer store lazily against the tmp PROJECT_ROOT so the
+    # purge's import-jobs cleanup never hits a store opened on the real root.
+    api_server._IMPORT_STORE = None
     api_server._last_purge_at = None
     with api_server._local_session_lock:
         api_server._local_sessions.clear()

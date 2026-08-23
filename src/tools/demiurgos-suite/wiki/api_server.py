@@ -454,11 +454,12 @@ def _hide_world_data(world_name: str) -> None:
 def _purge_world_associated_data(world_name: str) -> None:
     """Clean every association of a permanently purged world (REQ-006).
 
-    Hides the in-process data (graph cache, guided sessions) and removes
-    idea-capture rows. Idea capture runs as a separate runtime process; when
-    its package is not importable from this server, cleanup is delegated to
-    that runtime and logged — this server never fabricates a connection to a
-    database it does not own.
+    Hides the in-process data (graph cache, guided sessions), removes
+    idea-capture rows, and deletes the world's import jobs. Idea capture runs
+    as a separate runtime process; when its package is not importable from
+    this server, cleanup is delegated to that runtime and logged — this server
+    never fabricates a connection to a database it does not own. Each store
+    cleanup is guarded so a failure never breaks the purge.
     """
     _hide_world_data(world_name)
     try:
@@ -468,14 +469,19 @@ def _purge_world_associated_data(world_name: str) -> None:
             "World purge: idea_capture package not importable; idea-capture rows for '%s' are cleaned by the idea-capture runtime",
             world_name,
         )
-        return
+    else:
+        try:
+            store = CaptureStore(PROJECT_ROOT / "data" / "idea-capture.sqlite3")
+            cleaned = store.delete_for_world(world_name)
+            store.close()
+            logger.info("World purge: cleaned %d idea-capture rows for '%s'", cleaned, world_name)
+        except Exception as exc:
+            logger.warning("World purge: idea-capture cleanup failed for '%s': %s", world_name, exc)
     try:
-        store = CaptureStore(PROJECT_ROOT / "data" / "idea-capture.sqlite3")
-        cleaned = store.delete_for_world(world_name)
-        store.close()
-        logger.info("World purge: cleaned %d idea-capture rows for '%s'", cleaned, world_name)
+        jobs = _import_store().delete_jobs_for_world(world_name)
+        logger.info("World purge: cleaned %d import jobs for '%s'", jobs, world_name)
     except Exception as exc:
-        logger.warning("World purge: idea-capture cleanup failed for '%s': %s", world_name, exc)
+        logger.warning("World purge: import-jobs cleanup failed for '%s': %s", world_name, exc)
 
 
 def _maybe_purge_expired() -> None:
