@@ -104,6 +104,9 @@ from semantic_intent import (
     action_for_state,
     unavailable_copy,
 )
+from conversation_memory_store import ConversationMemoryStore, Turn
+from skill_router import SkillRouter, SkillRouteResult
+from contract_projection import project_contract_markdown
 
 import world_recycle_bin  # flat sibling module (world-level recycle bin)
 
@@ -934,12 +937,37 @@ def _active_methodology_snapshot(world: str) -> MethodologySnapshot:
         skill_version=active,
         compiled_contract_digest=None,
     )
+
+
+def _compiled_contract_markdown(world: str) -> str | None:
+    """Resolve the world's active compiled methodology as bounded Markdown.
+
+    Walks activation → published version → ``project_contract_markdown`` and
+    returns ``None`` for the builtin case (no activation) or on any resolution
+    failure, so callers fall back to the legacy version-string injection.
+    """
+    try:
+        activation = _methodology_library().active_for(world)
+        if activation is None:
+            return None
+        published = _methodology_library().get_published(activation.skill_id, activation.version)
+        if published is None:
+            return None
+        return project_contract_markdown(published)
+    except Exception:
+        logger.warning("compiled contract projection failed for world %r", world, exc_info=True)
+        return None
 # Semantic routing seam: the mandatory Hermes-first semantic gate. Wired to a
 # SemanticIntentProvider(ACTIVITY_ADAPTER) below, after the runs adapter exists.
 # No lexical/plain-chat fallback exists; unavailable/invalid/exhausted Hermes
 # results fail closed as ``blocked`` with localized safe copy. The type is kept
 # Optional because tests replace the seam with fakes.
 _SEMANTIC_PROVIDER: SemanticIntentProvider | None = None
+# Conversation memory + skill routing singletons for the non-guided assistant
+# path. Declared Optional here and initialized after the runs adapter exists so
+# tests can replace the seams with fakes (same pattern as _SEMANTIC_PROVIDER).
+_CONVERSATION_MEMORY: ConversationMemoryStore | None = None
+_SKILL_ROUTER: SkillRouter | None = None
 _GUIDED_REINDEX = ReindexCoordinator(MUNDOS_DIR, lambda world: _get_graph(world))
 _GUIDED_INDEX_REQUESTS: dict[str, tuple[str, str, str]] = {}
 # Review records are diskless until the existing confirmed create route succeeds.
@@ -1125,8 +1153,14 @@ async def _guided_continue(
         question_depth=depth,
         methodology=methodology,
     )
+    # Compiled contract projection (fricción 2): resolved here so every guided
+    # continuation path carries the world's active methodology as bounded
+    # Markdown into the provider invoke. Builtin worlds (no activation) resolve
+    # to None and the provider falls back to the version-string methodology.
+    compiled = _compiled_contract_markdown(mundo)
     response, state = await continue_session(
         _GUIDED_SESSIONS, _GUIDED_PROVIDER, request, _GUIDED_CAPABILITIES,
+        compiled_contract_markdown=compiled,
     )
     if state is not None:
         _invalidate_guided_proposal(session_id)
@@ -3248,6 +3282,15 @@ _GUIDED_PROVIDER = HermesGuidedProvider(ACTIVITY_ADAPTER)
 # localized safe copy and NO lexical/plain-chat fallback. Entry-handler
 # reordering ahead of this seam is PR 2; wiring alone keeps the seam live.
 _SEMANTIC_PROVIDER = SemanticIntentProvider(ACTIVITY_ADAPTER)
+# Conversation memory + skill routing (non-guided assistant path). The router
+# resolves the world's activated skill via the methodology library and runs its
+# LLM classification over the same runs adapter. Both are module seams that
+# tests may replace after import.
+_CONVERSATION_MEMORY = ConversationMemoryStore()
+_SKILL_ROUTER = SkillRouter(
+    methodology_library=_methodology_library(),
+    provider=ACTIVITY_ADAPTER,
+)
 
 class ChatRequest(BaseModel):
     messages: list[dict]
@@ -3275,11 +3318,81 @@ async def chat_endpoint(body: ChatRequest):
     """
     user_msg = body.messages[-1]["content"] if body.messages else ""
     mundo = body.mundo if _resolve_mundo_dir(body.mundo) is not None else ""
-    result = await _semantic_gate(mundo, user_msg, session_id=body.session_id)
+    result = await _semantic_gate(
+        mundo, user_msg,
+        session_id=body.session_id,
+        distilled_state=_distilled_summary(body.session_id),
+    )
     payload = result.as_dict()
     if result.decision is not None:
         payload["content"] = result.decision.response
     return payload
+
+
+async def _route_skill(prompt: str, mundo: str, distilled_state: str | None) -> str | None:
+    """Route ``prompt`` to a skill_id via the skill router (non-guided path).
+
+    Never raises and never blocks the response: on any failure or when no
+    router is wired it returns ``None`` (no skill). The routing decision is a
+    side effect (stored on the user turn for analytics / future summaries).
+    """
+    router = _SKILL_ROUTER
+    if router is None:
+        return None
+    try:
+        result = await router.route(prompt, mundo, distilled_state=distilled_state)
+    except Exception:
+        logger.warning("skill routing failed safely for world %r", mundo, exc_info=True)
+        return None
+    return result.skill_id if isinstance(result, SkillRouteResult) else None
+
+
+def _persist_memory_turn(
+    session_id: str, mundo: str, role: str, content: str, skill_id: str | None = None,
+) -> None:
+    """Persist one conversational turn; empty/absent session is a no-op."""
+    if not session_id or _CONVERSATION_MEMORY is None:
+        return
+    try:
+        _CONVERSATION_MEMORY.add_turn(session_id, mundo, role, content, skill_id=skill_id)
+    except Exception:
+        logger.warning("conversation memory turn persist failed", exc_info=True)
+
+
+async def _maybe_refresh_distilled(session_id: str, mundo: str) -> None:
+    """Lazily regenerate the distilled summary when the session crosses a
+    refresh boundary (every ``DISTILL_REFRESH_INTERVAL`` turns).
+
+    Runs after the response is produced and never blocks it. The summary is an
+    async LLM condensation via ``_run_hermes`` (the same provider seam used for
+    answers); on any failure it degrades to a bounded heuristic digest of the
+    recent window so the distilled state still advances.
+    """
+    if not session_id or _CONVERSATION_MEMORY is None:
+        return
+    memory = _CONVERSATION_MEMORY
+    try:
+        if not memory.should_refresh_distilled(session_id):
+            return
+        turns = memory.get_recent_turns(session_id, limit=10)
+        if not turns:
+            return
+        digest = "\n".join(f"{t.role}: {t.content}" for t in turns)
+        summary = digest[-800:]
+        try:
+            condensed = await _run_hermes(
+                "Condensa esta conversación en español, máximo 100 palabras, "
+                "destacando decisiones, hechos establecidos e hilos abiertos:\n" + digest,
+                session_id,
+            )
+            if condensed:
+                summary = condensed
+        except Exception:
+            summary = summary  # heuristic fallback already set
+        count = len(memory.get_recent_turns(session_id, limit=10_000))
+        memory.update_distilled_state(session_id, mundo, summary, count)
+    except Exception:
+        logger.warning("distilled refresh failed safely", exc_info=True)
 
 
 @app.post("/api/{mundo}/ai/ask")
@@ -3319,15 +3432,19 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
             ))
     # Mandatory Hermes semantic gate (decides with bounded authorized context).
     # The named-reference resolution is performed ONCE per request and reused by
-    # the guarded continuation, so the graph is never queried twice.
+    # the guarded continuation, so the graph is never queried twice. The
+    # session's distilled summary is injected so the single-run answer is
+    # memory-aware (fricción 3).
     ficha = _active_ficha_context(mundo, body)
     context, reference_context, reference_name, graph_unavailable = _semantic_context(
         mundo, body.prompt, ficha=ficha,
     )
+    distilled_state = _distilled_summary(body.session_id)
     result = await _semantic_gate(
         mundo, body.prompt,
         session_id=body.session_id,
         context=context,
+        distilled_state=distilled_state,
     )
     if result.decision is None:
         logger.info(
@@ -3342,12 +3459,24 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
         guided = await _internal_guided_turn(mundo, body, request)
         if guided is not None:
             return guided
-    # 2. Self-contained decisions answer directly with Hermes' voice.
+    # 2. Self-contained decisions answer directly with Hermes' voice. On the
+    #    non-guided conversational path the response is the gate's single-run
+    #    answer (already distilled-aware). Memory writes + skill routing are
+    #    SIDE EFFECTS: they never mutate the returned envelope (SC-08).
     if result.decision.state in SELF_CONTAINED_SEMANTIC_STATES:
         logger.info(
             "ai_ask: semantic state=%s attempts=%s",
             result.decision.state, result.attempts,
         )
+        if result.decision.state in {"allow", "clarify"}:
+            # Memory + routing are side effects only for a real session; the
+            # empty-string session never names a conversation (fricción 4), so
+            # it neither persists nor triggers a routing/LLM call.
+            if body.session_id:
+                skill_id = await _route_skill(body.prompt, mundo, distilled_state)
+                _persist_memory_turn(body.session_id, mundo, "user", body.prompt, skill_id)
+                _persist_memory_turn(body.session_id, mundo, "assistant", result.response)
+                await _maybe_refresh_distilled(body.session_id, mundo)
         return result.as_dict()
     # 3. require_confirmation/proposal_ready route through the guarded
     #    single-run machinery (the same run supplied the continuation).
@@ -3383,10 +3512,25 @@ def _semantic_context(
     return context, reference_context, reference_name, graph_unavailable
 
 
+def _distilled_summary(session_id: str) -> str | None:
+    """Return the session's distilled summary, or ``None`` when absent/empty.
+
+    The empty-string session id is deliberately ignored (fricción 4): it never
+    names a real conversation, so it must not trigger memory reads or writes.
+    """
+    if not session_id or _CONVERSATION_MEMORY is None:
+        return None
+    try:
+        state = _CONVERSATION_MEMORY.get_distilled_state(session_id)
+    except Exception:
+        return None
+    return state.summary if state is not None else None
+
+
 async def _semantic_gate(
     mundo: str, prompt: str, *, session_id: str = "",
     ficha: str | None = None, context: SemanticContext | None = None,
-    request_id: str | None = None,
+    request_id: str | None = None, distilled_state: str | None = None,
 ) -> SemanticResult:
     """Mandatory Hermes-first semantic gate shared by every assistant surface.
 
@@ -3395,6 +3539,10 @@ async def _semantic_gate(
     Hermes yields a blocked ``SemanticResult`` with zero action, session,
     proposal, or write. ``decide`` is the only semantic interpretation
     boundary and always receives the bounded authorized context.
+
+    ``distilled_state`` (optional, keyword-only) carries the session's compact
+    memory summary into the classification prompt so the gate's single-run
+    answer stays memory-aware without expanding ``SemanticContext``.
     """
     provider = _SEMANTIC_PROVIDER
     if provider is None:
@@ -3412,6 +3560,7 @@ async def _semantic_gate(
         request_id=request_id or f"semantic-{uuid.uuid4().hex}",
         session_id=session_id or None,
         context=context,
+        distilled_state=distilled_state,
     )
 
 
@@ -3714,6 +3863,9 @@ def _named_reference_context(mundo: str, prompt: str) -> tuple[str, bool, str | 
 def _build_ai_ask_prompt(
     mundo: str, body: AskRequest, ficha_context: str | None = None,
     reference_name: str | None = None,
+    memory_turns: list[Turn] | None = None,
+    distilled_state: str | None = None,
+    skill_id: str | None = None,
 ) -> str:
     from demiurgos_personality import build_identity_prompt, build_graph_context
 
@@ -3777,6 +3929,23 @@ def _build_ai_ask_prompt(
             "Responde solo con estos hechos verificados. Si la respuesta no está en la evidencia, "
             "indica que se desconoce y no inventes detalles.\n]"
         )
+    # Conversation memory window (recent turns) + distilled summary, injected
+    # before the current prompt so the assistant answers with continuity.
+    if memory_turns:
+        formatted_turns = "\n".join(
+            f"- {turn.role}: {turn.content}" for turn in memory_turns
+        )
+        parts.append(
+            f"[Recent conversation ({len(memory_turns)} turns):\n"
+            f"{formatted_turns}\n"
+            f"Summary: {distilled_state or '(none)'}]"
+        )
+    elif distilled_state:
+        parts.append(
+            f"[Conversation context (summarized): {distilled_state}]"
+        )
+    if skill_id:
+        parts.append(f"[Active skill: {skill_id}. Follow the skill's methodology.]")
     if parts:
         joined = "\n".join(parts)
         return f"{joined}\n\n{body.prompt}"
@@ -3958,11 +4127,32 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     except Exception:
         return _fail_closed_activity_response(result, request_id)
 
+    # Memory + skill routing for the activity surface (side effects). Only a
+    # real session is routed/persisted (fricción 4). The prompt carries the
+    # recent window + distilled summary + routed skill into the run.
+    distilled_state = _distilled_summary(body.session_id)
+    skill_id = None
+    recent_turns: list[Turn] = []
+    if body.session_id and _CONVERSATION_MEMORY is not None:
+        skill_id = await _route_skill(body.prompt, mundo, distilled_state)
+        try:
+            recent_turns = _CONVERSATION_MEMORY.get_recent_turns(body.session_id)
+        except Exception:
+            recent_turns = []
+
     activity_request = HermesActivityRequest(
         request_id=request_id,
-        prompt=_build_ai_ask_prompt(mundo, body),
+        prompt=_build_ai_ask_prompt(
+            mundo, body,
+            memory_turns=recent_turns or None,
+            distilled_state=distilled_state,
+            skill_id=skill_id,
+        ),
         session_id=body.session_id,
     )
+    # Register the user turn up front (side effect); the assistant turn is
+    # registered at stream close once the full answer text is known.
+    _persist_memory_turn(body.session_id, mundo, "user", body.prompt, skill_id)
     try:
         run_id = adapter.start(activity_request)
         if inspect.isawaitable(run_id):
@@ -3980,6 +4170,13 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     async def stream():
         # The additive authoritative semantic event comes first; compatible
         # evidence (activity/answer/terminal) follows and terminal stays final.
+        assistant_parts: list[str] = []
+
+        def emit(event) -> str:
+            if isinstance(event, AnswerEvent):
+                assistant_parts.append(event.response)
+            return _sse_event(event.as_dict())
+
         yield _sse_event(_semantic_decision_event(result).as_dict())
         completed = False
         disconnected = False
@@ -4002,7 +4199,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     for event in translator.translate(raw_event):
                         if isinstance(event, TerminalEvent):
                             completed = True
-                        yield _sse_event(event.as_dict())
+                        yield emit(event)
             else:
                 for raw_event in source:
                     if await request.is_disconnected():
@@ -4011,7 +4208,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                     for event in translator.translate(raw_event):
                         if isinstance(event, TerminalEvent):
                             completed = True
-                        yield _sse_event(event.as_dict())
+                        yield emit(event)
             if not disconnected and not completed:
                 status = getattr(adapter, "status", None)
                 if callable(status):
@@ -4029,26 +4226,32 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                             for event in translator.translate(raw_status):
                                 if isinstance(event, TerminalEvent):
                                     completed = True
-                                yield _sse_event(event.as_dict())
+                                yield emit(event)
                         elif run_status in {"failed", "cancelled"}:
                             raw_status = {"event": f"run.{run_status}", "run_id": run_id}
                             for event in translator.translate(raw_status):
                                 if isinstance(event, TerminalEvent):
                                     completed = True
-                                yield _sse_event(event.as_dict())
+                                yield emit(event)
             if not disconnected and not completed:
                 for event in translator.finalize():
-                    yield _sse_event(event.as_dict())
+                    yield emit(event)
         except asyncio.CancelledError:
             disconnected = True
             raise
         except Exception:
             if not disconnected:
                 for event in translator.finalize():
-                    yield _sse_event(event.as_dict())
+                    yield emit(event)
         finally:
             if not completed:
                 await _cancel_activity(adapter, run_id)
+            # Assistant turn at stream close (fricción 5): persist the full
+            # answer once it is known; skip on disconnect. The envelope of each
+            # event is untouched (SC-08).
+            if not disconnected and assistant_parts:
+                _persist_memory_turn(body.session_id, mundo, "assistant", "".join(assistant_parts))
+                await _maybe_refresh_distilled(body.session_id, mundo)
 
     return StreamingResponse(
         stream(),
