@@ -16,6 +16,7 @@ export function CategoryCard({ world, fileCount, onClick }: CategoryCardProps) {
   const sectionLabels: string[] = [];
   if (world.lore_count > 0) sectionLabels.push("Lore");
   if (world.character_count > 0) sectionLabels.push("Personajes");
+  if (world.reference_count > 0) sectionLabels.push("Referencias");
 
   return (
     <button

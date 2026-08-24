@@ -29,7 +29,7 @@ function setup(isOpen = true) {
 }
 
 function worldInfoOf(name: string, path: string): WorldInfo {
-  return { name, path, lore_count: 0, character_count: 0 };
+  return { name, path, lore_count: 0, character_count: 0, reference_count: 0 };
 }
 
 describe("CreateWorldModal render state", () => {

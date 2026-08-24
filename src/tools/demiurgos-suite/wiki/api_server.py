@@ -187,14 +187,16 @@ def _list_worlds() -> list[dict]:
             continue
         if entry.name in _RESERVED_WORLD_NAMES:
             continue
-        # Count files in lore + personajes
+        # Count files in lore + personajes + referencias
         lore_count = len(list((entry / "lore").rglob("*.md"))) if (entry / "lore").is_dir() else 0
         char_count = len(list((entry / "personajes").rglob("*.md"))) if (entry / "personajes").is_dir() else 0
+        ref_count = len(list((entry / "referencias").rglob("*.md"))) if (entry / "referencias").is_dir() else 0
         worlds.append({
             "name": entry.name,
             "path": str(entry),
             "lore_count": lore_count,
             "character_count": char_count,
+            "reference_count": ref_count,
         })
     return worlds
 

@@ -28,8 +28,7 @@ const worlds: WorldInfo[] = [
     name: "Vibrantes",
     path: "/vibrantes",
     lore_count: 77,
-    character_count: 10,
-    saga_count: 4,
+    character_count: 10, reference_count: 0,
   },
 ];
 

@@ -21,8 +21,7 @@ const initialWorlds: WorldInfo[] = [
     name: "Vibrantes",
     path: "/vibrantes",
     lore_count: 77,
-    character_count: 10,
-    saga_count: 4,
+    character_count: 10, reference_count: 0,
   },
 ];
 
@@ -30,8 +29,7 @@ const NEW_WORLD: WorldInfo = {
   name: "mi-mundo",
   path: "/mi-mundo",
   lore_count: 0,
-  character_count: 0,
-  saga_count: 0,
+  character_count: 0, reference_count: 0,
 };
 
 /**

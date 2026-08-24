@@ -11,6 +11,10 @@ const SECTION_CARD_META: Record<string, { icon: IconName; description: string }>
     icon: "avatar",
     description: "Fichas de personajes y desarrollo",
   },
+  referencias: {
+    icon: "folder-open",
+    description: "Material de apoyo e investigaciones",
+  },
 };
 
 interface SectionCardProps {

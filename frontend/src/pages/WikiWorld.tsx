@@ -46,6 +46,8 @@ export default function WikiWorld() {
         return w.lore_count;
       case "personajes":
         return w.character_count;
+      case "referencias":
+        return w.reference_count;
     }
   };
 

@@ -8,7 +8,7 @@ const mockWorld: WorldInfo = {
   name: "Vibrantes",
   path: "/mundos/vibrantes",
   lore_count: 77,
-  character_count: 10,
+  character_count: 10, reference_count: 0,
 };
 
 describe("CategoryCard", () => {

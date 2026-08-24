@@ -13,7 +13,6 @@ const entry: WorldTrashEntry = {
   size_bytes: 1024000,
   lore_count: 42,
   character_count: 15,
-  saga_count: 3,
   days_remaining: 28,
 };
 

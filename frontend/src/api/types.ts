@@ -4,6 +4,7 @@ export interface WorldInfo {
   path: string;
   lore_count: number;
   character_count: number;
+  reference_count: number;
 }
 
 /** A file or directory node in the section tree. */

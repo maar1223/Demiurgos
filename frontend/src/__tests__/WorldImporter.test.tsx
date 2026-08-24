@@ -62,7 +62,7 @@ import {
   streamImportFile,
 } from "@/api/importer";
 
-const world = { name: "mundo", path: "/mundo", lore_count: 1, character_count: 0, saga_count: 0 };
+const world = { name: "mundo", path: "/mundo", lore_count: 1, character_count: 0, reference_count: 0 };
 
 function job(overrides: Partial<ImportJob> = {}): ImportJob {
   return {

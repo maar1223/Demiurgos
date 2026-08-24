@@ -14,7 +14,7 @@ import { useWorlds } from "@/hooks/useWorlds";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
-  { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 10 },
+  { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 10, reference_count: 0 },
 ];
 
 /** Probe that renders the section param of the current route. */
@@ -76,7 +76,7 @@ describe("WikiWorld", () => {
   it("shows 'vacío' for sections with zero files", () => {
     (useWorlds as Mock).mockReturnValue({
       worlds: [
-        { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 0 },
+        { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 0, reference_count: 0 },
       ],
       isLoading: false,
       error: null,
@@ -84,7 +84,8 @@ describe("WikiWorld", () => {
     });
     renderWikiWorld();
 
-    expect(screen.getByText("vacío")).toBeInTheDocument();
+    // Two sections (personajes, referencias) are empty with this world.
+    expect(screen.getAllByText("vacío")).toHaveLength(2);
   });
 
   it("navigates to the section when a card is clicked", async () => {

@@ -1,19 +1,19 @@
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
-export const VALID_SECTIONS = ["lore", "personajes"] as const;
+export const VALID_SECTIONS = ["lore", "personajes", "referencias"] as const;
 export type Section = (typeof VALID_SECTIONS)[number];
 
 export const SECTION_LABELS: Record<Section, string> = {
   lore: "Lore",
   personajes: "Personajes",
+  referencias: "Referencias",
 };
 
 /**
  * Sections offered as move destinations in the "Mover a…" modal (decision
  * (b) of the proposal: `referencias` is a valid backend section and must be
- * selectable as a destination, even though it is NOT navigable in the
- * frontend — hence this constant is deliberately SEPARATE from
- * VALID_SECTIONS, which keeps driving the sidebar tabs and routing.
+ * selectable as a destination). Mirrors VALID_SECTIONS now that Referencias
+ * is navigable in the frontend.
  */
 export const MOVE_DESTINATION_SECTIONS = [
   "lore",

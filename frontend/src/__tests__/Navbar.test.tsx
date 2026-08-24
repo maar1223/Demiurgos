@@ -21,15 +21,13 @@ const worlds: WorldInfo[] = [
     name: "Vibrantes",
     path: "/vibrantes",
     lore_count: 77,
-    character_count: 10,
-    saga_count: 4,
+    character_count: 10, reference_count: 0,
   },
   {
     name: "Sombras",
     path: "/sombras",
     lore_count: 5,
-    character_count: 0,
-    saga_count: 3,
+    character_count: 0, reference_count: 0,
   },
 ];
 

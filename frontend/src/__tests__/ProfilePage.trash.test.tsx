@@ -53,7 +53,7 @@ const remainingWorld: WorldInfo = {
   name: "Vibrantes",
   path: "mundos/Vibrantes",
   lore_count: 7,
-  character_count: 2,
+  character_count: 2, reference_count: 0,
 };
 
 const trashEntry: WorldTrashEntry = {

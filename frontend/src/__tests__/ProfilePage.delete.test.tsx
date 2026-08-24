@@ -49,8 +49,8 @@ const permanentDeleteMock = vi.mocked(permanentDelete);
 const getIdeaCaptureStatusMock = vi.mocked(getIdeaCaptureStatus);
 
 const worlds: WorldInfo[] = [
-  { name: "Avalor", path: "mundos/Avalor", lore_count: 42, character_count: 15 },
-  { name: "Vibrantes", path: "mundos/Vibrantes", lore_count: 7, character_count: 2 },
+  { name: "Avalor", path: "mundos/Avalor", lore_count: 42, character_count: 15, reference_count: 0 },
+  { name: "Vibrantes", path: "mundos/Vibrantes", lore_count: 7, character_count: 2, reference_count: 0 },
 ];
 
 const trashEntry: WorldTrashEntry = {

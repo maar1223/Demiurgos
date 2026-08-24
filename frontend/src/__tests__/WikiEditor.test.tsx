@@ -141,7 +141,7 @@ import {
 import type { Mock } from "vitest";
 
 const mockWorlds = [
-  { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 10, saga_count: 4 },
+  { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 10, reference_count: 0 },
 ];
 
 const mockTreeNodes = [

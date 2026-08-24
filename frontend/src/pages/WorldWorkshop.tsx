@@ -53,7 +53,7 @@ export default function WorldWorkshop() {
   };
 
   const getFileCount = (world: WorldInfo): number => {
-    return world.lore_count + world.character_count;
+    return world.lore_count + world.character_count + world.reference_count;
   };
 
   return (
