@@ -405,11 +405,16 @@ class SemanticIntentProvider:
         request_id: str,
         session_id: str | None,
         context: SemanticContext | Mapping[str, Any] | None = None,
+        distilled_state: str | None = None,
     ) -> str:
         session_instruction = (
             f" and session_id {json.dumps(session_id)}" if session_id else ""
         )
         context_block = self._render_context(normalize_context(context))
+        distilled_block = (
+            f" [Conversation context (summarized): {distilled_state}]"
+            if distilled_state else ""
+        )
         return (
             "Act as the Hermes semantic intent interpreter. Return ONLY one JSON "
             "object — no markdown fences, no code blocks — with exactly: state "
@@ -426,6 +431,7 @@ class SemanticIntentProvider:
             "digest, revision, authority, reference, acceptance, or accepted_canon "
             "keys. You have no filesystem, graph, credential, or write access."
             + context_block
+            + distilled_block
             + " Never include reference, proposal, target, digest, revision, or "
             "authority fields; those are server-owned. Never write or claim "
             "approval. Author input: " + author_input
@@ -475,6 +481,7 @@ class SemanticIntentProvider:
         request_id: str,
         session_id: str | None = None,
         context: SemanticContext | Mapping[str, Any] | None = None,
+        distilled_state: str | None = None,
     ) -> SemanticResult:
         for attempt in range(1, self._max_attempts + 1):
             try:
@@ -483,6 +490,7 @@ class SemanticIntentProvider:
                         request_id=request_id,
                         prompt=self._build_prompt(
                             author_input, request_id, session_id, context,
+                            distilled_state,
                         ),
                         session_id=session_id or "",
                     )

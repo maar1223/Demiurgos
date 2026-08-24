@@ -67,7 +67,13 @@ class HermesGuidedProvider:
     async def probe(self) -> CapabilityAssessment:
         return await self._runs.probe()
 
-    async def invoke(self, request: GuidedRequest, cancellation: CancellationToken) -> object:
+    async def invoke(
+        self,
+        request: GuidedRequest,
+        cancellation: CancellationToken,
+        *,
+        compiled_contract_markdown: str | None = None,
+    ) -> object:
         reference = request.reference_context or "(No active ficha reference was provided.)"
         goal_instruction = ""
         if request.relation_goal:
@@ -86,11 +92,18 @@ class HermesGuidedProvider:
             if request.guided_mode == "fast" else ""
         )
         language = "Spanish" if resolve_ui_language() == "es" else "English"
-        methodology_context = (
-            f"Active methodology snapshot (server-pinned, read-only): {request.methodology}. "
-            "Follow this methodology and version for the entire session. "
-            if request.methodology else ""
-        )
+        if compiled_contract_markdown:
+            methodology_context = (
+                "[Active methodology contract (server-pinned, read-only):\n"
+                f"{compiled_contract_markdown}]\n"
+                "Follow this methodology for the entire session. "
+            )
+        else:
+            methodology_context = (
+                f"Active methodology snapshot (server-pinned, read-only): {request.methodology}. "
+                "Follow this methodology and version for the entire session. "
+                if request.methodology else ""
+            )
         prompt = (
             "Act as the guided character provider. Return ONLY one JSON object — "
             f"no markdown fences, no code blocks — matching the "
