@@ -1,7 +1,7 @@
 """Canonical world creation authority (OC7/OC8, world-workshop W9/W10).
 
 Creates a NEW world tree under ``mundos/{name}`` with the lowercase canonical
-folders ``lore/ personajes/ sagas/`` plus an optional empty OC8 Lore skeleton
+folders ``lore/ personajes/`` plus an optional empty OC8 Lore skeleton
 (``lore/{reglas,lugares,culturas,criaturas,facciones,artefactos,historia}``).
 
 Rules enforced here:
@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Iterable
 
 # Canonical minimum tree (OKF / OC7).
-CANONICAL_DIRS = ("lore", "personajes", "sagas")
+CANONICAL_DIRS = ("lore", "personajes")
 
 # Optional empty Lore skeleton for NEW worlds only (OC8). Empty folders only —
 # never generated content.
@@ -59,7 +59,7 @@ LEGACY_FOLDERS = ("Lore", "Personajes")
 # validates every structured-import target against these sections
 # (importador-auto-frontmatter). System dirs and transversal views are never
 # content sections and are therefore never permitted (OC7/W9/W10).
-IMPORTER_SCOPE_SECTIONS = ("lore", "personajes", "sagas", "referencias")
+IMPORTER_SCOPE_SECTIONS = ("lore", "personajes", "referencias")
 
 
 class WorldResultKind(Enum):
@@ -295,7 +295,7 @@ def is_importer_scope_permitted(canonical_section: str) -> bool:
 
     The structured importer (importador-auto-frontmatter) may only materialize
     fichas under the canonical content sections (``lore``/``personajes``/
-    ``sagas``/``referencias``). Any other top-level target — a system dir
+    ``referencias``). Any other top-level target — a system dir
     (``_context``/``.history``/``.papelera``), a transversal view
     (``relaciones``/``canon``/``conflictos``/``propuestas``), or an unknown
     section — is rejected: the importer never guesses a path (OC7/W9/W10).

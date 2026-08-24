@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import { VALID_SECTIONS, SECTION_LABELS, type Section } from "@/lib/constants";
 
 interface SectionTabsProps {
-  /** Current section from the URL (`lore` | `personajes` | `sagas`) */
+  /** Current section from the URL (`lore` | `personajes`) */
   activeSection: string;
   /** Called with the newly selected section */
   onSelect: (section: Section) => void;

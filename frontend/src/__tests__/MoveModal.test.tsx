@@ -60,7 +60,6 @@ describe("MoveModal", () => {
     expect(
       within(dialog).getByRole("tab", { name: "Personajes" }),
     ).toBeInTheDocument();
-    expect(within(dialog).getByRole("tab", { name: "Sagas" })).toBeInTheDocument();
     expect(
       within(dialog).getByRole("tab", { name: "Referencias" }),
     ).toBeInTheDocument();
@@ -128,9 +127,9 @@ describe("MoveModal", () => {
     await user.click(
       screen.getByRole("button", { name: "Seleccionar otros" }),
     );
-    await user.click(screen.getByRole("tab", { name: "Sagas" }));
+    await user.click(screen.getByRole("tab", { name: "Referencias" }));
     await user.click(screen.getByRole("button", { name: "Mover aquí" }));
-    expect(onConfirm).toHaveBeenCalledWith("sagas");
+    expect(onConfirm).toHaveBeenCalledWith("referencias");
   });
 
   it("closes on Escape", () => {

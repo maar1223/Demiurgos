@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils";
  * - 🔴 Error: ErrorBanner with retry
  * - 🟢 Missing params: EmptyState with link back
  * - 🟢 World not found: error panel with link back
- * - 🟢 Data: responsive grid of SectionCards (lore, personajes, sagas)
+ * - 🟢 Data: responsive grid of SectionCards (lore, personajes)
  */
 export default function WikiWorld() {
   const navigate = useNavigate();
@@ -46,8 +46,6 @@ export default function WikiWorld() {
         return w.lore_count;
       case "personajes":
         return w.character_count;
-      case "sagas":
-        return w.saga_count;
     }
   };
 

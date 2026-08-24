@@ -29,7 +29,6 @@ function toWorldInfo(result: WorldCreateResult): WorldInfo {
     path: result.path ?? "",
     lore_count: 0,
     character_count: 0,
-    saga_count: 0,
   };
 }
 

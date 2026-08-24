@@ -14,7 +14,7 @@ import { useWorlds } from "@/hooks/useWorlds";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
-  { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 10, saga_count: 0 },
+  { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 10 },
 ];
 
 /** Probe that renders the section param of the current route. */
@@ -57,14 +57,13 @@ describe("WikiWorld", () => {
     vi.clearAllMocks();
   });
 
-  it("renders a section card for each of the three sections", () => {
+  it("renders a section card for each section", () => {
     renderWikiWorld();
 
     expect(screen.getByRole("heading", { name: "Lore" })).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Personajes" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Sagas" })).toBeInTheDocument();
   });
 
   it("shows the world file counts on the cards", () => {
@@ -75,6 +74,14 @@ describe("WikiWorld", () => {
   });
 
   it("shows 'vacío' for sections with zero files", () => {
+    (useWorlds as Mock).mockReturnValue({
+      worlds: [
+        { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 0 },
+      ],
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
     renderWikiWorld();
 
     expect(screen.getByText("vacío")).toBeInTheDocument();

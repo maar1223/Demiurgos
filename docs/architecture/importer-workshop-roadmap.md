@@ -82,12 +82,12 @@ contratos existentes. Son vinculantes para el diseño del importador.
 - **NO existe**: el panel "Relaciones y Canon" que filtre por canon, ni el grafo que distinga entidades
   canon/borrador, ni la detección de conflictos borrador-vs-canon. Es diseño pendiente.
 
-### D5 — Sagas se elimina como sección del Taller de Mundo [HALLAZGO + DESFASE]
+### D5 — Sagas se elimina como sección del Taller de Mundo [RESUELTO]
 - Decisión conceptual: Saga es **narrativa** (historias/tramas/arcos) → pertenece al futuro Taller de
   Narrativa, NO al Taller de Mundo (memoria #2039, #2058). No se sustituye por Referencias (son cosas
   distintas: Sagas = narrativa, Referencias = material de apoyo/investigación).
-- **DESFASE con el código**: `VALID_SECTIONS`, `_SCAN_SECTIONS` (grafo) y `IMPORTER_SCOPE_SECTIONS`
-  siguen incluyendo `sagas`. Hay que retirarla y verificar que ningún mundo real la use con contenido valioso.
+- ✅ **RESUELTO**: retirada de `VALID_SECTIONS`, `_SCAN_SECTIONS` (grafo), `IMPORTER_SCOPE_SECTIONS`
+  y `saga_count` del modelo. Coyuntura: verificar que ningún mundo real la use con contenido valioso.
 
 ---
 
@@ -146,7 +146,7 @@ identidad + referencias, no contra todo el mundo a ciegas) → marcar `review`/`
 `okf_contract.validate` con `resolve` (ya existe).
 **Implementado:** `importer-collision-detection` (30/30 tareas, verify PASS WITH WARNINGS, 0 CRITICAL).
 Seam `graph_resolver` inyectado en `create_import_router` (fail-open); stamping en analyze post-enrichment:
-referencias resueltas contra el índice (solo secciones indexadas lore/personajes/sagas — `referencias`
+referencias resueltas contra el índice (solo secciones indexadas lore/personajes — `referencias`
 queda fuera por gap del índice, follow-up), colisión de identidad (`canonical_id` ya reclamado), colisión de
 ruta (`mundos_dir/mundo/canonical_path` + `plan_merge` → review), duplicados intra-import; `status=conflict`
 + `okf_issues` (cero cambios de schema/frontend — el UI ya agrupa "Requiere tu decisión"). Soft gate §6.3:
@@ -202,7 +202,7 @@ Lo que consume el Taller de Mundo ya funcionando. Menos urgente; su contrato viv
 | Panel de conflictos (350 vs 500 → decidir canon) | ❌ No existe — BLOQUE 4 |
 | Vista de propuestas (aceptar/rechazar) | ❌ No existe — BLOQUE 4 |
 | Estado inicial de fichas importadas (borrador por defecto) | ❌ No existe — BLOQUE 2 |
-| Retirar `sagas` de secciones canónicas | ⚠️ Desfase código vs decisión (D5) |
+| Retirar `sagas` de secciones canónicas | ✅ Hecho — retirada de `VALID_SECTIONS`, grafo, importador y modelo (decisión W8: sagas va a Narrativa) |
 
 ### OJO — confusión de términos
 - `conflict` en backend (`import_models`, `import_service`) = **estado del importador** (ficha que no se

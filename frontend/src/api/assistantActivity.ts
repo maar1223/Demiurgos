@@ -109,7 +109,7 @@ function isSafePath(value: unknown): value is string {
   }
   const parts = value.split("/");
   return (
-    ["lore", "personajes", "sagas", "referencias", "media"].includes(parts[0]) &&
+    ["lore", "personajes", "referencias", "media"].includes(parts[0]) &&
     parts.every((part) => part && part !== "." && part !== ".." && !part.startsWith("."))
   );
 }

@@ -126,7 +126,6 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
               <div className="flex flex-wrap gap-2">
                 <Badge>Lore {world.lore_count}</Badge>
                 <Badge>Personajes {world.character_count}</Badge>
-                <Badge>Sagas {world.saga_count}</Badge>
               </div>
               <div className="rounded-lg border border-llamita/30 bg-llamita/10 px-3 py-2 text-small text-llamita">
                 El mundo se moverá a la papelera y quedará recuperable durante 30 días. Pasado ese

@@ -40,7 +40,7 @@ export function getErrorMessage(status: number, detail?: string): string {
       case "Path traversal detectado":
         return "Ruta inválida: acceso fuera del directorio permitido";
       case "Sección inválida":
-        return "Sección no encontrada. Secciones válidas: Lore, Personajes, Sagas";
+        return "Sección no encontrada. Secciones válidas: Lore, Personajes, Referencias";
       case "Archivo no encontrado":
         return "Archivo no encontrado";
       case "El archivo ya existe":

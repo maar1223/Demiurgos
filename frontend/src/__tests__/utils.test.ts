@@ -61,7 +61,7 @@ describe("getErrorMessage", () => {
 
   it("returns section not found for 404 with matching detail", () => {
     expect(getErrorMessage(404, "Sección inválida")).toBe(
-      "Sección no encontrada. Secciones válidas: Lore, Personajes, Sagas",
+      "Sección no encontrada. Secciones válidas: Lore, Personajes, Referencias",
     );
   });
 

@@ -47,7 +47,6 @@ const SUGGESTIONS = [
 const SAFE_SOURCE_ROOTS = new Set([
   "lore",
   "personajes",
-  "sagas",
   "referencias",
   "media",
 ]);

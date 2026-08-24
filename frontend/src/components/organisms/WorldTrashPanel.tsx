@@ -161,7 +161,6 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
                     <Badge variant="warning">{entry.days_remaining} días</Badge>
                     <Badge>Lore {entry.lore_count}</Badge>
                     <Badge>Personajes {entry.character_count}</Badge>
-                    <Badge>Sagas {entry.saga_count}</Badge>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">

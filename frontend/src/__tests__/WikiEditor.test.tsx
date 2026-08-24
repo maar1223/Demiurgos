@@ -505,7 +505,6 @@ describe("WikiEditor", () => {
 
     expect(screen.getByRole("tab", { name: "Lore" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Personajes" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Sagas" })).toBeInTheDocument();
   });
 
   it("marks the current URL section as the active tab", () => {
@@ -525,12 +524,12 @@ describe("WikiEditor", () => {
     const user = userEvent.setup();
     renderWikiEditor();
 
-    await user.click(screen.getByRole("tab", { name: "Sagas" }));
+    await user.click(screen.getByRole("tab", { name: "Personajes" }));
 
     // Section change re-invokes the tree hook with the new section
     // (SWR key includes section → triggers re-fetch)
-    expect(useFileTree).toHaveBeenCalledWith("Vibrantes", "sagas");
-    expect(screen.getByRole("tab", { name: "Sagas" })).toHaveAttribute(
+    expect(useFileTree).toHaveBeenCalledWith("Vibrantes", "personajes");
+    expect(screen.getByRole("tab", { name: "Personajes" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -1400,7 +1399,6 @@ describe("WikiEditor", () => {
     expect(
       within(dialog).getByRole("radio", { name: "Personajes" }),
     ).toBeInTheDocument();
-    expect(within(dialog).getByRole("radio", { name: "Sagas" })).toBeInTheDocument();
     expect(
       within(dialog).getByRole("radio", { name: "Referencias" }),
     ).toBeInTheDocument();

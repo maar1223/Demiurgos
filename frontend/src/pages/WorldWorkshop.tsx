@@ -17,7 +17,7 @@ import type { WorldInfo } from "@/api/types";
  * Taller de Mundo shell (`/taller-mundo`).
  *
  * The free Core's world-workshop surface: pick a world and jump into its
- * connected sections (lore, personajes, sagas), the guided character flow,
+ * connected sections (lore, personajes), the guided character flow,
  * and ficha PDF export — all already present in the wiki workspace.
  *
  * States:
@@ -53,7 +53,7 @@ export default function WorldWorkshop() {
   };
 
   const getFileCount = (world: WorldInfo): number => {
-    return world.lore_count + world.character_count + world.saga_count;
+    return world.lore_count + world.character_count;
   };
 
   return (
@@ -65,7 +65,7 @@ export default function WorldWorkshop() {
           Taller de Mundo
         </h1>
         <p className="mt-2 text-body text-tinta-desvaida">
-          Construí tu mundo y mantenelo conectado: lore, personajes y sagas,
+          Construí tu mundo y mantenelo conectado: lore y personajes,
           con creación de personajes guiada y exportación de ficha a PDF.
         </p>
       </div>

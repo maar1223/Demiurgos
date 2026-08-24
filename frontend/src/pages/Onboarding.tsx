@@ -344,7 +344,7 @@ function WorldStep(props: {
     <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-filio bg-madero p-6">
       <h2 className="font-heading text-h4 text-pergamino">Creá tu mundo</h2>
       <p className="mt-1 text-small text-tinta-desvaida">
-        Se crea un árbol canónico en minúsculas (lore, personajes, sagas). El
+        Se crea un árbol canónico en minúsculas (lore, personajes). El
         mundo es el último paso operativo para entrar al Taller de Mundo.
       </p>
 

@@ -9,7 +9,6 @@ const mockWorld: WorldInfo = {
   path: "/mundos/vibrantes",
   lore_count: 77,
   character_count: 10,
-  saga_count: 4,
 };
 
 describe("CategoryCard", () => {
@@ -33,7 +32,6 @@ describe("CategoryCard", () => {
     );
     expect(screen.getByText("Lore")).toBeInTheDocument();
     expect(screen.getByText("Personajes")).toBeInTheDocument();
-    expect(screen.getByText("Sagas")).toBeInTheDocument();
   });
 
   it("calls onClick when clicked", async () => {

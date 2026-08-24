@@ -6,7 +6,7 @@ hermes_engine.py was not merged to master. Provides:
 
 1. A system-level identity prompt for the assistant.
 2. Entity graph context injection (BM25 search + entity content).
-3. World ficha context building from _context/ or lore/personajes/sagas.
+3. World ficha context building from _context/ or lore/personajes.
 
 The semantic gate (semantic_intent.py) is NOT touched. This module
 only affects the conversational assistant identity and context.
@@ -107,8 +107,8 @@ def build_fichas_context(
     """Build context from world fichas.
 
     Tries ``mundos/{mundo}/_context/`` first (all .md files are fichas).
-    Falls back to scanning ``lore/``, ``personajes/``, and ``sagas/``
-    directories. Returns an empty string if no fichas are found.
+    Falls back to scanning ``lore/`` and ``personajes/`` directories.
+    Returns an empty string if no fichas are found.
     """
     mundo_path = mundos_path / mundo
     parts: list[str] = []
@@ -129,8 +129,8 @@ def build_fichas_context(
         if parts:
             return "\n\n".join(parts)
 
-    # Fallback: scan lore/personajes/sagas
-    sections = ["lore", "personajes", "sagas"]
+    # Fallback: scan lore/personajes
+    sections = ["lore", "personajes"]
     for section in sections:
         section_path = mundo_path / section
         if not section_path.is_dir():

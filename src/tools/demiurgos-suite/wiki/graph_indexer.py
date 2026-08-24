@@ -52,7 +52,7 @@ _EXCLUDE_DIRS: set[str] = {
 
 _SKIP_PREFIXES: tuple[str, ...] = ("_",)
 
-_SCAN_SECTIONS: tuple[str, ...] = ("lore", "personajes", "sagas")
+_SCAN_SECTIONS: tuple[str, ...] = ("lore", "personajes")
 
 # Wikilink regex: [[Name]]
 _RE_WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
@@ -261,7 +261,7 @@ class EntityGraphIndex:
         return entity
 
     def _scan_mundo(self, mundo: str) -> list[dict[str, Any]]:
-        """Walk lore/, personajes/, sagas/ and parse all OKF .md files.
+        """Walk lore/, personajes/ and parse all OKF .md files.
 
         Returns list of entity dicts. Skips non-OKF, _-prefixed, excluded dirs.
 
@@ -562,7 +562,7 @@ class EntityGraphIndex:
         )
 
     def start_watch(self, mundo: str) -> None:
-        """Start watchdog observer on mundos/{mundo}/{lore,personajes,sagas}.
+        """Start watchdog observer on mundos/{mundo}/{lore,personajes}.
 
         Debounce 500ms. On create/modify â†’ update(). On delete â†’ remove entity.
 

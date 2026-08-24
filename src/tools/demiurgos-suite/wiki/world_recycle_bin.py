@@ -35,7 +35,7 @@ MUNDOS_DIR: Path = _PROJECT_ROOT / "mundos"
 RETENTION_DAYS = 30
 
 _META_NOTE = "associated data hidden; cleaned on purge"
-_ENTITY_SECTIONS = ("lore", "personajes", "sagas")
+_ENTITY_SECTIONS = ("lore", "personajes")
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,6 @@ class TrashEntry:
     size_bytes: int
     lore_count: int
     character_count: int
-    saga_count: int
     days_remaining: int
 
     def as_dict(self) -> dict:
@@ -71,11 +70,10 @@ def _validate_world_name(world_name: str) -> str:
 
 
 def _entity_counts(world_dir: Path) -> dict:
-    counts = {"lore_count": 0, "character_count": 0, "saga_count": 0}
+    counts = {"lore_count": 0, "character_count": 0}
     for section, key in (
         ("lore", "lore_count"),
         ("personajes", "character_count"),
-        ("sagas", "saga_count"),
     ):
         section_dir = world_dir / section
         if section_dir.is_dir():
@@ -150,7 +148,6 @@ def move_to_trash(
         "size_bytes": size_bytes,
         "lore_count": counts["lore_count"],
         "character_count": counts["character_count"],
-        "saga_count": counts["saga_count"],
         "note": _META_NOTE,
     }
     (target / "meta.json").write_text(
@@ -162,7 +159,6 @@ def move_to_trash(
         size_bytes=size_bytes,
         lore_count=counts["lore_count"],
         character_count=counts["character_count"],
-        saga_count=counts["saga_count"],
         days_remaining=RETENTION_DAYS,
     )
 
@@ -232,7 +228,6 @@ def list_trash(*, trash_root: Path | None = None) -> list[TrashEntry]:
                     size_bytes=int(meta.get("size_bytes", 0)),
                     lore_count=int(meta.get("lore_count", 0)),
                     character_count=int(meta.get("character_count", 0)),
-                    saga_count=int(meta.get("saga_count", 0)),
                     days_remaining=max(0, RETENTION_DAYS - age_days),
                 )
             )

@@ -22,7 +22,6 @@ describe("MoveToSectionDialog", () => {
     expect(
       screen.getByRole("radio", { name: "Personajes" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "Sagas" })).toBeInTheDocument();
     expect(
       screen.getByRole("radio", { name: "Referencias" }),
     ).toBeInTheDocument();
@@ -49,7 +48,7 @@ describe("MoveToSectionDialog", () => {
     const confirm = screen.getByRole("button", { name: "Confirmar" });
     expect(confirm).toBeDisabled();
 
-    await user.click(screen.getByRole("radio", { name: "Sagas" }));
+    await user.click(screen.getByRole("radio", { name: "Referencias" }));
     expect(confirm).toBeEnabled();
   });
 

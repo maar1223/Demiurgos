@@ -4192,7 +4192,6 @@ class TestWorldCreateEndpoint:
         root = api_server.MUNDOS_DIR / "mundo-x"
         assert (root / "lore" / "reglas").is_dir()
         assert (root / "personajes").is_dir()
-        assert (root / "sagas").is_dir()
         assert not (root / "relaciones").exists()
         assert not (root / "_context").exists()
 
@@ -4260,7 +4259,7 @@ class TestLegacyDetectionEndpoint:
     def test_readiness_does_not_report_canonical_worlds(
             self, empty_client: TestClient):
         good = api_server.MUNDOS_DIR / "bueno"
-        for sub in ("lore", "personajes", "sagas"):
+        for sub in ("lore", "personajes"):
             (good / sub).mkdir(parents=True)
         body = empty_client.get("/api/onboarding/readiness").json()
         assert body["legacy"] == []

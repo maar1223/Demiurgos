@@ -54,7 +54,6 @@ const remainingWorld: WorldInfo = {
   path: "mundos/Vibrantes",
   lore_count: 7,
   character_count: 2,
-  saga_count: 1,
 };
 
 const trashEntry: WorldTrashEntry = {
@@ -63,7 +62,6 @@ const trashEntry: WorldTrashEntry = {
   size_bytes: 1024000,
   lore_count: 42,
   character_count: 15,
-  saga_count: 3,
   days_remaining: 28,
 };
 
@@ -113,7 +111,6 @@ describe("ProfilePage — Papelera de mundos (W-5)", () => {
     expect(screen.getByText("28 días")).toBeInTheDocument();
     expect(screen.getByText("Lore 42")).toBeInTheDocument();
     expect(screen.getByText("Personajes 15")).toBeInTheDocument();
-    expect(screen.getByText("Sagas 3")).toBeInTheDocument();
     expect(screen.getByText(/1000\.0 KB/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Eliminar permanentemente" })).toBeInTheDocument();
   });

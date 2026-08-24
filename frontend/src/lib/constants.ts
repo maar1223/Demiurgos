@@ -1,12 +1,11 @@
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
-export const VALID_SECTIONS = ["lore", "personajes", "sagas"] as const;
+export const VALID_SECTIONS = ["lore", "personajes"] as const;
 export type Section = (typeof VALID_SECTIONS)[number];
 
 export const SECTION_LABELS: Record<Section, string> = {
   lore: "Lore",
   personajes: "Personajes",
-  sagas: "Sagas",
 };
 
 /**
@@ -19,7 +18,6 @@ export const SECTION_LABELS: Record<Section, string> = {
 export const MOVE_DESTINATION_SECTIONS = [
   "lore",
   "personajes",
-  "sagas",
   "referencias",
 ] as const;
 export type MoveDestinationSection =
@@ -28,7 +26,6 @@ export type MoveDestinationSection =
 export const MOVE_DESTINATION_LABELS: Record<MoveDestinationSection, string> = {
   lore: "Lore",
   personajes: "Personajes",
-  sagas: "Sagas",
   referencias: "Referencias",
 };
 

@@ -190,13 +190,11 @@ def _list_worlds() -> list[dict]:
         # Count files in lore + personajes
         lore_count = len(list((entry / "lore").rglob("*.md"))) if (entry / "lore").is_dir() else 0
         char_count = len(list((entry / "personajes").rglob("*.md"))) if (entry / "personajes").is_dir() else 0
-        sagas_count = len(list((entry / "sagas").rglob("*.md"))) if (entry / "sagas").is_dir() else 0
         worlds.append({
             "name": entry.name,
             "path": str(entry),
             "lore_count": lore_count,
             "character_count": char_count,
-            "saga_count": sagas_count,
         })
     return worlds
 
@@ -582,7 +580,7 @@ def purge_trash_world(name: str, request: Request):
 # File tree & content endpoints
 # ---------------------------------------------------------------------------
 
-VALID_SECTIONS = {"lore", "personajes", "sagas", "referencias", "media"}
+VALID_SECTIONS = {"lore", "personajes", "referencias", "media"}
 
 # Internal bookkeeping directories that must never be reachable as content
 # targets: ``.papelera`` (trash) and ``.history`` (edit snapshots). Both are
@@ -611,7 +609,7 @@ def _resolve_path(mundo: str, section: str, path: str) -> Path | None:
 def _resolve_mundo_path(mundo: str, path: str) -> Path | None:
     """Resolve a mundo-relative path safely (prevent path traversal).
 
-    The first path segment must be a valid section (lore/personajes/sagas/
+    The first path segment must be a valid section (lore/personajes/
     referencias/media) and the resolved path must stay under
     ``mundos/{mundo}`` — checked canonically against the resolved root plus a
     path separator, so sibling-world names (``mundos/mundo2/...``) can never

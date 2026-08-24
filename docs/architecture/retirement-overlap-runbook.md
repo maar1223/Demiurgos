@@ -23,7 +23,7 @@ check; running the gate never mutates anything.
 | `legacy_preserved_historical` | `src/tools/web-config-ui/` is preserved with `backup.py` and `tests/test_restore.py` intact; the docs mark it historical. |
 | `new_runtime_present` | The onboarding/Center runtime modules (`onboarding.py`, `world_authority.py`, `local_state.py`, `migration.py`) are present as the supported path. |
 | `online_offline_restart` | Local state survives commit → reload (restart resumes completed steps); the storage probe round-trips (offline local core works). |
-| `canonical_tree` | New worlds are created with the lowercase canonical tree (`lore/ personajes/ sagas/`), idempotently — in a sandbox, never the real `mundos/`. |
+| `canonical_tree` | New worlds are created with the lowercase canonical tree (`lore/ personajes/`), idempotently — in a sandbox, never the real `mundos/`. |
 | `migration_rollback_evidence` | The migration engine contract (evidence schema, `completed`/`rolled_back` outcomes, `restore_verified`) plus any persisted evidence records are well-formed. |
 | `three_proof_runtime` | The assistant still requires text + vision + runtime proofs, and the Hermes acceptance vocabulary (`accepted`/`pending-reload`/`saved-not-active`) stays honest. |
 | `readiness_truthfulness` | A bare registry claim never configures the assistant card; the import card never claims ready (no fake completion). |

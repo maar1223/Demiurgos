@@ -64,9 +64,9 @@ import { cn } from "@/lib/utils";
 
 // Classifier (BLOQUE 1 piece 1): per-document section choice offered by the
 // importer. Local on purpose — deliberately NOT shared with VALID_SECTIONS,
-// which still carries ``sagas`` pending its retirement as a separate change.
-// The server validates the same allow-list (CLASSIFIER_SECTIONS in
-// import_router.py); this constant only pre-fills the dropdown (advisory, D2).
+// which also carries the full set. The server validates the same allow-list
+// (CLASSIFIER_SECTIONS in import_router.py); this constant only pre-fills the
+// dropdown (advisory, D2).
 export const CLASSIFIER_SECTIONS = ["lore", "personajes", "referencias"] as const;
 export type ClassifierSection = (typeof CLASSIFIER_SECTIONS)[number];
 

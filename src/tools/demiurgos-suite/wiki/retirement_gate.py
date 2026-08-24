@@ -160,7 +160,7 @@ def check_canonical_tree(project_root: Path) -> GateCheck:
             return _verdict("canonical_tree", False,
                             f"creation failed: {first.kind.value}")
         top = {entry.name for entry in first.path.iterdir()}
-        if not {"lore", "personajes", "sagas"} <= top or any(n != n.lower() for n in top):
+        if not {"lore", "personajes"} <= top or any(n != n.lower() for n in top):
             return _verdict("canonical_tree", False, "tree is not lowercase canonical")
         second = create_world(Path(tmp), "gate-world", lore_skeleton=True)
         if second.kind is not WorldResultKind.ALREADY_EXISTS:

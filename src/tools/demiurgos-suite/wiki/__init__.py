@@ -1,1 +1,1 @@
-"""Wiki — API de lore/personajes/sagas para Demiurgos."""
+"""Wiki — API de lore/personajes/referencias para Demiurgos."""

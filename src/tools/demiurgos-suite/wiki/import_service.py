@@ -49,7 +49,7 @@ logger = logging.getLogger("demiurgos-import")
 
 APPROVAL_TTL_MINUTES = 30
 PAPELERA_RETENTION_DAYS = 30
-_VALID_SECTIONS = frozenset({"lore", "personajes", "sagas", "referencias"})
+_VALID_SECTIONS = frozenset({"lore", "personajes", "referencias"})
 
 
 def digest_of(content: str) -> str:

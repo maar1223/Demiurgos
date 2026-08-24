@@ -4,7 +4,6 @@ export interface WorldInfo {
   path: string;
   lore_count: number;
   character_count: number;
-  saga_count: number;
 }
 
 /** A file or directory node in the section tree. */
@@ -137,7 +136,6 @@ export interface WorldTrashEntry {
   size_bytes: number;
   lore_count: number;
   character_count: number;
-  saga_count: number;
   /** Days left before the 30-day purge permanently deletes the entry. */
   days_remaining: number;
 }

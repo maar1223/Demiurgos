@@ -49,8 +49,8 @@ const permanentDeleteMock = vi.mocked(permanentDelete);
 const getIdeaCaptureStatusMock = vi.mocked(getIdeaCaptureStatus);
 
 const worlds: WorldInfo[] = [
-  { name: "Avalor", path: "mundos/Avalor", lore_count: 42, character_count: 15, saga_count: 3 },
-  { name: "Vibrantes", path: "mundos/Vibrantes", lore_count: 7, character_count: 2, saga_count: 1 },
+  { name: "Avalor", path: "mundos/Avalor", lore_count: 42, character_count: 15 },
+  { name: "Vibrantes", path: "mundos/Vibrantes", lore_count: 7, character_count: 2 },
 ];
 
 const trashEntry: WorldTrashEntry = {
@@ -59,7 +59,6 @@ const trashEntry: WorldTrashEntry = {
   size_bytes: 1024000,
   lore_count: 42,
   character_count: 15,
-  saga_count: 3,
   days_remaining: 28,
 };
 
@@ -120,7 +119,6 @@ describe("ProfilePage — Mundos tab / 3-step delete flow (W-4)", () => {
     expect(within(dialog).getByText("Avalor")).toBeInTheDocument();
     expect(within(dialog).getByText("Lore 42")).toBeInTheDocument();
     expect(within(dialog).getByText("Personajes 15")).toBeInTheDocument();
-    expect(within(dialog).getByText("Sagas 3")).toBeInTheDocument();
     expect(within(dialog).getByText(/recuperable durante 30 días/)).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: "Entiendo, continuar" }));

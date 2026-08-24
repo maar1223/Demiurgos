@@ -11,10 +11,6 @@ const SECTION_CARD_META: Record<string, { icon: IconName; description: string }>
     icon: "avatar",
     description: "Fichas de personajes y desarrollo",
   },
-  sagas: {
-    icon: "folder",
-    description: "Relatos y arcos narrativos",
-  },
 };
 
 interface SectionCardProps {
@@ -25,7 +21,7 @@ interface SectionCardProps {
 }
 
 /**
- * Card for a world section (lore, personajes, sagas) shown on the
+ * Card for a world section (lore, personajes) shown on the
  * WikiWorld page. Icon-based visual (no image), file count, description
  * and a chevron hint. Clicking navigates to the section.
  */

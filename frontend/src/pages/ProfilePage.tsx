@@ -225,7 +225,6 @@ function WorldsSection() {
                     <div className="mt-1 flex flex-wrap items-center gap-1">
                       <Badge>Lore {world.lore_count}</Badge>
                       <Badge>Personajes {world.character_count}</Badge>
-                      <Badge>Sagas {world.saga_count}</Badge>
                     </div>
                   </div>
                   <Button

@@ -22,7 +22,7 @@ interface MoveModalProps {
 }
 
 /**
- * "Mover a…" modal (S9): pick a destination section (lore/personajes/sagas/
+ * "Mover a…" modal (S9): pick a destination section (lore/personajes/
  * referencias — decision (b)) and a folder inside it, then confirm.
  *
  * Owns a collapsible directory-only tree per active section built on

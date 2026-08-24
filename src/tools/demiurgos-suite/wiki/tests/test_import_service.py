@@ -905,7 +905,7 @@ class TestImporterScopeAuthority:
         return is_importer_scope_permitted(section)
 
     def test_canonical_sections_permitted(self):
-        for section in ("lore", "personajes", "sagas", "referencias"):
+        for section in ("lore", "personajes", "referencias"):
             assert self._permitted(section)
         # Case-insensitive on input.
         assert self._permitted("Lore")

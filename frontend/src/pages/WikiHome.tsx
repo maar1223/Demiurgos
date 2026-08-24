@@ -40,7 +40,7 @@ export default function WikiHome() {
 
   // Total file count across all sections
   const getFileCount = (world: WorldInfo): number => {
-    return world.lore_count + world.character_count + world.saga_count;
+    return world.lore_count + world.character_count;
   };
 
   return (

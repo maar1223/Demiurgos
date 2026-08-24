@@ -25,7 +25,7 @@ ACTIVITY_UNAVAILABLE_REASON = "file_evidence_contract_unverified"
 PROVIDER_ACTIVITY_FAILURE_REASON = "provider_activity_unavailable"
 
 _ALLOWLIST = {"graph_search": SEARCH_WORLD_LABEL, "graph_read": READ_WORLD_LABEL}
-_VALID_SECTIONS = {"lore", "personajes", "sagas", "referencias", "media"}
+_VALID_SECTIONS = {"lore", "personajes", "referencias", "media"}
 _INTERNAL_PATH_PARTS = {".papelera", ".history"}
 _REQUIRED_FEATURES = (
     "run_submission",

@@ -34,8 +34,6 @@ def env(tmp_path: Path):
     (avalor / "lore" / "b.md").write_text("# B\n", encoding="utf-8")
     (avalor / "personajes").mkdir()
     (avalor / "personajes" / "p.md").write_text("# P\n", encoding="utf-8")
-    (avalor / "sagas").mkdir()
-    (avalor / "sagas" / "s.md").write_text("# S\n", encoding="utf-8")
     return {"mundos": mundos, "trash": trash}
 
 
@@ -59,7 +57,6 @@ def _write_old_entry(trash: Path, world: str, deleted_at: datetime) -> Path:
                 "size_bytes": 12,
                 "lore_count": 1,
                 "character_count": 0,
-                "saga_count": 0,
                 "note": "associated data hidden; cleaned on purge",
             },
             ensure_ascii=False,
@@ -75,7 +72,6 @@ class TestMoveToTrash:
         assert entry.world_name == "Avalor"
         assert entry.lore_count == 2
         assert entry.character_count == 1
-        assert entry.saga_count == 1
         assert entry.size_bytes > 0
         assert entry.days_remaining == wrb.RETENTION_DAYS
         assert not (env["mundos"] / "Avalor").exists()
@@ -87,7 +83,6 @@ class TestMoveToTrash:
         assert meta["world_name"] == "Avalor"
         assert meta["lore_count"] == 2
         assert meta["character_count"] == 1
-        assert meta["saga_count"] == 1
         assert meta["size_bytes"] == entry.size_bytes
         assert meta["deleted_at"].endswith("Z")
         assert (entries[0] / "lore" / "a.md").is_file()

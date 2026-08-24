@@ -131,9 +131,9 @@ VisionCallable = Callable[[list[Candidate], list[VisionMediaEntry]], list[Candid
 
 # Per-document classifier sections (BLOQUE 1 piece 1). Local to the
 # classifier on purpose: ``VALID_SECTIONS``/``IMPORTER_SCOPE_SECTIONS`` still
-# carry ``sagas`` pending its retirement as a separate change, while the
-# classifier offers only the three canonical worldbuilding sections. The
-# server is the authority for validation; the client heuristic is advisory.
+# carry the full set, while the classifier offers only the canonical
+# worldbuilding sections. The server is the authority for validation; the
+# client heuristic is advisory.
 CLASSIFIER_SECTIONS = ("lore", "personajes", "referencias")
 
 
@@ -598,7 +598,7 @@ def create_import_router(
             # enforcement is unchanged. ``_resolver_fn`` was resolved above
             # (fail-open); ``None`` → only the filesystem-based path checks
             # run.
-            INDEXED_SECTIONS = ("lore", "personajes", "sagas")
+            INDEXED_SECTIONS = ("lore", "personajes")
             COLLISION_CODES = {
                 "identity-collision", "path-collision", "duplicate-target",
                 "unresolved-reference", "ambiguous-reference",
