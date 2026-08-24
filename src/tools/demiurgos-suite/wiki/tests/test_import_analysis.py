@@ -35,23 +35,48 @@ from import_analysis import (  # noqa: E402
 )
 from import_models import (  # noqa: E402
     Candidate,
+    ImagePlacement,
     Provenance,
 )
+from sync_lore.import_docx_parser import ExtractionResult  # noqa: E402
 from sync_lore.schemas import ImageEntry  # noqa: E402
 
 
 def _entry(filename: str = "pic.png", page: int | None = 1,
            data: bytes = b"\x89PNG\r\n\x1a\nfake",
-           source_file: str = "Lore/Enciclopedia.docx") -> ImageEntry:
+           source_file: str = "Lore/Enciclopedia.docx",
+           document_order: int = 0, paragraph_index: int = 0,
+           anchor_type: str = "", structural_path: str = "",
+           heading_path: str = "", context_text: str = "",
+           warnings: list[str] | None = None) -> ImageEntry:
     """Build a minimal sync_lore ImageEntry for tests."""
     return ImageEntry(
         id=str(uuid.uuid4()),
         source_file=source_file,
         page=page,
         chunk_ref="",
-        context_text="",
+        context_text=context_text,
         filename=filename,
         image_bytes=data,
+        document_order=document_order,
+        paragraph_index=paragraph_index,
+        anchor_type=anchor_type,
+        structural_path=structural_path,
+        heading_path=heading_path,
+        section_context=context_text,
+        warnings=list(warnings or []),
+    )
+
+
+def _strategy_result(entries: list[ImageEntry], markdown: str = "",
+                     diagnostics: list[str] | None = None,
+                     warnings: list[str] | None = None) -> ExtractionResult:
+    """Build the typed outcome the DOCX strategy returns (PR2 seam)."""
+    return ExtractionResult(
+        images=entries,
+        markdown=markdown,
+        diagnostics=list(diagnostics or []),
+        warnings=list(warnings or []),
     )
 
 
@@ -131,8 +156,9 @@ class TestSafeConversion:
         monkeypatch.setattr(
             "sync_lore.utils.converter.convert_to_markdown", _convert)
         monkeypatch.setattr(
-            "import_analysis.extract_images_from_file",
-            lambda _p: [])
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": _strategy_result(
+                [], markdown=converted_markdown))
         (tmp_path / "Lore").mkdir(parents=True)
         (tmp_path / "Lore" / "Enciclopedia.docx").write_bytes(b"PK..fake")
         files = [{"relative": "Lore/Enciclopedia.docx",
@@ -438,14 +464,18 @@ class TestImageExtraction:
         assert images[0].image_bytes == b"\x89PNG\r\n\x1a\nfake"
 
     def test_extract_images_from_docx_dispatch(self, monkeypatch):
-        """Task 2.2 — .docx dispatches to the sync_lore docx adapter."""
-        expected = [_entry(filename="inline.png", page=None)]
+        """Task 2.2 + PR2 — .docx dispatches through the strategy registry."""
+        expected = [_entry(filename="inline.png", page=None,
+                           document_order=1, anchor_type="inline",
+                           structural_path="body/p[0]/r[0]/inline[0]")]
         monkeypatch.setattr(
-            "sync_lore.image_indexer.extract_images_from_docx",
-            lambda _p: expected)
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": _strategy_result(expected))
         images = extract_images_from_file(Path("Lore/Enciclopedia.docx"))
         assert images == expected
         assert images[0].filename == "inline.png"
+        assert images[0].anchor_type == "inline"
+        assert images[0].structural_path == "body/p[0]/r[0]/inline[0]"
 
     def test_extract_images_from_pdf_dispatch(self, monkeypatch):
         """Task 2.2 — .pdf dispatches to the sync_lore pdf adapter."""
@@ -463,19 +493,27 @@ class TestImageExtraction:
 
     def test_media_stored_in_spool_with_metadata(
             self, monkeypatch, tmp_path):
-        """Tasks 2.3/2.4 — extracted bytes land in the spool and metadata is
-        attached to the AnalyzedFile for downstream consumption."""
+        """Tasks 2.3/2.4 + PR2 — extracted bytes land in the spool and
+        metadata (including the DOCX position contract) is attached to the
+        AnalyzedFile for downstream consumption."""
         def _convert(_path):
             return "# Enciclopedia\n\nBody"
         monkeypatch.setattr(
             "sync_lore.utils.converter.convert_to_markdown", _convert)
         entries = [
             _entry(filename="portada.png", page=None,
-                   data=b"PORTADA-BYTES"),
-            _entry(filename="mapa.png", page=1, data=b"MAPA-BYTES"),
+                   data=b"PORTADA-BYTES",
+                   document_order=1, paragraph_index=2, anchor_type="inline",
+                   structural_path="body/p[2]/r[0]/inline[0]",
+                   heading_path="Enciclopedia > Portada",
+                   context_text="Retrato de la fundadora"),
+            _entry(filename="mapa.png", page=1, data=b"MAPA-BYTES",
+                   document_order=2, anchor_type="anchor",
+                   structural_path="body/p[5]/r[1]/anchor[0]"),
         ]
         monkeypatch.setattr(
-            "import_analysis.extract_images_from_file", lambda _p: entries)
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": _strategy_result(entries))
         spool = tmp_path / "spool"
         (spool / "Lore").mkdir(parents=True)
         (spool / "Lore" / "Enciclopedia.docx").write_bytes(b"PK..fake")
@@ -500,6 +538,15 @@ class TestImageExtraction:
         assert second.image.source_file == "Lore/Enciclopedia.docx"
         assert second.image.page == 1
         assert second.image.filename == "mapa.png"
+        # PR2 — the DOCX position contract is mirrored on ExtractedMedia.
+        assert first.document_order == 1
+        assert first.paragraph_index == 2
+        assert first.anchor_type == "inline"
+        assert first.structural_path == "body/p[2]/r[0]/inline[0]"
+        assert first.heading_path == "Enciclopedia > Portada"
+        assert first.context_text == "Retrato de la fundadora"
+        assert second.anchor_type == "anchor"
+        assert second.structural_path == "body/p[5]/r[1]/anchor[0]"
 
     def test_spool_collision_avoids_overwrite(self, tmp_path):
         """Task 2.3 — duplicate filenames get a counter suffix, never
@@ -521,17 +568,17 @@ class TestImageExtraction:
 
     def test_extraction_failure_does_not_block_analysis(
             self, monkeypatch, tmp_path):
-        """Task 2.5 — an extraction failure leaves the converted candidate
-        intact and records a diagnostic."""
+        """Task 2.5 + PR2 — an extraction failure leaves the converted
+        candidate intact and records a diagnostic (fail-open)."""
         def _convert(_path):
             return "# Enciclopedia\n\nBody"
         monkeypatch.setattr(
             "sync_lore.utils.converter.convert_to_markdown", _convert)
 
-        def _boom(_path):
-            raise RuntimeError("docx adapter broke")
+        def _boom(_path, converted_markdown=""):
+            raise RuntimeError("docx strategy broke")
         monkeypatch.setattr(
-            "import_analysis.extract_images_from_file", _boom)
+            "sync_lore.import_docx_parser.extract_by_extension", _boom)
         spool = tmp_path / "spool"
         (spool / "Lore").mkdir(parents=True)
         (spool / "Lore" / "Enciclopedia.docx").write_bytes(b"PK..fake")
@@ -577,3 +624,187 @@ class TestExistingFlowPreserved:
         assert analyzed.chunks[0].heading_path == "City"
         assert analyzed.chunks[0].nearby_text_anchor == "The capital."
         assert analyzed.media == [] and analyzed.diagnostics == []
+
+
+# ---------------------------------------------------------------------------
+# PR2 — DOCX strategy integration (tasks 2.1/2.2/2.3 + scenario R3-S1/R4-S1)
+# ---------------------------------------------------------------------------
+
+
+class TestDocxStrategyIntegration:
+    """Positioned media propagation through ``analyze_source`` (PR2 seam).
+
+    The strategy mock emulates the real ``DocxImageExtractionStrategy``:
+    it receives the converted markdown, enriches it with injected image
+    references, and returns positioned ``ImageEntry`` records plus
+    diagnostics/warnings — exactly what ``import_docx_parser`` produces.
+    """
+
+    def test_strategy_enriches_markdown_and_placements_carry_position(
+            self, monkeypatch, tmp_path):
+        """R3-S1 — the enriched markdown (with injected refs) becomes the
+        candidate body, and the derived placements carry the DOCX position
+        fields from the spooled media."""
+        converted = "# Origen\n\nLa fundadora partió al exilio."
+        enriched = (
+            "# Origen\n\nLa fundadora partió al exilio.\n"
+            "![portada](media/portada.png)"
+        )
+        entry = _entry(
+            filename="portada.png", page=None, data=b"PORTADA-BYTES",
+            document_order=1, paragraph_index=1, anchor_type="inline",
+            structural_path="body/p[1]/r[0]/inline[0]",
+            heading_path="Origen", context_text="La fundadora partió",
+            warnings=["media part 'word/media/x.png' missing from package; skipped"],
+        )
+        monkeypatch.setattr(
+            "sync_lore.utils.converter.convert_to_markdown",
+            lambda _p: converted)
+        monkeypatch.setattr(
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": _strategy_result(
+                [entry], markdown=enriched))
+        spool = tmp_path / "spool"
+        (spool / "Lore").mkdir(parents=True)
+        (spool / "Lore" / "Enciclopedia.docx").write_bytes(b"PK..fake")
+        files = [{"relative": "Lore/Enciclopedia.docx",
+                  "sha256": "abc", "size": 8}]
+        report = analyze_source(files, _read_file(spool),
+                                file_path=_path_for(spool),
+                                spool_root=spool)
+        analyzed = report.ordered_files()[0]
+        # Injected reference lands in the candidate body (converted text).
+        assert "![portada](media/portada.png)" in analyzed.content_preview()
+        # The chunk placement derived from the ref carries the position.
+        placement = analyzed.chunks[0].images[0]
+        assert placement.relative_media_path == "media/portada.png"
+        assert placement.document_order == 1
+        assert placement.paragraph_index == 1
+        assert placement.anchor_type == "inline"
+        assert placement.structural_path == "body/p[1]/r[0]/inline[0]"
+        assert placement.heading_path == "Origen"
+        assert placement.context_text == "La fundadora partió"
+        assert placement.warnings == [
+            "media part 'word/media/x.png' missing from package; skipped"]
+        # Spooled media mirrors the same contract.
+        assert analyzed.media[0].document_order == 1
+        assert analyzed.media[0].anchor_type == "inline"
+
+    def test_strategy_warnings_flow_to_analyzed_file(
+            self, monkeypatch, tmp_path):
+        """R1-S2 — file-level strategy warnings (headers/SmartArt) surface on
+        the AnalyzedFile as advisory metadata; body analysis continues."""
+        monkeypatch.setattr(
+            "sync_lore.utils.converter.convert_to_markdown",
+            lambda _p: "# Origen\n\nBody")
+        monkeypatch.setattr(
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": _strategy_result(
+                [], markdown=converted_markdown,
+                warnings=[
+                    "header part 'word/_rels/header1.xml.rels' embeds 2 "
+                    "image(s) — headers are not supported; skipped",
+                    "SmartArt diagram 'word/diagrams/data1.xml' is not "
+                    "supported; skipped",
+                ]))
+        spool = tmp_path / "spool"
+        (spool / "Lore").mkdir(parents=True)
+        (spool / "Lore" / "Enciclopedia.docx").write_bytes(b"PK..fake")
+        files = [{"relative": "Lore/Enciclopedia.docx",
+                  "sha256": "abc", "size": 8}]
+        report = analyze_source(files, _read_file(spool),
+                                file_path=_path_for(spool),
+                                spool_root=spool)
+        analyzed = report.ordered_files()[0]
+        assert "Body" in analyzed.content_preview()
+        assert len(analyzed.warnings) == 2
+        assert any("headers are not supported" in w for w in analyzed.warnings)
+        assert analyzed.media == []
+
+    def test_one_candidate_per_docx(self, monkeypatch, tmp_path):
+        """R4-S1 — one source file yields exactly one analyzed file."""
+        def _convert(_path):
+            return "# Origen\n\nBody"
+        monkeypatch.setattr(
+            "sync_lore.utils.converter.convert_to_markdown", _convert)
+        monkeypatch.setattr(
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": _strategy_result(
+                [_entry(filename="a.png", document_order=1),
+                 _entry(filename="b.png", document_order=2)],
+                markdown=converted_markdown))
+        spool = tmp_path / "spool"
+        (spool / "Lore").mkdir(parents=True)
+        (spool / "Lore" / "Enciclopedia.docx").write_bytes(b"PK..fake")
+        files = [{"relative": "Lore/Enciclopedia.docx",
+                  "sha256": "abc", "size": 8}]
+        report = analyze_source(files, _read_file(spool),
+                                file_path=_path_for(spool),
+                                spool_root=spool)
+        assert len(report.files) == 1
+        assert len(report.ordered_files()[0].media) == 2
+
+    def test_media_store_failure_fail_open_for_other_images(
+            self, monkeypatch, tmp_path):
+        """R4-S1 — one media write failing never blocks body analysis nor the
+        other images; the failed media is simply absent from the bundle."""
+        def _convert(_path):
+            return "# Origen\n\nBody"
+        monkeypatch.setattr(
+            "sync_lore.utils.converter.convert_to_markdown", _convert)
+        entries = [
+            _entry(filename="good.png", data=b"GOOD-BYTES",
+                   document_order=1),
+            _entry(filename="bad.png", data=b"BAD-BYTES",
+                   document_order=2),
+        ]
+        monkeypatch.setattr(
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": _strategy_result(entries))
+        real_write_bytes = Path.write_bytes
+
+        def _flaky_write(self, data):
+            if self.name == "bad.png":
+                raise OSError("simulated disk full")
+            return real_write_bytes(self, data)
+        monkeypatch.setattr(Path, "write_bytes", _flaky_write)
+        spool = tmp_path / "spool"
+        (spool / "Lore").mkdir(parents=True)
+        (spool / "Lore" / "Enciclopedia.docx").write_bytes(b"PK..fake")
+        files = [{"relative": "Lore/Enciclopedia.docx",
+                  "sha256": "abc", "size": 8}]
+        report = analyze_source(files, _read_file(spool),
+                                file_path=_path_for(spool),
+                                spool_root=spool)
+        analyzed = report.ordered_files()[0]
+        assert "Body" in analyzed.content_preview()
+        assert [m.image.filename for m in analyzed.media] == ["good.png"]
+        assert (spool / "media" / "Enciclopedia" / "good.png").read_bytes() \
+            == b"GOOD-BYTES"
+        assert not (spool / "media" / "Enciclopedia" / "bad.png").exists()
+
+    def test_pdf_keeps_legacy_adapter(self, monkeypatch, tmp_path):
+        """R2-S1 — PDF stays on the legacy extractor (no strategy): the
+        converted markdown is not enriched and images come from the adapter."""
+        called_with: list[Path] = []
+
+        def _convert(_path):
+            return "# Manual\n\nBody"
+        monkeypatch.setattr(
+            "sync_lore.utils.converter.convert_to_markdown", _convert)
+        monkeypatch.setattr(
+            "sync_lore.image_indexer.extract_images_from_pdf",
+            lambda path: called_with.append(Path(path)) or [
+                _entry(filename="page1.png", page=1)])
+        spool = tmp_path / "spool"
+        (spool / "Lore").mkdir(parents=True)
+        (spool / "Lore" / "Manual.pdf").write_bytes(b"%PDF-fake")
+        files = [{"relative": "Lore/Manual.pdf", "sha256": "abc", "size": 8}]
+        report = analyze_source(files, _read_file(spool),
+                                file_path=_path_for(spool),
+                                spool_root=spool)
+        analyzed = report.ordered_files()[0]
+        assert called_with == [spool / "Lore" / "Manual.pdf"]
+        assert len(analyzed.media) == 1
+        assert analyzed.media[0].image.page == 1
+        assert analyzed.media[0].anchor_type == ""

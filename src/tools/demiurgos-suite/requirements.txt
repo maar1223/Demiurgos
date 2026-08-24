@@ -5,3 +5,7 @@ rank_bm25>=0.2.2,<0.3.0
 watchdog>=4.0.0
 # Image processing for media uploads (JPEG compression + thumbnails)
 Pillow>=10.0.0
+# Document conversion for importer (.docx, .pdf, .pptx → markdown)
+markitdown[docx]>=0.1.0
+# Streaming OOXML parsing for DOCX image extraction with precise positioning
+lxml>=4.9.0

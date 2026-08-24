@@ -2,7 +2,40 @@ import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
-import type { VisionSuggestion } from "@/api/types";
+import type { VisionSuggestion, VisionVerdict } from "@/api/types";
+
+/**
+ * Vision analysis card for one extracted image (sync-lore-in-importer, PR3+).
+ *
+ * Vision suggestions are ADVISORY: the verdict/description/analysis never
+ * gate writes — only the reviewer's explicit approve/reject does, via the
+ * same decisions endpoint as text suggestions. The approved description
+ * becomes the markdown alt-text at execute time; the ORIGINAL spool bytes
+ * are registered in the gallery (thumbnails are preview-only).
+ *
+ * Visual distinction: ``border-plata/40 bg-cripta`` keeps vision cards apart
+ * from classification (musgo) and relationship (filio) suggestions. The
+ * thumbnail only renders when the server provides a servable
+ * ``thumbnail_url`` — review-time images live in the job spool, which the
+ * media endpoint does not serve, so a broken image is never rendered.
+ */
+
+const VERDICT_LABELS: Record<VisionVerdict, string> = {
+  confirma: "confirma",
+  rechaza: "rechaza",
+  contradice: "contradice",
+  no_aplica: "no aplica",
+};
+
+const VERDICT_VARIANTS: Record<
+  VisionVerdict,
+  "success" | "error" | "default"
+> = {
+  confirma: "success",
+  rechaza: "error",
+  contradice: "error",
+  no_aplica: "default",
+};
 
 interface VisionSuggestionCardProps {
   candidateId: string;
@@ -16,15 +49,6 @@ interface VisionSuggestionCardProps {
   ) => void;
 }
 
-/**
- * PR4 — one advisory vision suggestion card.
- *
- * Vision suggestions approve/reject the IMAGE: approved originals are
- * registered in the gallery at execute and the description becomes the
- * markdown alt-text. Review-time images live in the spool (pre-gallery),
- * so the card shows a placeholder — never a broken `<img>`. Uses the same
- * decisions endpoint + ID commitment as the text suggestion family.
- */
 export function VisionSuggestionCard({
   candidateId,
   suggestion,
@@ -32,87 +56,130 @@ export function VisionSuggestionCard({
   busy,
   onDecision,
 }: VisionSuggestionCardProps) {
-  const provider = suggestion.provenance?.provider ?? "vision";
+  const providerLabel = suggestion.provenance?.provider ?? "visión";
+  const modelLabel = suggestion.provenance?.model ?? "";
+  const confidencePct = Math.round((suggestion.confidence ?? 0) * 100);
 
   return (
     <li
       className={cn(
-        "flex flex-col gap-2 rounded-md border p-3",
-        "border-plata/40 bg-plata/5",
+        "flex flex-col gap-2 rounded-md border border-plata/40 bg-cripta p-3",
         decision === "approved" && "ring-1 ring-musgo/40",
         decision === "rejected" && "opacity-70",
       )}
       data-testid={`suggestion-${suggestion.id}`}
       data-suggestion-state={decision ?? "pending"}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="info">visión</Badge>
-          <span className="text-small font-medium text-pergamino">
-            {suggestion.verdict}
-          </span>
+      <div className="flex items-start gap-3">
+        {/* Thumbnail: only when the server provides a servable preview URL.
+            Review-time images live in the job spool (pre-gallery), so the
+            fallback is an honest placeholder instead of a broken image. */}
+        {suggestion.thumbnail_url ? (
+          <div className="shrink-0 overflow-hidden rounded-md border border-filio bg-madero">
+            <img
+              src={suggestion.thumbnail_url}
+              alt={suggestion.description || suggestion.relative_media_path}
+              className="h-20 w-20 object-cover"
+            />
+          </div>
+        ) : (
+          <div
+            className="flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-filio bg-madero text-tinta-desvaida"
+            aria-label="Imagen sin vista previa disponible"
+          >
+            <Icon name="image" size={20} />
+            <span className="px-1 text-center text-[10px] leading-tight">
+              spool
+            </span>
+          </div>
+        )}
+
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={VERDICT_VARIANTS[suggestion.verdict]}>
+              {VERDICT_LABELS[suggestion.verdict]}
+            </Badge>
+            <Badge variant="info">visión</Badge>
+            <span
+              className="truncate text-xs text-tinta-desvaida"
+              title={suggestion.relative_media_path}
+            >
+              {suggestion.relative_media_path}
+            </span>
+            <span
+              className="text-xs text-tinta-desvaida"
+              title="confianza del asistente"
+            >
+              confianza {confidencePct}%
+            </span>
+          </div>
+          <p className="mt-1 text-small font-medium text-pergamino">
+            {suggestion.description || "(sin descripción)"}
+          </p>
+          {suggestion.analysis && (
+            <p className="mt-0.5 text-xs text-tinta-desvaida">
+              {suggestion.analysis}
+            </p>
+          )}
           {suggestion.tags.length > 0 && (
-            <span className="flex flex-wrap gap-1">
+            <div className="mt-1 flex flex-wrap gap-1">
               {suggestion.tags.map((tag) => (
                 <Badge key={tag} variant="default">
                   #{tag}
                 </Badge>
               ))}
-            </span>
+            </div>
           )}
         </div>
+      </div>
+
+      {suggestion.evidence && (
+        <p className="text-xs text-tinta-desvaida">{suggestion.evidence}</p>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-tinta-desvaida">
-          Origen: {provider}
+          Origen: {providerLabel}
+          {modelLabel && ` · ${modelLabel}`}
         </span>
+        <div className="flex gap-2">
+          <Button
+            variant={decision === "approved" ? "primary" : "secondary"}
+            size="sm"
+            disabled={busy || decision === "approved"}
+            onClick={() => onDecision(candidateId, suggestion.id, "approve")}
+            aria-label={`Aprobar imagen ${suggestion.id}`}
+            data-testid={`suggestion-approve-${suggestion.id}`}
+          >
+            <Icon name="check" size={14} />
+            Aprobar
+          </Button>
+          <Button
+            variant={decision === "rejected" ? "primary" : "ghost"}
+            size="sm"
+            disabled={busy || decision === "rejected"}
+            onClick={() => onDecision(candidateId, suggestion.id, "reject")}
+            aria-label={`Rechazar imagen ${suggestion.id}`}
+            data-testid={`suggestion-reject-${suggestion.id}`}
+          >
+            <Icon name="close" size={14} />
+            Rechazar
+          </Button>
+        </div>
       </div>
-
-      {/* Review-time images live in the spool (pre-gallery) — a placeholder,
-          never a broken <img>. */}
-      <div
-        className="flex items-center gap-2 rounded-md border border-dashed border-filio bg-madero/40 px-3 py-2 text-xs text-tinta-desvaida"
-        role="img"
-        aria-label="Imagen sin vista previa disponible"
-      >
-        <Icon name="image" size={16} />
-        {suggestion.relative_media_path}
-      </div>
-
-      {suggestion.description && (
-        <p className="text-small text-pergamino">{suggestion.description}</p>
+      {decision === "approved" && (
+        <p className="text-xs text-tinta-desvaida">
+          Imagen aprobada — la descripción se usará como texto alternativo al
+          importar.
+        </p>
       )}
-      {suggestion.analysis && (
-        <p className="text-xs text-tinta-desvaida">{suggestion.analysis}</p>
-      )}
-
-      <div className="flex justify-end gap-2">
-        <Button
-          variant={decision === "approved" ? "primary" : "secondary"}
-          size="sm"
-          disabled={busy || decision === "approved"}
-          onClick={() => onDecision(candidateId, suggestion.id, "approve")}
-          aria-label={`Aprobar sugerencia ${suggestion.id}`}
-          data-testid={`suggestion-approve-${suggestion.id}`}
-        >
-          <Icon name="check" size={14} />
-          Aprobar
-        </Button>
-        <Button
-          variant={decision === "rejected" ? "primary" : "ghost"}
-          size="sm"
-          disabled={busy || decision === "rejected"}
-          onClick={() => onDecision(candidateId, suggestion.id, "reject")}
-          aria-label={`Rechazar sugerencia ${suggestion.id}`}
-          data-testid={`suggestion-reject-${suggestion.id}`}
-        >
-          <Icon name="close" size={14} />
-          Rechazar
-        </Button>
-      </div>
       {decision === "rejected" && (
         <p className="text-xs text-tinta-desvaida">
-          Sugerencia rechazada — no se aplicará al importar.
+          Imagen rechazada — no se registrará en la galería.
         </p>
       )}
     </li>
   );
 }
+
+VisionSuggestionCard.displayName = "VisionSuggestionCard";

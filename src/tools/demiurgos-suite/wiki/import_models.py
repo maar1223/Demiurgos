@@ -10,11 +10,15 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from import_analysis import AnalysisReport
 
 # Importer-specific bounded upload limits (NOT a relaxation of the generic
 # 10 MB media cap). Enforced on the server-owned intake path only.
@@ -132,6 +136,49 @@ class Provenance(BaseModel):
     nearby_text_anchor: str = ""
     image_anchor: str = ""
     source_order: int = 0
+    # --- Notion export provenance (additive; legacy values remain valid) ---
+    source_folder: str = ""     # folder-relative source folder of the origin file
+    csv_row: int | None = None  # 1-based CSV row number when derived from a row
+    source_column: str = ""     # source column that produced this candidate
+
+
+# ---------------------------------------------------------------------------
+# Notion adapter contracts (additive; nothing here affects legacy intake).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class MediaAsset:
+    """Deduplicated media identity inside a Notion export.
+
+    Equal bytes share one ``sha256``; ``canonical_path`` is the POSIX-relative
+    canonical media path used by OKF review; ``references`` keeps every
+    original source path that pointed at these bytes so no reference is lost
+    when duplicate bytes collapse into a single asset.
+    """
+
+    sha256: str
+    canonical_path: str
+    size_bytes: int = 0
+    references: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class NotionAnalysis:
+    """Full analysis of a recognized Notion export (adapter orchestrator).
+
+    ``report`` carries the shared candidate analysis in source order;
+    ``media`` is the deduplicated media index; ``diagnostics`` holds fail-open
+    warnings (missing headings, unresolved links, malformed CSV rows);
+    out_of_scope lists complex/unsupported Notion features (views, filters,
+    relations, interactive metadata, HTML/API export, sync artifacts) that are
+    explicitly reported as out of scope rather than guessed into OKF semantics.
+    """
+
+    report: AnalysisReport
+    media: list[MediaAsset] = field(default_factory=list)
+    diagnostics: list[str] = field(default_factory=list)
+    out_of_scope: list[str] = field(default_factory=list)
 
 
 class ImagePlacement(BaseModel):
@@ -143,6 +190,17 @@ class ImagePlacement(BaseModel):
     target_ficha: str = ""
     confidence: float = 0.0
     placement_status: str = "proposed"  # proposed|approved|ambiguous|inserted
+    # --- DOCX position contract (additive; excluded from identity/digest) ---
+    # Mirrors the sync_lore ImageEntry position fields so review/placement
+    # consumers keep the structural source position without touching the
+    # media path or the candidate digest.
+    document_order: int = 0          # 1-based global order of extracted images
+    paragraph_index: int = 0         # 0-based index of the containing w:p
+    anchor_type: str = ""            # "inline" | "anchor" ("" when unknown)
+    structural_path: str = ""        # e.g. body/p[3]/r[1]/inline[0]
+    heading_path: str = ""           # heading hierarchy at extraction time
+    context_text: str = ""           # paragraph/heading text around the image
+    warnings: list[str] = Field(default_factory=list)  # per-image notes
 
 
 class MergeDecision(BaseModel):

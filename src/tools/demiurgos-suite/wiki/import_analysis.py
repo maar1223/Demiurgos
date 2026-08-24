@@ -137,6 +137,9 @@ class AnalyzedFile:
     # (e.g. "conversion_unavailable", "conversion_failed",
     # "media_extraction_failed"). Empty when no conversion was attempted.
     diagnostics: list[str] = field(default_factory=list)
+    # PR2 (docx-image-extraction): file-level strategy warnings (unsupported
+    # headers/SmartArt). In-memory advisory metadata — never persisted.
+    warnings: list[str] = field(default_factory=list)
 
     def content_preview(self) -> str:
         """Flatten ordered chunks into a candidate body (source order kept)."""
@@ -151,10 +154,22 @@ class ExtractedMedia:
     chunk reference, source context) plus the spool-relative path where the
     bytes were stored, so downstream execution can feed ``plan_placements``
     the original bytes without re-opening the source archive.
+
+    PR2 (docx-image-extraction): the DOCX position contract is mirrored as
+    flat additive fields (populated from the ``ImageEntry``) so spool
+    persistence and placement planning keep the structural position without
+    depending on the source archive.
     """
 
     image: ImageEntry
     spool_relative_path: str
+    document_order: int = 0          # 1-based global order of extracted images
+    paragraph_index: int = 0         # 0-based index of the containing w:p
+    anchor_type: str = ""            # "inline" | "anchor" ("" when unknown)
+    structural_path: str = ""        # e.g. body/p[3]/r[1]/inline[0]
+    heading_path: str = ""           # heading hierarchy at extraction time
+    context_text: str = ""           # paragraph/heading text around the image
+    warnings: list[str] = field(default_factory=list)  # per-image notes
 
 
 @dataclass
@@ -303,13 +318,15 @@ def analyze_source(
         if suffix in _CONVERTIBLE_SUFFIXES and file_path is not None:
             source = Path(file_path(relative))
             media_root = spool_root if spool_root is not None else source.parent
-            text, images, diagnostics = _convert_source(source)
+            text, images, diagnostics, warnings = _convert_source(source)
             if text is None:
                 text = ""
             analyzed = analyze_markdown(
                 text, normalized_identity_path(relative), digest, size)
             analyzed.media = store_media_in_spool(images, relative, media_root)
             analyzed.diagnostics = diagnostics
+            analyzed.warnings = warnings
+            _enrich_placements(analyzed)
             report.files.append(analyzed)
         elif suffix == ".md" and file_path is not None:
             source = Path(file_path(relative))
@@ -324,6 +341,7 @@ def analyze_source(
                     "Image extraction failed for %s: %s", source, exc)
                 images = []
             analyzed.media = store_media_in_spool(images, relative, media_root)
+            _enrich_placements(analyzed)
             report.files.append(analyzed)
         else:
             text = read_file(relative) or ""
@@ -363,18 +381,23 @@ def safe_convert_to_markdown(file_path: Path) -> tuple[str | None, list[ImageEnt
     instead of failing the job. Images are extracted from the original file
     alongside the conversion.
     """
-    text, images, _ = _convert_source(file_path)
+    text, images, _diagnostics, _warnings = _convert_source(file_path)
     return text, images
 
 
-def _convert_source(file_path: Path) -> tuple[str | None, list[ImageEntry], list[str]]:
+def _convert_source(file_path: Path) -> tuple[str | None, list[ImageEntry], list[str], list[str]]:
     """Convert + extract with granular diagnostics (internal seam).
 
-    Returns ``(markdown, images, diagnostics)``. Conversion and media are
-    optional and fail-open: any failure yields an empty result plus a
-    diagnostic token, never an exception or process exit.
+    Returns ``(markdown, images, diagnostics, warnings)``. Conversion and
+    media are optional and fail-open: any failure yields an empty result plus
+    a diagnostic token, never an exception or process exit. ``.docx`` sources
+    dispatch through the format strategy seam with the converted markdown so
+    the positioned ``ImageEntry`` records are enriched with Markdown image
+    references at their structural location (PR2); ``.pdf`` keeps the legacy
+    extractor (no position contract).
     """
     diagnostics: list[str] = []
+    warnings: list[str] = []
     try:
         from sync_lore.utils.converter import convert_to_markdown
         result = convert_to_markdown(file_path)
@@ -383,31 +406,43 @@ def _convert_source(file_path: Path) -> tuple[str | None, list[ImageEntry], list
             logger.warning(
                 "Conversion returned None for %s (markitdown failed)",
                 file_path)
-            return None, [], diagnostics
+            return None, [], diagnostics, warnings
         try:
-            images = extract_images_from_file(file_path)
+            if file_path.suffix.lower() == ".docx":
+                from sync_lore.import_docx_parser import extract_by_extension
+                extraction = extract_by_extension(
+                    file_path, converted_markdown=result)
+                text = extraction.markdown or result
+                images = extraction.images
+                diagnostics.extend(extraction.diagnostics)
+                warnings.extend(extraction.warnings)
+            else:
+                text = result
+                images = extract_images_from_file(file_path)
         except Exception as exc:  # noqa: BLE001 — media is optional, never fatal
             diagnostics.append("media_extraction_failed")
             logger.warning(
                 "Image extraction failed for %s: %s", file_path, exc)
+            text = result
             images = []
-        return result, images, diagnostics
+        return text, images, diagnostics, warnings
     except SystemExit:
         logger.warning("Conversion unavailable: markitdown not installed")
         diagnostics.append("conversion_unavailable")
-        return None, [], diagnostics
+        return None, [], diagnostics, warnings
     except Exception as exc:  # noqa: BLE001 — fail-open never breaks analysis
         logger.warning("Conversion failed for %s: %s", file_path, exc)
         diagnostics.append("conversion_failed")
-        return None, [], diagnostics
+        return None, [], diagnostics, warnings
 
 
 def extract_images_from_file(file_path: Path) -> list[ImageEntry]:
     """Extract images from ``.md``/``.docx``/``.pdf`` reusing sync_lore.
 
-    Markdown sources yield images referenced on disk; ``.docx``/``.pdf``
-    yield embedded blobs. Any failure is logged and returns no images so
-    analysis never blocks on media.
+    Markdown sources yield images referenced on disk; ``.docx`` dispatches
+    through the format strategy registry (positioned extraction, PR2);
+    ``.pdf`` yields embedded blobs via the legacy adapter. Any failure is
+    logged and returns no images so analysis never blocks on media.
     """
     suffix = file_path.suffix.lower()
     if suffix not in _EXTRACTABLE_SUFFIXES:
@@ -419,14 +454,52 @@ def extract_images_from_file(file_path: Path) -> list[ImageEntry]:
                 file_path.read_text(encoding="utf-8"),
                 file_path.parent, chunk_ref="")
         elif suffix == ".docx":
-            from sync_lore.image_indexer import extract_images_from_docx
-            return extract_images_from_docx(file_path)
+            from sync_lore.import_docx_parser import extract_by_extension
+            return extract_by_extension(file_path).images
         elif suffix == ".pdf":
             from sync_lore.image_indexer import extract_images_from_pdf
             return extract_images_from_pdf(file_path)
     except Exception as exc:  # noqa: BLE001 — media is optional, never fatal
         logger.warning("Image extraction failed for %s: %s", file_path, exc)
     return []
+
+
+def _position_lookup(media: list[ExtractedMedia]) -> dict[str, ExtractedMedia]:
+    """Map media filename → ExtractedMedia for position enrichment.
+
+    First occurrence wins so document order is preserved for duplicate
+    filenames (``pic.png`` vs ``pic-1.png`` spool collisions).
+    """
+    lookup: dict[str, ExtractedMedia] = {}
+    for entry in media:
+        name = Path(entry.spool_relative_path).name
+        lookup.setdefault(name, entry)
+    return lookup
+
+
+def _enrich_placements(analyzed: AnalyzedFile) -> None:
+    """Merge DOCX position fields from spooled media onto chunk placements.
+
+    Placements derived from Markdown references carry only the media path;
+    the position contract lives on the extracted ``ImageEntry``. Matching by
+    media filename lets injected refs (``media/pic.png``) and spool paths
+    (``media/<stem>/pic.png``) resolve to the same entry. Additive only —
+    identity/digest inputs are untouched.
+    """
+    lookup = _position_lookup(analyzed.media)
+    for chunk in analyzed.chunks:
+        for placement in chunk.images:
+            media = lookup.get(Path(placement.relative_media_path).name)
+            if media is None:
+                continue
+            placement.document_order = media.document_order
+            placement.paragraph_index = media.paragraph_index
+            placement.anchor_type = media.anchor_type
+            placement.structural_path = media.structural_path
+            placement.heading_path = media.heading_path
+            placement.context_text = media.context_text
+            if media.warnings:
+                placement.warnings = list(media.warnings)
 
 
 def store_media_in_spool(images: list[ImageEntry], source_rel: str,
@@ -436,7 +509,8 @@ def store_media_in_spool(images: list[ImageEntry], source_rel: str,
     Bytes land in ``<spool_dir>/media/<source-stem>/<filename>`` so review
     and execution can feed the original bytes to ``plan_placements`` without
     re-opening the source archive. Collisions are avoided by suffixing a
-    counter when the target already exists.
+    counter when the target already exists. The DOCX position contract is
+    mirrored onto each ``ExtractedMedia`` from its ``ImageEntry`` (PR2).
     """
     stored: list[ExtractedMedia] = []
     base = spool_dir / "media" / Path(source_rel).stem
@@ -457,6 +531,13 @@ def store_media_in_spool(images: list[ImageEntry], source_rel: str,
             image=image,
             spool_relative_path=str(
                 target.relative_to(spool_dir)).replace("\\", "/"),
+            document_order=image.document_order,
+            paragraph_index=image.paragraph_index,
+            anchor_type=image.anchor_type,
+            structural_path=image.structural_path,
+            heading_path=image.heading_path,
+            context_text=image.context_text,
+            warnings=list(image.warnings),
         ))
     return stored
 

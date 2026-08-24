@@ -195,6 +195,64 @@ class TestContextualPlacement:
         assert results[0]["placement_status"] == "approved"
         assert results[0]["relative_media_path"] == "img.png#left"
 
+    def test_position_fields_preserved_through_plan_placements(self):
+        """PR2 (task 2.5/2.10) — the DOCX position contract passes through
+        planning untouched on every outcome (approved/skip/ambiguous)."""
+        proposed = [{
+            "relative_media_path": "media/Enciclopedia/portada.png",
+            "target_ficha": "Origen",
+            "alt_text": "retrato",
+            "document_order": 1,
+            "paragraph_index": 1,
+            "anchor_type": "inline",
+            "structural_path": "body/p[1]/r[0]/inline[0]",
+            "heading_path": "Origen",
+            "context_text": "Body with context",
+            "warnings": ["media part missing; skipped"],
+        }]
+        approved = plan_placements([], proposed)[0]
+        assert approved["placement_status"] == "approved"
+        assert approved["document_order"] == 1
+        assert approved["paragraph_index"] == 1
+        assert approved["anchor_type"] == "inline"
+        assert approved["structural_path"] == "body/p[1]/r[0]/inline[0]"
+        assert approved["heading_path"] == "Origen"
+        assert approved["context_text"] == "Body with context"
+        assert approved["warnings"] == ["media part missing; skipped"]
+        # Skip outcome preserves the metadata too.
+        skipped = plan_placements(
+            ["media/Enciclopedia/portada.png"], proposed)[0]
+        assert skipped["placement_status"] == "skip"
+        assert skipped["anchor_type"] == "inline"
+
+    def test_position_fields_do_not_change_candidate_digest(
+            self, store, service):
+        """PR2 (task 2.10) — position/anchor metadata is excluded from the
+        approval digest: identity + source_hash are the only inputs."""
+        from import_models import ImagePlacement
+        job = _job()
+        store.create_job(job)
+        base = _candidate(ident="A", content="---\ntype: personaje\nname: A\n---\nA")
+        positioned = _candidate(
+            ident="A", content="---\ntype: personaje\nname: A\n---\nA",
+            images=[ImagePlacement(
+                gallery_asset_id="", relative_media_path="media/p.png",
+                alt_text="", target_ficha="Origen", confidence=1.0,
+                placement_status="proposed",
+                document_order=1, paragraph_index=1, anchor_type="inline",
+                structural_path="body/p[1]/r[0]/inline[0]",
+                heading_path="Origen", context_text="ctx",
+                warnings=["header skipped"])])
+        store.add_candidate(base)
+        digest_without_position = service.candidate_digest(job)
+        # Replace with the position-carrying candidate (same identity).
+        store._conn.execute("DELETE FROM candidates WHERE job_id=?",
+                            (job.job_id,))
+        store._conn.commit()
+        store.add_candidate(positioned)
+        digest_with_position = service.candidate_digest(job)
+        assert digest_with_position == digest_without_position
+
     def test_analysis_preserves_source_order_and_anchors(self):
         text = ("# Origen\nprimera linea de contexto\n\n"
                 "## Llegada\nsegundo bloque ![img](pic.png)")

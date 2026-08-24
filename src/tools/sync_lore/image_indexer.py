@@ -104,7 +104,7 @@ def extract_images_from_md(
 
 
 # ---------------------------------------------------------------------------
-# .docx image extraction (python-docx — optional)
+# .docx image extraction (delegated to the positioned OOXML strategy)
 # ---------------------------------------------------------------------------
 
 def extract_images_from_docx(
@@ -114,8 +114,12 @@ def extract_images_from_docx(
     """
     Extract embedded images from a .docx file.
 
-    Uses python-docx to iterate document relationships and
-    extract image blobs. Graceful fallback if not installed.
+    PR2 (docx-image-extraction): delegates to the positioned
+    ``DocxImageExtractionStrategy`` (zipfile + lxml streaming) — the legacy
+    python-docx path is deprecated. The function signature is retained for
+    backward compatibility with ``lore_indexer``; callers that also want
+    Markdown enrichment and diagnostics/warnings should dispatch through
+    ``sync_lore.import_docx_parser.extract_by_extension`` instead.
 
     Args:
         path: Path to the .docx file.
@@ -125,49 +129,18 @@ def extract_images_from_docx(
         List of ImageEntry with image_bytes populated.
     """
     try:
-        from docx import Document
-        from docx.opc.constants import RELATIONSHIP_TYPE as RT
-    except ImportError:
-        print(
-            "  \u26a0 python-docx not installed — skipping image extraction from .docx",
-            file=sys.stderr,
-        )
-        return []
-
-    entries: list[ImageEntry] = []
-
-    try:
-        doc = Document(str(path))
+        from sync_lore.import_docx_parser import extract_by_extension
+        result = extract_by_extension(Path(path))
+        entries = result.images
     except Exception as exc:
         print(
-            f"  \u26a0 Failed to open .docx {path.name}: {exc}",
+            f"  \u26a0 Failed to extract images from .docx {path.name}: {exc}",
             file=sys.stderr,
         )
         return []
-
-    # Iterate document part relationships to find images
-    for rel in doc.part.rels.values():
-        if "image" in rel.reltype:
-            try:
-                image_part = rel.target_part
-                img_bytes = image_part.blob
-                filename = Path(rel.target_ref).name if rel.target_ref else f"image_{uuid.uuid4().hex[:8]}.png"
-                entries.append(
-                    ImageEntry(
-                        id=str(uuid.uuid4()),
-                        source_file=str(path.name),
-                        chunk_ref=chunk_ref,
-                        context_text="",
-                        filename=filename,
-                        image_bytes=img_bytes,
-                    )
-                )
-            except Exception as exc:
-                print(
-                    f"  \u26a0 Failed to extract image from {path.name}: {exc}",
-                    file=sys.stderr,
-                )
-
+    if chunk_ref:
+        for entry in entries:
+            entry.chunk_ref = chunk_ref
     return entries
 
 

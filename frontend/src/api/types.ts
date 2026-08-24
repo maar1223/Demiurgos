@@ -690,6 +690,18 @@ export interface ImportImagePlacement {
   target_ficha: string;
   confidence: number;
   placement_status: ImagePlacementStatus;
+  /**
+   * DOCX position contract (additive — present for converted DOCX sources,
+   * absent for markdown/source-order placements). Server-provided and
+   * excluded from identity/digest inputs.
+   */
+  document_order?: number;   // 1-based global order of extracted images
+  paragraph_index?: number;  // 0-based index of the containing paragraph
+  anchor_type?: string;      // "inline" | "anchor" | "" ("" when unknown)
+  structural_path?: string;  // e.g. body/p[3]/r[1]/inline[0]
+  heading_path?: string;     // heading hierarchy at extraction time
+  context_text?: string;     // paragraph/heading text around the image
+  warnings?: string[];       // per-image actionable notes
 }
 
 /** Preservation-first merge decision (server-owned). */
@@ -754,20 +766,34 @@ export interface RelationshipSuggestion {
 }
 
 /**
- * Hermes-suggested vision analysis for an image (advisory only).
+ * Vision verdict vocabulary (mirror of the PR2/PR3 server contract). The
+ * verdict is ADVISORY: it never gates writes — only the reviewer's explicit
+ * approval does.
+ */
+export type VisionVerdict = "confirma" | "rechaza" | "no_aplica" | "contradice";
+
+/**
+ * Vision analysis for one extracted image (sync-lore-in-importer, PR3+).
  *
- * ``verdict`` is one of: ``confirma`` (image matches text), ``no_aplica``
- * (not relevant), or ``rechaza`` (contradicts). ``description`` is the
- * alt-text candidate; ``analysis`` is the full reasoning; ``tags`` are
- * auto-extracted labels. ``relative_media_path`` points to the spool-
- * relative location of the original image.
+ * Rides on the candidate's ``enrichment_json`` as a ``__type__: "vision"``
+ * entry (the PR3 server shape). ``relative_media_path`` is the SPOOL-relative
+ * path of the extracted original (``media/<stem>/<file>``) — it becomes the
+ * gallery path only after an approved execute, so it is NOT servable from the
+ * world media base during review; ``thumbnail_url`` is populated by the
+ * server only when a preview is actually servable. ``review_state`` toggles
+ * via the existing ``POST /{job_id}/review/decisions`` endpoint.
  */
 export interface VisionSuggestion {
   id: string;
   candidate_id: string;
+  /** Spool-relative media path of the extracted original (PR1 layout). */
   relative_media_path: string;
+  /** Optional servable preview URL; absent when the spool path is not
+   *  servable yet (review-time images are pre-gallery). */
+  thumbnail_url?: string;
+  /** Vision description — used as the markdown alt-text on approval. */
   description: string;
-  verdict: "confirma" | "no_aplica" | "rechaza";
+  verdict: VisionVerdict;
   analysis: string;
   tags: string[];
   confidence: number;

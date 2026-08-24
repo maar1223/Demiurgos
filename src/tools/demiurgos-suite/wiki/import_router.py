@@ -62,6 +62,7 @@ from import_service import (
     render_frontmatter_document,
 )
 import okf_contract
+import import_notion
 
 logger = logging.getLogger("demiurgos-import-router")
 
@@ -130,7 +131,7 @@ VisionCallable = Callable[[list[Candidate], list[VisionMediaEntry]], list[Candid
 
 
 # Per-document classifier sections (BLOQUE 1 piece 1). Local to the
-# classifier on purpose: ``VALID_SECTIONS``/``IMPORTER_SCOPE_SECTIONS`` still
+# classifier on purpose: ``VALID_SECTIONS``/``IMPORTER_SCOPE_SECTIONS``
 # carry the full set, while the classifier offers only the canonical
 # worldbuilding sections. The server is the authority for validation; the
 # client heuristic is advisory.
@@ -373,6 +374,10 @@ def create_import_router(
             # attribute results to their owning candidate. The ``provider``
             # path yields no media bundle, so vision is skipped there.
             media_bundle: list[VisionMediaEntry] = []
+            # PR3 (world-importer-notion-support): set only when the ZIP source
+            # is a recognized Notion export; carries the adapter's fail-open
+            # diagnostics (rename/link/CSV warnings) for observability.
+            notion_analysis = None
 
             # Source-kind dispatch: ZIP sources extract first (bounded), then we
             # analyze the extracted entries; loose/folder sources analyze the
@@ -400,6 +405,27 @@ def create_import_router(
                     _mark_failed(job_id,
                                  f"zip rejected: {type(exc).__name__}", "failed:zip_safety")
                     return {"job": _store.get_job(job_id).model_dump_redacted()}
+                # PR3 (world-importer-notion-support): a recognized Notion
+                # Markdown & CSV export routes through the shared analysis
+                # contract via the adapter (deterministic rename/rewrite,
+                # streaming media dedup, CSV-to-ficha conversion). Ambiguous
+                # exports fail closed with an actionable diagnostic and event
+                # tag — never guessed, never partially analyzed. The injected
+                # ``provider`` seam keeps its own dispatch.
+                if provider is None and _service is not None:
+                    manifest = import_notion.recognize_notion_zip(extracted_dir)
+                    if manifest is not None:
+                        try:
+                            notion_analysis = import_notion.analyze_export(
+                                extracted_dir, manifest)
+                        except Exception as exc:  # noqa: BLE001 — fail closed on ambiguity
+                            _mark_failed(
+                                job_id,
+                                f"Notion export analysis failed: "
+                                f"{type(exc).__name__}: {exc}",
+                                "failed:notion_analysis",
+                            )
+                            return {"job": _store.get_job(job_id).model_dump_redacted()}
                 # Build the files list from the extracted entries (hashed).
                 files: list[dict] = []
                 for sf in spool_files:
@@ -442,6 +468,8 @@ def create_import_router(
                         structure_inference=structure_inference,
                         sections=job.sections,
                         graph_resolver=_resolver_fn,
+                        report=notion_analysis.report
+                        if notion_analysis is not None else None,
                     )
                 else:
                     raise MalformedProviderError("analysis provider unavailable")
@@ -706,6 +734,15 @@ def create_import_router(
                             "reference": target_path,
                         })
                         c.status = "conflict"
+
+            # PR3 — fail-open Notion diagnostics (rename/link/CSV warnings)
+            # surface as an actionable job event; warnings never reject a
+            # recognized export — only fatal analysis failures do.
+            if notion_analysis is not None and notion_analysis.diagnostics:
+                _store.add_event(
+                    job_id,
+                    f"notion_diagnostics:{len(notion_analysis.diagnostics)}",
+                )
 
             added = 0
             for candidate in candidates:
@@ -1043,7 +1080,8 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
                          mundos_dir: Path | None = None,
                          structure_inference: Callable[[str], Any] | None = None,
                          sections: dict[str, str] | None = None,
-                         graph_resolver: Callable[[str], list[str]] | None = None
+                         graph_resolver: Callable[[str], list[str]] | None = None,
+                         report=None
                          ) -> tuple[list[Candidate], list[VisionMediaEntry]]:
     """Build ordered candidates + the preserved media bundle from spooled files.
 
@@ -1085,8 +1123,18 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     and their extracted media is persisted under the spool (tasks 5.5). The
     returned ``media_bundle`` ties every extracted image to its owning
     candidate so the router can hand it to the vision seam.
+
+    PR3 (world-importer-notion-support): ``report`` is an optional precomputed
+    ``AnalysisReport`` (e.g., from ``import_notion.analyze_export``). When
+    provided, the mapping below — candidate construction, OKF validation, and
+    canonical target resolution — runs on those analyzed files instead of a
+    fresh ``analyze_source`` pass, so recognized Notion exports (Markdown
+    pages and generated CSV fichas alike) share the exact candidate contract
+    as every other source.
     """
-    from import_analysis import analyze_source, resolve_target, split_heading_tree
+    from import_analysis import (
+        AnalysisReport, analyze_source, resolve_target, split_heading_tree,
+    )
     from import_models import Provenance
 
     read_root = root_dir or spool.job_dir
@@ -1112,11 +1160,18 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
         """
         identity = ficha.canonical_id or Path(relative).stem
         display_title = ficha.title or Path(relative).stem
+        # Folder-relative provenance: the Notion adapter names CSV-derived
+        # fichas ``<folder>/<slug>.md`` so the parent segment IS the source
+        # folder (empty for root-level pages).
+        source_folder = Path(relative).parent.as_posix()
+        if source_folder in ("", "."):
+            source_folder = ""
         provenance = Provenance(
             source_path=relative, source_kind=job.source_kind,
             source_hash=f"sha256:{digest}",
             source_sequence=ficha.source_order,
             nearby_text_anchor=_ficha_anchor(ficha.body),
+            source_folder=source_folder,
         )
         return Candidate(
             candidate_id=uuid.uuid4().hex,
@@ -1136,12 +1191,13 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
             section=(sections or {}).get(relative, ""),
         )
 
-    report = analyze_source(
-        files,
-        read_file,
-        file_path=lambda relative: read_root / relative,
-        spool_root=spool.job_dir,
-    )
+    if report is None:
+        report = analyze_source(
+            files,
+            read_file,
+            file_path=lambda relative: read_root / relative,
+            spool_root=spool.job_dir,
+        )
     candidates: list[Candidate] = []
     media_bundle: list[VisionMediaEntry] = []
     for f in report.files:

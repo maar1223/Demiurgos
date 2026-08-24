@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import shutil
+import stat
 import threading
 import zipfile
 from dataclasses import dataclass
@@ -156,14 +157,27 @@ def inspect_zip(archive: Path) -> tuple[list[ZipEntrySpec], int]:
 _ZIP_EXTRACT_CHUNK = 64 * 1024
 
 
+def _is_symlink_entry(info: zipfile.ZipInfo) -> bool:
+    """True when a ZIP entry is a Unix symlink (header attributes only).
+
+    ``ZipInfo.external_attr`` embeds the Unix mode in its high 16 bits; the
+    file-type bits equal ``stat.S_IFLNK`` only for symlink entries. Archives
+    built on Windows carry zero mode bits, so regular files are never
+    misclassified.
+    """
+    mode = (info.external_attr >> 16) & 0xFFFF
+    return stat.S_IFMT(mode) == stat.S_IFLNK
+
+
 def extract_zip_bounded(archive: Path,
                         destination: Path) -> list[SpoolFile]:
     """Bounded extraction of a ZIP archive into *destination*.
 
     Reuses ``inspect_zip`` (entry-count, per-entry size, depth, compression
-    ratio) BEFORE any file is written and re-validates each path through
-    ``reject_unsafe_path``. Every entry is streamed into the destination
-    via ``ZipFile.open`` one chunk at a time; the unbounded
+    ratio) BEFORE any file is written, re-validates each path through
+    ``reject_unsafe_path``, and rejects symlink entries from their Unix
+    header attributes before any write. Every entry is streamed into the
+    destination via ``ZipFile.open`` one chunk at a time; the unbounded
     ``ZipFile.extractall`` is never called. The aggregate uncompressed
     total is bounded against ``MAX_JOB_AGGREGATE_BYTES`` during streaming
     so a single oversize archive cannot exhaust the spool.
@@ -204,6 +218,13 @@ def extract_zip_bounded(archive: Path,
             if info.file_size > ZIP_MAX_ENTRY_SIZE:
                 raise ZipBombError(
                     f"zip entry {info.filename!r} exceeds 500 MB per-file limit"
+                )
+
+            # Symlink entries are rejected before any write: a link could
+            # point outside the destination and defeat containment checks.
+            if _is_symlink_entry(info):
+                raise UnsafePathError(
+                    f"zip entry is a symlink and is not importable: {info.filename!r}"
                 )
 
             # Resolve the target path under the destination and ensure it

@@ -4619,11 +4619,13 @@ def _make_vision_callable():
         return None
 
     def vision(candidates, media_entries):
+        """Seam adapter: candidates + media bundle -> candidates + suggestions."""
         if not candidates or not media_entries:
             return candidates
         try:
             results = analyze_images([m.image for m in media_entries], "")
-        except Exception:  # noqa: BLE001 — vision is advisory, fail-open
+        except Exception as exc:  # noqa: BLE001 — vision is advisory, fail-open
+            logger.warning("vision adapter raised during analyze: %s", exc)
             return candidates
         by_hash = {r.image_hash: r for r in results}
         by_candidate: dict[str, list[dict]] = {}

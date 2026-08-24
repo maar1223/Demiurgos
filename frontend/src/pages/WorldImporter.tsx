@@ -2580,6 +2580,17 @@ function ImagePlacementRow({
     "",
   );
 
+  // PR2 (docx-image-extraction): the DOCX position contract is additive and
+  // optional — legacy/markdown placements simply omit these fields.
+  const documentOrder = placement.document_order ?? 0;
+  const anchorType = placement.anchor_type ?? "";
+  const structuralPath = placement.structural_path ?? "";
+  const headingPath = placement.heading_path ?? "";
+  const contextText = placement.context_text ?? "";
+  const warnings = placement.warnings ?? [];
+  const anchorLabel =
+    anchorType === "inline" ? "alineada" : anchorType === "anchor" ? "anclada" : "";
+
   return (
     <li
       className={cn(
@@ -2603,11 +2614,52 @@ function ImagePlacementRow({
             </Badge>
           )}
         </p>
+        {(documentOrder > 0 || anchorLabel || structuralPath) && (
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-tinta-desvaida">
+            {documentOrder > 0 && (
+              <span aria-label={`Orden de origen: ${documentOrder}`}>
+                #{documentOrder}
+              </span>
+            )}
+            {anchorLabel && (
+              <Badge variant={anchorType === "inline" ? "info" : "default"}>
+                {anchorLabel}
+              </Badge>
+            )}
+            {structuralPath && (
+              <code className="rounded bg-madero px-1.5 py-0.5 text-tinta-desvaida">
+                {structuralPath}
+              </code>
+            )}
+          </div>
+        )}
+        {headingPath && (
+          <p className="mt-1 text-xs text-tinta-desvaida">
+            Sección: {headingPath}
+          </p>
+        )}
+        {contextText && (
+          <p className="mt-1 truncate text-xs text-tinta-desvaida" title={contextText}>
+            Contexto: {contextText}
+          </p>
+        )}
         <p className="mt-1 text-xs text-tinta-desvaida">
           {placement.target_ficha
             ? `Ficha destino: ${placement.target_ficha}`
             : "Ficha destino: por confirmar"}
         </p>
+        {warnings.length > 0 && (
+          <ul
+            className="mt-2 flex flex-col gap-1 rounded-md border border-llamita/40 bg-llamita/5 p-2"
+            aria-label="Advertencias de imagen"
+          >
+            {warnings.map((warning, index) => (
+              <li key={index} className="text-xs text-llamita">
+                {warning}
+              </li>
+            ))}
+          </ul>
+        )}
         <p className="mt-2 text-xs text-tinta-desvaida">Markdown resultante</p>
         <code className="mt-0.5 block overflow-x-auto rounded bg-cripta px-2 py-1 text-xs text-tinta-desvaida">
           {markdown}

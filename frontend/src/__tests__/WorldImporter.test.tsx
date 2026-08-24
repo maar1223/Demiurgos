@@ -260,6 +260,79 @@ describe("WorldImporter — accessible, preservation-first workflow (slice 3)", 
     ).toBeDisabled();
   });
 
+  it("surfaces DOCX position metadata and actionable warnings in image review (PR2)", async () => {
+    mockAnalyzeToReview([
+      candidate({
+        images: [
+          {
+            gallery_asset_id: "g1",
+            relative_media_path: "media/Enciclopedia/portada.png",
+            alt_text: "retrato",
+            target_ficha: "Origen",
+            confidence: 1.0,
+            placement_status: "proposed",
+            document_order: 1,
+            paragraph_index: 1,
+            anchor_type: "inline",
+            structural_path: "body/p[1]/r[0]/inline[0]",
+            heading_path: "Origen",
+            context_text: "La fundadora partió al exilio",
+            warnings: [
+              "header part 'word/_rels/header1.xml.rels' embeds 2 image(s) — headers are not supported; skipped",
+            ],
+          },
+        ],
+      }),
+    ]);
+    renderImporter();
+    await selectFileAndAnalyze();
+
+    // Source order, structural position, and anchor type are perceivable.
+    expect(screen.getByLabelText("Orden de origen: 1")).toBeInTheDocument();
+    expect(screen.getByText("alineada")).toBeInTheDocument();
+    expect(
+      screen.getByText("body/p[1]/r[0]/inline[0]"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Sección: Origen")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Contexto: La fundadora partió al exilio/),
+    ).toBeInTheDocument();
+
+    // Warnings are actionable and exposed accessibly (labelled list).
+    const warnings = screen.getByLabelText("Advertencias de imagen");
+    expect(warnings).toBeInTheDocument();
+    expect(
+      within(warnings).getByText(/headers are not supported; skipped/),
+    ).toBeInTheDocument();
+  });
+
+  it("renders placements without position data as before (legacy compatibility)", async () => {
+    mockAnalyzeToReview([
+      candidate({
+        images: [
+          {
+            gallery_asset_id: "g1",
+            relative_media_path: "img.png",
+            alt_text: "foto",
+            target_ficha: "",
+            confidence: 1.0,
+            placement_status: "proposed",
+          },
+        ],
+      }),
+    ]);
+    renderImporter();
+    await selectFileAndAnalyze();
+
+    // No position metadata rendered, no anchor badge, no warnings block.
+    expect(screen.getByText("img.png")).toBeInTheDocument();
+    expect(screen.queryByText("alineada")).not.toBeInTheDocument();
+    expect(screen.queryByText("anclada")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Advertencias de imagen"),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders gallery-compatible Markdown and a live #align-size preview", async () => {
     mockAnalyzeToReview([
       candidate({

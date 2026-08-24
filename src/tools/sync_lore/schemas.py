@@ -136,6 +136,17 @@ class ImageEntry:
     filename: str = ""               # original filename or generated
     image_bytes: bytes = field(default=b"", repr=False)  # NOT persisted to JSON
     analysis: ImageAnalysis | None = None
+    # --- DOCX position contract (additive; excluded from identity/digest) ---
+    document_order: int = 0          # 1-based global order of extracted images
+    paragraph_index: int = 0         # 0-based index of the containing w:p
+    run_index: int = 0               # 0-based index of the containing w:r
+    run_offset: int = 0              # char offset of the drawing within its run
+    drawing_index: int = 0           # 0-based drawing index within the paragraph
+    anchor_type: str = ""            # "inline" | "anchor" ("" when unknown)
+    structural_path: str = ""        # e.g. body/p[3]/r[1]/inline[0]
+    heading_path: str = ""           # current heading hierarchy at extraction time
+    section_context: str = ""        # paragraph/heading text around the image
+    warnings: list[str] = field(default_factory=list)  # per-image notes
 
 
 # ---------------------------------------------------------------------------

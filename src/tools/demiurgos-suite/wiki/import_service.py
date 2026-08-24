@@ -200,7 +200,9 @@ def plan_placements(existing_images: list[str],
     placement is ``skip`` when the image already exists in the target; the
     target is chosen only when unambiguous. Never reorders existing images
     and never appends wholesale — every unresolved/ambiguous case is marked
-    ``ambiguous`` (review required).
+    ``ambiguous`` (review required). Additive metadata (DOCX position fields,
+    warnings) is passed through unchanged via the dict spread; identity and
+    digest inputs (media path + target ficha) are the only fields consulted.
     """
     seen = {_clean_media_path(img) for img in existing_images}
     results: list[dict] = []
@@ -757,10 +759,20 @@ class ImportService:
                 desc = str(entry.get("description") or "")
                 if desc:
                     p = p.model_copy(update={"alt_text": desc})
+            # PR2 (docx-image-extraction): the position contract rides through
+            # planning as additive metadata — the executor never interprets it,
+            # but review consumers keep the structural source position.
             proposed.append({
                 "relative_media_path": p.relative_media_path,
                 "target_ficha": p.target_ficha,
                 "alt_text": p.alt_text,
+                "document_order": p.document_order,
+                "paragraph_index": p.paragraph_index,
+                "anchor_type": p.anchor_type,
+                "structural_path": p.structural_path,
+                "heading_path": p.heading_path,
+                "context_text": p.context_text,
+                "warnings": list(p.warnings),
             })
 
         # Resolve placement statuses against the target's current images.

@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import sys
 import uuid
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -28,10 +30,13 @@ for _p in (str(_WIKI), str(_TOOLS)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import import_notion  # noqa: E402
+from sync_lore.import_docx_parser import ExtractionResult  # noqa: E402
 from import_models import (  # noqa: E402
     Candidate,
     FrontmatterCandidate,
     FrontmatterState,
+    ImportJobState,
     Provenance,
 )
 from import_store import ImportJobStore  # noqa: E402
@@ -136,7 +141,9 @@ def _docx_seams(monkeypatch, entries):
         lambda _p: "# Enciclopedia\n\nBody text here",
     )
     monkeypatch.setattr(
-        "import_analysis.extract_images_from_file", lambda _p: entries)
+        "sync_lore.import_docx_parser.extract_by_extension",
+        lambda _p, converted_markdown="": ExtractionResult(
+            images=entries, markdown=converted_markdown))
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +372,9 @@ class TestRouterVisionSeam:
             lambda _p: "# Enciclopedia\n\nBody without image refs",
         )
         monkeypatch.setattr(
-            "import_analysis.extract_images_from_file", lambda _p: [_entry()])
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": ExtractionResult(
+                images=[_entry()], markdown=converted_markdown))
         client, store, spool, _ = _make_app(tmp_path)  # no vision
         job = _create_job(client)
         _stream(client, job["job_id"], b"PK..fake")
@@ -387,7 +396,9 @@ class TestRouterVisionSeam:
         )
         # First analysis: no media extraction (unavailable dependency).
         monkeypatch.setattr(
-            "import_analysis.extract_images_from_file", lambda _p: [])
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": ExtractionResult(
+                images=[], markdown=converted_markdown))
         client, store, spool, _ = _make_app(tmp_path)
         job = _create_job(client)
         _stream(client, job["job_id"], b"PK..fake")
@@ -397,8 +408,10 @@ class TestRouterVisionSeam:
 
         # Second analysis of the same bytes: media extraction now works.
         monkeypatch.setattr(
-            "import_analysis.extract_images_from_file",
-            lambda _p: [_entry(filename="portada.png")])
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": ExtractionResult(
+                images=[_entry(filename="portada.png")],
+                markdown=converted_markdown))
         _analyze(client, job["job_id"])
         cand = store.candidates_for(job["job_id"])[0]
         assert any(p.relative_media_path == "media/Enciclopedia/portada.png"
@@ -631,7 +644,9 @@ class TestConversionFailureGate:
         monkeypatch.setattr(
             "sync_lore.utils.converter.convert_to_markdown", lambda _p: None)
         monkeypatch.setattr(
-            "import_analysis.extract_images_from_file", lambda _p: [])
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": ExtractionResult(
+                images=[], markdown=converted_markdown))
 
         client, store, spool, _ = _make_app(tmp_path)
         job = _create_job(client)
@@ -1118,3 +1133,143 @@ class TestCollisionDetection:
         cand = store.candidates_for(job_id)[0]
         assert any(i["code"] == "path-collision" for i in cand.okf_issues)
         assert cand.status == "conflict"
+class TestNotionZipDispatch:
+    """Phase 3 — recognized exports route through the shared analysis
+    contract; ambiguous exports fail closed with an actionable diagnostic;
+    and the existing generic non-Notion ZIP flow is untouched."""
+
+    NOTION_FIXTURE = _HERE / "fixtures" / "notion" / "export"
+
+    def _notion_zip(self, tmp_path: Path,
+                    extra: dict[str, str] | None = None) -> Path:
+        """Deterministic Notion-shaped ZIP (real export fixture + extras)."""
+        archive = tmp_path / "notion.zip"
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in sorted(self.NOTION_FIXTURE.rglob("*")):
+                relative = path.relative_to(self.NOTION_FIXTURE)
+                if path.is_dir():
+                    zf.writestr(zipfile.ZipInfo(f"{relative}/"), b"")
+                else:
+                    zf.writestr(str(relative), path.read_bytes())
+            for rel, content in (extra or {}).items():
+                zf.writestr(rel, content)
+        return archive
+
+    def _create_zip_job(self, client: TestClient) -> dict:
+        resp = client.post(
+            "/api/world1/imports",
+            json={"source_kind": "zip", "files": ["notion.zip"]},
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["job"]
+
+    def _stream_zip(self, client: TestClient, job_id: str,
+                    archive: Path) -> None:
+        resp = client.post(
+            f"/api/world1/imports/{job_id}/stream",
+            json={"relative": "notion.zip", "offset": 0,
+                  "data_b64": base64.b64encode(archive.read_bytes()).decode()},
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_recognized_notion_zip_yields_markdown_and_csv_candidates(
+            self, tmp_path):
+        """A Notion Markdown & CSV export yields pages AND CSV fichas with
+        provenance through the shared candidate contract (task 3.1/3.3)."""
+        client, store, spool, mundos = _make_app(tmp_path)
+        job = self._create_zip_job(client)
+        self._stream_zip(client, job["job_id"], self._notion_zip(tmp_path))
+
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["candidates"] == 5
+        assert store.get_job(job["job_id"]).state == ImportJobState.REVIEW
+
+        candidates = store.candidates_for(job["job_id"])
+        # The UUID-named page was renamed from its first H1; the CSV rows
+        # became folder-scoped fichas; all carry ZIP provenance.
+        by_path = {c.provenance.source_path: c for c in candidates}
+        assert sorted(by_path) == [
+            "Database/dorin.md", "Database/elara.md", "Database/kael.md",
+            "World Overview.md", "elara-s-journal.md",
+        ]
+        for candidate in candidates:
+            assert candidate.provenance.source_kind == "zip"
+            assert candidate.provenance.source_hash.startswith("sha256:")
+        # Folder provenance: CSV fichas keep their source folder.
+        assert by_path["Database/elara.md"].provenance.source_folder == "Database"
+        assert by_path["elara-s-journal.md"].provenance.source_folder == ""
+        # The generated ficha is OKF-shaped: the title lives in display_title
+        # (the per-ficha flow excludes the H1 from content_preview; a CSV ficha
+        # has metadata-only body) and the page keeps its image.
+        assert by_path["Database/elara.md"].display_title == "Elara"
+        assert any(
+            p.relative_media_path == "assets/hero.png"
+            for p in by_path["elara-s-journal.md"].images)
+        # Read-only: no canon writes during analysis.
+        assert list((mundos / "world1").rglob("*.md")) == []
+
+    def test_notion_diagnostics_surface_as_actionable_event(self, tmp_path):
+        """Fail-open adapter warnings (unresolved links) become an observable
+        job event; the export is still analyzed (task 3.2/3.3)."""
+        client, store, _, _ = _make_app(tmp_path)
+        job = self._create_zip_job(client)
+        archive = self._notion_zip(
+            tmp_path,
+            extra={"9a8b7c6d-5e4f-4321-abcd-1234567890ab.md":
+                   "# Broken Page\n\n[missing](DoesNotExist.md)\n"},
+        )
+        self._stream_zip(client, job["job_id"], archive)
+
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["candidates"] == 6
+        events = _events(store, job)
+        assert "notion_diagnostics:1" in events
+
+    def test_ambiguous_notion_zip_fails_closed_with_diagnostic(
+            self, tmp_path, monkeypatch):
+        """A recognized export whose analysis raises fails closed: FAILED
+        state, actionable error, event tag, zero candidates (task 3.2/3.3)."""
+        client, store, spool, mundos = _make_app(tmp_path)
+        job = self._create_zip_job(client)
+        self._stream_zip(client, job["job_id"], self._notion_zip(tmp_path))
+
+        def _boom(root, manifest):
+            raise OSError("simulated ambiguous export")
+
+        monkeypatch.setattr(import_notion, "analyze_export", _boom)
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["job"]["state"] == "failed"
+        stored = store.get_job(job["job_id"])
+        assert stored.state == ImportJobState.FAILED
+        assert "Notion export analysis failed" in stored.error
+        assert "OSError" in stored.error
+        assert "failed:notion_analysis" in _events(store, job)
+        assert store.candidates_for(job["job_id"]) == []
+        assert list((mundos / "world1").rglob("*.md")) == []
+
+    def test_non_notion_zip_flow_unaffected(self, tmp_path):
+        """A ZIP with no Notion content (no .md/.csv) keeps the generic
+        analysis flow: candidates, REVIEW state, no Notion events (3.3)."""
+        client, store, spool, mundos = _make_app(tmp_path)
+        job = self._create_zip_job(client)
+        archive = tmp_path / "plain.zip"
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("notes.txt", "plain notes")
+            zf.writestr("decoration.gif", b"GIF89a")
+        self._stream_zip(client, job["job_id"], archive)
+
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["candidates"] == 2
+        assert store.get_job(job["job_id"]).state == ImportJobState.REVIEW
+        paths = sorted(c.provenance.source_path
+                       for c in store.candidates_for(job["job_id"]))
+        assert paths == ["decoration.gif", "notes.txt"]
+        events = _events(store, job)
+        assert not any(e.startswith("notion_") for e in events)
+        assert "failed:notion_analysis" not in events
+        # Generic extraction still lands the entries on disk.
+        assert (spool / job["job_id"] / "extracted" / "notes.txt").exists()

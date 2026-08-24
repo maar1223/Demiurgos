@@ -38,6 +38,7 @@ from import_router import create_import_router  # noqa: E402
 from import_service import ImportService  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
 from import_vision import build_vision_callable  # noqa: E402
+from sync_lore.import_docx_parser import ExtractionResult  # noqa: E402
 from sync_lore.schemas import ImageAnalysis, ImageEntry  # noqa: E402
 
 
@@ -110,12 +111,23 @@ class _ThumbRecorder:
 # ---------------------------------------------------------------------------
 
 
-def _entry(filename: str = "portada.png", data: bytes = b"PORTADA-BYTES") -> ImageEntry:
+def _entry(filename: str = "portada.png", data: bytes = b"PORTADA-BYTES",
+           document_order: int = 0, paragraph_index: int = 0,
+           anchor_type: str = "", structural_path: str = "",
+           heading_path: str = "", context_text: str = "",
+           warnings: list[str] | None = None) -> ImageEntry:
     return ImageEntry(
         id=str(uuid.uuid4()),
         source_file="Lore/Enciclopedia.docx",
-        page=None, chunk_ref="", context_text="",
+        page=None, chunk_ref="", context_text=context_text,
         filename=filename, image_bytes=data,
+        document_order=document_order,
+        paragraph_index=paragraph_index,
+        anchor_type=anchor_type,
+        structural_path=structural_path,
+        heading_path=heading_path,
+        section_context=context_text,
+        warnings=list(warnings or []),
     )
 
 
@@ -314,20 +326,24 @@ def _events(store, job_id: str) -> list[str]:
     obs = store.observability(stored.opaque_token)
     return [e["event"] for e in obs["events"]]
 
-
 def _docx_seams(monkeypatch, entries, md_text):
     """Mock the lazy conversion + extraction seams for a .docx source.
 
     The converted markdown references the extracted images at their PR1 spool
     paths (``media/<stem>/<file>``) so placements and vision suggestions
-    resolve to the same path the executor reads.
+    resolve to the same path the executor reads. The strategy seam returns
+    the mock entries and passes the converted markdown through unchanged
+    (PR2 dispatch through ``extract_by_extension``).
     """
     monkeypatch.setattr(
         "sync_lore.utils.converter.convert_to_markdown",
         lambda _p: md_text,
     )
     monkeypatch.setattr(
-        "import_analysis.extract_images_from_file", lambda _p: entries)
+        "sync_lore.import_docx_parser.extract_by_extension",
+        lambda _p, converted_markdown="": ExtractionResult(
+            images=entries, markdown=converted_markdown),
+    )
 
 
 _DOCX_MD = (
@@ -799,3 +815,61 @@ class TestPdfFlow:
         fichas = list((mundos / "world1").rglob("*.md"))
         ficha_text = "".join(f.read_text(encoding="utf-8") for f in fichas)
         assert "![Retrato sombrío en claroscuro](media/Manual/diagrama.png)" in ficha_text
+
+
+class TestDocxPositionPropagation:
+    """PR2 (docx-image-extraction) — scenario R3-S1: the DOCX position
+    contract survives ``analyze_source → spool → candidate persistence →
+    review`` and is visible in the serialized review payload."""
+
+    _MD = (
+        "---\ntype: personaje\nname: A\n---\n"
+        "# Origen\n"
+        "Body with context\n\n"
+        "![retrato](media/Enciclopedia/portada.png)"
+    )
+
+    def test_review_payload_carries_position_fields(
+            self, tmp_path, monkeypatch):
+        _CountingVisionProvider.instances.clear()
+        thumb = _ThumbRecorder()
+        entry = _entry(
+            filename="portada.png",
+            document_order=1, paragraph_index=1, anchor_type="inline",
+            structural_path="body/p[1]/r[0]/inline[0]",
+            heading_path="Origen", context_text="Body with context",
+            warnings=["media part 'word/media/x.png' missing; skipped"],
+        )
+        _docx_seams(monkeypatch, [entry], self._MD)
+        monkeypatch.setattr(
+            "sync_lore.providers.llm.LlmProvider", _CountingVisionProvider)
+
+        store = ImportJobStore(":memory:")
+        client, store, spool, _ = _app(
+            tmp_path,
+            vision=_vision_seam(
+                _settings_file(tmp_path), thumb, store,
+                provider_cls=_CountingVisionProvider),
+            store=store,
+        )
+        job = _create_job(client)
+        _stream(client, job["job_id"], "Lore/Enciclopedia.docx", b"PK..docx")
+        _analyze(client, job["job_id"])
+        review = _review(client, job["job_id"])
+        cand = review["candidates"][0]
+        placements = cand["images"]
+        # One candidate per DOCX, one placement for the referenced image.
+        assert len(review["candidates"]) == 1
+        assert len(placements) == 1
+        placement = placements[0]
+        assert placement["relative_media_path"] == (
+            "media/Enciclopedia/portada.png")
+        # The position contract survives persistence + review serialization.
+        assert placement["document_order"] == 1
+        assert placement["paragraph_index"] == 1
+        assert placement["anchor_type"] == "inline"
+        assert placement["structural_path"] == "body/p[1]/r[0]/inline[0]"
+        assert placement["heading_path"] == "Origen"
+        assert placement["context_text"] == "Body with context"
+        assert placement["warnings"] == [
+            "media part 'word/media/x.png' missing; skipped"]
