@@ -153,16 +153,19 @@ describe("importer API — world-importer slice 3 contract", () => {
     expect(mockApiFetch).not.toHaveBeenCalled();
   });
 
-  it("analyzeImportJob omits the body when enrich is absent (legacy deterministic)", async () => {
+  it("analyzeImportJob always sends an explicit enrich+vision body (enrich ON by default)", async () => {
     mockApiFetch.mockResolvedValue({ job: { job_id: "job1" }, candidates: 0 });
     await analyzeImportJob("mundo", "job1");
     expect(mockApiFetch).toHaveBeenCalledWith(
       "/api/mundo/imports/job1/analyze",
-      expect.objectContaining({ method: "POST", body: undefined }),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ enrich: true, vision: true }),
+      }),
     );
   });
 
-  it("analyzeImportJob sends { enrich: true } when opt-in is requested (slice 2)", async () => {
+  it("analyzeImportJob sends { enrich, vision } when opt-in is requested (slice 2)", async () => {
     mockApiFetch.mockResolvedValue({
       job: { job_id: "job1" },
       candidates: 1,
@@ -173,17 +176,20 @@ describe("importer API — world-importer slice 3 contract", () => {
       "/api/mundo/imports/job1/analyze",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({ enrich: true }),
+        body: JSON.stringify({ enrich: true, vision: true }),
       }),
     );
   });
 
-  it("analyzeImportJob omits the body when enrich=false (no Hermes call)", async () => {
+  it("analyzeImportJob keeps vision=false faithful when only vision is turned off", async () => {
     mockApiFetch.mockResolvedValue({ job: { job_id: "job1" }, candidates: 0 });
-    await analyzeImportJob("mundo", "job1", { enrich: false });
+    await analyzeImportJob("mundo", "job1", { vision: false });
     expect(mockApiFetch).toHaveBeenCalledWith(
       "/api/mundo/imports/job1/analyze",
-      expect.objectContaining({ body: undefined }),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ enrich: true, vision: false }),
+      }),
     );
   });
 
