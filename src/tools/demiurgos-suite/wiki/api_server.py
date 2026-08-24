@@ -3894,10 +3894,12 @@ def _build_ai_ask_prompt(
 
     # Response guidance
     parts.append(
-        "[Visible response guidance: Answer directly in 1-3 short paragraphs or bullets. "
-        "Ask at most one question at a time. Use the verified context silently, answer only "
-        "the relevant point, and do not repeat the full ficha or internal context. Expand only "
-        "when requested. Keep factual answers grounded in the provided evidence.]"
+        "[Visible response guidance: Answer directly and concisely. Format the answer "
+        "with markdown when it adds structure: use ## headings for distinct sections, "
+        "**bold** for key names or terms, and - bullets for short lists or steps. Do not "
+        "over-format a one-line answer; keep factual answers grounded in the provided "
+        "evidence and do not repeat the full ficha or internal context. Expand only "
+        "when requested.]"
     )
 
     if body.file_path:
