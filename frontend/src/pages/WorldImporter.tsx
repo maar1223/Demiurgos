@@ -2423,6 +2423,21 @@ function EnrichmentStatusBanner({ status }: { status: EnrichmentStatus }) {
 }
 
 /**
+ * Human-readable target label for a relationship suggestion.
+ *
+ * Prefer the readable ``target_name`` over the internal ``target_candidate_id``
+ * (a hex id that means nothing to a reviewer). Fall back to the id only when
+ * the name is missing/blank, and to "?" when both are absent.
+ */
+function relationshipTargetLabel(rel: RelationshipSuggestion): string {
+  const name = rel.target_name?.trim();
+  if (name) return name;
+  const id = rel.target_candidate_id?.trim();
+  if (id) return id;
+  return "?";
+}
+
+/**
  * Slice 2 — one advisory suggestion card. Visual distinction:
  * ``border-musgo/40 bg-musgo/5`` for classification, ``border-filio bg-cripta``
  * for relationship. Approved/rejected states are persisted via the
@@ -2478,9 +2493,7 @@ function SuggestionCard({
           <span className="text-small font-medium text-pergamino">
             {isClassification
               ? `tipo: ${cls!.type || "(sin tipo)"}`
-              : `${rel!.relationship_type} → ${
-                  rel!.target_candidate_id ?? rel!.target_name ?? "?"
-                }`}
+              : `${rel!.relationship_type} → ${relationshipTargetLabel(rel!)}`}
           </span>
           {isClassification && cls!.tags.length > 0 && (
             <span className="flex flex-wrap gap-1">
@@ -2497,9 +2510,11 @@ function SuggestionCard({
         </span>
       </div>
       {(isClassification ? cls!.evidence : rel!.evidence) && (
-        <p className="text-xs text-tinta-desvaida">
-          {(isClassification ? cls!.evidence : rel!.evidence)}
-        </p>
+        isClassification ? (
+          <p className="text-xs text-tinta-desvaida">{cls!.evidence}</p>
+        ) : (
+          <p className="text-sm font-medium text-pergamino">{rel!.evidence}</p>
+        )
       )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-tinta-desvaida">

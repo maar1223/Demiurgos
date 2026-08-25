@@ -955,6 +955,60 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     expect(screen.getAllByText(/hermes-gateway/).length).toBeGreaterThan(0);
   });
 
+  it("renders relationship suggestions with the readable name, not the hex id (target_name primary)", async () => {
+    const enriched: ImportCandidate = candidate({
+      enrichment_json: [
+        relationshipSuggestion({
+          target_candidate_id: "7d2078e270c244f78b6f740a517f2dc2",
+          target_name: "Ciudad Alta",
+        }),
+      ],
+      enrichment_status: "ok",
+    });
+    mockAnalyzeWithEnrichment([enriched]);
+
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    const card = screen.getByTestId("suggestion-rel-1");
+
+    // The label prefers the readable name over the internal hex id.
+    expect(card).toHaveTextContent("habita-en → Ciudad Alta");
+    // The hex id must never be surfaced as the prominent relationship label.
+    expect(card).not.toHaveTextContent("7d2078e270c244f78b6f740a517f2dc2");
+
+    // The human-facing description (evidence) is the primary content.
+    expect(card).toHaveTextContent("Menciones explícitas a la Ciudad Alta.");
+  });
+
+  it("falls back to the candidate id only when the readable name is blank", async () => {
+    const enriched: ImportCandidate = candidate({
+      enrichment_json: [
+        relationshipSuggestion({
+          target_candidate_id: "7d2078e270c244f78b6f740a517f2dc2",
+          target_name: "   ",
+        }),
+      ],
+      enrichment_status: "ok",
+    });
+    mockAnalyzeWithEnrichment([enriched]);
+
+    renderImporter();
+    await screen.findByRole("heading", { name: "Importar contenido" });
+    const input = screen.getByLabelText("Selección de fuentes");
+    fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
+    fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
+    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+
+    expect(screen.getByTestId("suggestion-rel-1")).toHaveTextContent(
+      "habita-en → 7d2078e270c244f78b6f740a517f2dc2",
+    );
+  });
+
   it("approving a suggestion posts to decisions and binds the ID to execute (slice 2)", async () => {
     const enriched: ImportCandidate = candidate({
       enrichment_json: [classificationSuggestion({ id: "cls-1" })],
