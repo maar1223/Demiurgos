@@ -105,6 +105,36 @@ def _ficha_anchor(body: str) -> str:
     return ""
 
 
+def _resolve_batch_candidates(
+    candidates: list[Candidate], link_name: str,
+) -> list[str]:
+    """Resolve a wikilink name against the current import batch.
+
+    The funnel generates ``relaciones`` pointing at SIBLING fichas of the SAME
+    batch — not yet persisted, so the world graph index cannot resolve them.
+    Match the precise ``canonical_id`` first, then ``normalized_identity`` /
+    ``display_title`` case-insensitively with underscores collapsed to spaces
+    (mirroring ``graph_indexer._resolve_link`` semantics). Returns the matching
+    candidate ids; empty when no batch ficha matches.
+    """
+    def _norm(value: str) -> str:
+        return value.lower().replace("_", " ").strip()
+
+    link_norm = _norm(link_name)
+    matches: list[str] = []
+    for c in candidates:
+        if c.canonical_id and c.canonical_id == link_name:
+            matches.append(c.candidate_id)
+            continue
+        if link_norm and (
+            _norm(c.canonical_id or "") == link_norm
+            or _norm(c.normalized_identity or "") == link_norm
+            or _norm(c.display_title or "") == link_norm
+        ):
+            matches.append(c.candidate_id)
+    return matches
+
+
 @dataclass
 class VisionMediaEntry:
     """One extracted image tied to its owning candidate (PR3 vision seam).
@@ -672,6 +702,22 @@ def create_import_router(
                     _target_groups.setdefault(
                         c.target_resolution["canonical_path"], []).append(c)
 
+            # Reference-check resolver: the funnel generates ``relaciones``
+            # pointing at SIBLING fichas of THIS import batch, which are not
+            # yet indexed in the world graph — resolving only against the
+            # graph flags every intra-batch relation ``unresolved-reference``
+            # and pushes the whole batch into "requiere tu decisión". Resolve
+            # against the batch first (canonical_id / normalized_identity /
+            # display_title) and fall back to the graph index so references to
+            # real external entities keep their existing behavior.
+            def _reference_resolver(link_name: str) -> list[str]:
+                batch_matches = _resolve_batch_candidates(candidates, link_name)
+                if batch_matches:
+                    return batch_matches
+                if _resolver_fn is not None:
+                    return list(_resolver_fn(link_name))
+                return []
+
             for candidate in candidates:
                 # Rendered document for validation: a funnel-frontmatter
                 # candidate materializes like execute-time (so ``resolve``
@@ -693,7 +739,7 @@ def create_import_router(
                     if candidate.section in INDEXED_SECTIONS:
                         try:
                             ref_validation = okf_contract.validate(
-                                rendered, resolve=_resolver_fn)
+                                rendered, resolve=_reference_resolver)
                             for issue in ref_validation.issues:
                                 if issue.code in (
                                         "unresolved-reference",
@@ -1324,15 +1370,48 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
                 owner.images.append(placement)
         for placement in unmatched:
             ficha_candidates[0].images.append(placement)
-        # PR3 — attach extracted media to the owning ficha (by spool path) and
-        # preserve the media bundle tied to the candidate that owns each image.
+        # PR3 — attach extracted media to the owning ficha and preserve the
+        # media bundle tied to the candidate that owns each image. Ownership
+        # follows the SAME canonical attribution as the inline placements
+        # above: the body references media by filename (``media/x.png`` for
+        # DOCX-injected refs, the raw source ref for markdown), while the
+        # spool path carries a ``media/<stem>/`` prefix — matching on the
+        # full spool path never matches the body and silently folds every
+        # image into the FIRST ficha (Bug 2). Match by basename instead,
+        # enrich the existing placement with the DOCX position contract, and
+        # only create a placement (with full position metadata) when no
+        # inline placement referenced the media.
+        placement_by_name: dict[str, ImagePlacement] = {}
+        for c in ficha_candidates:
+            for p in c.images:
+                placement_by_name.setdefault(
+                    Path(p.relative_media_path).name, p)
         for media in f.media:
-            owner = next(
-                (c for c in ficha_candidates
-                 if media.spool_relative_path in c.content_preview),
-                ficha_candidates[0])
-            if not any(p.relative_media_path == media.spool_relative_path
-                       for p in owner.images):
+            media_name = Path(media.spool_relative_path).name
+            existing = placement_by_name.get(media_name)
+            if existing is not None:
+                owner = next(
+                    (c for c in ficha_candidates
+                     if any(p is existing for p in c.images)),
+                    ficha_candidates[0])
+                # Mirror the DOCX position contract onto the inline placement
+                # (additive; the ``_enrich_placements`` basename match may
+                # have missed when the ref and spool names differ).
+                if media.document_order:
+                    existing.document_order = media.document_order
+                    existing.paragraph_index = media.paragraph_index
+                if media.anchor_type:
+                    existing.anchor_type = media.anchor_type
+                if media.structural_path:
+                    existing.structural_path = media.structural_path
+                if media.heading_path:
+                    existing.heading_path = media.heading_path
+                if media.context_text:
+                    existing.context_text = media.context_text
+                if media.warnings:
+                    existing.warnings = list(media.warnings)
+            else:
+                owner = ficha_candidates[0]
                 owner.images.append(ImagePlacement(
                     gallery_asset_id="",
                     relative_media_path=media.spool_relative_path,
@@ -1340,6 +1419,13 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
                     target_ficha=owner.canonical_id,
                     confidence=1.0,
                     placement_status="proposed",
+                    document_order=media.document_order,
+                    paragraph_index=media.paragraph_index,
+                    anchor_type=media.anchor_type,
+                    structural_path=media.structural_path,
+                    heading_path=media.heading_path,
+                    context_text=media.context_text,
+                    warnings=list(media.warnings),
                 ))
             media_bundle.append(VisionMediaEntry(
                 candidate_id=owner.candidate_id,

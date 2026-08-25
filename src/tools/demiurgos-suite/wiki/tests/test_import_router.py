@@ -54,12 +54,19 @@ class _FakePrincipal:
 
 
 def _entry(filename: str = "portada.png",
-           data: bytes = b"PORTADA-BYTES") -> ImageEntry:
+           data: bytes = b"PORTADA-BYTES",
+           *, page: int | None = None, document_order: int = 0,
+           paragraph_index: int = 0, anchor_type: str = "",
+           structural_path: str = "", heading_path: str = "",
+           context_text: str = "") -> ImageEntry:
     return ImageEntry(
         id=str(uuid.uuid4()),
         source_file="Lore/Enciclopedia.docx",
-        page=None, chunk_ref="", context_text="",
+        page=page, chunk_ref="", context_text=context_text,
         filename=filename, image_bytes=data,
+        document_order=document_order, paragraph_index=paragraph_index,
+        anchor_type=anchor_type, structural_path=structural_path,
+        heading_path=heading_path,
     )
 
 
@@ -383,6 +390,49 @@ class TestRouterVisionSeam:
         assert cand.provenance.source_path == "Lore/Enciclopedia.md"
         assert any(p.relative_media_path == "media/Enciclopedia/portada.png"
                    for p in cand.images)
+
+    def test_media_attributed_to_owning_ficha_with_position(
+            self, tmp_path, monkeypatch):
+        """BUG 2 — extracted media lands on the ficha whose body references
+        it (never folded into the FIRST ficha) and carries the DOCX position
+        contract (document_order / paragraph_index)."""
+        monkeypatch.setattr(
+            "sync_lore.utils.converter.convert_to_markdown",
+            lambda _p: "# El Origen\n\nHistoria antigua.\n\n"
+                       "# Breve Historia\n\n"
+                       "![retrato](media/retrato.png)\n",
+        )
+        monkeypatch.setattr(
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": ExtractionResult(
+                images=[_entry(filename="retrato.png", page=None,
+                               document_order=1, paragraph_index=2,
+                               anchor_type="inline",
+                               structural_path="body/p[2]/r[0]/inline[0]",
+                               heading_path="Breve Historia",
+                               context_text="Retrato")],
+                markdown=converted_markdown))
+        client, store, spool, _ = _make_app(tmp_path)
+        job = _create_job(client)
+        _stream(client, job["job_id"], b"PK..fake")
+        _analyze(client, job["job_id"])
+        cands = {c.canonical_id: c for c in store.candidates_for(job["job_id"])}
+        assert set(cands) == {"El Origen", "Breve Historia"}
+        # The image is owned by the ficha whose body references it.
+        owner = cands["Breve Historia"]
+        assert any("retrato.png" in p.relative_media_path
+                   for p in owner.images)
+        assert not any("retrato.png" in p.relative_media_path
+                       for p in cands["El Origen"].images)
+        # DOCX position contract is preserved on the placement.
+        placement = next(
+            p for p in owner.images if "retrato.png" in p.relative_media_path)
+        assert placement.document_order == 1
+        assert placement.paragraph_index == 2
+        assert placement.anchor_type == "inline"
+        assert placement.structural_path == "body/p[2]/r[0]/inline[0]"
+        assert placement.heading_path == "Breve Historia"
+        assert placement.context_text == "Retrato"
 
     def test_reimport_backfills_media_on_candidate_created_without_images(
             self, tmp_path, monkeypatch):
@@ -922,6 +972,44 @@ class TestCollisionDetection:
                    for i in cand.okf_issues)
         assert cand.status == "conflict"
 
+    def test_analyze_resolves_intra_batch_reference(self, tmp_path):
+        """BUG 1 — a ficha referencing a SIBLING of the same import batch
+        resolves: the batch fichas are not yet in the world graph, so the
+        reference check must resolve against the batch first (the injected
+        graph resolver knows nothing and returns [] for every name)."""
+        resolver = _outer_resolver(lambda name: [])  # graph knows nothing
+
+        def enricher(candidates, progress_cb=None):
+            out = []
+            for c in candidates:
+                # The funnel emits BARE canonical ids (render_frontmatter_document
+                # wraps them into ``[[...]]`` wikilinks at render time).
+                relaciones = (
+                    ["Palacios"] if c.canonical_id == "Ayagares" else [])
+                out.append(c.model_copy(update={
+                    "frontmatter": FrontmatterCandidate(
+                        title=c.display_title or c.normalized_identity,
+                        type="lore", description="",
+                        relaciones=relaciones,
+                        state=FrontmatterState.GENERATED),
+                }))
+            return out
+
+        client, store, _, _ = _make_app(
+            tmp_path, graph_resolver=resolver, enricher=enricher)
+        job_id = _collision_job(
+            client, {"Enciclopedia.md": "lore"},
+            {"Enciclopedia.md":
+             b"# Ayagares\n\nSe relaciona con [[Palacios]].\n\n"
+             b"# Palacios\n\nCapital del mundo."})
+        cands = {c.canonical_id: c for c in store.candidates_for(job_id)}
+        assert set(cands) == {"Ayagares", "Palacios"}
+        # The intra-batch relation must NOT be flagged unresolved/ambiguous.
+        assert not any(i["code"] in ("unresolved-reference",
+                                     "ambiguous-reference")
+                       for i in cands["Ayagares"].okf_issues)
+        assert cands["Ayagares"].status == "pending"
+
     def test_analyze_skips_reference_check_referencias(self, tmp_path):
         """referencias candidate with [[Nonexistent]] → NO reference issue
         (referencias is excluded from the graph index)."""
@@ -987,10 +1075,10 @@ class TestCollisionDetection:
         path-collision."""
         resolver = _outer_resolver(lambda name: [])
         client, store, _, mundos = _make_app(tmp_path, graph_resolver=resolver)
-        # The ficha body (content_preview) excludes the H1 heading line, so
-        # "identical content" is the rendered body, not the raw source text.
+        # The ficha body (content_preview) INCLUDES the H1 heading line, so
+        # "identical content" is the rendered body (heading + prose).
         (mundos / "world1" / "lore" / "dottua.md").write_text(
-            "Nueva prosa.", encoding="utf-8")
+            "# Dottua\n\nNueva prosa.", encoding="utf-8")
         job_id = _collision_job(
             client, {"Enciclopedia.md": "lore"},
             {"Enciclopedia.md": b"# Dottua\n\nNueva prosa."})

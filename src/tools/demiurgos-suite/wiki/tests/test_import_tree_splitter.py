@@ -59,17 +59,20 @@ class TestHeadingTreeSplitter:
         assert root.children[0].title == "Descripción Física"
         extremidades = tree.fichas[-1]
         assert extremidades.level == 4
-        assert extremidades.body == "##### Manos\n\nCinco dedos."
+        # The ficha's own heading opens its body (self-descriptive ficha).
+        assert extremidades.body == (
+            "#### Extremidades\n\n##### Manos\n\nCinco dedos.")
         assert extremidades.children == []
 
     def test_empty_h1_scaffold_is_preserved(self):
-        """An empty H1 remains a valid root/index ficha, never dropped."""
+        """An empty H1 remains a valid root/index ficha, never dropped. Its
+        body carries the heading line so the ficha is self-descriptive."""
         tree = split_heading_tree("# Vacía\n\n# Llena\n\nContenido.\n")
         assert [f.canonical_id for f in tree.fichas] == ["Vacía", "Llena"]
         vacia, llena = tree.fichas
-        assert vacia.body == ""
+        assert vacia.body == "# Vacía"
         assert vacia.level == 1 and vacia.is_ficha
-        assert llena.body == "Contenido."
+        assert llena.body == "# Llena\n\nContenido."
 
     def test_childless_prose_folds_into_parent_ficha(self):
         """Childless headings fold (verbatim, heading included) into the
@@ -128,7 +131,7 @@ class TestHeadingTreeSplitter:
         )
         tree = split_heading_tree("# Manual\n\nCuerpo.\n", structure=structure)
         assert tree.fichas[0].canonical_id == "Manual"
-        assert tree.fichas[0].body == "Cuerpo."
+        assert tree.fichas[0].body == "# Manual\n\nCuerpo."
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +237,7 @@ class TestHeadingDetection:
         tree = split_heading_tree(
             "# Inferido\n\nTexto plano.\n", structure=structure)
         assert tree.fichas[0].canonical_id == "Inferido"
-        assert tree.fichas[0].body == "Texto plano."
+        assert tree.fichas[0].body == "# Inferido\n\nTexto plano."
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +305,16 @@ class TestMarkdownCleaning:
         ficha = tree.fichas[0]
         assert ficha.title == "Sección"
         assert ficha.canonical_id == "Sección"
+
+    def test_ficha_own_heading_opens_body_with_pipe_preserved(self):
+        """BUG 3 — the ficha's own heading line opens the body verbatim, and a
+        ``|`` in the title stays a real markdown heading (self-descriptive
+        ficha, no duplicated title)."""
+        tree = split_heading_tree(
+            "# Vibrastal | Estados y Niveles\n\nContenido.\n")
+        ficha = tree.fichas[0]
+        assert ficha.body == "# Vibrastal | Estados y Niveles\n\nContenido."
+        assert ficha.title == "Vibrastal | Estados y Niveles"
 
     def test_body_preserves_markdown_formatting_verbatim(self):
         # Emphasis markers are REAL document formatting (bold/italic/code from

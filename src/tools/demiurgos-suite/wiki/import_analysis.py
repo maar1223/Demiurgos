@@ -992,7 +992,13 @@ def _split_into_fichas(text: str, spans: list[HeadingSpan]) -> list[StructureNod
         root.is_ficha = True
         _assign_tree(root)
     if preamble:
-        roots[0].body_lines = preamble + roots[0].body_lines
+        # Preamble lines precede the first heading in the source; splice the
+        # heading line between preamble and body so source order is preserved
+        # when ``_ficha_from`` opens the body with the heading.
+        roots[0].body_lines = [
+            *preamble, roots[0].heading_text, *roots[0].body_lines,
+        ]
+        roots[0].heading_text = ""  # consumed; ``_ficha_from`` must not re-add
 
     fichas: list[StructureNode] = []
     order: Iterator[int] = itertools.count()
@@ -1080,6 +1086,13 @@ def _ficha_from(
     )
     fichas.append(node)
     body_lines = list(raw.body_lines)
+    # The ficha's own heading line opens its body so the ficha is
+    # self-descriptive when opened (the heading previously lived only in
+    # metadata). Verbatim markdown — a ``|``-containing title stays a real
+    # heading. ``_split_into_fichas`` already consumed the heading into
+    # ``body_lines`` for the preamble case, so it is never duplicated.
+    if raw.heading_text:
+        body_lines.insert(0, raw.heading_text)
     for child in raw.children:
         if child.is_ficha:
             node.children.append(_ficha_from(

@@ -290,6 +290,28 @@ class TestValidateSuggestions:
         assert len(rel) == 1
         assert rel[0].target_name == "B"
 
+    def test_batched_target_gets_display_title_as_target_name(self):
+        """BUG 4 — a relationship to another candidate of the batch carries
+        that candidate's human title (display_title) so the frontend shows a
+        readable name instead of the internal candidate id."""
+        a = _candidate("A")
+        b = _candidate("B")
+        b.display_title = "Vibrastal"
+        parsed = {
+            "classifications": [],
+            "relationships": [{
+                "source_candidate_id": a.candidate_id,
+                "target_candidate_id": b.candidate_id,
+                "relationship_type": "aliado-de",
+                "confidence": 0.8,
+                "evidence": "serves together",
+            }],
+        }
+        _, rel = validate_suggestions(parsed, [a, b])
+        assert len(rel) == 1
+        assert rel[0].target_candidate_id == b.candidate_id
+        assert rel[0].target_name == "Vibrastal"
+
     def test_unknown_relationship_type_is_rejected(self):
         a = _candidate("A")
         b = _candidate("B")

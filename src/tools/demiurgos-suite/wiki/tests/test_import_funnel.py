@@ -225,7 +225,9 @@ class TestRelationshipBatch:
         assert len(rels) == 1
         assert rels[0].source_candidate_id == a.candidate_id
         assert rels[0].target_candidate_id == b.candidate_id
-        assert rels[0].target_name is None  # canonical id materialized, not name
+        # The batched target carries its human title (display_title) so the
+        # frontend shows a readable name instead of the internal candidate id.
+        assert rels[0].target_name == "Palacios"
 
     def test_validate_rejects_ambiguous_leaf_names(self):
         """Design risk 3: a bare leaf name shared by two branches must not

@@ -295,9 +295,12 @@ class RelationshipSuggestion(BaseModel):
     """Hermes-suggested relationship between candidates (or to a named target).
 
     ``target_candidate_id`` is set when the target is another candidate in
-    the same batch; ``target_name`` is set when Hermes names an entity not
-    present in the batch (validation rejects ungrounded names). Self-links
-    are rejected. ``review_state`` round-trips through ``enrichment_json``.
+    the same batch; ``target_name`` then carries that candidate's human
+    title (``display_title``) so the frontend shows a readable name instead
+    of the internal id. When Hermes names an entity NOT present in the
+    batch, ``target_name`` holds the grounded name (validation rejects
+    ungrounded names). Self-links are rejected. ``review_state`` round-trips
+    through ``enrichment_json``.
     """
 
     model_config = ConfigDict(extra="forbid")

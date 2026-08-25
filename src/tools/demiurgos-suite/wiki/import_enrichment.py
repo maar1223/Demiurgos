@@ -325,6 +325,15 @@ def validate_suggestions(
             if tgt_id == src:
                 continue  # self-link rejected
             target_candidate_id = tgt_id
+            # A batched target gets its human title so the frontend can show a
+            # readable name instead of the internal candidate hex id.
+            target = next(
+                (c for c in candidates if c.candidate_id == tgt_id), None)
+            if target is not None:
+                target_name = (
+                    target.display_title
+                    or target.normalized_identity
+                    or target.candidate_id)
         elif isinstance(tgt_name, str):
             candidate_identity = tgt_name.strip()
             if not candidate_identity or candidate_identity == src:
