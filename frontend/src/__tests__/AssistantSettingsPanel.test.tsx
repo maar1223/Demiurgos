@@ -368,7 +368,7 @@ describe("AssistantSettingsPanel", () => {
     expect(screen.getByText("Texto: superada · Visión: superada")).toBeInTheDocument();
     // Real runtime state, not hardcoded success.
     expect(screen.getByText("Activo")).toBeInTheDocument();
-    expect(screen.getByText("Volver al Centro de Configuración")).toBeInTheDocument();
+    expect(screen.getByText("Volver al Perfil")).toBeInTheDocument();
   });
 
   it("blocks a second save after the first succeeds (no duplicate requests)", async () => {

@@ -11,7 +11,8 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
  *
  * Flow: step 0 (locale) → world creation → ready. Remote steps (AI, Telegram,
  * Backup) are NEVER blocking and are reported as pending — they are resumed
- * from the Configuration Center. Completed steps are never replayed after a
+ * from the Centro de Configuración tab inside the Profile (`/perfil`).
+ * Completed steps are never replayed after a
  * restart (server is authoritative).
  *
  * Writes are gated on the authenticated local principal; a 401 surfaces a
@@ -59,8 +60,9 @@ function authHint(error: unknown): string | null {
 export default function Onboarding() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  // `?step=step0` re-opens ONLY the locale step from the Configuration Center
-  // (OC12 per-section resume) without replaying the completed flow.
+  // `?step=step0` re-opens ONLY the locale step from the Profile's
+  // "Centro de Configuración" tab (OC12 per-section resume) without replaying
+  // the completed flow; after saving, the user lands back on `/perfil`.
   const reconfigure = searchParams.get("step") === "step0";
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -113,7 +115,10 @@ export default function Onboarding() {
         setStatus(next);
         setBusy(false);
         if (next.completed || reconfigure) {
-          navigate("/centro-configuracion", { replace: true });
+          // The Configuration Center now lives inside the Profile (Perfil →
+          // "Centro de Configuración" tab), so the reconfigure handoff lands
+          // there instead of a standalone page.
+          navigate("/perfil", { replace: true });
         }
       })
       .catch((cause: unknown) => {

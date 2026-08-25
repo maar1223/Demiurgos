@@ -5,7 +5,9 @@ import ProfilePage from "@/pages/ProfilePage";
 import { useWorlds } from "@/hooks/useWorlds";
 import { deleteWorld, listTrash, permanentDelete, restoreWorld } from "@/api/worlds";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
+import { getReadiness } from "@/api/onboarding";
 import { ApiError, type IdeaCaptureStatus, type WorldInfo, type WorldTrashEntry } from "@/api/types";
+import type { Mock } from "vitest";
 
 vi.mock("@/hooks/useWorlds", () => ({ useWorlds: vi.fn() }));
 vi.mock("@/api/worlds", () => ({
@@ -15,6 +17,7 @@ vi.mock("@/api/worlds", () => ({
   permanentDelete: vi.fn(),
 }));
 vi.mock("@/api/ideaCapture", () => ({ getIdeaCaptureStatus: vi.fn() }));
+vi.mock("@/api/onboarding", () => ({ getReadiness: vi.fn() }));
 
 vi.mock("@/hooks/useLocalDevAuth", () => ({
   useLocalDevAuth: () => ({
@@ -90,6 +93,12 @@ beforeEach(() => {
   getIdeaCaptureStatusMock.mockResolvedValue({
     config: { active_world: "" },
   } as unknown as IdeaCaptureStatus);
+  (getReadiness as Mock).mockResolvedValue({
+    local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+    cards: {},
+    offline: { local_ready: true, remote_pending: [] },
+    legacy: [],
+  });
   deleteWorldMock.mockResolvedValue(trashEntry);
   listTrashMock.mockResolvedValue([]);
   restoreWorldMock.mockResolvedValue(undefined);

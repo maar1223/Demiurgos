@@ -50,7 +50,7 @@ function renderOnboarding(initialEntry = "/onboarding") {
       <Routes>
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/wiki" element={<div data-testid="wiki-home">wiki</div>} />
-        <Route path="/centro-configuracion" element={<div data-testid="center">center</div>} />
+        <Route path="/perfil" element={<div data-testid="perfil">perfil</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -189,5 +189,20 @@ describe("Onboarding page (ONB-1.1/ONB-1.4)", () => {
     await screen.findByRole("heading", { name: "Creá tu mundo" });
     expect(screen.getByText("Asistente de IA (texto y visión)")).toBeInTheDocument();
     expect(screen.getByText("Requiere conexión y una cuenta configurada. Se retoma desde el Centro de Configuración.")).toBeInTheDocument();
+  });
+
+  it("lands on the Profile (not a standalone page) after reconfiguring locale", async () => {
+    // Reconfigure (`?step=step0`) re-opens ONLY the locale step; after saving
+    // the user must land on `/perfil`, where the Centro de Configuración tab
+    // lives (nav-restructure decision — the `/centro-configuracion` route is gone).
+    (getOnboardingStatus as Mock).mockResolvedValue(FRESH_STATUS);
+    (submitStep0 as Mock).mockResolvedValue(STEP0_DONE_STATUS);
+    const user = userEvent.setup();
+    renderOnboarding("/onboarding?step=step0");
+
+    await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+
+    expect(await screen.findByTestId("perfil")).toBeInTheDocument();
   });
 });

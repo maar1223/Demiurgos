@@ -330,7 +330,7 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
           </dl>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button variant="primary" onClick={changeConfiguration}>Cambiar configuración</Button>
-            <Button variant="secondary" onClick={() => navigate("/centro-configuracion")}>Volver al Centro de Configuración</Button>
+            <Button variant="secondary" onClick={() => navigate("/perfil")}>Volver al Perfil</Button>
           </div>
         </div>
       ) : (

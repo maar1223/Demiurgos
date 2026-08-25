@@ -9,7 +9,6 @@ import WorldWorkshop from "@/pages/WorldWorkshop";
 import WorldImporter from "@/pages/WorldImporter";
 import RelacionesCanon from "@/pages/RelacionesCanon";
 import Onboarding from "@/pages/Onboarding";
-import ConfigurationCenter from "@/pages/ConfigurationCenter";
 import LoginScreen from "@/pages/LoginScreen";
 import NotFound from "@/pages/NotFound";
 import { useOnboardingGate } from "@/hooks/useOnboardingGate";
@@ -75,11 +74,12 @@ function FirstRunGate() {
  * Routes:
  * - `/` → redirect to `/wiki`
  * - `/onboarding` → first-run onboarding (outside the gate)
- * - `/centro-configuracion` → permanent Configuration Center (OC12)
  * - `/wiki` → Wiki Home page
  * - `/taller-herramientas` → ToolWorkshop (Taller de Herramientas shell)
  * - `/taller-mundo` → WorldWorkshop (Taller de Mundo shell)
- * - `/perfil` → Profile page (local session + Integraciones → Captura de ideas)
+ * - `/perfil` → Profile page (Sesión de edición + Centro de Configuración tab +
+ *   Integraciones → Captura de ideas (single Telegram surface), Asistente IA,
+ *   Mundos incl. migración de carpetas legacy)
  * - `/wiki/:mundo/entity/*path` → EntityPage (entity detail with connections)
  * - `/wiki/:mundo` → WikiWorld (section cards for one world)
  * - `/wiki/:mundo/importer` → WorldImporter (world-level import workflow)
@@ -99,7 +99,6 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/wiki" replace />} />
         <Route path="/onboarding" element={<Onboarding />} />
-        <Route path="/centro-configuracion" element={<ConfigurationCenter />} />
 
         <Route element={<AuthGate />}>
           <Route element={<FirstRunGate />}>

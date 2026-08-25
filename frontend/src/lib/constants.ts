@@ -34,7 +34,6 @@ export const ROUTES = {
   TALLER_HERRAMIENTAS: "/taller-herramientas",
   TALLER_MUNDO: "/taller-mundo",
   ONBOARDING: "/onboarding",
-  CENTRO_CONFIGURACION: "/centro-configuracion",
   ENTITY: "/wiki/:mundo/entity/*path",
   IMPORTER: "/wiki/:mundo/importer",
   EDITOR: "/wiki/:mundo/:section/*path",
@@ -59,8 +58,11 @@ export const GENERIC_TEASER_LABEL = "Próximamente" as const;
 
 /**
  * Core-only navigation contract (workshop-navigation spec): the free Core
- * exposes Taller de Mundo and Taller de Herramientas as `available` workshops,
- * plus the permanent Configuration Center (OC12). Every future/paid surface
+ * exposes Taller de Mundo and Taller de Herramientas as `available` workshops.
+ * The Configuration Center is NOT a navbar item anymore: it lives inside the
+ * Profile page ("Perfil" → "Centro de Configuración" tab), with Telegram under
+ * "Integraciones" and the legacy-folder migration under "Mundos"; there is no
+ * standalone `/centro-configuracion` route. Every future/paid surface
  * collapses into ONE generic non-actionable "Próximamente" teaser — legacy
  * narrative phases (Personajes/Escritura/Planificar/Revisar) are never
  * presented as Core workshops. Taller de Publicación stays absent until it
@@ -70,7 +72,6 @@ export const GENERIC_TEASER_LABEL = "Próximamente" as const;
 export const NAV_LINKS: readonly NavLink[] = [
   { label: "Taller de Herramientas", to: ROUTES.TALLER_HERRAMIENTAS, availability: "available" },
   { label: "Taller de Mundo", to: ROUTES.TALLER_MUNDO, availability: "available" },
-  { label: "Centro de Configuración", to: ROUTES.CENTRO_CONFIGURACION, availability: "available" },
   { label: GENERIC_TEASER_LABEL, to: "#", availability: "teaser" },
 ];
 

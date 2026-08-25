@@ -271,6 +271,7 @@ Reglas de la estructura recomendada:
 **[DECISIÓN CERRADA — OC12]** El **Centro de Configuración** es la superficie permanente que sustituye la repetición del onboarding:
 
 - **Ajustes globales + entrada contextual**: el Centro agrupa los ajustes globales de la instalación y es alcanzable contextualmente desde las superficies donde corresponda (p. ej. desde el perfil/autenticación según la constitución 10.3, o desde el estado del asistente). `[DECISIÓN CERRADA — OC12]`
+- **Ubicación actual**: la superficie vive **dentro del Perfil** (`/perfil`, pestaña "Centro de Configuración"), con la configuración de Telegram bajo la pestaña "Integraciones" y la migración de carpetas legacy bajo "Mundos"; **no existe una página/ruta independiente** `/centro-configuracion` (decisión nav-restructure, aplicada en el frontend). `[ACTUAL]`
 - **Tarjetas por sección**, cada una con su estado:
 
 | Tarjeta | Capacidad |

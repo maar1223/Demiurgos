@@ -1,20 +1,33 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Navbar } from "@/components/organisms/Navbar";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
+import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
 import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
+import { getReadiness } from "@/api/onboarding";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
-import type { WorldInfo } from "@/api/types";
+import type { ReadinessSnapshot, WorldInfo } from "@/api/types";
+import {
+  CARD_DEFS,
+  ESSENTIAL_BADGES,
+  MigrationPanel,
+  REMOTE_LABELS,
+  STATE_META,
+  cardLabel,
+  cardState,
+  essentialBadgeFor,
+} from "@/pages/ConfigurationCenter";
 import { cn } from "@/lib/utils";
 
-type ProfileSection = "sesion" | "integraciones" | "asistente" | "mundos";
+type ProfileSection = "sesion" | "configuracion" | "integraciones" | "asistente" | "mundos";
 
 /** Sesión de edición — the same local-dev session controls as the Navbar
  *  dropdown, kept accessible from the full Profile page. */
@@ -106,7 +119,9 @@ function SessionSection() {
   );
 }
 
-/** Perfil → Integraciones → Captura de ideas (temporary MVP panel). */
+/** Perfil → Integraciones → Captura de ideas — the single Telegram surface.
+ *  The guided wizard covers the write-only bot token (save/replace/clear) and
+ *  getMe-backed connection validation via the "Detectar chat" step. */
 function IntegrationsSection() {
   const auth = useLocalDevAuth(true);
   return (
@@ -128,8 +143,200 @@ function AssistantSection() {
 }
 
 /**
+ * Perfil → Centro de Configuración — the configuration capabilities that have
+ * NO home elsewhere in the Profile: Respaldo y restauración, Idioma/región/zona
+ * horaria and Offline/dispositivo, plus the essential local readiness summary.
+ *
+ * The other Configuration Center cards (Identidad, IA texto y visión, Telegram,
+ * Mundos, Importar mundo) are intentionally NOT duplicated here — each of those
+ * already lives in a dedicated Profile tab (Asistente IA / Mundos /
+ * Integraciones) or in the Profile/Taller de Mundo themselves (nav-restructure
+ * decision): the idea-capture wizard (with the Telegram bot config folded in)
+ * renders under Integraciones and the legacy-folder MigrationPanel under
+ * Mundos. State semantics (ONB-3.1/ONB-3.5
+ * anti-overstatement guard, OC19 assistant label, OC11/OC21 essential badges)
+ * are reused from ConfigurationCenter.tsx so the Profile tabs and the shared
+ * module never drift.
+ */
+function ConfigurationSection() {
+  const navigate = useNavigate();
+  const [readiness, setReadiness] = useState<ReadinessSnapshot | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    void getReadiness()
+      .then(setReadiness)
+      .catch((cause: unknown) => setError(cause))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida">
+        <Spinner size="sm" /> Comprobando configuración…
+      </div>
+    );
+  }
+
+  if (!!error && !readiness) {
+    return (
+      <ErrorBanner
+        message="No se pudieron cargar los estados de configuración."
+        onRetry={load}
+      />
+    );
+  }
+
+  if (!readiness) return null;
+
+  const cards = readiness.cards ?? {};
+  const keepCards = CARD_DEFS.filter((card) =>
+    ["backup", "locale", "offline"].includes(card.key),
+  );
+
+  return (
+    <div className="space-y-4" aria-live="polite">
+      {/* Essential local readiness (OC11/OC21) — the tab's intro block. */}
+      <section
+        aria-labelledby="config-readiness-title"
+        className="rounded-lg border border-filio bg-madero p-4"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h3
+            id="config-readiness-title"
+            className="font-heading text-body text-pergamino"
+          >
+            Listo para trabajar
+          </h3>
+        </div>
+        <p className="mt-1 text-small text-tinta-desvaida">
+          Capacidades esenciales locales: Mundo y editor local.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-3">
+          {ESSENTIAL_BADGES.map((badge) => {
+            const meta = essentialBadgeFor(readiness, cards, badge.key);
+            return (
+              <span key={badge.key} className="flex items-center gap-2">
+                <span className="text-small text-tinta-desvaida">{badge.title}:</span>
+                <Badge variant={meta.badge}>{meta.label}</Badge>
+                <span className="sr-only">Estado: {meta.label}</span>
+              </span>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* Kept configuration cards — same rounded-box style as the other
+          Profile sections (title row on top, content below). */}
+      {keepCards.map((card) => {
+        const state = cardState(cards, card.key);
+        const label = cardLabel(card.key, state);
+        const meta = STATE_META[state];
+        return (
+          <section
+            key={card.key}
+            aria-labelledby={`config-card-title-${card.key}`}
+            className="rounded-lg border border-filio bg-madero p-4"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3
+                id={`config-card-title-${card.key}`}
+                className="font-heading text-body text-pergamino"
+              >
+                {card.title}
+              </h3>
+              <span className="flex items-center gap-2">
+                <Badge variant={meta.badge}>{label}</Badge>
+                <span className="sr-only">Estado: {label}</span>
+              </span>
+            </div>
+            <p className="mt-1 text-small text-tinta-desvaida">{card.description}</p>
+
+            {card.key === "backup" && (
+              <>
+                <p className="mt-3 text-small text-sombra">
+                  Pendiente — contrato dedicado en definición
+                </p>
+                {/* ONB-4.5 (WU-4d) — Backup/restore card: entry only.
+                    Google Drive / rclone backup is not implemented in
+                    this change; the card stays pending and is only an
+                    entry for its dedicated contract. Drive consent is
+                    separate from the Google identity consent, and backup
+                    and restore are distinct flows (OC10/OC24). */}
+                <div className="mt-4 border-t border-filio pt-4">
+                  <p className="text-small text-tinta-desvaida">
+                    El respaldo y la restauración (Google Drive / rclone) no están
+                    implementados en esta versión: la tarjeta queda pendiente y es solo la
+                    entrada para su contrato dedicado. El consentimiento de Drive es
+                    independiente del consentimiento de identidad de Google, y respaldo y
+                    restauración son flujos distintos. Nunca se afirma configurado sin ese
+                    contrato.
+                  </p>
+                </div>
+              </>
+            )}
+
+            {card.key === "locale" && card.action && (
+              <div className="mt-3">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => navigate(card.action!.to)}
+                >
+                  {card.action.label}
+                </Button>
+              </div>
+            )}
+
+            {card.key === "offline" && (
+              <dl className="mt-4 space-y-3 border-t border-filio pt-4">
+                <div className="flex items-center justify-between gap-3">
+                  <dt className="text-small text-tinta-desvaida">Núcleo local</dt>
+                  <dd className="flex items-center gap-2">
+                    <Badge variant={readiness.offline.local_ready ? "success" : "error"}>
+                      {readiness.offline.local_ready ? "Listo" : "No disponible"}
+                    </Badge>
+                    <span className="sr-only">
+                      Estado: {readiness.offline.local_ready ? "Listo" : "No disponible"}
+                    </span>
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-small text-tinta-desvaida">Remoto</dt>
+                  <dd className="mt-1 text-small text-tinta-desvaida">
+                    {readiness.offline.remote_pending.length > 0 ? (
+                      <span>
+                        Capacidades remotas pendientes (requieren conexión):{" "}
+                        {readiness.offline.remote_pending
+                          .map((key) => REMOTE_LABELS[key] ?? key)
+                          .join(", ")}.
+                      </span>
+                    ) : (
+                      <span>Sin capacidades remotas pendientes.</span>
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
  * Perfil → Mundos — world management: the "Zona peligrosa" delete flow and
- * the world-level recycle bin ("Papelera de mundos").
+ * the world-level recycle bin ("Papelera de mundos"). Also hosts the legacy
+ * uppercase-folder migration panel (ONB-4.3, WU-4c2), relocated from the
+ * standalone Centro de Configuración page (nav-restructure decision):
+ * detection stays read-only and the migration only runs through the panel's
+ * explicit confirm flow.
  *
  * The delete button mirrors the backend guards: it is disabled for the active
  * world (idea-capture config) and when the world is the only one left. A
@@ -141,6 +348,7 @@ function WorldsSection() {
   const [deleteTarget, setDeleteTarget] = useState<WorldInfo | null>(null);
   const [trashRefresh, setTrashRefresh] = useState(0);
   const [activeWorld, setActiveWorld] = useState("");
+  const [legacy, setLegacy] = useState<ReadinessSnapshot["legacy"]>([]);
 
   // The backend refuses to delete the active world; mirror that rule in the
   // UI with a disabled button + tooltip. Fail-open: if the idea-capture
@@ -158,6 +366,17 @@ function WorldsSection() {
       active = false;
     };
   }, []);
+
+  // ONB-4.2/4.3 — read-only legacy detection: readiness is the source of
+  // truth for uppercase folders; after a completed migration the panel
+  // refreshes readiness so the notice disappears once the tree is canonical.
+  const loadLegacy = useCallback(() => {
+    void getReadiness()
+      .then((readiness) => setLegacy(readiness.legacy ?? []))
+      .catch(() => setLegacy([]));
+  }, []);
+
+  useEffect(loadLegacy, [loadLegacy]);
 
   const onlyWorld = worlds.length <= 1;
 
@@ -248,6 +467,16 @@ function WorldsSection() {
         <WorldTrashPanel refreshToken={trashRefresh} onChanged={handleTrashChanged} />
       </div>
 
+      {/* ONB-4.2/4.3 (WU-4c2) — legacy uppercase-folder migration, relocated
+          from the standalone Centro de Configuración page. Rendered only when
+          readiness detected legacy folders; migration never runs automatically
+          and always requires the panel's explicit confirm flow. */}
+      {legacy.length > 0 && (
+        <div className="mt-6">
+          <MigrationPanel findings={legacy} onMigrated={loadLegacy} />
+        </div>
+      )}
+
       {deleteTarget && (
         <DeleteWorldModal
           world={deleteTarget}
@@ -260,12 +489,15 @@ function WorldsSection() {
 }
 
 /**
- * Profile page (`/perfil`).
+ * Profile page (`/perfil`) — the unified configuration surface.
  *
  * Sections: Sesión de edición (local-dev auth, same controls as the Navbar
- * dropdown), Integraciones (idea capture configuration panel), Asistente IA
- * (assistant settings) and Mundos (world delete + recycle bin). The whole
- * page sits behind the same local-dev auth boundary as wiki editing.
+ * dropdown), Centro de Configuración (configuration capabilities without a
+ * Profile home: backup, locale, offline + essential readiness), Integraciones
+ * (idea-capture wizard — the single Telegram surface, ONB-3.3), Asistente IA
+ * (assistant settings) and Mundos (world delete + recycle bin + legacy-folder
+ * migration, ONB-4.3). The whole page sits behind the same local-dev auth
+ * boundary as wiki editing.
  */
 export default function ProfilePage() {
   const { worlds } = useWorlds();
@@ -273,6 +505,7 @@ export default function ProfilePage() {
 
   const tabs: { id: ProfileSection; label: string }[] = [
     { id: "sesion", label: "Sesión de edición" },
+    { id: "configuracion", label: "Centro de Configuración" },
     { id: "integraciones", label: "Integraciones" },
     { id: "asistente", label: "Asistente IA" },
     { id: "mundos", label: "Mundos" },
@@ -308,6 +541,8 @@ export default function ProfilePage() {
           <section className="min-w-0 flex-1">
             {section === "sesion" ? (
               <SessionSection />
+            ) : section === "configuracion" ? (
+              <ConfigurationSection />
             ) : section === "integraciones" ? (
               <IntegrationsSection />
             ) : section === "mundos" ? (
