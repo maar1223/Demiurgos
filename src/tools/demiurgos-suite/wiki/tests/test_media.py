@@ -86,6 +86,13 @@ class TestGetMedia:
         resp = client.get("/api/test/media", params={"path": "wiki/media/photo.png"})
         assert resp.status_code == 200
 
+    def test_serve_importer_wiki_relative_path(self, client: TestClient):
+        """The importer writes references relative to ``wiki/`` (``media/x.png``);
+        they must resolve to ``wiki/media/x.png`` instead of 404."""
+        resp = client.get("/api/test/media", params={"path": "media/test.jpg"})
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("image/")
+
     def test_path_traversal_400(self, client: TestClient):
         resp = client.get("/api/test/media", params={"path": "../../../.env"})
         assert resp.status_code == 400

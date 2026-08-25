@@ -32,6 +32,7 @@ from import_analysis import (  # noqa: E402
     safe_convert_to_markdown,
     slug_segment,
     store_media_in_spool,
+    strip_broken_data_uris,
 )
 from import_models import (  # noqa: E402
     Candidate,
@@ -97,6 +98,30 @@ def _path_for(root: Path):
 # ---------------------------------------------------------------------------
 # Phase 1 — safe conversion seam
 # ---------------------------------------------------------------------------
+
+
+class TestStripBrokenDataUris:
+    """markitdown emits truncated ``data:image/...;base64...`` placeholders for
+    large embedded docx images; they must be stripped from the ficha body so
+    they never render as "Imagen no disponible"."""
+
+    def test_strips_truncated_data_uri_from_prose(self):
+        text = ("**Nombre:** *Armonizador Stalico*"
+                "![](data:image/png;base64...)")
+        assert strip_broken_data_uris(text) == \
+            "**Nombre:** *Armonizador Stalico*"
+
+    def test_strips_alt_and_jpeg_placeholder(self):
+        assert strip_broken_data_uris("![alt](data:image/jpeg;base64...)") == ""
+
+    def test_keeps_media_ref_and_real_data_uri(self):
+        text = ("![real](wiki/media/image1.png)  and  "
+                "![ok](data:image/png;base64,iVBORw0KGgo=)")
+        assert strip_broken_data_uris(text) == text
+
+    def test_empty_and_plain_passthrough(self):
+        assert strip_broken_data_uris("") == ""
+        assert strip_broken_data_uris("no images here") == "no images here"
 
 
 class TestSafeConversion:

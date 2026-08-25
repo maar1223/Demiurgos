@@ -24,7 +24,8 @@ from fastapi.testclient import TestClient
 
 _HERE = Path(__file__).resolve().parent
 _WIKI = _HERE.parent
-for _p in (str(_WIKI),):
+_TOOLS = _HERE.parents[2]
+for _p in (str(_WIKI), str(_TOOLS)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
@@ -32,6 +33,8 @@ from import_models import ImportJobState  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
 from import_service import ImportService  # noqa: E402
 from import_router import create_import_router, StreamChunkRequest  # noqa: E402
+from import_intake import BoundedSpool  # noqa: E402
+from import_router import _analyze_via_service  # noqa: E402
 
 
 class _FakePrincipal:
@@ -95,6 +98,71 @@ def _stream(client: TestClient, job_id: str, data: bytes) -> None:
 
 
 _OKF = b"---\ntype: personaje\nname: A\n---\n# Origen\nA body with context"
+
+
+def test_docx_section_map_resolves_after_dot_md_conversion(
+        tmp_path, monkeypatch):
+    """Regression: a section chosen for ``X.docx`` must survive .docx→.md.
+
+    The job persists the author's classifier section under the ORIGINAL source
+    path (``Enciclopedia.docx``), but analysis converts ``.docx`` to markdown
+    and the candidate's ``source_path`` becomes ``Enciclopedia.md``. The old
+    lookup (``sections.get('.md' path)``) missed the ``.docx`` key, leaving
+    ``section=''`` and dropping every ficha into "requires your decision"
+    (unknown section). The fix indexes the map under the markdown identity
+    path too, so the author's choice survives and the target resolves.
+    """
+    from datetime import datetime, timezone
+    from import_models import ImportJob, ImportJobState
+
+    def _fake_convert(path):
+        return (
+            "# Enciclopedia\n\n## Raíces\n\nCuerpo de la ficha Raíces.\n"
+            "\n## Fauna\n\nCuerpo de la ficha Fauna.\n"
+        )
+
+    monkeypatch.setattr(
+        "sync_lore.utils.converter.convert_to_markdown", _fake_convert)
+    monkeypatch.setattr(
+        "sync_lore.import_docx_parser.extract_by_extension",
+        lambda _p, converted_markdown="": type(
+            "ExtractionResult", (), {
+                "markdown": converted_markdown, "images": [],
+            })(),
+    )
+
+    spool = BoundedSpool(tmp_path / "spool", "job-docx", "world1")
+    (spool.job_dir).mkdir(parents=True, exist_ok=True)
+    # The source that the author ran through the classifier:
+    (spool.job_dir / "Enciclopedia.docx").write_bytes(b"PK..fake")
+
+    job = ImportJob(
+        job_id="job-docx", world="world1", owner_principal="tester",
+        state=ImportJobState.REVIEW, source_kind="loose",
+        created_at=datetime.now(timezone.utc).isoformat(),
+        updated_at=datetime.now(timezone.utc).isoformat(),
+        # Author picked ``lore`` for the ORIGINAL .docx path.
+        sections={"Enciclopedia.docx": "lore"},
+    )
+    files = [{"relative": "Enciclopedia.docx", "sha256": "abc", "size": 8}]
+
+    # The router passes ``sections=job.sections``; mirror that here so the
+    # normalized lookup (which fixes the .docx→.md key mismatch) is exercised.
+    candidates, _ = _analyze_via_service(
+        job, files, spool, sections=job.sections)
+
+    assert candidates, "expected candidates from the converted docx"
+    for cand in candidates:
+        # The author's section survived the .docx→.md conversion.
+        assert cand.section == "lore", (
+            f"section must resolve to 'lore', got {cand.section!r} "
+            f"(source_path={cand.provenance.source_path!r})")
+        # target resolution relies on section; with it set the target resolves.
+        from import_analysis import resolve_target
+        resolution = resolve_target(cand.world, cand, mundos_dir=tmp_path)
+        assert resolution.status == "resolved", (
+            f"target must resolve, got {resolution.status}: "
+            f"{resolution.diagnostic}")
 
 
 def test_full_lifecycle_upload_to_result(tmp_path):
@@ -696,7 +764,7 @@ class TestSpoolCleanup:
     def test_analyze_malformed_enricher_removes_spool(self, tmp_path):
         from import_intake import MalformedProviderError
 
-        def bad_enricher(candidates):
+        def bad_enricher(candidates, progress_cb=None):
             raise MalformedProviderError("garbage")
 
         client, _, spool, _ = self._app(tmp_path, enricher=bad_enricher,

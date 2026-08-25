@@ -131,13 +131,19 @@ def _fill_missing_summaries(
     summaries.update(_ask(candidates))
     missing = [c for c in candidates
                if not summaries.get(c.candidate_id)]
-    # Fill-in passes: small groups, up to a bounded number of rounds.
+    # Fill-in passes: small groups, up to a bounded number of rounds. A round
+    # that recovers ZERO new summaries stops the loop early — a runner that
+    # keeps returning the same non-productive response (the observed "same
+    # candidates, identical JSON" loop) would otherwise burn every round.
     rounds = 0
     while missing and rounds < 5:
         rounds += 1
+        before = len(summaries)
         for start in range(0, len(missing), fill_group_size):
             group = missing[start:start + fill_group_size]
             summaries.update(_ask(group))
+        if len(summaries) == before:
+            break
         missing = [c for c in candidates
                    if not summaries.get(c.candidate_id)]
     return summaries
@@ -296,3 +302,35 @@ def test_no_fill_needed_when_runner_completes():
     _fill_missing_summaries(fichas, runner, "job")
     assert calls["big"] == 1
     assert calls["small"] == 0, "fill-in should be no-op on the happy path"
+
+
+def test_fill_in_stops_when_round_recovers_nothing_new():
+    """A non-productive round (same repeated response) must not burn all rounds.
+
+    Reproduces the observed prod loop: a runner that answers "same candidates,
+    identical JSON" — i.e. keeps returning summaries already captured by a
+    prior round and never fills the remaining fichas. The no-progress guard
+    breaks out after the first dead round instead of re-asking up to 5 times.
+    """
+    calls = {"n": 0}
+    fichas = [_ficha(f"Ficha {i}") for i in range(6)]
+    # The one summary the runner "knows": the first ficha's id, already
+    # captured by the initial pass. Every re-ask returns THIS same id — the
+    # observed "identical JSON" refusal to fill the remaining fichas.
+    known_id = fichas[0].candidate_id
+
+    def runner(prompt: str, _session: str) -> str:
+        calls["n"] += 1
+        return json.dumps({"summaries": [
+            {"candidate_id": known_id, "summary": f"Stub resumen de {known_id}."}]})
+
+    summaries = _fill_missing_summaries(fichas, runner, "job")
+
+    # The guard cut the loop after the first dead round: 1 initial pass + 2
+    # fill-in calls (5 missing -> groups of 4 => 2 groups) that added nothing.
+    # WITHOUT the guard this would burn one round per missing group up to 5
+    # rounds (~10+ calls). Assert we stopped well short of that.
+    assert calls["n"] <= 3, (
+        f"non-productive fill-in burned {calls['n']} calls; expected <=3")
+    # Only the one ficha the runner actually summarized is captured.
+    assert len(summaries) == 1, f"expected only the single returned summary, got {len(summaries)}"

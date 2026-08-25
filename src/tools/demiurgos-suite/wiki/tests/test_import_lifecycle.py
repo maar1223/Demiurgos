@@ -200,10 +200,32 @@ class TestFrontmatterMaterialization:
         assert v.ok, [i.message for i in v.issues]
         assert v.entity_type == "evento"
 
-    def test_approved_materialization_writes_status_draft(self, store, service):
-        """BLOQUE 2 — an approved funnel candidate materializes with
-        ``status: draft`` in the frontmatter block, after ``description`` and
-        before ``relaciones`` (stable field order for the tree/panel)."""
+    def test_approved_materialization_in_fresh_world_emits_status_stable(
+            self, store, service):
+        """Auto-canon (author preference) — an approved funnel candidate
+        materializing into a brand-new (empty) world enters as ``status:
+        stable`` (Canon) instead of borrador, after ``description`` and
+        before ``relaciones`` (stable field order)."""
+        job = _job()
+        store.create_job(job)
+        store.add_candidate(_candidate())
+        approval = service.issue_approval(job, "tester", [])
+        outcomes = service.execute(job, "tester", approval.digest, approval.token)
+        assert outcomes[0].written
+        content = _written(service)
+        head = content.split("\n---")[0]
+        assert "description: Ciudad amurallada\nstatus: stable\nrelaciones:" \
+            in head
+        assert head.count("status: stable") == 1
+
+    def test_approved_materialization_in_populated_world_emits_status_draft(
+            self, store, service):
+        """Auto-canon boundary — a world that already has fichas is not
+        "new": its approved funnel candidate still enters as ``status:
+        draft`` (borrador)."""
+        (service.mundos_dir / "world1" / "lore" / "existente.md").write_text(
+            "---\ntype: lugar\ntitle: Existe\nstatus: draft\n---\n# Existe\n",
+            encoding="utf-8")
         job = _job()
         store.create_job(job)
         store.add_candidate(_candidate())
@@ -406,7 +428,7 @@ class _FakePrincipal:
 
 
 def _scripted_funnel_runner():
-    """Minimal fake Hermes runner covering funnel Steps 2-4 (fail-open)."""
+    """Minimal fake Hermes runner covering funnel Steps 2 and 3+4 (fail-open)."""
 
     def runner(prompt: str, _session: str) -> str:
         data = json.loads(prompt)
@@ -416,15 +438,18 @@ def _scripted_funnel_runner():
                 {"candidate_id": c["candidate_id"],
                  "summary": f"Resumen denso de {c['display_title']}."}
                 for c in cands]})
-        if "rel_vocab" in data:
-            return json.dumps({"relationships": []})
-        if "entity_vocab" in data:
-            return json.dumps({"frontmatter": [
+        has_rel = "rel_vocab" in data
+        has_entity = "entity_vocab" in data
+        payload: dict = {}
+        if has_rel:
+            payload["relationships"] = []
+        if has_entity:
+            payload["frontmatter"] = [
                 {"candidate_id": c["candidate_id"], "title": c["display_title"],
                  "type": "lugar", "description": "Ficha importada.",
                  "relaciones": []}
-                for c in cands]})
-        return "{}"
+                for c in cands]
+        return json.dumps(payload)
 
     return runner
 
@@ -433,9 +458,10 @@ def _funnel_enricher():
     """Enricher that runs the real enrichment funnel (generated frontmatter)."""
     from import_enrichment import analyze_ficha_funnel
 
-    def enricher(candidates):
+    def enricher(candidates, progress_cb=None):
         return analyze_ficha_funnel(
-            candidates, hermes_runner=_scripted_funnel_runner())
+            candidates, hermes_runner=_scripted_funnel_runner(),
+            progress_cb=progress_cb)
 
     return enricher
 

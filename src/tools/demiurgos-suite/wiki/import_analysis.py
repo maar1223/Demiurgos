@@ -93,6 +93,27 @@ def clean_markdown_body(text: str) -> str:
     return text
 
 
+# markitdown cannot inline very large embedded docx images and emits a broken
+# truncated placeholder instead of real bytes: ``![alt](data:image/png;base64...)``
+# (literal ``...``). It is not a valid image and would render as "Imagen no
+# disponible"; the real images are referenced by the injected ``media/`` refs.
+_RE_BROKEN_DATA_URI = re.compile(
+    r"!\[[^\]]*\]\(\s*data:image/[a-zA-Z0-9+.-]+;base64(?:,)?\.\.\.\s*\)"
+)
+
+
+def strip_broken_data_uris(text: str) -> str:
+    """Remove markitdown's truncated data-URI image placeholders.
+
+    These carry no real image bytes (``base64...``) so they must never land in
+    a ficha body; the extracted images are referenced via ``media/`` refs that
+    the docx parser injects at the correct heading position.
+    """
+    if not text:
+        return text
+    return _RE_BROKEN_DATA_URI.sub("", text)
+
+
 def clean_markdown_title(text: str) -> str:
     """Clean a heading-derived title: images → alt, emphasis unwrapped.
 
@@ -425,6 +446,12 @@ def _convert_source(file_path: Path) -> tuple[str | None, list[ImageEntry], list
                 "Image extraction failed for %s: %s", file_path, exc)
             text = result
             images = []
+        # markitdown emits invalid truncated ``data:image/...;base64...``
+        # placeholders for embedded docx images it cannot inline; they are not
+        # real images and would break the ficha render. Drop them — the real
+        # images are referenced by the ``media/`` refs the parser injects.
+        if text:
+            text = strip_broken_data_uris(text)
         return text, images, diagnostics, warnings
     except SystemExit:
         logger.warning("Conversion unavailable: markitdown not installed")

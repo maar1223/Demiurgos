@@ -58,7 +58,7 @@ owned_pid() {
     cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
     case "$name" in
         api) [[ "$cmdline" == *"uvicorn api_server:app"* ]] ;;
-        frontend) [[ "$cmdline" == *"vite"* && "$cmdline" == *"--host 127.0.0.1"* ]] ;;
+        frontend) [[ ( "$cmdline" == *"vite"* || "$cmdline" == *"npm run dev"* ) && "$cmdline" == *"--host 127.0.0.1"* ]] ;;
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] ;;
         *) return 1 ;;
     esac
@@ -131,7 +131,7 @@ adopt_existing_component() {
     cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
     case "$name" in
         api) [[ "$cmdline" == *"$API_DIR"* && "$cmdline" == *"uvicorn"* ]] || return 1 ;;
-        frontend) [[ "$cmdline" == *"$FRONTEND_DIR"* && "$cmdline" == *"vite"* ]] || return 1 ;;
+        frontend) [[ ( "$cmdline" == *"$FRONTEND_DIR"* && "$cmdline" == *"vite"* ) || "$cmdline" == *"npm run dev"* ]] || return 1 ;;
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] || return 1 ;;
         *) return 1 ;;
     esac
@@ -231,8 +231,15 @@ show_status() {
     printf 'Frontend: http://127.0.0.1:%s\n' "$FRONTEND_PORT"
     printf 'Hermes:  127.0.0.1:%s\n' "$GATEWAY_PORT"
     printf 'Logs: %s, %s, %s\n' "$API_LOG" "$FRONTEND_LOG" "$GATEWAY_LOG"
-    printf '\nPress Enter to close this window. Services continue running.\n'
-    read -r || true
+    printf '\nServices continue running in the background.\n'
+    # Only block for Enter when there is a real interactive terminal (the
+    # script was launched from a terminal by hand). When launched "as a
+    # program" (file manager, no TTY), never block — that left a zombie
+    # waiting forever for input nobody would send.
+    if [ -t 0 ]; then
+        printf 'Press Enter to close this window.\n'
+        read -r || true
+    fi
 }
 
 install_desktop() {

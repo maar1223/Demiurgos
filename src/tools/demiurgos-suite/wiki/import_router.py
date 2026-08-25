@@ -195,7 +195,8 @@ def create_import_router(
     spool_dir: Callable[[], Path],
     store: ImportJobStore | Callable[[], ImportJobStore],
     provider: Callable[[ImportJob, list[dict[str, Any]]], list[Candidate]] | None = None,
-    enricher: Callable[[list[Candidate]], list[Candidate]] | None = None,
+    enricher: Callable[[list[Candidate], Callable[[int, int], None] | None],
+                       list[Candidate]] | None = None,
     vision: VisionCallable | None = None,
     service: ImportService | None = None,
     structure_inference: Callable[[str], Any] | None = None,
@@ -524,6 +525,14 @@ def create_import_router(
             # review row carries the suggestions. The enricher is fail-open: any
             # exception leaves candidates unchanged with status ``disabled``.
             #
+            # The Hermes funnel is the SLOW phase (per-ficha summaries + a
+            # relationship + frontmatter pass per chunk, each a separate LLM
+            # call). The ``progress_cb`` reports cumulative ``done`` fichas vs
+            # ``total`` after every chunk so the live client sees a moving
+            # bar ("ficha X de Y") instead of the static 80% it previously
+            # froze on for minutes. Mapped to pct 80→95 (the remainder is the
+            # post-enrichment collision/persistence tail).
+            #
             # Enrichment cache: before calling the enricher, check which
             # candidates already have enrichment from a prior import (same
             # world + source_hash + normalized_identity). Reuse that cached
@@ -534,6 +543,25 @@ def create_import_router(
             cache_hit_ids: set[str] = set()
             if enrich and enricher is not None and candidates:
                 _store.update_progress(job_id, "Consultando asistente", 80)
+
+                def _live_enrichment_progress(done: int, total: int) -> None:
+                    """Persist a coarse "ficha X de Y" enrichment checkpoint.
+
+                    Ranges pct from 80 (enrichment start) to 95 (enrichment
+                    done) so the live bar moves during the slow Hermes phase
+                    without implying the (still pending) tail completed. The
+                    stage string carries the count so the user reads real
+                    progress, not a frozen label.
+                    """
+                    if total <= 0:
+                        return
+                    pct = 80 + int(round(15 * done / total))
+                    _store.update_progress(
+                        job_id,
+                        f"Consultando asistente — ficha {done} de {total}",
+                        min(pct, 95),
+                    )
+
                 # Partition candidates into cache-hit vs cache-miss.
                 cache_hits: list[Candidate] = []
                 cache_misses: list[Candidate] = []
@@ -566,7 +594,10 @@ def create_import_router(
                 # Only run the enricher on candidates without cached enrichment.
                 if cache_misses:
                     try:
-                        enriched_misses = enricher(list(cache_misses))
+                        enriched_misses = enricher(
+                            list(cache_misses),
+                            progress_cb=_live_enrichment_progress,
+                        )
                         if not isinstance(enriched_misses, list):
                             raise MalformedProviderError(
                                 "enricher output is not a candidate list")
@@ -744,6 +775,36 @@ def create_import_router(
                     f"notion_diagnostics:{len(notion_analysis.diagnostics)}",
                 )
 
+            # Server-owned OKF authority (§2.8) — RE-validate now that the
+            # enrichment funnel has assigned generated/fallback frontmatter.
+            # ``build_ficha_candidate`` stamped each candidate with a MANUAL
+            # frontmatter (type=None) and ``_analyze_via_service`` validated
+            # against that, so every funnel candidate carried a bogus
+            # ``identity: missing frontmatter type`` issue and went to "requires
+            # your decision". Validating after enrichment renders the real
+            # frontmatter (with type), so the stale issue is cleared and the
+            # candidate is grouped correctly. Funnel-frontmatter candidates
+            # render via ``render_frontmatter_document``; the rest validate
+            # their raw body.
+            # NOTE: ``okf_contract`` is imported at module scope (see top of
+            # file) — do NOT re-import it locally here, it would shadow the
+            # module binding and break the earlier collision block with an
+            # UnboundLocalError.
+            for candidate in candidates:
+                doc = candidate.content_preview
+                if _is_funnel_frontmatter(candidate):
+                    doc = render_frontmatter_document(
+                        candidate.frontmatter, candidate.content_preview,
+                        canonical_id=candidate.canonical_id or "")
+                validation = okf_contract.validate(doc)
+                # Merge: keep collision/reference issues the analyze produced
+                # above, but drop the fresh false-positive ``identity`` from a
+                # stale manual-frontmatter validation.
+                kept = [i for i in candidate.okf_issues
+                        if i.get("code") != "identity"]
+                candidate.okf_issues = kept + [
+                    i.to_dict() for i in validation.issues]
+
             added = 0
             for candidate in candidates:
                 existing = _store.find_candidate(
@@ -760,6 +821,12 @@ def create_import_router(
                     # duplicate insert; reassignment is the correct operation.
                     _store.reassign_candidate_to_job(
                         existing.candidate_id, job.job_id)
+                    # BLOQUE 1 piece 1: the author's section choice must
+                    # survive a re-import. The existing row may predate the
+                    # section classifier (section=''), so persist the fresh
+                    # section + target_resolution even on a cache hit.
+                    _store.update_candidate_section(
+                        existing.candidate_id, candidate)
                     # PR3: when vision ran, the in-memory candidate carries
                     # fresh vision suggestions on top of the cached text
                     # enrichment — persist them so review sees the new
@@ -790,6 +857,11 @@ def create_import_router(
                         candidate.enrichment_status)
                     _store.update_candidate_funnel(
                         existing.candidate_id, candidate)
+                    # BLOQUE 1 piece 1: persist the fresh section so a re-import
+                    # of already-existing content does not keep a stale
+                    # section='' row (which falls into "requires your decision").
+                    _store.update_candidate_section(
+                        existing.candidate_id, candidate)
                     # Re-assign to the current job so candidates_for(job_id)
                     # returns it for review/execute.
                     _store.reassign_candidate_to_job(
@@ -804,6 +876,11 @@ def create_import_router(
                     # Re-assign to the current job so it appears in review.
                     _store.reassign_candidate_to_job(
                         existing.candidate_id, job.job_id)
+                    # BLOQUE 1 piece 1: persist the fresh section so a re-import
+                    # of already-existing content does not keep a stale
+                    # section='' row (which falls into "requires your decision").
+                    _store.update_candidate_section(
+                        existing.candidate_id, candidate)
                     # If the existing candidate has empty content (e.g., was
                     # created before markitdown was installed), update it with
                     # the newly extracted content.
@@ -1133,11 +1210,29 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
     as every other source.
     """
     from import_analysis import (
-        AnalysisReport, analyze_source, resolve_target, split_heading_tree,
+        AnalysisReport, analyze_source, normalized_identity_path,
+        resolve_target, split_heading_tree,
     )
     from import_models import Provenance
 
     read_root = root_dir or spool.job_dir
+
+    # Section-lookup normalization (BLOQUE 1 piece 1): the author picks the
+    # classifier section per ORIGINAL source path (e.g. ``X.docx``), and the
+    # job persists that map under the original path. Analysis converts
+    # ``.docx``/``.pdf`` to markdown, so candidates carry the ``.md`` identity
+    # path (``X.md``) as their ``source_path``. Keying the lookup by only the
+    # converted path would silently miss the author's choice and drop every
+    # ficha into "requires your decision" (unknown section). Index each entry
+    # under the original path AND its markdown identity path so the lookup
+    # resolves for both spellings; direct original-path hits win on ambiguity
+    # (an explicit ``.md`` map key outranks a derived ``.docx``->``.md`` entry).
+    section_lookup: dict[str, str] = {}
+    for _src, _section in (sections or {}).items():
+        section_lookup.setdefault(_src, _section)
+        _md_path = normalized_identity_path(_src)
+        if _md_path not in section_lookup:
+            section_lookup[_md_path] = _section
 
     def read_file(relative: str) -> str:
         try:
@@ -1188,7 +1283,7 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
             frontmatter=FrontmatterCandidate(
                 title=display_title, type=None, description="", relaciones=[],
                 state=FrontmatterState.MANUAL),
-            section=(sections or {}).get(relative, ""),
+            section=section_lookup.get(relative, ""),
         )
 
     if report is None:

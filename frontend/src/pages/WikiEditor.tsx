@@ -371,7 +371,11 @@ export default function WikiEditor() {
   const handleRenameCommit = useCallback(
     async (node: FileNode, newName: string) => {
       if (!mundo || !section) return;
-      const from = node.path;
+      // The tree returns section-relative paths (`node.path` has no `lore/`
+      // prefix), but the move endpoint requires mundo-relative paths whose
+      // first segment is a valid section. Prepend the active section so the
+      // backend can resolve `from`/`to` instead of rejecting them (400).
+      const from = section ? `${section}/${node.path}` : node.path;
       const parentDir = from.includes("/")
         ? from.slice(0, from.lastIndexOf("/"))
         : "";

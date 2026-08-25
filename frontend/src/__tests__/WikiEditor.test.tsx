@@ -1311,8 +1311,8 @@ describe("WikiEditor", () => {
     await waitFor(() => {
       expect(moveNode).toHaveBeenCalledWith(
         "Vibrantes",
-        "notas.md",
-        "renombrada.md",
+        "lore/notas.md",
+        "lore/renombrada.md",
       );
     });
   });

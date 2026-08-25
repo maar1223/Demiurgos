@@ -779,6 +779,49 @@ class TestClassifierSectionsPersistence:
         assert row is not None
         assert row.section == ""
 
+    def test_update_candidate_section_overwrites_stale_empty_on_reimport(
+            self, store: ImportJobStore) -> None:
+        """Regression (re-import of already-existing content): the existing row
+        was created before the section classifier (section=''), and a re-import
+        of the SAME content must persist the author's fresh section choice.
+        Without ``update_candidate_section`` the stale ``section=''`` row
+        survives and every ficha falls into "requires your decision"
+        (unknown section), so the section never applies on re-import."""
+        store.create_job(_job(job_id="cls-reimport"))
+        # First import: section empty (pre-classifier row).
+        first = Candidate(
+            candidate_id="cand-first", job_id="cls-reimport", world="demo",
+            normalized_identity="Enciclopedia",
+            source_hash="sha256:enc",
+            provenance=Provenance(
+                source_path="Enciclopedia.md", source_kind="loose",
+                source_hash="sha256:enc"),
+            content_preview="body",
+            section="",
+        )
+        store.add_candidate(first)
+        # Re-import: the author chose ``lore`` this time.
+        reimport = Candidate(
+            candidate_id="cand-first", job_id="cls-reimport", world="demo",
+            normalized_identity="Enciclopedia",
+            source_hash="sha256:enc",
+            provenance=Provenance(
+                source_path="Enciclopedia.md", source_kind="loose",
+                source_hash="sha256:enc"),
+            content_preview="body",
+            section="lore",
+            target_resolution={"canonical_path": "lore/Enciclopedia.md",
+                               "status": "resolved"},
+        )
+        store.update_candidate_section(reimport.candidate_id, reimport)
+
+        row = store.find_candidate("demo", "sha256:enc", "Enciclopedia")
+        assert row is not None
+        assert row.section == "lore", (
+            f"re-import must persist the fresh section, got {row.section!r}")
+        assert row.target_resolution is not None
+        assert row.target_resolution.get("status") == "resolved"
+
     def test_legacy_db_bootstraps_classifier_columns(self, tmp_path) -> None:
         """Legacy databases (no ``sections_json``/``section`` columns) get
         both columns via idempotent bootstrap; legacy rows read back as

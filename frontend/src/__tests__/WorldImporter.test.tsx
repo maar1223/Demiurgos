@@ -914,10 +914,11 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
 
     await selectFileAndAnalyze();
     // The flag is explicit ``{enrich: true}`` — no toggle can send false.
+    // Vision is a UX decision: never exposed, never requested.
     expect(analyzeImportJob).toHaveBeenCalledWith(
       "mundo",
       expect.any(String),
-      { enrich: true, vision: true },
+      { enrich: true, vision: false },
     );
   });
 
@@ -1360,9 +1361,9 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     expect(createImportJob).not.toHaveBeenCalled();
     expect(streamImportFile).not.toHaveBeenCalled();
     // analyzeImportJob was called with the recovered job ID and the
-    // explicit enrich flag (default ON).
+    // explicit enrich flag (default ON). Vision never requested (UX).
     expect(analyzeImportJob).toHaveBeenCalledWith(
-      "mundo", "j-intaking", { enrich: true, vision: true },
+      "mundo", "j-intaking", { enrich: true, vision: false },
     );
   });
 });

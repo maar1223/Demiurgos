@@ -497,6 +497,31 @@ class ImportJobStore:
             )
             self._conn.commit()
 
+    def update_candidate_section(self, candidate_id: str,
+                                 candidate: Candidate) -> None:
+        """Persist the per-ficha classifier section + recompute target on an
+        existing row (re-import that already exists).
+
+        The author's section choice is authoritative (BLOQUE 1 piece 1) and
+        ``target_resolution`` derives from it. A re-import of the same content
+        (same world + source_hash + normalized_identity) hits the existing row;
+        the other ``update_candidate_*`` methods deliberately leave ``section``
+        and ``target_resolution_json`` untouched, so without this write the
+        stale (pre-fix) ``section=''`` row survives and every ficha falls into
+        "requires your decision" (unknown section). Only the advisory fields
+        are written; identity/digest/body are untouched. Idempotent.
+        """
+        with self._lock:
+            self._conn.execute(
+                "UPDATE candidates SET section=?, target_resolution_json=?"
+                " WHERE candidate_id=?",
+                (candidate.section,
+                 _json(candidate.target_resolution)
+                 if candidate.target_resolution else None,
+                 candidate_id),
+            )
+            self._conn.commit()
+
     def reassign_candidate_to_job(self, candidate_id: str,
                                   new_job_id: str) -> None:
         """Re-point a candidate at a different job (cache-hit re-import).

@@ -246,7 +246,7 @@ class TestRouterVisionSeam:
         families coexist in the persisted enrichment payload."""
         _docx_seams(monkeypatch, [_entry()])
 
-        def fake_enricher(candidates):
+        def fake_enricher(candidates, progress_cb=None):
             return [c.model_copy(update={
                 "enrichment_json": [{
                     "__type__": "classification", "id": "cls:1",
@@ -455,6 +455,9 @@ class TestApiVisionComposition:
         suggestions on the owning candidate."""
         import api_server
         from import_vision import VisionResult
+        # Dense import disables vision by default; opt in for the composition
+        # seam under test.
+        monkeypatch.setenv("DEMIURGOS_IMPORT_VISION", "1")
 
         def fake_build(**kw):
             assert kw["generate_thumbnail"] is api_server.generate_thumbnail
@@ -490,6 +493,7 @@ class TestApiVisionComposition:
         """The seam adapter never raises: a provider error returns the
         candidates unchanged."""
         import api_server
+        monkeypatch.setenv("DEMIURGOS_IMPORT_VISION", "1")
 
         def fake_build(**kw):
             def analyze_images(images, context):
@@ -507,6 +511,7 @@ class TestApiVisionComposition:
         """Media without a successful analysis yields no suggestion and the
         candidate's enrichment is left untouched."""
         import api_server
+        monkeypatch.setenv("DEMIURGOS_IMPORT_VISION", "1")
 
         def fake_build(**kw):
             def analyze_images(images, context):
@@ -523,6 +528,7 @@ class TestApiVisionComposition:
     def test_vision_adapter_no_media_noop(self, monkeypatch):
         """An empty media bundle short-circuits without calling the provider."""
         import api_server
+        monkeypatch.setenv("DEMIURGOS_IMPORT_VISION", "1")
         called = []
 
         def fake_build(**kw):
@@ -537,6 +543,24 @@ class TestApiVisionComposition:
         out = vision([cand], [])
         assert out == [cand]
         assert called == []
+
+    def test_vision_disabled_by_default_for_dense_import(self, monkeypatch):
+        """Dense lore import must NOT run vision unless explicitly opted in.
+
+        PR3 regression: a multimodal assistant would otherwise trigger one
+        vision LLM call per image (huge cost) during import, which the author
+        does not need — import placement already carries the DOCX position
+        contract. `_make_vision_callable` returns None unless
+        ``DEMIURGOS_IMPORT_VISION=1`` is set.
+        """
+        import api_server
+        monkeypatch.setenv("DEMIURGOS_IMPORT_VISION", "0")
+        # Even with a buildable vision callable present, default is off.
+        monkeypatch.setattr(
+            "import_vision.build_vision_callable",
+            lambda **kw: (lambda images, context: []),
+        )
+        assert api_server._make_vision_callable() is None
 
 
 # ---------------------------------------------------------------------------
@@ -809,7 +833,7 @@ def _funnel_enricher(type_name: str = "lore"):
     """Funnel frontmatter enricher: upgrades every candidate's manual stub to
     ``generated`` so analyze materializes the rendered document (matching
     execute-time) — required for the reference check to see wikilinks."""
-    def enricher(candidates):
+    def enricher(candidates, progress_cb=None):
         return [c.model_copy(update={
             "frontmatter": FrontmatterCandidate(
                 title=c.display_title or c.normalized_identity,

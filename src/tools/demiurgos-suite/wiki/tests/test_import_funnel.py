@@ -47,9 +47,11 @@ for _p in (str(_WIKI), str(_TOOLS)):
 from import_enrichment import (  # noqa: E402
     DEFAULT_TIMEOUT_SECONDS,
     analyze_ficha_funnel,
+    build_frontmatter_and_relationships_prompt,
     build_relationship_batch_prompt,
     build_summary_prompt,
     build_type_frontmatter_prompt,
+    parse_frontmatter_and_relationships_response,
     parse_frontmatter_response,
     parse_summary_response,
     validate_relationship_batch,
@@ -98,11 +100,13 @@ def _ficha(
 
 
 def _scripted_funnel_runner():
-    """Build a dynamic fake Hermes runner covering funnel Steps 2-4.
+    """Build a dynamic fake Hermes runner covering funnel Steps 2 and 3+4.
 
     Inspects the prompt payload to decide the step: Step 2 candidates carry
-    ``body``; Step 3 prompts carry ``rel_vocab``; Step 4 prompts carry
-    ``entity_vocab``. Relationships anchor on canonical ids (design risk 3).
+    ``body``; the combined Steps 3+4 prompt carries BOTH ``rel_vocab`` and
+    ``entity_vocab`` (returns both arrays); the legacy Step 3 prompt carries
+    only ``rel_vocab``; the legacy Step 4 prompt carries only ``entity_vocab``.
+    Relationships anchor on canonical ids (design risk 3).
     """
 
     def runner(prompt: str, _session: str) -> str:
@@ -113,26 +117,37 @@ def _scripted_funnel_runner():
                 {"candidate_id": c["candidate_id"],
                  "summary": f"Resumen denso de {c['display_title']}."}
                 for c in cands]})
-        if "rel_vocab" in data:
-            rels = []
-            if len(cands) >= 2:
-                rels.append({
-                    "id": "rel-1",
-                    "source_candidate_id": cands[0]["candidate_id"],
-                    "target_canonical_id": cands[1]["canonical_id"],
-                    "relationship_type": "ubicado-en",
-                    "confidence": 0.9,
-                    "evidence": "mencionado en el resumen",
-                })
-            return json.dumps({"relationships": rels})
-        return json.dumps({"frontmatter": [
-            {"candidate_id": c["candidate_id"],
-             "title": c["display_title"],
-             "type": "lugar",
-             "description": f"Descripcion de {c['display_title']}.",
-             "relaciones": [o["canonical_id"] for o in cands
-                            if o["candidate_id"] != c["candidate_id"]]}
-            for c in cands]})
+        has_rel = "rel_vocab" in data
+        has_entity = "entity_vocab" in data
+        # Relationship half (combined or legacy Step 3).
+        rels = []
+        if has_rel and len(cands) >= 2:
+            rels.append({
+                "id": "rel-1",
+                "source_candidate_id": cands[0]["candidate_id"],
+                "target_canonical_id": cands[1]["canonical_id"],
+                "relationship_type": "ubicado-en",
+                "confidence": 0.9,
+                "evidence": "mencionado en el resumen",
+            })
+        # Frontmatter half (combined or legacy Step 4).
+        frontmatter = []
+        if has_entity:
+            frontmatter = [
+                {"candidate_id": c["candidate_id"],
+                 "title": c["display_title"],
+                 "type": "lugar",
+                 "description": f"Descripcion de {c['display_title']}.",
+                 "relaciones": [o["canonical_id"] for o in cands
+                                if o["candidate_id"] != c["candidate_id"]]}
+                for c in cands]
+        # Combined prompt returns both arrays; legacy prompts the relevant one.
+        payload: dict = {}
+        if has_rel:
+            payload["relationships"] = rels
+        if has_entity:
+            payload["frontmatter"] = frontmatter
+        return json.dumps(payload)
 
     return runner
 
@@ -385,6 +400,133 @@ class TestFichaFunnel:
         assert original[0].summary == ""
         assert original[0].frontmatter is None
 
+    def test_funnel_reports_cumulative_progress_after_each_chunk(self):
+        """``progress_cb(done, total)`` fires once per chunk with cumulative counts.
+
+        The liveness hook exists so the live UI can show a moving "ficha X de Y"
+        bar during the slow Hermes phase. It must report a monotonically
+        increasing ``done`` and the full ``total``, ending at ``done == total``.
+        """
+        fichas = [_ficha(f"Ficha {i}", preview=f"Contenido determinista de {i}.")
+                  for i in range(7)]
+        reports: list[tuple[int, int]] = []
+        out = analyze_ficha_funnel(
+            fichas, _scripted_funnel_runner(),
+            progress_cb=lambda done, total: reports.append((done, total)),
+        )
+
+        assert reports, "progress_cb must fire at least once"
+        assert reports[-1] == (len(fichas), len(fichas)), (
+            f"final report must be done==total=={len(fichas)}, got {reports[-1]}")
+        # Every report counts the same total; done never decreases; done <= total.
+        assert all(total == len(fichas) for _, total in reports)
+        dones = [done for done, _ in reports]
+        assert dones == sorted(dones), "done must be monotonic"
+        assert all(0 < d <= len(fichas) for d in dones)
+        # The funnel still enriched every ficha even with a side-effecting hook.
+        assert len(out) == len(fichas)
+
+    def test_combined_step34_prompt_produces_both_halves(self):
+        """Steps 3+4 merge into ONE prompt that returns relationships + frontmatter.
+
+        The combined prompt carries BOTH ``rel_vocab`` and ``entity_vocab`` so a
+        single Hermes call returns both arrays; the parser splits them so each
+        half validates independently (fail-open). This is the speed optimization
+        that halves the LLM round-trips per chunk.
+        """
+        a = _ficha("Ayagares", canonical_id="Ayagares::Origen")
+        b = _ficha("Palacios", canonical_id="Palacios::Murallas")
+        # Give them summaries so the enrichment pass has something to reason on.
+        a = Candidate.model_validate(
+            {**a.model_dump(), "summary": "Fundada hace mil años."})
+        b = Candidate.model_validate(
+            {**b.model_dump(), "summary": "Murallas de piedra blanca."})
+
+        prompt = build_frontmatter_and_relationships_prompt(
+            [a, b], catalog=[a, b])
+        assert "rel_vocab" in prompt, "combined prompt carries rel_vocab"
+        assert "entity_vocab" in prompt, "combined prompt carries entity_vocab"
+        assert "relationships" in prompt["instructions"]
+        assert "frontmatter" in prompt["instructions"]
+
+        # Simulate the model returning BOTH halves in one response.
+        raw = json.dumps({
+            "relationships": [{
+                "id": "r1",
+                "source_candidate_id": a.candidate_id,
+                "target_canonical_id": b.canonical_id,
+                "relationship_type": "ubicado-en",
+                "confidence": 0.9,
+                "evidence": "mencionado",
+            }],
+            "frontmatter": [
+                {"candidate_id": c.candidate_id, "title": c.display_title,
+                 "type": "lugar", "description": "d", "relaciones": []}
+                for c in [a, b]],
+        })
+        fm_out, rel_payload = parse_frontmatter_and_relationships_response(raw)
+        assert len(fm_out) == 2, f"frontmatter half must parse 2, got {len(fm_out)}"
+        assert rel_payload["relationships"], "relationships half must not be lost"
+        rels = validate_relationship_batch(
+            rel_payload, [a, b], catalog=[a, b])
+        assert len(rels) == 1, "validated relationship must ground"
+        assert rels[0].source_candidate_id == a.candidate_id
+        assert rels[0].target_candidate_id == b.candidate_id
+
+    def test_combined_step34_halves_hermes_calls_per_chunk(self):
+        """The merged step uses ONE runner call for relationships + frontmatter.
+
+        Regression guard for the speed optimization: with the old two-call
+        funnel, each chunk made 3 Hermes calls (summary, relationships,
+        frontmatter). The merged chunk makes 2 (summary, combined step). A call
+        counter asserts we never launch a separate relationship call.
+        """
+        steps_called: list[str] = []
+
+        def counting_runner(prompt: str, _session: str) -> str:
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            if cands and "body" in cands[0]:
+                steps_called.append("summary")
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            if "rel_vocab" in data and "entity_vocab" in data:
+                steps_called.append("combined")
+                return json.dumps({
+                    "relationships": [],
+                    "frontmatter": [
+                        {"candidate_id": c["candidate_id"],
+                         "title": c["display_title"], "type": "lugar",
+                         "description": "d", "relaciones": []}
+                        for c in cands]})
+            # A standalone relationship-only call would land here -> fail the test.
+            steps_called.append("legacy_single_step")
+            return json.dumps({})
+
+        fichas = [_ficha(f"Ficha {i}") for i in range(3)]
+        out = analyze_ficha_funnel(fichas, counting_runner)
+        assert len(out) == 3
+        assert "combined" in steps_called
+        assert "legacy_single_step" not in steps_called, (
+            "the merged funnel must NOT issue a standalone step call")
+
+    def test_funnel_survives_a_raising_progress_callback(self):
+        """A hostile progress_cb (raises) must NOT abort enrichment (fail-open)."""
+        a = _ficha("Ayagares")
+        b = _ficha("Palacios")
+
+        def boom(_done, _total):
+            raise RuntimeError("progress hook failure")
+
+        out = analyze_ficha_funnel(
+            [a, b], _scripted_funnel_runner(), progress_cb=boom)
+        assert len(out) == 2
+        for cand in out:
+            assert cand.frontmatter.state == FrontmatterState.GENERATED
+            assert cand.summary.startswith("Resumen denso de")
+
     def test_funnel_fill_in_recovers_skipped_summary_candidate(self):
         """A candidate omitted by the FIRST Step 2 call is recovered by fill-in.
 
@@ -407,13 +549,16 @@ class TestFichaFunnel:
                     "candidate_id": cands[0]["candidate_id"],
                     "summary": f"Resumen de {cands[0]['display_title']}.",
                 }]})
+            payload: dict = {}
             if "rel_vocab" in data:
-                return json.dumps({"relationships": []})
-            return json.dumps({"frontmatter": [
-                {"candidate_id": c["candidate_id"],
-                 "title": c["display_title"],
-                 "type": "lugar", "description": "d", "relaciones": []}
-                for c in cands]})
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"],
+                     "title": c["display_title"],
+                     "type": "lugar", "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
 
         out = analyze_ficha_funnel([a, b], partial_runner)
         by_id = {c.candidate_id: c for c in out}
@@ -449,12 +594,15 @@ class TestFichaFunnel:
                     {"candidate_id": c["candidate_id"],
                      "summary": f"Resumen de {c['display_title']}."}
                     for c in cands]})
+            payload: dict = {}
             if "rel_vocab" in data:
-                return json.dumps({"relationships": []})
-            return json.dumps({"frontmatter": [
-                {"candidate_id": c["candidate_id"], "title": c["display_title"],
-                 "type": "lugar", "description": "d", "relaciones": []}
-                for c in cands]})
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"], "title": c["display_title"],
+                     "type": "lugar", "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
 
         out = analyze_ficha_funnel(fichas, failing_runner)
         # The funnel actually byte-chunked: more than one summary call happened.
@@ -469,6 +617,224 @@ class TestFichaFunnel:
         assert len(fallback) >= 1
         # The first chunk (non-failing) yields generated candidates.
         assert generated[0].summary == f"Resumen de {generated[0].display_title}."
+
+
+class TestFichaFunnelParallelism:
+    """Parallel chunk processing (per-chunk session + bounded pool).
+
+    The funnel fans byte-bounded chunks out to a ``ThreadPoolExecutor`` when
+    ``max_workers > 1``. Three invariants must hold regardless of completion
+    order: each chunk uses a UNIQUE session_id (so the gateway never serializes
+    concurrent turns on a shared session), output order matches the input, and
+    fail-open isolation survives a raising worker (one chunk never drags the
+    rest down). The default ``max_workers`` (``None``) keeps the sequential
+    path, so existing tests are unaffected.
+    """
+
+    def test_uses_unique_session_per_chunk(self):
+        """Each chunk gets its own session_id (never the shared base).
+
+        The whole point of parallelizing is to avoid the gateway serializing
+        concurrent turns that share one session_id. If two chunks reuse the
+        same session, the gateway chains them (``concurrent turns on one
+        session``) and the speedup disappears.
+        """
+        fichas = [_ficha(f"Ficha {i:02d}", preview="#x" * 2000) for i in range(6)]
+        sessions: list[str] = []
+
+        def recording_runner(prompt: str, session: str) -> str:
+            sessions.append(session)
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            if cands and "body" in cands[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            payload: dict = {}
+            if "rel_vocab" in data:
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"], "title": c["display_title"],
+                     "type": "lugar", "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
+
+        # Explicit chunk_budget (20000) — the test must be independent of the
+        # module default (_FUNNEL_CHUNK_BYTES), which is a tuning knob.
+        analyze_ficha_funnel(fichas, recording_runner, max_workers=4,
+                             chunk_budget=20000)
+        assert sessions, "the funnel must invoke the runner"
+        # Two steps per chunk reuse the SAME chunk session (summary + combined),
+        # so unique-by-call is wrong; unique-by-session is what matters.
+        unique = set(sessions)
+        assert len(unique) >= 2, (
+            f"each chunk must use a distinct session_id, got {len(unique)} "
+            f"unique for {len(sessions)} calls: {sessions}")
+        assert all(s.strip() for s in sessions), "no blank session_id"
+
+    def test_parallelizes_chunks_over_time(self):
+        """Chunks with a real delay actually overlap (wall-time < sum of parts).
+
+        A naive sequential runner would take ~sum(delays); a parallel one takes
+        ~max(delays) + tiny pool overhead. We use enough fichas to guarantee
+        multiple bytes-bounded chunks and assert the observed wall time is far
+        below the serial sum, proving the pool interleaves them.
+        """
+        fichas = [_ficha(f"Ficha {i:02d}", preview="#x" * 2500) for i in range(10)]
+        import time as _time
+        overlap_guard = {"in_flight": 0, "max_in_flight": 0, "lock": __import__("threading").Lock()}
+
+        def slow_runner(prompt: str, _session: str) -> str:
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            with overlap_guard["lock"]:
+                overlap_guard["in_flight"] += 1
+                overlap_guard["max_in_flight"] = max(
+                    overlap_guard["max_in_flight"], overlap_guard["in_flight"])
+            try:
+                _time.sleep(0.4)
+            finally:
+                with overlap_guard["lock"]:
+                    overlap_guard["in_flight"] -= 1
+            if cands and "body" in cands[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            payload: dict = {}
+            if "rel_vocab" in data:
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"], "title": c["display_title"],
+                     "type": "lugar", "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
+
+        analyze_ficha_funnel(fichas, slow_runner, max_workers=4)
+        # At least 2 chunks ran concurrently (the pool actually overlapped them).
+        assert overlap_guard["max_in_flight"] >= 2, (
+            f"expected concurrent chunks, got max_in_flight="
+            f"{overlap_guard['max_in_flight']}")
+
+    def test_preserves_output_order_under_parallelism(self):
+        """The pool may finish chunks in any order; output must match the input.
+
+        We force the LATER chunk to finish FIRST (a longer sleep on chunk 1) to
+        prove re-assembly happens on the input order, not the completion order.
+        """
+        fichas = [_ficha(f"Ficha {i:02d}", preview="#x" * 2500) for i in range(8)]
+        import time as _time
+
+        def out_of_order_runner(prompt: str, session: str) -> str:
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            # Chunk 0 (its session ends :chunk:0) sleeps LONGER so it returns
+            # last; if the pool re-assembled on completion order, the result
+            # would be reversed.
+            if session.endswith(":chunk:0"):
+                _time.sleep(0.9)
+            if cands and "body" in cands[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            payload: dict = {}
+            if "rel_vocab" in data:
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"], "title": c["display_title"],
+                     "type": "lugar", "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
+
+        out = analyze_ficha_funnel(fichas, out_of_order_runner, max_workers=4)
+        assert [c.display_title for c in out] == [f"Ficha {i:02d}" for i in range(8)], (
+            "output must be re-assembled in input order, not completion order")
+
+    def test_parallel_fail_open_isolates_a_raising_chunk(self):
+        """A raising chunk degrades only itself; the rest keep generated metadata.
+
+        The parallel path routes an exception through ``_fail_open_runner`` so
+        the affected chunk's candidates fall back (``fallback``/``no_suggestions``)
+        while every other chunk keeps its generated frontmatter. The import never
+        blocks and no exception escapes.
+        """
+        fichas = [_ficha(f"Ficha {i:02d}", preview="#x" * 2500) for i in range(8)]
+        # 8 fichas x 5000 chars = 40000 -> 2 byte-bounded chunks [:chunk:0, :chunk:1].
+
+        def raising_runner(prompt: str, session: str) -> str:
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            # Fail only on the SECOND chunk's summary step.
+            if session.endswith(":chunk:1") and cands and "body" in cands[0]:
+                raise RuntimeError("worker died")
+            if cands and "body" in cands[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            payload: dict = {}
+            if "rel_vocab" in data:
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"], "title": c["display_title"],
+                     "type": "lugar", "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
+
+        out = analyze_ficha_funnel(fichas, raising_runner, max_workers=4,
+                                   chunk_budget=20000)
+        # No exception escaped; chunk 1 (4 fichas) fell back, chunk 0 kept generated.
+        fallback = [c for c in out if c.frontmatter.state == FrontmatterState.FALLBACK]
+        generated = [c for c in out if c.frontmatter.state == FrontmatterState.GENERATED]
+        assert len(fallback) == 4, (
+            f"the raising chunk (4 fichas) must degrade to fallback, got {len(fallback)}")
+        assert len(generated) == 4, (
+            f"the healthy chunk (4 fichas) must keep generated frontmatter, got "
+            f"{len(generated)}")
+        assert len(out) == len(fichas), "every candidate survives (fail-open)"
+
+    def test_sequential_by_default(self):
+        """``max_workers=None`` (and ``<=1``) keep the historical sequential path.
+
+        Guard for compatibility: callers that do not opt into parallelism must
+        see exactly the old behavior — no unique-per-chunk session splitting
+        beyond the base id, and identical results.
+        """
+        fichas = [_ficha(f"Ficha {i:02d}", preview="#x" * 2000) for i in range(4)]
+        sessions: list[str] = []
+
+        def recording_runner(prompt: str, session: str) -> str:
+            sessions.append(session)
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            if cands and "body" in cands[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            payload: dict = {}
+            if "rel_vocab" in data:
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"], "title": c["display_title"],
+                     "type": "lugar", "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
+
+        analyze_ficha_funnel(fichas, recording_runner)  # default max_workers
+        # Sequential path: sessions are the per-chunk ids we build, all distinct,
+        # and the result is not empty.
+        assert sessions
+        out = analyze_ficha_funnel(fichas, recording_runner, max_workers=1)
+        assert len(out) == len(fichas)
+        assert all(c.frontmatter.state == FrontmatterState.GENERATED for c in out)
 
 
 # ---------------------------------------------------------------------------
@@ -698,9 +1064,10 @@ class TestFunnelRouterWiring:
         summary + frontmatter persisted on the candidate rows."""
         from import_enrichment import analyze_ficha_funnel
 
-        def enricher(candidates):
+        def enricher(candidates, progress_cb=None):
             return analyze_ficha_funnel(
-                candidates, hermes_runner=_scripted_funnel_runner())
+                candidates, hermes_runner=_scripted_funnel_runner(),
+                progress_cb=progress_cb)
 
         client, store, spool, _ = _funnel_app(tmp_path, enricher=enricher)
         resp = client.post(

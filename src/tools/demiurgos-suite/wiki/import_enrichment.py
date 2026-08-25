@@ -31,8 +31,10 @@ without breaking existing imports; unknown values are filtered out.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
+import os
 import re
 from typing import Any, Callable, Iterable
 
@@ -76,7 +78,11 @@ _MAX_CANDIDATES_PER_BATCH = 100
 # chunk; a single oversized ficha still travels COMPLETE (never split, never
 # truncated). ``_FUNNEL_FILL_GROUP_SIZE`` bounds the fill-in re-ask for
 # candidates the model omitted.
-_FUNNEL_CHUNK_BYTES = 20000
+# Tuned 2026-08-25 (live A/B, 60 real fichas, 4 workers): 40000 gives 58/60 ok
+# vs 38/60 at 60000, at only ~19% more wall-time — 60000 degrades quality
+# (22 fichas without suggestions) for a small time saving, so 40000 is the
+# default sweet spot. Never raise to 60000.
+_FUNNEL_CHUNK_BYTES = 40000
 _FUNNEL_FILL_GROUP_SIZE = 4
 
 # Relationship-type vocabulary: lowercase, hyphen-separated, ASCII only.
@@ -183,27 +189,13 @@ def parse_hermes_response(raw: str) -> dict[str, list[dict[str, Any]]]:
 
     Returns ``{"classifications": [...], "relationships": [...]}`` with raw
     dicts (validation runs separately so test failures pinpoint the failing
-    stage). Empty arrays when the payload is missing or not a JSON object;
-    one fenced block is stripped before parsing.
+    stage). Empty arrays when the payload is missing or not a JSON object. A
+    fenced block is stripped before parsing, and a prose prefix (Hermes often
+    intro's the reply) is tolerated via ``_parse_json_object`` — which recovers
+    the first balanced ``{...}`` object even when it is not the whole reply.
     """
-    text = (raw or "").strip()
-    if not text:
-        return {"classifications": [], "relationships": []}
-    # Strip a single ```json ... ``` fence (Hermes' most common deviation).
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    if not text:
-        return {"classifications": [], "relationships": []}
-    try:
-        data = json.loads(text)
-    except (TypeError, ValueError):
-        return {"classifications": [], "relationships": []}
-    if not isinstance(data, dict):
+    data = _parse_json_object(raw)
+    if data is None:
         return {"classifications": [], "relationships": []}
     cls_raw = data.get("classifications", [])
     rel_raw = data.get("relationships", [])
@@ -513,16 +505,67 @@ def _strip_code_fence(text: str) -> str:
     return text
 
 
+def _extract_json_object_text(text: str) -> str | None:
+    """Locate the first balanced ``{...}`` block in *text*, if any.
+
+    Hermes frequently wraps its JSON in a ```json fence BUT also prepends a
+    short intro (e.g. "Aquí tienes las fichas resumidas según el pipeline
+    import-enrichment/v1.") or appends a closing remark. ``_strip_code_fence``
+    only removes a fence when it is at the very start, so a prose prefix makes
+    ``json.loads`` fail on the whole reply even though the object is intact
+    inside. This scans for the first ``{`` and returns the substring up to the
+    matching ``}`` (tracking nesting and string literals so a ``}`` inside a
+    summary never ends the block early). Returns ``None`` when no ``{`` exists.
+    """
+    start = text.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    # Unbalanced (e.g. truncated) — fall back to the rest of the string so the
+    # caller's tolerant ``json.loads`` can still try the tail.
+    return text[start:].strip()
+
+
 def _parse_json_object(raw: str) -> dict[str, Any] | None:
-    """Tolerantly parse a Hermes reply into a JSON object, or ``None``."""
+    """Tolerantly parse a Hermes reply into a JSON object, or ``None``.
+
+    Tries in order: the whole (fence-stripped) reply, then the first balanced
+    ``{...}`` substring embedded in prose. Fail-open: returns ``None`` when no
+    object can be recovered — a malformed reply never raises.
+    """
     text = _strip_code_fence(raw)
     if not text:
         return None
-    try:
-        data = json.loads(text)
-    except (TypeError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
+    for candidate in (text, _extract_json_object_text(text)):
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(data, dict):
+            return data
+    return None
 
 
 def build_summary_prompt(candidates: list[Candidate]) -> dict[str, Any]:
@@ -794,6 +837,128 @@ def _fallback_frontmatter(candidate: Candidate) -> FrontmatterCandidate:
     )
 
 
+# ---------------------------------------------------------------------------
+# Combined Steps 3+4 (relationships + frontmatter in ONE Hermes call)
+# ---------------------------------------------------------------------------
+
+
+def build_frontmatter_and_relationships_prompt(
+    candidates: list[Candidate],
+    *,
+    rel_vocab: Iterable[str] | None = None,
+    catalog: list[Candidate] | None = None,
+) -> dict[str, Any]:
+    """Steps 3+4 — ONE relationship + frontmatter pass over summarized fichas.
+
+    The funnel previously made two separate Hermes calls (Step 3 for
+    relationships, Step 4 for frontmatter) over the same ``candidates``. Both
+    consume the same per-ficha summary, so a single call returns both arrays
+    at once, halving the LLM round-trips per chunk (the dominant cost of the
+    slow enrichment phase). The combined prompt asks for a JSON object with a
+    ``relationships`` array AND a ``frontmatter`` array; the caller validates
+    each side independently (fail-open), so a malformed ``relationships`` half
+    never discards a valid ``frontmatter`` half.
+
+    Relationship grounding mirrors ``build_relationship_batch_prompt``: sources
+    stay limited to ``candidates``; targets may be any ``canonical_id`` in the
+    DOCUMENT-WIDE ``catalog``. Frontmatter mirrors
+    ``build_type_frontmatter_prompt``: one ``title``/``type``/``description``/
+    ``relaciones`` per candidate_id.
+    """
+    rel_vocab_set = frozenset(rel_vocab) if rel_vocab is not None else _REL_VOCAB_DEFAULT
+    payload_candidates = [
+        {
+            "candidate_id": c.candidate_id,
+            "canonical_id": c.canonical_id or c.normalized_identity,
+            "display_title": c.display_title or c.normalized_identity,
+            "summary": c.summary or "",
+        }
+        for c in candidates
+    ]
+    instructions = (
+        "You are enriching imported worldbuilding fichas from their summaries. "
+        "Return a single JSON object with TWO arrays: 'relationships' and "
+        "'frontmatter'. "
+        "'relationships': each entry needs 'source_candidate_id' (one of the "
+        "supplied candidate_ids), 'target_canonical_id' (an EXACT canonical_id "
+        "from the supplied catalog, never a bare or ambiguous title), "
+        "'relationship_type' (from the vocabulary), 'confidence' in [0,1], and "
+        "a short 'evidence' quote. NEVER invent targets outside the catalog. "
+        "'frontmatter': each entry needs 'candidate_id', 'title' (match the "
+        "display_title unless the body clearly implies a better canonical "
+        "title), 'type' (one of the entity types or null), a concise "
+        "'description', and 'relaciones' (an array of canonical ids from the "
+        "supplied candidates). NEVER invent canonical ids outside the batch."
+    )
+    payload: dict[str, Any] = {
+        "instructions": instructions,
+        "rel_vocab": sorted(rel_vocab_set),
+        "entity_vocab": list(entity_type_vocabulary()),
+        "provenance": _default_provenance(),
+        "candidates": payload_candidates,
+    }
+    if catalog is not None:
+        payload["catalog"] = [
+            {
+                "canonical_id": c.canonical_id or c.normalized_identity,
+                "display_title": c.display_title or c.normalized_identity,
+            }
+            for c in catalog
+        ]
+    return payload
+
+
+def parse_frontmatter_and_relationships_response(
+    raw: str,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """Parse the combined Steps 3+4 response into (frontmatter, relationship).
+
+    Returns ``(frontmatter_by_candidate, relationships_payload)``. The
+    ``frontmatter`` dict is the ``parse_frontmatter_response`` shape (caller
+    builds a ``FrontmatterCandidate``); the ``relationships`` payload is the
+    raw parsed object the caller feeds to ``validate_relationship_batch``.
+    Both sides are tolerant/independent: a malformed or missing ``frontmatter``
+    half degrades to ``{}`` without touching the ``relationships`` half, and
+    vice versa (fail-open — one bad half never kills the other).
+    """
+    data = _parse_json_object(raw)
+    if data is None:
+        return {}, {}
+    # Frontmatter: same tolerant parsing as the Step 4 standalone path.
+    fm_entries = data.get("frontmatter", [])
+    fm_out: dict[str, dict[str, Any]] = {}
+    if isinstance(fm_entries, list):
+        for entry in fm_entries:
+            if not isinstance(entry, dict):
+                continue
+            cid = entry.get("candidate_id")
+            if not isinstance(cid, str) or not cid:
+                continue
+            title = entry.get("title")
+            if not isinstance(title, str) or not title.strip():
+                continue
+            description = entry.get("description")
+            if not isinstance(description, str):
+                description = ""
+            rel = entry.get("relaciones")
+            rel_list = [r for r in rel if isinstance(r, str)] if isinstance(rel, list) else []
+            fm_type = entry.get("type")
+            if not isinstance(fm_type, str) or not fm_type:
+                fm_type = None
+            fm_out[cid] = {
+                "title": title.strip(),
+                "type": fm_type,
+                "description": description,
+                "relaciones": rel_list,
+                "state": FrontmatterState.GENERATED.value,
+            }
+    # Relationships: keep the full parsed object for validate_relationship_batch.
+    rel_payload: dict[str, Any] = {}
+    if isinstance(data.get("relationships"), list):
+        rel_payload["relationships"] = data["relationships"]
+    return fm_out, rel_payload
+
+
 def _ficha_byte_len(candidate: Candidate) -> int:
     """Byte length of a ficha's body (the size that drives the LLM prompt)."""
     return len(candidate.content_preview or "")
@@ -868,10 +1033,156 @@ def _fill_missing_summaries(
     rounds = 0
     while missing and rounds < max_rounds:
         rounds += 1
+        before = len(summaries)
         for start in range(0, len(missing), size):
             summaries.update(_ask(missing[start:start + size]))
+        # No-progress guard: when a fill-in round recovers ZERO new summaries,
+        # the runner is repeating a non-productive response (the observed
+        # "same candidates, identical JSON" loop). Re-asking the same missing
+        # group again would only burn a bounded but pointless round-trip, so
+        # stop early and let the remaining candidates fail-open to fallback
+        # (they do not drag down the rest — see relationship-reach tests).
+        if len(summaries) == before:
+            break
         missing = [c for c in candidates if not summaries.get(c.candidate_id)]
     return summaries
+
+
+def _enrich_funnel_chunk(
+    chunk: list[Candidate],
+    hermes_runner: Callable[[str, str], str],
+    session_id: str,
+    *,
+    catalog: list[Candidate],
+    rel_vocab: Iterable[str] | None,
+    prov: dict[str, str],
+) -> list[Candidate]:
+    """Run Steps 2-4 for ONE byte-bounded chunk (the unit of parallelism).
+
+    Marked as a separate module-level function so ``analyze_ficha_funnel`` can
+    fan chunks out to a bounded thread pool (``ThreadPoolExecutor``) without
+    sharing mutable state between workers. Returns a NEW list of enriched
+    candidates for this chunk, in the same order as ``chunk``. Fail-open: any
+    step failure (timeout/malformed/unavailable) leaves the affected candidates
+    with ``fallback``/``no_suggestions`` so the import path never blocks.
+
+    The ``session_id`` is unique to this chunk (the caller appends a chunk
+    index) so concurrent chunks do NOT share a gateway session — a shared
+    session_id makes the gateway serialize concurrent turns ("two routing keys
+    mapped to one session_id"), which caps enrichment at 1x. A per-chunk
+    session is the whole point of the parallelism.
+    """
+    # Step 2 — per-ficha summaries from the full body (this chunk). Uses
+    # fill-in: re-asks any candidate the model omitted in small groups, so a
+    # single truncated response cannot drop a ficha (which would cascade into
+    # loss of its relationships in Step 3, not just fallback).
+    summaries: dict[str, str] = _fill_missing_summaries(
+        chunk, hermes_runner, session_id)
+
+    summarized: list[Candidate] = []
+    for c in chunk:
+        patched = _copy_candidate(c, summary=summaries.get(c.candidate_id, ""))
+        if patched.summary:
+            summarized.append(patched)
+    summarized_by_id = {c.candidate_id: c for c in summarized}
+
+    # Steps 3+4 — ONE combined relationship + frontmatter pass over this chunk's
+    # summaries, grounded against the DOCUMENT-WIDE catalog. Sources stay
+    # limited to this summarized batch; targets may be any ficha of the whole
+    # document. Merging the two former calls halves the LLM round-trips per
+    # chunk. Each half validates independently (fail-open): a malformed
+    # relationships side never discards a valid frontmatter side.
+    relationships: list[RelationshipSuggestion] = []
+    frontmatter: dict[str, dict[str, Any]] = {}
+    if summarized:
+        try:
+            raw = hermes_runner(
+                json.dumps(
+                    build_frontmatter_and_relationships_prompt(
+                        summarized, rel_vocab=rel_vocab, catalog=catalog),
+                    ensure_ascii=False,
+                ),
+                session_id,
+            )
+            fm_out, rel_payload = parse_frontmatter_and_relationships_response(raw)
+            frontmatter = fm_out
+            relationships = validate_relationship_batch(
+                rel_payload, summarized, rel_vocab=rel_vocab, catalog=catalog)
+        except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+            logger.warning(
+                "funnel steps 3+4 (relationships/frontmatter) failed: %s",
+                type(exc).__name__, exc_info=True)
+
+    rel_by_candidate: dict[str, list[dict[str, Any]]] = {}
+    for rel in relationships:
+        rel_by_candidate.setdefault(rel.source_candidate_id, []).append(
+            rel.model_dump()
+            | {"provenance": dict(prov), "__type__": "relationship"})
+
+    out: list[Candidate] = []
+    for c in chunk:
+        sc = summarized_by_id.get(c.candidate_id)
+        fm_data = frontmatter.get(c.candidate_id)
+        if fm_data is not None:
+            candidate_fm = FrontmatterCandidate(
+                title=fm_data["title"],
+                type=fm_data["type"],
+                description=fm_data["description"],
+                relaciones=fm_data["relaciones"],
+                state=FrontmatterState.GENERATED,
+            )
+        else:
+            # Enrichment was attempted but produced no generated frontmatter
+            # for this candidate -> fallback, reviewable and importable.
+            candidate_fm = _fallback_frontmatter(sc or c)
+        own = rel_by_candidate.get(c.candidate_id, [])
+        out.append(_copy_candidate(
+            sc or c,
+            frontmatter=candidate_fm,
+            enrichment_json=own or None,
+            enrichment_status=(EnrichmentStatus.OK.value if own
+                               else EnrichmentStatus.NO_SUGGESTIONS.value),
+        ))
+    return out
+
+
+def _default_funnel_max_workers() -> int:
+    """Resolve the funnel parallelism from env (``DEMIURGOS_IMPORT_WORKERS``).
+
+    Defaults to 4 — the measured sweet spot (N=4 isolated per-chunk sessions
+    gave a median ~3.6x wall-clock speedup with no error and no meaningful
+    gateway RSS growth). Bounded so a 4 GB machine never sees the gateway
+    spawn more sessions than it can safely interleave; overrides via env.
+    """
+    raw = os.getenv("DEMIURGOS_IMPORT_WORKERS", "")
+    try:
+        val = int(raw)
+    except (TypeError, ValueError):
+        return 4
+    return max(1, min(val, 8))
+
+
+def _fail_open_runner(
+    hermes_runner: Callable[[str, str], str],
+) -> Callable[[str, str], str]:
+    """Wrap a runner so a raising worker degrades to ``""`` instead of escaping.
+
+    Used only on the degraded-chunk path: if a parallel worker raised (network,
+    gateway, timeout), re-running its chunk through this wrapper lets
+    ``_enrich_funnel_chunk`` fail-open (malformed/empty replies produce
+    ``fallback``/``no_suggestions`` candidates) instead of re-raising the same
+    exception. The import never blocks and the chunk never escapes.
+    """
+    if hermes_runner is None:
+        return lambda _p, _s: ""
+    def wrapper(prompt: str, session_id: str) -> str:
+        try:
+            return hermes_runner(prompt, session_id)
+        except Exception as _exc:  # noqa: BLE001 — fail-open never breaks analyze
+            logger.warning("funnel degraded-chunk runner failed: %s",
+                           type(_exc).__name__, exc_info=True)
+            return ""
+    return wrapper
 
 
 def analyze_ficha_funnel(
@@ -880,6 +1191,9 @@ def analyze_ficha_funnel(
     *,
     rel_vocab: Iterable[str] | None = None,
     provenance: dict[str, str] | None = None,
+    progress_cb: Callable[[int, int], None] | None = None,
+    max_workers: int | None = None,
+    chunk_budget: int | None = None,
 ) -> list[Candidate]:
     """Run Steps 2-4 of the enrichment funnel over complete-ficha candidates.
 
@@ -892,6 +1206,25 @@ def analyze_ficha_funnel(
     preserves them — the import path never blocks on enrichment (design risks
     3 & 4). Candidates are left ``manual`` only when no runner was supplied
     (enrichment not requested).
+
+    Parallelism: chunks are processed through a bounded ``ThreadPoolExecutor``
+    when ``max_workers > 1`` (default resolved from ``DEMIURGOS_IMPORT_WORKERS``,
+    see ``_default_funnel_max_workers``). Each chunk gets a UNIQUE session_id
+    (``import-funnel:{job}:chunk:{i}``) so concurrent chunks do not collide on a
+    shared gateway session — a shared session makes the gateway serialize turns
+    and caps enrichment at 1x. Output order and fail-open semantics are
+    preserved: results are re-assembled in the original candidate order, and a
+    raising/timing-out chunk only degrades its own candidates. ``max_workers=1``
+    (or <= 1) keeps the historical purely-sequential behavior.
+
+    ``chunk_budget`` overrides the byte bound for ``_group_by_bytes`` (tests and
+    tuning): when set, it replaces ``_FUNNEL_CHUNK_BYTES`` for this call only.
+
+    ``progress_cb`` (optional) is invoked as ``progress_cb(done, total)`` after
+    each byte-bounded chunk completes, where ``done`` is the cumulative count of
+    fichas fully enriched so far and ``total`` is ``len(candidates)``. It is a
+    liveness hook — the caller may surface a coarse "ficha X de Y" progress bar
+    during the slow Hermes phase. Never raised and never blocks enrichment.
 
     importador-auto-frontmatter (global relationship reach):
     * Chunks are bounded by BYTES (``_group_by_bytes``), not ficha count, so a
@@ -915,7 +1248,7 @@ def analyze_ficha_funnel(
                     state=FrontmatterState.MANUAL))
             out.append(c)
         return out
-    session_id = f"import-funnel:{candidates[0].job_id}"
+    base_session_id = f"import-funnel:{candidates[0].job_id}"
     prov = dict(provenance or _default_provenance())
     # Enrichment WAS attempted: any candidate that ends up without generated
     # frontmatter is an affected candidate -> fallback (fail-open), never a
@@ -929,97 +1262,76 @@ def analyze_ficha_funnel(
     # fits in a single Step 3 call. Sources stay limited per-chunk.
     catalog = list(candidates)
 
-    # Process the funnel per BYTE-bounded chunk. Each chunk runs Steps 2-4
-    # independently so a truncated/timed-out call only affects its own
-    # candidates; earlier chunks keep their generated metadata. Chunks are
-    # bounded by cumulative body bytes (not ficha count) — a fixed count of 12
-    # large fichas can still total ~72k chars and truncate Hermes (the observed
-    # "fallback from 9no Stal onward" was exactly that).
-    final: list[Candidate] = []
-    for chunk in _group_by_bytes(candidates):
+    # Byte-bounded chunks (per ``_group_by_bytes``; ``chunk_budget`` overrides
+    # only for this call when the caller (tests/tuning) supplies it).
+    chunks = _group_by_bytes(candidates, budget_chars=chunk_budget)
 
-        # Step 2 — per-ficha summaries from the full body (this chunk). Uses
-        # fill-in: re-asks any candidate the model omitted in small groups, so
-        # a single truncated response cannot drop a ficha (which would cascade
-        # into loss of its relationships in Step 3, not just fallback).
-        summaries: dict[str, str] = _fill_missing_summaries(
-            chunk, hermes_runner, session_id)
+    # Outer chunk callback used by both the sequential and the parallel paths.
+    # It enriches chunk ``idx`` with its OWN session_id and returns
+    # ``(idx, [Candidate])`` so the caller can re-assemble in input order.
+    def _run_chunk(idx: int) -> tuple[int, list[Candidate]]:
+        chunk = chunks[idx]
+        chunk_session = f"{base_session_id}:chunk:{idx}"
+        return idx, _enrich_funnel_chunk(
+            chunk, hermes_runner, chunk_session,
+            catalog=catalog, rel_vocab=rel_vocab, prov=prov)
 
-        summarized: list[Candidate] = []
-        for c in chunk:
-            patched = _copy_candidate(c, summary=summaries.get(c.candidate_id, ""))
-            if patched.summary:
-                summarized.append(patched)
-        summarized_by_id = {c.candidate_id: c for c in summarized}
+    workers = max_workers if max_workers is not None else _default_funnel_max_workers()
+    if workers <= 1 or len(chunks) <= 1:
+        # Sequential (historical) path: one chunk at a time, deterministic order.
+        final_flat: list[Candidate] = []
+        _done = 0
+        for idx in range(len(chunks)):
+            _i, enriched = _run_chunk(idx)
+            final_flat.extend(enriched)
+            _done += len(chunks[idx])
+            if progress_cb is not None:
+                try:
+                    progress_cb(_done, len(candidates))
+                except Exception as _exc:  # noqa: BLE001 — progress is advisory
+                    logger.warning("funnel progress_cb failed: %s",
+                                   type(_exc).__name__, exc_info=True)
+        return final_flat
 
-        # Step 3 — one relationship pass over this chunk's summaries, grounded
-        # against the DOCUMENT-WIDE catalog. Sources stay limited to this
-        # summarized batch; targets may be any ficha of the whole document.
-        relationships: list[RelationshipSuggestion] = []
-        if summarized:
+    # Parallel path: a bounde ThreadPoolExecutor over independent chunks. Each
+    # chunk uses its OWN session_id (unique per chunk, see ``_run_chunk``) so
+    # concurrent chunks never share a gateway session — which would force the
+    # gateway to serialize turns and defeat the parallelism. Correctness is
+    # order-independent (read-only catalog + independent candidates), so we
+    # simply re-assemble the results in the original chunk order below.
+    final: list[list[Candidate]] = [None] * len(chunks)  # type: ignore[list-item]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        future_by_idx: dict[int, concurrent.futures.Future] = {}
+        for idx in range(len(chunks)):
+            future_by_idx[idx] = ex.submit(_run_chunk, idx)
+        # Re-assemble in input order regardless of completion order.
+        for idx in range(len(chunks)):
             try:
-                raw = hermes_runner(
-                    json.dumps(
-                        build_relationship_batch_prompt(
-                            summarized, rel_vocab=rel_vocab, catalog=catalog),
-                        ensure_ascii=False,
-                    ),
-                    session_id,
-                )
-                parsed = _parse_json_object(raw) or {}
-                relationships = validate_relationship_batch(
-                    parsed, summarized, rel_vocab=rel_vocab, catalog=catalog)
-            except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
-                logger.warning("funnel step 3 (relationships) failed: %s",
-                               type(exc).__name__, exc_info=True)
+                _i, enriched = future_by_idx[idx].result()
+                final[idx] = enriched
+            except Exception:
+                # Degraded chunk (a raising/timing-out worker): fail-open to a
+                # non-raising fallback runner so the import never blocks and no
+                # chunk ever escapes an exception. Only its own chunk degrades.
+                final[idx] = _enrich_funnel_chunk(
+                    chunks[idx], _fail_open_runner(hermes_runner),
+                    f"{base_session_id}:chunk:{idx}",
+                    catalog=catalog, rel_vocab=rel_vocab, prov=prov)
 
-        # Step 4 — type/frontmatter per ficha (this chunk).
-        frontmatter: dict[str, dict[str, Any]] = {}
-        if summarized:
+    ordered: list[Candidate] = []
+    _done = 0
+    for idx, enriched in enumerate(final):
+        if enriched is None:
+            continue
+        ordered.extend(enriched)
+        _done += len(chunks[idx])
+        if progress_cb is not None:
             try:
-                raw = hermes_runner(
-                    json.dumps(
-                        build_type_frontmatter_prompt(summarized),
-                        ensure_ascii=False,
-                    ),
-                    session_id,
-                )
-                frontmatter = parse_frontmatter_response(raw)
-            except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
-                logger.warning("funnel step 4 (frontmatter) failed: %s",
-                               type(exc).__name__, exc_info=True)
-
-        rel_by_candidate: dict[str, list[dict[str, Any]]] = {}
-        for rel in relationships:
-            rel_by_candidate.setdefault(rel.source_candidate_id, []).append(
-                rel.model_dump()
-                | {"provenance": dict(prov), "__type__": "relationship"})
-
-        for c in chunk:
-            sc = summarized_by_id.get(c.candidate_id)
-            fm_data = frontmatter.get(c.candidate_id)
-            if fm_data is not None:
-                candidate_fm = FrontmatterCandidate(
-                    title=fm_data["title"],
-                    type=fm_data["type"],
-                    description=fm_data["description"],
-                    relaciones=fm_data["relaciones"],
-                    state=FrontmatterState.GENERATED,
-                )
-            else:
-                # Enrichment was attempted but produced no generated
-                # frontmatter for this candidate -> fallback, reviewable and
-                # importable (fail-open).
-                candidate_fm = _fallback_frontmatter(sc or c)
-            own = rel_by_candidate.get(c.candidate_id, [])
-            final.append(_copy_candidate(
-                sc or c,
-                frontmatter=candidate_fm,
-                enrichment_json=own or None,
-                enrichment_status=(EnrichmentStatus.OK.value if own
-                                   else EnrichmentStatus.NO_SUGGESTIONS.value),
-            ))
-    return final
+                progress_cb(_done, len(candidates))
+            except Exception as _exc:  # noqa: BLE001 — progress is advisory
+                logger.warning("funnel progress_cb failed: %s",
+                               type(_exc).__name__, exc_info=True)
+    return ordered
 
 
 # ---------------------------------------------------------------------------

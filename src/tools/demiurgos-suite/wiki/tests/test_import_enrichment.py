@@ -43,6 +43,7 @@ from import_enrichment import (  # noqa: E402
     enrich_candidates,
     entity_type_vocabulary,
     parse_hermes_response,
+    parse_summary_response,
     validate_suggestions,
 )
 from import_models import (  # noqa: E402
@@ -152,6 +153,46 @@ class TestParseHermesResponse:
     def test_non_object_payload_returns_empty_lists(self):
         out = parse_hermes_response(json.dumps(["bad", "shape"]))
         assert out == {"classifications": [], "relationships": []}
+
+    def test_prose_prefixed_fenced_json_is_parsed(self):
+        """Prose before the fenced block must not defeat the parser.
+
+        Hermes sometimes prepends a short intro (e.g. "Aquí tienes ...") before
+        the `````json`` block. ``_strip_code_fence`` only strips a fence at the
+        very start, so this previously fell through to ``json.loads`` on the
+        prose and returned no classifications/relationships — silently emptying
+        the enrichment funnel (every ficha landed in "requires your decision").
+        """
+        raw = (
+            "Aquí tienes las fichas resumidas según el pipeline. \n\n"
+            "```json\n"
+            + json.dumps({"classifications": [
+                {"candidate_id": "x", "type": "personaje"}],
+                "relationships": []})
+            + "\n```"
+        )
+        out = parse_hermes_response(raw)
+        assert len(out["classifications"]) == 1
+        assert len(out["relationships"]) == 0
+
+    def test_summary_prose_prefixed_fenced_json_is_parsed(self):
+        """Step 2 (summaries) must also tolerate a prose-prefixed fenced reply.
+
+        This is the funnel's critical path: if the summary parse returns ``{}``,
+        ``summarized`` is empty, Steps 3+4 never run, and every ficha falls into
+        "requires your decision" with no relationships and fallback frontmatter.
+        """
+        raw = (
+            "Aquí tienes las fichas resumidas (paso 1 del pipeline).\n\n"
+            "```json\n"
+            + json.dumps({"summaries": [
+                {"candidate_id": "x", "summary": "Resumen de la ficha."}]})
+            + "\n```"
+        )
+        out = parse_summary_response(raw)
+        assert out == {"x": "Resumen de la ficha."}
+
+
 
 
 class TestValidateSuggestions:
@@ -525,7 +566,7 @@ def _full_app(tmp_path, *, enricher=None):
 
 class TestAnalyzeEnrichFlow:
     def test_analyze_with_enrich_true_attaches_suggestions(self, tmp_path):
-        def enricher(candidates):
+        def enricher(candidates, progress_cb=None):
             from import_models import EnrichmentStatus
             payload = [{
                 "id": "cls-1",
@@ -566,7 +607,7 @@ class TestAnalyzeEnrichFlow:
     def test_analyze_without_enrich_does_not_call_enricher(self, tmp_path):
         calls: list[int] = []
 
-        def enricher(candidates):
+        def enricher(candidates, progress_cb=None):
             calls.append(len(candidates))
             return candidates
 
@@ -603,7 +644,7 @@ class TestAnalyzeEnrichFlow:
         """Explicit ``enrich=false`` preserves the legacy deterministic path."""
         calls: list[int] = []
 
-        def enricher(candidates):
+        def enricher(candidates, progress_cb=None):
             calls.append(len(candidates))
             return candidates
 
@@ -645,7 +686,7 @@ class TestAnalyzeEnrichFlow:
             assert suggestions == []
 
     def test_decisions_endpoint_toggles_review_state(self, tmp_path):
-        def enricher(candidates):
+        def enricher(candidates, progress_cb=None):
             from import_models import EnrichmentStatus, Candidate
             data = candidates[0].model_dump()
             data["enrichment_json"] = [{

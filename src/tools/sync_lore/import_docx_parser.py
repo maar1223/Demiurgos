@@ -453,7 +453,11 @@ class DocxImageExtractionStrategy:
                     id=str(uuid.uuid4()),
                     source_file=source_name,
                     context_text=section_context,
-                    filename=PurePosixPath(member).name,
+                    filename=_unique_filename(
+                        _readable_stem(heading_path, PurePosixPath(member).stem),
+                        PurePosixPath(member).suffix or ".png",
+                        images,
+                    ),
                     image_bytes=image_bytes,
                     document_order=len(images) + 1,
                     paragraph_index=paragraph_index,
@@ -510,8 +514,17 @@ class DocxImageExtractionStrategy:
 
 
 def _normalize_heading(text: str) -> str:
-    """Normalized heading text for matching: lowercased, collapsed spaces."""
-    return " ".join(text.strip().lower().split())
+    """Normalized heading text for matching: lowercased, collapsed spaces,
+    and markdown emphasis/inline markers stripped.
+
+    markitdown wraps docx headings in bold (``## **Sold (Nivel 1)**``); those
+    ``*``/``_``/inline markers must be stripped so the converted heading matches
+    the docx-parser ``heading_path`` component (``Sold (Nivel 1)``) instead of
+    every image falling through to "no markdown heading match" and being dumped
+    at the end of the document.
+    """
+    cleaned = re.sub(r"[*_`~]", "", text)
+    return " ".join(cleaned.strip().lower().split())
 
 
 def _is_heading_line(line: str) -> bool:
@@ -546,6 +559,61 @@ def _deepest_heading(heading_path: str) -> str:
     if " > " in heading_path:
         return heading_path.rsplit(" > ", 1)[-1]
     return heading_path
+
+
+# Characters that break filenames on Windows / markdown image destinations /
+# URLs. They are dropped (not replaced) so readable names stay short.
+_RE_ILLEGAL_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|()\[\]{}\x00-\x1f]')
+_MAX_READABLE_STEM = 150
+
+
+def _readable_stem(heading_path: str, fallback: str) -> str:
+    """Derive a readable, filesystem/markdown-safe image stem from a heading path.
+
+    Convention: ``_`` separates heading LEVELS (hierarchy) and ``-`` replaces the
+    spaces within a heading's words — so an image under ``A > B`` becomes
+    ``B_A`` (the image's own heading first, then its parent, read left-to-right).
+    Illegal filename characters are dropped (no spaces, ``#``, ``|``,
+    parentheses), keeping the name portable across exports and usable as a
+    markdown image destination. Only the last two heading levels are kept (the
+    image's own section + its immediate parent); a lone heading keeps just
+    itself. Falls back to *fallback* when there is no heading at all.
+    """
+    components = [c.strip() for c in heading_path.split(" > ") if c.strip()]
+    if not components:
+        return fallback
+    parts = components[-2:]  # [parent, child] in the ``a > b`` heading path
+    # User-facing order: the image's own heading (child) first, then its parent.
+    names = list(reversed(parts)) if len(parts) >= 2 else parts
+    tokens = []
+    for name in names:
+        clean = _RE_ILLEGAL_FILENAME_CHARS.sub("", name)
+        clean = re.sub(r"\s+", "-", clean).strip("-")
+        if clean:
+            tokens.append(clean)
+    stem = "_".join(tokens)
+    if not stem:
+        return fallback
+    return stem[:_MAX_READABLE_STEM].rstrip(" -_") or fallback
+
+
+def _unique_filename(
+    stem: str, suffix: str, images: list[ImageEntry]
+) -> str:
+    """Disambiguate *stem* against filenames already assigned to *images*.
+
+    Two images under the same heading would otherwise collide in the gallery
+    (the second is skipped as ``dest.exists()``). Append ``-2``, ``-3`` …
+    (case-insensitive) so every file is both readable and unique.
+    """
+    existing = {PurePosixPath(i.filename or "").name.lower() for i in images}
+    candidate = f"{stem}{suffix}"
+    if candidate.lower() not in existing:
+        return candidate
+    n = 2
+    while f"{stem}-{n}{suffix}".lower() in existing:
+        n += 1
+    return f"{stem}-{n}{suffix}"
 
 
 def _image_ref(img: ImageEntry) -> str:

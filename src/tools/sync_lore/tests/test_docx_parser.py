@@ -219,7 +219,7 @@ class TestStreamingExtraction:
         assert result.diagnostics == []
         assert result.warnings == []
         assert [img.filename for img in result.images] == [
-            "image1.png", "image2.png", "image3.png",
+            "Chapter-One.png", "Chapter-One-2.png", "Chapter-One-3.png",
         ]
         assert [img.document_order for img in result.images] == [1, 2, 3]
         assert [img.anchor_type for img in result.images] == [
@@ -345,7 +345,10 @@ class TestStreamingExtraction:
         assert len(result.images) == 2
         assert result.images[0].document_order == 1
         assert result.images[1].document_order == 2
-        assert result.images[0].filename == result.images[1].filename == "image1.png"
+        # No heading context: names fall back to the media part name, and the
+        # duplicate is disambiguated so every gallery file stays unique.
+        assert result.images[0].filename == "image1.png"
+        assert result.images[1].filename == "image1-2.png"
 
     def test_large_streaming_fixture_is_bounded(self, tmp_path):
         """Thousands of paragraphs parse with correct positions (bounded memory)."""
@@ -602,6 +605,18 @@ class TestMarkdownInjection:
             "![image2](media/image2.png)"
         )
 
+    def test_matches_bold_wrapped_heading(self):
+        """markitdown wraps docx headings in ``**bold**`` (``## **Sold (Nivel 1)**``);
+        the heading must still match the docx ``heading_path`` (``Sold (Nivel 1)``)
+        instead of being reported unmatched and dumped at the document end."""
+        markdown = "# Chapter One\n\nIntro text.\n\n## **Sold (Sólido | Nivel 1)**\n\nBody.\n"
+        images = [_positioned_image("image1.png", heading_path="Chapter One > Sold (Sólido | Nivel 1)")]
+        md, diags = inject_image_refs(markdown, images)
+        assert diags == []
+        lines = md.split("\n")
+        ref_idx = lines.index("![image1](media/image1.png)")
+        assert lines[ref_idx - 1] == "Body."  # injected inside the matching section
+
     def test_overflow_refs_appended_at_section_end_with_diagnostic(self):
         markdown = "# Chapter One\n\nP1.\n\n# Next\n\nMore.\n"
         images = [
@@ -637,7 +652,7 @@ class TestMarkdownInjection:
         )
         result = STRATEGY.extract(doc, converted_markdown=markdown)
         lines = result.markdown.split("\n")
-        ref_idx = lines.index("![image1](media/image1.png)")
+        ref_idx = lines.index("![Chapter-One](media/Chapter-One.png)")
         assert lines[ref_idx - 1] == "Intro text."  # after the paragraph line
 
 

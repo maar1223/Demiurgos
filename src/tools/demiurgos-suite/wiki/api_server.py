@@ -2914,9 +2914,10 @@ def _get_media_bases(mundo: str) -> list[Path]:
 def _resolve_media_path(mundo: str, path: str) -> Path | None:
     """Resolve a media file path with path-traversal protection.
 
-    Accepts *path* in two formats:
+    Accepts *path* in three formats:
       1. Relative to *mundo* root:   ``wiki/media/foto.jpg``
       2. Relative to a media base:   ``foto.jpg``
+      3. Relative to the wiki root:  ``media/foto.jpg`` (importer convention)
 
     Checks against both allowed base directories:
 
@@ -2936,16 +2937,22 @@ def _resolve_media_path(mundo: str, path: str) -> Path | None:
 
     bases = _get_media_bases(mundo)
 
+    # Candidate roots: the mundo root (``wiki/media/x.png`` and
+    # ``referencias/...``), each media base (``x.png``), and the wiki root.
+    # The importer writes references relative to ``wiki/`` (``media/x.png``),
+    # which must resolve to ``wiki/media/x.png``; adding the wiki root keeps
+    # those imported fichas renderable without rewriting already-written data.
+    candidate_roots = [mundo_base, *bases, mundo_base / "wiki"]
+
     # Collect all candidate paths (deduplicated)
     seen: set[str] = set()
     candidates: list[Path] = []
-    for base in bases:
-        for p in (mundo_base / path, base / path):
-            resolved = p.resolve()
-            key = str(resolved)
-            if key not in seen:
-                seen.add(key)
-                candidates.append(resolved)
+    for root in candidate_roots:
+        resolved = (root / path).resolve()
+        key = str(resolved)
+        if key not in seen:
+            seen.add(key)
+            candidates.append(resolved)
 
     # Pass 1 — return existing file first (prefer correct base)
     for full in candidates:
@@ -4723,8 +4730,9 @@ def _make_import_enricher():
     """
     from import_enrichment import analyze_ficha_funnel as _funnel
 
-    def enricher(candidates):
-        return _funnel(candidates, hermes_runner=_sync_hermes_enricher)
+    def enricher(candidates, progress_cb=None):
+        return _funnel(candidates, hermes_runner=_sync_hermes_enricher,
+                       progress_cb=progress_cb)
 
     return enricher
 
@@ -4805,7 +4813,18 @@ def _make_vision_callable():
     media bundle and turns each result into an advisory ``vision:<sha256>``
     suggestion on its owning candidate. Vision is advisory and fail-open —
     any analysis failure returns the candidates unchanged.
+
+    Vision is DISABLED for dense lore import by default: the import
+    placement already carries the DOCX position contract, so describing each
+    image adds a huge LLM cost (one multimodal call per image) the author
+    does not need for placement. Set ``DEMIURGOS_IMPORT_VISION=1`` to re-enable
+    it for future point-image analysis without touching any other code. The
+    ``import_vision`` machinery and the ``capability`` gate stay intact.
     """
+    # Reversible opt-in: default OFF for dense import; set the env var to
+    # re-enable image-content analysis for point use-cases later.
+    if os.getenv("DEMIURGOS_IMPORT_VISION", "0") != "1":
+        return None
     try:
         from assistant_settings import _resolve_profile_paths
         from import_vision import build_vision_callable

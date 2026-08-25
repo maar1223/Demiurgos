@@ -7,7 +7,6 @@ import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Badge } from "@/components/atoms/Badge";
 import { Spinner } from "@/components/atoms/Spinner";
-import { Switch } from "@/components/atoms/Switch";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
@@ -344,12 +343,6 @@ export default function WorldImporter() {
   const [monitoringAfterTimeout, setMonitoringAfterTimeout] = useState(false);
   /** Elapsed seconds since the analysis step started (monitoring UX). */
   const [elapsedSec, setElapsedSec] = useState(0);
-  /**
-   * Whether analysis includes the per-image (vision) pass. ON by default
-   * (backward compatible); the author can disable it for a cheaper, text-only
-   * import. Sent as ``vision`` in the analyze request.
-   */
-  const [analyzeImages, setAnalyzeImages] = useState(true);
 
   const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
   // The review digest is never displayed; the approval response carries the
@@ -918,7 +911,12 @@ export default function WorldImporter() {
       stopLiveProgress = startLiveProgressPoll(mundo, activeJobId);
       const analysis = await analyzeImportJob(mundo, activeJobId, {
         enrich: true,
-        vision: analyzeImages,
+        // Vision (per-image content analysis) is a deliberate UX decision:
+        // not exposed to the author and never requested for dense lore import.
+        // Image PLACEMENT still works (DOCX position contract) — this only
+        // skips the expensive image-content pass, which the backend also
+        // disables by default (DEMIURGOS_IMPORT_VISION).
+        vision: false,
       });
       setJob(analysis.job);
       setAnalysisProgress({
@@ -1003,7 +1001,8 @@ export default function WorldImporter() {
         try {
           const analysis = await analyzeImportJob(mundo, jobId, {
             enrich: true,
-            vision: analyzeImages,
+            // Vision never requested (UX decision: not exposed to the author).
+            vision: false,
           });
           setJob(analysis.job);
           if (analysis.enrichment_status) {
@@ -1623,31 +1622,6 @@ export default function WorldImporter() {
               ))}
             </ul>
           )}
-
-          <div className="mt-5 flex w-full items-start justify-between gap-4 rounded-lg border border-filio bg-cripta/40 px-4 py-3">
-            <div className="min-w-0">
-              <p className="text-small text-pergamino">Analizar imágenes del documento</p>
-              <p className="mt-0.5 text-xs text-tinta-desvaida">
-                {analyzeImages
-                  ? "Se analiza el texto y las imágenes (más lento y costoso)."
-                  : "Solo texto: se salta el análisis de imágenes (más rápido y barato)."}
-              </p>
-            </div>
-            <div className="flex shrink-0 flex-col items-center gap-1">
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-tinta-desvaida">Solo texto</span>
-                <Switch
-                  checked={analyzeImages}
-                  onChange={setAnalyzeImages}
-                  aria-label="Analizar imágenes del documento"
-                />
-                <span className="text-[11px] text-tinta-desvaida">Con imágenes</span>
-              </div>
-              <span className="text-[11px] font-medium" aria-live="polite">
-                {analyzeImages ? "Encendido" : "Apagado"}
-              </span>
-            </div>
-          </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-3">
             <Button

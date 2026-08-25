@@ -311,6 +311,7 @@ def render_frontmatter_document(
     frontmatter: FrontmatterCandidate,
     body: str,
     canonical_id: str = "",
+    status: str = "draft",
 ) -> str:
     """Render an approved OKF document: frontmatter + the untouched body.
 
@@ -318,12 +319,13 @@ def render_frontmatter_document(
     as the OKF frontmatter block (``title``/``type``/``description``/
     ``status``/``relaciones``) followed by the ficha's original body verbatim
     — never a truncated or generated replacement of author text. Approved
-    materialization always emits ``status: draft`` so imported fichas enter
-    as borrador (BLOQUE 2), which the tree/graph/panel can consume.
-    ``relaciones`` are serialized as OKF ``[[canonical_id]]`` wikilinks. When
-    the candidate carries a parent-qualified ``canonical_id``, it is emitted
-    as the ``id`` so the OKF/graph identity contract recognizes the same key
-    (task 3.3).
+    materialization emits ``status`` (default ``draft`` so imported fichas
+    enter as borrador — BLOQUE 2 — or ``stable`` when the import seeds a
+    brand-new world, per the author's auto-canon preference), which the
+    tree/graph/panel can consume. ``relaciones`` are serialized as OKF
+    ``[[canonical_id]]`` wikilinks. When the candidate carries a
+    parent-qualified ``canonical_id``, it is emitted as the ``id`` so the
+    OKF/graph identity contract recognizes the same key (task 3.3).
 
     ``canonical_id`` is omitted when empty or not a canonical identity (e.g.
     an implicit single-ficha candidate), so the emitted document stays a
@@ -337,9 +339,11 @@ def render_frontmatter_document(
         lines.append(f"type: {_yaml_scalar(frontmatter.type)}")
     if frontmatter.description:
         lines.append(f"description: {_yaml_scalar(frontmatter.description)}")
-    # BLOQUE 2 — imported fichas always enter as borrador: the tree badge,
-    # the graph and the Relaciones y Canon panel consume this status.
-    lines.append("status: draft")
+    # BLOQUE 2 — imported fichas enter as ``status``: the tree badge, the
+    # graph and the Relaciones y Canon panel consume this status. By default
+    # fichas land as borrador (draft); when the import seeds a brand-new
+    # world, the author's auto-canon preference promotes them to ``stable``.
+    lines.append(f"status: {status}")
     if frontmatter.relaciones:
         # Block-form quoted wikilinks (matching the existing OKF corpus) so the
         # YAML is unambiguous: each entry is a ``[[canonical_id]]`` string that
@@ -411,6 +415,25 @@ class ImportService:
 
     def _mundo_dir(self, world: str) -> Path:
         return self.mundos_dir / world
+
+    def _world_has_fichas(self, world: str) -> bool:
+        """True when the world already has ficha content before an import.
+
+        Used to decide the default OKF ``status`` for imported fichas: a fresh
+        world (no ficha files in any content section) is treated as "new", so
+        the author's auto-canon preference promotes imported fichas to
+        ``stable`` instead of the default ``draft`` (borrador).
+        """
+        mundo_dir = self._mundo_dir(world)
+        for section in _VALID_SECTIONS:
+            section_dir = mundo_dir / section
+            if not section_dir.is_dir():
+                continue
+            for path in section_dir.rglob("*"):
+                if (path.is_file()
+                        and path.suffix.lower() in (".md", ".txt", ".json")):
+                    return True
+        return False
 
     def _target_for(self, world: str, candidate: Candidate) -> Path:
         """Resolve the target ficha path from a candidate's identity.
@@ -519,6 +542,11 @@ class ImportService:
         self.store.mark_approval_consumed(job.job_id, token)
         self.store.update_job(job.job_id, expected_revision=job.revision,
                               state=ImportJobState.EXECUTING)
+        # Auto-canon (author preference): when this import seeds a brand-new
+        # world (no pre-existing fichas anywhere), imported fichas enter as
+        # canonical (``stable``) instead of borrador (``draft``). Computed
+        # once up front so the whole batch agrees on one status.
+        ficha_status = "stable" if not self._world_has_fichas(job.world) else "draft"
         # Resolve approved suggestions ONCE up front so per-candidate
         # execution reuses the cached lists (a single batch can produce
         # many suggestions; classification + relationships are kept
@@ -610,6 +638,7 @@ class ImportService:
                     job, working,
                     vision_by_path=vision_by_path,
                     approved_vision_ids=approved_vision_ids,
+                    default_status=ficha_status,
                 )
                 outcomes.append(outcome)
                 self.store.add_item(ItemOutcome(
@@ -713,7 +742,8 @@ class ImportService:
 
     def _execute_candidate(self, job: ImportJob, candidate: Candidate,
                            vision_by_path: dict[str, dict] | None = None,
-                           approved_vision_ids: set[str] | None = None
+                           approved_vision_ids: set[str] | None = None,
+                           default_status: str = "draft"
                            ) -> ExecutionOutcome:
         # Slice 1 (IM-1.2): resolve the canonical OKF target first; only a
         # ``resolved`` mapping is allowed to write. ``review``/``rejected``
@@ -804,7 +834,9 @@ class ImportService:
         if _is_funnel_frontmatter(candidate):
             document = render_frontmatter_document(
                 candidate.frontmatter, preview,
-                canonical_id=candidate.canonical_id or "")
+                canonical_id=candidate.canonical_id or "",
+                status=default_status,
+            )
         else:
             document = preview
 
