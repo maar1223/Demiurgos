@@ -37,6 +37,7 @@ export interface Session {
 }
 
 const STORAGE_KEY = "demiurgos-ai-sessions";
+const ACTIVE_SESSION_STORAGE_KEY = "demiurgos-ai-sessions-active";
 const MAX_SESSION_TITLE_LENGTH = 40;
 
 export interface AssistantActivityState {
@@ -100,7 +101,30 @@ function saveSessions(sessions: Session[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
   } catch {
-    // localStorage might be full ΓÇö silently fail
+    // localStorage might be full — silently fail
+  }
+}
+
+function loadActiveSessionId(): string | null {
+  try {
+    const stored = localStorage.getItem(ACTIVE_SESSION_STORAGE_KEY);
+    if (!stored) return null;
+    const parsed = JSON.parse(stored) as unknown;
+    return typeof parsed === "string" && parsed.length > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveSessionId(id: string | null): void {
+  try {
+    if (id === null) {
+      localStorage.removeItem(ACTIVE_SESSION_STORAGE_KEY);
+    } else {
+      localStorage.setItem(ACTIVE_SESSION_STORAGE_KEY, JSON.stringify(id));
+    }
+  } catch {
+    // localStorage might be full — silently fail
   }
 }
 
@@ -167,7 +191,19 @@ export function useAIAssistantSessions(
   filePath?: string,
 ): AIAssistantSessionsResult {
   const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  // Restore the last active session so the open conversation survives
+  // remounts (the sidebar unmounts when the editor switches tabs). The
+  // persisted id is validated against the sessions restored for this mount:
+  // if it no longer exists (deleted or cleared storage) fall back to null —
+  // never auto-pick a session the user did not have active. Sessions are
+  // stored under a single global key (not per-context), so the active id is
+  // scoped and validated consistently with how sessions are loaded.
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    const persisted = loadActiveSessionId();
+    return persisted !== null && sessions.some((s) => s.id === persisted)
+      ? persisted
+      : null;
+  });
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activity, setActivity] = useState<AssistantActivityState>(INITIAL_ACTIVITY);
@@ -178,6 +214,13 @@ export function useAIAssistantSessions(
   useEffect(() => {
     saveSessions(sessions);
   }, [sessions]);
+
+  // Persist the active session id whenever it changes; every create/switch/
+  // delete/auto-create path flows through setActiveSessionId, and deleting
+  // the active session sets it to null (removing the persisted id).
+  useEffect(() => {
+    saveActiveSessionId(activeSessionId);
+  }, [activeSessionId]);
 
   useEffect(() => () => activityAbortRef.current?.abort(), []);
 
