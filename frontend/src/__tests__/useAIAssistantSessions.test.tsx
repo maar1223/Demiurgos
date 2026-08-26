@@ -1,13 +1,26 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import {
   useAIAssistantSessions,
+  GLOBAL_ASSISTANT_CONTEXT,
   type Session,
 } from "@/hooks/useAIAssistantSessions";
+import { streamAssistantActivity } from "@/api/assistantActivity";
+import { askAssistant } from "@/api/wiki";
 
 vi.mock("@/hooks/useAppLanguage", () => ({
   useAppLanguage: vi.fn(() => "es"),
 }));
+
+vi.mock("@/api/assistantActivity", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/assistantActivity")>();
+  return { ...actual, streamAssistantActivity: vi.fn() };
+});
+
+vi.mock("@/api/wiki", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/wiki")>();
+  return { ...actual, askAssistant: vi.fn() };
+});
 
 const SESSIONS_KEY = "demiurgos-ai-sessions";
 const ACTIVE_KEY = "demiurgos-ai-sessions-active";
@@ -91,5 +104,100 @@ describe("useAIAssistantSessions active session persistence", () => {
     // A fresh mount restores the newly created session
     const second = renderHook(() => useAIAssistantSessions("mundo"));
     expect(second.result.current.activeSessionId).toBe(createdId);
+  });
+});
+
+describe("useAIAssistantSessions null-mundo (global context)", () => {
+  const streamMock = vi.mocked(streamAssistantActivity);
+  const askMock = vi.mocked(askAssistant);
+
+  const allowedDecision = {
+    accepted: true,
+    events: [],
+    answer: "Hola",
+    terminalStatus: "succeeded" as const,
+    semanticDecision: {
+      kind: "semantic_decision" as const,
+      request_id: "r1",
+      state: "allow" as const,
+      action: "answer" as const,
+      unavailable: false,
+      continuation: null,
+    },
+  };
+
+  beforeEach(() => {
+    streamMock.mockReset();
+    askMock.mockReset();
+    window.localStorage.clear();
+  });
+
+  it("exposes the stable ideas-global context key", () => {
+    expect(GLOBAL_ASSISTANT_CONTEXT).toBe("ideas-global");
+  });
+
+  it("uses the stable ideas-global key when mundo is null/undefined", async () => {
+    streamMock.mockResolvedValue(allowedDecision);
+
+    const { result } = renderHook(() =>
+      useAIAssistantSessions(undefined, undefined, undefined),
+    );
+
+    await act(async () => {
+      await result.current.sendMessage("Dame una idea de personaje");
+    });
+
+    expect(streamMock).toHaveBeenCalledWith(
+      "ideas-global",
+      expect.objectContaining({ prompt: "Dame una idea de personaje" }),
+      expect.any(Object),
+    );
+    // World-scoped context fields are omitted in the global context.
+    const body = streamMock.mock.calls[0][1] as unknown as Record<string, unknown>;
+    expect(body.section).toBeUndefined();
+    expect(body.file_path).toBeUndefined();
+    // The assistant answer is appended to the session.
+    expect(result.current.activeSession?.messages).toContainEqual(
+      expect.objectContaining({ role: "assistant", content: "Hola" }),
+    );
+  });
+
+  it("keeps mundo-scoped sessions using the world key and world context", async () => {
+    streamMock.mockResolvedValue(allowedDecision);
+
+    const { result } = renderHook(() =>
+      useAIAssistantSessions("vibrantes", "lore", "cap1.md"),
+    );
+
+    await act(async () => {
+      await result.current.sendMessage("¿Quién es Rhyz?");
+    });
+
+    expect(streamMock).toHaveBeenCalledWith(
+      "vibrantes",
+      expect.objectContaining({
+        prompt: "¿Quién es Rhyz?",
+        section: "lore",
+        file_path: "cap1.md",
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it("tolerates null-mundo for the session persistence flows", () => {
+    seedSessions([makeSession("s1")]);
+
+    const { result } = renderHook(() => useAIAssistantSessions(null as unknown as string));
+
+    expect(result.current.activeSessionId).toBeNull();
+    act(() => {
+      result.current.switchSession("s1");
+    });
+    expect(result.current.activeSessionId).toBe("s1");
+
+    act(() => {
+      result.current.deleteSession("s1");
+    });
+    expect(result.current.activeSessionId).toBeNull();
   });
 });

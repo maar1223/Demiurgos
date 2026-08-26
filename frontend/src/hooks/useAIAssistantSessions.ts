@@ -40,6 +40,14 @@ const STORAGE_KEY = "demiurgos-ai-sessions";
 const ACTIVE_SESSION_STORAGE_KEY = "demiurgos-ai-sessions-active";
 const MAX_SESSION_TITLE_LENGTH = 40;
 
+/**
+ * Stable context key for world-agnostic assistant sessions (null-mundo, e.g.
+ * the Taller de Ideas). The backend AI routes are mundo-scoped
+ * (`/api/{mundo}/ai/ask`); this key is the frontend-side stable identity for
+ * the global context and is sent as the mundo segment of those URLs.
+ */
+export const GLOBAL_ASSISTANT_CONTEXT = "ideas-global";
+
 export interface AssistantActivityState {
   accepted: boolean;
   items: AssistantActivityItem[];
@@ -186,10 +194,15 @@ function activityEvidence(activity: AssistantActivityState): AssistantActivityEv
  * and a list of messages.
  */
 export function useAIAssistantSessions(
-  mundo: string,
+  mundo?: string,
   section?: string,
   filePath?: string,
 ): AIAssistantSessionsResult {
+  // World-agnostic sessions (mundo null/undefined) use the stable global
+  // context key so the Taller de Ideas assistant never leaks into — nor is
+  // polluted by — any mundo-scoped session.
+  const contextMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
+  const worldScoped = Boolean(mundo);
   const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
   // Restore the last active session so the open conversation survives
   // remounts (the sidebar unmounts when the editor switches tabs). The
@@ -311,8 +324,11 @@ export function useAIAssistantSessions(
       const requestBody = {
         prompt: trimmed,
         session_id: sessionId ?? "",
-        ...(section ? { section } : {}),
-        ...(filePath ? { file_path: filePath } : {}),
+        // section/filePath are world-scoped context: they only make sense for
+        // mundo-scoped sessions and are omitted in the null-mundo (global)
+        // context.
+        ...(worldScoped && section ? { section } : {}),
+        ...(worldScoped && filePath ? { file_path: filePath } : {}),
         ...(guided ? {
           guided_session_id: guided.session_id,
           guided_revision: guided.revision,
@@ -320,7 +336,7 @@ export function useAIAssistantSessions(
       };
 
       const legacyRequest = async () => {
-        return askAssistant(mundo, requestBody, controller.signal);
+        return askAssistant(contextMundo, requestBody, controller.signal);
       };
 
       const applySemanticOutcome = (outcome: ReturnType<typeof mapSemanticDecision>) => {
@@ -374,7 +390,7 @@ export function useAIAssistantSessions(
 
       try {
         const request = requestBody;
-        const result = await streamAssistantActivity(mundo, request, {
+        const result = await streamAssistantActivity(contextMundo, request, {
           signal: controller.signal,
           onAccepted: () => {
             activityAccepted = true;
@@ -442,7 +458,7 @@ export function useAIAssistantSessions(
         setIsSending(false);
       }
     },
-    [activeSession, activeSessionId, isSending, mundo, section, filePath, language],
+    [activeSession, activeSessionId, isSending, mundo, contextMundo, section, filePath, language],
   );
 
   const resolveGuidedProposal = useCallback(async (accept: boolean) => {
@@ -452,21 +468,21 @@ export function useAIAssistantSessions(
     if (!proposal) return;
     const proposalKey = proposal.key;
     const action = accept ? acceptGuidedCharacterProposal : rejectGuidedCharacterProposal;
-    const next = await action(mundo, guided.session_id, guided.revision, proposalKey);
+    const next = await action(contextMundo, guided.session_id, guided.revision, proposalKey);
     setSessions((prev) => prev.map((session) => (
       session.id === activeSessionId ? { ...session, guided: next } : session
     )));
-  }, [activeSession, activeSessionId, mundo]);
+  }, [activeSession, activeSessionId, contextMundo]);
 
   const requestGuidedReview = useCallback(async () => {
     const guided = activeSession?.guided;
     if (!guided || !activeSessionId) return null;
-    const proposal = await serializeGuidedCharacter(mundo, guided.session_id, guided.revision);
+    const proposal = await serializeGuidedCharacter(contextMundo, guided.session_id, guided.revision);
     setSessions((prev) => prev.map((session) => (
       session.id === activeSessionId ? { ...session, pendingReview: proposal } : session
     )));
     return proposal;
-  }, [activeSession, activeSessionId, mundo]);
+  }, [activeSession, activeSessionId, contextMundo]);
 
   const cancelSend = useCallback(() => activityAbortRef.current?.abort(), []);
 
