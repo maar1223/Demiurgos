@@ -12,7 +12,6 @@ import type { IdeaCaptureConfig, IdeaCaptureStatus } from "@/api/types";
 const defaultConfig: IdeaCaptureConfig = {
   private_chat_ids: [],
   approved_groups: {},
-  active_world: "",
   limits: { image_mb: 20, audio_mb: 50, audio_minutes: 5, raw_retention_days: 30 },
 };
 

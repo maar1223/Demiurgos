@@ -124,9 +124,27 @@ class TestStatus:
         assert data["config"]["active_world"] == "vibrantes"
         assert data["config"]["limits"]["raw_retention_days"] == 45
         assert data["validation"]["ok"] is True
-        # Ready: allowlists non-empty, world exists — only the token is missing.
+        # Ready: allowlists non-empty — only the token is missing. A world is
+        # NOT required (capture goes to the global Taller de Ideas).
         assert data["serve"]["runnable"] is False
         assert any("TELEGRAM_BOT_TOKEN" in r for r in data["serve"]["blocked_reasons"])
+
+    def test_serve_status_does_not_require_world(self, client: TestClient,
+                                                 monkeypatch: pytest.MonkeyPatch):
+        """Capture enables for the global Taller without any active_world: the
+        serve readiness only gates on token + non-empty allowlists."""
+        _authed(monkeypatch)
+        _save_config(client, {
+            "private_chat_ids": [111],
+            "approved_groups": {},
+            "limits": {"image_mb": 20, "audio_mb": 50, "audio_minutes": 5,
+                       "raw_retention_days": 30},
+        })
+        _set_token(client)
+        data = client.get("/api/idea-capture/status").json()
+        assert data["config"]["active_world"] == ""
+        assert data["serve"]["runnable"] is True
+        assert data["serve"]["blocked_reasons"] == []
 
     def test_hermes_command_is_exact_for_local_runtime(self, client: TestClient,
                                                        monkeypatch: pytest.MonkeyPatch):

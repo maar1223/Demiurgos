@@ -357,7 +357,7 @@ function WorldsSection() {
     let active = true;
     void getIdeaCaptureStatus()
       .then((status) => {
-        if (active) setActiveWorld(status.config.active_world);
+        if (active) setActiveWorld(status.config.active_world ?? "");
       })
       .catch(() => {
         if (active) setActiveWorld("");

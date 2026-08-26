@@ -221,8 +221,9 @@ export interface IdeaCaptureConfig {
   private_chat_ids: number[];
   /** Group chat id → approved sender ids. Empty mapping = fail closed. */
   approved_groups: Record<string, number[]>;
-  /** World used by the serve command; empty when not chosen yet. */
-  active_world: string;
+  /** Legacy world selector, read backward-compatibly when present. Capture
+   *  always goes to the global Taller de Ideas, so this is never required. */
+  active_world?: string;
   limits: IdeaCaptureLimits;
 }
 

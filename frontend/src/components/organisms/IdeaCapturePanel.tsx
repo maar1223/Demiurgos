@@ -36,11 +36,12 @@ interface GroupRow {
 }
 
 /** The guided wizard steps. One step is visible at a time; the label doubles
- *  as the progress indicator entry (technical identifiers stay out of copy). */
+ *  as the progress indicator entry (technical identifiers stay out of copy).
+ *  Capture NEVER asks for a world: ideas always land in the global Taller de
+ *  Ideas bank; the world is chosen later, when materializing an idea. */
 const STEPS = [
   { id: "connect", label: "Conectar bot" },
   { id: "chat", label: "Detectar chat" },
-  { id: "world", label: "Elegir mundo" },
   { id: "review", label: "Revisar" },
   { id: "finish", label: "Finalizar" },
 ] as const;
@@ -89,10 +90,10 @@ function countAuthorized(privateText: string, groupRows: GroupRow[]): number {
  *   1. Conectar bot — token entry (masked by default), save/replace/clear.
  *   2. Detectar chat — /start instruction, read-only discovery, one-click
  *      private authorization, explicit group authorization (fail-closed).
- *   3. Elegir mundo — active world preselected, plain selector.
- *   4. Revisar — bot/chat/world summary + collapsed advanced settings
- *      (manual IDs, groups, media limits, raw retention).
- *   5. Finalizar — save confirmation, exact Hermes gateway command, next
+ *   3. Revisar — bot/chat summary + collapsed advanced settings (manual IDs,
+ *      groups, media limits, raw retention). The destination is ALWAYS the
+ *      global Taller de Ideas: no world is chosen at capture.
+ *   4. Finalizar — save confirmation, exact Hermes gateway command, next
  *      action to start capture. The panel NEVER auto-starts Telegram.
  *
  * Everything lives behind the local-dev session boundary: without an
@@ -133,7 +134,6 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
   // ------------------------------------------------------------- form state
   const [privateText, setPrivateText] = useState("");
   const [groupRows, setGroupRows] = useState<GroupRow[]>([]);
-  const [activeWorld, setActiveWorld] = useState("");
   const [limits, setLimits] = useState({
     image_mb: 20,
     audio_mb: 50,
@@ -156,7 +156,6 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
         senders: senders.join(", "),
       })),
     );
-    setActiveWorld(status.config.active_world);
     setLimits({ ...status.config.limits });
   }, [status]);
 
@@ -351,10 +350,6 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
       }
       groups[chat] = senders;
     }
-    if (activeWorld && !/^[A-Za-z0-9_-]+$/.test(activeWorld)) {
-      setFormError("El mundo activo no es un nombre seguro");
-      return;
-    }
     for (const [key, value] of Object.entries(limits)) {
       if (!Number.isInteger(value) || value < 1) {
         setFormError(`limits.${key}: debe ser un entero positivo`);
@@ -365,7 +360,6 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
     const config: IdeaCaptureConfig = {
       private_chat_ids: privateChatIds,
       approved_groups: groups,
-      active_world: activeWorld,
       limits: { ...limits },
     };
     setSaving(true);
@@ -424,7 +418,7 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
   }
 
   const failClosed = countAuthorized(privateText, groupRows) === 0;
-  const worlds = status?.worlds ?? [];
+  // Capture never asks for a world: only the bot token gates the first step.
   const canContinue = step === 0 ? hasToken : true;
 
   const goNext = () => {
@@ -781,47 +775,6 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
             )}
 
             {step === 2 && (
-              <section aria-label="Elegir mundo">
-                <h3 className="font-heading text-body text-pergamino">
-                  Elegí el mundo de captura
-                </h3>
-                <p className="mt-1 text-small text-tinta-desvaida">
-                  Las ideas capturadas se guardan en el mundo seleccionado. El
-                  mundo activo ya está preseleccionado.
-                </p>
-                <div className="mt-3">
-                  <label htmlFor="ic-world" className={labelClass}>
-                    Mundo activo
-                  </label>
-                  <select
-                    id="ic-world"
-                    value={activeWorld}
-                    onChange={(event) => setActiveWorld(event.target.value)}
-                    className={inputClass}
-                  >
-                    <option value="">— sin mundo —</option>
-                    {worlds.map((world) => (
-                      <option key={world} value={world}>
-                        {world}
-                      </option>
-                    ))}
-                    {activeWorld && !worlds.includes(activeWorld) && (
-                      <option value={activeWorld}>{activeWorld}</option>
-                    )}
-                  </select>
-                </div>
-                {!activeWorld && (
-                  <p className="mt-3 text-small text-llama-alta">
-                     Sin mundo activo Hermes no arranca la captura: elegí uno para
-                    continuar, o definí{" "}
-                    <code className="text-plata">DEMIURGOS_WORLD</code> en{" "}
-                    <code className="text-plata">.env</code>.
-                  </p>
-                )}
-              </section>
-            )}
-
-            {step === 3 && (
               <section aria-label="Revisar">
                 <h3 className="font-heading text-body text-pergamino">
                   Revisá tu configuración
@@ -842,12 +795,15 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <dt className="text-tinta-desvaida">Mundo</dt>
-                    <dd className="text-pergamino">
-                      {activeWorld || "— sin mundo —"}
-                    </dd>
+                    <dt className="text-tinta-desvaida">Destino</dt>
+                    <dd className="text-pergamino">Taller de Ideas</dd>
                   </div>
                 </dl>
+                <p className="mt-3 text-small text-tinta-desvaida">
+                  Las ideas capturadas van siempre al <strong>Taller de Ideas</strong>{" "}
+                  global: no elegís mundo al capturar. El mundo se define recién
+                  cuando materializás una idea desde el taller.
+                </p>
 
                 {failClosed && (
                   <div className="mt-3 rounded-lg border border-llamita/40 bg-llamita/10 p-3 text-small text-llama-alta">
@@ -993,7 +949,7 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
               </section>
             )}
 
-            {step === 4 && (
+            {step === 3 && (
               <section aria-label="Finalizar">
                 <h3 className="font-heading text-body text-pergamino">
                   Finalizá y arrancá la captura
@@ -1001,7 +957,8 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
                 <p className="mt-1 text-small text-tinta-desvaida">
                   Guardá la configuración y después ejecutá el comando del
                   gateway Hermes en tu terminal para empezar a capturar ideas.
-                  El panel no inicia Telegram automáticamente.
+                  Tus ideas se guardan en el <strong>Taller de Ideas</strong>{" "}
+                  (sin elegir mundo). El panel no inicia Telegram automáticamente.
                 </p>
                 <div className="mt-3">
                   <Button

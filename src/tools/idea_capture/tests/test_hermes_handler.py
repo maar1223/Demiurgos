@@ -152,7 +152,7 @@ def test_media_cache_metadata_and_caption_are_persisted_raw_first():
             runtime.close()
 
 
-def test_capture_keyboard_has_fourth_global_button():
+def test_capture_keyboard_saves_to_taller_by_default():
     with tempfile.TemporaryDirectory() as directory:
         handler, runtime = _handler(Path(directory))
         adapter = FakeAdapter()
@@ -161,8 +161,11 @@ def test_capture_keyboard_has_fourth_global_button():
             asyncio.run(handler.handle_message(event=event, adapter=adapter))
             buttons = adapter.interaction_messages[0][2][0]
             texts = [b["text"] for b in buttons]
-            assert texts == ["Guardar", "Cambiar mundo", "Cancelar", "Guardar global"]
+            # Global-first default: the keyboard saves to the Taller de Ideas
+            # without a world; the per-world buttons are not offered.
+            assert texts == ["Guardar en Taller de Ideas", "Cancelar"]
             assert any(b["callback_data"].endswith(":save_global") for b in buttons)
+            assert not any(b["callback_data"].endswith(":save") for b in buttons)
         finally:
             runtime.close()
 
@@ -212,9 +215,60 @@ def test_save_global_callback_writes_to_global_bank_without_world():
             assert record.global_ is True
             assert record.world is None
             assert (root / "ideas" / f"{record.slug}.md").exists()
-            assert interaction.answers == ["Idea guardada en el banco global (procesando...)."]
+            assert interaction.answers == ["Idea guardada en el Taller de Ideas (procesando...)."]
             assert interaction.edits == [
-                ("Idea guardada en el banco global (procesando...).", [])]
+                ("Idea guardada en el Taller de Ideas (procesando...).", [])]
+        finally:
+            runtime.close()
+
+
+def test_handler_enabled_without_active_world():
+    """Capture enables for the global Taller without any world configured: the
+    enabled gate only requires authorized bindings."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        policy = IngressPolicy(
+            frozenset(), {},
+            authorized_bindings=frozenset({"telegram:7:8:default"}),
+            require_binding=True,
+        )
+        runtime = IdeaCaptureRuntime(
+            config=CaptureConfig(policy, CaptureLimits()),
+            state_path=root / "capture.sqlite3",
+            mundos_root=root / "mundos",
+            active_world="",
+            enrich=lambda raw: (raw, "concepto"),
+            global_ideas_root=root / "ideas",
+        )
+        # No active_world in the yaml, none in the environment.
+        config = root / "idea-capture.yaml"
+        config.write_text(
+            "authorized_bindings:\n"
+            "  - platform: telegram\n"
+            "    chat_id: 7\n"
+            "    user_id: 8\n"
+            "    profile: default\n",
+            encoding="utf-8",
+        )
+        handler = IdeaCaptureHandler(
+            repo_root=root,
+            config_path=config,
+            mundos_root=root / "mundos",
+            runtime=runtime,
+        )
+        try:
+            assert handler.enabled is True
+            adapter = FakeAdapter()
+            event = _event(7, _source(), text="no-world idea")
+            assert asyncio.run(handler.handle_message(event=event, adapter=adapter))
+            capture_id = runtime.store.list_capture_ids()[0]
+            interaction = FakeInteraction(
+                f"capture:{capture_id}:save_global", _source(),
+            )
+            assert asyncio.run(handler.handle_interaction(interaction=interaction))
+            record = runtime.wait_state(capture_id, CaptureState.SAVED)
+            assert record.global_ is True
+            assert (root / "ideas" / f"{record.slug}.md").exists()
         finally:
             runtime.close()
 

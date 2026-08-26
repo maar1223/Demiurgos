@@ -6,14 +6,12 @@
 #   approved_groups:                          # group chat id -> approved senders
 #     987654321: [123456789, 555000111]
 #
-# Loaded by src/tools/idea_capture/config.py (load_policy). The `serve`
-# entrypoint refuses to start while both lists are empty; `smoke` validates
-# parsing but runs with a synthetic test policy only.
+# Loaded by src/tools/idea_capture/config.py (load_policy). Hermes consumes
+# authorized_bindings after its own gateway authorization. The legacy `serve`
+# entrypoint remains compatibility-only and is not the production supervisor.
 private_chat_ids: [<telegram-id>]
 approved_groups:
   {}
-# Native Hermes identity binding. Do not infer user_id from chat_id.
-# Example: [{platform: telegram, chat_id: 123, user_id: 456, profile: default}]
 authorized_bindings:
   - platform: telegram
     chat_id: <telegram-id>

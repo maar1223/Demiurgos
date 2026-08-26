@@ -64,7 +64,9 @@ class TelegramUpdate:
 class CaptureReceipt:
     update_id: int
     status: str
-    prompt: tuple[str, ...] = ("Save", "Change world", "Cancel")
+    # Global-first default: capture always lands in the Taller de Ideas. The
+    # per-world Save/Change world actions remain a world-scoped variant.
+    prompt: tuple[str, ...] = ("Save global", "Cancel")
     capture_id: str | None = None
 
 

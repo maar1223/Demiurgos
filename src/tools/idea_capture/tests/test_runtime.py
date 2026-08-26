@@ -131,7 +131,8 @@ class RuntimeFlowTests(unittest.TestCase):
     def test_save_change_cancel_flow_through_worker(self):
         receipt = self.runtime.handle_update(text_payload(1, text="first idea"))
         self.assertEqual(receipt.status, "RAW_PERSISTED")
-        self.assertEqual(receipt.prompt, ("Save", "Change world", "Cancel"))
+        # Global-first default: the prompt names the Taller de Ideas save.
+        self.assertEqual(receipt.prompt, ("Save global", "Cancel"))
 
         self.runtime.confirm(receipt.capture_id, WorldAction.SAVE)
         saved = self.runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
@@ -302,17 +303,21 @@ class PollLoopTests(unittest.TestCase):
 
 
 class KeyboardTests(unittest.TestCase):
-    def test_capture_keyboard_payload(self):
+    def test_capture_keyboard_defaults_to_global_save(self):
         capture_id = "c" * 36
         keyboard = build_capture_keyboard(capture_id)
         buttons = {b["text"]: b["callback_data"]
                    for b in keyboard["inline_keyboard"][0]}
+        # SAVE_GLOBAL is the default path: no world chosen at capture, so the
+        # keyboard only offers the Taller de Ideas save and Cancel.
         self.assertEqual(list(buttons),
-                         ["Guardar", "Cambiar mundo", "Cancelar", "Guardar global"])
-        self.assertEqual(buttons["Guardar"], f"capture:{capture_id}:save")
-        self.assertEqual(buttons["Cambiar mundo"], f"capture:{capture_id}:world")
+                         ["Guardar en Taller de Ideas", "Cancelar"])
+        self.assertEqual(buttons["Guardar en Taller de Ideas"],
+                         f"capture:{capture_id}:save_global")
         self.assertEqual(buttons["Cancelar"], f"capture:{capture_id}:cancel")
-        self.assertEqual(buttons["Guardar global"], f"capture:{capture_id}:save_global")
+        # The per-world buttons are NOT offered on the primary keyboard.
+        self.assertNotIn("Guardar", buttons)
+        self.assertNotIn("Cambiar mundo", buttons)
         for data in buttons.values():
             self.assertLessEqual(len(data), 64)
 
@@ -562,8 +567,8 @@ class GlobalSaveFlowTests(unittest.TestCase):
         self.assertIsNone(saved.world)
         self.assertTrue((self.root / "ideas" / f"{saved.slug}.md").exists())
         self.assertEqual(transport.answered,
-                         [("q-global", "✅ Idea guardada en el banco global (procesando…).")])
-        self.assertEqual(replies, ["✅ Idea guardada en el banco global (procesando…)."])
+                         [("q-global", "✅ Idea guardada en el Taller de Ideas (procesando…).")])
+        self.assertEqual(replies, ["✅ Idea guardada en el Taller de Ideas (procesando…)."])
 
     def test_save_global_without_global_ideas_root_is_retryable(self):
         # A runtime that never received a global root cannot persist globally:

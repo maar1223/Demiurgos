@@ -19,7 +19,7 @@ class CaptureService:
         record = self.store.reserve(update)
         status = "DUPLICATE" if existing is not None else "RAW_PERSISTED"
         return CaptureReceipt(update.update_id, status,
-                              ("Save", "Change world", "Cancel"), record.capture_id)
+                              ("Save global", "Cancel"), record.capture_id)
 
     def confirm(self, capture_id: str, action: WorldAction, selected_world: str | None = None):
         if action is WorldAction.CANCEL:

@@ -39,13 +39,12 @@ function makeStatus(overrides: Partial<IdeaCaptureStatus> = {}): IdeaCaptureStat
     config: {
       private_chat_ids: [],
       approved_groups: {},
-      active_world: "",
       limits: { image_mb: 20, audio_mb: 50, audio_minutes: 5, raw_retention_days: 30 },
     },
     has_token: false,
     validation: { ok: true, errors: [] },
     serve: {
-      command: "PYTHONPATH=src/tools python -m idea_capture serve --world <mundo>",
+      command: "PYTHONPATH=src/tools python -m idea_capture serve",
       runnable: false,
       blocked_reasons: ["No hay TELEGRAM_BOT_TOKEN configurado en .env"],
     },
@@ -132,7 +131,7 @@ describe("IdeaCapturePanel — wizard navigation", () => {
     expect(mocked.getIdeaCaptureStatus).not.toHaveBeenCalled();
   });
 
-  it("shows a 5-step progress indicator and only the current step's content", async () => {
+  it("shows a 4-step progress indicator and only the current step's content", async () => {
     renderPanel(makeAuth());
     // Wait until the status has loaded (step 0 content rendered).
     await screen.findByRole("heading", { name: "Conectá tu bot de Telegram" });
@@ -140,12 +139,13 @@ describe("IdeaCapturePanel — wizard navigation", () => {
     for (const label of [
       "Conectar bot",
       "Detectar chat",
-      "Elegir mundo",
       "Revisar",
       "Finalizar",
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
+    // Capture never asks for a world: no world step exists at all.
+    expect(screen.queryByText("Elegir mundo")).not.toBeInTheDocument();
     // Step 0 content visible; the rest are hidden (only the progress label
     // for later steps exists, never their content).
     expect(
@@ -189,7 +189,7 @@ describe("IdeaCapturePanel — wizard navigation", () => {
 
     await goToStep(user, 1);
     expect(
-      screen.getByRole("heading", { name: "Elegí el mundo de captura" }),
+      screen.getByRole("heading", { name: "Revisá tu configuración" }),
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Volver" }));
@@ -590,7 +590,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
   });
 });
 
-describe("IdeaCapturePanel — Elegir mundo", () => {
+describe("IdeaCapturePanel — sin elegir mundo (Taller de Ideas)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -599,39 +599,44 @@ describe("IdeaCapturePanel — Elegir mundo", () => {
     vi.restoreAllMocks();
   });
 
-  it("preselects the active world from the server config", async () => {
-    const base = makeStatus({ has_token: true });
-    base.config.active_world = "vibrantes";
-    base.worlds = ["vibrantes", "umbrales"];
-    mocked.getIdeaCaptureStatus.mockResolvedValue(base);
-    const user = userEvent.setup();
-    renderPanel(makeAuth());
-    await goToStep(user, 2);
-
-    expect(screen.getByLabelText("Mundo activo")).toHaveValue("vibrantes");
-  });
-
-  it("lets the user switch the world from the simple selector", async () => {
-    const base = makeStatus({ has_token: true });
-    base.config.active_world = "vibrantes";
-    base.worlds = ["vibrantes", "umbrales"];
-    mocked.getIdeaCaptureStatus.mockResolvedValue(base);
-    const user = userEvent.setup();
-    renderPanel(makeAuth());
-    await goToStep(user, 2);
-
-    await user.selectOptions(screen.getByLabelText("Mundo activo"), "umbrales");
-    expect(screen.getByLabelText("Mundo activo")).toHaveValue("umbrales");
-  });
-
-  it("warns when no world is selected yet (Hermes would not start capture)", async () => {
+  it("never shows a world selector anywhere in the wizard", async () => {
     mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
     const user = userEvent.setup();
     renderPanel(makeAuth());
     await goToStep(user, 2);
 
     expect(
-      screen.getByText(/Sin mundo activo Hermes no arranca la captura/i),
+      screen.getByRole("heading", { name: "Revisá tu configuración" }),
+    ).toBeInTheDocument();
+    // No world select, no world label, no world step content.
+    expect(screen.queryByLabelText("Mundo activo")).not.toBeInTheDocument();
+    expect(screen.queryByText("— sin mundo —")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Sin mundo activo/i)).not.toBeInTheDocument();
+  });
+
+  it("reaches Finalizar without any world state — capture needs no world", async () => {
+    mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
+    const user = userEvent.setup();
+    renderPanel(makeAuth());
+    await goToStep(user, 3);
+
+    expect(
+      screen.getByRole("heading", { name: "Finalizá y arrancá la captura" }),
+    ).toBeInTheDocument();
+    // The destination copy names the Taller de Ideas, not a world.
+    expect(screen.getByText(/Taller de Ideas/)).toBeInTheDocument();
+  });
+
+  it("shows the Taller de Ideas as the capture destination in Revisar", async () => {
+    mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
+    const user = userEvent.setup();
+    renderPanel(makeAuth());
+    await goToStep(user, 2);
+
+    // Destination row + explanatory note both name the Taller de Ideas.
+    expect(screen.getAllByText("Taller de Ideas").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText(/no elegís mundo al capturar/i),
     ).toBeInTheDocument();
   });
 });
@@ -645,28 +650,28 @@ describe("IdeaCapturePanel — Revisar y configuración avanzada", () => {
     vi.restoreAllMocks();
   });
 
-  it("summarizes bot, chat and world before finishing", async () => {
+  it("summarizes bot, chat and destination before finishing", async () => {
     const base = makeStatus({ has_token: true });
     base.config.private_chat_ids = [111];
-    base.config.active_world = "vibrantes";
     mocked.getIdeaCaptureStatus.mockResolvedValue(base);
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 3);
+    await goToStep(user, 2);
 
     expect(
       screen.getByRole("heading", { name: "Revisá tu configuración" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Token configurado")).toBeInTheDocument();
     expect(screen.getByText("1 chat(s)")).toBeInTheDocument();
-    expect(screen.getByText("vibrantes")).toBeInTheDocument();
+    // Destination row + explanatory note both name the Taller de Ideas.
+    expect(screen.getAllByText("Taller de Ideas").length).toBeGreaterThan(0);
   });
 
   it("flags fail-closed in review when no chat is authorized", async () => {
     mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 3);
+    await goToStep(user, 2);
 
     expect(screen.getByText("Ninguno (fail-closed)")).toBeInTheDocument();
     expect(screen.getAllByText(/se rechaza TODO el ingreso/i).length).toBeGreaterThan(0);
@@ -676,7 +681,7 @@ describe("IdeaCapturePanel — Revisar y configuración avanzada", () => {
     mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 3);
+    await goToStep(user, 2);
 
     const summary = screen.getByText("Configuración avanzada (opcional)");
     expect(summary).toBeInTheDocument();
@@ -692,7 +697,7 @@ describe("IdeaCapturePanel — Revisar y configuración avanzada", () => {
     mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 3);
+    await goToStep(user, 2);
 
     await user.click(screen.getByText("Configuración avanzada (opcional)"));
 
@@ -714,15 +719,18 @@ describe("IdeaCapturePanel — Revisar y configuración avanzada", () => {
     mocked.getIdeaCaptureStatus.mockResolvedValue(
       makeStatus({
         has_token: true,
-        validation: { ok: false, errors: ["El mundo activo no es un nombre seguro"] },
+        validation: {
+          ok: false,
+          errors: ["limits.image_mb: debe ser un entero positivo"],
+        },
       }),
     );
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 3);
+    await goToStep(user, 2);
 
     expect(
-      screen.getByText(/El mundo activo no es un nombre seguro/),
+      screen.getByText(/limits\.image_mb: debe ser un entero positivo/),
     ).toBeInTheDocument();
   });
 });
@@ -739,7 +747,6 @@ describe("IdeaCapturePanel — Finalizar", () => {
   it("saves the assembled config and shows the exact Hermes command", async () => {
     const base = makeStatus({ has_token: true });
     base.config.private_chat_ids = [111];
-    base.config.active_world = "vibrantes";
     base.serve = {
       command: "powershell -ExecutionPolicy Bypass -File start-gateway.ps1",
       runnable: true,
@@ -749,17 +756,22 @@ describe("IdeaCapturePanel — Finalizar", () => {
     mocked.saveIdeaCaptureConfig.mockResolvedValue(base);
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 4);
+    await goToStep(user, 3);
 
     await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
 
+    // The saved config never carries a world: capture goes to the Taller de
+    // Ideas automatically.
     expect(mocked.saveIdeaCaptureConfig).toHaveBeenCalledWith(
       expect.objectContaining({
         private_chat_ids: [111],
         approved_groups: {},
-        active_world: "vibrantes",
       }),
     );
+    expect(
+      (mocked.saveIdeaCaptureConfig.mock.calls[0][0] as { active_world?: string })
+        .active_world,
+    ).toBeUndefined();
     expect(await screen.findByText("Configuración guardada.")).toBeInTheDocument();
     expect(screen.getByText(/start-gateway\.ps1/)).toBeInTheDocument();
     expect(screen.getByText(/Listo para ejecutar Hermes/)).toBeInTheDocument();
@@ -770,7 +782,7 @@ describe("IdeaCapturePanel — Finalizar", () => {
     mocked.saveIdeaCaptureConfig.mockResolvedValue(makeStatus({ has_token: true }));
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 4);
+    await goToStep(user, 3);
 
     await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
 
@@ -783,27 +795,28 @@ describe("IdeaCapturePanel — Finalizar", () => {
   it("shows the fail-closed blocked reasons after saving when serve cannot run", async () => {
     const base = makeStatus({ has_token: true });
     base.serve = {
-      command: "PYTHONPATH=src/tools python -m idea_capture serve --world <mundo>",
+      command: "PYTHONPATH=src/tools python -m idea_capture serve",
       runnable: false,
       blocked_reasons: [
         "Las listas de autorización están vacías (fail-closed): se rechaza todo ingreso",
-        "No hay un mundo activo configurado",
       ],
     };
     mocked.getIdeaCaptureStatus.mockResolvedValue(base);
     mocked.saveIdeaCaptureConfig.mockResolvedValue(base);
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 4);
+    await goToStep(user, 3);
 
     await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
 
     expect(
       await screen.findByText(/Las listas de autorización están vacías \(fail-closed\)/),
     ).toBeInTheDocument();
+    // A missing world is no longer a blocking reason: capture goes to the
+    // Taller de Ideas without a world.
     expect(
-      screen.getByText(/No hay un mundo activo configurado/),
-    ).toBeInTheDocument();
+      screen.queryByText(/No hay un mundo activo configurado/),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByText(/Listo para ejecutar el serve/),
     ).not.toBeInTheDocument();
@@ -813,7 +826,7 @@ describe("IdeaCapturePanel — Finalizar", () => {
     mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 4);
+    await goToStep(user, 3);
 
     expect(screen.getByText("Limitaciones actuales")).toBeInTheDocument();
     expect(screen.getByText("Limitación de prueba")).toBeInTheDocument();
@@ -825,7 +838,7 @@ describe("IdeaCapturePanel — Finalizar", () => {
     mocked.getIdeaCaptureStatus.mockResolvedValue(base);
     const user = userEvent.setup();
     renderPanel(makeAuth());
-    await goToStep(user, 4);
+    await goToStep(user, 3);
 
     // Break the private ids through the advanced disclosure on the review step.
     await user.click(screen.getByRole("button", { name: "Volver" }));

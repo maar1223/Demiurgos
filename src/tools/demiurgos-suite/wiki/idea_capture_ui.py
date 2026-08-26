@@ -687,6 +687,7 @@ def authorize_chat_into_config(config: dict, payload: dict) -> tuple[dict, str]:
 # ---------------------------------------------------------------------------
 
 _LIMITATIONS = [
+    "La captura va siempre al Taller de Ideas global (ideas/): el mundo se elige recién al materializar una idea desde el taller.",
     "Publicador real de Engram no conectado: las ideas se persisten en el store local (outbox) pero aún no se publican a Engram.",
     "Los proveedores de enriquecimiento de voz e imágenes no están conectados: solo se captura texto plano.",
     "Para probar de verdad hace falta un bot y un chat de staging — nunca credenciales de producción.",
@@ -699,25 +700,18 @@ _LIMITATIONS = [
 def build_serve_status(config: dict, has_token: bool) -> dict:
     """Native Hermes startup command for the current local runtime + readiness.
 
-    Fail-closed gates mirror runtime.run_serve: token, non-empty allowlists,
-    and an existing world are all required before the native handler can start.
+    Capture always goes to the global Taller de Ideas bank (no world chosen at
+    capture), so a world is NOT required to start: the only fail-closed gates
+    are the bot token and non-empty allowlists (an optional ``active_world``
+    is still read backward-compatibly when present, but never blocks).
     """
     private = config["private_chat_ids"]
     groups = config["approved_groups"]
-    world = config.get("active_world", "")
     blocked: list[str] = []
     if not has_token:
         blocked.append("No hay TELEGRAM_BOT_TOKEN configurado en .env")
     if not private and not groups:
         blocked.append("Las listas de autorización están vacías (fail-closed): se rechaza todo ingreso")
-    if not world:
-        blocked.append("No hay un mundo activo configurado")
-    elif not _WORLD.fullmatch(world):
-        blocked.append("El mundo activo no es un nombre seguro")
-    elif not (_mundos_root() / world).is_dir():
-        blocked.append(f"El mundo '{world}' no existe en mundos/")
-
-    target = world if world else "<mundo>"
     if os.name == "nt":
         command = "powershell -ExecutionPolicy Bypass -File start-gateway.ps1"
     else:

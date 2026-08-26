@@ -6,13 +6,15 @@ It is a thin layer over the existing SDD contracts and adds:
 - fail-closed policy loading from ``config/idea-capture.yaml`` (``load_policy``)
 - a Telegram adapter entrypoint (``update_from_telegram``) with an injectable
   file resolver, so it is testable without network calls
-- the Save / Change world / Cancel confirmation flow (``confirm``)
- - an injectable publisher/transport boundary (``MemoryPublisher`` by default,
+- the Save global / Cancel confirmation flow (``confirm``); SAVE_GLOBAL is the
+  default capture path (Taller de Ideas, no world), while SAVE/CHANGE_WORLD
+  remain a world-scoped variant
+- an injectable publisher/transport boundary (``MemoryPublisher`` by default,
    ``TelegramTransport`` only for the compatibility command)
-- Telegram inline keyboards for the capture flow (Guardar / Cambiar mundo /
+- Telegram inline keyboards for the capture flow (Guardar en Taller de Ideas /
   Cancelar) with callback-query handling; the text commands remain a
   backward-compatible fallback
- - an ownership lock retained for the compatibility command so it cannot race
+- an ownership lock retained for the compatibility command so it cannot race
    Hermes' production Telegram owner
 - a ``smoke`` CLI that runs fully offline in a temporary directory
 """
@@ -98,16 +100,19 @@ def parse_capture_callback(data) -> tuple[str, WorldAction, str | None] | None:
 
 
 def build_capture_keyboard(capture_id: str) -> dict:
-    """Inline keyboard shown after a capture: Guardar / Cambiar mundo / Cancelar / Guardar global."""
+    """Inline keyboard shown after a capture: Guardar en Taller de Ideas / Cancelar.
+
+    SAVE_GLOBAL is the default capture path: the idea lands in the global
+    Taller de Ideas bank with no world chosen at capture. The per-world
+    SAVE/CHANGE_WORLD actions remain supported at the runtime level as a
+    world-scoped variant (text commands /save, /world), but they are not
+    offered on the primary keyboard.
+    """
     return {"inline_keyboard": [[
-        {"text": "Guardar",
-         "callback_data": encode_capture_callback(capture_id, WorldAction.SAVE)},
-        {"text": "Cambiar mundo",
-         "callback_data": encode_capture_callback(capture_id, WorldAction.CHANGE_WORLD)},
+        {"text": "Guardar en Taller de Ideas",
+         "callback_data": encode_capture_callback(capture_id, WorldAction.SAVE_GLOBAL)},
         {"text": "Cancelar",
          "callback_data": encode_capture_callback(capture_id, WorldAction.CANCEL)},
-        {"text": "Guardar global",
-         "callback_data": encode_capture_callback(capture_id, WorldAction.SAVE_GLOBAL)},
     ]]}
 
 
@@ -444,7 +449,7 @@ def _handle_callback_query(runtime: IdeaCaptureRuntime, transport: TelegramTrans
             answer = f"✅ Idea guardada en {runtime.active_world} (procesando…)."
         elif action is WorldAction.SAVE_GLOBAL:
             runtime.confirm(capture_id, action)
-            answer = "✅ Idea guardada en el banco global (procesando…)."
+            answer = "✅ Idea guardada en el Taller de Ideas (procesando…)."
         else:  # CANCEL
             runtime.confirm(capture_id, action)
             answer = "🗑 Idea cancelada."
@@ -517,7 +522,8 @@ def run_smoke(config_path: str | Path = CONFIG_PATH) -> dict:
         runtime = IdeaCaptureRuntime(config=_build_test_policy(),
                                      state_path=root / "capture.sqlite3",
                                      mundos_root=root / "mundos",
-                                     active_world="smoke", publisher=publisher)
+                                     active_world="smoke", publisher=publisher,
+                                     global_ideas_root=root / "ideas")
 
         # 1. Fail closed: an unauthorized chat is rejected, nothing persisted.
         try:
@@ -549,7 +555,7 @@ def run_smoke(config_path: str | Path = CONFIG_PATH) -> dict:
         step("save_flow_reaches_saved", record.state is CaptureState.SAVED,
              f"state={record.state.value} slug={record.slug}")
 
-        # 5. Change world flow.
+        # 5. Change world flow (world-scoped variant, still supported).
         receipt = runtime.handle_update({"update_id": 3, "message": {
             "chat": {"id": 7, "type": "private"}, "from": {"id": 8},
             "text": "Third smoke idea"}})
@@ -558,7 +564,17 @@ def run_smoke(config_path: str | Path = CONFIG_PATH) -> dict:
         step("change_world_flow", record.world == "smoke2" and record.state is CaptureState.SAVED,
              f"world={record.world} state={record.state.value}")
 
-        # 6. Replaying the same update is a durable no-op: same capture id, no new row.
+        # 6. Save global flow -> default path, no world, Taller de Ideas.
+        receipt = runtime.handle_update({"update_id": 4, "message": {
+            "chat": {"id": 7, "type": "private"}, "from": {"id": 8},
+            "text": "Fourth smoke idea"}})
+        runtime.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        record = runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
+        step("save_global_flow", record.global_ and record.world is None
+             and record.state is CaptureState.SAVED,
+             f"global={record.global_} state={record.state.value} slug={record.slug}")
+
+        # 7. Replaying the same update is a durable no-op: same capture id, no new row.
         before = runtime.store.count()
         duplicate = runtime.handle_update({"update_id": 2, "message": {
             "chat": {"id": 7, "type": "private"}, "from": {"id": 8},
@@ -567,9 +583,9 @@ def run_smoke(config_path: str | Path = CONFIG_PATH) -> dict:
              duplicate.capture_id == second_capture_id and runtime.store.count() == before,
              f"same_id={duplicate.capture_id == second_capture_id} count={runtime.store.count()}")
 
-        # 7. Outbox published exactly once per saved idea.
+        # 8. Outbox published exactly once per saved idea.
         runtime.drain_outbox()
-        step("outbox_published", len(publisher.messages) == 2,
+        step("outbox_published", len(publisher.messages) == 3,
              f"published={len(publisher.messages)}")
 
         runtime.close()

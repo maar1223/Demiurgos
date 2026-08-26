@@ -7,7 +7,6 @@ It deliberately has no Telegram SDK, Bot API, token, or polling dependency.
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable
@@ -23,9 +22,6 @@ from .runtime import (
     parse_capture_callback,
 )
 from .telegram import UnauthorizedUpdate
-
-
-_SAFE_WORLD = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _within(path: Path, root: Path) -> bool:
@@ -86,9 +82,12 @@ class IdeaCaptureHandler:
             state_path=state_path or self.repo_root / "data" / "idea-capture.sqlite3",
             mundos_root=self.mundos_root,
             active_world=world,
+            global_ideas_root=self.repo_root / "ideas",
         )
         effective_policy = runtime.config.policy if runtime is not None else native_policy
-        self.enabled = bool(effective_policy.authorized_bindings and _SAFE_WORLD.fullmatch(world or ""))
+        # Capture always lands in the global Taller de Ideas, so no world is
+        # required to enable the handler: authorized bindings are enough.
+        self.enabled = bool(effective_policy.authorized_bindings)
 
     @property
     def policy(self):
@@ -178,7 +177,7 @@ class IdeaCaptureHandler:
                 answer = f"Idea guardada en {self.runtime.active_world} (procesando...)."
             elif action is WorldAction.SAVE_GLOBAL:
                 self.runtime.confirm(capture_id, action)
-                answer = "Idea guardada en el banco global (procesando...)."
+                answer = "Idea guardada en el Taller de Ideas (procesando...)."
             else:
                 self.runtime.confirm(capture_id, action)
                 answer = "Idea cancelada."
