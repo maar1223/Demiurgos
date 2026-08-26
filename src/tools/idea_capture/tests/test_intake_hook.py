@@ -7,7 +7,9 @@ runtime is built with a temporary root so no test touches the repo.
 
 import asyncio
 import importlib.util
+import sys
 import tempfile
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,9 +27,25 @@ _PLUGIN_PATH = (
 
 
 def _load_plugin():
+    """Load the plugin the way Hermes does: ``hermes_plugins.<slug>`` package.
+
+    Mirrors ``hermes_cli.plugins._load_directory_module``: the plugin dir
+    becomes the package path so the relative import of ``.capture_adapter``
+    (PR 2) resolves exactly like it does at gateway runtime.
+    """
+    plugin_dir = _PLUGIN_PATH.parent
+    module_name = "hermes_plugins.demiurgos_idea_capture"
+    if "hermes_plugins" not in sys.modules:
+        ns_pkg = types.ModuleType("hermes_plugins")
+        ns_pkg.__path__ = []
+        ns_pkg.__package__ = "hermes_plugins"
+        sys.modules["hermes_plugins"] = ns_pkg
     spec = importlib.util.spec_from_file_location(
-        "demiurgos_idea_capture_plugin", _PLUGIN_PATH)
+        module_name, _PLUGIN_PATH, submodule_search_locations=[str(plugin_dir)])
     module = importlib.util.module_from_spec(spec)
+    module.__package__ = module_name
+    module.__path__ = [str(plugin_dir)]
+    sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -310,7 +328,44 @@ def test_register_registers_pre_gateway_dispatch_hook(monkeypatch):
     with tempfile.TemporaryDirectory() as directory:
         monkeypatch.setenv("DEMIURGOS_ROOT", directory)
         calls = []
-        ctx = SimpleNamespace(register_hook=lambda name, cb: calls.append((name, cb)))
+
+        def _register_hook(name, cb):
+            calls.append(("register_hook", name, cb))
+
+        def _register_platform(**kwargs):
+            calls.append(("register_platform", kwargs))
+
+        ctx = SimpleNamespace(register_hook=_register_hook,
+                              register_platform=_register_platform)
         plugin.register(ctx)
-    assert ("pre_gateway_dispatch", plugin.capture_intake_hook) in calls
+    assert ("register_hook", "pre_gateway_dispatch", plugin.capture_intake_hook) in calls
     assert plugin._handler is not None
+    platform = [c for c in calls if c[0] == "register_platform"]
+    assert len(platform) == 1
+    kwargs = platform[0][1]
+    assert kwargs["name"] == "telegram"
+    assert kwargs["required_env"] == ["TELEGRAM_BOT_TOKEN"]
+    assert callable(kwargs["adapter_factory"])
+    assert callable(kwargs["check_fn"])
+
+
+def test_register_platform_factory_builds_capture_adapter(monkeypatch):
+    """2.8: the registered factory returns a CaptureTelegramAdapter subclass."""
+    plugin = _load_plugin()
+    with tempfile.TemporaryDirectory() as directory:
+        monkeypatch.setenv("DEMIURGOS_ROOT", directory)
+        captured = {}
+
+        def _register_platform(**kwargs):
+            captured.update(kwargs)
+
+        ctx = SimpleNamespace(
+            register_hook=lambda name, cb: None,
+            register_platform=_register_platform,
+        )
+        plugin.register(ctx)
+    adapter = captured["adapter_factory"](SimpleNamespace(name="telegram", extra={}))
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    assert isinstance(adapter, TelegramAdapter)
+    assert type(adapter).__name__ == "CaptureTelegramAdapter"
+    assert adapter._capture_handler is plugin._handler

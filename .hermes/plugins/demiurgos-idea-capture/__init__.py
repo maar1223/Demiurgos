@@ -7,7 +7,9 @@ intercepts the designated capture chat so messages never reach the assistant.
 
 PR 2 adds the ``CaptureTelegramAdapter`` subclass registered via
 ``ctx.register_platform("telegram", ...)`` for the inline Guardar/Descartar
-keyboard and callback routing; the prompt-send seam below is its hook point.
+keyboard and callback routing; ``_schedule_capture_prompt`` now calls
+``adapter.send_capture_prompt`` (falling back to plain ``send`` when the
+platform override is not in effect).
 """
 
 from __future__ import annotations
@@ -31,6 +33,11 @@ def register(ctx) -> None:
         sys.path.insert(0, str(tools))
 
     from idea_capture.hermes_handler import IdeaCaptureHandler
+    from .capture_adapter import (
+        CaptureTelegramAdapter,
+        capture_platform_deps_ready,
+        verify_bundled_adapter_surface,
+    )
 
     _handler = IdeaCaptureHandler(repo_root=root)
 
@@ -38,6 +45,24 @@ def register(ctx) -> None:
     # or assistant dispatch. The hook is synchronous and returns a skip dict so
     # captured messages are consumed and never reach the assistant.
     ctx.register_hook("pre_gateway_dispatch", capture_intake_hook)
+
+    # PR 2: override the bundled telegram adapter with the capture subclass so
+    # Guardar/Descartar callbacks route and the prompt carries a real keyboard.
+    # Fail loud if the bundled adapter's private helpers drifted (Hermes
+    # upgrade), then register last-writer-wins (platform_registry replaces
+    # same-name entries).
+    verify_bundled_adapter_surface()
+
+    def _adapter_factory(cfg):
+        return CaptureTelegramAdapter(cfg, capture_handler=_handler)
+
+    ctx.register_platform(
+        name="telegram",
+        label="Telegram (Demiurgos capture)",
+        adapter_factory=_adapter_factory,
+        check_fn=capture_platform_deps_ready,
+        required_env=["TELEGRAM_BOT_TOKEN"],
+    )
 
 
 def capture_intake_hook(*, event, gateway, session_store) -> dict | None:
@@ -92,14 +117,21 @@ def capture_intake_hook(*, event, gateway, session_store) -> dict | None:
 def _schedule_capture_prompt(adapter, source, capture_id: str) -> None:
     """Schedule the outbound capture prompt without blocking dispatch.
 
-    PR 1 sends a plain-text confirmation through the bundled adapter's real
-    ``send`` API (Hermes v0.20 ``send()`` has no ``reply_markup``). PR 2
-    replaces this seam with ``CaptureTelegramAdapter.send_capture_prompt`` so
-    the Guardar/Descartar keyboard rides the same scheduled task.
+    PR 2: the prompt rides ``CaptureTelegramAdapter.send_capture_prompt`` so
+    the Guardar/Descartar keyboard is attached. Falls back to the PR 1
+    plain-text ``send`` when the active adapter predates the subclass (e.g.
+    the platform override is not yet in effect).
     """
-    text = f"Idea capturada (id=`{capture_id}`). Elegí una acción:"
-    metadata = {"thread_id": source.thread_id} if getattr(source, "thread_id", None) else None
+    kwargs = {"chat_id": str(source.chat_id), "capture_id": capture_id}
+    if getattr(source, "thread_id", None):
+        kwargs["thread_id"] = source.thread_id
+    send_prompt = getattr(adapter, "send_capture_prompt", None)
     try:
-        asyncio.create_task(adapter.send(str(source.chat_id), text, metadata=metadata))
+        if callable(send_prompt):
+            asyncio.create_task(send_prompt(**kwargs))
+        else:
+            text = f"Idea capturada (id=`{capture_id}`). Elegí una acción:"
+            metadata = {"thread_id": kwargs["thread_id"]} if "thread_id" in kwargs else None
+            asyncio.create_task(adapter.send(str(source.chat_id), text, metadata=metadata))
     except RuntimeError as exc:  # no running loop: prompt cannot be scheduled
         log.warning("idea-capture prompt scheduling failed for %s: %s", capture_id, exc)
