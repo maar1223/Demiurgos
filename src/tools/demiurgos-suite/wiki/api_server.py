@@ -161,6 +161,12 @@ TRASH_ROOT = world_recycle_bin.TRASH_ROOT  # data/world-trash — monkeypatchabl
 # (GET /api/worlds/trash, DELETE /api/worlds/trash/{name}).
 _RESERVED_WORLD_NAMES = frozenset({"Ideas", "trash"})
 
+# The single literal ``mundo`` segment that maps to the world-agnostic assistant
+# context (Taller de Ideas). ONLY this exact string is special: the AI assistant
+# handlers accept it as a valid context WITHOUT a world directory, while every
+# other route (and every other unknown name) keeps rejecting it.
+GLOBAL_ASSISTANT_CONTEXT = "ideas-global"
+
 
 _LOCAL_STATE: LocalState | None = None
 
@@ -226,6 +232,30 @@ def _resolve_mundo_dir(mundo: str) -> Path | None:
     if mundo_dir.parent != MUNDOS_DIR.resolve():
         return None
     return mundo_dir
+
+
+def _resolve_assistant_context(mundo: str) -> tuple[str, Path | None]:
+    """Resolve an assistant ``mundo`` segment to ``(kind, world_root)``.
+
+    ``kind`` is one of:
+      ``"global"``  — the single literal :data:`GLOBAL_ASSISTANT_CONTEXT`
+                      (world-agnostic: ``world_root`` is ``None``, no world
+                      directory is required or resolved, no lore grounding);
+      ``"world"``   — a real, visible world (same rules as
+                      :func:`_resolve_mundo_dir`); ``world_root`` is its root;
+      ``"unknown"`` — anything else; callers fail closed.
+
+    Only the AI assistant handlers use this narrow resolver.
+    ``_resolve_mundo_dir`` itself is unchanged, so every other route keeps
+    rejecting the global context and arbitrary strings are never treated as
+    worlds.
+    """
+    if mundo == GLOBAL_ASSISTANT_CONTEXT:
+        return "global", None
+    world_dir = _resolve_mundo_dir(mundo)
+    if world_dir is not None:
+        return "world", world_dir
+    return "unknown", None
 
 
 # ---------------------------------------------------------------------------
@@ -3442,10 +3472,28 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
     # the guarded continuation, so the graph is never queried twice. The
     # session's distilled summary is injected so the single-run answer is
     # memory-aware (fricción 3).
+    # Bounded assistant context: real worlds keep the world-scoped authorized
+    # context; the single literal global context is world-agnostic (no mundo,
+    # ficha, reference, or graph grounding); anything else fails closed — the
+    # global special-case is never a permissive catch-all for arbitrary names.
+    context_kind, _ = _resolve_assistant_context(mundo)
+    if context_kind == "unknown":
+        logger.info("ai_ask: unknown assistant context %r; fail closed", mundo)
+        return SemanticResult(
+            decision=None,
+            attempts=0,
+            request_id=f"semantic-{uuid.uuid4().hex}",
+            session_id=body.session_id or None,
+            unavailable=True,
+        ).as_dict()
     ficha = _active_ficha_context(mundo, body)
-    context, reference_context, reference_name, graph_unavailable = _semantic_context(
-        mundo, body.prompt, ficha=ficha,
-    )
+    if context_kind == "global":
+        context = SemanticContext()
+        reference_context, reference_name, graph_unavailable = "", None, False
+    else:
+        context, reference_context, reference_name, graph_unavailable = _semantic_context(
+            mundo, body.prompt, ficha=ficha,
+        )
     distilled_state = _distilled_summary(body.session_id)
     result = await _semantic_gate(
         mundo, body.prompt,
@@ -3867,6 +3915,23 @@ def _named_reference_context(mundo: str, prompt: str) -> tuple[str, bool, str | 
     return reference.context[:4_000], False, reference.name
 
 
+_GLOBAL_ASSISTANT_IDENTITY = (
+    "[SYSTEM OVERRIDE — IDENTITY] Tu identidad es el Asistente Demiurgos del "
+    "Taller de Ideas, un espacio independiente de cualquier mundo. NO sos "
+    "Gentle AI y NO pertenecés a ningún mundo narrativo concreto. Respondé "
+    "siempre como el Asistente Demiurgos: ayudá a brainstormear, enriquecer y "
+    "desarrollar ideas narrativas genéricas (premisas, personajes, escenarios, "
+    "tramas) sin asumir acceso a ningún mundo."
+)
+
+_GLOBAL_ASSISTANT_GUIDANCE = (
+    "[Contexto: sesión global sin mundo. No hay fichas, lore, grafo ni "
+    "archivos de ningún mundo. No inventes hechos de mundos existentes; si la "
+    "persona menciona un mundo concreto, recordale que este asistente trabaja "
+    "sin acceso a ese mundo y proponé ideas genéricas o pedile más contexto.]"
+)
+
+
 def _build_ai_ask_prompt(
     mundo: str, body: AskRequest, ficha_context: str | None = None,
     reference_name: str | None = None,
@@ -3876,28 +3941,38 @@ def _build_ai_ask_prompt(
 ) -> str:
     from demiurgos_personality import build_identity_prompt, build_graph_context
 
+    global_context = mundo == GLOBAL_ASSISTANT_CONTEXT
     parts: list[str] = []
 
-    # Demiurgos assistant identity (world-agnostic)
-    if mundo:
+    # Demiurgos assistant identity: world-grounded for real worlds, or the
+    # world-agnostic Taller de Ideas persona for the global context.
+    if global_context:
+        parts.append(_GLOBAL_ASSISTANT_IDENTITY)
+    elif mundo:
         parts.append(build_identity_prompt(mundo))
 
-    # Tool usage guidance: use the graph tools, never generic file/lore tools
-    parts.append(
-        "[Tool usage guidance: For questions about this world, use the Demiurgos graph "
-        "tools, not generic file tools. Prefer this flow: call graph_search to locate an "
-        "entity, then graph_read to read its ficha, then answer using only what was read. "
-        "Use graph_links only when the question is about connections between entities. Do "
-        "NOT use generic search/read file tools (search_files, read_file) or lore_search "
-        "for world lore when the graph tools allow answering directly. If the graph returns "
-        "nothing for the world, say so plainly instead of inventing facts.]"
-    )
+    if global_context:
+        # World-agnostic: no graph tools, no world lore grounding — the global
+        # assistant brainstorms/enriches ideas generically and never claims
+        # access to any world's files, graph, or lore.
+        parts.append(_GLOBAL_ASSISTANT_GUIDANCE)
+    else:
+        # Tool usage guidance: use the graph tools, never generic file/lore tools
+        parts.append(
+            "[Tool usage guidance: For questions about this world, use the Demiurgos graph "
+            "tools, not generic file tools. Prefer this flow: call graph_search to locate an "
+            "entity, then graph_read to read its ficha, then answer using only what was read. "
+            "Use graph_links only when the question is about connections between entities. Do "
+            "NOT use generic search/read file tools (search_files, read_file) or lore_search "
+            "for world lore when the graph tools allow answering directly. If the graph returns "
+            "nothing for the world, say so plainly instead of inventing facts.]"
+        )
 
-    # Entity graph context (search for entities matching the prompt)
-    graph_index = _get_graph(mundo) if mundo else None
-    graph_ctx = build_graph_context(body.prompt, graph_index)
-    if graph_ctx:
-        parts.append(graph_ctx)
+        # Entity graph context (search for entities matching the prompt)
+        graph_index = _get_graph(mundo) if mundo else None
+        graph_ctx = build_graph_context(body.prompt, graph_index)
+        if graph_ctx:
+            parts.append(graph_ctx)
 
     # Response guidance
     parts.append(
@@ -4084,15 +4159,19 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
                 "reason_code": "guided_handoff",
             },
         )
-    world_root = _resolve_mundo_dir(mundo)
-    if world_root is None:
+    context_kind, world_root = _resolve_assistant_context(mundo)
+    if context_kind == "unknown":
         return _activity_unavailable()
 
     # Mandatory Hermes semantic interpretation FIRST with bounded authorized
     # context. No classifier, action, session, proposal, or write precedes the
-    # validated decision.
+    # validated decision. The global context is world-agnostic: no mundo,
+    # ficha, reference, or graph grounding reaches the gate.
     request_id = f"activity-{uuid.uuid4().hex}"
-    context, _, _, _ = _semantic_context(mundo, body.prompt)
+    if context_kind == "global":
+        context = SemanticContext()
+    else:
+        context, _, _, _ = _semantic_context(mundo, body.prompt)
     result = await _semantic_gate(
         mundo, body.prompt,
         session_id=body.session_id,
