@@ -10,6 +10,13 @@ PR 2 adds the ``CaptureTelegramAdapter`` subclass registered via
 keyboard and callback routing; ``_schedule_capture_prompt`` now calls
 ``adapter.send_capture_prompt`` (falling back to plain ``send`` when the
 platform override is not in effect).
+
+PR 3 adds the voice-duration probe: the intake hook routes events through
+``IdeaCaptureHandler._update_from_event_with_voice_probe`` so voice notes
+(no ``media_durations`` field on the v0.20 ``MessageEvent``) get their
+duration from the bundled adapter's ``_probe_voice_duration_seconds`` and
+pass ``validate_media`` (<=300s); over-limit or unprobeable voice fails
+closed with ``skip-rejected``.
 """
 
 from __future__ import annotations
@@ -92,7 +99,7 @@ def capture_intake_hook(*, event, gateway, session_store) -> dict | None:
         return None  # S-3.2: unauthorized sender -> assistant handles
 
     try:
-        update = handler._update_from_event(event)
+        update = handler._update_from_event_with_voice_probe(event, gateway)
     except ValueError:
         # S-10.3 / S-10.4: unsupported media type, no capturable text/media,
         # or missing Telegram identity -> normal assistant flow, never capture.

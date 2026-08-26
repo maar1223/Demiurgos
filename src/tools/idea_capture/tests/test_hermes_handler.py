@@ -3,9 +3,13 @@ import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+import idea_capture.hermes_handler as hermes_handler
 from idea_capture.config import CaptureConfig, CaptureLimits
 from idea_capture.hermes_handler import IdeaCaptureHandler
-from idea_capture.models import CaptureState
+from idea_capture.media import MediaValidationError, validate_media
+from idea_capture.models import CaptureState, MediaKind
 from idea_capture.runtime import IdeaCaptureRuntime
 from idea_capture.telegram import IngressPolicy
 
@@ -296,5 +300,128 @@ def test_callback_requires_exact_identity_and_confirms_world_asynchronously():
             asyncio.run(handler.handle_interaction(interaction=unauthorized))
             assert unauthorized.answers == ["No autorizado."]
             assert runtime.store.get(capture_id).state is CaptureState.SAVED
+        finally:
+            runtime.close()
+
+
+# -- PR 3: voice probe + media mapping + edge cases -------------------------
+
+
+def test_voice_probe_duration_passes_validation(monkeypatch):
+    """3.2 / S-2.3: probed duration <=300s lets an ogg voice note validate."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(
+            Path(directory), media_reader=lambda _: b"OggS raw-voice",
+        )
+        try:
+            monkeypatch.setattr(hermes_handler, "_probe_voice_duration", lambda path: 120)
+            event = _event(9, _source(), media_urls=[".hermes/cache/audio/voice.ogg"],
+                           media_types=["audio/ogg"], message_type="voice")
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            assert update.media.kind is MediaKind.VOICE
+            assert update.media.duration_seconds == 120.0
+            validate_media(update.media)  # must not raise
+            receipt = runtime.service.accept(update)
+            assert receipt.status == "RAW_PERSISTED"
+        finally:
+            runtime.close()
+
+
+def test_voice_over_300s_rejected(monkeypatch):
+    """3.3 / S-2.4: a voice longer than 300s is rejected, nothing persisted."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(
+            Path(directory), media_reader=lambda _: b"OggS raw-voice",
+        )
+        try:
+            monkeypatch.setattr(hermes_handler, "_probe_voice_duration", lambda path: 301)
+            event = _event(10, _source(), media_urls=[".hermes/cache/audio/long.ogg"],
+                           media_types=["audio/ogg"], message_type="voice")
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            assert update.media.duration_seconds == 301.0
+            with pytest.raises(MediaValidationError):
+                validate_media(update.media)
+            # What the intake hook maps to {"action": "skip", ...}: the accept
+            # path itself raises, so nothing is reserved, no leak, no crash.
+            with pytest.raises(MediaValidationError):
+                runtime.service.accept(update)
+            assert runtime.store.count() == 0
+        finally:
+            runtime.close()
+
+
+def test_voice_probe_failure_rejected(monkeypatch):
+    """3.4 / S-10.5: probe failure (no mutagen/ffprobe) fails closed."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(
+            Path(directory), media_reader=lambda _: b"OggS raw-voice",
+        )
+        try:
+            def _boom(path):
+                raise OSError("mutagen/ffprobe unavailable")
+
+            monkeypatch.setattr(hermes_handler, "_probe_voice_duration", _boom)
+            event = _event(11, _source(), media_urls=[".hermes/cache/audio/voice.ogg"],
+                           media_types=["audio/ogg"], message_type="voice")
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            assert update.media.duration_seconds is None  # fail closed, no crash
+            with pytest.raises(MediaValidationError):
+                validate_media(update.media)
+            assert runtime.store.count() == 0
+
+            # A probe that simply cannot read the file (returns None) behaves
+            # identically: duration stays unset and validation rejects it.
+            monkeypatch.setattr(hermes_handler, "_probe_voice_duration", lambda path: None)
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            assert update.media.duration_seconds is None
+            with pytest.raises(MediaValidationError):
+                validate_media(update.media)
+        finally:
+            runtime.close()
+
+
+def test_album_uses_media_urls_0():
+    """3.5 / S-10.1: a merged album event captures ONE idea via media_urls[0]."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        try:
+            event = _event(
+                12, _source(), text="burst",
+                media_urls=[".hermes/cache/images/a.png", ".hermes/cache/images/b.png"],
+                media_types=["image/png", "image/png"], message_type="photo",
+            )
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            assert update.media.kind is MediaKind.IMAGE
+            assert update.media.path == ".hermes/cache/images/a.png"
+            assert update.media.data.startswith(b"\x89PNG")
+            receipt = runtime.service.accept(update)
+            assert receipt.status == "RAW_PERSISTED"
+            assert runtime.store.count() == 1  # one idea per merged event
+        finally:
+            runtime.close()
+
+
+def test_mp3_without_id3_rejected(monkeypatch):
+    """3.6 / S-10.2: MP3 without an ID3 signature fails closed.
+
+    Voice notes (ogg) are the supported capture path; an MP3 whose bytes lack
+    the ID3 signature is rejected by validate_media with a user-visible error
+    path (skip-rejected) instead of leaking to the assistant.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(
+            Path(directory), media_reader=lambda _: b"\xff\xfb\x90 raw-mpeg-frames",
+        )
+        try:
+            monkeypatch.setattr(hermes_handler, "_probe_voice_duration", lambda path: 60)
+            event = _event(13, _source(), media_urls=[".hermes/cache/audio/note.mp3"],
+                           media_types=["audio/mp3"], message_type="audio")
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            assert update.media.kind is MediaKind.VOICE
+            assert update.media.mime == "audio/mp3"
+            assert update.media.duration_seconds == 60.0
+            with pytest.raises(MediaValidationError):
+                validate_media(update.media)  # signature check fails
+            assert runtime.store.count() == 0
         finally:
             runtime.close()

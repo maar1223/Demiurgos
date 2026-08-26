@@ -13,6 +13,7 @@ import types
 from pathlib import Path
 from types import SimpleNamespace
 
+import idea_capture.hermes_handler as hermes_handler
 from idea_capture.config import CaptureConfig, CaptureLimits
 from idea_capture.hermes_handler import IdeaCaptureHandler
 from idea_capture.media import MediaValidationError
@@ -92,7 +93,7 @@ class FakeGateway:
         return self._adapter
 
 
-def _handler(root: Path):
+def _handler(root: Path, *, media_reader=None):
     (root / "mundos" / "vibrantes").mkdir(parents=True)
     policy = IngressPolicy(
         frozenset(), {},
@@ -111,7 +112,7 @@ def _handler(root: Path):
         config_path=root / "idea-capture.yaml",
         mundos_root=root / "mundos",
         runtime=runtime,
-        media_reader=lambda _: b"\x89PNG\r\n\x1a\nraw-image",
+        media_reader=media_reader or (lambda _: b"\x89PNG\r\n\x1a\nraw-image"),
     )
     return handler, runtime
 
@@ -369,3 +370,74 @@ def test_register_platform_factory_builds_capture_adapter(monkeypatch):
     assert isinstance(adapter, TelegramAdapter)
     assert type(adapter).__name__ == "CaptureTelegramAdapter"
     assert adapter._capture_handler is plugin._handler
+
+
+# -- PR 3: voice probe through the hook + intake edge cases -----------------
+
+
+def test_voice_over_300s_rejected_via_hook(monkeypatch):
+    """PR 3 / S-2.4: an over-300s voice is consumed (skip-rejected), never leaks."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(
+            Path(directory), media_reader=lambda _: b"OggS raw-voice",
+        )
+        plugin = _load_plugin()
+        plugin._handler = handler
+        adapter = FakeAdapter()
+        try:
+            monkeypatch.setattr(hermes_handler, "_probe_voice_duration", lambda path: 320)
+            event = _event(1, _source(), media_urls=[".hermes/cache/audio/long.ogg"],
+                           media_types=["audio/ogg"], message_type="voice")
+            result = _run_hook(plugin, event=event,
+                               gateway=FakeGateway(adapter), session_store=None)
+            assert result == {"action": "skip", "reason": "idea-capture-rejected"}
+            assert runtime.store.count() == 0
+            assert adapter.sent == []  # no prompt, no acknowledgment
+        finally:
+            runtime.close()
+
+
+def test_unsupported_media_returns_none():
+    """3.7 / S-10.3: video and document are not capturable -> None, no prompt."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _load_plugin()
+        plugin._handler = handler
+        adapter = FakeAdapter()
+        try:
+            cases = [
+                (".hermes/cache/video/clip.mp4", "video/mp4", "video"),
+                (".hermes/cache/documents/doc.pdf", "application/pdf", "document"),
+            ]
+            for url, mime, mtype in cases:
+                event = _event(4, _source(), media_urls=[url],
+                               media_types=[mime], message_type=mtype)
+                result = _run_hook(plugin, event=event,
+                                   gateway=FakeGateway(adapter), session_store=None)
+                assert result is None
+            assert runtime.store.count() == 0
+            assert adapter.sent == []
+        finally:
+            runtime.close()
+
+
+def test_missing_identity_returns_none():
+    """3.8 / S-10.4: a missing Telegram identity is never captured."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _load_plugin()
+        plugin._handler = handler
+        adapter = FakeAdapter()
+        try:
+            no_user = _event(5, _source(user_id=None), text="ghost")
+            result = _run_hook(plugin, event=no_user,
+                               gateway=FakeGateway(adapter), session_store=None)
+            assert result is None
+            no_chat = _event(6, _source(chat_id=None), text="ghost")
+            result = _run_hook(plugin, event=no_chat,
+                               gateway=FakeGateway(adapter), session_store=None)
+            assert result is None
+            assert runtime.store.count() == 0
+            assert adapter.sent == []
+        finally:
+            runtime.close()

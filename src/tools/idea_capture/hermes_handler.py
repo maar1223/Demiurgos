@@ -7,6 +7,7 @@ It deliberately has no Telegram SDK, Bot API, token, or polling dependency.
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import replace
 from pathlib import Path
 from typing import Callable
@@ -48,6 +49,48 @@ def read_hermes_media_cache(path: str) -> bytes:
     if not candidate.is_file():
         raise ValueError("media path is not a regular file")
     return candidate.read_bytes()
+
+
+def _hermes_agent_root() -> Path:
+    """Resolve the Hermes agent source root (parent of the ``plugins`` package).
+
+    Mirrors ``capture_adapter.hermes_agent_root()``: an explicit
+    ``HERMES_AGENT_ROOT`` override wins, then ``HERMES_HOME`` (default
+    ``~/.hermes``) + ``hermes-agent``. Inside a running gateway the agent root
+    is already importable, so this is only a fallback for standalone/test
+    processes.
+    """
+    override = os.environ.get("HERMES_AGENT_ROOT", "").strip()
+    if override:
+        return Path(override).resolve()
+    home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")).expanduser()
+    return (home / "hermes-agent").resolve()
+
+
+def _probe_voice_duration(path: str) -> float | None:
+    """Best-effort voice duration via the bundled Hermes probe (fail closed).
+
+    Reuses the TelegramAdapter's module-level ``_probe_voice_duration_seconds``
+    (mutagen -> ffprobe, adapter.py:335) instead of duplicating that logic.
+    Capability-checked: a Hermes upgrade that renames or breaks the helper
+    yields ``None`` here, so the voice note is rejected by ``validate_media``
+    (S-10.5) instead of crashing dispatch. Never raises.
+    """
+    try:
+        from plugins.platforms.telegram.adapter import _probe_voice_duration_seconds
+    except ImportError:
+        root = _hermes_agent_root()
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        try:
+            from plugins.platforms.telegram.adapter import _probe_voice_duration_seconds
+        except Exception:
+            return None
+    try:
+        duration = _probe_voice_duration_seconds(path)
+    except Exception:
+        return None
+    return None if duration is None else float(duration)
 
 
 class IdeaCaptureHandler:
@@ -243,4 +286,38 @@ class IdeaCaptureHandler:
             media,
             platform=str(getattr(getattr(source, "platform", None), "value", "telegram")),
             profile=str(getattr(source, "profile", None) or "default"),
+        )
+
+    def _update_from_event_with_voice_probe(self, event, gateway=None) -> TelegramUpdate:
+        """Like ``_update_from_event``, but probes VOICE duration from the cache.
+
+        Hermes v0.20's ``MessageEvent`` has no ``media_durations`` field, so a
+        voice note arrives with ``duration_seconds=None`` and ``validate_media``
+        would reject it (media.py requires a duration <= 300s). The bundled
+        TelegramAdapter exposes ``_probe_voice_duration_seconds`` (mutagen ->
+        ffprobe); we reuse it on the cached path and rebuild the ``MediaInput``
+        with the probed duration so voice notes pass validation (R-2 / S-2.3).
+
+        ``gateway`` is part of the intake-hook contract (the design's hook
+        passes it); the probe needs no gateway state today.
+
+        Fail closed (S-10.5): when the probe is unavailable or raises, the
+        update keeps ``duration_seconds=None`` and ``validate_media`` rejects
+        the capture — the hook maps that to ``skip-rejected``, never a leak.
+        """
+        update = self._update_from_event(event)
+        if (
+            update.media.kind is not MediaKind.VOICE
+            or update.media.duration_seconds is not None
+        ):
+            return update
+        try:
+            duration = _probe_voice_duration(update.media.path)
+        except Exception:  # noqa: BLE001 — fail closed, never crash dispatch
+            duration = None
+        if duration is None:
+            return update
+        return replace(
+            update,
+            media=replace(update.media, duration_seconds=float(duration)),
         )
