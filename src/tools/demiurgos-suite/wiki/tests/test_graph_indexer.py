@@ -364,5 +364,47 @@ class TestEntityStatus(unittest.TestCase):
             self.assertEqual(detail.status, "draft")
 
 
+class TestIdeasBankCanonSafety(unittest.TestCase):
+    """R-IB-05 — the top-level ``ideas/`` bank is never scanned as canon.
+
+    Structural guarantee: the graph indexer is scoped to ``mundos/{mundo}/``
+    (``_scan_mundo`` walks only ``lore``/``personajes`` under a world root), so
+    a top-level ``ideas/`` sibling of ``mundos/`` is structurally invisible —
+    no graph node is ever created for an idea file, regardless of its content.
+    """
+
+    def _make_world(self, tmpdir: str) -> tuple[Path, Path, Path]:
+        root = Path(tmpdir)
+        mundos_path = root / "mundos"
+        mundo_dir = mundos_path / "canonworld"
+        (mundo_dir / "lore").mkdir(parents=True, exist_ok=True)
+        ideas_dir = root / "ideas"  # sibling of mundos/, per R-IB-02
+        ideas_dir.mkdir(parents=True, exist_ok=True)
+        return mundos_path, mundo_dir, ideas_dir
+
+    def test_top_level_ideas_never_scanned(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir, ideas_dir = self._make_world(tmpdir)
+            # A canon ficha that MUST be indexed.
+            _write_okf(mundo_dir, "lore/A.md", "Alpha")
+            # An idea file with OKF-shaped frontmatter that MUST NOT be
+            # indexed (it would be, if the indexer ever scanned ideas/).
+            (ideas_dir / "arquero-ciego.md").write_text(
+                "---\ntype: personaje\ntitle: Arquero Ciego\n"
+                "id: Arquero Ciego\nstatus: fresh\nused_in: []\n"
+                "---\n# Arquero Ciego\n",
+                encoding="utf-8",
+            )
+            index = EntityGraphIndex(mundos_path)
+            self.assertEqual(index.build("canonworld"), 1)
+            entities = index._cache["entities"]
+            # Only the canon ficha is indexed.
+            self.assertEqual(list(entities), ["lore/A.md"])
+            # The idea is not resolvable as an entity by any key.
+            self.assertIsNone(index.get_entity("ideas/arquero-ciego.md"))
+            self.assertIsNone(index.get_entity("arquero-ciego.md"))
+            self.assertIsNone(index.get_entity("Arquero Ciego"))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -4580,6 +4580,7 @@ async def ai_edit_suggest(mundo: str, body: dict, request: Request):
 # ---------------------------------------------------------------------------
 
 from idea_capture_ui import create_idea_capture_router  # noqa: E402
+from ideas_bank_router import create_ideas_bank_router  # noqa: E402
 from assistant_settings import create_assistant_settings_router  # noqa: E402
 from telegram_settings import create_telegram_settings_router  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
@@ -4646,6 +4647,14 @@ def _register_import_gallery(world: str, src: Path, rel: str) -> None:
 # does not own Hermes or start, stop, reload, or restart any process.
 app.include_router(
     create_idea_capture_router(
+        require_principal=lambda request: _resolve_principal(request),
+    ),
+)
+
+# Taller de Ideas — global idea bank (/api/ideas). The bank is a separate
+# top-level surface (ideas/, sibling of mundos/); canon safety is structural.
+app.include_router(
+    create_ideas_bank_router(
         require_principal=lambda request: _resolve_principal(request),
     ),
 )
