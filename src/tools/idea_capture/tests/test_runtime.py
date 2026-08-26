@@ -307,10 +307,12 @@ class KeyboardTests(unittest.TestCase):
         keyboard = build_capture_keyboard(capture_id)
         buttons = {b["text"]: b["callback_data"]
                    for b in keyboard["inline_keyboard"][0]}
-        self.assertEqual(list(buttons), ["Guardar", "Cambiar mundo", "Cancelar"])
+        self.assertEqual(list(buttons),
+                         ["Guardar", "Cambiar mundo", "Cancelar", "Guardar global"])
         self.assertEqual(buttons["Guardar"], f"capture:{capture_id}:save")
         self.assertEqual(buttons["Cambiar mundo"], f"capture:{capture_id}:world")
         self.assertEqual(buttons["Cancelar"], f"capture:{capture_id}:cancel")
+        self.assertEqual(buttons["Guardar global"], f"capture:{capture_id}:save_global")
         for data in buttons.values():
             self.assertLessEqual(len(data), 64)
 
@@ -341,7 +343,8 @@ class KeyboardTests(unittest.TestCase):
     def test_callback_encoding_round_trip(self):
         capture_id = "a" * 36
         cases = [(WorldAction.SAVE, None), (WorldAction.CANCEL, None),
-                 (WorldAction.CHANGE_WORLD, None), (WorldAction.CHANGE_WORLD, "nec")]
+                 (WorldAction.CHANGE_WORLD, None), (WorldAction.CHANGE_WORLD, "nec"),
+                 (WorldAction.SAVE_GLOBAL, None)]
         for action, world in cases:
             parsed = parse_capture_callback(encode_capture_callback(capture_id, action, world))
             self.assertEqual(parsed, (capture_id, action, world))

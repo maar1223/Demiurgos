@@ -134,7 +134,7 @@ class IdeaCaptureHandler:
         return True
 
     async def handle_interaction(self, *, interaction, **_) -> bool:
-        """Handle Save / Change world / Cancel callbacks and always acknowledge."""
+        """Handle Save / Change world / Save global / Cancel callbacks and always acknowledge."""
         parsed = parse_capture_callback(getattr(interaction, "data", None))
         if parsed is None:
             await interaction.answer("Acción inválida.")
@@ -176,6 +176,9 @@ class IdeaCaptureHandler:
             elif action is WorldAction.SAVE:
                 self.runtime.confirm(capture_id, action)
                 answer = f"Idea guardada en {self.runtime.active_world} (procesando...)."
+            elif action is WorldAction.SAVE_GLOBAL:
+                self.runtime.confirm(capture_id, action)
+                answer = "Idea guardada en el banco global (procesando...)."
             else:
                 self.runtime.confirm(capture_id, action)
                 answer = "Idea cancelada."

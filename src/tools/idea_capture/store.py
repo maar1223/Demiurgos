@@ -33,6 +33,7 @@ _SCHEMA = """
         mime TEXT NOT NULL, media_kind TEXT NOT NULL, slug TEXT NOT NULL,
         attempt INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL,
         media_path TEXT NOT NULL DEFAULT '', media_duration_seconds REAL,
+        global_ INTEGER NOT NULL DEFAULT 0,
         UNIQUE(source, update_id)
     );
     CREATE TABLE IF NOT EXISTS outbox (
@@ -65,6 +66,8 @@ class CaptureStore:
                 conn.execute("ALTER TABLE captures ADD COLUMN media_path TEXT NOT NULL DEFAULT ''")
             if "media_duration_seconds" not in columns:
                 conn.execute("ALTER TABLE captures ADD COLUMN media_duration_seconds REAL")
+            if "global_" not in columns:
+                conn.execute("ALTER TABLE captures ADD COLUMN global_ INTEGER NOT NULL DEFAULT 0")
             conn.commit()
             self._local.connection = conn
             with self._lock:
@@ -113,6 +116,19 @@ class CaptureStore:
         state = CaptureState.CANCELLED if world is None else CaptureState.PROCESSING
         self._connection().execute("UPDATE captures SET world=?, state=? WHERE capture_id=?",
                                    (world, state.value, capture_id))
+        self._connection().commit()
+        return self.get(capture_id)
+
+    def set_global(self, capture_id: str) -> CaptureRecord:
+        """Flag a capture for the global bank: no world, durable processing.
+
+        Additive to the per-world flow: it clears any world, sets the ``global_``
+        flag and transitions to PROCESSING so the worker persists it to the
+        global ``ideas/`` root. It never touches the SAVE/CHANGE_WORLD path.
+        """
+        self._connection().execute(
+            "UPDATE captures SET world=NULL, global_=1, state=? WHERE capture_id=?",
+            (CaptureState.PROCESSING.value, capture_id))
         self._connection().commit()
         return self.get(capture_id)
 
@@ -199,5 +215,5 @@ class CaptureStore:
             CaptureState(row["state"]), row["raw_text"], row["raw_bytes"],
             row["mime"], MediaKind(row["media_kind"]), row["slug"],
             row["attempt"], row["error"], row["created_at"], row["source"],
-            row["media_path"], row["media_duration_seconds"],
+            row["media_path"], row["media_duration_seconds"], bool(row["global_"]),
         )

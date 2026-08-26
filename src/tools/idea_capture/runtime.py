@@ -53,7 +53,7 @@ _CALLBACK_PREFIX = "capture:"
 _CALLBACK_MAX_LENGTH = 64
 _CAPTURE_ID_PATTERN = r"[0-9a-fA-F-]{36}"  # uuid5 hex form, e.g. 8-4-4-4-12
 _CALLBACK_ACTION_RE = re.compile(
-    rf"^{_CALLBACK_PREFIX}({_CAPTURE_ID_PATTERN}):(save|cancel)$")
+    rf"^{_CALLBACK_PREFIX}({_CAPTURE_ID_PATTERN}):(save|save_global|cancel)$")
 _CALLBACK_PICKER_RE = re.compile(
     rf"^{_CALLBACK_PREFIX}({_CAPTURE_ID_PATTERN}):world$")
 _CALLBACK_WORLD_RE = re.compile(
@@ -98,7 +98,7 @@ def parse_capture_callback(data) -> tuple[str, WorldAction, str | None] | None:
 
 
 def build_capture_keyboard(capture_id: str) -> dict:
-    """Inline keyboard shown after a capture: Guardar / Cambiar mundo / Cancelar."""
+    """Inline keyboard shown after a capture: Guardar / Cambiar mundo / Cancelar / Guardar global."""
     return {"inline_keyboard": [[
         {"text": "Guardar",
          "callback_data": encode_capture_callback(capture_id, WorldAction.SAVE)},
@@ -106,6 +106,8 @@ def build_capture_keyboard(capture_id: str) -> dict:
          "callback_data": encode_capture_callback(capture_id, WorldAction.CHANGE_WORLD)},
         {"text": "Cancelar",
          "callback_data": encode_capture_callback(capture_id, WorldAction.CANCEL)},
+        {"text": "Guardar global",
+         "callback_data": encode_capture_callback(capture_id, WorldAction.SAVE_GLOBAL)},
     ]]}
 
 
@@ -202,33 +204,36 @@ class IdeaCaptureRuntime:
 
     def __init__(self, *, config: CaptureConfig, state_path: str | Path,
                  mundos_root: str | Path, active_world: str,
-                 publisher=None, enrich: Callable[[object], str] | None = None,
+                 publisher=None, enrich: Callable[[object], tuple[str, str]] | None = None,
                  resolve_file=None, audit: Callable[[dict], None] | None = None,
                  ownership: OwnershipLock | None = None,
-                 busy_timeout_seconds: float = 10.0):
+                 busy_timeout_seconds: float = 10.0,
+                 global_ideas_root: str | Path | None = None):
         self.config = config
         self.state_path = Path(state_path)
         self.mundos_root = Path(mundos_root)
         self.active_world = active_world
+        self.global_ideas_root = Path(global_ideas_root) if global_ideas_root else None
         self.store = CaptureStore(self.state_path, busy_timeout_seconds=busy_timeout_seconds)
         self.audit = audit or (lambda event: log.debug("capture audit: %s", event))
         self.ingress = TelegramIngress(config.policy, self.audit)
         self.service = CaptureService(self.ingress, self.store, active_world)
         self.publisher = publisher or MemoryPublisher()
         self.processor = IdeaProcessor(self.store, self.mundos_root,
-                                       enrich or self._default_enrich, self.publisher)
+                                       enrich or self._default_enrich, self.publisher,
+                                       global_ideas_root=self.global_ideas_root)
         self.worker = CaptureWorker(self.processor)
         self.resolve_file = resolve_file
         self.ownership = ownership
 
     @staticmethod
-    def _default_enrich(raw: object) -> str:
+    def _default_enrich(raw: object) -> tuple[str, str]:
         if isinstance(raw, bytes):
             raise ValueError("voice/image capture requires an enrichment provider")
         body = str(raw).strip()
         if not body:
             raise ValueError("empty idea")
-        return body
+        return body, "sin_clasificar"
 
     # -- ingress -------------------------------------------------------------
 
@@ -437,6 +442,9 @@ def _handle_callback_query(runtime: IdeaCaptureRuntime, transport: TelegramTrans
         elif action is WorldAction.SAVE:
             runtime.confirm(capture_id, action)
             answer = f"✅ Idea guardada en {runtime.active_world} (procesando…)."
+        elif action is WorldAction.SAVE_GLOBAL:
+            runtime.confirm(capture_id, action)
+            answer = "✅ Idea guardada en el banco global (procesando…)."
         else:  # CANCEL
             runtime.confirm(capture_id, action)
             answer = "🗑 Idea cancelada."

@@ -15,6 +15,7 @@ class WorldAction(str, Enum):
     SAVE = "save"
     CHANGE_WORLD = "change_world"
     CANCEL = "cancel"
+    SAVE_GLOBAL = "save_global"
 
 
 class CaptureState(str, Enum):
@@ -84,6 +85,7 @@ class CaptureRecord:
     source: str = ""
     media_path: str = ""
     media_duration_seconds: float | None = None
+    global_: bool = False
 
 
 AuditWriter = Callable[[dict], None]

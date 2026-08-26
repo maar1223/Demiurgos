@@ -24,6 +24,9 @@ class CaptureService:
     def confirm(self, capture_id: str, action: WorldAction, selected_world: str | None = None):
         if action is WorldAction.CANCEL:
             return self.store.set_world(capture_id, None)
+        if action is WorldAction.SAVE_GLOBAL:
+            # Global bank capture: no world required, durable processing.
+            return self.store.set_global(capture_id)
         world = self.active_world if action is WorldAction.SAVE else selected_world
         if not world or not _WORLD.fullmatch(world):
             raise ValueError("world must be a safe explicit name")
