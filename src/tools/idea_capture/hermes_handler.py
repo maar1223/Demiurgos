@@ -2,6 +2,13 @@
 
 This module consumes Hermes' normalized ``MessageEvent`` and media-cache paths.
 It deliberately has no Telegram SDK, Bot API, token, or polling dependency.
+
+Intake happens through ``IdeaCaptureHandler._update_from_event_with_voice_probe``
+called by the project plugin's ``pre_gateway_dispatch`` hook. The legacy
+``handle_message`` / ``handle_interaction`` methods (which called the fictional
+``send_interaction_message`` / ``interaction.answer|send|edit`` APIs that do not
+exist in Hermes v0.20) were retired; callback confirm/deny now lives in the
+``CaptureTelegramAdapter`` subclass.
 """
 
 from __future__ import annotations
@@ -13,16 +20,8 @@ from pathlib import Path
 from typing import Callable
 
 from .config import CaptureConfig, load_active_world, load_policy
-from .media import MediaValidationError, validate_media
-from .models import MediaInput, MediaKind, TelegramUpdate, WorldAction
-from .runtime import (
-    IdeaCaptureRuntime,
-    build_capture_keyboard,
-    build_world_keyboard,
-    handle_confirmation_command,
-    parse_capture_callback,
-)
-from .telegram import UnauthorizedUpdate
+from .models import MediaInput, MediaKind, TelegramUpdate
+from .runtime import IdeaCaptureRuntime
 
 
 def _within(path: Path, root: Path) -> bool:
@@ -135,103 +134,6 @@ class IdeaCaptureHandler:
     @property
     def policy(self):
         return self.runtime.config.policy
-
-    async def handle_message(self, *, event, adapter=None, **_) -> bool:
-        """Consume one already Hermes-authorized message when capture policy allows."""
-        source = getattr(event, "source", None)
-        if source is None or str(getattr(source.platform, "value", source.platform)) != "telegram":
-            return False
-
-        text = getattr(event, "text", "") or ""
-        if text.startswith("/"):
-            command = event.get_command()
-            if command not in {"save", "world", "cancel"}:
-                return False
-            if not self._binding_allowed(source):
-                return True
-            reply = handle_confirmation_command(self.runtime, text)
-            if adapter is not None:
-                await adapter.send(source.chat_id, reply)
-            return True
-
-        if not self.enabled:
-            return False
-        update = self._update_from_event(event)
-        try:
-            receipt = self.runtime.service.accept(update)
-        except UnauthorizedUpdate:
-            return True
-        except (MediaValidationError, ValueError):
-            return True
-        if receipt.status == "DUPLICATE":
-            return True
-
-        if adapter is not None:
-                await adapter.send_interaction_message(
-                    source.chat_id,
-                    f"Idea capturada (id=`{receipt.capture_id}`). Elegí una acción:",
-                    build_capture_keyboard(receipt.capture_id)["inline_keyboard"],
-                metadata={"thread_id": source.thread_id} if source.thread_id else None,
-            )
-        return True
-
-    async def handle_interaction(self, *, interaction, **_) -> bool:
-        """Handle Save / Change world / Save global / Cancel callbacks and always acknowledge."""
-        parsed = parse_capture_callback(getattr(interaction, "data", None))
-        if parsed is None:
-            await interaction.answer("Acción inválida.")
-            return True
-        capture_id, action, world = parsed
-        source = interaction.source
-        if not self._binding_allowed(source):
-            await interaction.answer("No autorizado.")
-            return True
-
-        try:
-            record = self.runtime.store.get(capture_id)
-        except KeyError:
-            await interaction.answer("Captura no encontrada.")
-            return True
-        if record.source != self._binding_key(source):
-            await interaction.answer("No autorizado.")
-            return True
-
-        if action is WorldAction.CHANGE_WORLD and world is None:
-            keyboard = build_world_keyboard(self.runtime, capture_id)
-            if not keyboard["inline_keyboard"]:
-                await interaction.answer("No hay mundos disponibles.")
-                return True
-            await interaction.send(
-                "Elegí el mundo para esta idea:",
-                keyboard["inline_keyboard"],
-            )
-            await interaction.answer("Elegí un mundo.")
-            return True
-
-        try:
-            if action is WorldAction.CHANGE_WORLD:
-                if world not in self.runtime.available_worlds():
-                    await interaction.answer("Mundo no disponible.")
-                    return True
-                self.runtime.confirm(capture_id, action, world)
-                answer = f"Idea asignada a {world} (procesando...)."
-            elif action is WorldAction.SAVE:
-                self.runtime.confirm(capture_id, action)
-                answer = f"Idea guardada en {self.runtime.active_world} (procesando...)."
-            elif action is WorldAction.SAVE_GLOBAL:
-                self.runtime.confirm(capture_id, action)
-                answer = "Idea guardada en el Taller de Ideas (procesando...)."
-            else:
-                self.runtime.confirm(capture_id, action)
-                answer = "Idea cancelada."
-        except (KeyError, ValueError):
-            answer = "No se pudo aplicar esa acción."
-        await interaction.answer(answer)
-        try:
-            await interaction.edit(answer, buttons=[])
-        except Exception:
-            pass
-        return True
 
     def _binding_key(self, source) -> str:
         platform = str(getattr(getattr(source, "platform", None), "value", ""))

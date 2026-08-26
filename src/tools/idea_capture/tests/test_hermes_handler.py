@@ -1,4 +1,3 @@
-import asyncio
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +8,7 @@ import idea_capture.hermes_handler as hermes_handler
 from idea_capture.config import CaptureConfig, CaptureLimits
 from idea_capture.hermes_handler import IdeaCaptureHandler
 from idea_capture.media import MediaValidationError, validate_media
-from idea_capture.models import CaptureState, MediaKind
+from idea_capture.models import CaptureState, MediaKind, WorldAction
 from idea_capture.runtime import IdeaCaptureRuntime
 from idea_capture.telegram import IngressPolicy
 
@@ -39,36 +38,6 @@ def _event(update_id, source, *, text="", media_urls=None, media_types=None,
         get_command=lambda: text.split(maxsplit=1)[0][1:].lower()
         if text.startswith("/") else None,
     )
-
-
-class FakeAdapter:
-    def __init__(self):
-        self.sent = []
-        self.interaction_messages = []
-
-    async def send(self, chat_id, content, **kwargs):
-        self.sent.append((chat_id, content, kwargs))
-
-    async def send_interaction_message(self, chat_id, content, buttons, **kwargs):
-        self.interaction_messages.append((chat_id, content, buttons, kwargs))
-
-
-class FakeInteraction:
-    def __init__(self, data, source):
-        self.data = data
-        self.source = source
-        self.answers = []
-        self.edits = []
-        self.sent = []
-
-    async def answer(self, text=None):
-        self.answers.append(text)
-
-    async def edit(self, content, buttons=None):
-        self.edits.append((content, buttons))
-
-    async def send(self, content, buttons=None):
-        self.sent.append((content, buttons))
 
 
 def _handler(root: Path, *, enrich=None, media_reader=None):
@@ -106,18 +75,21 @@ def _handler(root: Path, *, enrich=None, media_reader=None):
 
 
 def test_text_is_raw_persisted_and_duplicate_is_idempotent():
+    """The new intake path (probe variant + sync accept) persists raw text and
+    treats a replayed event as DUPLICATE (R-4) without a second row."""
     with tempfile.TemporaryDirectory() as directory:
         handler, runtime = _handler(Path(directory))
-        adapter = FakeAdapter()
         try:
             event = _event(1, _source(), text="  raw idea  ")
-            assert asyncio.run(handler.handle_message(event=event, adapter=adapter))
-            assert asyncio.run(handler.handle_message(event=event, adapter=adapter))
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            first = runtime.service.accept(update)
+            assert first.status == "RAW_PERSISTED"
+            second = runtime.service.accept(update)
+            assert second.status == "DUPLICATE"
             record = runtime.store.get(runtime.store.list_capture_ids()[0])
             assert record.raw_text == "  raw idea  "
             assert record.media_kind.value == "text"
-            assert len(adapter.interaction_messages) == 1
-            assert len(adapter.interaction_messages[0][2]) == 1
+            assert runtime.store.count() == 1
         finally:
             runtime.close()
 
@@ -131,7 +103,9 @@ def test_media_cache_metadata_and_caption_are_persisted_raw_first():
                 2, _source(), text="caption", media_urls=[cache_path],
                 media_types=["image/png"], message_type="photo", durations=[None],
             )
-            asyncio.run(handler.handle_message(event=event, adapter=FakeAdapter()))
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            receipt = runtime.service.accept(update)
+            assert receipt.status == "RAW_PERSISTED"
             record = runtime.store.get(runtime.store.list_capture_ids()[0])
             assert record.media_kind.value == "image"
             assert record.raw_text == "caption"
@@ -144,10 +118,10 @@ def test_media_cache_metadata_and_caption_are_persisted_raw_first():
                 media_reader=lambda _: b"OggS raw-voice",
             )
             try:
-                voice_update = voice_handler._update_from_event(_event(
+                voice_update = voice_handler._update_from_event_with_voice_probe(_event(
                     4, _source(), media_urls=[".hermes/cache/audio/voice.ogg"],
                     media_types=["audio/ogg"], message_type="voice", durations=[2.5],
-                ))
+                ), gateway=None)
                 assert voice_update.media.duration_seconds == 2.5
                 assert voice_update.media.path.endswith("voice.ogg")
             finally:
@@ -156,25 +130,8 @@ def test_media_cache_metadata_and_caption_are_persisted_raw_first():
             runtime.close()
 
 
-def test_capture_keyboard_saves_to_taller_by_default():
-    with tempfile.TemporaryDirectory() as directory:
-        handler, runtime = _handler(Path(directory))
-        adapter = FakeAdapter()
-        try:
-            event = _event(6, _source(), text="keyboard idea")
-            asyncio.run(handler.handle_message(event=event, adapter=adapter))
-            buttons = adapter.interaction_messages[0][2][0]
-            texts = [b["text"] for b in buttons]
-            # Global-first default: the keyboard saves to the Taller de Ideas
-            # without a world; the per-world buttons are not offered.
-            assert texts == ["Guardar en Taller de Ideas", "Cancelar"]
-            assert any(b["callback_data"].endswith(":save_global") for b in buttons)
-            assert not any(b["callback_data"].endswith(":save") for b in buttons)
-        finally:
-            runtime.close()
-
-
-def test_save_global_callback_writes_to_global_bank_without_world():
+def test_save_global_writes_to_global_bank_without_world():
+    """SAVE_GLOBAL confirm lands in the global Taller de Ideas, no world set."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         (root / "mundos" / "vibrantes").mkdir(parents=True)
@@ -209,19 +166,14 @@ def test_save_global_callback_writes_to_global_bank_without_world():
         )
         try:
             event = _event(5, _source(), text="bank idea")
-            asyncio.run(handler.handle_message(event=event, adapter=FakeAdapter()))
-            capture_id = runtime.store.list_capture_ids()[0]
-            interaction = FakeInteraction(
-                f"capture:{capture_id}:save_global", _source(),
-            )
-            assert asyncio.run(handler.handle_interaction(interaction=interaction))
-            record = runtime.wait_state(capture_id, CaptureState.SAVED)
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            receipt = runtime.service.accept(update)
+            assert receipt.status == "RAW_PERSISTED"
+            runtime.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+            record = runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
             assert record.global_ is True
             assert record.world is None
             assert (root / "ideas" / f"{record.slug}.md").exists()
-            assert interaction.answers == ["Idea guardada en el Taller de Ideas (procesando...)."]
-            assert interaction.edits == [
-                ("Idea guardada en el Taller de Ideas (procesando...).", [])]
         finally:
             runtime.close()
 
@@ -262,44 +214,35 @@ def test_handler_enabled_without_active_world():
         )
         try:
             assert handler.enabled is True
-            adapter = FakeAdapter()
             event = _event(7, _source(), text="no-world idea")
-            assert asyncio.run(handler.handle_message(event=event, adapter=adapter))
-            capture_id = runtime.store.list_capture_ids()[0]
-            interaction = FakeInteraction(
-                f"capture:{capture_id}:save_global", _source(),
-            )
-            assert asyncio.run(handler.handle_interaction(interaction=interaction))
-            record = runtime.wait_state(capture_id, CaptureState.SAVED)
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            receipt = runtime.service.accept(update)
+            assert receipt.status == "RAW_PERSISTED"
+            runtime.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+            record = runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
             assert record.global_ is True
             assert (root / "ideas" / f"{record.slug}.md").exists()
         finally:
             runtime.close()
 
 
-def test_callback_requires_exact_identity_and_confirms_world_asynchronously():
+def test_world_change_confirm_and_binding_gate():
+    """CHANGE_WORLD confirm assigns the world; the kept identity gate
+    (``_binding_allowed``) still separates authorized from unauthorized senders."""
     with tempfile.TemporaryDirectory() as directory:
         handler, runtime = _handler(Path(directory), enrich=lambda raw: raw)
-        adapter = FakeAdapter()
         try:
             event = _event(3, _source(), text="save me")
-            asyncio.run(handler.handle_message(event=event, adapter=adapter))
-            capture_id = runtime.store.list_capture_ids()[0]
-            interaction = FakeInteraction(
-                f"capture:{capture_id}:world:nec", _source(),
-            )
-            assert asyncio.run(handler.handle_interaction(interaction=interaction))
-            record = runtime.wait_state(capture_id, CaptureState.SAVED)
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            receipt = runtime.service.accept(update)
+            assert receipt.status == "RAW_PERSISTED"
+            runtime.confirm(receipt.capture_id, WorldAction.CHANGE_WORLD, "nec")
+            record = runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
             assert record.world == "nec"
-            assert interaction.answers == ["Idea asignada a nec (procesando...)."]
-            assert interaction.edits == [("Idea asignada a nec (procesando...).", [])]
 
-            unauthorized = FakeInteraction(
-                f"capture:{capture_id}:cancel", _source(user_id=99),
-            )
-            asyncio.run(handler.handle_interaction(interaction=unauthorized))
-            assert unauthorized.answers == ["No autorizado."]
-            assert runtime.store.get(capture_id).state is CaptureState.SAVED
+            assert handler._binding_allowed(_source())
+            assert not handler._binding_allowed(_source(user_id=99))
+            assert runtime.store.get(receipt.capture_id).state is CaptureState.SAVED
         finally:
             runtime.close()
 
