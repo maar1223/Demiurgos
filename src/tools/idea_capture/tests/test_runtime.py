@@ -495,5 +495,157 @@ class CallbackFlowTests(unittest.TestCase):
         self.assertIn("guardada", transport.sent[-1][1])
 
 
+class GlobalSaveFlowTests(unittest.TestCase):
+    """SAVE_GLOBAL: capture persists to the global ideas/ bank, no world."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        (self.root / "mundos" / "vibrantes").mkdir(parents=True)
+        self.publisher = MemoryPublisher()
+        self.audit = []
+        self.runtime = IdeaCaptureRuntime(
+            config=policy_for(7),
+            state_path=self.root / "capture.sqlite3",
+            mundos_root=self.root / "mundos",
+            active_world="vibrantes",
+            publisher=self.publisher,
+            audit=self.audit.append,
+            global_ideas_root=self.root / "ideas",
+        )
+
+    def tearDown(self):
+        self.runtime.close()
+        self.temp.cleanup()
+
+    def test_save_global_writes_to_global_bank_without_world(self):
+        receipt = self.runtime.handle_update(text_payload(1, text="global idea"))
+        record = self.runtime.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        self.assertTrue(record.global_)
+        self.assertIsNone(record.world)
+        saved = self.runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
+        self.assertEqual(saved.state, CaptureState.SAVED)
+        target = self.root / "ideas" / f"{saved.slug}.md"
+        self.assertTrue(target.exists())
+        content = target.read_text(encoding="utf-8")
+        self.assertIn("source: telegram", content)
+        self.assertIn("status: fresh", content)
+        self.assertIn("used_in: []", content)
+        # Default (offline) enrich fails open to the explicit bucket.
+        self.assertIn("type: sin_clasificar", content)
+        self.assertNotIn("idea_loose", content)
+        # The per-world bank was NOT written.
+        self.assertFalse(
+            (self.root / "mundos" / "vibrantes" / "Ideas" / f"{saved.slug}.md").exists())
+        self.runtime.drain_outbox()
+        self.assertEqual(len(self.publisher.messages), 1)
+
+    def test_save_global_uses_enriched_type(self):
+        self.runtime.processor.enrich = lambda raw: (str(raw).strip(), "trama")
+        receipt = self.runtime.handle_update(text_payload(1, text="a plot twist"))
+        self.runtime.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        saved = self.runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
+        content = (self.root / "ideas" / f"{saved.slug}.md").read_text(encoding="utf-8")
+        self.assertIn("type: trama", content)
+        self.assertIn("a plot twist", content)
+
+    def test_save_global_callback_persists_to_global_bank(self):
+        capture_id = self.runtime.handle_update(
+            text_payload(1, text="button global idea")).capture_id
+        transport = FakeTransport(
+            [callback_payload(50, "q-global", data=f"capture:{capture_id}:save_global")])
+        replies = []
+        poll_once(self.runtime, transport, 0, replies)
+        saved = self.runtime.wait_state(capture_id, CaptureState.SAVED)
+        self.assertEqual(saved.state, CaptureState.SAVED)
+        self.assertTrue(saved.global_)
+        self.assertIsNone(saved.world)
+        self.assertTrue((self.root / "ideas" / f"{saved.slug}.md").exists())
+        self.assertEqual(transport.answered,
+                         [("q-global", "✅ Idea guardada en el banco global (procesando…).")])
+        self.assertEqual(replies, ["✅ Idea guardada en el banco global (procesando…)."])
+
+    def test_save_global_without_global_ideas_root_is_retryable(self):
+        # A runtime that never received a global root cannot persist globally:
+        # the capture is retryable, never SAVED, and never crashes the flow.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = IdeaCaptureRuntime(config=policy_for(7),
+                                         state_path=root / "capture.sqlite3",
+                                         mundos_root=root / "mundos",
+                                         active_world="vibrantes")
+            try:
+                receipt = runtime.handle_update(text_payload(1, text="orphan idea"))
+                runtime.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+                record = runtime.wait_state(receipt.capture_id, CaptureState.RETRYABLE,
+                                            timeout=5)
+                self.assertEqual(record.state, CaptureState.RETRYABLE)
+                self.assertIn("global_ideas_root", record.error)
+            finally:
+                runtime.close()
+
+
+class PerWorldInvariantRegressionTests(unittest.TestCase):
+    """Dedicated regression (R-CG-01): SAVE/CHANGE_WORLD/CANCEL behave
+    identically to the pre-SAVE_GLOBAL runtime — the additive invariant."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.publisher = MemoryPublisher()
+        self.runtime = IdeaCaptureRuntime(
+            config=policy_for(7),
+            state_path=self.root / "capture.sqlite3",
+            mundos_root=self.root / "mundos",
+            active_world="vibrantes",
+            publisher=self.publisher,
+        )
+
+    def tearDown(self):
+        self.runtime.close()
+        self.temp.cleanup()
+
+    def test_per_world_save_is_unchanged(self):
+        receipt = self.runtime.handle_update(text_payload(1, text="per-world idea"))
+        self.runtime.confirm(receipt.capture_id, WorldAction.SAVE)
+        saved = self.runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
+        self.assertFalse(saved.global_)
+        self.assertEqual(saved.world, "vibrantes")
+        target = self.root / "mundos" / "vibrantes" / "Ideas" / f"{saved.slug}.md"
+        self.assertTrue(target.exists())
+        content = target.read_text(encoding="utf-8")
+        # Legacy per-world schema untouched: type idea_loose, status pending.
+        self.assertIn("type: idea_loose", content)
+        self.assertIn("status: pending", content)
+        self.assertIn("source: telegram", content)
+        # The global bank was NOT written.
+        self.assertFalse((self.root / "ideas" / f"{saved.slug}.md").exists())
+
+    def test_change_world_is_unchanged(self):
+        (self.root / "mundos" / "nec").mkdir(parents=True)
+        receipt = self.runtime.handle_update(text_payload(2, text="move me"))
+        self.runtime.confirm(receipt.capture_id, WorldAction.CHANGE_WORLD, "nec")
+        moved = self.runtime.wait_state(receipt.capture_id, CaptureState.SAVED)
+        self.assertEqual(moved.world, "nec")
+        self.assertFalse(moved.global_)
+        self.assertTrue((self.root / "mundos" / "nec" / "Ideas" / f"{moved.slug}.md").exists())
+
+    def test_cancel_is_unchanged(self):
+        receipt = self.runtime.handle_update(text_payload(3, text="discard me"))
+        self.runtime.confirm(receipt.capture_id, WorldAction.CANCEL)
+        record = self.runtime.store.get(receipt.capture_id)
+        self.assertEqual(record.state, CaptureState.CANCELLED)
+        self.assertFalse(record.global_)
+        self.assertFalse(
+            (self.root / "mundos" / "vibrantes" / "Ideas" / f"{record.slug}.md").exists())
+
+    def test_invalid_world_still_rejected(self):
+        receipt = self.runtime.handle_update(text_payload(4, text="bad target"))
+        with self.assertRaises(ValueError):
+            self.runtime.confirm(receipt.capture_id, WorldAction.CHANGE_WORLD, "../unsafe")
+        self.assertEqual(self.runtime.store.get(receipt.capture_id).state,
+                         CaptureState.RAW_PERSISTED)
+
+
 if __name__ == "__main__":
     unittest.main()
