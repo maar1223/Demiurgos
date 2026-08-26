@@ -33,6 +33,7 @@ export const ROUTES = {
   HOME: "/wiki",
   TALLER_HERRAMIENTAS: "/taller-herramientas",
   TALLER_MUNDO: "/taller-mundo",
+  IDEAS: "/ideas",
   ONBOARDING: "/onboarding",
   ENTITY: "/wiki/:mundo/entity/*path",
   IMPORTER: "/wiki/:mundo/importer",
@@ -58,19 +59,20 @@ export const GENERIC_TEASER_LABEL = "Próximamente" as const;
 
 /**
  * Core-only navigation contract (workshop-navigation spec): the free Core
- * exposes Taller de Mundo and Taller de Herramientas as `available` workshops.
- * The Configuration Center is NOT a navbar item anymore: it lives inside the
- * Profile page ("Perfil" → "Centro de Configuración" tab), with Telegram under
- * "Integraciones" and the legacy-folder migration under "Mundos"; there is no
- * standalone `/centro-configuracion` route. Every future/paid surface
- * collapses into ONE generic non-actionable "Próximamente" teaser — legacy
- * narrative phases (Personajes/Escritura/Planificar/Revisar) are never
- * presented as Core workshops. Taller de Publicación stays absent until it
- * exists/becomes available; when enabled it is marked `rightmost` and always
- * renders last.
+ * exposes Taller de Mundo, Taller de Herramientas and Taller de Ideas as
+ * `available` workshops. The Configuration Center is NOT a navbar item
+ * anymore: it lives inside the Profile page ("Perfil" → "Centro de
+ * Configuración" tab), with Telegram under "Integraciones" and the
+ * legacy-folder migration under "Mundos"; there is no standalone
+ * `/centro-configuracion` route. Every future/paid surface collapses into
+ * ONE generic non-actionable "Próximamente" teaser — legacy narrative phases
+ * (Personajes/Escritura/Planificar/Revisar) are never presented as Core
+ * workshops. Taller de Publicación stays absent until it exists/becomes
+ * available; when enabled it is marked `rightmost` and always renders last.
  */
 export const NAV_LINKS: readonly NavLink[] = [
   { label: "Taller de Herramientas", to: ROUTES.TALLER_HERRAMIENTAS, availability: "available" },
+  { label: "Taller de Ideas", to: ROUTES.IDEAS, availability: "available" },
   { label: "Taller de Mundo", to: ROUTES.TALLER_MUNDO, availability: "available" },
   { label: GENERIC_TEASER_LABEL, to: "#", availability: "teaser" },
 ];

@@ -533,6 +533,42 @@ describe("AIAssistantSidebar single conversation", () => {
   });
 });
 
+describe("AIAssistantSidebar null-mundo (global context)", () => {
+  beforeEach(() => {
+    useSessionsMock.mockReturnValue(
+      createSessionsState({
+        activeSession: {
+          id: "session-42",
+          title: "Nueva sesión",
+          messages: [],
+          createdAt: 1,
+        },
+      }),
+    );
+    useAppLanguageMock.mockReturnValue("es");
+  });
+
+  it("renders a world-agnostic context without a mundo prop", () => {
+    render(<AIAssistantSidebar />);
+
+    expect(screen.getByText("Banco global de ideas")).toBeInTheDocument();
+    expect(screen.getByText("Preguntame sobre el banco global")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Dame una idea de personaje" }),
+    ).toBeInTheDocument();
+    // No file to edit in the global context — the edit action explains why.
+    expect(
+      screen.getByText("El asistente global no edita archivos de un mundo."),
+    ).toBeInTheDocument();
+  });
+
+  it("forwards no world context to the sessions hook", () => {
+    render(<AIAssistantSidebar />);
+
+    expect(useSessionsMock).toHaveBeenCalledWith(undefined, undefined, undefined);
+  });
+});
+
 describe("AIAssistantSidebar semantic decision UX", () => {
   beforeEach(() => {
     useSessionsMock.mockReturnValue(createSessionsState());

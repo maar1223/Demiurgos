@@ -329,7 +329,7 @@ class ActivityTranslator:
         request_id: str,
         run_id: str,
         session_id: str = "",
-        world_root: Path,
+        world_root: Path | None = None,
     ) -> None:
         if isinstance(capability, HermesCapabilities):
             capability = CapabilityAssessment(True, "", capability)
@@ -339,7 +339,9 @@ class ActivityTranslator:
         self.request_id = request_id
         self.run_id = run_id
         self.session_id = session_id
-        self.world_root = Path(world_root)
+        # ``None`` marks the world-agnostic (global) assistant context, which
+        # has no world directory and therefore no file evidence paths.
+        self.world_root = Path(world_root) if world_root is not None else None
         self._items: dict[str, list[tuple[str, str]]] = defaultdict(list)
         self._public_item_ids: dict[tuple[str, int], str] = {}
         self._closed = False

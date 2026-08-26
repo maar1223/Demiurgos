@@ -5128,3 +5128,105 @@ class TestGraphEntitiesEndpoint:
             assert link["source"] in paths
             assert link["target"] in paths
             assert link["source"] != link["target"]
+
+
+class TestGlobalAssistantContext:
+    """GAP-A: the world-agnostic ``ideas-global`` assistant context.
+
+    The Taller de Ideas assistant is world-agnostic and sends
+    ``mundo == GLOBAL_ASSISTANT_CONTEXT`` to the AI assistant endpoints. The
+    backend must accept that single literal context WITHOUT a world directory,
+    keep per-world grounding intact, and never treat arbitrary names as worlds.
+    """
+
+    def test_global_ai_ask_answers_without_world_grounding(
+        self, client: TestClient, monkeypatch,
+    ):
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        response = client.post("/api/ideas-global/ai/ask", json={
+            "prompt": "Ayudame a brainstormear una premisa",
+            "session_id": "gap-global-1",
+        })
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["state"] == "allow"
+        assert payload["unavailable"] is False
+        assert payload["response"] == "Hermes semantic answer."
+        # World-agnostic: the global context name never reaches the provider
+        # and no world grounding is injected.
+        prompt = runs.requests[0].prompt
+        assert "ideas-global" not in prompt
+        assert "Authorized context" not in prompt
+
+    def test_global_ai_ask_activity_streams_usable_answer(
+        self, client: TestClient, monkeypatch,
+    ):
+        class Adapter:
+            available = True
+            capability = _activity_capability()
+
+            def __init__(self):
+                self.request = None
+
+            def start(self, request):
+                self.request = request
+                return "run-global"
+
+            async def events(self, run_id):
+                yield {"event": "message.delta", "run_id": run_id, "delta": "Idea enriquecida."}
+                yield {"event": "run.completed", "run_id": run_id, "output": "Idea enriquecida."}
+
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        adapter = Adapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+        response = client.post("/api/ideas-global/ai/ask/activity", json={
+            "prompt": "Ayudame a brainstormear una premisa",
+            "session_id": "gap-global-1",
+        })
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        events = _parse_sse(response.text)
+        kinds = [event["kind"] for event in events]
+        assert kinds[0] == "semantic_decision"
+        assert events[0]["state"] == "allow"
+        assert events[0]["unavailable"] is False
+        assert kinds[-1] == "terminal"
+        answers = [event["response"] for event in events if event["kind"] == "answer"]
+        assert "Idea enriquecida." in answers
+        # The adapter prompt is world-agnostic: global identity present, no
+        # world name and no graph-tool grounding.
+        assert "Taller de Ideas" in adapter.request.prompt
+        assert "ideas-global" not in adapter.request.prompt
+
+    def test_world_ai_ask_keeps_world_grounding(self, client: TestClient, monkeypatch):
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        response = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "Quien es Rhyz", "session_id": "gap-chat-1",
+        })
+        assert response.status_code == 200
+        assert response.json()["state"] == "allow"
+        # Per-world behavior preserved: the real world name reaches the
+        # provider as authorized context.
+        assert '"mundo": "test_mundo"' in runs.requests[0].prompt
+
+    def test_unknown_mundo_still_fails_closed(self, client: TestClient, monkeypatch):
+        """An arbitrary name must never become a permissive world — even with a
+        wired provider, ``nope`` fails closed on both assistant surfaces."""
+        runs = _SemanticRuns(_semantic_payload("allow"))
+        _wire_semantic_provider(monkeypatch, runs)
+        ask = client.post("/api/nope/ai/ask", json={
+            "prompt": "Hola", "session_id": "gap-nope-1",
+        })
+        assert ask.status_code == 200
+        envelope = ask.json()
+        assert envelope["state"] == "blocked"
+        assert envelope["unavailable"] is True
+        assert runs.starts == 0  # the provider was never consulted
+        activity = client.post("/api/nope/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "gap-nope-1",
+        })
+        assert activity.status_code == 503
+        assert activity.json()["code"] == "activity_unavailable"

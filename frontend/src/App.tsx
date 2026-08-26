@@ -17,6 +17,9 @@ import { useAuthGate } from "@/hooks/useAuthGate";
 /** Lazy-loaded entity page — code-split because it's only used on entity routes */
 const EntityPage = lazy(() => import("@/pages/EntityPage"));
 
+/** Lazy-loaded ideas workshop — world-agnostic two-panel page at /ideas */
+const IdeasWorkshop = lazy(() => import("@/pages/IdeasWorkshop"));
+
 /**
  * Authentication gate (MANDATORY when DEMIURGOS_AUTH_MODE=local-dev):
  * when local auth is enabled, the user MUST authenticate before accessing
@@ -76,6 +79,7 @@ function FirstRunGate() {
  * - `/onboarding` → first-run onboarding (outside the gate)
  * - `/wiki` → Wiki Home page
  * - `/taller-herramientas` → ToolWorkshop (Taller de Herramientas shell)
+ * - `/ideas` → IdeasWorkshop (Taller de Ideas — global, world-agnostic bank)
  * - `/taller-mundo` → WorldWorkshop (Taller de Mundo shell)
  * - `/perfil` → Profile page (Sesión de edición + Centro de Configuración tab +
  *   Integraciones → Captura de ideas (single Telegram surface), Asistente IA,
@@ -104,6 +108,20 @@ export default function App() {
           <Route element={<FirstRunGate />}>
             <Route path="/wiki" element={<WikiHome />} />
             <Route path="/taller-herramientas" element={<ToolWorkshop />} />
+            <Route
+              path="/ideas"
+              element={
+                <Suspense
+                  fallback={
+                    <div className="flex min-h-screen items-center justify-center bg-cripta">
+                      <span className="text-tinta-desvaida">Cargando Taller de Ideas…</span>
+                    </div>
+                  }
+                >
+                  <IdeasWorkshop />
+                </Suspense>
+              }
+            />
             <Route path="/taller-mundo" element={<WorldWorkshop />} />
             <Route path="/perfil" element={<ProfilePage />} />
             <Route

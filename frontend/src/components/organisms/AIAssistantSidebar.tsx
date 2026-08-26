@@ -28,7 +28,10 @@ export interface AssistantEditRequest {
 }
 
 interface AIAssistantSidebarProps {
-  mundo: string;
+  /** World-scoped context. Omit (or pass null/undefined) for world-agnostic
+   *  sessions such as the Taller de Ideas — the hook then uses the stable
+   *  global context key `ideas-global`. */
+  mundo?: string;
   section?: string;
   filePath?: string;
   onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
@@ -42,6 +45,13 @@ const SUGGESTIONS = [
   "Explicame el sistema Stal",
   "¿Qué es el Flud?",
   "Contame sobre Ekkor",
+];
+
+/** World-agnostic suggestions for the null-mundo (global ideas) context. */
+const GLOBAL_SUGGESTIONS = [
+  "Dame una idea de personaje",
+  "Proponé una trama",
+  "¿Qué concepto puedo desarrollar?",
 ];
 
 const SAFE_SOURCE_ROOTS = new Set([
@@ -103,7 +113,7 @@ function formatDate(ts: number): string {
 /* ================================================================== */
 
 interface ChatScreenProps {
-  mundo: string;
+  mundo?: string;
   section?: string;
   filePath?: string;
   activeSession: ReturnType<typeof useAIAssistantSessions>["activeSession"];
@@ -271,9 +281,11 @@ function ChatScreen({
   );
 
   const handleLightbulb = useCallback(() => {
-    const prompt = `Estoy en la sección ${section}${filePath ? `, archivo ${filePath}` : ""}. Dame ideas sobre qué puedo trabajar o profundizar aquí.`;
+    const prompt = mundo
+      ? `Estoy en la sección ${section}${filePath ? `, archivo ${filePath}` : ""}. Dame ideas sobre qué puedo trabajar o profundizar aquí.`
+      : "Dame ideas sobre qué puedo trabajar en el banco global de ideas.";
     sendMessage(prompt);
-  }, [section, filePath, sendMessage]);
+  }, [mundo, section, filePath, sendMessage]);
 
   const handleMicClick = useCallback(() => {
     if (whisperIsRecording) {
@@ -290,6 +302,7 @@ function ChatScreen({
   const latestUserPrompt = [...messages]
     .reverse()
     .find((message) => message.role === "user")?.content.trim();
+  const suggestions = mundo ? SUGGESTIONS : GLOBAL_SUGGESTIONS;
   const canProposeEdit = Boolean(
     onProposeEdit &&
       section &&
@@ -298,13 +311,15 @@ function ChatScreen({
       latestUserPrompt &&
       !isSending,
   );
-  const proposeEditDisabledReason = !section || !filePath
-    ? "Abrí un archivo para proponer una edición."
-    : !latestUserPrompt
-      ? "Escribí y enviá una solicitud al asistente primero."
-      : isSending
-        ? "Esperá a que termine la respuesta del asistente."
-        : "Proponer una edición usando la última solicitud enviada.";
+  const proposeEditDisabledReason = !mundo
+    ? "El asistente global no edita archivos de un mundo."
+    : !section || !filePath
+      ? "Abrí un archivo para proponer una edición."
+      : !latestUserPrompt
+        ? "Escribí y enviá una solicitud al asistente primero."
+        : isSending
+          ? "Esperá a que termine la respuesta del asistente."
+          : "Proponer una edición usando la última solicitud enviada.";
   const hasAssistantAnswer = messages.some((message) => message.role === "assistant");
   const hasGuidedCandidate = Boolean(
     activeSession?.guided && (
@@ -368,7 +383,9 @@ function ChatScreen({
             <h2 className="text-body font-medium text-pergamino truncate">
               Asistente IA
             </h2>
-            <p className="text-xs text-tinta-desvaida truncate">{mundo}</p>
+            <p className="text-xs text-tinta-desvaida truncate">
+              {mundo ?? "Banco global de ideas"}
+            </p>
           </div>
         </div>
         <button
@@ -389,15 +406,29 @@ function ChatScreen({
             <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-llamita/10 text-llamita">
               <Icon name="lightbulb" size={24} />
             </div>
-            <h3 className="mb-1 text-body font-medium text-pergamino">
-              Preguntame sobre tu mundo
-            </h3>
-            <p className="mb-4 text-xs text-tinta-desvaida max-w-[200px]">
-              Conozco todo el lore de{" "}
-              <strong className="text-pergamino">{mundo}</strong>.
-            </p>
+            {mundo ? (
+              <>
+                <h3 className="mb-1 text-body font-medium text-pergamino">
+                  Preguntame sobre tu mundo
+                </h3>
+                <p className="mb-4 text-xs text-tinta-desvaida max-w-[200px]">
+                  Conozco todo el lore de{" "}
+                  <strong className="text-pergamino">{mundo}</strong>.
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="mb-1 text-body font-medium text-pergamino">
+                  Preguntame sobre el banco global
+                </h3>
+                <p className="mb-4 text-xs text-tinta-desvaida max-w-[200px]">
+                  Trabajo con ideas sin atarme a un mundo: personajes,
+                  relaciones, ambientaciones, tramas y conceptos.
+                </p>
+              </>
+            )}
             <div className="flex flex-wrap justify-center gap-1.5">
-              {SUGGESTIONS.map((suggestion) => (
+              {suggestions.map((suggestion) => (
                 <button
                   key={suggestion}
                   type="button"

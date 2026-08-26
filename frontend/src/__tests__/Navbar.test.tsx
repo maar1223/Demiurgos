@@ -144,6 +144,31 @@ describe("Navbar", () => {
     ).toBeInTheDocument();
   });
 
+  it("places Taller de Ideas between Taller de Herramientas and Taller de Mundo", () => {
+    const availableLabels = NAV_LINKS.filter(
+      (link) => link.availability === "available",
+    ).map((link) => link.label);
+    expect(availableLabels).toEqual([
+      "Taller de Herramientas",
+      "Taller de Ideas",
+      "Taller de Mundo",
+    ]);
+
+    renderNavbar({ worlds });
+
+    // DOM order mirrors NAV_LINKS order: the ideas entry renders between the
+    // two existing workshops in the desktop nav.
+    const herramientas = screen.getByRole("button", { name: "Taller de Herramientas" });
+    const ideas = screen.getByRole("button", { name: "Taller de Ideas" });
+    const mundo = screen.getByRole("button", { name: "Taller de Mundo" });
+    expect(
+      herramientas.compareDocumentPosition(ideas) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      ideas.compareDocumentPosition(mundo) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("hides legacy narrative phases and Taller de Publicación while unavailable", () => {
     renderNavbar({ worlds });
 
