@@ -406,3 +406,46 @@ def test_verify_bundled_adapter_surface_passes():
             assert callable(mod.capture_platform_deps_ready)
         finally:
             runtime.close()
+
+
+# -- bundled behavior preservation (PR 4 / S-5.1) -----------------------------
+
+
+def test_adapter_preserves_bundled_behavior(monkeypatch):
+    """4.5 / S-5.1: media caching, album merge, and threads stay on the parent.
+
+    The subclass exists ONLY for capture routing/keyboard (R-5: subclass,
+    never a copy). The methods that implement bundled behavior — media
+    caching + album merge (``_handle_media_message`` / ``_handle_text_message``)
+    and the thread fallback send (``_send_message_with_thread_fallback``) —
+    must be the parent's own function objects, inherited verbatim. And any
+    non-capture callback must still defer to ``super()`` untouched, so the
+    bundled callback handlers keep working.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        adapter, mod = _adapter(handler)
+        try:
+            # 1. Class-level: the bundled behavior is inherited, not re-implemented.
+            for name in ("_handle_media_message", "_handle_text_message",
+                         "_handle_location_message",
+                         "_send_message_with_thread_fallback"):
+                assert getattr(mod.CaptureTelegramAdapter, name) is getattr(
+                    mod.TelegramAdapter, name), name
+
+            # 2. Behavior-level: a non-capture callback reaches super() exactly
+            #    once (mock the parent call), preserving the bundled handler.
+            parent_calls = []
+
+            async def fake_parent(self, update, context):
+                parent_calls.append((update, context))
+
+            monkeypatch.setattr(mod.TelegramAdapter, "_handle_callback_query",
+                                fake_parent)
+            query = FakeQuery(data="mp:preserved-payload")
+            asyncio.run(adapter._handle_callback_query(
+                SimpleNamespace(callback_query=query), context=None))
+            assert len(parent_calls) == 1
+            assert parent_calls[0][0].callback_query.data == "mp:preserved-payload"
+        finally:
+            runtime.close()
