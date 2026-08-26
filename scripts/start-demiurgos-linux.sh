@@ -180,8 +180,12 @@ start_component() {
             (cd "$FRONTEND_DIR" && exec nohup npm run dev -- \
                 --host 127.0.0.1 --port "$FRONTEND_PORT" >>"$FRONTEND_LOG" 2>&1) & ;;
         gateway)
+            # CWD = repo root so Path.cwd()/.hermes/plugins resolves to the
+            # project plugins; HERMES_ENABLE_PROJECT_PLUGINS=1 opts them in
+            # (plugins.enabled in ~/.hermes/config.yaml gates which load).
             (cd "$PROJECT_ROOT" && exec nohup env \
                 DEMIURGOS_ROOT="$PROJECT_ROOT" \
+                HERMES_ENABLE_PROJECT_PLUGINS=1 \
                 HERMES_GATEWAY_HOST=127.0.0.1 HERMES_GATEWAY_PORT="$GATEWAY_PORT" \
                 "$HERMES_BIN" gateway run >>"$GATEWAY_LOG" 2>&1) & ;;
         *) return 1 ;;
