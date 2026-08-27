@@ -4,6 +4,7 @@ import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { TabBar, type SidebarTab } from "@/components/molecules/TabBar";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
+import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useWorlds } from "@/hooks/useWorlds";
@@ -497,8 +498,11 @@ export default function IdeasWorkshop() {
             </dl>
           </header>
 
-          <div className="mb-6 whitespace-pre-wrap break-words text-body text-pergamino">
-            {selectedIdea.body}
+          {/* Body rendered as GFM markdown (R-1). Frontmatter is stripped
+              inside MarkdownViewer (splitFrontmatter); no `mundo` prop by
+              design — /api/ideas/media/... embeds pass through MarkdownImage. */}
+          <div className="mb-6">
+            <MarkdownViewer content={selectedIdea.body} />
           </div>
 
           {/* Reclassify */}

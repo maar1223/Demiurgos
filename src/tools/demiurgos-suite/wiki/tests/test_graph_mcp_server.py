@@ -22,6 +22,7 @@ from wiki.graph_indexer import EntityGraphIndex    # noqa: E402
 from wiki.mcp_adapter import GraphMCPAdapter        # noqa: E402
 from wiki.graph_models import EntityDetail, EntityHit  # noqa: E402
 from wiki.narrative_utils import THEME_MAP           # noqa: E402
+from wiki.ideas_bank import Idea, IdeaNotFound       # noqa: E402
 
 
 # =============================================================================
@@ -904,3 +905,197 @@ class TestSearchScoreFiltering:
         assert "Rhyz" in names, "Name-prefix match must survive an empty corpus"
         assert "Bira" not in names
         assert len(results) == 1
+
+
+# =============================================================================
+# Unit tests — idea-bank MCP tools (ideas_list / ideas_read / ideas_search)
+# =============================================================================
+
+
+def _make_idea(
+    slug: str = "test-idea",
+    body: str = "Un arquero ciego.",
+    tags: list[str] | None = None,
+    status: str = "fresh",
+) -> Idea:
+    """Build a real Idea dataclass (no I/O) for mocked IdeasBank returns."""
+    return Idea(
+        id=f"id-{slug}",
+        slug=slug,
+        timestamp="2026-08-27T00:00:00+00:00",
+        source="manual",
+        type="concepto",
+        tags=tags or [],
+        status=status,
+        used_in=[],
+        based_on=None,
+        media_path=None,
+        body=body,
+    )
+
+
+class TestIdeaBankTools:
+    """The three idea-bank tools are registered, sign correctly, and honor
+    the summary/full contracts (S-3.1, S-3.2, S-3.3) with a mocked IdeasBank."""
+
+    def test_tools_registered(self) -> None:
+        """ideas_list / ideas_read / ideas_search are defined on the module."""
+        from wiki import graph_mcp_server  # noqa: F811
+
+        assert hasattr(graph_mcp_server, "ideas_list")
+        assert hasattr(graph_mcp_server, "ideas_read")
+        assert hasattr(graph_mcp_server, "ideas_search")
+
+    def test_tool_signatures(self) -> None:
+        """Each tool accepts its spec-defined parameter signature."""
+        from wiki.graph_mcp_server import (  # noqa: F811
+            ideas_list,
+            ideas_read,
+            ideas_search,
+        )
+
+        import inspect
+
+        sig_list = inspect.signature(ideas_list)
+        assert list(sig_list.parameters.keys()) == ["tag", "status"]
+
+        sig_read = inspect.signature(ideas_read)
+        assert list(sig_read.parameters.keys()) == ["slug"]
+
+        sig_search = inspect.signature(ideas_search)
+        assert list(sig_search.parameters.keys()) == ["query"]
+
+    def test_ideas_list_returns_summaries_without_body(self) -> None:
+        """ideas_list() returns {ideas: [...]} with no body field (S-3.1)."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import ideas_list  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.list.return_value = [
+            _make_idea(slug="alpha", body="Cuerpo secreto A"),
+            _make_idea(slug="beta", body="Cuerpo secreto B", tags=["fantasy"]),
+        ]
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = ideas_list()
+
+        assert set(result.keys()) == {"ideas"}
+        assert len(result["ideas"]) == 2
+        for summary in result["ideas"]:
+            assert "body" not in summary
+            assert "slug" in summary
+            assert "type" in summary
+            assert "status" in summary
+        assert [s["slug"] for s in result["ideas"]] == ["alpha", "beta"]
+        # Filter arguments were passed through to the bank.
+        bank_mock.list.assert_called_once_with(status=None)
+
+    def test_ideas_list_filters_by_tag_and_status(self) -> None:
+        """Tag/status filters narrow the returned summaries (R-5).
+
+        Status filtering lives inside IdeasBank.list() (mocked away here, so
+        the mock returns only status-matching ideas); the tool-side TAG
+        filter then narrows further. The status filter must still be
+        forwarded to the bank.
+        """
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import ideas_list  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.list.return_value = [
+            _make_idea(slug="a", tags=["fantasy"], status="fresh"),
+            _make_idea(slug="c", tags=["horror"], status="fresh"),
+        ]
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = ideas_list(tag="fantasy", status="fresh")
+
+        assert [s["slug"] for s in result["ideas"]] == ["a"]
+        bank_mock.list.assert_called_once_with(status="fresh")
+
+    def test_ideas_read_returns_full_idea(self) -> None:
+        """ideas_read() returns {idea: {...}, exists: true} including body (S-3.2)."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import ideas_read  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.read.return_value = _make_idea(
+            slug="arquero-ciego", body="Un arquero que no ve."
+        )
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = ideas_read("arquero-ciego")
+
+        assert result["exists"] is True
+        assert result["idea"]["slug"] == "arquero-ciego"
+        assert result["idea"]["body"] == "Un arquero que no ve."
+        assert "media_path" in result["idea"]
+        bank_mock.read.assert_called_once_with("arquero-ciego")
+
+    def test_ideas_read_missing_idea_returns_exists_false(self) -> None:
+        """Missing slug returns {exists: false} — no exception (S-3.2)."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import ideas_read  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.read.side_effect = IdeaNotFound("No existe la idea 'nope'.")
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = ideas_read("nope")
+
+        assert result == {"exists": False}
+
+    def test_ideas_search_matches_body_substring_case_insensitive(self) -> None:
+        """ideas_search() matches substrings in body, case-insensitive (S-3.3)."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import ideas_search  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.list.return_value = [
+            _make_idea(slug="dragons-keep", body="The DRAGON sleeps in the keep."),
+            _make_idea(slug="market", body="The market is quiet at dawn."),
+        ]
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = ideas_search("dragon")
+
+        assert result["query"] == "dragon"
+        assert [m["slug"] for m in result["matches"]] == ["dragons-keep"]
+        assert "body" not in result["matches"][0]
+
+    def test_ideas_search_matches_tags(self) -> None:
+        """ideas_search() also matches substrings inside tags."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import ideas_search  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.list.return_value = [
+            _make_idea(slug="portal", body="Una puerta antigua.", tags=["fantasy"]),
+            _make_idea(slug="guild", body="La cofradía.", tags=["urbano"]),
+        ]
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = ideas_search("fant")
+
+        assert [m["slug"] for m in result["matches"]] == ["portal"]
+
+    def test_ideas_search_no_matches_returns_empty(self) -> None:
+        """No matches returns an empty list with the query echoed back."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import ideas_search  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.list.return_value = [_make_idea(slug="portal", body="Una puerta.")]
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = ideas_search("zzz-inexistente")
+
+        assert result["matches"] == []
+        assert result["query"] == "zzz-inexistente"
