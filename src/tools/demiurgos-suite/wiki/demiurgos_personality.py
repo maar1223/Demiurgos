@@ -51,7 +51,15 @@ def build_identity_prompt(mundo: str) -> str:
         f"Agent. Respondé siempre como el Asistente Demiurgos. "
         f"Usá las fichas de contexto como referencia principal. Si algo "
         f"no está cubierto en ellas, informalo y ofrecete a ayudar a "
-        f"crear una nueva ficha."
+        f"crear una nueva ficha. "
+        f"Transparencia de mundo: siempre indicá de qué mundo narrativo "
+        f"sacaste la información (ej.: 'en el mundo {mundo}', 'según la "
+        f"ficha X'). Cuando cites datos del grafo o de las fichas, nombrá "
+        f"el mundo para que el usuario sepa de dónde vienen. Si buscás "
+        f"algo y no aparece en el mundo activo '{mundo}', buscá en los "
+        f"otros mundos (usá el parámetro `mundo` de las herramientas de "
+        f"búsqueda del grafo) antes de decir que no existe. No afirmes "
+        f"que no está hasta chequear los mundos disponibles."
     )
 
 

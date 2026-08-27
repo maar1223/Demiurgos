@@ -117,8 +117,9 @@ class GraphMCPAdapter:
     ) -> dict[str, Any]:
         """Search entities by name/title/tags.
 
-        ``mundo`` is the world to query (optional; defaults to the configured
-        world).  Returns ``{"matches": [...], "query": "..."}``.
+        ``mundo`` defaults to the active world; pass another world name to
+        search that world. When you return results, tell the user which
+        world they came from.  Returns ``{"matches": [...], "query": "..."}``.
         """
         hits = self._index_for(mundo).search(query, filters)
         return {
@@ -129,8 +130,9 @@ class GraphMCPAdapter:
     def tool_read(self, entity_path: str, mundo: str = "") -> dict[str, Any]:
         """Read a full entity by path.
 
-        ``mundo`` is the world to query (optional; defaults to the configured
-        world).  Returns ``{"entity": {...}, "exists": true|false}``.
+        ``mundo`` defaults to the active world; pass another world name to
+        read that world. When you return results, tell the user which world
+        they came from.  Returns ``{"entity": {...}, "exists": true|false}``.
         """
         detail = self._index_for(mundo).get_entity(entity_path)
         if detail is None:
@@ -149,8 +151,9 @@ class GraphMCPAdapter:
     ) -> dict[str, Any]:
         """Query link graph — same kinds as ``EntityGraphIndex.get_links()``.
 
-        ``mundo`` is the world to query (optional; defaults to the configured
-        world).  Returns ``{"links": [...], "kind": "...", "entity_path": "..."}``.
+        ``mundo`` defaults to the active world; pass another world name to
+        query that world. When you return results, tell the user which world
+        they came from.  Returns ``{"links": [...], "kind": "...", "entity_path": "..."}``.
         """
         try:
             links = self._index_for(mundo).get_links(entity_path, kind)
@@ -201,8 +204,9 @@ class GraphMCPAdapter:
     def tool_lore_search(self, query: str, mundo: str = "") -> dict[str, Any]:
         """Search both the entity graph and Engram memory.
 
-        ``mundo`` is the world to query (optional; defaults to the configured
-        world).  Returns ``{"graph_matches": [...], "engram_matches": [...], "query": "..."}``.
+        ``mundo`` defaults to the active world; pass another world name to
+        search that world. When you return results, tell the user which world
+        they came from.  Returns ``{"graph_matches": [...], "engram_matches": [...], "query": "..."}``.
         Each match is tagged with ``"source": "graph"|"engram"``.
         """
         # Graph search

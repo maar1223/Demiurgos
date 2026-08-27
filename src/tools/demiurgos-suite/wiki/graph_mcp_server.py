@@ -113,7 +113,9 @@ def graph_search(query: str, type: str = "", tag: str = "", mundo: str = "") -> 
 
     Returns matches sorted by relevance score.  Use this tool first to
     locate entities before calling graph_read for full content.
-    ``mundo`` is the world to query (optional; defaults to the configured world).
+    ``mundo`` defaults to the active world; pass another world name to
+    search that world. When you return results, tell the user which world
+    they came from.
     """
     filters: dict = {}
     if type:
@@ -130,7 +132,9 @@ def graph_read(entity_path: str, mundo: str = "") -> dict:
 
     Returns the entity with content, forward_links, backlinks, relaciones,
     and word count.  If the entity does not exist, returns {exists: false}.
-    ``mundo`` is the world to query (optional; defaults to the configured world).
+    ``mundo`` defaults to the active world; pass another world name to
+    read that world. When you return results, tell the user which world
+    they came from.
     """
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
     return _adapter.tool_read(entity_path, mundo)
@@ -148,7 +152,9 @@ def graph_links(entity_path: str = "", kind: str = "backlinks", mundo: str = "")
       - hubs        — top 20 entities with the most total links
       - suggest     — entities sharing tags with entity_path but NOT linked
 
-    ``mundo`` is the world to query (optional; defaults to the configured world).
+    ``mundo`` defaults to the active world; pass another world name to
+    query that world. When you return results, tell the user which world
+    they came from.
     """
     ep: str | None = entity_path if entity_path else None
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
@@ -191,7 +197,9 @@ def lore_search(query: str, mundo: str = "") -> dict:
     Returns graph_matches (from the entity index) and engram_matches
     (from Engram memory), each tagged with a source field.
     Use this to find entities and related memories in one call.
-    ``mundo`` is the world to query (optional; defaults to the configured world).
+    ``mundo`` defaults to the active world; pass another world name to
+    search that world. When you return results, tell the user which world
+    they came from.
     """
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
     return _adapter.tool_lore_search(query, mundo)
