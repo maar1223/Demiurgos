@@ -917,6 +917,7 @@ def _make_idea(
     body: str = "Un arquero ciego.",
     tags: list[str] | None = None,
     status: str = "fresh",
+    version: int = 1,
 ) -> Idea:
     """Build a real Idea dataclass (no I/O) for mocked IdeasBank returns."""
     return Idea(
@@ -930,6 +931,7 @@ def _make_idea(
         used_in=[],
         based_on=None,
         media_path=None,
+        version=version,
         body=body,
     )
 
@@ -939,12 +941,15 @@ class TestIdeaBankTools:
     the summary/full contracts (S-3.1, S-3.2, S-3.3) with a mocked IdeasBank."""
 
     def test_tools_registered(self) -> None:
-        """ideas_list / ideas_read / ideas_search are defined on the module."""
+        """ideas_list / ideas_read / ideas_search / update_idea / idea_history
+        are defined on the module."""
         from wiki import graph_mcp_server  # noqa: F811
 
         assert hasattr(graph_mcp_server, "ideas_list")
         assert hasattr(graph_mcp_server, "ideas_read")
         assert hasattr(graph_mcp_server, "ideas_search")
+        assert hasattr(graph_mcp_server, "update_idea")
+        assert hasattr(graph_mcp_server, "idea_history")
 
     def test_tool_signatures(self) -> None:
         """Each tool accepts its spec-defined parameter signature."""
@@ -952,6 +957,8 @@ class TestIdeaBankTools:
             ideas_list,
             ideas_read,
             ideas_search,
+            update_idea,
+            idea_history,
         )
 
         import inspect
@@ -964,6 +971,12 @@ class TestIdeaBankTools:
 
         sig_search = inspect.signature(ideas_search)
         assert list(sig_search.parameters.keys()) == ["query"]
+
+        sig_update = inspect.signature(update_idea)
+        assert list(sig_update.parameters.keys()) == ["slug", "body", "title", "tags", "type"]
+
+        sig_history = inspect.signature(idea_history)
+        assert list(sig_history.parameters.keys()) == ["slug"]
 
     def test_ideas_list_returns_summaries_without_body(self) -> None:
         """ideas_list() returns {ideas: [...]} with no body field (S-3.1)."""
@@ -1099,3 +1112,97 @@ class TestIdeaBankTools:
 
         assert result["matches"] == []
         assert result["query"] == "zzz-inexistente"
+
+    def test_update_idea_delegates_and_returns_new_version(self) -> None:
+        """update_idea() delegates to update_versioned() and returns the new
+        version with previous_version and the archive path (S-6.1)."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import update_idea  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.update_versioned.return_value = _make_idea(
+            slug="arquero-ciego", body="Versión mejorada.", version=2
+        )
+        bank_mock._archive_path.return_value = Path("ideas/versions/arquero-ciego-v1.md")
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = update_idea("arquero-ciego", body="Versión mejorada.", tags=["arcano"])
+
+        assert result == {
+            "slug": "arquero-ciego",
+            "version": 2,
+            "previous_version": 1,
+            "archived_at": "ideas/versions/arquero-ciego-v1.md",
+        }
+        bank_mock.update_versioned.assert_called_once_with(
+            "arquero-ciego", {"body": "Versión mejorada.", "tags": ["arcano"]}
+        )
+
+    def test_update_idea_omits_empty_fields(self) -> None:
+        """Empty/omitted fields are not forwarded to update_versioned()."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import update_idea  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.update_versioned.return_value = _make_idea(
+            slug="portal", version=2
+        )
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            update_idea("portal", title="Nuevo título")
+
+        bank_mock.update_versioned.assert_called_once_with(
+            "portal", {"title": "Nuevo título"}
+        )
+
+    def test_update_idea_unknown_slug_returns_error(self) -> None:
+        """Missing slug -> {error} (no exception raised to the model)."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import update_idea  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock.update_versioned.side_effect = IdeaNotFound("No existe la idea 'nope'.")
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = update_idea("nope", body="x")
+
+        assert result["error"]
+
+    def test_idea_history_returns_ascending_versions(self) -> None:
+        """idea_history() returns versions ascending via _versions_for()."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import idea_history  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock._versions_for.return_value = [
+            Path("ideas/versions/arquero-ciego-v1.md"),
+            Path("ideas/versions/arquero-ciego-v2.md"),
+        ]
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = idea_history("arquero-ciego")
+
+        assert result["slug"] == "arquero-ciego"
+        assert result["versions"] == [
+            {"version": 1, "path": "ideas/versions/arquero-ciego-v1.md"},
+            {"version": 2, "path": "ideas/versions/arquero-ciego-v2.md"},
+        ]
+        bank_mock._versions_for.assert_called_once_with("arquero-ciego")
+
+    def test_idea_history_no_archives_returns_empty(self) -> None:
+        """No archives -> versions: []."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import idea_history  # noqa: F811
+
+        bank_mock = MagicMock()
+        bank_mock._versions_for.return_value = []
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = idea_history("portal")
+
+        assert result == {"slug": "portal", "versions": []}

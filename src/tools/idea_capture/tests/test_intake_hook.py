@@ -379,9 +379,10 @@ def test_register_registers_pre_gateway_dispatch_hook(monkeypatch):
     # ai mode (default) also wires the assistant-facing surface (R-3/R-4).
     assert ("register_hook", "pre_llm_call", plugin.capture_guidance_hook) in calls
     tool = [c for c in calls if c[0] == "register_tool"]
-    assert len(tool) == 1
-    assert tool[0][1]["name"] == "capture_idea"
+    assert len(tool) == 2
+    assert [t[1]["name"] for t in tool] == ["capture_idea", "update_idea"]
     assert callable(tool[0][1]["handler"])
+    assert callable(tool[1][1]["handler"])
     platform = [c for c in calls if c[0] == "register_platform"]
     assert len(platform) == 1
     kwargs = platform[0][1]

@@ -146,3 +146,21 @@ def test_voice_turn_guidance_injected_with_transcript_in_text(monkeypatch):
             assert "configured language" in result["context"]
         finally:
             runtime.close()
+
+
+def test_update_idea_guidance_injected_for_authorized(monkeypatch):
+    """R-7: the guidance context tells the model to call update_idea only after
+    explicit user approval (authorized binding, ai mode)."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _setup_hook(monkeypatch)
+        plugin._handler = handler
+        try:
+            result = _fire(plugin)
+            assert result is not None
+            assert "update_idea" in result["context"]
+            assert "explicit" in result["context"]
+            assert "approval" in result["context"]
+            assert "ideas_read" in result["context"]
+        finally:
+            runtime.close()

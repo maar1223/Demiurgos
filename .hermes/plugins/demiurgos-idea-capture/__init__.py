@@ -74,6 +74,18 @@ _CAPTURE_GUIDANCE = (
     "call `capture_idea`. If it is ordinary conversation → respond normally."
 )
 
+# Update-idea guidance appended to the same pre_llm_call context (R-7). The
+# tool must ONLY be invoked after the user explicitly approves the final
+# version of the idea (e.g. "listo, actualizá"), never speculatively.
+_UPDATE_IDEA_GUIDANCE = (
+    "When the user wants to improve or edit an existing idea: "
+    "1) Use `ideas_read(slug)` to read the current version. "
+    "2) Collaborate in conversation — propose improvements, discuss changes. "
+    "3) ONLY call `update_idea` after the user explicitly approves the final "
+    "version (e.g. 'listo, actualizá', 'go ahead', 'save it'). "
+    "Never call `update_idea` without explicit user approval."
+)
+
 
 def _demiurgos_language() -> str:
     """Resolve Demiurgos' configured UI language (``DEMIURGOS_LANGUAGE``).
@@ -100,7 +112,7 @@ def _build_guidance_context() -> str:
         if lang
         else "Always respond in Demiurgos' configured language."
     )
-    return f"{_CAPTURE_GUIDANCE} {lang_instr}"
+    return f"{_CAPTURE_GUIDANCE} {_UPDATE_IDEA_GUIDANCE} {lang_instr}"
 
 _CAPTURE_IDEA_SCHEMA = {
     "name": "capture_idea",
@@ -138,12 +150,55 @@ _CAPTURE_IDEA_SCHEMA = {
 }
 
 
+_UPDATE_IDEA_SCHEMA = {
+    "name": "update_idea",
+    "description": (
+        "Update an existing idea, creating a new version. ONLY call after "
+        "explicit user approval of the final version (e.g. 'listo, "
+        "actualizá'). Returns {slug, version, previous_version, archived_at}."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "slug": {
+                "type": "string",
+                "description": "The idea slug to update.",
+            },
+            "body": {
+                "type": "string",
+                "description": "New markdown body (optional partial).",
+            },
+            "title": {
+                "type": "string",
+                "description": "New title (optional partial).",
+            },
+            "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "New tags (optional partial).",
+            },
+            "type": {
+                "type": "string",
+                "description": "New idea type (optional partial).",
+            },
+        },
+        "required": ["slug"],
+    },
+}
+
+
 def register(ctx) -> None:
     global _handler
     root = Path(os.environ.get("DEMIURGOS_ROOT", Path.cwd())).resolve()
     tools = root / "src" / "tools"
     if str(tools) not in sys.path:
         sys.path.insert(0, str(tools))
+    # The wiki package (IdeasBank for update_idea) lives under
+    # src/tools/demiurgos-suite/wiki — put the suite dir on the path so the
+    # lazy ``from wiki.ideas_bank import ...`` in the tool handler resolves.
+    suite = tools / "demiurgos-suite"
+    if str(suite) not in sys.path:
+        sys.path.insert(0, str(suite))
     # PR idea-capture-ai-gate Phase 4: mode resolution delegates to the config
     # module (env > yaml > ai), so ``src/tools`` must be on the path first.
     _resolve_capture_mode()
@@ -187,6 +242,18 @@ def register(ctx) -> None:
             handler=_capture_idea_tool,
             description=_CAPTURE_IDEA_SCHEMA["description"],
             emoji="💡",
+            is_async=False,
+        )
+        # R-7: expose the versioned edit tool. Same auth gate as capture_idea;
+        # the guidance hook tells the model to only call it after explicit
+        # user approval.
+        ctx.register_tool(
+            name="update_idea",
+            toolset="demiurgos",
+            schema=_UPDATE_IDEA_SCHEMA,
+            handler=_update_idea_tool,
+            description=_UPDATE_IDEA_SCHEMA["description"],
+            emoji="✏️",
             is_async=False,
         )
 
@@ -546,6 +613,51 @@ def _capture_idea_tool(args: dict, **kwargs) -> str:
         except Exception as exc:  # noqa: BLE001 — confirm failure must not crash the turn
             log.warning("capture_idea confirm failed for %s: %s", receipt.capture_id, exc)
     return json.dumps({"capture_id": receipt.capture_id, "status": receipt.status})
+
+
+def _update_idea_tool(args: dict, **kwargs) -> str:
+    """Tool handler for ``update_idea`` (R-7, ai mode only).
+
+    Returns a JSON string per the Hermes tool contract: the update result
+    ``{slug, version, previous_version, archived_at}`` on success, or an
+    ``error`` payload. Sessions that are not the authorized capture binding
+    are rejected before any write (S-7.1). The tool delegates to
+    ``IdeasBank.update_versioned()``; the ``version`` is derived from the
+    core, never passed by the caller, and the tool neither moves media nor
+    deletes.
+    """
+    handler = _handler
+    if handler is None:
+        return json.dumps({"error": "idea-capture handler is not initialized"})
+    if _CAPTURE_MODE != "ai":
+        return json.dumps({"error": "update_idea is only available in ai mode"})
+    if not _session_binding_allowed(handler):
+        return json.dumps({"error": "unauthorized session"})  # S-7.1
+    slug = args.get("slug")
+    if not slug:
+        return json.dumps({"error": "slug is required"})
+    from wiki.ideas_bank import IdeaNotFound, IdeasBank, InvalidIdea
+    try:
+        partial: dict = {}
+        for key in ("body", "title", "tags", "type"):
+            value = args.get(key)
+            if value not in (None, "", [], ()):
+                partial[key] = value
+        bank = IdeasBank()
+        updated = bank.update_versioned(slug, partial)
+    except (IdeaNotFound, InvalidIdea) as exc:
+        log.warning("update_idea tool rejected update: %s", exc)
+        return json.dumps({"error": str(exc)})
+    except Exception as exc:  # noqa: BLE001 — bounded error to the model
+        log.warning("update_idea tool rejected update: %s", exc)
+        return json.dumps({"error": f"update rejected: {exc}"})
+    previous_version = updated.version - 1
+    return json.dumps({
+        "slug": slug,
+        "version": updated.version,
+        "previous_version": previous_version,
+        "archived_at": str(bank._archive_path(slug, previous_version)),
+    })
 
 
 # -- PR idea-capture-ai-gate: pre_llm_call guidance (R-4) --------------------

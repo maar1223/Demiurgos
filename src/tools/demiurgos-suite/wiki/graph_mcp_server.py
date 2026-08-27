@@ -24,11 +24,14 @@ Idea-bank tools (world-agnostic, global ``ideas/`` bank — no mundo needed):
   - ideas_list(tag?, status?)                 → {ideas: [IdeaSummary, ...]}
   - ideas_read(slug)                          → {idea: {...}, exists: bool}
   - ideas_search(query)                       → {matches: [IdeaSummary, ...], query}
+  - update_idea(slug, body?, title?, tags?, type?) → {slug, version, previous_version, archived_at}
+  - idea_history(slug)                        → {slug, versions: [{version, path}]}
 """
 
 from __future__ import annotations
 
 import argparse
+import re
 import signal
 import sys
 from pathlib import Path
@@ -45,7 +48,7 @@ if str(_PARENT_DIR) not in sys.path:
 
 from wiki.graph_indexer import EntityGraphIndex   # noqa: E402
 from wiki.mcp_adapter import GraphMCPAdapter      # noqa: E402
-from wiki.ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
+from wiki.ideas_bank import IdeaNotFound, IdeasBank, InvalidIdea  # noqa: E402
 
 from mcp.server.fastmcp import FastMCP             # noqa: E402
 
@@ -302,6 +305,60 @@ def ideas_search(query: str) -> dict:
         or any(lowered in tag.lower() for tag in idea.tags)
     ]
     return {"matches": [idea.to_summary() for idea in matches], "query": query}
+
+
+@mcp.tool()
+def update_idea(slug: str, body: str = "", title: str = "", tags: list[str] = [], type: str = "") -> dict:
+    """Update an existing idea, creating a new version (S-6.1, R-6).
+
+    Delegates to ``IdeasBank.update_versioned()``: the current
+    ``ideas/{slug}.md`` is archived to ``ideas/versions/{slug}-vN.md`` and the
+    live file gets the next filesystem-derived version. The tool never moves
+    media and never deletes; the ``version`` is derived from the core, never
+    passed by the caller. Returns
+    ``{slug, version, previous_version, archived_at}``.
+    """
+    bank = IdeasBank()
+    partial: dict = {}
+    if body:
+        partial["body"] = body
+    if title:
+        partial["title"] = title
+    if tags:
+        partial["tags"] = tags
+    if type:
+        partial["type"] = type
+    try:
+        updated = bank.update_versioned(slug, partial)
+    except IdeaNotFound:
+        return {"error": f"idea '{slug}' not found"}
+    except InvalidIdea as exc:
+        return {"error": str(exc)}
+    previous_version = updated.version - 1
+    return {
+        "slug": slug,
+        "version": updated.version,
+        "previous_version": previous_version,
+        "archived_at": str(bank._archive_path(slug, previous_version)),
+    }
+
+
+@mcp.tool()
+def idea_history(slug: str) -> dict:
+    """List an idea's archived versions ascending by version number (R-3).
+
+    Delegates to ``IdeasBank._versions_for()``. Returns
+    ``{slug, versions: [{version, path}]}``; an empty list when no archive
+    exists for the slug.
+    """
+    bank = IdeasBank()
+    versions = [
+        {"version": int(match.group(1)), "path": str(path)}
+        for path in bank._versions_for(slug)
+        for match in [re.search(r"-v(\d+)\.md$", path.name)]
+        if match
+    ]
+    return {"slug": slug, "versions": versions}
 
 
 # ---------------------------------------------------------------------------

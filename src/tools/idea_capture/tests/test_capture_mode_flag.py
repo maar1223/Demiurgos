@@ -74,7 +74,7 @@ def test_unset_mode_defaults_to_ai(monkeypatch):
     assert plugin._CAPTURE_MODE == "ai"
     # ai mode wires the assistant-facing surface (tool + guidance).
     assert ("pre_llm_call", plugin.capture_guidance_hook) in ctx.hooks
-    assert [t["name"] for t in ctx.tools] == ["capture_idea"]
+    assert [t["name"] for t in ctx.tools] == ["capture_idea", "update_idea"]
 
 
 def test_strict_mode_resolved(monkeypatch):

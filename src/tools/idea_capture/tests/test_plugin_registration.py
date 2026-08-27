@@ -102,7 +102,7 @@ def test_plugin_registers_hook_and_platform(monkeypatch):
     # and the capture_idea tool are wired in ai mode (the default).
     assert plugin._CAPTURE_MODE == "ai"
     assert ("pre_llm_call", plugin.capture_guidance_hook) in ctx.hooks
-    assert [t["name"] for t in ctx.tools] == ["capture_idea"]
+    assert [t["name"] for t in ctx.tools] == ["capture_idea", "update_idea"]
     tool = ctx.tools[0]
     assert tool["toolset"] == "demiurgos"
     assert callable(tool["handler"])
