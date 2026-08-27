@@ -540,9 +540,11 @@ export default function IdeasWorkshop() {
 
           {/* Body rendered as GFM markdown (R-1). Frontmatter is stripped
               inside MarkdownViewer (splitFrontmatter); no `mundo` prop by
-              design — /api/ideas/media/... embeds pass through MarkdownImage. */}
+              design — /api/ideas/media/... embeds pass through MarkdownImage.
+              imageFit="contain" keeps exact proportions (no crop) so images
+              of any resolution render consistently in the idea bank. */}
           <div className="mb-6">
-            <MarkdownViewer content={selectedIdea.body} />
+            <MarkdownViewer content={selectedIdea.body} imageFit="contain" />
           </div>
 
           {/* Edit title */}

@@ -37,7 +37,8 @@ class TestTextDispatch:
     def test_text_delegates_to_hermes_classifier(self):
         provider = MediaEnrichProvider(hermes=lambda raw: "personaje")
         result = provider("un mercenario sombrío", media_kind=MediaKind.TEXT)
-        assert result.body == "un mercenario sombrío"
+        assert result.body.startswith("## Descripción")
+        assert "un mercenario sombrío" in result.body
         assert result.type == "personaje"
 
     def test_text_title_from_tuple_classifier(self):
@@ -47,6 +48,8 @@ class TestTextDispatch:
         result = provider("una conspiración", media_kind=MediaKind.TEXT)
         assert result.type == "trama"
         assert result.title == "La conspiración"
+        assert result.body.startswith("## Descripción")
+        assert "una conspiración" in result.body
 
     def test_text_failure_fails_open_preserving_body(self):
         def exploding(_raw):
@@ -54,14 +57,16 @@ class TestTextDispatch:
 
         provider = MediaEnrichProvider(hermes=exploding, timeout_seconds=5)
         result = provider("una idea", media_kind=MediaKind.TEXT)
-        assert result.body == "una idea"
+        assert result.body.startswith("## Descripción")
+        assert "una idea" in result.body
         assert result.type == DEFAULT_TYPE
         assert result.title == ""
 
     def test_unknown_media_kind_classifies_as_text(self):
         provider = MediaEnrichProvider(hermes=lambda raw: "concepto")
         result = provider("una idea", media_kind="video")
-        assert result.body == "una idea"
+        assert result.body.startswith("## Descripción")
+        assert "una idea" in result.body
         assert result.type == "concepto"
 
     def test_classifier_timeout_fails_open_to_sin_clasificar(self):
@@ -73,7 +78,8 @@ class TestTextDispatch:
 
         provider = MediaEnrichProvider(hermes=slow, timeout_seconds=0.05)
         result = provider("una idea lenta", media_kind=MediaKind.TEXT)
-        assert result.body == "una idea lenta"
+        assert result.body.startswith("## Descripción")
+        assert "una idea lenta" in result.body
         assert result.type == DEFAULT_TYPE
         assert result.title == ""
 
@@ -87,7 +93,7 @@ _IMAGE_BYTES = b"\x89PNG\r\n\x1a\nraw-image"
 
 
 class TestImageDispatch:
-    def test_vision_descripcion_becomes_body_and_tags_map_to_type(self):
+    def test_vision_descripcion_becomes_structured_body_and_tags_map_to_type(self):
         provider = MediaEnrichProvider(
             vision_fn=lambda raw, ctx: {
                 "descripcion": "un mapa de la corte",
@@ -97,7 +103,9 @@ class TestImageDispatch:
             vision_enabled=True,
         )
         result = provider(_IMAGE_BYTES, media_kind=MediaKind.IMAGE)
-        assert result.body == "un mapa de la corte"
+        assert result.body.startswith("## Descripción")
+        assert "un mapa de la corte" in result.body
+        assert "## Detalles" in result.body
         assert result.type == "ambientacion"
 
     def test_vision_ambiguous_tags_fall_back_to_concepto(self):
@@ -109,7 +117,8 @@ class TestImageDispatch:
             vision_enabled=True,
         )
         result = provider(_IMAGE_BYTES, media_kind=MediaKind.IMAGE)
-        assert result.body == "dos figuras"
+        assert result.body.startswith("## Descripción")
+        assert "dos figuras" in result.body
         assert result.type == "concepto"
 
     def test_vision_title_from_payload_titulo_field(self):
@@ -124,6 +133,7 @@ class TestImageDispatch:
         result = provider(_IMAGE_BYTES, media_kind=MediaKind.IMAGE)
         assert result.type == "ambientacion"
         assert result.title == "El Mapa de la Corte"
+        assert result.body.startswith("## Descripción")
 
     def test_vision_title_derived_from_descripcion_first_words(self):
         provider = MediaEnrichProvider(
@@ -205,7 +215,8 @@ class TestAudioDispatch:
             media_path=str(audio),
             mime="audio/ogg",
         )
-        assert result.body == "una idea hablada"
+        assert result.body.startswith("## Descripción")
+        assert "una idea hablada" in result.body
         assert result.type == "concepto"
         # The persisted media file is passed through, not re-written.
         assert seen["path"] == str(audio)
@@ -213,7 +224,8 @@ class TestAudioDispatch:
 
     def test_audio_title_flows_from_transcript_classification(self, tmp_path):
         """AUDIO routes through the Hermes classifier over the transcript, so
-        a ``(label, title)``-returning classifier yields the idea title."""
+        a ``(label, title)``-returning classifier yields the idea title AND
+        the transcript comes back structured (## Descripción first)."""
         audio = tmp_path / "voice.ogg"
         audio.write_bytes(b"OggS\x01fake-voice")
         provider = MediaEnrichProvider(
@@ -227,7 +239,8 @@ class TestAudioDispatch:
             media_path=str(audio),
             mime="audio/ogg",
         )
-        assert result.body == "un arquero ciego protege la ciudad"
+        assert result.body.startswith("## Descripción")
+        assert "un arquero ciego protege la ciudad" in result.body
         assert result.type == "personaje"
         assert result.title == "El arquero ciego"
 
@@ -277,7 +290,8 @@ class TestAudioDispatch:
             media_path=None,
             mime="audio/ogg",
         )
-        assert result.body == "grabación recuperada"
+        assert result.body.startswith("## Descripción")
+        assert "grabación recuperada" in result.body
         assert result.type == "concepto"
         # The temp fallback file was removed after transcription.
         assert temp_files

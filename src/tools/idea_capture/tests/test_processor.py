@@ -59,12 +59,14 @@ class ProcessorMediaTests(unittest.TestCase):
         content = (self.ideas_root / f"{record.slug}.md").read_text(encoding="utf-8")
         # First-class frontmatter field (R-2 / R-4).
         self.assertIn(f"media_path: media/{record.slug}.png", content)
-        # Embed prepended to the body, before the enriched body.
-        self.assertIn(f"![idea image](/api/ideas/media/{record.slug}.png)\n\n", content)
+        # Embed prepended to the body, ABOVE the first heading (## Descripción).
+        self.assertIn(f"![idea image](/api/ideas/media/{record.slug}.png)\n\n## Descripción",
+                      content)
         self.assertIn("un mapa con tesoros", content)
-        # Structured OKF: frontmatter block, blank line, body.
+        # Structured OKF: frontmatter block, blank line, structured body.
         self.assertIn("---\n", content)
         self.assertIn("\n---\n\n", content)
+        self.assertIn("## Detalles", content)
 
     def test_extension_maps_from_mime(self):
         self.assertEqual(IdeaProcessor._ext_for_mime("image/jpeg"), ".jpg")
@@ -93,6 +95,40 @@ class ProcessorMediaTests(unittest.TestCase):
         content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
         self.assertNotIn("media_path", content)
         self.assertNotIn("![idea image]", content)
+
+    def test_global_body_starts_with_structure_heading(self):
+        """The global idea body is structured: ``## Descripción`` first (no
+        embed on text), and a legacy provider's plain body gets the local
+        fallback structure so every idea shares the same scheme."""
+        update = TelegramUpdate(1, 7, 8, False,
+                                MediaInput(MediaKind.TEXT, text="una idea de texto"))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        saved = self._processor().process(receipt.capture_id)
+
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        body = content.split("---\n\n", 1)[1]
+        self.assertTrue(body.startswith("## Descripción"), body[:60])
+        self.assertIn("## Detalles", body)
+
+    def test_structured_provider_body_passes_through_unchanged(self):
+        """A provider that already returns a structured body keeps it as-is:
+        the processor does NOT double-structure or re-wrap it."""
+        structured = ("## Descripción\n\nuna trama genial\n\n"
+                      "## Detalles\n\n- giro final\n- protagonista")
+        update = TelegramUpdate(1, 7, 8, False,
+                                MediaInput(MediaKind.TEXT, text="una trama genial"))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        processor = IdeaProcessor(
+            self.store, self.root / "mundos",
+            lambda raw, **kw: (structured, "trama", "La conspiración"),
+            global_ideas_root=self.ideas_root)
+        saved = processor.process(receipt.capture_id)
+
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        self.assertIn(structured, content)
+        self.assertEqual(content.count("## Descripción"), 1)
 
     def test_voice_capture_has_no_media_path_and_no_media_dir(self):
         """S-4.3: audio must not be copied to ideas/media/ nor get media_path."""
@@ -199,6 +235,25 @@ class ProcessorMediaTests(unittest.TestCase):
         self.assertIn("title: mapa del reino", content)
         self.assertNotIn("mapa: del", content)
 
+    def test_title_fallback_skips_structure_headings(self):
+        """A structured body with an empty enrichment title derives the title
+        from the description content, never from '## Descripción'."""
+        update = TelegramUpdate(1, 7, 8, False,
+                                MediaInput(MediaKind.TEXT,
+                                           text="un mapa con tesoros escondidos"))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        processor = IdeaProcessor(
+            self.store, self.root / "mundos",
+            lambda raw, **kw: ("## Descripción\n\nun mapa con tesoros escondidos\n\n"
+                               "## Detalles\n\n- un mapa", "concepto", ""),
+            global_ideas_root=self.ideas_root)
+        saved = processor.process(receipt.capture_id)
+
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        self.assertIn("title: un mapa con tesoros escondidos", content)
+        self.assertNotIn("title: ##", content)
+
     def test_image_capture_title_from_descripcion(self):
         """IMAGE captures get a title from the vision description's first
         words, persisted in the frontmatter alongside media_path."""
@@ -219,9 +274,12 @@ class ProcessorMediaTests(unittest.TestCase):
         self.assertEqual(saved.state.value, "SAVED")
         content = (self.ideas_root / f"{record.slug}.md").read_text(encoding="utf-8")
         self.assertIn("title: un mapa con tesoros escondidos", content)
-        # Media embed + media_path logic unchanged.
+        # Media embed + media_path logic unchanged; embed stays ABOVE the
+        # structured ## Descripción heading.
         self.assertIn(f"media_path: media/{record.slug}.png", content)
-        self.assertIn(f"![idea image](/api/ideas/media/{record.slug}.png)\n\n", content)
+        self.assertIn(
+            f"![idea image](/api/ideas/media/{record.slug}.png)\n\n## Descripción",
+            content)
 
     def test_voice_capture_title_from_transcript_enrichment(self):
         """AUDIO captures get a title from the Hermes classifier over the
