@@ -109,13 +109,15 @@ def create_ideas_bank_router(
         with a ``resolve()`` parent check as defense-in-depth.
         """
         _guard(request)
-        # Reject dangerous filename patterns (S-2.1).
+        # Reject dangerous filename patterns (S-2.1). A null byte would make
+        # ``Path.resolve()`` raise ValueError (unhandled 500) — reject it too.
         if (
             ".." in filename
             or "/" in filename
             or "\\" in filename
             or filename.startswith("/")
             or filename.startswith("\\")
+            or "\x00" in filename
         ):
             raise HTTPException(status_code=400, detail="Invalid filename")
         # Allowlist extensions (R-3).
@@ -124,7 +126,12 @@ def create_ideas_bank_router(
             raise HTTPException(status_code=400, detail="Unsupported file type")
         # Serve only from <ideas_root>/media (defense-in-depth).
         media_dir = bank._ideas_root / "media"
-        file_path = (media_dir / filename).resolve()
+        try:
+            file_path = (media_dir / filename).resolve()
+        except (OSError, ValueError):
+            # A malformed filename that cannot resolve (e.g. an embedded null
+            # byte) is a bad request, never a 500.
+            raise HTTPException(status_code=400, detail="Invalid filename")
         if file_path.parent != media_dir.resolve():
             raise HTTPException(status_code=403, detail="Access denied")
         if not file_path.is_file():

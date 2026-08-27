@@ -220,6 +220,14 @@ def test_media_unsupported_extension_is_400(client: TestClient) -> None:
     assert resp.json()["detail"] == "Unsupported file type"
 
 
+def test_media_null_byte_filename_is_400(client: TestClient) -> None:
+    """An embedded null byte in the filename is rejected with 400, not an
+    unhandled 500 from ``Path.resolve()`` (ValueError embedded null byte)."""
+    resp = client.get("/api/ideas/media/foo%00.png")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Invalid filename"
+
+
 def test_media_missing_file_is_404(client: TestClient) -> None:
     """Missing file returns 404 even for a valid image extension."""
     resp = client.get("/api/ideas/media/no-such.png")

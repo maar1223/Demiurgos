@@ -133,15 +133,20 @@ class IdeaProcessor:
     def _title_from_body(body: str, max_words: int = 5) -> str:
         """Heuristic title from the body's first words (fail-open fallback).
 
-        Markdown-aware: heading lines (``## Descripción``), image embeds and
-        bullet items are skipped so a structured body yields a title from the
-        actual description content, never from ``## Descripción ...``.
+        Markdown-aware: heading lines (``## Descripción``), image embeds,
+        bullet items (``- ``), markdown-quote/emphasis lines (``> ``, ``* ``)
+        and fenced-code markers are skipped so a structured body yields a
+        title from the actual description content, never from structural
+        markdown.
         """
         if not isinstance(body, str):
             return ""
         for line in body.strip().splitlines():
             stripped = line.strip()
-            if not stripped or stripped.startswith(("#", "![", "- ")):
+            if (
+                not stripped
+                or stripped.startswith(("#", "![", "- ", "> ", "* ", "`"))
+            ):
                 continue
             words = [w for w in stripped.split() if w]
             if words:
@@ -172,14 +177,34 @@ class IdeaProcessor:
 
         The idea file's frontmatter is a hand-rolled ``key: value`` template,
         so the title must not carry characters that break YAML parsing
-        (colons, hashes, newlines, quotes). ``ideas_bank`` re-reads the file
-        leniently — an unsanitized title like ``mapa: del reino`` would make
-        ``yaml.safe_load`` fail and hide the idea from the bank.
+        (colons, hashes, newlines, quotes, aliases, block-scalar and flow
+        sigils). ``ideas_bank`` re-reads the file leniently — an unsanitized
+        title like ``mapa: del reino``, ``* El reino`` (alias) or ``> cita``
+        (block scalar) would make ``yaml.safe_load`` fail and hide the idea
+        from the bank.
         """
         if not isinstance(title, str):
             return ""
         cleaned = " ".join(title.split())
-        cleaned = cleaned.replace(":", "").replace("#", "").strip("'\"- \t")
+        # Strip YAML/markdown chars that break a plain scalar in a hand-rolled
+        # frontmatter value: colons, hashes, quotes, and the sigils that mark
+        # aliases (*), block scalars (>, |), flow collections ({}[]), anchors
+        # (&), tags (!), and backticks.
+        cleaned = (
+            cleaned.replace(":", "")
+            .replace("#", "")
+            .replace("*", "")
+            .replace(">", "")
+            .replace("|", "")
+            .replace("&", "")
+            .replace("!", "")
+            .replace("{", "")
+            .replace("}", "")
+            .replace("[", "")
+            .replace("]", "")
+            .replace("`", "")
+            .strip("'\"- \t")
+        )
         return cleaned[:max_chars].strip()
 
     def _copy_media(self, record) -> str | None:

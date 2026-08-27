@@ -8,6 +8,7 @@ to the body, the fail-closed copy behavior, and the untouched text/voice paths.
 import tempfile
 import unittest
 import sys
+import yaml
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -234,6 +235,54 @@ class ProcessorMediaTests(unittest.TestCase):
         content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
         self.assertIn("title: mapa del reino", content)
         self.assertNotIn("mapa: del", content)
+
+    def test_title_sanitized_against_yaml_alias_and_block_scalar_sigils(self):
+        """Markdown/YAML sigils (alias `*`, block scalar `>`, brackets, etc.)
+        in an enrichment title must not break yaml.safe_load on re-read —
+        otherwise the idea hides from the bank silently."""
+        # A title starting with `*` is a YAML alias; `>` is a block scalar; both
+        # make yaml.safe_load raise, hiding the idea. Sanitize them all.
+        update = TelegramUpdate(1, 7, 8, False,
+                                MediaInput(MediaKind.TEXT, text="el reino del norte"))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        processor = IdeaProcessor(
+            self.store, self.root / "mundos",
+            lambda raw, **kw: ("el reino del norte", "concepto",
+                               "**El Reino** del Norte > cita"),
+            global_ideas_root=self.ideas_root)
+        saved = processor.process(receipt.capture_id)
+
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        # The sigils are stripped so the frontmatter value is a plain scalar.
+        self.assertIn("title: El Reino del Norte", content)
+        self.assertNotIn("title: **", content)
+        self.assertNotIn("title: >", content)
+        self.assertNotIn("title: *", content)
+        # yaml.safe_load over the frontmatter must not raise (alias/block-scalar
+        # sigils removed), so the idea stays visible in the bank.
+        fm = content.split("\n---\n", 1)[0]
+        self.assertIsInstance(yaml.safe_load(fm), dict)
+
+    def test_title_fallback_skips_quote_and_emphasis_lines(self):
+        """A body starting with `> ` quote or `* ` emphasis lines must not
+        feed those markdown sigils into the derived title."""
+        update = TelegramUpdate(1, 7, 8, False,
+                                MediaInput(MediaKind.TEXT,
+                                           text="una idea sobre dragones"))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        processor = IdeaProcessor(
+            self.store, self.root / "mundos",
+            lambda raw, **kw: ("> un cita\n\n* un enfasis\n\nlos dragones del norte",
+                               "concepto", ""),
+            global_ideas_root=self.ideas_root)
+        saved = processor.process(receipt.capture_id)
+
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        # The derived title is the content line, not the markdown sigil lines.
+        self.assertNotIn("title: un cita", content)
+        self.assertNotIn("title: un enfasis", content)
 
     def test_title_fallback_skips_structure_headings(self):
         """A structured body with an empty enrichment title derives the title
