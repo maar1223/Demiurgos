@@ -4,7 +4,7 @@ PR 2 of ``idea-capture-native-adapter``. Subclasses the bundled Hermes v0.20
 ``TelegramAdapter`` (imported from the Hermes plugins path) and adds ONLY the
 capture behavior:
 
-- a ``demiurgos-capture:`` branch in ``_handle_callback_query``, inserted
+- a ``capture:`` branch in ``_handle_callback_query``, inserted
   before the bundled silent-return gate (``adapter.py:6763-6764`` — the
   ``update_prompt:`` fallthrough that silently drops unknown prefixes), and
 - ``send_capture_prompt``, which renders the Guardar/Descartar keyboard with
@@ -31,8 +31,11 @@ from idea_capture.runtime import build_capture_keyboard, parse_capture_callback
 
 log = logging.getLogger(__name__)
 
-_CAPTURE_PREFIX = "demiurgos-capture:"
-_RUNTIME_PREFIX = "capture:"
+# The runtime encodes Guardar/Descartar buttons with the ``capture:<id>:<action>``
+# envelope (see ``idea_capture.runtime._CALLBACK_PREFIX``). The adapter branch MUST
+# match that exact prefix or every tap falls through to the bundled parent handler,
+# which silently drops unknown prefixes and the button appears to "do nothing".
+_CAPTURE_PREFIX = "capture:"
 
 # Capture states that still allow a button tap to mutate the capture. Any
 # other state (PROCESSING/SAVED/CANCELLED/RETRYABLE/ERROR) means the tap is
@@ -128,7 +131,7 @@ class CaptureTelegramAdapter(TelegramAdapter):
     # -- callback routing ---------------------------------------------------
 
     async def _handle_callback_query(self, update, context):
-        """Route ``demiurgos-capture:`` taps; defer everything else to the parent.
+        """Route ``capture:`` taps; defer everything else to the parent.
 
         The capture branch runs BEFORE the bundled handlers — i.e. before the
         silent-return gate (adapter.py:6763-6764) that drops unknown prefixes —
@@ -155,10 +158,10 @@ class CaptureTelegramAdapter(TelegramAdapter):
             await query.answer("No autorizado.")
             return
 
-        # "demiurgos-capture:<id>:<action>" -> "capture:<id>:<action>": the
-        # runtime parser never sees the project namespace.
-        parsed = parse_capture_callback(
-            data.replace(_CAPTURE_PREFIX, _RUNTIME_PREFIX, 1))
+        # The runtime parser reads the ``capture:<id>:<action>`` envelope
+        # verbatim; the adapter branch already matched that prefix, so pass the
+        # data through unchanged.
+        parsed = parse_capture_callback(data)
         if parsed is None:
             await query.answer("Acción inválida.")
             return

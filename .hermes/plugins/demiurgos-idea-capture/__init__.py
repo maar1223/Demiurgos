@@ -72,12 +72,16 @@ def register(ctx) -> None:
     )
 
 
-def capture_intake_hook(*, event, gateway, session_store) -> dict | None:
+def capture_intake_hook(*, event, gateway, session_store, **kwargs) -> dict | None:
     """Synchronous intake for the designated capture chat.
 
     Hermes' ``invoke_hook`` calls this callback synchronously (``cb(**kwargs)``);
     it MUST return a dict, never a coroutine — an un-awaited coroutine here
-    would silently disable the skip contract. Returns:
+    would silently disable the skip contract. ``**kwargs`` absorbs the
+    ``telemetry_schema_version="hermes.observer.v1"`` marker that
+    ``PluginManager`` appends to every plugin-hook callback (Hermes docs);
+    without it the extra keyword raises a TypeError and the hook never returns
+    ``skip``, leaking the message to the normal assistant flow. Returns:
 
     - ``{"action": "skip", "reason": "idea-capture"}`` for a captured message,
     - ``{"action": "skip", "reason": "idea-capture-duplicate"}`` for a replay,

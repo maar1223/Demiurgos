@@ -145,6 +145,35 @@ def test_hook_is_sync_and_returns_skip_dict():
             runtime.close()
 
 
+def test_hook_accepts_telemetry_schema_version_kwarg():
+    """Hermes appends ``telemetry_schema_version`` to every plugin-hook callback.
+
+    Regression: ``capture_intake_hook`` previously used a keyword-only signature
+    without ``**kwargs``, so the real runtime invoked it with the extra
+    ``telemetry_schema_version="hermes.observer.v1"`` marker and raised a
+    TypeError. That exception made the hook fall through to the assistant flow
+    instead of returning ``skip``, so capture never fired. The hook must absorb
+    the marker and still return the skip dict.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _load_plugin()
+        plugin._handler = handler
+        adapter = FakeAdapter()
+        try:
+            result = _run_hook(
+                plugin,
+                event=_event(1, _source(), text="idea with telemetry marker"),
+                gateway=FakeGateway(adapter),
+                session_store=None,
+                telemetry_schema_version="hermes.observer.v1",
+            )
+            assert result == {"action": "skip", "reason": "idea-capture"}
+            assert runtime.store.count() == 1
+        finally:
+            runtime.close()
+
+
 def test_authorized_text_captured_and_prompt_scheduled():
     """1.3 / user req: authorized text -> skip dict, sync accept, task scheduled."""
     with tempfile.TemporaryDirectory() as directory:

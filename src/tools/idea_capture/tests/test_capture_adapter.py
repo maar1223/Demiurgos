@@ -31,7 +31,11 @@ _PLUGIN_DIR = (
     / ".hermes" / "plugins" / "demiurgos-idea-capture"
 )
 _ADAPTER_PATH = _PLUGIN_DIR / "capture_adapter.py"
-_CAPTURE_PREFIX = "demiurgos-capture:"
+# The runtime encodes Guardar/Descartar buttons as ``capture:<id>:<action>``
+# (idea_capture.runtime._CALLBACK_PREFIX). Tests must use that exact prefix —
+# previously they used ``demiurgos-capture:``, a value the keyboard never
+# produces, so the adapter branch never matched real taps in production.
+_CAPTURE_PREFIX = "capture:"
 
 
 # -- shims -------------------------------------------------------------------
