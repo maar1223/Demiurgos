@@ -397,6 +397,8 @@ describe("IdeasWorkshop", () => {
     expect(
       within(section).getByText(/Sin versiones archivadas/),
     ).toBeInTheDocument();
+  });
+
   it("shows the pending-queue counter in the header (S-8.1)", async () => {
     listPendingCapturesMock.mockResolvedValue({
       captures: [
