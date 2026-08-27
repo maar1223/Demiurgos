@@ -1,14 +1,15 @@
 """Hermes gateway idea classifier tests (SDD idea-capture-ai-gate, Phase 3, R-5).
 
 Covers the production TEXT/AUDIO classifier: the happy path (a gateway JSON
-``{"label": ..., "title": ...}`` becomes the idea type AND title through the
-provider, S-5.1), label normalization, fail-open when the gateway is
-unconfigured / errors / times out / returns an unrecognized, non-JSON or
-malformed response (always ``(sin_clasificar, "")``, never raises), the
-cheap-offline build contract (config read at call time, no network at build),
-and the production wiring assertion that a zero-injection
-``build_media_enrich_provider()`` builds a real (non-None) classifier. The
-HTTP layer is mocked — no real gateway is ever contacted.
+``{"label", "title", "body", "details"}`` becomes the idea type, title AND
+structured body through the provider, S-5.1), label normalization, fail-open
+when the gateway is unconfigured / errors / times out / returns an
+unrecognized, non-JSON or malformed response (always
+``(sin_clasificar, "", "", [])``, never raises), the cheap-offline build
+contract (config read at call time, no network at build), and the production
+wiring assertion that a zero-injection ``build_media_enrich_provider()``
+builds a real (non-None) classifier. The HTTP layer is mocked — no real
+gateway is ever contacted.
 """
 
 from __future__ import annotations
@@ -35,12 +36,19 @@ from idea_capture.hermes_handler import (  # noqa: E402
 from idea_capture.models import MediaKind  # noqa: E402
 
 
-def _json_payload(label: str = "personaje", title: str = "") -> str:
+def _json_payload(label: str = "personaje", title: str = "",
+                  body: str = "", details: list | None = None) -> str:
     """Serialize the gateway response JSON the classifier must parse."""
-    return json.dumps({"label": label, "title": title})
+    payload: dict = {"label": label, "title": title}
+    if body:
+        payload["body"] = body
+    if details:
+        payload["details"] = details
+    return json.dumps(payload)
 
 
-def _configured_gateway(monkeypatch, *, label: str = "personaje", title: str = ""):
+def _configured_gateway(monkeypatch, *, label: str = "personaje", title: str = "",
+                        body: str = "", details: list | None = None):
     """Pin gateway config and stub the HTTP seam with a canned JSON response."""
     monkeypatch.setattr(
         "idea_capture.hermes_handler._gateway_config",
@@ -49,46 +57,67 @@ def _configured_gateway(monkeypatch, *, label: str = "personaje", title: str = "
     monkeypatch.setattr(
         "idea_capture.hermes_handler._gateway_post",
         lambda url, payload, headers, timeout: {
-            "choices": [{"message": {"content": _json_payload(label, title)}}],
+            "choices": [{"message": {"content": _json_payload(label, title, body, details)}}],
         },
     )
     return build_hermes_classifier()
 
 
 class TestHermesClassifier:
-    def test_happy_path_returns_label_and_title(self, monkeypatch):
+    def test_happy_path_returns_classification_tuple(self, monkeypatch):
         classify = _configured_gateway(monkeypatch, label="trama", title="La conspiración")
-        assert classify("una conspiración en la corte") == ("trama", "La conspiración")
+        label, title, body, details = classify("una conspiración en la corte")
+        assert label == "trama"
+        assert title == "La conspiración"
+        assert body == ""
+        assert details == []
 
     def test_happy_path_through_provider_yields_type_and_title(self, monkeypatch):
         classify = _configured_gateway(monkeypatch, label="personaje", title="El mercenario")
         provider = MediaEnrichProvider(hermes=classify)
         result = provider("un mercenario sombrío", media_kind=MediaKind.TEXT)
-        assert result.body == "un mercenario sombrío"
+        # The gateway returned no ``body`` field -> the provider structures
+        # the raw text locally (fail-open compatibility).
+        assert result.body.startswith("## Descripción")
+        assert "un mercenario sombrío" in result.body
         assert result.type == "personaje"
         assert result.title == "El mercenario"
+
+    def test_gateway_structured_body_flows_through_provider(self, monkeypatch):
+        body = "## Descripción\n\nuna conspiración\n\n## Detalles\n\n- giro final"
+        classify = _configured_gateway(
+            monkeypatch, label="trama", title="La conspiración",
+            body=body, details=["giro final"])
+        provider = MediaEnrichProvider(hermes=classify)
+        result = provider("una conspiración en la corte", media_kind=MediaKind.TEXT)
+        assert result.body == body
+        assert result.type == "trama"
+        assert result.title == "La conspiración"
 
     def test_prompt_mentions_the_full_taxonomy(self):
         for label in ("personaje", "relacion", "ambientacion",
                       "trama", "concepto", "sin_clasificar"):
             assert label in CLASSIFY_PROMPT
 
-    def test_prompt_asks_for_label_and_title_json(self):
+    def test_prompt_asks_for_label_title_body_and_details_json(self):
         assert "label" in CLASSIFY_PROMPT
         assert "title" in CLASSIFY_PROMPT
+        assert "body" in CLASSIFY_PROMPT
+        assert "details" in CLASSIFY_PROMPT
         assert "JSON" in CLASSIFY_PROMPT
+        assert "## Descripción" in CLASSIFY_PROMPT
 
     def test_label_is_trimmed_and_lowercased(self, monkeypatch):
         classify = _configured_gateway(monkeypatch, label="  Ambientacion  ")
-        assert classify("un bosque") == ("ambientacion", "")
+        assert classify("un bosque") == ("ambientacion", "", "", [])
 
     def test_unrecognized_label_fails_open_keeping_title(self, monkeypatch):
         classify = _configured_gateway(monkeypatch, label="poesia", title="Un poema")
-        assert classify("un poema") == (DEFAULT_TYPE, "Un poema")
+        assert classify("un poema") == (DEFAULT_TYPE, "Un poema", "", [])
 
     def test_empty_label_fails_open(self, monkeypatch):
         classify = _configured_gateway(monkeypatch, label="", title="")
-        assert classify("algo") == (DEFAULT_TYPE, "")
+        assert classify("algo") == (DEFAULT_TYPE, "", "", [])
 
     def test_non_string_content_fails_open(self, monkeypatch):
         _configured_gateway(monkeypatch, label="personaje", title="X")
@@ -97,7 +126,7 @@ class TestHermesClassifier:
             lambda *args: {"choices": [{"message": {"content": None}}]},
         )
         classify = build_hermes_classifier()
-        assert classify("algo") == (DEFAULT_TYPE, "")
+        assert classify("algo") == (DEFAULT_TYPE, "", "", [])
 
     def test_non_json_content_fails_open_to_sin_clasificar_and_empty_title(self, monkeypatch):
         """A bare (non-JSON) gateway reply must not crash: label and title fail open."""
@@ -107,7 +136,7 @@ class TestHermesClassifier:
             lambda *args: {"choices": [{"message": {"content": "personaje"}}]},
         )
         classify = build_hermes_classifier()
-        assert classify("algo") == (DEFAULT_TYPE, "")
+        assert classify("algo") == (DEFAULT_TYPE, "", "", [])
 
     def test_missing_title_key_yields_label_with_empty_title(self, monkeypatch):
         _configured_gateway(monkeypatch, label="personaje", title="X")
@@ -118,7 +147,7 @@ class TestHermesClassifier:
             },
         )
         classify = build_hermes_classifier()
-        assert classify("algo") == ("trama", "")
+        assert classify("algo") == ("trama", "", "", [])
 
     def test_non_string_title_fails_open_to_empty_title(self, monkeypatch):
         classify = _configured_gateway(monkeypatch, label="trama")
@@ -128,7 +157,18 @@ class TestHermesClassifier:
                 "choices": [{"message": {"content": json.dumps({"label": "trama", "title": 42})}}],
             },
         )
-        assert classify("algo") == ("trama", "")
+        assert classify("algo") == ("trama", "", "", [])
+
+    def test_non_string_body_and_details_fail_open(self, monkeypatch):
+        classify = _configured_gateway(monkeypatch, label="trama")
+        monkeypatch.setattr(
+            "idea_capture.hermes_handler._gateway_post",
+            lambda *args: {
+                "choices": [{"message": {"content": json.dumps(
+                    {"label": "trama", "body": 42, "details": "no-list"})}}],
+            },
+        )
+        assert classify("algo") == ("trama", "", "", [])
 
     def test_unconfigured_gateway_fails_open_without_network(self, monkeypatch):
         called: list = []
@@ -141,7 +181,7 @@ class TestHermesClassifier:
             lambda *args: called.append(args) or {"choices": []},
         )
         classify = build_hermes_classifier()
-        assert classify("un texto") == (DEFAULT_TYPE, "")
+        assert classify("un texto") == (DEFAULT_TYPE, "", "", [])
         assert called == [], "no network attempt when the gateway is unconfigured"
 
     def test_gateway_error_fails_open(self, monkeypatch):
@@ -151,7 +191,7 @@ class TestHermesClassifier:
             lambda *args: (_ for _ in ()).throw(RuntimeError("gateway down")),
         )
         classify = build_hermes_classifier()
-        assert classify("un texto") == (DEFAULT_TYPE, "")
+        assert classify("un texto") == (DEFAULT_TYPE, "", "", [])
 
     def test_gateway_timeout_fails_open(self, monkeypatch):
         import httpx
@@ -162,7 +202,7 @@ class TestHermesClassifier:
             lambda *args: (_ for _ in ()).throw(httpx.TimeoutException("timed out")),
         )
         classify = build_hermes_classifier()
-        assert classify("un texto") == (DEFAULT_TYPE, "")
+        assert classify("un texto") == (DEFAULT_TYPE, "", "", [])
 
     def test_malformed_response_fails_open(self, monkeypatch):
         _configured_gateway(monkeypatch, label="personaje", title="X")
@@ -171,7 +211,7 @@ class TestHermesClassifier:
             lambda *args: {"choices": []},
         )
         classify = build_hermes_classifier()
-        assert classify("un texto") == (DEFAULT_TYPE, "")
+        assert classify("un texto") == (DEFAULT_TYPE, "", "", [])
 
     def test_build_is_offline_and_defers_config_to_call_time(self, monkeypatch):
         calls: list = []
@@ -185,7 +225,7 @@ class TestHermesClassifier:
         )
         classify = build_hermes_classifier()
         assert calls == [], "building the classifier must not read gateway config"
-        assert classify("un texto") == ("trama", "")
+        assert classify("un texto") == ("trama", "", "", [])
         assert calls == ["config"], "config is read at call time, once per call"
 
 
@@ -204,9 +244,10 @@ class TestClassifierWiring:
 
         assert provider._hermes._hermes is not None
         assert callable(provider._hermes._hermes)
-        # Unconfigured gateway -> fail open at call time, never raise.
+        # Unconfigured gateway -> fail open at call time, never raise; the
+        # raw text still comes back structured via the local fallback.
         result = provider("una idea", media_kind=MediaKind.TEXT)
-        assert result.body == "una idea"
+        assert result.body.startswith("## Descripción")
         assert result.type == DEFAULT_TYPE
 
     def test_normalize_classified_label(self):

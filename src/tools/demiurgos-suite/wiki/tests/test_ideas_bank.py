@@ -404,3 +404,47 @@ def test_legacy_idea_without_title_loads_empty(bank: IdeasBank, tmp_path: Path) 
     )
     idea = bank.read("legacy")
     assert idea.title == ""
+
+
+# ---------------------------------------------------------------------------
+# FMT — structured markdown bodies (## Descripción / ## Detalles / ## Notas)
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+
+REFORMATTED_IDEAS: dict[str, dict] = {
+    "2026-08-27-3fbf55b420ea": {"title": "", "media_path": None},
+    "2026-08-27-48a17af9349f": {
+        "title": "Vibrastal Oscuro criatura",
+        "media_path": "media/2026-08-27-48a17af9349f.jpg",
+    },
+    "2026-08-27-91f2c681437a": {"title": "", "media_path": None},
+    "2026-08-27-a6daf48fbbc3": {
+        "title": "",
+        "media_path": "media/2026-08-27-a6daf48fbbc3.jpg",
+    },
+}
+
+
+def test_reformatted_repo_ideas_load_with_structure() -> None:
+    """The reformatted ideas/ files keep loading: title + body + media_path.
+
+    Integration-shaped: the repo's own Taller de Ideas bank must stay
+    parseable after the markdown-structure reformat (``## Descripción`` first,
+    optional ``## Detalles`` / ``## Notas``, image embed above the heading).
+    Frontmatter fields (slug/id/title/media_path) are preserved exactly.
+    """
+    repo_bank = IdeasBank(ideas_root=_REPO_ROOT / "ideas",
+                          mundos_root=_REPO_ROOT / "mundos")
+    for slug, expected in REFORMATTED_IDEAS.items():
+        idea = repo_bank.read(slug)
+        assert idea.title == expected["title"]
+        assert idea.media_path == expected["media_path"]
+        if idea.media_path:
+            # Image ideas keep the embed at the very top, then the heading.
+            filename = Path(idea.media_path).name
+            assert idea.body.startswith(f"![idea image](/api/ideas/media/{filename})")
+            assert "## Descripción" in idea.body
+            assert idea.body.index("![idea image]") < idea.body.index("## Descripción")
+        else:
+            assert idea.body.startswith("## Descripción"), f"{slug} body must be structured"

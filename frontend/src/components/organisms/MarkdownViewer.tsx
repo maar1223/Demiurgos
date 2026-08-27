@@ -12,6 +12,8 @@ import { getMediaUrl } from "@/api/wiki";
 import { Icon } from "@/components/atoms/Icon";
 import { splitFrontmatter } from "@/lib/frontmatter";
 
+export type ImageFit = "contain" | "cover";
+
 interface MarkdownViewerProps {
   content?: string | null;
   fileName?: string;
@@ -20,6 +22,13 @@ interface MarkdownViewerProps {
   onRetry?: () => void;
   /** Current world name — required for wikilink entity URL construction */
   mundo?: string;
+  /**
+   * Image fit when rendering without a world (e.g. the global idea bank).
+   * "contain" keeps exact proportions and shows the full image (no crop);
+   * "cover" fills the box (crops), used by the mundo gallery. When unset,
+   * images only render via MarkdownImage when `mundo` is present (legacy).
+   */
+  imageFit?: ImageFit;
 }
 
 /**
@@ -50,6 +59,7 @@ export function MarkdownViewer({
   error = null,
   onRetry,
   mundo,
+  imageFit,
 }: MarkdownViewerProps) {
   // Hide the YAML frontmatter block — only the body is rendered. Defense
   // in depth: the wiki editor already strips it before display, but this
@@ -99,9 +109,12 @@ export function MarkdownViewer({
   }
 
   // Render markdown — the img component is only wired up when `mundo` is
-  // known so relative paths can be rewritten against the media API.
+  // known so relative paths can be rewritten against the media API. When an
+  // `imageFit` is supplied (no-mundo surfaces like the global idea bank) the
+  // img component is also wired so images get a consistent, proportion-
+  // preserving size instead of rendering at full resolution.
   return (
-    <MarkdownBody content={body} mundo={mundo} />
+    <MarkdownBody content={body} mundo={mundo} imageFit={imageFit} />
   );
 }
 
@@ -114,10 +127,12 @@ export function MarkdownBody({
   content,
   mundo,
   className,
+  imageFit,
 }: {
   content: string;
   mundo?: string;
   className?: string;
+  imageFit?: ImageFit;
 }) {
   const components: Components = {
     a({ href, children, ...props }) {
@@ -135,10 +150,10 @@ export function MarkdownBody({
         </a>
       );
     },
-    ...(mundo
+    ...(mundo || imageFit
       ? {
           img: ({ src, alt }: { src?: string; alt?: string }) => (
-            <MarkdownImage src={src} alt={alt} mundo={mundo} />
+            <MarkdownImage src={src} alt={alt} mundo={mundo ?? ""} imageFit={imageFit} />
           ),
         }
       : {}),
@@ -156,19 +171,20 @@ export function MarkdownBody({
   );
 }
 
+interface MarkdownImageProps {
+  src?: string;
+  alt?: string;
+  mundo?: string;
+  imageFit?: ImageFit;
+}
+
 /**
  * Custom img component that rewrites relative image paths to use the
  * wiki media API endpoint. Shows a broken-image placeholder on error.
+ * `imageFit` = "contain" preserves exact proportions and shows the full
+ * image (no crop) — used by no-world surfaces like the global idea bank.
  */
-function MarkdownImage({
-  src,
-  alt,
-  mundo,
-}: {
-  src?: string;
-  alt?: string;
-  mundo: string;
-}) {
+function MarkdownImage({ src, alt, mundo = "", imageFit }: MarkdownImageProps) {
   const [hasError, setHasError] = useState(false);
 
   // Extract alignment and size suffix (#left, #left-sm, #right-lg, #sm, etc.)
@@ -198,6 +214,7 @@ function MarkdownImage({
   // Data URIs and absolute URLs pass through as-is.
   const resolvedSrc =
     cleanSrc &&
+    mundo &&
     !cleanSrc.startsWith("http://") &&
     !cleanSrc.startsWith("https://") &&
     !cleanSrc.startsWith("/api/") &&
@@ -214,13 +231,17 @@ function MarkdownImage({
 
   // CSS classes for each size option
   const sizeStyles: Record<string, string> = {
-    sm: "max-w-[150px] max-h-[100px]",
-    md: "max-w-[300px] max-h-[200px]",
-    lg: "max-w-[500px] max-h-[350px]",
+    sm: "max-w-[150px] max-h-[150px]",
+    md: "max-w-[300px] max-h-[300px]",
+    lg: "max-w-[500px] max-h-[500px]",
   };
 
+  // object-contain: keep exact proportions and show the full image (no crop).
+  // object-cover: fill the box (crop), the mundo gallery default.
+  const fitClass = imageFit === "contain" ? "object-contain" : "object-cover";
+
   const imgClassName =
-    `rounded-lg h-auto object-cover ${sizeStyles[size]} ${
+    `rounded-lg h-auto ${fitClass} ${sizeStyles[size]} ${
       align ? alignStyles[align] : hasSuffix ? "block mx-auto my-4" : ""
     }`.trim();
 

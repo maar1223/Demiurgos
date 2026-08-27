@@ -3,6 +3,7 @@
 import re
 from pathlib import Path
 
+from .enrich import _derive_bullets, _structure_body
 from .models import CaptureState, MediaKind
 from .outbox import MemoryPublisher
 from .store import CaptureStore
@@ -52,10 +53,15 @@ class IdeaProcessor:
                 # persist the relative media_path. Text/voice captures return
                 # None (no copy, no media_path field) — see _copy_media.
                 idea_media_path = self._copy_media(record)
-                body_text = body.strip()
+                # Canonical markdown structure for the bank body: new
+                # enrichment providers structure in enrichment; legacy
+                # providers get the local fallback so every idea in the bank
+                # shares the same scheme (## Descripción / ## Detalles).
+                body_text = self._ensure_structured(body)
                 if idea_media_path:
                     # Self-contained embed; MarkdownImage already passes /api/
                     # paths through, so the idea renders regardless of context.
+                    # The embed stays ABOVE the first heading (## Descripción).
                     media_file = Path(idea_media_path).name
                     body_text = f"![idea image](/api/ideas/media/{media_file})\n\n{body_text}"
                 media_field = f"media_path: {idea_media_path}\n" if idea_media_path else ""
@@ -125,11 +131,40 @@ class IdeaProcessor:
 
     @staticmethod
     def _title_from_body(body: str, max_words: int = 5) -> str:
-        """Heuristic title from the body's first words (fail-open fallback)."""
+        """Heuristic title from the body's first words (fail-open fallback).
+
+        Markdown-aware: heading lines (``## Descripción``), image embeds and
+        bullet items are skipped so a structured body yields a title from the
+        actual description content, never from ``## Descripción ...``.
+        """
         if not isinstance(body, str):
             return ""
-        words = [w for w in body.strip().split() if w]
-        return " ".join(words[:max_words]) if words else ""
+        for line in body.strip().splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", "![", "- ")):
+                continue
+            words = [w for w in stripped.split() if w]
+            if words:
+                return " ".join(words[:max_words])
+        return ""
+
+    @staticmethod
+    def _ensure_structured(body: str) -> str:
+        """Guarantee the canonical markdown structure for the written body.
+
+        New enrichment providers return the structured body already
+        (``## Descripción`` + ``## Detalles``); legacy providers that return a
+        plain text body are wrapped with the local ``_structure_body``
+        fallback so every idea in the bank shares the same scheme. Never
+        blocks capture — a body already structured (first line a ``##``
+        heading) passes through untouched, and an empty body stays empty.
+        """
+        text = body.strip()
+        if not text:
+            return text
+        if text.splitlines()[0].strip().startswith("## "):
+            return text
+        return _structure_body(text, bullets=_derive_bullets(text))
 
     @staticmethod
     def _sanitize_title(title: str, max_chars: int = 80) -> str:
