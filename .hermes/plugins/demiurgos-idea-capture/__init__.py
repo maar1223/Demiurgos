@@ -43,16 +43,19 @@ PR idea-capture-ai-gate (Phase 4) adds the optional ``capture_mode`` field to
 ``ai`` precedence, delegated to ``idea_capture.config.resolve_capture_mode`` so
 the plugin and the config layer share one validation.
 
-PR idea-capture-confirm-queue (WU2) adds the park path: ``capture_idea`` gains a
-``confirm`` parameter (default ``true``); ``confirm=false`` parks the capture in
-``AWAITING_CONFIRM`` (via ``CaptureStore.set_awaiting_confirm``) and schedules
-the Guardar/Descartar keyboard through ``_active_gateway`` — a module-level
-reference stashed by ``capture_intake_hook`` on its first invocation, since the
-tool handler itself never receives the gateway — instead of auto-SAVE_GLOBAL.
-``confirm`` is excluded from the ``_synthetic_update_id`` dedup hash so the same
-material never persists twice across the save/park paths (S-4.3).
-``_CAPTURE_GUIDANCE`` becomes a 3-way rule: clear idea -> save (confirm=true),
-uncertain -> park (confirm=false), ordinary conversation -> no tool (S-5.1).
+PR idea-capture-confirm-queue (WU2) adds the park path: ``capture_idea`` parks
+EVERY capture in ``AWAITING_CONFIRM`` (via ``CaptureStore.set_awaiting_confirm``)
+and schedules the Guardar/Descartar keyboard through ``_active_gateway`` — a
+module-level reference stashed by ``capture_intake_hook`` on its first
+invocation, since the tool handler itself never receives the gateway. There is
+NO auto-SAVE_GLOBAL path from the tool (Opción A): the idea only lands in the
+Taller de Ideas when the user taps Guardar (``runtime.confirm`` SAVE_GLOBAL via
+the keyboard or the web review panel). The legacy ``confirm`` parameter is kept
+for schema compatibility but its value no longer changes behavior — every call
+parks. ``confirm`` stays excluded from the ``_synthetic_update_id`` dedup hash
+so the same material never persists twice (S-4.3). ``_CAPTURE_GUIDANCE`` is a
+2-way rule: idea/worldbuilding/lore/character seed -> ``capture_idea`` (always
+parks for confirmation), ordinary conversation -> no tool (S-5.1).
 
 PR idea-capture-confirm-queue (WU3) adds the one-shot wake-up notice (R-6):
 ``_boot_ts`` (boot timestamp captured at module load), the ``_wake_notice_sent``
@@ -63,6 +66,18 @@ ingested this boot (``event_ts < boot_ts AND created_at >= boot_ts`` via
 when M > 0 it sends one summary message plus one Guardar/Descartar keyboard per
 parked capture through the stashed gateway's adapter, and never re-fires within
 the same boot (S-6.1 / S-6.2 / S-6.3).
+
+Bug fix (live-test): the park path (``capture_idea``) runs in a SYNCHRONOUS
+tool handler dispatched on a gateway worker thread with NO running event loop,
+so ``asyncio.create_task`` raised "no running event loop" and
+``_schedule_capture_prompt`` only logged — the user never received the
+Guardar/Descartar keyboard nor any notification. The running loop is now
+resolved BEFORE the coroutine is created (no un-awaited coroutine leak); with
+no loop, the send runs in its own event loop on a daemon background thread
+(fire-and-forget, never blocks the turn), and if even that fails a
+synchronous raw Bot API send (``sendMessage`` with the project
+``TELEGRAM_BOT_TOKEN``) guarantees the user is notified about the parked
+capture.
 """
 
 from __future__ import annotations
@@ -70,11 +85,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import inspect
 import json
 import logging
 import os
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -118,15 +135,17 @@ _WAKE_NOTICE_DELAY = 5.0
 _CAPTURE_MODE: str | None = None
 
 # One-shot guidance rule injected via pre_llm_call for the authorized binding
-# (R-4). Kept on the module so tests can assert on the exact text. Three-way
-# decision (S-5.1): clear idea -> save directly; uncertain -> park for later
-# review; ordinary conversation -> respond normally without the tool.
+# (R-4). Kept on the module so tests can assert on the exact text. Two-way
+# decision (Opción A, S-5.1): idea/worldbuilding/lore/character seed ->
+# capture_idea (ALWAYS parked for user confirmation, never auto-saved);
+# ordinary conversation -> respond normally without the tool.
 _CAPTURE_GUIDANCE = (
-    "If the user's turn contains a clear idea, world, lore, or character "
-    "seed → call `capture_idea` with confirm=true to save it directly. If "
-    "the material might be an idea but you are not sure, call `capture_idea` "
-    "with confirm=false to park it for later review. If it is ordinary "
-    "conversation → respond normally without calling the tool."
+    "If the user's turn contains an idea, worldbuilding, lore, or character "
+    "seed worth keeping → call `capture_idea` with the material. The capture "
+    "is ALWAYS parked for user confirmation first (never auto-saved): the "
+    "Guardar/Descartar keyboard lets the user save it to the Taller de Ideas "
+    "or discard it. If it is ordinary conversation → respond normally without "
+    "calling the tool."
 )
 
 # Update-idea guidance appended to the same pre_llm_call context (R-7). The
@@ -140,6 +159,25 @@ _UPDATE_IDEA_GUIDANCE = (
     "version (e.g. 'listo, actualizá', 'go ahead', 'save it'). "
     "Never call `update_idea` without explicit user approval."
 )
+
+
+class _TelegramAttemptOneFilter(logging.Filter):
+    """Downgrade Hermes' misleading attempt-1 Telegram connect log.
+
+    The bundled Telegram adapter logs "Connecting to Telegram (attempt 1/8)"
+    at WARNING before every connect, even the normally-successful first
+    attempt, which pollutes WARNING+ triage logs with a non-error. Only
+    attempts 2+ indicate a real connectivity/conflict problem, so we keep
+    those at WARNING and downgrade attempt 1 to INFO.
+    """
+    _TARGET_LOGGER = "plugins.platforms.telegram.adapter"
+    _ATTEMPT_ONE_MSG = "[Telegram] Connecting to Telegram (attempt 1/8)"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name == self._TARGET_LOGGER and self._ATTEMPT_ONE_MSG in record.getMessage():
+            record.levelno = logging.INFO
+            record.levelname = "INFO"
+        return True
 
 
 def _demiurgos_language() -> str:
@@ -202,9 +240,12 @@ _CAPTURE_IDEA_SCHEMA = {
             "confirm": {
                 "type": "boolean",
                 "description": (
-                    "true guarda directo; false lo deja en Ideas por confirmar"
+                    "Obsoleto (compatibilidad): capture_idea siempre deja la "
+                    "idea en 'Ideas por confirmar' y muestra el teclado "
+                    "Guardar/Descartar; el usuario decide. Este campo ya no "
+                    "cambia el comportamiento."
                 ),
-                "default": True,
+                "default": False,
             },
         },
         "required": [],
@@ -270,6 +311,14 @@ def register(ctx) -> None:
         CaptureTelegramAdapter,
         capture_platform_deps_ready,
         verify_bundled_adapter_surface,
+    )
+
+    # Keep Hermes' misleading "Connecting to Telegram (attempt 1/8)" WARNING
+    # from polluting the triage logs: it fires on the normally-successful
+    # first attempt. Downgrade just that record to INFO (attempts 2+ stay
+    # WARNING). Owned here so we never patch the upstream adapter.
+    logging.getLogger("plugins.platforms.telegram.adapter").addFilter(
+        _TelegramAttemptOneFilter()
     )
 
     enrich = None
@@ -453,20 +502,127 @@ def _schedule_capture_prompt(adapter, source, capture_id: str) -> None:
     the Guardar/Descartar keyboard is attached. Falls back to the PR 1
     plain-text ``send`` when the active adapter predates the subclass (e.g.
     the platform override is not yet in effect).
+
+    Bug fix (live-test): the park path (``capture_idea`` — the only path since
+    Opción A) runs in a SYNCHRONOUS tool handler on a gateway worker thread
+    with no running event loop, so ``asyncio.create_task`` raised
+    "no running event loop" and the keyboard was never sent (only a warning;
+    the coroutine was left un-awaited). The running loop is now resolved
+    BEFORE the coroutine is created, so nothing leaks when no loop exists;
+    without a loop the send runs in its own event loop on a background thread
+    (fire-and-forget) so the user still gets the keyboard, and if even that
+    fails a synchronous raw-Bot-API send guarantees the user is notified.
+    Always returns ``None``; never raises.
     """
     kwargs = {"chat_id": str(source.chat_id), "capture_id": capture_id}
     if getattr(source, "thread_id", None):
         kwargs["thread_id"] = source.thread_id
     send_prompt = getattr(adapter, "send_capture_prompt", None)
     try:
-        if callable(send_prompt):
-            asyncio.create_task(send_prompt(**kwargs))
-        else:
-            text = f"Idea capturada (id=`{capture_id}`). Elegí una acción:"
-            metadata = {"thread_id": kwargs["thread_id"]} if "thread_id" in kwargs else None
-            asyncio.create_task(adapter.send(str(source.chat_id), text, metadata=metadata))
-    except RuntimeError as exc:  # no running loop: prompt cannot be scheduled
-        log.warning("idea-capture prompt scheduling failed for %s: %s", capture_id, exc)
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No running loop: loop-less worker thread (sync tool handler). Run
+        # the send in its own event loop on a daemon background thread so the
+        # Guardar/Descartar keyboard still goes out without blocking the turn.
+        _run_capture_prompt_off_loop(adapter, source, capture_id, kwargs)
+        return
+    if callable(send_prompt):
+        loop.create_task(send_prompt(**kwargs))
+    else:
+        text = f"Idea capturada (id=`{capture_id}`). Elegí una acción:"
+        metadata = {"thread_id": kwargs["thread_id"]} if "thread_id" in kwargs else None
+        loop.create_task(adapter.send(str(source.chat_id), text, metadata=metadata))
+
+
+def _run_capture_prompt_off_loop(adapter, source, capture_id: str, kwargs: dict) -> None:
+    """Fire-and-forget the capture prompt from a loop-less worker thread.
+
+    The park branch of ``capture_idea`` runs in a synchronous tool handler
+    dispatched via ``loop.run_in_executor`` (gateway worker thread), where
+    ``asyncio.create_task`` cannot schedule. The prompt is instead run in its
+    own event loop on a daemon background thread — never blocking the turn —
+    and the coroutine is created and awaited INSIDE that loop, so nothing
+    leaks un-awaited. If the adapter send fails (e.g. the PTB client is bound
+    to the gateway loop and rejects a foreign loop), a synchronous raw-Bot-API
+    send still notifies the user. Never raises.
+    """
+    text = f"Idea capturada (id=`{capture_id}`). Elegí una acción:"
+
+    def _runner() -> None:
+        try:
+            send_prompt = getattr(adapter, "send_capture_prompt", None)
+            if callable(send_prompt):
+                result = send_prompt(**kwargs)
+            else:
+                metadata = {"thread_id": kwargs["thread_id"]} if "thread_id" in kwargs else None
+                result = adapter.send(str(source.chat_id), text, metadata=metadata)
+            if inspect.isawaitable(result):
+                asyncio.run(result)
+        except Exception as exc:  # noqa: BLE001 — degraded path must still notify
+            log.warning("idea-capture prompt thread failed for %s: %s", capture_id, exc)
+            _send_capture_prompt_sync_fallback(source, capture_id, text)
+
+    try:
+        threading.Thread(
+            target=_runner,
+            name=f"idea-capture-prompt-{capture_id}",
+            daemon=True,
+        ).start()
+    except Exception as exc:  # noqa: BLE001 — thread start failure still notifies
+        log.warning("idea-capture prompt thread start failed for %s: %s", capture_id, exc)
+        _send_capture_prompt_sync_fallback(source, capture_id, text)
+
+
+_TELEGRAM_BOT_API = "https://api.telegram.org"
+
+
+def _send_capture_prompt_sync_fallback(source, capture_id: str, text: str) -> None:
+    """Synchronous plain-text Telegram send via the raw Bot API (last resort).
+
+    Loop-independent (``urllib``, no adapter): guarantees the user is notified
+    about a parked capture even when the async adapter send cannot run from a
+    loop-less worker thread. The token comes from the environment or the
+    project ``.env`` via ``idea_capture.hermes_handler._project_env`` (secrets
+    never live in code). The Guardar/Descartar keyboard is attached when the
+    runtime keyboard builder is importable, so the tap routes exactly like a
+    keyboard sent through the adapter. Best-effort: any failure is logged,
+    never raised.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        try:
+            from idea_capture.hermes_handler import _project_env  # noqa: PLC0415
+            token = _project_env("TELEGRAM_BOT_TOKEN")
+        except Exception:  # noqa: BLE001 — no token, nothing to send
+            token = ""
+    if not token:
+        log.warning("idea-capture sync fallback: no TELEGRAM_BOT_TOKEN for %s; "
+                    "user not notified", capture_id)
+        return
+    try:
+        from urllib import request as _urlrequest  # noqa: PLC0415
+        payload: dict = {
+            "chat_id": str(getattr(source, "chat_id", "")),
+            "text": text,
+        }
+        thread_id = getattr(source, "thread_id", None)
+        if thread_id:
+            payload["message_thread_id"] = thread_id
+        try:
+            from idea_capture.runtime import build_capture_keyboard  # noqa: PLC0415
+            payload["reply_markup"] = json.dumps(build_capture_keyboard(capture_id))
+        except Exception:  # noqa: BLE001 — plain text still notifies
+            pass
+        req = _urlrequest.Request(
+            f"{_TELEGRAM_BOT_API}/bot{token}/sendMessage",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with _urlrequest.urlopen(req, timeout=10) as resp:
+            resp.read()
+    except Exception as exc:  # noqa: BLE001 — best-effort notification
+        log.warning("idea-capture sync fallback send failed for %s: %s", capture_id, exc)
 
 
 # -- PR idea-capture-ai-gate: mode flag (R-1) -------------------------------
@@ -598,10 +754,10 @@ def _synthetic_update_id(args: dict) -> int:
     normalized: dict[str, str] = {}
     for key, value in sorted(args.items()):
         if key == "confirm":
-            # S-4.3: dedup keys on capture CONTENT, never on the confirm intent.
-            # The guidance picks one path per turn (save or park), so the same
-            # material with confirm=true vs confirm=false must map to the same
-            # update id — otherwise the same text could persist twice.
+            # S-4.3: dedup keys on capture CONTENT, never on the confirm field.
+            # The field is deprecated (Opción A parks every capture), but if a
+            # caller still passes it, it must not split identical material into
+            # two rows.
             continue
         if value in (None, ""):
             continue
@@ -691,17 +847,19 @@ def _capture_idea_tool(args: dict, **kwargs) -> str:
     from sessions that are not the authorized capture binding are rejected
     before ``service.accept`` (S-3.3).
 
-    PR idea-capture-confirm-queue (WU2, R-4): ``confirm`` defaults to ``true``
-    (auto-SAVE_GLOBAL, pre-change behavior). ``confirm=false`` parks the
-    capture in ``AWAITING_CONFIRM`` and schedules the Guardar/Descartar
-    keyboard via the stashed gateway instead of auto-saving (S-4.2).
+    PR idea-capture-confirm-queue (Opción A): ``capture_idea`` ALWAYS parks
+    the capture in ``AWAITING_CONFIRM`` and schedules the Guardar/Descartar
+    keyboard via the stashed gateway — there is NO auto-SAVE_GLOBAL path
+    anymore. The idea reaches the Taller de Ideas only when the user taps
+    Guardar (``runtime.confirm`` SAVE_GLOBAL) or confirms through the web
+    review panel. The legacy ``confirm`` parameter is ignored (kept for schema
+    compatibility); every call parks.
     """
     handler = _handler
     if handler is None:
         return json.dumps({"error": "idea-capture handler is not initialized"})
     if _CAPTURE_MODE != "ai":
         return json.dumps({"error": "capture_idea is only available in ai mode"})
-    from idea_capture.models import WorldAction  # local: confirm decision below
     if not _session_binding_allowed(handler):
         return json.dumps({"error": "unauthorized session"})  # S-3.3
     try:
@@ -712,40 +870,33 @@ def _capture_idea_tool(args: dict, **kwargs) -> str:
         return json.dumps({"error": f"capture rejected: {exc}"})
     if receipt.status == "DUPLICATE":
         # Dedup fires on content (confirm excluded from the update hash), so a
-        # save/park attempt for already-captured material never mutates the row.
+        # repeated capture attempt for already-captured material never mutates
+        # the row.
         return json.dumps({"capture_id": receipt.capture_id, "status": receipt.status})
-    if not bool(args.get("confirm", True)):
-        # Park path (R-4 / S-4.2): keep the capture for later review instead of
-        # auto-saving — transition to AWAITING_CONFIRM and schedule the
-        # Guardar/Descartar keyboard via the gateway stashed by the intake hook
-        # (the tool handler itself never receives the gateway).
-        try:
-            handler.runtime.store.set_awaiting_confirm(receipt.capture_id)
-        except Exception as exc:  # noqa: BLE001 — park failure must not crash the turn
-            log.warning("capture_idea park failed for %s: %s", receipt.capture_id, exc)
-            return json.dumps({"error": f"capture parked failed: {exc}"})
-        _schedule_park_prompt(receipt.capture_id)
-        return json.dumps({"capture_id": receipt.capture_id, "status": receipt.status})
-    # Confirmed path (S-4.1): the tool bypasses the inline Guardar/Descartar
-    # keyboard, so the SAVE_GLOBAL decision (and the worker that writes the idea
-    # file) must happen here; without it the capture stays RAW_PERSISTED forever
-    # and never lands in the Taller de Ideas.
+    # Park path (Opción A): the ONLY path. Keep the capture for user
+    # confirmation — transition to AWAITING_CONFIRM and schedule the
+    # Guardar/Descartar keyboard via the gateway stashed by the intake hook
+    # (the tool handler itself never receives the gateway). No auto-save.
     try:
-        handler.runtime.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
-    except Exception as exc:  # noqa: BLE001 — confirm failure must not crash the turn
-        log.warning("capture_idea confirm failed for %s: %s", receipt.capture_id, exc)
+        handler.runtime.store.set_awaiting_confirm(receipt.capture_id)
+    except Exception as exc:  # noqa: BLE001 — park failure must not crash the turn
+        log.warning("capture_idea park failed for %s: %s", receipt.capture_id, exc)
+        return json.dumps({"error": f"capture parked failed: {exc}"})
+    _schedule_park_prompt(receipt.capture_id)
     return json.dumps({"capture_id": receipt.capture_id, "status": receipt.status})
 
 
 def _schedule_park_prompt(capture_id: str) -> None:
     """Schedule the Guardar/Descartar keyboard for a parked capture (R-4).
 
-    The tool handler never receives the gateway, so the park branch resolves
-    the live adapter through ``_active_gateway`` (stashed by the intake hook on
-    its first invocation). ``_schedule_capture_prompt`` falls back to plain-text
-    ``send`` when the active adapter predates the keyboard subclass, and when no
-    gateway/adapter is available the capture stays parked and surfaces via the
-    web review panel / wake-up notice instead — never crashing the turn.
+    ``capture_idea`` always parks (Opción A), so every tool capture goes
+    through this path. The tool handler never receives the gateway, so the
+    park path resolves the live adapter through ``_active_gateway`` (stashed by
+    the intake hook on its first invocation). ``_schedule_capture_prompt``
+    falls back to plain-text ``send`` when the active adapter predates the
+    keyboard subclass, and when no gateway/adapter is available the capture
+    stays parked and surfaces via the web review panel / wake-up notice
+    instead — never crashing the turn.
     """
     gateway = _active_gateway
     source = _session_source()

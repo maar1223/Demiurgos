@@ -143,9 +143,10 @@ class CaptureStore:
     def set_awaiting_confirm(self, capture_id: str) -> CaptureRecord:
         """Park a capture for later review: RAW_PERSISTED -> AWAITING_CONFIRM.
 
-        Used by the ``capture_idea`` park path (``confirm=false``, R-4): the row
-        is kept raw so the Guardar/Descartar keyboard (or the web review panel,
-        WU4) can confirm it later — nothing is auto-saved or discarded here.
+        Used by the ``capture_idea`` park path (Opción A: every capture): the
+        row is kept raw so the Guardar/Descartar keyboard (or the web review
+        panel, WU4) can confirm it later — nothing is auto-saved or discarded
+        here.
         """
         self._connection().execute(
             "UPDATE captures SET state=? WHERE capture_id=?",

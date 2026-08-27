@@ -148,13 +148,10 @@ def test_voice_turn_guidance_injected_with_transcript_in_text(monkeypatch):
             runtime.close()
 
 
-def test_guidance_is_three_way_save_park_converse(monkeypatch):
-    """S-5.1: guidance distinguishes save (confirm=true), park (confirm=false),
-    and ordinary conversation (no tool).
-
-    The injected rule must let the LLM tell the three paths apart per turn:
-    clear idea -> confirm=true, uncertain material -> confirm=false, and
-    ordinary conversation -> respond without calling the tool.
+def test_guidance_is_two_way_capture_or_converse(monkeypatch):
+    """Opción A: guidance is 2-way — idea -> capture_idea (always parks),
+    ordinary conversation -> no tool. No confirm=true/confirm=false branches
+    remain: the assistant never auto-saves, it only parks for confirmation.
     """
     with tempfile.TemporaryDirectory() as directory:
         handler, runtime = _handler(Path(directory))
@@ -164,10 +161,11 @@ def test_guidance_is_three_way_save_park_converse(monkeypatch):
             result = _fire(plugin)
             context = result["context"]
             assert "capture_idea" in context
-            assert "confirm=true" in context
-            assert "confirm=false" in context
+            assert "confirm=true" not in context
+            assert "confirm=false" not in context
             assert "ordinary conversation" in context
             assert "without calling the tool" in context
+            assert "parked" in context  # always-park semantics are explicit
         finally:
             runtime.close()
 

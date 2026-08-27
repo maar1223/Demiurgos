@@ -110,11 +110,12 @@ def test_plugin_registers_hook_and_platform(monkeypatch):
     assert set(tool["schema"]["parameters"]["properties"]) == {
         "text", "image_bytes", "audio_bytes", "mime", "confirm",
     }
-    # WU2 (idea-capture-confirm-queue): confirm defaults to true (auto-save)
-    # and is a real JSON-schema boolean property.
+    # idea-capture-confirm-queue (Opción A): confirm defaults to false and is
+    # deprecated — capture_idea ALWAYS parks for user confirmation (no
+    # auto-save), so the schema default must never signal auto-save.
     confirm_prop = tool["schema"]["parameters"]["properties"]["confirm"]
     assert confirm_prop["type"] == "boolean"
-    assert confirm_prop["default"] is True
+    assert confirm_prop["default"] is False
 
     # Platform override (PR 2): telegram registered with the full contract.
     assert len(ctx.platforms) == 1
