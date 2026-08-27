@@ -353,6 +353,25 @@ class ProcessorMediaTests(unittest.TestCase):
         content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
         self.assertIn("title: El arquero ciego", content)
 
+    # ------------------------------------------------------------------
+    # R-8 — versioning alignment (ideas-edit-versioning PR 1, S-8.1)
+    # ------------------------------------------------------------------
+
+    def test_global_frontmatter_emits_version_1(self):
+        """S-8.1 — the global-bank frontmatter template includes ``version: 1``
+        for newly captured ideas, and the frontmatter stays parseable."""
+        update = TelegramUpdate(1, 7, 8, False,
+                                MediaInput(MediaKind.TEXT, text="una idea de texto"))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        saved = self._processor().process(receipt.capture_id)
+
+        self.assertEqual(saved.state.value, "SAVED")
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        self.assertIn("version: 1", content)
+        frontmatter = content.split("\n---\n", 1)[0]
+        self.assertIsInstance(yaml.safe_load(frontmatter), dict)
+
 
 if __name__ == "__main__":
     unittest.main()

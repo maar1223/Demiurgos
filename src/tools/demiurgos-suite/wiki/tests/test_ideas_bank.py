@@ -448,3 +448,243 @@ def test_reformatted_repo_ideas_load_with_structure() -> None:
             assert idea.body.index("![idea image]") < idea.body.index("## Descripción")
         else:
             assert idea.body.startswith("## Descripción"), f"{slug} body must be structured"
+
+
+# ---------------------------------------------------------------------------
+# R-1 / R-2 / R-3 / R-11 — file-level versioning (ideas-edit-versioning PR 1)
+# ---------------------------------------------------------------------------
+
+def test_to_dict_includes_version(bank: IdeasBank) -> None:
+    """``to_dict()`` MUST carry ``version`` (R-1)."""
+    idea = _create(bank)
+    assert idea.to_dict()["version"] == 1
+
+
+def test_create_emits_version_1(bank: IdeasBank, tmp_path: Path) -> None:
+    """S-11.1 — ``create()`` writes ``version: 1`` in the new file's frontmatter."""
+    _create(bank, slug="nueva")
+    content = (tmp_path / "ideas" / "nueva.md").read_text(encoding="utf-8")
+    frontmatter = content.split("---\n")[1]
+    assert "version: 1" in frontmatter
+    assert bank.read("nueva").version == 1
+
+
+def test_idea_without_version_defaults_to_1(bank: IdeasBank, tmp_path: Path) -> None:
+    """S-1.1 — a pre-versioning file without ``version`` reads as version 1.
+
+    Non-numeric ``version`` values also default to 1 (lenient parse, no
+    data migration — existing files keep working).
+    """
+    (tmp_path / "ideas").mkdir(parents=True)
+    (tmp_path / "ideas" / "legacy.md").write_text(
+        "---\nid: l1\nslug: legacy\ntimestamp: '2024-01-01'\nsource: manual\n"
+        "type: concepto\ntags: []\nstatus: fresh\nused_in: []\nbased_on: null\n"
+        "---\nCuerpo legacy\n",
+        encoding="utf-8",
+    )
+    idea = bank.read("legacy")
+    assert idea.version == 1
+    (tmp_path / "ideas" / "rara.md").write_text(
+        "---\nid: r1\nslug: rara\ntimestamp: '2024-01-01'\nsource: manual\n"
+        "type: concepto\ntags: []\nstatus: fresh\nused_in: []\nbased_on: null\n"
+        "version: alta\n---\nCuerpo\n",
+        encoding="utf-8",
+    )
+    assert bank.read("rara").version == 1
+
+
+def test_update_versioned_archives_v1_and_writes_v2(bank: IdeasBank, tmp_path: Path) -> None:
+    """S-2.1 — a versioned edit archives the original as v1 and writes v2."""
+    _create(bank, slug="editar", body="original")
+    updated = bank.update_versioned("editar", {"body": "revisado"})
+    assert updated.version == 2
+    assert updated.body == "revisado"
+    archive = tmp_path / "ideas" / "versions" / "editar-v1.md"
+    assert archive.is_file()
+    content = archive.read_text(encoding="utf-8")
+    assert "version: 1" in content
+    assert "original" in content
+    current = bank.read("editar")
+    assert current.version == 2
+    assert current.body == "revisado"
+
+
+def test_update_versioned_sequential_versions(bank: IdeasBank, tmp_path: Path) -> None:
+    """S-2.2 — sequential versioned edits keep archiving: v3 → archive v3, new v4."""
+    _create(bank, slug="secuencial", body="v1")
+    bank.update_versioned("secuencial", {"body": "v2"})
+    bank.update_versioned("secuencial", {"body": "v3"})
+    updated = bank.update_versioned("secuencial", {"body": "v4"})
+    assert updated.version == 4
+    versions_dir = tmp_path / "ideas" / "versions"
+    assert (versions_dir / "secuencial-v1.md").is_file()
+    assert (versions_dir / "secuencial-v2.md").is_file()
+    assert (versions_dir / "secuencial-v3.md").is_file()
+    assert bank.read("secuencial").version == 4
+    assert len(bank._versions_for("secuencial")) == 3
+
+
+def test_next_version_is_max_plus_one(bank: IdeasBank) -> None:
+    """S-2.3 — the next version is ``max(archived vN) + 1`` from disk,
+    never an in-memory counter."""
+    _create(bank, slug="determinista", body="v1")
+    bank.update_versioned("determinista", {"body": "v2"})
+    bank.update_versioned("determinista", {"body": "v3"})
+    bank.update_versioned("determinista", {"body": "v4"})
+    # archives v1,v2,v3 on disk → next version is 4
+    assert bank._next_version("determinista") == 4
+    assert bank._next_version("sin-archivos") == 1
+
+
+def test_update_versioned_archive_survives_new_write_failure(
+    bank: IdeasBank, monkeypatch, tmp_path: Path
+) -> None:
+    """S-2.4 — when the new-file write fails after the archive write, the
+    archived version remains intact and recoverable."""
+    _create(bank, slug="fallo", body="original")
+
+    def failing_write(self, idea):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(IdeasBank, "_write", failing_write)
+    with pytest.raises(OSError):
+        bank.update_versioned("fallo", {"body": "nuevo"})
+
+    # The current file is unchanged...
+    current = bank.read("fallo")
+    assert current.body == "original"
+    assert current.version == 1
+    # ...and the archive is intact and a complete valid idea file.
+    archive = tmp_path / "ideas" / "versions" / "fallo-v1.md"
+    assert archive.is_file()
+    archived = bank._idea_from_file(archive)
+    assert archived is not None
+    assert archived.body == "original"
+    assert archived.version == 1
+
+
+def test_update_versioned_invalid_partial_fails_closed(bank: IdeasBank, tmp_path: Path) -> None:
+    """S-2.5 — an invalid partial fails without touching existing files:
+    no archive is created and the current file is unchanged."""
+    _create(bank, slug="cerrado", body="original")
+    with pytest.raises(InvalidIdea):
+        bank.update_versioned("cerrado", {"telefono": "555"})
+    with pytest.raises(InvalidIdea):
+        bank.update_versioned("cerrado", {"type": "nope"})
+    assert not (tmp_path / "ideas" / "versions").exists()
+    current = bank.read("cerrado")
+    assert current.body == "original"
+    assert current.version == 1
+
+
+def test_update_versioned_concurrent_race_distinct_versions(
+    bank: IdeasBank, monkeypatch
+) -> None:
+    """S-2.6 — two overlapping update_versioned calls end with distinct
+    version numbers; each call derives ``max(archived vN) + 1`` from the
+    filesystem at write time, never from an in-memory counter.
+
+    The second (concurrent) call starts while the first is mid-flight, but
+    its disk reads land after the first's write, so both produce distinct
+    versions and the final state stays consistent with the archives.
+    """
+    _create(bank, slug="carrera", body="original")
+    fired = {"once": False}
+    orig_write = IdeasBank._write
+
+    def interleaving_write(self, idea):
+        if not fired["once"]:
+            fired["once"] = True
+            result = orig_write(self, idea)  # first call's write lands
+            bank.update_versioned("carrera", {"body": "segundo"})  # second call
+            return result
+        return orig_write(self, idea)
+
+    monkeypatch.setattr(IdeasBank, "_write", interleaving_write)
+    first = bank.update_versioned("carrera", {"body": "primero"})
+
+    assert fired["once"] is True
+    # Both calls produced distinct versions (2 and 3), last write wins.
+    second = bank.read("carrera")
+    assert first.version == 2
+    assert second.version == 3
+    assert second.body == "segundo"
+    # Both superseded versions archived, ascending.
+    archives = bank._versions_for("carrera")
+    assert [p.name for p in archives] == ["carrera-v1.md", "carrera-v2.md"]
+
+
+def test_versions_for_ascending(bank: IdeasBank) -> None:
+    """S-3.1 — archived versions are listed ascending by version number."""
+    _create(bank, slug="historico", body="v1")
+    bank.update_versioned("historico", {"body": "v2"})
+    bank.update_versioned("historico", {"body": "v3"})
+    bank.update_versioned("historico", {"body": "v4"})
+    versions = bank._versions_for("historico")
+    assert [p.name for p in versions] == [
+        "historico-v1.md",
+        "historico-v2.md",
+        "historico-v3.md",
+    ]
+
+
+def test_versions_for_empty_when_no_archives(bank: IdeasBank) -> None:
+    """S-3.2 — a slug without archives yields an empty list."""
+    _create(bank, slug="solo-actual")
+    assert bank._versions_for("solo-actual") == []
+    assert bank._versions_for("nunca-existio") == []
+
+
+def test_list_excludes_versions_subdir(bank: IdeasBank) -> None:
+    """S-4.1 — archived files under ideas/versions/ never appear in list()
+    (top-level glob naturally excludes the subdirectory)."""
+    _create(bank, slug="visible", body="v1")
+    _create(bank, slug="otra", body="x")
+    bank.update_versioned("visible", {"body": "v2"})
+    bank.update_versioned("visible", {"body": "v3"})
+    slugs = [i.slug for i in bank.list()]
+    assert slugs == ["otra", "visible"]
+    assert all("versions" not in s for s in slugs)
+
+
+def test_materialize_keeps_version_1_no_archive(bank: IdeasBank, tmp_path: Path) -> None:
+    """S-5.1 — materialize() is bookkeeping: it uses update() (non-versioned),
+    never creates archives and leaves version untouched."""
+    _create(bank, slug="mat", type="personaje")
+    result = bank.materialize("mat", "vibrantes")
+    assert result["ok"] is True
+    idea = bank.read("mat")
+    assert idea.version == 1
+    assert idea.status == "used"
+    assert not (tmp_path / "ideas" / "versions").exists()
+
+
+def test_archived_version_retains_media_path(bank: IdeasBank, tmp_path: Path) -> None:
+    """S-9.1 — an archived version keeps the same media_path and its media
+    resolves to the existing file."""
+    _create(bank, slug="con-imagen", body="v1")
+    bank.update("con-imagen", {"media_path": "media/con-imagen.png"})
+    media = tmp_path / "ideas" / "media" / "con-imagen.png"
+    media.parent.mkdir(parents=True)
+    media.write_bytes(b"\x89PNG fake")
+    bank.update_versioned("con-imagen", {"body": "v2"})
+
+    archive = tmp_path / "ideas" / "versions" / "con-imagen-v1.md"
+    assert archive.is_file()
+    content = archive.read_text(encoding="utf-8")
+    assert "media_path: media/con-imagen.png" in content
+    archived = bank._idea_from_file(archive)
+    assert archived is not None
+    assert archived.media_path == "media/con-imagen.png"
+    resolved = (tmp_path / "ideas" / archived.media_path).resolve()
+    assert resolved.is_file()
+
+
+def test_update_preserves_version(bank: IdeasBank) -> None:
+    """Non-versioned update() must keep the current version, never reset it
+    to the dataclass default 1 (materialize()/REST PATCH rely on this)."""
+    _create(bank, slug="preserva", body="v1")
+    bank.update_versioned("preserva", {"body": "v2"})
+    updated = bank.update("preserva", {"status": "used"})
+    assert updated.version == 2
+    assert bank.read("preserva").version == 2

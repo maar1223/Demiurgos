@@ -67,6 +67,7 @@ class IdeaProcessor:
                 media_field = f"media_path: {idea_media_path}\n" if idea_media_path else ""
                 destination = self.global_ideas_root / f"{record.slug}.md"
                 content = (f"---\nid: {record.capture_id}\nslug: {record.slug}\n"
+                           f"version: 1\n"
                            f"timestamp: {record.created_at}\n"
                            f"source: telegram\ntype: {idea_type}\ntitle: {title}\ntags: []\n"
                            "status: fresh\nused_in: []\n"

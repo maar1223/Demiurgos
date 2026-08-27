@@ -87,6 +87,7 @@ class Idea:
     used_in: list[str] = field(default_factory=list)
     based_on: str | None = None
     media_path: str | None = None
+    version: int = 1  # NEW — default 1 for backward compat (R-1)
     title: str = ""
     body: str = ""
 
@@ -94,6 +95,7 @@ class Idea:
         return {
             "id": self.id,
             "slug": self.slug,
+            "version": self.version,
             "timestamp": self.timestamp,
             "source": self.source,
             "type": self.type,
@@ -215,6 +217,13 @@ class IdeasBank:
         slug = path.stem
         if not data:
             return None
+        # Lenient version parse: absent/non-numeric frontmatter defaults to 1
+        # so pre-versioning files keep working (R-1, S-1.1).
+        raw_version = data.get("version", 1)
+        try:
+            version = int(raw_version) if raw_version is not None else 1
+        except (TypeError, ValueError):
+            version = 1
         return Idea(
             id=str(data.get("id") or ""),
             slug=str(data.get("slug") or slug),
@@ -230,6 +239,7 @@ class IdeasBank:
             else [],
             based_on=data.get("based_on"),
             media_path=data.get("media_path"),
+            version=version,
             title=str(data.get("title") or ""),
             body=body.strip(),
         )
@@ -316,6 +326,7 @@ class IdeasBank:
             used_in=[],
             based_on=None,
             media_path=None,
+            version=1,  # every new idea starts at version 1 (R-11, S-11.1)
             title=title or "",
             body=body.strip(),
         )
@@ -325,9 +336,40 @@ class IdeasBank:
     def update(self, slug: str, partial: dict[str, Any]) -> Idea:
         """Update idea fields (type correction, status, tags, body, ...).
 
-        ``partial`` keys must be a known subset of the frontmatter model; the
-        taxonomy/status/source invariants are re-validated on the merged
-        result. ``slug`` itself cannot be renamed through update.
+        NON-versioned: the current file is overwritten in place and no
+        archive is created. ``materialize()`` routes here on purpose (R-5,
+        S-5.1); content edits go through ``update_versioned()`` (R-2).
+        """
+        _, updated = self._prepare_update(slug, partial)
+        self._write(updated)
+        return updated
+
+    def update_versioned(self, slug: str, partial: dict[str, Any]) -> Idea:
+        """Update idea fields with file-level versioning (R-2).
+
+        The current ``ideas/{slug}.md`` is archived to
+        ``ideas/versions/{slug}-v{N}.md`` BEFORE the new file is written —
+        both writes are atomic tmp+replace via ``_write_to`` — then
+        ``version`` is bumped in the new frontmatter. The new version is
+        derived from the filesystem (``max(archived vN) + 1``), never from
+        an in-memory counter (S-2.3, S-2.6). Payload validation matches
+        ``update()`` and runs before any disk write, so an invalid payload
+        fails closed without touching existing files (S-2.5).
+        """
+        current, updated = self._prepare_update(slug, partial)
+        # Archive FIRST: a failure in the new-file write must never lose the
+        # archived version (S-2.4).
+        self._write_to(current, self._archive_path(slug, current.version))
+        updated.version = self._next_version(slug)
+        self._write(updated)
+        return updated
+
+    def _prepare_update(self, slug: str, partial: dict[str, Any]) -> tuple[Idea, Idea]:
+        """Validate ``partial`` and merge it into the current idea.
+
+        Shared by ``update()`` and ``update_versioned()`` so both enforce
+        exactly the same payload contract. Returns ``(current, merged)``.
+        Raises ``InvalidIdea`` before any disk write.
         """
         if not isinstance(partial, dict):
             raise InvalidIdea("La actualización debe ser un objeto.")
@@ -337,8 +379,8 @@ class IdeasBank:
             raise InvalidIdea(
                 f"Campos desconocidos: {', '.join(sorted(unknown))}."
             )
-        idea = self.read(slug)
-        merged = idea.to_dict()
+        current = self.read(slug)
+        merged = current.to_dict()
         merged.update(partial)
         # Re-validate invariants on the merged payload.
         if merged["type"] not in IDEA_TYPES:
@@ -364,9 +406,9 @@ class IdeasBank:
         if not isinstance(merged["title"], str):
             raise InvalidIdea("El título de la idea debe ser un string.")
         updated = Idea(
-            id=idea.id,
+            id=current.id,
             slug=slug,
-            timestamp=idea.timestamp,
+            timestamp=current.timestamp,
             source=merged["source"],
             type=merged["type"],
             tags=list(merged["tags"]),
@@ -374,11 +416,53 @@ class IdeasBank:
             used_in=list(merged["used_in"]),
             based_on=merged.get("based_on"),
             media_path=merged.get("media_path"),
-            title=merged.get("title", idea.title),
-            body=merged.get("body", idea.body),
+            version=merged["version"],
+            title=merged.get("title", current.title),
+            body=merged.get("body", current.body),
         )
-        self._write(updated)
-        return updated
+        return current, updated
+
+    def _archive_path(self, slug: str, version: int) -> Path:
+        """Resolve ``ideas/versions/<slug>-v<version>.md`` (R-2)."""
+        if not _valid_slug(slug):
+            raise InvalidIdea(f"El slug '{slug}' no es válido (solo minúsculas, dígitos, guiones y guiones bajos).")
+        versions_dir = (self._ideas_root / "versions").resolve()
+        path = (versions_dir / f"{slug}-v{version}.md").resolve()
+        if path.parent != versions_dir:
+            raise InvalidIdea(f"El slug '{slug}' no es un nombre de archivo seguro.")
+        return path
+
+    def _versions_for(self, slug: str) -> list[Path]:
+        """Archived versions for slug, ascending by version number (R-3).
+
+        Returns an empty list when no ``ideas/versions/`` archive exists
+        for the slug (S-3.2). Numeric ordering keeps ``v10`` after ``v9``.
+        """
+        versions_dir = self._ideas_root / "versions"
+        if not versions_dir.is_dir():
+            return []
+        pattern = re.compile(rf"^{re.escape(slug)}-v(\d+)\.md$")
+        found: list[tuple[int, Path]] = []
+        for path in versions_dir.iterdir():
+            match = pattern.fullmatch(path.name)
+            if match:
+                found.append((int(match.group(1)), path))
+        found.sort(key=lambda item: item[0])
+        return [path for _, path in found]
+
+    def _next_version(self, slug: str) -> int:
+        """``max(archived vN on disk) + 1`` — filesystem-derived (S-2.3).
+
+        The version number is read from disk at write time, never kept in
+        memory, so it survives restarts and stays deterministic for a
+        single user (S-2.6).
+        """
+        versions = self._versions_for(slug)
+        if not versions:
+            return 1
+        pattern = re.compile(rf"^{re.escape(slug)}-v(\d+)\.md$")
+        numbers = [int(pattern.match(path.name).group(1)) for path in versions]
+        return max(numbers) + 1
 
     def delete(self, slug: str) -> None:
         """Delete an idea file (archive/delete surface, R-IB-03 extension)."""
@@ -442,13 +526,22 @@ class IdeasBank:
     # ------------------------------------------------------------------
 
     def _write(self, idea: Idea) -> None:
-        """Persist an idea to ``ideas/{slug}.md`` atomically."""
-        self._ideas_root.mkdir(parents=True, exist_ok=True)
+        """Persist an idea to ``ideas/{slug}.md`` atomically (tmp+replace)."""
+        self._write_to(idea, self._path_for(idea.slug))
+
+    def _write_to(self, idea: Idea, path: Path) -> None:
+        """Persist an idea file atomically (tmp+replace) at an explicit path.
+
+        Shared by the live ``ideas/{slug}.md`` write and the version-archive
+        write ``ideas/versions/{slug}-vN.md`` (R-2). The archive write
+        happens BEFORE the new live file is written, so a failure in the
+        new-file write never loses the archived version (S-2.4).
+        """
+        path.parent.mkdir(parents=True, exist_ok=True)
         data = idea.to_dict()
         data.pop("body", None)  # body is the free-text section, not frontmatter
         data["_body"] = idea.body
         content = self._render_frontmatter(data)
-        path = self._path_for(idea.slug)
         tmp = path.with_suffix(".md.tmp")
         tmp.write_text(content, encoding="utf-8")
         tmp.replace(path)
