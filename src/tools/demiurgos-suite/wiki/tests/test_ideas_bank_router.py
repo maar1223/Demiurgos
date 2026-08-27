@@ -155,6 +155,70 @@ def test_delete(client: TestClient) -> None:
 
 
 # ---------------------------------------------------------------------------
+# R-2 / R-3 — media endpoint GET /api/ideas/media/{filename}
+# ---------------------------------------------------------------------------
+
+def test_media_traversal_rejected(client: TestClient) -> None:
+    """Path traversal is rejected with 400 (S-2.1).
+
+    Backslash is not a URL path separator, so ``..\\..\\etc\\passwd`` survives
+    HTTP path normalization and reaches the ``{filename}`` param intact,
+    exercising the endpoint's ``..``/``\\`` rejection.
+    """
+    resp = client.get("/api/ideas/media/..%5C..%5Cetc%5Cpasswd")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Invalid filename"
+
+
+def test_media_dotdot_in_segment_rejected(client: TestClient) -> None:
+    """A single-segment filename containing ``..`` is rejected with 400."""
+    resp = client.get("/api/ideas/media/foo..bar.png")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Invalid filename"
+
+
+def test_media_absolute_path_rejected(client: TestClient) -> None:
+    """Absolute path (backslash form) in filename is rejected with 400."""
+    resp = client.get("/api/ideas/media/%5Cetc%5Cpasswd")
+    assert resp.status_code == 400
+
+
+def test_media_unsupported_extension_is_400(client: TestClient) -> None:
+    """Non-image extensions are rejected with 400 (R-3)."""
+    resp = client.get("/api/ideas/media/notes.txt")
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Unsupported file type"
+
+
+def test_media_missing_file_is_404(client: TestClient) -> None:
+    """Missing file returns 404 even for a valid image extension."""
+    resp = client.get("/api/ideas/media/no-such.png")
+    assert resp.status_code == 404
+
+
+def test_media_valid_file_served_with_mime(client: TestClient, tmp_path: Path) -> None:
+    """Valid image is served with 200 and correct Content-Type (S-2.2)."""
+    media_dir = tmp_path / "ideas" / "media"
+    media_dir.mkdir(parents=True)
+    png = b"\x89PNG\r\n\x1a\nfakedata"
+    (media_dir / "test.png").write_bytes(png)
+    resp = client.get("/api/ideas/media/test.png")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content == png
+
+
+def test_media_jpeg_mime(client: TestClient, tmp_path: Path) -> None:
+    """JPEG files are served with image/jpeg Content-Type."""
+    media_dir = tmp_path / "ideas" / "media"
+    media_dir.mkdir(parents=True)
+    (media_dir / "foto.jpg").write_bytes(b"\xff\xd8\xff\xe0jpegdata")
+    resp = client.get("/api/ideas/media/foto.jpg")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/jpeg"
+
+
+# ---------------------------------------------------------------------------
 # R-CG-04 — materialize
 # ---------------------------------------------------------------------------
 
@@ -205,6 +269,7 @@ def test_all_routes_require_auth(tmp_path: Path) -> None:
         ("patch", "/api/ideas/x"),
         ("delete", "/api/ideas/x"),
         ("post", "/api/ideas/x/materialize"),
+        ("get", "/api/ideas/media/test.png"),
     ]:
         kwargs = {"json": {"slug": "x", "type": "personaje", "body": "x",
                            "world": "vibrantes"}} if method in ("post", "patch") else {}

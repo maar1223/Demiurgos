@@ -264,3 +264,67 @@ def test_delete_removes_file(bank: IdeasBank) -> None:
 def test_delete_missing_raises(bank: IdeasBank) -> None:
     with pytest.raises(IdeaNotFound):
         bank.delete("no-existe")
+
+
+# ---------------------------------------------------------------------------
+# R-2 / R-3 — media_path first-class frontmatter field
+# ---------------------------------------------------------------------------
+
+def test_to_dict_includes_media_path(bank: IdeasBank) -> None:
+    """``to_dict()`` MUST carry the ``media_path`` key (None when unset)."""
+    idea = _create(bank)
+    data = idea.to_dict()
+    assert "media_path" in data
+    assert data["media_path"] is None
+
+
+def test_to_dict_media_path_value() -> None:
+    idea = Idea(
+        id="x", slug="y", timestamp="t", source="manual", type="personaje",
+        body="b", media_path="media/y.png",
+    )
+    assert idea.to_dict()["media_path"] == "media/y.png"
+
+
+def test_create_writes_media_path_frontmatter(bank: IdeasBank, tmp_path: Path) -> None:
+    """``media_path`` is a first-class frontmatter field, not a ``_body`` marker."""
+    _create(bank, slug="mp")
+    content = (tmp_path / "ideas" / "mp.md").read_text(encoding="utf-8")
+    assert "media_path:" in content
+    frontmatter = content.split("---\n")[1]
+    assert "media_path:" in frontmatter
+
+
+def test_idea_from_file_reads_media_path(bank: IdeasBank, tmp_path: Path) -> None:
+    """``_idea_from_file`` reads ``media_path`` from frontmatter."""
+    _create(bank, slug="con-media")
+    path = tmp_path / "ideas" / "con-media.md"
+    content = path.read_text(encoding="utf-8")
+    path.write_text(
+        content.replace("media_path: null", "media_path: media/con-media.png"),
+        encoding="utf-8",
+    )
+    idea = bank.read("con-media")
+    assert idea.media_path == "media/con-media.png"
+
+
+def test_update_accepts_media_path(bank: IdeasBank) -> None:
+    """``update`` accepts ``media_path`` and persists it through round-trip."""
+    _create(bank, slug="act")
+    updated = bank.update("act", {"media_path": "media/act.png"})
+    assert updated.media_path == "media/act.png"
+    assert bank.read("act").media_path == "media/act.png"
+
+
+def test_old_idea_without_media_path_loads_none(bank: IdeasBank, tmp_path: Path) -> None:
+    """Backward compat: a legacy idea without ``media_path`` loads with None (S-4.2)."""
+    (tmp_path / "ideas").mkdir(parents=True)
+    (tmp_path / "ideas" / "legacy.md").write_text(
+        "---\nid: l1\nslug: legacy\ntimestamp: '2024-01-01'\nsource: manual\n"
+        "type: concepto\ntags: []\nstatus: fresh\nused_in: []\nbased_on: null\n"
+        "---\nCuerpo legacy\n",
+        encoding="utf-8",
+    )
+    idea = bank.read("legacy")
+    assert idea.media_path is None
+    assert idea.body == "Cuerpo legacy"

@@ -12,10 +12,12 @@ requires a trusted local principal resolved at call time via
 
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ideas_bank import (
@@ -95,6 +97,40 @@ def create_ideas_bank_router(
             "ideas": [idea.to_summary() for idea in ideas],
             "total": len(ideas),
         }
+
+    @router.get("/media/{filename}")
+    def get_idea_media(filename: str, request: Request) -> FileResponse:
+        """Serve an image from ``<ideas_root>/media/{filename}`` (R-2, R-3).
+
+        Path-traversal protection: reject ``..``, path separators and absolute
+        paths; allowlist image extensions; serve only from ``<ideas_root>/media``
+        with a ``resolve()`` parent check as defense-in-depth.
+        """
+        _guard(request)
+        # Reject dangerous filename patterns (S-2.1).
+        if (
+            ".." in filename
+            or "/" in filename
+            or "\\" in filename
+            or filename.startswith("/")
+            or filename.startswith("\\")
+        ):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        # Allowlist extensions (R-3).
+        ext = Path(filename).suffix.lower()
+        if ext not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+        # Serve only from <ideas_root>/media (defense-in-depth).
+        media_dir = bank._ideas_root / "media"
+        file_path = (media_dir / filename).resolve()
+        if file_path.parent != media_dir.resolve():
+            raise HTTPException(status_code=403, detail="Access denied")
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        mime_type, _ = mimetypes.guess_type(filename)
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+        return FileResponse(file_path, media_type=mime_type)
 
     @router.get("/{slug}")
     def get_idea(slug: str, request: Request) -> dict[str, Any]:
