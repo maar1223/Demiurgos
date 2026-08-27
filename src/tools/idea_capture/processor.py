@@ -25,7 +25,7 @@ class IdeaProcessor:
             if not record.global_ and record.world is None:
                 raise ValueError("capture requires confirmed world")
             raw_input = record.raw_text if record.media_kind is MediaKind.TEXT else record.raw_bytes
-            body, idea_type = self._split_enrich(
+            body, idea_type, title = self._split_enrich(
                 self._enrich_with_media_kind(raw_input, record.media_kind,
                                              record.media_path, record.mime))
             if not isinstance(body, str) or not body.strip():
@@ -36,6 +36,13 @@ class IdeaProcessor:
                 body = record.raw_text.strip()
             if not body:
                 raise ValueError("enrichment produced empty idea")
+            # Every idea gets a human-readable title: the enrichment's title
+            # when it produced one, else a heuristic from the body's first
+            # words. The title is sanitized so it stays a safe single-line
+            # frontmatter value (R-TITLE-01).
+            if not isinstance(title, str) or not title.strip():
+                title = self._title_from_body(body)
+            title = self._sanitize_title(title)
             if not re.fullmatch(r"[A-Za-z0-9_-]+", record.slug):
                 raise ValueError("unsafe slug")
             if record.global_:
@@ -55,7 +62,7 @@ class IdeaProcessor:
                 destination = self.global_ideas_root / f"{record.slug}.md"
                 content = (f"---\nid: {record.capture_id}\nslug: {record.slug}\n"
                            f"timestamp: {record.created_at}\n"
-                           f"source: telegram\ntype: {idea_type}\ntags: []\n"
+                           f"source: telegram\ntype: {idea_type}\ntitle: {title}\ntags: []\n"
                            "status: fresh\nused_in: []\n"
                            f"{media_field}---\n\n"
                            f"{body_text}\n")
@@ -103,15 +110,42 @@ class IdeaProcessor:
 
     @staticmethod
     def _split_enrich(result):
-        """Normalize the enrich seam to ``(body, type)``.
+        """Normalize the enrich seam to ``(body, type, title="")``.
 
-        New providers return ``(body, type)``; legacy string-returning providers
-        (and the identity default) are tolerated and fail open to
-        ``sin_clasificar``.
+        New providers return ``(body, type, title)``; providers returning a
+        ``(body, type)`` tuple (and legacy string-returning providers) are
+        tolerated and fail open to an empty title.
         """
-        if isinstance(result, tuple) and len(result) == 2:
-            return result[0], result[1]
-        return result, "sin_clasificar"
+        if isinstance(result, tuple):
+            if len(result) >= 3:
+                return result[0], result[1], result[2]
+            if len(result) == 2:
+                return result[0], result[1], ""
+        return result, "sin_clasificar", ""
+
+    @staticmethod
+    def _title_from_body(body: str, max_words: int = 5) -> str:
+        """Heuristic title from the body's first words (fail-open fallback)."""
+        if not isinstance(body, str):
+            return ""
+        words = [w for w in body.strip().split() if w]
+        return " ".join(words[:max_words]) if words else ""
+
+    @staticmethod
+    def _sanitize_title(title: str, max_chars: int = 80) -> str:
+        """Make a frontmatter-safe single-line title.
+
+        The idea file's frontmatter is a hand-rolled ``key: value`` template,
+        so the title must not carry characters that break YAML parsing
+        (colons, hashes, newlines, quotes). ``ideas_bank`` re-reads the file
+        leniently — an unsanitized title like ``mapa: del reino`` would make
+        ``yaml.safe_load`` fail and hide the idea from the bank.
+        """
+        if not isinstance(title, str):
+            return ""
+        cleaned = " ".join(title.split())
+        cleaned = cleaned.replace(":", "").replace("#", "").strip("'\"- \t")
+        return cleaned[:max_chars].strip()
 
     def _copy_media(self, record) -> str | None:
         """Persist image bytes to ``<global_ideas_root>/media/{slug}.{ext}`` and

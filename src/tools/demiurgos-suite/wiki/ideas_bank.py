@@ -87,6 +87,7 @@ class Idea:
     used_in: list[str] = field(default_factory=list)
     based_on: str | None = None
     media_path: str | None = None
+    title: str = ""
     body: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +97,7 @@ class Idea:
             "timestamp": self.timestamp,
             "source": self.source,
             "type": self.type,
+            "title": self.title,
             "tags": list(self.tags),
             "status": self.status,
             "used_in": list(self.used_in),
@@ -228,6 +230,7 @@ class IdeasBank:
             else [],
             based_on=data.get("based_on"),
             media_path=data.get("media_path"),
+            title=str(data.get("title") or ""),
             body=body.strip(),
         )
 
@@ -275,12 +278,15 @@ class IdeasBank:
         body: str,
         tags: list[str] | None = None,
         source: str = "manual",
+        title: str | None = None,
     ) -> Idea:
         """Create a well-formed idea file (R-IB-01, R-IB-03).
 
         ``slug`` must be unique; ``type`` must be in the taxonomy; ``source``
-        must be one of telegram|manual|assistant. The file is written with all
-        required frontmatter fields plus the free-text body.
+        must be one of telegram|manual|assistant; ``title`` must be a string
+        when provided (empty/None allowed — the UI falls back to the slug).
+        The file is written with all required frontmatter fields plus the
+        free-text body.
         """
         path = self._path_for(slug)
         if path.exists():
@@ -295,6 +301,8 @@ class IdeasBank:
             )
         if not isinstance(body, str) or not body.strip():
             raise InvalidIdea("El cuerpo de la idea no puede estar vacío.")
+        if title is not None and not isinstance(title, str):
+            raise InvalidIdea("El título de la idea debe ser un string.")
         tags = [t for t in (tags or []) if isinstance(t, str) and t.strip()]
         now = utcnow_iso()
         idea = Idea(
@@ -307,6 +315,8 @@ class IdeasBank:
             status="fresh",
             used_in=[],
             based_on=None,
+            media_path=None,
+            title=title or "",
             body=body.strip(),
         )
         self._write(idea)
@@ -321,7 +331,7 @@ class IdeasBank:
         """
         if not isinstance(partial, dict):
             raise InvalidIdea("La actualización debe ser un objeto.")
-        allowed = {"type", "status", "source", "tags", "used_in", "based_on", "media_path", "body"}
+        allowed = {"type", "status", "source", "tags", "used_in", "based_on", "media_path", "title", "body"}
         unknown = set(partial) - allowed
         if unknown:
             raise InvalidIdea(
@@ -351,6 +361,8 @@ class IdeasBank:
             isinstance(w, str) for w in merged["used_in"]
         ):
             raise InvalidIdea("used_in debe ser una lista de slugs de mundo.")
+        if not isinstance(merged["title"], str):
+            raise InvalidIdea("El título de la idea debe ser un string.")
         updated = Idea(
             id=idea.id,
             slug=slug,
@@ -362,6 +374,7 @@ class IdeasBank:
             used_in=list(merged["used_in"]),
             based_on=merged.get("based_on"),
             media_path=merged.get("media_path"),
+            title=merged.get("title", idea.title),
             body=merged.get("body", idea.body),
         )
         self._write(updated)

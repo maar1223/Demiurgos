@@ -328,3 +328,79 @@ def test_old_idea_without_media_path_loads_none(bank: IdeasBank, tmp_path: Path)
     idea = bank.read("legacy")
     assert idea.media_path is None
     assert idea.body == "Cuerpo legacy"
+
+
+# ---------------------------------------------------------------------------
+# R-TITLE-01 — human-readable title (frontmatter field + UI concern)
+# ---------------------------------------------------------------------------
+
+def test_idea_has_title_field() -> None:
+    """``Idea.title`` defaults to ``""`` and round-trips through the dataclass."""
+    idea = Idea(id="x", slug="y", timestamp="t", source="manual", type="personaje",
+                body="b")
+    assert idea.title == ""
+    titled = Idea(id="x", slug="y", timestamp="t", source="manual", type="personaje",
+                  body="b", title="Prototipo de diosa")
+    assert titled.title == "Prototipo de diosa"
+
+
+def test_to_dict_includes_title() -> None:
+    idea = Idea(id="x", slug="y", timestamp="t", source="manual", type="personaje",
+                body="b", title="El Arquero")
+    assert idea.to_dict()["title"] == "El Arquero"
+
+
+def test_create_accepts_title(bank: IdeasBank, tmp_path: Path) -> None:
+    """``create`` persists ``title`` as a first-class frontmatter field."""
+    idea = bank.create(slug="titulada", type="personaje",
+                       body="Un arquero.", title="El Arquero Ciego")
+    assert idea.title == "El Arquero Ciego"
+    content = (tmp_path / "ideas" / "titulada.md").read_text(encoding="utf-8")
+    assert "title: El Arquero Ciego" in content
+    assert bank.read("titulada").title == "El Arquero Ciego"
+
+
+def test_create_without_title_defaults_empty(bank: IdeasBank) -> None:
+    idea = bank.create(slug="sin-titulo", type="concepto", body="Una idea.")
+    assert idea.title == ""
+
+
+def test_create_rejects_non_string_title(bank: IdeasBank) -> None:
+    with pytest.raises(InvalidIdea):
+        bank.create(slug="mala", type="personaje", body="x", title=42)
+
+
+def test_idea_from_file_reads_title(bank: IdeasBank, tmp_path: Path) -> None:
+    _create(bank, slug="con-titulo")
+    path = tmp_path / "ideas" / "con-titulo.md"
+    content = path.read_text(encoding="utf-8")
+    path.write_text(content.replace("title: ''", "title: Un Título"), encoding="utf-8")
+    idea = bank.read("con-titulo")
+    assert idea.title == "Un Título"
+
+
+def test_update_accepts_title(bank: IdeasBank) -> None:
+    """``update`` accepts ``title`` and persists it through round-trip."""
+    _create(bank, slug="act-titulo")
+    updated = bank.update("act-titulo", {"title": "El Nuevo Título"})
+    assert updated.title == "El Nuevo Título"
+    assert bank.read("act-titulo").title == "El Nuevo Título"
+
+
+def test_update_rejects_non_string_title(bank: IdeasBank) -> None:
+    _create(bank, slug="act-titulo")
+    with pytest.raises(InvalidIdea):
+        bank.update("act-titulo", {"title": 42})
+
+
+def test_legacy_idea_without_title_loads_empty(bank: IdeasBank, tmp_path: Path) -> None:
+    """Backward compat: a legacy idea without ``title`` loads as ``""``."""
+    (tmp_path / "ideas").mkdir(parents=True)
+    (tmp_path / "ideas" / "legacy.md").write_text(
+        "---\nid: l1\nslug: legacy\ntimestamp: '2024-01-01'\nsource: manual\n"
+        "type: concepto\ntags: []\nstatus: fresh\nused_in: []\nbased_on: null\n"
+        "---\nCuerpo legacy\n",
+        encoding="utf-8",
+    )
+    idea = bank.read("legacy")
+    assert idea.title == ""

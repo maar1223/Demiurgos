@@ -97,6 +97,36 @@ def test_create_returns_detail(client: TestClient) -> None:
     assert idea["body"] == "Un arquero que perdió la vista."
 
 
+def test_create_with_title_persists_and_returns_it(client: TestClient, tmp_path: Path) -> None:
+    resp = client.post(
+        "/api/ideas",
+        json={"slug": "titulada", "type": "personaje", "body": "Un arquero.",
+              "title": "El Arquero Ciego"},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["title"] == "El Arquero Ciego"
+    content = (tmp_path / "ideas" / "titulada.md").read_text(encoding="utf-8")
+    assert "title: El Arquero Ciego" in content
+    # The list summary also carries the title (R-TITLE-01).
+    listing = client.get("/api/ideas").json()
+    assert listing["ideas"][0]["title"] == "El Arquero Ciego"
+
+
+def test_update_title(client: TestClient) -> None:
+    _create(client)
+    resp = client.patch("/api/ideas/arquero-ciego", json={"title": "El Nuevo Título"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["title"] == "El Nuevo Título"
+    detail = client.get("/api/ideas/arquero-ciego").json()
+    assert detail["title"] == "El Nuevo Título"
+
+
+def test_create_without_title_defaults_empty(client: TestClient) -> None:
+    idea = _create(client, slug="sin-titulo")
+    assert idea["title"] == ""
+
+
 def test_create_conflict_is_409(client: TestClient) -> None:
     _create(client, slug="dupe")
     resp = client.post("/api/ideas", json={"slug": "dupe", "type": "personaje", "body": "x"})

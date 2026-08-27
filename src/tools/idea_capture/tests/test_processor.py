@@ -144,6 +144,108 @@ class ProcessorMediaTests(unittest.TestCase):
         self.assertNotIn("media_path", content)
         self.assertNotIn("![idea image]", content)
 
+    # ------------------------------------------------------------------
+    # R-TITLE-01 — human-readable title from enrichment, frontmatter field
+    # ------------------------------------------------------------------
+
+    def test_title_from_enrichment_written_to_frontmatter(self):
+        """A (body, type, title) enrich result persists ``title:`` in the
+        global frontmatter (text captures flow through enrichment)."""
+        update = TelegramUpdate(1, 7, 8, False,
+                                MediaInput(MediaKind.TEXT, text="una idea de texto"))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        processor = IdeaProcessor(
+            self.store, self.root / "mundos",
+            lambda raw, **kw: ("una idea de texto", "trama", "Prototipo de diosa"),
+            global_ideas_root=self.ideas_root)
+        saved = processor.process(receipt.capture_id)
+
+        self.assertEqual(saved.state.value, "SAVED")
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        self.assertIn("title: Prototipo de diosa", content)
+
+    def test_title_falls_back_to_body_first_words(self):
+        """When enrichment yields an empty title, the body's first 5 words
+        become the title (fail-open fallback, R-TITLE-01)."""
+        body = "un mapa con tesoros escondidos bajo la catedral"
+        update = TelegramUpdate(1, 7, 8, False,
+                                MediaInput(MediaKind.TEXT, text=body))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        processor = IdeaProcessor(
+            self.store, self.root / "mundos",
+            lambda raw, **kw: (body, "concepto", ""),
+            global_ideas_root=self.ideas_root)
+        saved = processor.process(receipt.capture_id)
+
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        self.assertIn("title: un mapa con tesoros escondidos", content)
+
+    def test_title_is_sanitized_for_frontmatter_safety(self):
+        """Colons/newlines in an enrichment title must not break the
+        hand-rolled frontmatter (yaml.safe_load would fail otherwise)."""
+        update = TelegramUpdate(1, 7, 8, False,
+                                MediaInput(MediaKind.TEXT, text="el mapa secreto"))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        processor = IdeaProcessor(
+            self.store, self.root / "mundos",
+            lambda raw, **kw: ("el mapa secreto", "concepto", "mapa: del\nreino"),
+            global_ideas_root=self.ideas_root)
+        saved = processor.process(receipt.capture_id)
+
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        self.assertIn("title: mapa del reino", content)
+        self.assertNotIn("mapa: del", content)
+
+    def test_image_capture_title_from_descripcion(self):
+        """IMAGE captures get a title from the vision description's first
+        words, persisted in the frontmatter alongside media_path."""
+        from idea_capture.enrich import MediaEnrichProvider
+
+        record = self._capture_image(text="mapa del mundo")
+        enrich = MediaEnrichProvider(
+            vision_fn=lambda raw, ctx: {
+                "descripcion": "un mapa con tesoros escondidos bajo la corte",
+                "tags": ["concepto"],
+            },
+            vision_enabled=True,
+        )
+        processor = IdeaProcessor(self.store, self.root / "mundos", enrich,
+                                  global_ideas_root=self.ideas_root)
+        saved = processor.process(record.capture_id)
+
+        self.assertEqual(saved.state.value, "SAVED")
+        content = (self.ideas_root / f"{record.slug}.md").read_text(encoding="utf-8")
+        self.assertIn("title: un mapa con tesoros escondidos", content)
+        # Media embed + media_path logic unchanged.
+        self.assertIn(f"media_path: media/{record.slug}.png", content)
+        self.assertIn(f"![idea image](/api/ideas/media/{record.slug}.png)\n\n", content)
+
+    def test_voice_capture_title_from_transcript_enrichment(self):
+        """AUDIO captures get a title from the Hermes classifier over the
+        transcript, persisted in the frontmatter."""
+        from idea_capture.enrich import MediaEnrichProvider
+
+        update = TelegramUpdate(4, 7, 8, False,
+                                MediaInput(MediaKind.VOICE, b"OggS\x01fake-voice",
+                                           "audio/ogg", 2))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        enrich = MediaEnrichProvider(
+            hermes=lambda raw: ("personaje", "El arquero ciego"),
+            transcribe_fn=lambda path, language: "un arquero ciego protege la ciudad",
+            language_resolver=lambda: "es",
+        )
+        processor = IdeaProcessor(self.store, self.root / "mundos", enrich,
+                                  global_ideas_root=self.ideas_root)
+        saved = processor.process(receipt.capture_id)
+
+        self.assertEqual(saved.state.value, "SAVED")
+        content = (self.ideas_root / f"{saved.slug}.md").read_text(encoding="utf-8")
+        self.assertIn("title: El arquero ciego", content)
+
 
 if __name__ == "__main__":
     unittest.main()
