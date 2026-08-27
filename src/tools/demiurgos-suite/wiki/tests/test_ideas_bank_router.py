@@ -176,6 +176,53 @@ def test_update_missing_is_404(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
+# ---------------------------------------------------------------------------
+# R-10 — versioned PATCH + GET /{slug}/versions (S-10.1, S-10.2)
+# ---------------------------------------------------------------------------
+
+def test_update_archives_previous_version(client: TestClient, tmp_path: Path) -> None:
+    """PATCH is versioned by default: archives v1 and bumps to v2 (S-10.1)."""
+    _create(client)
+    resp = client.patch("/api/ideas/arquero-ciego", json={"title": "El Nuevo Título"})
+    assert resp.status_code == 200
+    assert resp.json()["version"] == 2
+    # The previous version was archived to ideas/versions/.
+    archive = tmp_path / "ideas" / "versions" / "arquero-ciego-v1.md"
+    assert archive.is_file()
+    archived = archive.read_text(encoding="utf-8")
+    assert "El Nuevo Título" not in archived
+    # The live file carries the bumped version.
+    live = (tmp_path / "ideas" / "arquero-ciego.md").read_text(encoding="utf-8")
+    assert "version: 2" in live
+
+
+def test_get_versions_returns_history_ascending(client: TestClient) -> None:
+    _create(client)
+    client.patch("/api/ideas/arquero-ciego", json={"title": "T1"})
+    client.patch("/api/ideas/arquero-ciego", json={"title": "T2"})
+    resp = client.get("/api/ideas/arquero-ciego/versions")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["slug"] == "arquero-ciego"
+    versions = data["versions"]
+    assert [v["version"] for v in versions] == [1, 2]
+    assert all(
+        v["path"].endswith(f"arquero-ciego-v{v['version']}.md") for v in versions
+    )
+
+
+def test_get_versions_empty_when_no_archives(client: TestClient) -> None:
+    _create(client)
+    resp = client.get("/api/ideas/arquero-ciego/versions")
+    assert resp.status_code == 200
+    assert resp.json() == {"slug": "arquero-ciego", "versions": []}
+
+
+def test_get_versions_missing_is_404(client: TestClient) -> None:
+    resp = client.get("/api/ideas/no-existe/versions")
+    assert resp.status_code == 404
+
+
 def test_delete(client: TestClient) -> None:
     _create(client, slug="borrar")
     resp = client.delete("/api/ideas/borrar")
@@ -307,6 +354,7 @@ def test_all_routes_require_auth(tmp_path: Path) -> None:
         ("patch", "/api/ideas/x"),
         ("delete", "/api/ideas/x"),
         ("post", "/api/ideas/x/materialize"),
+        ("get", "/api/ideas/x/versions"),
         ("get", "/api/ideas/media/test.png"),
     ]:
         kwargs = {"json": {"slug": "x", "type": "personaje", "body": "x",

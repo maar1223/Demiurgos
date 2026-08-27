@@ -14,6 +14,7 @@ vi.mock("@/api/ideas", async (importOriginal) => {
     ...actual,
     listIdeas: vi.fn(),
     getIdea: vi.fn(),
+    getIdeaVersions: vi.fn(),
     createIdea: vi.fn(),
     updateIdea: vi.fn(),
     deleteIdea: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock("@/hooks/useOnboardingGate", () => ({
 
 const listIdeasMock = vi.mocked(ideasApi.listIdeas);
 const getIdeaMock = vi.mocked(ideasApi.getIdea);
+const getIdeaVersionsMock = vi.mocked(ideasApi.getIdeaVersions);
 const createIdeaMock = vi.mocked(ideasApi.createIdea);
 const updateIdeaMock = vi.mocked(ideasApi.updateIdea);
 const deleteIdeaMock = vi.mocked(ideasApi.deleteIdea);
@@ -89,11 +91,13 @@ describe("IdeasWorkshop", () => {
   beforeEach(() => {
     listIdeasMock.mockReset();
     getIdeaMock.mockReset();
+    getIdeaVersionsMock.mockReset();
     createIdeaMock.mockReset();
     updateIdeaMock.mockReset();
     deleteIdeaMock.mockReset();
     materializeIdeaMock.mockReset();
     listIdeasMock.mockResolvedValue({ ideas: [summary], total: 1 });
+    getIdeaVersionsMock.mockResolvedValue({ slug: "arquero-ciego", versions: [] });
   });
 
   afterEach(() => {
@@ -328,6 +332,52 @@ describe("IdeasWorkshop", () => {
     await user.click(screen.getByRole("button", { name: "Eliminar idea arquero-ciego" }));
 
     await waitFor(() => expect(deleteIdeaMock).toHaveBeenCalledWith("arquero-ciego"));
+  });
+
+  it("shows the version history panel with archived versions (R-10, S-10.2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    getIdeaVersionsMock.mockResolvedValue({
+      slug: "arquero-ciego",
+      versions: [
+        { version: 1, path: "/ideas/versions/arquero-ciego-v1.md" },
+        { version: 2, path: "/ideas/versions/arquero-ciego-v2.md" },
+      ],
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+
+    expect(getIdeaVersionsMock).toHaveBeenCalledWith("arquero-ciego");
+    const section = await screen.findByRole("region", {
+      name: "Historial de versiones",
+    });
+    expect(within(section).getByText("Versión 1")).toBeInTheDocument();
+    expect(
+      within(section).getByText("/ideas/versions/arquero-ciego-v1.md"),
+    ).toBeInTheDocument();
+    expect(within(section).getByText("Versión 2")).toBeInTheDocument();
+    expect(
+      within(section).getByText("/ideas/versions/arquero-ciego-v2.md"),
+    ).toBeInTheDocument();
+    // The live frontmatter version never leaks as plain user text (R-1).
+    expect(screen.queryByText(/version: \d/)).not.toBeInTheDocument();
+  });
+
+  it("shows the empty state when the idea has no archived versions", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    getIdeaVersionsMock.mockResolvedValue({ slug: "arquero-ciego", versions: [] });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+
+    const section = await screen.findByRole("region", {
+      name: "Historial de versiones",
+    });
+    expect(
+      within(section).getByText(/Sin versiones archivadas/),
+    ).toBeInTheDocument();
   });
 });
 

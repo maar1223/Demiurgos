@@ -13,6 +13,7 @@ requires a trusted local principal resolved at call time via
 from __future__ import annotations
 
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -150,6 +151,28 @@ def create_ideas_bank_router(
         except IdeaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc))
 
+    @router.get("/{slug}/versions")
+    def get_idea_versions(slug: str, request: Request) -> dict[str, Any]:
+        """List an idea's archived versions ascending (R-10, S-10.2).
+
+        Delegates to ``IdeasBank._versions_for()`` — the router never
+        re-implements version history itself. Returns
+        ``{slug, versions: [{version, path}]}``; an empty list when no
+        archive exists for the slug. Unknown slug → 404.
+        """
+        _guard(request)
+        try:
+            bank.read(slug)
+        except IdeaNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        versions = [
+            {"version": int(match.group(1)), "path": str(path)}
+            for path in bank._versions_for(slug)
+            for match in [re.search(r"-v(\d+)\.md$", path.name)]
+            if match
+        ]
+        return {"slug": slug, "versions": versions}
+
     @router.post("", status_code=201)
     def create_idea(body: IdeaCreateRequest, request: Request) -> dict[str, Any]:
         """Create a manual idea at ``ideas/{slug}.md`` (R-IB-01, R-IB-03)."""
@@ -170,13 +193,20 @@ def create_ideas_bank_router(
 
     @router.patch("/{slug}")
     def update_idea(slug: str, body: IdeaUpdateRequest, request: Request) -> dict[str, Any]:
-        """Partial update — type correction, status, tags, body (R-IB-03)."""
+        """Partial update — type correction, status, tags, body (R-IB-03).
+
+        Versioned by default (R-10, S-10.1): the current ``ideas/{slug}.md``
+        is archived to ``ideas/versions/{slug}-vN.md`` and the live file gets
+        the next filesystem-derived version. Delegates to
+        ``IdeasBank.update_versioned()`` — the router never re-implements
+        versioning logic.
+        """
         _guard(request)
         partial = body.model_dump(exclude_unset=True)
         if not partial:
             raise HTTPException(status_code=400, detail="No hay campos para actualizar.")
         try:
-            return _detail(bank.update(slug, partial))
+            return _detail(bank.update_versioned(slug, partial))
         except IdeaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         except InvalidIdea as exc:

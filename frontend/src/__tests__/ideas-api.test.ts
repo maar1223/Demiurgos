@@ -3,6 +3,7 @@ import {
   createIdea,
   deleteIdea,
   getIdea,
+  getIdeaVersions,
   listIdeas,
   materializeIdea,
   updateIdea,
@@ -133,6 +134,31 @@ describe("ideas bank API", () => {
       expect.objectContaining({ method: "DELETE", credentials: "same-origin" }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it("fetches version history from GET /{slug}/versions (R-10, S-10.2)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        slug: "arquero-ciego",
+        versions: [
+          { version: 1, path: "/ideas/versions/arquero-ciego-v1.md" },
+          { version: 2, path: "/ideas/versions/arquero-ciego-v2.md" },
+        ],
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await getIdeaVersions("arquero-ciego");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ideas/arquero-ciego/versions",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+    expect(result.slug).toBe("arquero-ciego");
+    expect(result.versions).toEqual([
+      { version: 1, path: "/ideas/versions/arquero-ciego-v1.md" },
+      { version: 2, path: "/ideas/versions/arquero-ciego-v2.md" },
+    ]);
   });
 
   it("materializes an idea with POST /materialize and the world payload", async () => {

@@ -86,6 +86,18 @@ export interface IdeaMaterializeResult {
   canon_path: string | null;
 }
 
+/** One archived version of an idea (R-10) — number + archive path. */
+export interface IdeaVersionSummary {
+  version: number;
+  path: string;
+}
+
+/** GET /api/ideas/{slug}/versions response (R-10, S-10.2). */
+export interface IdeaVersionsResponse {
+  slug: string;
+  versions: IdeaVersionSummary[];
+}
+
 /** Same-origin credentials so the local-dev session cookie authorizes reads. */
 const CREDENTIALS = { credentials: "same-origin" as const };
 
@@ -137,6 +149,17 @@ export function deleteIdea(slug: string): Promise<IdeaDeleteResult> {
     method: "DELETE",
     ...CREDENTIALS,
   });
+}
+
+/**
+ * GET /api/ideas/{slug}/versions — archived version history, ascending by
+ * version number (R-10, S-10.2).
+ */
+export function getIdeaVersions(slug: string): Promise<IdeaVersionsResponse> {
+  return apiFetch<IdeaVersionsResponse>(
+    ideasUrl([slug, "versions"]),
+    CREDENTIALS,
+  );
 }
 
 /**

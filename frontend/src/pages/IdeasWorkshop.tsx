@@ -12,6 +12,7 @@ import {
   createIdea,
   deleteIdea,
   getIdea,
+  getIdeaVersions,
   listIdeas,
   materializeIdea,
   updateIdea,
@@ -21,6 +22,7 @@ import {
   type IdeaStatus,
   type IdeaSummary,
   type IdeaType,
+  type IdeaVersionsResponse,
   IDEA_TYPES,
 } from "@/api/ideas";
 import { getErrorMessage } from "@/lib/utils";
@@ -109,6 +111,20 @@ export default function IdeasWorkshop() {
     { revalidateOnFocus: true },
   );
 
+  // Version history for the selected idea (R-10). Refreshed after any
+  // PATCH so a new archive appears as soon as it's created.
+  const {
+    data: versionsData,
+    error: versionsError,
+    mutate: mutateVersions,
+  } = useSWR<IdeaVersionsResponse | null>(
+    selectedSlug ? ["idea-versions", selectedSlug] : null,
+    () => getIdeaVersions(selectedSlug as string),
+    { revalidateOnFocus: true },
+  );
+
+  const archivedVersions = versionsData?.versions ?? [];
+
   const ideas = listData?.ideas ?? [];
   const selectedIdea = detail ?? null;
 
@@ -192,13 +208,14 @@ export default function IdeasWorkshop() {
       await updateIdea(selectedSlug, { type: reclassifyType });
       await mutateDetail();
       await mutateList();
+      await mutateVersions();
       showToast(`Idea reclasificada como "${TYPE_LABELS[reclassifyType]}".`);
     } catch (err) {
       notifyError(err);
     } finally {
       setReclassifying(false);
     }
-  }, [selectedSlug, reclassifyType, selectedIdea?.type, mutateDetail, mutateList, notifyError, showToast]);
+  }, [selectedSlug, reclassifyType, selectedIdea?.type, mutateDetail, mutateList, mutateVersions, notifyError, showToast]);
 
   // ── Edit title ──────────────────────────────────────────────────────────
   const [editTitle, setEditTitle] = useState("");
@@ -217,13 +234,14 @@ export default function IdeasWorkshop() {
       await updateIdea(selectedSlug, { title: editTitle.trim() });
       await mutateDetail();
       await mutateList();
+      await mutateVersions();
       showToast(`Título guardado: "${editTitle.trim()}".`);
     } catch (err) {
       notifyError(err);
     } finally {
       setSavingTitle(false);
     }
-  }, [selectedSlug, editTitle, selectedIdea?.title, mutateDetail, mutateList, notifyError, showToast]);
+  }, [selectedSlug, editTitle, selectedIdea?.title, mutateDetail, mutateList, mutateVersions, notifyError, showToast]);
 
   // ── Materialize ("usar en el mundo") ─────────────────────────────────────
   const [materializeWorld, setMaterializeWorld] = useState("");
@@ -666,6 +684,50 @@ export default function IdeasWorkshop() {
                   </button>
                 </div>
               </div>
+            )}
+          </section>
+
+          {/* Version history (R-10) — archived versions only. The live
+              frontmatter `version` is never shown here nor in the body
+              (MarkdownViewer strips frontmatter); this panel is the product
+              value: consultable archive of every prior version. */}
+          <section
+            aria-label="Historial de versiones"
+            className="mb-4 rounded-lg border border-filio bg-madero p-4"
+          >
+            <h3 className="mb-2 text-body font-medium text-pergamino">
+              Historial de versiones
+            </h3>
+            {versionsError ? (
+              <p className="text-xs text-sangre">
+                {getErrorMessage(
+                  (versionsError as ApiError).status,
+                  (versionsError as ApiError).detail,
+                )}
+              </p>
+            ) : archivedVersions.length === 0 ? (
+              <p className="text-xs text-tinta-desvaida">
+                Sin versiones archivadas. La idea actual es la versión viva.
+              </p>
+            ) : (
+              <ul aria-label="Versiones archivadas" className="space-y-1">
+                {archivedVersions.map((v) => (
+                  <li
+                    key={v.version}
+                    className="flex items-baseline justify-between gap-2 rounded-md bg-cripta px-2.5 py-1.5 text-xs"
+                  >
+                    <span className="shrink-0 font-medium text-pergamino">
+                      Versión {v.version}
+                    </span>
+                    <span
+                      className="min-w-0 truncate text-tinta-desvaida"
+                      title={v.path}
+                    >
+                      {v.path}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             )}
           </section>
 
