@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import logging
 import os
 import sys
@@ -434,8 +435,10 @@ def _resolve_vision_dependencies(
 CLASSIFY_PROMPT = (
     "Clasifica la idea del usuario en EXACTAMENTE UNA de estas categorías: "
     "personaje, relacion, ambientacion, trama, concepto, sin_clasificar. "
-    "Responde únicamente con la etiqueta elegida, sin puntuación ni "
-    "explicación."
+    "Responde únicamente con un objeto JSON con dos campos: \"label\" (la "
+    "etiqueta elegida, sin puntuación) y \"title\" (un título corto de la "
+    "idea, máximo 5 palabras, en el idioma de la idea). Sin explicación "
+    "fuera del JSON."
 )
 
 
@@ -539,29 +542,56 @@ def _normalize_classified_label(content: object) -> str:
     return label if label in TYPE_TAXONOMY else DEFAULT_TYPE
 
 
-def build_hermes_classifier() -> Callable[[object], str]:
+def _parse_classification(content: object) -> tuple[str, str]:
+    """Parse the gateway JSON ``{"label": ..., "title": ...}`` into a
+    ``(taxonomy label, title)`` tuple.
+
+    Non-JSON, non-dict, or empty responses fail open: label ->
+    ``sin_clasificar``, title -> ``""``. The taxonomy label keeps its exact
+    prior semantics through ``_normalize_classified_label``; the title is
+    additive — a valid JSON payload keeps its title even when the label is
+    unrecognized (the processor still shows the idea under a fallback).
+    """
+    label, title = DEFAULT_TYPE, ""
+    if isinstance(content, str) and content.strip():
+        try:
+            data = json.loads(content.strip())
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            label = _normalize_classified_label(data.get("label"))
+            raw_title = data.get("title")
+            if isinstance(raw_title, str):
+                title = raw_title.strip()
+    return label, title
+
+
+def build_hermes_classifier() -> Callable[[object], tuple[str, str]]:
     """Build a Hermes-gateway idea classifier; fail-open NO-OP when unavailable.
 
     The returned callable labels a raw text/transcript with exactly one
-    ``TYPE_TAXONOMY`` type via the Hermes gateway chat-completions endpoint
-    (the same pattern ``api_server`` uses). Building the classifier is cheap
-    and offline: the closure reads ``HERMES_GATEWAY_URL`` / ``HERMES_GATEWAY_KEY``
-    (env, then project ``.env``) at CALL time, so runtime config is honored
-    and provider construction never touches the network. When the gateway is
-    unconfigured, unreachable, times out, or returns an unrecognized label,
-    the callable returns ``sin_clasificar`` and never raises — the enrich
-    provider stays fail-open. Runs synchronously on the ``CaptureWorker``
-    thread (enrichment is already off the event loop).
+    ``TYPE_TAXONOMY`` type AND derives a short human-readable title from the
+    same Hermes call — it returns a ``(label, title)`` tuple. The gateway
+    chat-completions endpoint is asked for a single JSON object
+    ``{"label": ..., "title": ...}`` (the same pattern ``api_server`` uses).
+    Building the classifier is cheap and offline: the closure reads
+    ``HERMES_GATEWAY_URL`` / ``HERMES_GATEWAY_KEY`` (env, then project
+    ``.env``) at CALL time, so runtime config is honored and provider
+    construction never touches the network. When the gateway is
+    unconfigured, unreachable, times out, returns an unrecognized label, or
+    returns non-JSON, the callable returns ``(sin_clasificar, "")`` and never
+    raises — the enrich provider stays fail-open. Runs synchronously on the
+    ``CaptureWorker`` thread (enrichment is already off the event loop).
     """
 
-    def classify(raw: object) -> str:
+    def classify(raw: object) -> tuple[str, str]:
         try:
             content = _classify_via_gateway(raw)
         except Exception as exc:  # noqa: BLE001 — fail-open: classification is advisory
             log.warning("hermes classification failed; failing open to %s: %s",
                         DEFAULT_TYPE, exc)
-            return DEFAULT_TYPE
-        return _normalize_classified_label(content)
+            return DEFAULT_TYPE, ""
+        return _parse_classification(content)
 
     return classify
 

@@ -27,10 +27,19 @@ class EnrichProviderTests(unittest.TestCase):
         self.assertIsInstance(result, EnrichResult)
         self.assertEqual(result.body, "una trama genial")
         self.assertEqual(result.type, "trama")
-        # The result is a 2-tuple, so the processor seam unpacks it.
-        self.assertEqual(tuple(result), ("una trama genial", "trama"))
+        # A legacy string-returning classifier yields an empty title.
+        self.assertEqual(result.title, "")
+        # The result is a 3-tuple, so the processor seam unpacks it.
+        self.assertEqual(tuple(result), ("una trama genial", "trama", ""))
 
-    def test_exception_fails_open_to_sin_clasificar(self):
+    def test_tuple_classifier_yields_label_and_title(self):
+        provider = HermesEnrichProvider(hermes=lambda raw: ("trama", "La conspiración"))
+        result = provider("una trama genial")
+        self.assertEqual(result.type, "trama")
+        self.assertEqual(result.title, "La conspiración")
+        self.assertEqual(tuple(result), ("una trama genial", "trama", "La conspiración"))
+
+    def test_exception_fails_open_to_sin_clasificar_and_empty_title(self):
         def exploding(_raw):
             raise RuntimeError("hermes down")
 
@@ -38,11 +47,12 @@ class EnrichProviderTests(unittest.TestCase):
         result = provider("idea con clasificador caido")
         self.assertEqual(result.body, "idea con clasificador caido")
         self.assertEqual(result.type, DEFAULT_TYPE)
+        self.assertEqual(result.title, "")
 
-    def test_timeout_fails_open_to_sin_clasificar(self):
+    def test_timeout_fails_open_to_sin_clasificar_and_empty_title(self):
         def slow(_raw):
             time.sleep(0.5)
-            return "personaje"
+            return ("personaje", "El personaje")
 
         provider = HermesEnrichProvider(hermes=slow, timeout_seconds=0.1)
         start = time.monotonic()
@@ -51,16 +61,19 @@ class EnrichProviderTests(unittest.TestCase):
         self.assertLess(elapsed, 1.0, "timeout must bound the call")
         self.assertEqual(result.body, "idea lenta")
         self.assertEqual(result.type, DEFAULT_TYPE)
+        self.assertEqual(result.title, "")
 
     def test_missing_hermes_fails_open(self):
         provider = HermesEnrichProvider()
         result = provider("sin proveedor")
         self.assertEqual(result.type, DEFAULT_TYPE)
+        self.assertEqual(result.title, "")
 
     def test_unknown_classification_fails_open(self):
         provider = HermesEnrichProvider(hermes=lambda raw: "not-a-type")
         result = provider("clasificacion rara")
         self.assertEqual(result.type, DEFAULT_TYPE)
+        self.assertEqual(result.title, "")
 
     def test_every_taxonomy_value_is_accepted(self):
         for expected in TYPE_TAXONOMY:
@@ -78,6 +91,7 @@ class EnrichProviderTests(unittest.TestCase):
         result = provider("   ")
         self.assertEqual(result.body, "")
         self.assertEqual(result.type, DEFAULT_TYPE)
+        self.assertEqual(result.title, "")
 
 
 if __name__ == "__main__":

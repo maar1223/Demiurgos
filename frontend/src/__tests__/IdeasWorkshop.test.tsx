@@ -64,6 +64,7 @@ const summary: ideasApi.IdeaSummary = {
   timestamp: "2026-08-25T15:00:00Z",
   source: "manual",
   type: "personaje",
+  title: "El Arquero Ciego",
   tags: ["arquero"],
   status: "fresh",
   used_in: [],
@@ -107,7 +108,8 @@ describe("IdeasWorkshop", () => {
     expect(screen.getByRole("combobox", { name: "Filtrar por tipo" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Filtrar por estado" })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Filtrar por origen" })).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: /arquero-ciego/ })).toBeInTheDocument();
+    // The list shows the human-readable title (falls back to slug).
+    expect(await screen.findByRole("button", { name: /El Arquero Ciego/ })).toBeInTheDocument();
 
     // Right panel: persistent assistant (null-mundo)
     expect(screen.getByTestId("assistant-sidebar")).toBeInTheDocument();
@@ -116,11 +118,30 @@ describe("IdeasWorkshop", () => {
     expect(screen.getByText("Banco global de ideas")).toBeInTheDocument();
   });
 
+  it("falls back to the slug when the title is empty (list + detail header)", async () => {
+    const user = userEvent.setup();
+    listIdeasMock.mockResolvedValue({
+      ideas: [{ ...summary, title: "" }],
+      total: 1,
+    });
+    getIdeaMock.mockResolvedValue({ ...detail, title: "" });
+    renderPage();
+
+    // List item primary line shows the slug when title is empty.
+    expect(await screen.findByRole("button", { name: /arquero-ciego/ })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /arquero-ciego/ }));
+    // Detail header falls back to the slug too.
+    expect(
+      await screen.findByRole("heading", { name: "arquero-ciego" }),
+    ).toBeInTheDocument();
+  });
+
   it("filters the list by type when the filter changes", async () => {
     const user = userEvent.setup();
     renderPage();
 
-    await screen.findByRole("button", { name: /arquero-ciego/ });
+    await screen.findByRole("button", { name: /El Arquero Ciego/ });
 
     await user.selectOptions(
       screen.getByRole("combobox", { name: "Filtrar por tipo" }),
@@ -162,6 +183,30 @@ describe("IdeasWorkshop", () => {
     );
   });
 
+  it("creates a manual idea with an optional title", async () => {
+    const user = userEvent.setup();
+    createIdeaMock.mockResolvedValue({ ...detail, slug: "prototipo", title: "Prototipo de diosa" });
+    renderPage();
+
+    await user.click(screen.getByRole("button", { name: "Nueva idea" }));
+
+    const form = screen.getByRole("group", { name: "Crear idea" });
+    await user.type(within(form).getByLabelText("Slug"), "prototipo");
+    await user.type(within(form).getByLabelText("Título (opcional)"), "Prototipo de diosa");
+    await user.type(within(form).getByLabelText("Cuerpo"), "Una idea nueva.");
+    await user.click(within(form).getByRole("button", { name: "Crear idea" }));
+
+    await waitFor(() =>
+      expect(createIdeaMock).toHaveBeenCalledWith({
+        slug: "prototipo",
+        type: "sin_clasificar",
+        body: "Una idea nueva.",
+        tags: [],
+        title: "Prototipo de diosa",
+      }),
+    );
+  });
+
   it("loads the detail and materializes the idea into a world", async () => {
     const user = userEvent.setup();
     getIdeaMock.mockResolvedValue(detail);
@@ -172,11 +217,11 @@ describe("IdeasWorkshop", () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /arquero-ciego/ }));
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
 
     expect(getIdeaMock).toHaveBeenCalledWith("arquero-ciego");
     expect(
-      await screen.findByRole("heading", { name: "arquero-ciego" }),
+      await screen.findByRole("heading", { name: "El Arquero Ciego" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Un arquero que no ve.")).toBeInTheDocument();
 
@@ -204,7 +249,7 @@ describe("IdeasWorkshop", () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /arquero-ciego/ }));
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
 
     // Markdown structure renders (heading from `## Summary`).
     expect(
@@ -224,7 +269,7 @@ describe("IdeasWorkshop", () => {
     });
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /arquero-ciego/ }));
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
 
     // The /api/ path passes through as-is (no mundo prop → default <img>).
     expect(
@@ -234,14 +279,33 @@ describe("IdeasWorkshop", () => {
     expect(screen.queryByText(/media_path:/)).not.toBeInTheDocument();
   });
 
+  it("edits the idea title from the detail panel", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    updateIdeaMock.mockResolvedValue({ ...detail, title: "Nuevo Título" });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    const titleInput = screen.getByPlaceholderText("Sin título — se muestra el slug");
+    await user.clear(titleInput);
+    await user.type(titleInput, "Nuevo Título");
+    await user.click(screen.getByRole("button", { name: "Guardar título" }));
+
+    await waitFor(() =>
+      expect(updateIdeaMock).toHaveBeenCalledWith("arquero-ciego", { title: "Nuevo Título" }),
+    );
+  });
+
   it("reclassifies the idea type via the classification action", async () => {
     const user = userEvent.setup();
     getIdeaMock.mockResolvedValue(detail);
     updateIdeaMock.mockResolvedValue({ ...detail, type: "concepto" });
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /arquero-ciego/ }));
-    await screen.findByRole("heading", { name: "arquero-ciego" });
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
 
     await user.selectOptions(screen.getByLabelText("Tipo de la idea"), "concepto");
     await user.click(screen.getByRole("button", { name: "Guardar tipo" }));
@@ -258,8 +322,8 @@ describe("IdeasWorkshop", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderPage();
 
-    await user.click(await screen.findByRole("button", { name: /arquero-ciego/ }));
-    await screen.findByRole("heading", { name: "arquero-ciego" });
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
 
     await user.click(screen.getByRole("button", { name: "Eliminar idea arquero-ciego" }));
 

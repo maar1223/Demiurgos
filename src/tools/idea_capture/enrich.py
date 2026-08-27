@@ -1,9 +1,12 @@
-"""Mandatory idea enrichment provider (type classification), fail-open.
+"""Mandatory idea enrichment provider (type classification + title), fail-open.
 
 The provider is the seam the processor calls at capture time. It returns
-``(body, type)`` where ``type`` is one of the idea type taxonomy. It NEVER
+``(body, type, title)`` where ``type`` is one of the idea type taxonomy and
+``title`` is a short human-readable title derived from the enrichment (the
+Hermes classifier for TEXT/AUDIO, the vision payload for IMAGE). It NEVER
 blocks or crashes the capture: on any timeout, exception, or unknown
-classification it fails open to ``sin_clasificar`` while preserving the body.
+classification it fails open to ``sin_clasificar`` / ``""`` while preserving
+the body.
 """
 
 from __future__ import annotations
@@ -37,6 +40,22 @@ DEFAULT_TYPE = "sin_clasificar"
 class EnrichResult(NamedTuple):
     body: str
     type: str  # one of TYPE_TAXONOMY
+    title: str = ""  # short human-readable title from the enrichment
+
+
+def _short_title(text: str, max_words: int = 5) -> str:
+    """A short title from the first words of a description; ``""`` when empty.
+
+    Lightweight heuristic used for IMAGE captures when the vision payload
+    carries no explicit ``titulo``/``title`` field. The processor keeps its
+    own body-first-words fallback for the fail-open case.
+    """
+    if not isinstance(text, str):
+        return ""
+    words = [w for w in text.strip().split() if w]
+    if not words:
+        return ""
+    return " ".join(words[:max_words])
 
 
 def _body_from_raw(raw) -> str:
@@ -64,8 +83,13 @@ class HermesEnrichProvider:
 
     ``__call__`` always returns an ``EnrichResult`` and never raises. The
     injected ``hermes`` callable is optional: when omitted (or offline) the
-    provider fails open to ``sin_clasificar``, so capture is never blocked by
-    the classifier.
+    provider fails open to ``sin_clasificar`` and an empty title, so capture
+    is never blocked by the classifier.
+
+    The injected callable may return either the taxonomy label (legacy
+    string) or a ``(label, title)`` tuple (the gateway classifier built by
+    ``build_hermes_classifier``); both are normalized to ``(label, title)``
+    and the title stays ``""`` for legacy string classifiers.
 
     ``__call__`` accepts a ``media_kind`` keyword so the processor seam can
     pass the capture's media kind through; this provider only classifies
@@ -75,7 +99,7 @@ class HermesEnrichProvider:
     provider, and this text-only provider has no use for them.
     """
 
-    def __init__(self, hermes: Callable[[object], str] | None = None,
+    def __init__(self, hermes: Callable[[object], str | tuple[str, str]] | None = None,
                  timeout_seconds: float = 10.0):
         self._hermes = hermes
         self._timeout_seconds = timeout_seconds
@@ -83,32 +107,47 @@ class HermesEnrichProvider:
     def __call__(self, raw, *, media_kind=None, media_path=None, mime=None) -> EnrichResult:
         body = _body_from_raw(raw)
         try:
-            classified = self._classify(raw)
-            type_ = _normalize_type(classified)
+            label, title = self._classify(raw)
+            type_ = _normalize_type(label)
         except Exception as exc:  # noqa: BLE001 — fail open, never block capture
             log.warning("idea enrichment failed; failing open to %s: %s",
                         DEFAULT_TYPE, exc)
             type_ = DEFAULT_TYPE
-        return EnrichResult(body=body, type=type_)
+            title = ""
+        return EnrichResult(body=body, type=type_, title=title)
 
-    def _classify(self, raw) -> str:
+    def _classify(self, raw) -> tuple[str, str]:
         if self._hermes is None:
-            return DEFAULT_TYPE
+            return DEFAULT_TYPE, ""
         if self._timeout_seconds is None or self._timeout_seconds <= 0:
-            return self._hermes(raw)
+            return self._unpack_classified(self._hermes(raw))
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             future = executor.submit(self._hermes, raw)
             try:
-                return future.result(timeout=self._timeout_seconds)
+                return self._unpack_classified(future.result(timeout=self._timeout_seconds))
             except FutureTimeoutError:
                 # Timeout-bounded: return immediately, never block the capture.
                 log.warning("idea enrichment timed out after %.1fs; failing open",
                             self._timeout_seconds)
-                return DEFAULT_TYPE
+                return DEFAULT_TYPE, ""
         finally:
             # Fire-and-forget the stuck classifier; do NOT wait for it.
             executor.shutdown(wait=False)
+
+    @staticmethod
+    def _unpack_classified(classified) -> tuple[str, str]:
+        """Normalize a classifier result into ``(label, title)``.
+
+        New classifiers return a ``(label, title)`` tuple; legacy string-
+        returning classifiers (and the identity default) keep a ``""`` title.
+        """
+        if isinstance(classified, tuple):
+            if len(classified) >= 2:
+                return classified[0], classified[1]
+            if len(classified) == 1:
+                return classified[0], ""
+        return classified, ""
 
 
 def map_tags_to_taxonomy(tags, veredicto: str = "") -> str:
@@ -170,7 +209,7 @@ class MediaEnrichProvider:
 
     def __init__(
         self,
-        hermes: Callable[[object], str] | None = None,
+        hermes: Callable[[object], str | tuple[str, str]] | None = None,
         vision_fn: Callable[[bytes, str], dict] | None = None,
         transcribe_fn: Callable[[str, str], str] | None = None,
         language_resolver: Callable[[], str] | None = None,
@@ -212,7 +251,17 @@ class MediaEnrichProvider:
         body = str(payload.get("descripcion") or "").strip()
         tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
         type_ = map_tags_to_taxonomy(tags, str(payload.get("veredicto") or ""))
-        return EnrichResult(body=body, type=type_)
+        # Title from the vision payload: an explicit ``titulo``/``title``
+        # field wins; otherwise derive a short title from the description's
+        # first words. Fails open to "" (the processor falls back to the
+        # body's first words when the title is empty).
+        title = payload.get("titulo") or payload.get("title") or ""
+        if not isinstance(title, str):
+            title = ""
+        title = title.strip()
+        if not title:
+            title = _short_title(body)
+        return EnrichResult(body=body, type=type_, title=title)
 
     def _enrich_audio(self, raw, *, media_path=None, mime=None) -> EnrichResult:
         """Transcribe the audio and classify the transcript (fail-open).

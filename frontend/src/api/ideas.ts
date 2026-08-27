@@ -31,6 +31,7 @@ export interface IdeaSummary {
   timestamp: string;
   source: IdeaSource;
   type: IdeaType;
+  title: string;
   tags: string[];
   status: IdeaStatus;
   used_in: string[];
@@ -59,6 +60,8 @@ export interface IdeaCreateInput {
   body: string;
   tags?: string[];
   source?: IdeaSource;
+  /** Human-readable title; empty/omitted falls back to the slug in the UI. */
+  title?: string;
 }
 
 export interface IdeaUpdateInput {
@@ -68,6 +71,7 @@ export interface IdeaUpdateInput {
   tags?: string[];
   used_in?: string[];
   based_on?: string | null;
+  title?: string;
   body?: string;
 }
 

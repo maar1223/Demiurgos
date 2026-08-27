@@ -41,6 +41,7 @@ class IdeaCreateRequest(BaseModel):
     body: str = Field(..., min_length=1)
     tags: list[str] | None = None
     source: str = "manual"
+    title: str | None = None
 
 
 class IdeaUpdateRequest(BaseModel):
@@ -52,6 +53,7 @@ class IdeaUpdateRequest(BaseModel):
     tags: list[str] | None = None
     used_in: list[str] | None = None
     based_on: str | None = None
+    title: str | None = None
     body: str | None = None
 
 
@@ -152,6 +154,7 @@ def create_ideas_bank_router(
                 body=body.body,
                 tags=body.tags,
                 source=body.source,
+                title=body.title,
             )
         except (IdeaConflict, InvalidIdea) as exc:
             status_code = 409 if isinstance(exc, IdeaConflict) else 400
