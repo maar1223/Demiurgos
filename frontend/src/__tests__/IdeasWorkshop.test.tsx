@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
+import { SWRConfig } from "swr";
 import IdeasWorkshop from "@/pages/IdeasWorkshop";
 import App from "@/App";
 import * as ideasApi from "@/api/ideas";
@@ -72,9 +73,13 @@ const summary: ideasApi.IdeaSummary = {
 const detail: IdeaDetail = { ...summary, body: "Un arquero que no ve." };
 
 function renderPage() {
+  // Fresh SWR cache per render — SWR's module-level cache would otherwise
+  // leak stale list/detail responses between tests (order-dependent).
   return render(
     <MemoryRouter>
-      <IdeasWorkshop />
+      <SWRConfig value={{ provider: () => new Map() }}>
+        <IdeasWorkshop />
+      </SWRConfig>
     </MemoryRouter>,
   );
 }
@@ -189,6 +194,44 @@ describe("IdeasWorkshop", () => {
         undefined,
       ),
     );
+  });
+
+  it("renders the idea body as markdown with frontmatter hidden (R-1, S-1.1)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue({
+      ...detail,
+      body: "---\ntype: personaje\n---\n## Summary\n\nThis is a **test** idea.",
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /arquero-ciego/ }));
+
+    // Markdown structure renders (heading from `## Summary`).
+    expect(
+      await screen.findByRole("heading", { name: "Summary" }),
+    ).toBeInTheDocument();
+    // Raw markdown syntax must NOT leak.
+    expect(screen.queryByText("**test**")).not.toBeInTheDocument();
+    // YAML frontmatter must stay hidden.
+    expect(screen.queryByText(/type: personaje/)).not.toBeInTheDocument();
+  });
+
+  it("renders embedded idea images from the media API (R-1, S-1.2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue({
+      ...detail,
+      body: "---\nmedia_path: media/arquero-ciego.png\n---\n![idea image](/api/ideas/media/arquero-ciego.png)\n\nUn arquero ciego.",
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /arquero-ciego/ }));
+
+    // The /api/ path passes through as-is (no mundo prop → default <img>).
+    expect(
+      await screen.findByRole("img", { name: "idea image" }),
+    ).toHaveAttribute("src", "/api/ideas/media/arquero-ciego.png");
+    // Frontmatter (media_path line) stays hidden.
+    expect(screen.queryByText(/media_path:/)).not.toBeInTheDocument();
   });
 
   it("reclassifies the idea type via the classification action", async () => {

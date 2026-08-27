@@ -6,7 +6,7 @@ Usage::
     python graph_mcp_server.py --mundo vibrantes --mundos-path mundos
     python graph_mcp_server.py --mundo vibrantes --mundos-path mundos --no-engram
 
-Hermes connects via the demiurgos-mcp profile and gains 10 tools.
+Hermes connects via the demiurgos-mcp profile and gains 13 tools.
 Every tool accepts an optional ``mundo`` parameter (defaults to the world
 configured at launch) so the UI can query whichever world is active:
   - graph_search(query, type?, tag?, mundo?)  → {matches: [...], query}
@@ -19,6 +19,11 @@ configured at launch) so the UI can query whichever world is active:
   - lore_format(data)                         → str (markdown with [[wikilinks]])
   - auto_tag(text, mundo)                     → {entities, themes}
   - idea_link(content, mundo)                 → {matches, content}
+
+Idea-bank tools (world-agnostic, global ``ideas/`` bank — no mundo needed):
+  - ideas_list(tag?, status?)                 → {ideas: [IdeaSummary, ...]}
+  - ideas_read(slug)                          → {idea: {...}, exists: bool}
+  - ideas_search(query)                       → {matches: [IdeaSummary, ...], query}
 """
 
 from __future__ import annotations
@@ -40,6 +45,7 @@ if str(_PARENT_DIR) not in sys.path:
 
 from wiki.graph_indexer import EntityGraphIndex   # noqa: E402
 from wiki.mcp_adapter import GraphMCPAdapter      # noqa: E402
+from wiki.ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
 
 from mcp.server.fastmcp import FastMCP             # noqa: E402
 
@@ -236,6 +242,66 @@ def idea_link(content: str, mundo: str) -> dict:
     """
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
     return _adapter.tool_idea_link(content, mundo)
+
+
+# ---------------------------------------------------------------------------
+# Idea-bank tools (R-5) — world-agnostic access to the global `ideas/` bank.
+# Each instantiates IdeasBank() (defaults to `<project>/ideas` via
+# `_project_root()`); no `mundo` parameter is needed. List/search return
+# IdeaSummary objects (body omitted, S-3.1/S-3.3); read returns the full
+# idea including body (S-3.2). Frontmatter is never leaked: to_dict() only
+# exposes parsed fields, never raw YAML (S-4.1).
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool()
+def ideas_list(tag: str = "", status: str = "") -> dict:
+    """List ideas from the global bank, optionally filtered by tag/status.
+
+    Returns {ideas: [IdeaSummary, ...]} where IdeaSummary has no body field.
+    ``tag`` matches an exact tag in the idea's tag list; ``status`` filters
+    by idea status (fresh|used).
+    """
+    bank = IdeasBank()
+    ideas = bank.list(status=status or None)
+    if tag:
+        ideas = [idea for idea in ideas if tag in idea.tags]
+    return {"ideas": [idea.to_summary() for idea in ideas]}
+
+
+@mcp.tool()
+def ideas_read(slug: str) -> dict:
+    """Read a full idea by slug from the global bank.
+
+    Returns {idea: Idea, exists: true} or {exists: false} when the slug does
+    not exist. The idea dict includes the body field (S-3.2) but never the
+    raw YAML frontmatter (S-4.1).
+    """
+    bank = IdeasBank()
+    try:
+        idea = bank.read(slug)
+    except IdeaNotFound:
+        return {"exists": False}
+    return {"idea": idea.to_dict(), "exists": True}
+
+
+@mcp.tool()
+def ideas_search(query: str) -> dict:
+    """Search ideas by substring match in body and tags (case-insensitive).
+
+    Returns {matches: [IdeaSummary, ...], query}. Matches an idea when the
+    lowercased query appears in its lowercased body or in any of its tags.
+    Summaries omit the body field (S-3.3).
+    """
+    bank = IdeasBank()
+    lowered = query.lower()
+    matches = [
+        idea
+        for idea in bank.list()
+        if lowered in idea.body.lower()
+        or any(lowered in tag.lower() for tag in idea.tags)
+    ]
+    return {"matches": [idea.to_summary() for idea in matches], "query": query}
 
 
 # ---------------------------------------------------------------------------
