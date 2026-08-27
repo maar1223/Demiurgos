@@ -25,8 +25,16 @@ class IdeaProcessor:
             if not record.global_ and record.world is None:
                 raise ValueError("capture requires confirmed world")
             raw_input = record.raw_text if record.media_kind is MediaKind.TEXT else record.raw_bytes
-            body, idea_type = self._split_enrich(self.enrich(raw_input))
+            body, idea_type = self._split_enrich(
+                self._enrich_with_media_kind(raw_input, record.media_kind,
+                                             record.media_path, record.mime))
             if not isinstance(body, str) or not body.strip():
+                # Media captures with a caption fall back to it when the
+                # provider fails open with an empty body (vision off,
+                # transcription unavailable): the raw body/caption is always
+                # retained, never lost (R-5 / S-5.3 / S-5.5 / S-5.7).
+                body = record.raw_text.strip()
+            if not body:
                 raise ValueError("enrichment produced empty idea")
             if not re.fullmatch(r"[A-Za-z0-9_-]+", record.slug):
                 raise ValueError("unsafe slug")
@@ -54,6 +62,32 @@ class IdeaProcessor:
         except (OSError, ValueError, RuntimeError) as error:
             self.store.mark_retryable(capture_id, str(error))
             raise
+
+    def _enrich_with_media_kind(self, raw_input, media_kind, media_path, mime):
+        """Call the enrich seam with the capture's media context, tolerating
+        legacy providers.
+
+        Media-aware providers dispatch on ``media_kind`` (and may use the
+        persisted ``media_path`` / ``mime``); providers that predate the seam
+        accept only the raw input. A ``TypeError`` naming one of the seam
+        keywords means the provider does not accept it, so retry without that
+        keyword — never mask other internal errors raised by the provider.
+        """
+        kwargs = {
+            "media_kind": media_kind,
+            "media_path": media_path,
+            "mime": mime,
+        }
+        while kwargs:
+            try:
+                return self.enrich(raw_input, **kwargs)
+            except TypeError as exc:
+                rejected = [name for name in kwargs if name in str(exc)]
+                if not rejected:
+                    raise
+                for name in rejected:
+                    kwargs.pop(name)
+        return self.enrich(raw_input)
 
     @staticmethod
     def _split_enrich(result):

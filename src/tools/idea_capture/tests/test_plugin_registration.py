@@ -40,12 +40,16 @@ class RecordingCtx:
     def __init__(self):
         self.hooks = []
         self.platforms = []
+        self.tools = []
 
     def register_hook(self, hook_name, callback):
         self.hooks.append((hook_name, callback))
 
     def register_platform(self, **kwargs):
         self.platforms.append(kwargs)
+
+    def register_tool(self, **kwargs):
+        self.tools.append(kwargs)
 
 
 def _load_plugin():
@@ -83,6 +87,7 @@ def test_plugin_registers_hook_and_platform(monkeypatch):
     plugin = _load_plugin()
     with tempfile.TemporaryDirectory() as directory:
         monkeypatch.setenv("DEMIURGOS_ROOT", directory)
+        monkeypatch.setenv("DEMIURGOS_IDEA_CAPTURE_MODE", "ai")
         ctx = RecordingCtx()
         plugin.register(ctx)
 
@@ -92,6 +97,19 @@ def test_plugin_registers_hook_and_platform(monkeypatch):
     hook_cb = [cb for name, cb in ctx.hooks if name == "pre_gateway_dispatch"]
     assert len(hook_cb) == 1
     assert not __import__("asyncio").iscoroutinefunction(hook_cb[0])
+
+    # AI-gated surface (PR idea-capture-ai-gate, R-3/R-4): the guidance hook
+    # and the capture_idea tool are wired in ai mode (the default).
+    assert plugin._CAPTURE_MODE == "ai"
+    assert ("pre_llm_call", plugin.capture_guidance_hook) in ctx.hooks
+    assert [t["name"] for t in ctx.tools] == ["capture_idea"]
+    tool = ctx.tools[0]
+    assert tool["toolset"] == "demiurgos"
+    assert callable(tool["handler"])
+    assert tool["schema"]["name"] == "capture_idea"
+    assert set(tool["schema"]["parameters"]["properties"]) == {
+        "text", "image_bytes", "audio_bytes", "mime",
+    }
 
     # Platform override (PR 2): telegram registered with the full contract.
     assert len(ctx.platforms) == 1

@@ -209,7 +209,7 @@ class IdeaCaptureRuntime:
 
     def __init__(self, *, config: CaptureConfig, state_path: str | Path,
                  mundos_root: str | Path, active_world: str,
-                 publisher=None, enrich: Callable[[object], tuple[str, str]] | None = None,
+                 publisher=None, enrich: Callable[..., tuple[str, str]] | None = None,
                  resolve_file=None, audit: Callable[[dict], None] | None = None,
                  ownership: OwnershipLock | None = None,
                  busy_timeout_seconds: float = 10.0,
@@ -232,7 +232,15 @@ class IdeaCaptureRuntime:
         self.ownership = ownership
 
     @staticmethod
-    def _default_enrich(raw: object) -> tuple[str, str]:
+    def _default_enrich(raw: object, *, media_kind=None, media_path=None,
+                        mime=None) -> tuple[str, str]:
+        """Fallback enrich: text only; voice/image require a provider.
+
+        ``media_kind``, ``media_path``, and ``mime`` are accepted so the
+        processor seam can pass the capture's media context through without
+        breaking the no-provider fallback. Bytes inputs (voice/image without
+        an injected provider) keep failing as before.
+        """
         if isinstance(raw, bytes):
             raise ValueError("voice/image capture requires an enrichment provider")
         body = str(raw).strip()

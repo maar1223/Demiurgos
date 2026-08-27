@@ -357,6 +357,7 @@ def test_register_registers_pre_gateway_dispatch_hook(monkeypatch):
     plugin = _load_plugin()
     with tempfile.TemporaryDirectory() as directory:
         monkeypatch.setenv("DEMIURGOS_ROOT", directory)
+        monkeypatch.setenv("DEMIURGOS_IDEA_CAPTURE_MODE", "ai")
         calls = []
 
         def _register_hook(name, cb):
@@ -365,11 +366,22 @@ def test_register_registers_pre_gateway_dispatch_hook(monkeypatch):
         def _register_platform(**kwargs):
             calls.append(("register_platform", kwargs))
 
+        def _register_tool(**kwargs):
+            calls.append(("register_tool", kwargs))
+
         ctx = SimpleNamespace(register_hook=_register_hook,
-                              register_platform=_register_platform)
+                              register_platform=_register_platform,
+                              register_tool=_register_tool)
         plugin.register(ctx)
     assert ("register_hook", "pre_gateway_dispatch", plugin.capture_intake_hook) in calls
     assert plugin._handler is not None
+    assert plugin._CAPTURE_MODE == "ai"
+    # ai mode (default) also wires the assistant-facing surface (R-3/R-4).
+    assert ("register_hook", "pre_llm_call", plugin.capture_guidance_hook) in calls
+    tool = [c for c in calls if c[0] == "register_tool"]
+    assert len(tool) == 1
+    assert tool[0][1]["name"] == "capture_idea"
+    assert callable(tool[0][1]["handler"])
     platform = [c for c in calls if c[0] == "register_platform"]
     assert len(platform) == 1
     kwargs = platform[0][1]
@@ -392,6 +404,7 @@ def test_register_platform_factory_builds_capture_adapter(monkeypatch):
         ctx = SimpleNamespace(
             register_hook=lambda name, cb: None,
             register_platform=_register_platform,
+            register_tool=lambda **kw: None,
         )
         plugin.register(ctx)
     adapter = captured["adapter_factory"](SimpleNamespace(name="telegram", extra={}))
@@ -468,5 +481,131 @@ def test_missing_identity_returns_none():
             assert result is None
             assert runtime.store.count() == 0
             assert adapter.sent == []
+        finally:
+            runtime.close()
+
+
+# -- PR idea-capture-ai-gate: gate fall-through (R-2, R-6) -------------------
+
+
+def test_ai_mode_authorized_text_falls_through(monkeypatch):
+    """S-2.1: ai + authorized binding + text -> None, message reaches assistant."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _load_plugin()
+        plugin._handler = handler
+        plugin._CAPTURE_MODE = "ai"
+        adapter = FakeAdapter()
+        try:
+            result = _run_hook(plugin, event=_event(1, _source(), text="an idea"),
+                               gateway=FakeGateway(adapter), session_store=None)
+            assert result is None
+            assert runtime.store.count() == 0
+            assert adapter.sent == []  # no skip, no capture prompt
+        finally:
+            runtime.close()
+
+
+def test_strict_mode_authorized_text_skips(monkeypatch):
+    """S-2.2: strict + authorized binding -> unconditional skip (current behavior)."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _load_plugin()
+        plugin._handler = handler
+        plugin._CAPTURE_MODE = "strict"
+        adapter = FakeAdapter()
+        try:
+            result = _run_hook(plugin, event=_event(1, _source(), text="an idea"),
+                               gateway=FakeGateway(adapter), session_store=None)
+            assert result == {"action": "skip", "reason": "idea-capture"}
+            assert runtime.store.count() == 1
+        finally:
+            runtime.close()
+
+
+def test_ai_mode_voice_and_photo_fall_through(monkeypatch):
+    """S-2.3: ai + authorized binding + voice/photo -> None (gateway already
+    injected transcript/description for the assistant's turn)."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(
+            Path(directory), media_reader=lambda _: b"OggS raw-voice",
+        )
+        plugin = _load_plugin()
+        plugin._handler = handler
+        plugin._CAPTURE_MODE = "ai"
+        adapter = FakeAdapter()
+        try:
+            voice = _event(1, _source(), media_urls=[".hermes/cache/audio/note.ogg"],
+                           media_types=["audio/ogg"], message_type="voice")
+            result = _run_hook(plugin, event=voice,
+                               gateway=FakeGateway(adapter), session_store=None)
+            assert result is None
+            photo = _event(2, _source(), text="caption",
+                           media_urls=[".hermes/cache/images/img.png"],
+                           media_types=["image/png"], message_type="photo")
+            result = _run_hook(plugin, event=photo,
+                               gateway=FakeGateway(adapter), session_store=None)
+            assert result is None
+            assert runtime.store.count() == 0
+            assert adapter.sent == []
+        finally:
+            runtime.close()
+
+
+def test_ai_mode_non_telegram_returns_none(monkeypatch):
+    """S-6.1: non-telegram platform -> None in ai mode (authorization gate first)."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _load_plugin()
+        plugin._handler = handler
+        plugin._CAPTURE_MODE = "ai"
+        source = _source()
+        source.platform = SimpleNamespace(value="discord")
+        try:
+            result = _run_hook(plugin, event=_event(1, source, text="idea"),
+                               gateway=FakeGateway(FakeAdapter()), session_store=None)
+            assert result is None
+            assert runtime.store.count() == 0
+        finally:
+            runtime.close()
+
+
+def test_ai_mode_unauthorized_binding_returns_none(monkeypatch):
+    """S-6.2: unauthorized sender -> None in ai mode (binding gate still first)."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _load_plugin()
+        plugin._handler = handler
+        plugin._CAPTURE_MODE = "ai"
+        try:
+            result = _run_hook(plugin, event=_event(1, _source(user_id=99), text="idea"),
+                               gateway=FakeGateway(FakeAdapter()), session_store=None)
+            assert result is None
+            assert runtime.store.count() == 0
+        finally:
+            runtime.close()
+
+
+def test_ai_mode_conversion_value_error_returns_none(monkeypatch):
+    """S-6.3: _update_from_event_with_voice_probe raises ValueError -> None.
+
+    In ai mode the authorized binding returns before conversion; this proves
+    the ValueError path still returns None (never leaks, never crashes) when
+    mode is ai and the conversion is forced.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _load_plugin()
+        plugin._handler = handler
+        plugin._CAPTURE_MODE = "ai"
+        try:
+            def _boom(event, gateway=None):
+                raise ValueError("unsupported media")
+
+            monkeypatch.setattr(handler, "_update_from_event_with_voice_probe", _boom)
+            result = _run_hook(plugin, event=_event(1, _source(), text="idea"),
+                               gateway=FakeGateway(FakeAdapter()), session_store=None)
+            assert result is None
+            assert runtime.store.count() == 0
         finally:
             runtime.close()

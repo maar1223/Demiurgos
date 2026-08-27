@@ -9,6 +9,7 @@ granting or revoking access.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,6 +22,50 @@ from .telegram import IngressPolicy
 log = logging.getLogger(__name__)
 _ID = re.compile(r"^-?\d+$")
 _PROFILE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def image_vision_enabled() -> bool:
+    """Opt-out IMAGE vision enrichment for idea capture (low-volume rationale).
+
+    Idea capture is LOW-VOLUME: a Taller de Ideas message, not a bulk import,
+    so images are analyzed correctly by default. Reads
+    ``DEMIURGOS_IDEA_CAPTURE_IMAGE_VISION`` and defaults ON; set it to ``0``
+    to opt out (the bulk-import ``DEMIURGOS_IMPORT_VISION`` pattern stays
+    opt-in because imports move thousands of images at once). When off, image
+    messages skip vision and fall through to ``sin_clasificar`` with the raw
+    bytes retained (no loss).
+    """
+    return os.getenv("DEMIURGOS_IDEA_CAPTURE_IMAGE_VISION", "1") == "1"
+
+
+def resolve_capture_mode(config_path: str | Path) -> str:
+    """Resolve the AI-gate capture mode with env > yaml > default precedence.
+
+    Returns ``ai`` (default — the assistant decides per turn) or ``strict``
+    (pre-change unconditional capture). Precedence (task 4.1 / R-1):
+
+      1. ``DEMIURGOS_IDEA_CAPTURE_MODE`` env var (the owner's escape hatch),
+      2. the optional ``capture_mode`` field in ``config/idea-capture.yaml``,
+      3. the default ``ai``.
+
+    Invalid values at any layer warn and fall back to ``ai``, so the escape
+    hatch never takes an unknown value. The plugin's ``_resolve_capture_mode``
+    and the CLI share this single implementation so both agree on precedence.
+    """
+    raw = os.environ.get("DEMIURGOS_IDEA_CAPTURE_MODE", "").strip().lower()
+    source = "DEMIURGOS_IDEA_CAPTURE_MODE"
+    if not raw:
+        yaml_value = _load_yaml(config_path).get("capture_mode")
+        if yaml_value is None:
+            return "ai"
+        raw = str(yaml_value).strip().lower()
+        source = "capture_mode (config/idea-capture.yaml)"
+    if raw == "strict":
+        return "strict"
+    if raw == "ai":
+        return "ai"
+    log.warning("unknown capture mode %s=%r; treating as 'ai'", source, raw)
+    return "ai"
 
 
 @dataclass(frozen=True)

@@ -5,6 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from idea_capture.enrich import MediaEnrichProvider
 from idea_capture.models import MediaInput, MediaKind, TelegramUpdate, WorldAction
 from idea_capture.outbox import MemoryPublisher
 from idea_capture.processor import IdeaProcessor
@@ -147,6 +148,58 @@ class DurableProcessingTests(unittest.TestCase):
         self.assertEqual(current.attempt, 0)
         self.assertIsNone(current.error)
         self.assertEqual(len(self.store.pending_outbox()), 1)
+
+    # -- expanded enrich seam (PR idea-capture-ai-gate Phase 3, task 3.3) ----
+
+    def test_enrich_seam_passes_media_context_for_voice(self):
+        """The expanded seam passes media_kind/media_path/mime to the provider."""
+        audio = self.root / "voice.ogg"
+        audio.write_bytes(b"OggS\x01fake-voice")
+        update = TelegramUpdate(9, 7, 8, False,
+                                MediaInput(MediaKind.VOICE, b"OggS\x01fake-voice",
+                                           "audio/ogg", 2, path=str(audio)))
+        seen = {}
+
+        def media_enrich(raw, *, media_kind=None, media_path=None, mime=None):
+            seen["kind"] = media_kind
+            seen["path"] = media_path
+            seen["mime"] = mime
+            return "un recuerdo hablado", "concepto"
+
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        processor = IdeaProcessor(self.store, self.root / "mundos", media_enrich,
+                                  global_ideas_root=self.root / "ideas")
+        saved = processor.process(receipt.capture_id)
+        self.assertEqual(saved.state.value, "SAVED")
+        self.assertIs(seen["kind"], MediaKind.VOICE)
+        self.assertEqual(seen["path"], str(audio))
+        self.assertEqual(seen["mime"], "audio/ogg")
+
+    def test_legacy_single_arg_enrich_still_works(self):
+        """Providers predating the seam accept only raw; the retry must not mask
+        internal provider TypeErrors."""
+        receipt = self.service.accept(self.update())
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE)
+        processor = IdeaProcessor(self.store, self.root / "mundos", lambda raw: raw)
+        saved = processor.process(receipt.capture_id)
+        self.assertEqual(saved.state.value, "SAVED")
+
+    def test_media_caption_retained_when_enrich_fails_open(self):
+        """S-5.3: image + vision off -> the caption body is retained (SAVED)."""
+        update = TelegramUpdate(10, 7, 8, False,
+                                MediaInput(MediaKind.IMAGE, b"\x89PNG\r\n\x1a\nx",
+                                           "image/png", text="el mapa de la corte"))
+        receipt = self.service.accept(update)
+        self.service.confirm(receipt.capture_id, WorldAction.SAVE_GLOBAL)
+        provider = MediaEnrichProvider(vision_enabled=False)  # fails open: empty body
+        processor = IdeaProcessor(self.store, self.root / "mundos", provider,
+                                  global_ideas_root=self.root / "ideas")
+        saved = processor.process(receipt.capture_id)
+        self.assertEqual(saved.state.value, "SAVED")
+        content = (self.root / "ideas" / f"{saved.slug}.md").read_text(encoding="utf-8")
+        self.assertIn("el mapa de la corte", content)
+        self.assertIn("type: sin_clasificar", content)
 
 
 if __name__ == "__main__":

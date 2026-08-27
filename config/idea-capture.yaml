@@ -22,3 +22,9 @@ limits:
   audio_mb: 50
   audio_minutes: 5
   raw_retention_days: 30
+# AI gate (R-1): "ai" lets the assistant decide per turn whether to capture or
+# converse; "strict" restores the pre-change unconditional capture. Precedence:
+# DEMIURGOS_IDEA_CAPTURE_MODE env var > this field > default "ai". Any other
+# value falls back to "ai" with a warning. Resolved by
+# src/tools/idea_capture/config.py (resolve_capture_mode).
+capture_mode: ai
