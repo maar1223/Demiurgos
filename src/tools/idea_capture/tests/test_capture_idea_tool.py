@@ -6,6 +6,7 @@ built from the tool payload. It must reject sessions that are not the
 authorized capture binding before any accept happens.
 """
 
+import asyncio
 import importlib.util
 import json
 import sys
@@ -219,5 +220,154 @@ def test_tool_rejects_non_ai_mode(monkeypatch):
             result = _call(plugin, {"text": "nope"})
             assert result["error"] == "capture_idea is only available in ai mode"
             assert runtime.store.count() == 0
+        finally:
+            runtime.close()
+
+
+# -- idea-capture-confirm-queue WU2: park path (confirm=false) ----------------
+
+
+def test_explicit_confirm_true_auto_saves(monkeypatch):
+    """S-4.1: confirm=true -> auto SAVE_GLOBAL, never left AWAITING_CONFIRM."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _setup_tool(monkeypatch)
+        plugin._handler = handler
+        try:
+            result = _call(plugin, {"text": "explicit save idea", "confirm": True})
+            record = runtime.wait_state(result["capture_id"], CaptureState.SAVED,
+                                        timeout=5.0)
+            assert record.state is CaptureState.SAVED
+            assert record.state is not CaptureState.AWAITING_CONFIRM
+            assert runtime.store.count_pending_confirm() == 0
+        finally:
+            runtime.close()
+
+
+def test_confirm_false_parks_without_autosave(monkeypatch):
+    """S-4.2: confirm=false -> AWAITING_CONFIRM, no auto-save, prompt scheduled.
+
+    The park branch must NOT call runtime.confirm (no SAVE_GLOBAL, no worker
+    submit): the capture stays raw until the user taps Guardar/Descartar.
+    ``_schedule_park_prompt`` resolves the adapter through ``_active_gateway``
+    and hands off to ``_schedule_capture_prompt`` — spied here so the test does
+    not need a running loop.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _setup_tool(monkeypatch)
+        plugin._handler = handler
+        scheduled = []
+
+        class FakeAdapter:
+            pass
+
+        class FakeGateway:
+            def _adapter_for_source(self, source):
+                return FakeAdapter()
+
+        plugin._active_gateway = FakeGateway()
+        monkeypatch.setattr(
+            plugin, "_schedule_capture_prompt",
+            lambda adapter, source, capture_id: scheduled.append(capture_id))
+        try:
+            result = _call(plugin, {"text": "maybe an idea", "confirm": False})
+            assert result["status"] == "RAW_PERSISTED"
+            record = runtime.store.get(result["capture_id"])
+            assert record.state is CaptureState.AWAITING_CONFIRM
+            assert record.state not in (CaptureState.PROCESSING, CaptureState.SAVED)
+            assert runtime.store.count_pending_confirm() == 1
+            assert scheduled == [result["capture_id"]]  # keyboard scheduled
+        finally:
+            runtime.close()
+
+
+def test_park_schedules_keyboard_via_active_gateway(monkeypatch):
+    """2.x: the park branch schedules the real send_capture_prompt coroutine.
+
+    With a running loop, ``_schedule_capture_prompt`` must actually schedule
+    ``send_capture_prompt`` on the adapter resolved via ``_active_gateway`` —
+    the Guardar/Descartar keyboard really goes out (S-4.2).
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _setup_tool(monkeypatch)
+        plugin._handler = handler
+        sent = []
+
+        class FakeAdapter:
+            async def send_capture_prompt(self, *, chat_id, capture_id, thread_id=None):
+                sent.append((chat_id, capture_id, thread_id))
+
+        class FakeGateway:
+            def _adapter_for_source(self, source):
+                return FakeAdapter()
+
+        plugin._active_gateway = FakeGateway()
+
+        async def _run():
+            result = _call(plugin, {"text": "parked via gateway", "confirm": False})
+            await asyncio.sleep(0)  # let the scheduled prompt task fire
+            return result
+
+        try:
+            result = asyncio.run(_run())
+            record = runtime.store.get(result["capture_id"])
+            assert record.state is CaptureState.AWAITING_CONFIRM
+            assert sent, "park branch must schedule the keyboard prompt"
+            chat_id, capture_id, thread_id = sent[0]
+            assert chat_id == "7"  # session chat
+            assert capture_id == result["capture_id"]
+            assert thread_id is None
+        finally:
+            runtime.close()
+
+
+def test_dedup_hash_excludes_confirm(monkeypatch):
+    """S-4.3: confirm=true / confirm=false / omitted -> the same update id.
+
+    The dedup hash keys on capture CONTENT only; the confirm intent (which the
+    guidance picks per turn) must never split the same material into two rows.
+    """
+    plugin = _setup_tool(monkeypatch)
+    assert plugin._synthetic_update_id({"text": "same material", "confirm": True}) == \
+        plugin._synthetic_update_id({"text": "same material", "confirm": False})
+    assert plugin._synthetic_update_id({"text": "same material"}) == \
+        plugin._synthetic_update_id({"text": "same material", "confirm": False})
+    assert plugin._synthetic_update_id({"text": "same material", "confirm": False}) != \
+        plugin._synthetic_update_id({"text": "different material", "confirm": False})
+
+
+def test_same_material_true_then_false_dedupes(monkeypatch):
+    """S-4.3 flow: same text with confirm=true then confirm=false -> one row."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _setup_tool(monkeypatch)
+        plugin._handler = handler
+        try:
+            first = _call(plugin, {"text": "one idea either way", "confirm": True})
+            second = _call(plugin, {"text": "one idea either way", "confirm": False})
+            assert first["status"] == "RAW_PERSISTED"
+            assert second["status"] == "DUPLICATE"
+            assert second["capture_id"] == first["capture_id"]
+            assert runtime.store.count() == 1  # no new record persisted
+        finally:
+            runtime.close()
+
+
+def test_different_material_with_confirm_creates_two_captures(monkeypatch):
+    """S-4.3 semantics: dedup keys on content, so different material -> 2 rows."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _setup_tool(monkeypatch)
+        plugin._handler = handler
+        try:
+            saved = _call(plugin, {"text": "clear idea", "confirm": True})
+            parked = _call(plugin, {"text": "vague thought", "confirm": False})
+            assert saved["capture_id"] != parked["capture_id"]
+            assert runtime.store.count() == 2
+            assert runtime.store.count_pending_confirm() == 1
+            assert runtime.store.get(parked["capture_id"]).state is \
+                CaptureState.AWAITING_CONFIRM
         finally:
             runtime.close()

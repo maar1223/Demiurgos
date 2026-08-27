@@ -33,7 +33,7 @@ _SCHEMA = """
         mime TEXT NOT NULL, media_kind TEXT NOT NULL, slug TEXT NOT NULL,
         attempt INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL,
         media_path TEXT NOT NULL DEFAULT '', media_duration_seconds REAL,
-        global_ INTEGER NOT NULL DEFAULT 0,
+        global_ INTEGER NOT NULL DEFAULT 0, event_ts TEXT NOT NULL DEFAULT '',
         UNIQUE(source, update_id)
     );
     CREATE TABLE IF NOT EXISTS outbox (
@@ -68,6 +68,8 @@ class CaptureStore:
                 conn.execute("ALTER TABLE captures ADD COLUMN media_duration_seconds REAL")
             if "global_" not in columns:
                 conn.execute("ALTER TABLE captures ADD COLUMN global_ INTEGER NOT NULL DEFAULT 0")
+            if "event_ts" not in columns:
+                conn.execute("ALTER TABLE captures ADD COLUMN event_ts TEXT NOT NULL DEFAULT ''")
             conn.commit()
             self._local.connection = conn
             with self._lock:
@@ -84,16 +86,22 @@ class CaptureStore:
         capture_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{source}:{update.update_id}"))
         digest = hashlib.sha256(update.media.data or update.media.text.encode()).hexdigest()[:12]
         slug = f"{datetime.now(timezone.utc):%Y-%m-%d}-{digest}"
+        # event.timestamp (= message.date) is the reliable offline marker for the
+        # wake-up notice (R-1); absent timestamps stay empty so the notice treats
+        # the row as not offline-drained.
+        event_ts = ""
+        if update.event_timestamp is not None:
+            event_ts = datetime.fromtimestamp(update.event_timestamp, timezone.utc).isoformat()
         db.execute(
             "INSERT INTO captures "
             "(capture_id,source,update_id,world,state,raw_text,raw_bytes,mime,"
-            "media_kind,slug,attempt,error,created_at,media_path,media_duration_seconds) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "media_kind,slug,attempt,error,created_at,media_path,media_duration_seconds,event_ts) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (capture_id, source, update.update_id, None,
              CaptureState.RAW_PERSISTED.value, update.media.text,
              update.media.data, update.media.mime, update.media.kind.value,
              slug, 0, None, datetime.now(timezone.utc).isoformat(),
-             update.media.path, update.media.duration_seconds),
+             update.media.path, update.media.duration_seconds, event_ts),
         )
         db.commit()
         return self.get(capture_id)
@@ -129,6 +137,19 @@ class CaptureStore:
         self._connection().execute(
             "UPDATE captures SET world=NULL, global_=1, state=? WHERE capture_id=?",
             (CaptureState.PROCESSING.value, capture_id))
+        self._connection().commit()
+        return self.get(capture_id)
+
+    def set_awaiting_confirm(self, capture_id: str) -> CaptureRecord:
+        """Park a capture for later review: RAW_PERSISTED -> AWAITING_CONFIRM.
+
+        Used by the ``capture_idea`` park path (``confirm=false``, R-4): the row
+        is kept raw so the Guardar/Descartar keyboard (or the web review panel,
+        WU4) can confirm it later — nothing is auto-saved or discarded here.
+        """
+        self._connection().execute(
+            "UPDATE captures SET state=? WHERE capture_id=?",
+            (CaptureState.AWAITING_CONFIRM.value, capture_id))
         self._connection().commit()
         return self.get(capture_id)
 
@@ -171,6 +192,49 @@ class CaptureStore:
 
     def count(self):
         return self._connection().execute("SELECT COUNT(*) FROM captures").fetchone()[0]
+
+    def pending_confirm(self) -> list[CaptureRecord]:
+        """Every capture parked in ``AWAITING_CONFIRM`` (S-2.1: exact state filter).
+
+        Used by the web review panel and the wake-up notice M-subset. Rows are
+        ordered by creation time so the review surface shows oldest first.
+        """
+        rows = self._connection().execute(
+            "SELECT * FROM captures WHERE state=? ORDER BY created_at",
+            (CaptureState.AWAITING_CONFIRM.value,),
+        ).fetchall()
+        return [self._record(row) for row in rows]
+
+    def count_pending_confirm(self) -> int:
+        """Number of captures parked in ``AWAITING_CONFIRM``."""
+        row = self._connection().execute(
+            "SELECT COUNT(*) FROM captures WHERE state=?",
+            (CaptureState.AWAITING_CONFIRM.value,),
+        ).fetchone()
+        return int(row[0])
+
+    def list_pending_confirm(self) -> list[CaptureRecord]:
+        """Explicitly-named alias of ``pending_confirm`` (wake-notice consumer)."""
+        return self.pending_confirm()
+
+    def boot_captures(self, boot_ts: float) -> list[CaptureRecord]:
+        """Captures ingested this boot from offline-drained messages (R-6, N).
+
+        N for the wake-up notice: rows whose ``event_ts`` (Telegram
+        ``message.date``) predates the gateway boot but whose ``created_at``
+        (ingestion) happened at or after boot — i.e. messages sent while the
+        bot was down and drained during this boot. Rows without ``event_ts``
+        carry no offline marker and are excluded (an empty string sorts before
+        any timestamp in SQLite, so it must be filtered explicitly). Ordered by
+        ``created_at`` so the notice presents oldest first.
+        """
+        boot_ts_iso = datetime.fromtimestamp(boot_ts, timezone.utc).isoformat()
+        rows = self._connection().execute(
+            "SELECT * FROM captures WHERE event_ts != '' AND event_ts < ? "
+            "AND created_at >= ? ORDER BY created_at",
+            (boot_ts_iso, boot_ts_iso),
+        ).fetchall()
+        return [self._record(row) for row in rows]
 
     def list_capture_ids(self) -> list[str]:
         rows = self._connection().execute(
@@ -216,4 +280,5 @@ class CaptureStore:
             row["mime"], MediaKind(row["media_kind"]), row["slug"],
             row["attempt"], row["error"], row["created_at"], row["source"],
             row["media_path"], row["media_duration_seconds"], bool(row["global_"]),
+            row["event_ts"],
         )

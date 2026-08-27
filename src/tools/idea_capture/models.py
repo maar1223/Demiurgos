@@ -21,6 +21,7 @@ class WorldAction(str, Enum):
 class CaptureState(str, Enum):
     RECEIVED = "RECEIVED"
     RAW_PERSISTED = "RAW_PERSISTED"
+    AWAITING_CONFIRM = "AWAITING_CONFIRM"
     AWAITING_WORLD = "AWAITING_WORLD"
     PROCESSING = "PROCESSING"
     SAVED = "SAVED"
@@ -48,6 +49,7 @@ class TelegramUpdate:
     media: MediaInput
     platform: str = "telegram"
     profile: str = "default"
+    event_timestamp: float | None = None  # message.date (Unix epoch)
 
     @property
     def binding_key(self) -> str:
@@ -88,6 +90,7 @@ class CaptureRecord:
     media_path: str = ""
     media_duration_seconds: float | None = None
     global_: bool = False
+    event_ts: str = ""  # ISO-8601 UTC, sourced from event.timestamp (message.date)
 
 
 AuditWriter = Callable[[dict], None]

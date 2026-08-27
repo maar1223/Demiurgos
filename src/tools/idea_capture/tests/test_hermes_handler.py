@@ -1,4 +1,5 @@
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,7 +26,7 @@ def _source(chat_id=7, user_id=8, *, chat_type="dm"):
 
 
 def _event(update_id, source, *, text="", media_urls=None, media_types=None,
-           message_type="text", durations=None):
+           message_type="text", durations=None, timestamp=None):
     value = SimpleNamespace(value=message_type)
     return SimpleNamespace(
         platform_update_id=update_id,
@@ -35,6 +36,7 @@ def _event(update_id, source, *, text="", media_urls=None, media_types=None,
         media_types=media_types or [],
         media_durations=durations or [],
         message_type=value,
+        timestamp=timestamp,
         get_command=lambda: text.split(maxsplit=1)[0][1:].lower()
         if text.startswith("/") else None,
     )
@@ -366,5 +368,41 @@ def test_mp3_without_id3_rejected(monkeypatch):
             with pytest.raises(MediaValidationError):
                 validate_media(update.media)  # signature check fails
             assert runtime.store.count() == 0
+        finally:
+            runtime.close()
+
+
+def test_update_from_event_exposes_timestamp_and_persists_it():
+    """S-1.1: event.timestamp (= message.date) is exposed on the update and
+    persisted as the row's event_ts through the real intake path."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        try:
+            ts = 1_700_000_000.5
+            event = _event(1, _source(), text="idea with a timestamp", timestamp=ts)
+            update = handler._update_from_event(event)
+            assert update.event_timestamp == ts
+
+            receipt = runtime.service.accept(update)
+            record = runtime.store.get(receipt.capture_id)
+            expected = datetime.fromtimestamp(ts, timezone.utc).isoformat()
+            assert record.event_ts == expected
+        finally:
+            runtime.close()
+
+
+def test_voice_probe_variant_preserves_event_timestamp(monkeypatch):
+    """S-1.1: the voice-probe path keeps event.timestamp through its replace."""
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        try:
+            monkeypatch.setattr(hermes_handler, "_probe_voice_duration", lambda path: 2.5)
+            event = _event(2, _source(), text="voice caption",
+                           media_urls=[".hermes/cache/audio/note.ogg"],
+                           media_types=["audio/ogg"], message_type="voice",
+                           durations=[None], timestamp=1_700_000_000.5)
+            update = handler._update_from_event_with_voice_probe(event, gateway=None)
+            assert update.media.duration_seconds == 2.5  # probe applied
+            assert update.event_timestamp == 1_700_000_000.5  # timestamp kept
         finally:
             runtime.close()

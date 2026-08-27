@@ -29,6 +29,7 @@ import logging
 import os
 import re
 import shutil
+import threading
 import uuid
 from pathlib import Path
 from typing import Any, Callable
@@ -720,6 +721,84 @@ def build_serve_status(config: dict, has_token: bool) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Pending review queue (R-7) — web list/confirm/discard for parked captures
+#
+# The web Taller reviews captures parked in AWAITING_CONFIRM (R-8). This
+# server builds its OWN IdeaCaptureRuntime (design decision 5: config + store
+# + worker pool) instead of sharing Hermes' gateway runtime: cross-process
+# SQLite is safe (per-thread connections + busy_timeout), so confirming from
+# the web never contends with the bot owner. The runtime is created lazily on
+# first use and cached per state file — importing this module never pulls the
+# idea_capture runtime chain (same lazy-import rule as ``owner_is_active``).
+# ---------------------------------------------------------------------------
+
+# Server-side replication of the bot adapter's gate (design decision 6; the
+# canonical set lives in ``.hermes/plugins/demiurgos-idea-capture/
+# capture_adapter.py`` and is not importable from this wiki server). A capture
+# outside this set (PROCESSING/SAVED/CANCELLED/RETRYABLE/ERROR) is rejected
+# with 409 — never trust the client, never re-queue a worker.
+_CONFIRMABLE_STATES = frozenset({
+    "RECEIVED",
+    "RAW_PERSISTED",
+    "AWAITING_WORLD",
+    "AWAITING_CONFIRM",
+})
+
+_pending_runtimes: dict[str, Any] = {}
+_pending_runtimes_lock = threading.Lock()
+
+
+def _pending_state_path() -> Path:
+    """SQLite state file shared with the Hermes idea-capture runtime."""
+    return REPO_ROOT / "data" / "idea-capture.sqlite3"
+
+
+def _build_pending_runtime() -> Any:
+    """Compose the web-confirm runtime over the CURRENT repo root.
+
+    Fail-closed policy (empty allowlists reject every update), the shared
+    state file (per-thread connections + 10s busy timeout make concurrent
+    web/bot writers safe), and the global ideas bank as the SAVE_GLOBAL
+    destination. ``IdeaCaptureRuntime`` is imported lazily so this module
+    never hard-depends on the runtime chain at import time.
+    """
+    from idea_capture.config import load_active_world, load_policy
+    from idea_capture.runtime import IdeaCaptureRuntime
+
+    config = load_policy(_config_path())
+    return IdeaCaptureRuntime(
+        config=config,
+        state_path=_pending_state_path(),
+        mundos_root=_mundos_root(),
+        active_world=load_active_world(_config_path()),
+        global_ideas_root=REPO_ROOT / "ideas",
+        busy_timeout_seconds=10.0,
+    )
+
+
+def _pending_runtime() -> Any:
+    """One runtime per state file (reuse existing instances; never rebuild).
+
+    Keyed by the resolved state path so tests that relocate ``REPO_ROOT`` get
+    an isolated runtime per sandbox while production keeps a single instance.
+    """
+    path = str(_pending_state_path())
+    with _pending_runtimes_lock:
+        runtime = _pending_runtimes.get(path)
+        if runtime is None:
+            try:
+                runtime = _build_pending_runtime()
+            except ImportError:
+                log.warning("idea-capture runtime not importable; pending endpoints unavailable")
+                raise HTTPException(
+                    status_code=503,
+                    detail="El runtime de captura no está disponible en este servidor.",
+                )
+            _pending_runtimes[path] = runtime
+        return runtime
+
+
+# ---------------------------------------------------------------------------
 # Router — every route requires a trusted local principal (fail closed)
 # ---------------------------------------------------------------------------
 
@@ -904,5 +983,70 @@ def create_idea_capture_router(
             "limitations": _LIMITATIONS,
             "message": message,
         }
+
+    # -- Web review queue (R-7): captures parked in AWAITING_CONFIRM ---------
+
+    @router.get("/pending")
+    def get_pending(request: Request) -> dict:
+        """List every capture parked in AWAITING_CONFIRM plus their count.
+
+        S-7.1: the response carries all parked captures with ``count`` equal
+        to the list length; the frontend counter and review panel consume it.
+        """
+        _guard(request)
+        runtime = _pending_runtime()
+        captures = runtime.store.pending_confirm()
+        return {
+            "captures": [
+                {
+                    "capture_id": record.capture_id,
+                    "slug": record.slug,
+                    "raw_text": record.raw_text,
+                    "created_at": record.created_at,
+                    "event_ts": record.event_ts,
+                    "media_kind": record.media_kind.value,
+                }
+                for record in captures
+            ],
+            "count": len(captures),
+        }
+
+    @router.post("/pending/{capture_id}/confirm")
+    def confirm_pending_capture(capture_id: str, request: Request) -> dict:
+        """Confirm a parked capture as a global idea (SAVE_GLOBAL, S-7.2).
+
+        The server replicates the bot adapter's ``_CONFIRMABLE_STATES`` gate:
+        a capture already resolved is rejected with 409 so a stale/second
+        confirm can never re-queue the worker (S-7.4). The client is never
+        trusted.
+        """
+        from idea_capture.models import WorldAction
+
+        _guard(request)
+        runtime = _pending_runtime()
+        try:
+            record = runtime.store.get(capture_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Captura no encontrada")
+        if record.state.value not in _CONFIRMABLE_STATES:
+            raise HTTPException(status_code=409, detail="La captura ya fue resuelta")
+        runtime.confirm(capture_id, WorldAction.SAVE_GLOBAL)
+        return {"ok": True}
+
+    @router.post("/pending/{capture_id}/discard")
+    def discard_pending_capture(capture_id: str, request: Request) -> dict:
+        """Discard a parked capture (CANCEL → CANCELLED, S-7.3). Same gate."""
+        from idea_capture.models import WorldAction
+
+        _guard(request)
+        runtime = _pending_runtime()
+        try:
+            record = runtime.store.get(capture_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Captura no encontrada")
+        if record.state.value not in _CONFIRMABLE_STATES:
+            raise HTTPException(status_code=409, detail="La captura ya fue resuelta")
+        runtime.confirm(capture_id, WorldAction.CANCEL)
+        return {"ok": True}
 
     return router

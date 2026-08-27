@@ -46,6 +46,7 @@ _CONFIRMABLE_STATES = frozenset({
     CaptureState.RECEIVED,
     CaptureState.RAW_PERSISTED,
     CaptureState.AWAITING_WORLD,
+    CaptureState.AWAITING_CONFIRM,
 })
 
 

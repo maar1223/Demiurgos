@@ -787,12 +787,23 @@ class IdeaCaptureHandler:
                 )
             else:
                 raise ValueError("Hermes media type is not capturable")
+        # event.timestamp (= Telegram message.date) is the offline-drain marker
+        # the wake-up notice keys on (R-1); expose it on the update so the store
+        # persists it. Missing/unparseable timestamps stay None (fail open).
+        event_timestamp = None
+        raw_timestamp = getattr(event, "timestamp", None)
+        if raw_timestamp is not None:
+            try:
+                event_timestamp = float(raw_timestamp)
+            except (TypeError, ValueError):
+                event_timestamp = None
         return TelegramUpdate(
             update_id, chat_id, sender_id,
             str(getattr(source, "chat_type", "")) in {"group", "forum"},
             media,
             platform=str(getattr(getattr(source, "platform", None), "value", "telegram")),
             profile=str(getattr(source, "profile", None) or "default"),
+            event_timestamp=event_timestamp,
         )
 
     def _update_from_event_with_voice_probe(self, event, gateway=None) -> TelegramUpdate:

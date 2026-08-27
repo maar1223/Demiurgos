@@ -19,6 +19,9 @@ vi.mock("@/api/ideas", async (importOriginal) => {
     updateIdea: vi.fn(),
     deleteIdea: vi.fn(),
     materializeIdea: vi.fn(),
+    listPendingCaptures: vi.fn(),
+    confirmCapture: vi.fn(),
+    discardCapture: vi.fn(),
   };
 });
 
@@ -59,6 +62,9 @@ const createIdeaMock = vi.mocked(ideasApi.createIdea);
 const updateIdeaMock = vi.mocked(ideasApi.updateIdea);
 const deleteIdeaMock = vi.mocked(ideasApi.deleteIdea);
 const materializeIdeaMock = vi.mocked(ideasApi.materializeIdea);
+const listPendingCapturesMock = vi.mocked(ideasApi.listPendingCaptures);
+const confirmCaptureMock = vi.mocked(ideasApi.confirmCapture);
+const discardCaptureMock = vi.mocked(ideasApi.discardCapture);
 
 const summary: ideasApi.IdeaSummary = {
   id: "a1",
@@ -74,6 +80,15 @@ const summary: ideasApi.IdeaSummary = {
 };
 
 const detail: IdeaDetail = { ...summary, body: "Un arquero que no ve." };
+
+const pendingCapture: ideasApi.PendingCapture = {
+  capture_id: "cap-1",
+  slug: "2026-08-27-idea-pendiente",
+  raw_text: "Una idea que quedó en pausa.",
+  created_at: "2026-08-27T13:00:00Z",
+  event_ts: "",
+  media_kind: "text",
+};
 
 function renderPage() {
   // Fresh SWR cache per render — SWR's module-level cache would otherwise
@@ -96,8 +111,12 @@ describe("IdeasWorkshop", () => {
     updateIdeaMock.mockReset();
     deleteIdeaMock.mockReset();
     materializeIdeaMock.mockReset();
+    listPendingCapturesMock.mockReset();
+    confirmCaptureMock.mockReset();
+    discardCaptureMock.mockReset();
     listIdeasMock.mockResolvedValue({ ideas: [summary], total: 1 });
     getIdeaVersionsMock.mockResolvedValue({ slug: "arquero-ciego", versions: [] });
+    listPendingCapturesMock.mockResolvedValue({ captures: [], count: 0 });
   });
 
   afterEach(() => {
@@ -378,6 +397,62 @@ describe("IdeasWorkshop", () => {
     expect(
       within(section).getByText(/Sin versiones archivadas/),
     ).toBeInTheDocument();
+  it("shows the pending-queue counter in the header (S-8.1)", async () => {
+    listPendingCapturesMock.mockResolvedValue({
+      captures: [
+        pendingCapture,
+        { ...pendingCapture, capture_id: "cap-2", raw_text: "Segunda." },
+        { ...pendingCapture, capture_id: "cap-3", raw_text: "Tercera." },
+      ],
+      count: 3,
+    });
+    renderPage();
+
+    expect(
+      await screen.findByText("Ideas por confirmar (3)"),
+    ).toBeInTheDocument();
+  });
+
+  it("confirms a parked capture from the review panel (S-8.2)", async () => {
+    const user = userEvent.setup();
+    listPendingCapturesMock
+      .mockResolvedValueOnce({ captures: [pendingCapture], count: 1 })
+      .mockResolvedValue({ captures: [], count: 0 });
+    confirmCaptureMock.mockResolvedValue({ ok: true });
+    renderPage();
+
+    // Review panel shows the parked capture with its raw text.
+    expect(await screen.findByText(pendingCapture.raw_text)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Guardar como idea" }));
+
+    await waitFor(() =>
+      expect(confirmCaptureMock).toHaveBeenCalledWith(pendingCapture.capture_id),
+    );
+    // mutate() re-fetches the queue: the resolved capture leaves the panel.
+    await waitFor(() =>
+      expect(screen.queryByText(pendingCapture.raw_text)).not.toBeInTheDocument(),
+    );
+  });
+
+  it("discards a parked capture from the review panel (S-8.3)", async () => {
+    const user = userEvent.setup();
+    listPendingCapturesMock
+      .mockResolvedValueOnce({ captures: [pendingCapture], count: 1 })
+      .mockResolvedValue({ captures: [], count: 0 });
+    discardCaptureMock.mockResolvedValue({ ok: true });
+    renderPage();
+
+    expect(await screen.findByText(pendingCapture.raw_text)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Descartar" }));
+
+    await waitFor(() =>
+      expect(discardCaptureMock).toHaveBeenCalledWith(pendingCapture.capture_id),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(pendingCapture.raw_text)).not.toBeInTheDocument(),
+    );
   });
 });
 
@@ -385,6 +460,8 @@ describe("IdeasWorkshop route", () => {
   beforeEach(() => {
     listIdeasMock.mockReset();
     listIdeasMock.mockResolvedValue({ ideas: [], total: 0 });
+    listPendingCapturesMock.mockReset();
+    listPendingCapturesMock.mockResolvedValue({ captures: [], count: 0 });
   });
 
   afterEach(() => {

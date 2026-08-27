@@ -29,6 +29,14 @@ for _p in (str(_WIKI), str(_SUITE), str(_TOOLS)):
 import api_server  # noqa: E402
 import idea_capture_ui  # noqa: E402
 from idea_capture.config import load_policy  # noqa: E402
+from idea_capture.models import (  # noqa: E402
+    CaptureRecord,
+    CaptureState,
+    MediaInput,
+    MediaKind,
+    TelegramUpdate,
+)
+from idea_capture.store import CaptureStore  # noqa: E402
 
 
 @pytest.fixture()
@@ -866,3 +874,159 @@ class TestChatAuthorization:
         resp = client.post("/api/idea-capture/chats/authorize", json=payload)
         assert resp.status_code == 400, resp.text
         assert path.read_text(encoding="utf-8") == before
+
+
+class TestPendingQueue:
+    """Web review queue (R-7): GET /pending + POST confirm/discard + gate.
+
+    S-7.1 list, S-7.2 confirm (SAVE_GLOBAL → PROCESSING), S-7.3 discard
+    (CANCEL → CANCELLED), S-7.4 server-side ``_CONFIRMABLE_STATES`` gate
+    (a resolved capture is rejected with 409 — never trust the client).
+    """
+
+    @staticmethod
+    def _seed_pending(texts: tuple[str, ...]) -> list[str]:
+        """Reserve + park text captures in the sandboxed shared state file."""
+        store = CaptureStore(idea_capture_ui._pending_state_path())
+        try:
+            ids: list[str] = []
+            for index, text in enumerate(texts, start=1):
+                update = TelegramUpdate(
+                    update_id=10_000 + index,
+                    chat_id=111,
+                    sender_id=111,
+                    is_group=False,
+                    media=MediaInput(kind=MediaKind.TEXT, text=text,
+                                     data=text.encode("utf-8")),
+                )
+                record = store.reserve(update)
+                store.set_awaiting_confirm(record.capture_id)
+                ids.append(record.capture_id)
+            return ids
+        finally:
+            store.close()
+
+    @staticmethod
+    def _read(capture_id: str) -> CaptureRecord:
+        store = CaptureStore(idea_capture_ui._pending_state_path())
+        try:
+            return store.get(capture_id)
+        finally:
+            store.close()
+
+    # -- auth gate ----------------------------------------------------------
+
+    def test_pending_endpoints_require_local_session(self, client: TestClient):
+        assert client.get("/api/idea-capture/pending").status_code == 401
+        assert client.post("/api/idea-capture/pending/x/confirm").status_code == 401
+        assert client.post("/api/idea-capture/pending/x/discard").status_code == 401
+
+    # -- S-7.1 list ---------------------------------------------------------
+
+    def test_pending_lists_awaiting_confirm_captures(
+            self, client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        _authed(monkeypatch)
+        ids = self._seed_pending(("Primera idea", "Segunda idea", "Tercera idea"))
+
+        resp = client.get("/api/idea-capture/pending")
+
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["count"] == 3
+        assert {item["capture_id"] for item in data["captures"]} == set(ids)
+        for item in data["captures"]:
+            assert item["slug"]
+            assert item["raw_text"]
+            assert item["created_at"]
+            assert item["event_ts"] == ""
+            assert item["media_kind"] == "text"
+
+    def test_pending_empty_queue_returns_zero(
+            self, client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        _authed(monkeypatch)
+        resp = client.get("/api/idea-capture/pending")
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"captures": [], "count": 0}
+
+    # -- S-7.2 confirm ------------------------------------------------------
+
+    def test_confirm_saves_parked_capture_as_global_idea(
+            self, client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        _authed(monkeypatch)
+        [capture_id] = self._seed_pending(("Idea a confirmar",))
+
+        resp = client.post(f"/api/idea-capture/pending/{capture_id}/confirm")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"ok": True}
+        record = self._read(capture_id)
+        # S-7.2: SAVE_GLOBAL path — global flag (only set_global sets it),
+        # world cleared, and the capture leaves the pending queue. The worker
+        # may already have finished, so PROCESSING or the final SAVED both
+        # prove the transition happened through SAVE_GLOBAL.
+        assert record.global_ is True
+        assert record.state in (CaptureState.PROCESSING, CaptureState.SAVED)
+        store = CaptureStore(idea_capture_ui._pending_state_path())
+        try:
+            assert store.count_pending_confirm() == 0
+        finally:
+            store.close()
+
+    def test_confirm_unknown_capture_returns_404(
+            self, client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        _authed(monkeypatch)
+        resp = client.post("/api/idea-capture/pending/no-such-id/confirm")
+        assert resp.status_code == 404
+
+    # -- S-7.3 discard ------------------------------------------------------
+
+    def test_discard_cancels_parked_capture(
+            self, client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        _authed(monkeypatch)
+        [capture_id] = self._seed_pending(("Idea a descartar",))
+
+        resp = client.post(f"/api/idea-capture/pending/{capture_id}/discard")
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"ok": True}
+        record = self._read(capture_id)
+        assert record.state is CaptureState.CANCELLED
+        store = CaptureStore(idea_capture_ui._pending_state_path())
+        try:
+            assert store.count_pending_confirm() == 0
+        finally:
+            store.close()
+
+    # -- S-7.4 server-side gate ---------------------------------------------
+
+    def test_confirm_rejects_resolved_capture_with_409(
+            self, client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        _authed(monkeypatch)
+        # A capture already saved: the server must reject a stale confirm
+        # instead of re-queuing the worker (never trust the client).
+        [capture_id] = self._seed_pending(("Ya guardada",))
+        store = CaptureStore(idea_capture_ui._pending_state_path())
+        try:
+            store.mark_saved(capture_id, "nec/ideas/ya-guardada", {"slug": "ya-guardada"})
+        finally:
+            store.close()
+
+        resp = client.post(f"/api/idea-capture/pending/{capture_id}/confirm")
+
+        assert resp.status_code == 409
+        assert self._read(capture_id).state is CaptureState.SAVED
+
+    def test_discard_rejects_resolved_capture_with_409(
+            self, client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        _authed(monkeypatch)
+        [capture_id] = self._seed_pending(("Ya cancelada",))
+        store = CaptureStore(idea_capture_ui._pending_state_path())
+        try:
+            store.set_world(capture_id, None)  # -> CANCELLED
+        finally:
+            store.close()
+
+        resp = client.post(f"/api/idea-capture/pending/{capture_id}/discard")
+
+        assert resp.status_code == 409
+        assert self._read(capture_id).state is CaptureState.CANCELLED

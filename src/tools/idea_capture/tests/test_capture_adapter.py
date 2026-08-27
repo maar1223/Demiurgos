@@ -453,3 +453,42 @@ def test_adapter_preserves_bundled_behavior(monkeypatch):
             assert parent_calls[0][0].callback_query.data == "mp:preserved-payload"
         finally:
             runtime.close()
+
+
+# -- confirmable-state gate (idea-capture-confirm-queue WU1) ------------------
+
+
+def test_confirmable_states_include_awaiting_confirm():
+    """S-3.1 readiness: a parked capture is accepted by the callback gate.
+
+    The park transition itself lands in WU2; WU1 ships the state, so the gate
+    must already accept AWAITING_CONFIRM or a parked Guardar tap would be
+    answered "Ya resuelta." without ever mutating the capture.
+    """
+    mod = _load_adapter_module()
+    assert CaptureState.AWAITING_CONFIRM in mod._CONFIRMABLE_STATES
+
+
+def test_awaiting_confirm_guardar_tap_processed():
+    """S-3.1: a Guardar tap on a parked (AWAITING_CONFIRM) capture is accepted.
+
+    WU2 adds the park transition (``store.set_awaiting_confirm``); a real
+    parked row must then flow through the callback gate like any raw capture —
+    confirmed via SAVE_GLOBAL, never answered "Ya resuelta.".
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        adapter, _ = _adapter(handler)
+        capture_id = _accept_capture(handler, runtime)
+        runtime.store.set_awaiting_confirm(capture_id)
+        assert runtime.store.get(capture_id).state is CaptureState.AWAITING_CONFIRM
+        query = FakeQuery(data=f"{_CAPTURE_PREFIX}{capture_id}:save_global")
+        try:
+            asyncio.run(adapter._handle_capture_callback(query, query.data))
+            record = runtime.store.get(capture_id)
+            assert record.global_  # SAVE_GLOBAL confirm applied
+            assert record.state is not CaptureState.AWAITING_CONFIRM
+            assert query.answers[-1] == \
+                "Idea guardada en el Taller de Ideas (procesando...)."
+        finally:
+            runtime.close()

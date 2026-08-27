@@ -177,3 +177,57 @@ export function materializeIdea(
     ...CREDENTIALS,
   });
 }
+
+/**
+ * Pending-capture review queue — `/api/idea-capture/pending` (backend: wiki
+ * `idea_capture_ui`, R-7). Text captures the capture guidance parked in
+ * AWAITING_CONFIRM (uncertain ideas) are listed here so the author can save
+ * them to the global bank or discard them from the web Taller. Every call
+ * carries the local-dev session cookie like the rest of the idea-capture API.
+ */
+
+/** A capture parked in AWAITING_CONFIRM awaiting a Guardar/Descartar decision. */
+export interface PendingCapture {
+  capture_id: string;
+  slug: string;
+  raw_text: string;
+  created_at: string;
+  event_ts: string;
+  media_kind: string;
+}
+
+export interface PendingListResponse {
+  captures: PendingCapture[];
+  count: number;
+}
+
+/** Build an `/api/idea-capture/pending` URL. */
+function pendingUrl(segments: string[]): string {
+  const path =
+    "/" +
+    ["api", "idea-capture", "pending", ...segments]
+      .map((s) => encodeURIComponent(s))
+      .join("/");
+  return `${API_BASE_URL}${path}`;
+}
+
+/** GET /api/idea-capture/pending — parked captures + count (S-7.1, S-8.1). */
+export function listPendingCaptures(): Promise<PendingListResponse> {
+  return apiFetch<PendingListResponse>(pendingUrl([]), CREDENTIALS);
+}
+
+/** POST /api/idea-capture/pending/{id}/confirm — save as a global idea. */
+export function confirmCapture(id: string): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(pendingUrl([id, "confirm"]), {
+    method: "POST",
+    ...CREDENTIALS,
+  });
+}
+
+/** POST /api/idea-capture/pending/{id}/discard — cancel the parked capture. */
+export function discardCapture(id: string): Promise<{ ok: true }> {
+  return apiFetch<{ ok: true }>(pendingUrl([id, "discard"]), {
+    method: "POST",
+    ...CREDENTIALS,
+  });
+}

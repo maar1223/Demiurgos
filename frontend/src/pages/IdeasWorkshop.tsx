@@ -9,11 +9,14 @@ import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useWorlds } from "@/hooks/useWorlds";
 import {
+  confirmCapture,
   createIdea,
   deleteIdea,
+  discardCapture,
   getIdea,
   getIdeaVersions,
   listIdeas,
+  listPendingCaptures,
   materializeIdea,
   updateIdea,
   type IdeaDetail,
@@ -23,6 +26,7 @@ import {
   type IdeaSummary,
   type IdeaType,
   type IdeaVersionsResponse,
+  type PendingCapture,
   IDEA_TYPES,
 } from "@/api/ideas";
 import { getErrorMessage } from "@/lib/utils";
@@ -128,6 +132,24 @@ export default function IdeasWorkshop() {
   const ideas = listData?.ideas ?? [];
   const selectedIdea = detail ?? null;
 
+  // ── Pending captures ("Ideas por confirmar", R-8) ───────────────────────
+  // SWR keyed on the pending queue: the counter badge and the review panel
+  // share one fetch, and every confirm/discard mutates it so both update.
+  // (The action handlers live below, after notifyError/showToast, which they
+  // depend on.)
+  const {
+    data: pendingData,
+    mutate: mutatePending,
+  } = useSWR("idea-capture-pending", () => listPendingCaptures(), {
+    revalidateOnFocus: true,
+    revalidateOnReconnect: true,
+    errorRetryCount: 2,
+  });
+  const pendingCount = pendingData?.count ?? 0;
+  const pendingCaptures = pendingData?.captures ?? [];
+
+  const [actingCaptureId, setActingCaptureId] = useState<string | null>(null);
+
   const notifyError = useCallback((err: unknown) => {
     const apiError = err as ApiError;
     setActionError(getErrorMessage(apiError.status, apiError.detail));
@@ -137,6 +159,35 @@ export default function IdeasWorkshop() {
     setToast(message);
     window.setTimeout(() => setToast(null), 2500);
   }, []);
+
+  // ── Pending capture actions (Guardar como idea / Descartar, S-8.2/S-8.3) ─
+  const handleConfirmPending = useCallback(async (captureId: string) => {
+    setActingCaptureId(captureId);
+    setActionError(null);
+    try {
+      await confirmCapture(captureId);
+      await mutatePending();
+      showToast("Idea guardada en el Taller de Ideas (procesando...).");
+    } catch (err) {
+      notifyError(err);
+    } finally {
+      setActingCaptureId(null);
+    }
+  }, [mutatePending, notifyError, showToast]);
+
+  const handleDiscardPending = useCallback(async (captureId: string) => {
+    setActingCaptureId(captureId);
+    setActionError(null);
+    try {
+      await discardCapture(captureId);
+      await mutatePending();
+      showToast("Captura descartada.");
+    } catch (err) {
+      notifyError(err);
+    } finally {
+      setActingCaptureId(null);
+    }
+  }, [mutatePending, notifyError, showToast]);
 
   // ── Create ───────────────────────────────────────────────────────────────
   const [createSlug, setCreateSlug] = useState("");
@@ -306,6 +357,14 @@ export default function IdeasWorkshop() {
           <h2 className="font-heading text-body font-medium text-pergamino">Ideas</h2>
           <span className="text-xs text-tinta-desvaida">{ideas.length}</span>
         </div>
+
+        {/* S-8.1: pending queue counter (shared SWR key with the panel) */}
+        {pendingCount > 0 && (
+          <div className="mt-2 rounded-md border border-llamita/30 bg-llamita/10 px-2.5 py-1.5 text-xs font-medium text-llamita">
+            Ideas por confirmar ({pendingCount})
+          </div>
+        )}
+
         <button
           type="button"
           onClick={() => {
@@ -319,6 +378,59 @@ export default function IdeasWorkshop() {
           Nueva idea
         </button>
       </div>
+
+      {/* S-8.2/S-8.3: web review panel — parked captures with Guardar/Descartar.
+          Same SWR key as the counter: after either action, mutatePending()
+          re-fetches the queue and the resolved capture leaves the panel. */}
+      {pendingCaptures.length > 0 && (
+        <div
+          role="region"
+          aria-label="Revisar capturas por confirmar"
+          className="border-b border-filio bg-cripta/60 px-4 py-3"
+        >
+          <h3 className="mb-2 text-xs font-medium text-pergamino">Por confirmar</h3>
+          <ul className="space-y-2">
+            {pendingCaptures.map((capture: PendingCapture) => (
+              <li
+                key={capture.capture_id}
+                className="rounded-md border border-filio bg-madero p-2.5"
+              >
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="truncate text-xs font-medium text-pergamino">
+                    {capture.slug}
+                  </span>
+                  {capture.event_ts && (
+                    <span className="shrink-0 text-[10px] text-tinta-desvaida">
+                      {new Date(capture.event_ts).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                <p className="mb-2 line-clamp-2 text-xs text-tinta-desvaida">
+                  {capture.raw_text}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleConfirmPending(capture.capture_id)}
+                    disabled={actingCaptureId === capture.capture_id}
+                    className="flex-1 rounded-md bg-llamita px-2 py-1 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Guardar como idea
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDiscardPending(capture.capture_id)}
+                    disabled={actingCaptureId === capture.capture_id}
+                    className="flex-1 rounded-md border border-sangre/30 px-2 py-1 text-xs text-sangre transition-colors hover:bg-sangre/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Descartar
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {showCreate && (
         <div

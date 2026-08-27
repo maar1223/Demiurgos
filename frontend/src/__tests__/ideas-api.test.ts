@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  confirmCapture,
   createIdea,
   deleteIdea,
+  discardCapture,
   getIdea,
   getIdeaVersions,
   listIdeas,
+  listPendingCaptures,
   materializeIdea,
   updateIdea,
 } from "@/api/ideas";
@@ -194,5 +197,65 @@ describe("ideas bank API", () => {
         body: JSON.stringify({ world: "vibrantes", canon_rel: "personajes/arquero.md" }),
       }),
     );
+  });
+
+  it("lists pending captures from the idea-capture queue (S-7.1)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        captures: [
+          {
+            capture_id: "cap-1",
+            slug: "2026-08-27-idea",
+            raw_text: "Una idea.",
+            created_at: "2026-08-27T13:00:00Z",
+            event_ts: "",
+            media_kind: "text",
+          },
+        ],
+        count: 1,
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await listPendingCaptures();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/idea-capture/pending",
+      expect.objectContaining({ credentials: "same-origin" }),
+    );
+    expect(result.count).toBe(1);
+    expect(result.captures[0].capture_id).toBe("cap-1");
+  });
+
+  it("confirms a pending capture with POST /confirm (S-7.2)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await confirmCapture("cap-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/idea-capture/pending/cap-1/confirm",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+      }),
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("discards a pending capture with POST /discard (S-7.3)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }));
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await discardCapture("cap-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/idea-capture/pending/cap-1/discard",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+      }),
+    );
+    expect(result.ok).toBe(true);
   });
 });
