@@ -122,7 +122,10 @@ class IdeasBank:
         ideas_root: Path | None = None,
         mundos_root: Path | None = None,
     ) -> None:
-        root = _project_root() if ideas_root is None else Path(ideas_root)
+        # Default ideas_root is ``<project>/ideas`` (the global Taller de Ideas
+        # bank), NOT ``<project>`` — scanning the repo root only finds *.md
+        # docs with no idea frontmatter and the bank appears empty.
+        root = (_project_root() / "ideas" if ideas_root is None else Path(ideas_root))
         self._ideas_root: Path = root
         self._mundos_root: Path = (
             _project_root() / "mundos" if mundos_root is None else Path(mundos_root)

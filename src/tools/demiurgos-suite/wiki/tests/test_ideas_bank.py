@@ -40,6 +40,40 @@ def _create(bank: IdeasBank, slug: str = "arquero-ciego", type: str = "personaje
     return bank.create(slug=slug, type=type, body=body, tags=tags, source=source)
 
 
+def test_default_ideas_root_points_at_project_ideas(monkeypatch, tmp_path):
+    """Regression: the default ``ideas_root`` MUST be ``<project>/ideas``.
+
+    Production builds ``IdeasBank()`` with no explicit ``ideas_root`` (via
+    ``create_ideas_bank_router``). ``_project_root()`` returns the repo root,
+    so a default of ``<project>`` made ``list()`` scan the repo root — only
+    finding *.md docs with no idea frontmatter — and the Taller de Ideas
+    appeared permanently empty even after captures were saved. The default must
+    carry the ``/ideas`` suffix.
+    """
+    import ideas_bank as module
+
+    fake_root = tmp_path / "repo"
+    monkeypatch.setattr(module, "_project_root", lambda: fake_root, raising=False)
+    bank = IdeasBank()
+    assert bank._ideas_root == fake_root / "ideas"
+    assert bank._mundos_root == fake_root / "mundos"
+
+
+def test_default_ideas_root_lists_saved_idea(monkeypatch, tmp_path):
+    """Regression (integration-shaped): an idea written into ``<project>/ideas``
+    is returned by ``bank.list()`` when the bank uses the default root."""
+    import ideas_bank as module
+
+    fake_root = tmp_path / "repo"
+    monkeypatch.setattr(module, "_project_root", lambda: fake_root, raising=False)
+
+    bank = IdeasBank()
+    bank.create(slug="desde-telegram", type="concepto",
+                body="Una idea guardada desde Telegram.", source="telegram")
+    ideas = bank.list()
+    assert any(i.slug == "desde-telegram" for i in ideas)
+
+
 # ---------------------------------------------------------------------------
 # R-IB-01 — well-formed idea file
 # ---------------------------------------------------------------------------
