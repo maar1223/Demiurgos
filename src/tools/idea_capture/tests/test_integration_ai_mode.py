@@ -198,28 +198,43 @@ def test_ai_mode_text_turn_falls_through_then_tool_captures(monkeypatch):
             runtime.close()
 
 
-def test_ai_mode_photo_and_voice_fall_through(monkeypatch):
-    """S-2.3: ai + authorized binding + photo/voice -> None (assistant sees them)."""
+def test_ai_mode_text_falls_through_and_media_captured(monkeypatch):
+    """S-2.3 (adjusted): ai mode — text-only falls through to the assistant
+    (None, so the assistant decides), while photo/voice are captured directly
+    by the hook (skip) so their real bytes reach ideas/media/ (the assistant
+    only sees an injected description, which would lose the image/audio)."""
     with tempfile.TemporaryDirectory() as directory:
-        handler, runtime = _handler(
-            Path(directory), media_reader=lambda _: _VOICE_BYTES)
+        def _reader(path):
+            return _VOICE_BYTES if "audio" in str(path) else _IMAGE_BYTES
+
+        handler, runtime = _handler(Path(directory), media_reader=_reader)
         plugin = _load_plugin()
         plugin._handler = handler
         plugin._CAPTURE_MODE = "ai"
         adapter = FakeAdapter()
+        monkeypatch.setattr(hermes_handler, "_probe_voice_duration",
+                            lambda path: 30.0)
         try:
-            photo = _event(1, _source(), text="caption",
+            # text-only turn -> assistant sees it (None)
+            text = _event(1, _source(), text="una idea")
+            assert _run_hook(plugin, event=text, gateway=FakeGateway(adapter),
+                             session_store=None) is None
+            # photo turn -> captured directly by the hook (skip)
+            photo = _event(2, _source(), text="caption",
                            media_urls=[".hermes/cache/images/img.png"],
                            media_types=["image/png"], message_type="photo")
-            voice = _event(2, _source(),
+            assert _run_hook(plugin, event=photo, gateway=FakeGateway(adapter),
+                             session_store=None) == {"action": "skip",
+                                                     "reason": "idea-capture"}
+            # voice turn -> captured directly by the hook (skip)
+            voice = _event(3, _source(),
                            media_urls=[".hermes/cache/audio/note.ogg"],
                            media_types=["audio/ogg"], message_type="voice")
-            assert _run_hook(plugin, event=photo, gateway=FakeGateway(adapter),
-                             session_store=None) is None
             assert _run_hook(plugin, event=voice, gateway=FakeGateway(adapter),
-                             session_store=None) is None
-            assert runtime.store.count() == 0
-            assert adapter.sent == []
+                             session_store=None) == {"action": "skip",
+                                                     "reason": "idea-capture"}
+            # two media captures persisted (text did not)
+            assert runtime.store.count() == 2
         finally:
             runtime.close()
 

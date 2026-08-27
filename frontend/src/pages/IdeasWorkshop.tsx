@@ -4,6 +4,7 @@ import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { TabBar, type SidebarTab } from "@/components/molecules/TabBar";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
+import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useWorlds } from "@/hooks/useWorlds";
@@ -124,6 +125,7 @@ export default function IdeasWorkshop() {
   // ── Create ───────────────────────────────────────────────────────────────
   const [createSlug, setCreateSlug] = useState("");
   const [createType, setCreateType] = useState<IdeaType>("sin_clasificar");
+  const [createTitle, setCreateTitle] = useState("");
   const [createTags, setCreateTags] = useState("");
   const [createBody, setCreateBody] = useState("");
   const [creating, setCreating] = useState(false);
@@ -131,6 +133,7 @@ export default function IdeasWorkshop() {
   const resetCreateForm = useCallback(() => {
     setCreateSlug("");
     setCreateType("sin_clasificar");
+    setCreateTitle("");
     setCreateTags("");
     setCreateBody("");
     setShowCreate(false);
@@ -154,17 +157,18 @@ export default function IdeasWorkshop() {
           .split(",")
           .map((tag) => tag.trim())
           .filter(Boolean),
+        ...(createTitle.trim() ? { title: createTitle.trim() } : {}),
       });
       await mutateList();
       resetCreateForm();
       setSelectedSlug(created.slug);
-      showToast(`Idea "${created.slug}" creada.`);
+      showToast(`Idea "${created.title || created.slug}" creada.`);
     } catch (err) {
       notifyError(err);
     } finally {
       setCreating(false);
     }
-  }, [createBody, createSlug, createTags, createType, mutateList, notifyError, resetCreateForm, showToast]);
+  }, [createBody, createSlug, createTags, createTitle, createType, mutateList, notifyError, resetCreateForm, showToast]);
 
   // ── Reclassify (type correction) ────────────────────────────────────────
   const [reclassifyType, setReclassifyType] = useState<IdeaType>("sin_clasificar");
@@ -195,6 +199,31 @@ export default function IdeasWorkshop() {
       setReclassifying(false);
     }
   }, [selectedSlug, reclassifyType, selectedIdea?.type, mutateDetail, mutateList, notifyError, showToast]);
+
+  // ── Edit title ──────────────────────────────────────────────────────────
+  const [editTitle, setEditTitle] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
+
+  // Keep the title input in sync with the loaded idea (reclassify pattern).
+  useEffect(() => {
+    if (selectedIdea) setEditTitle(selectedIdea.title ?? "");
+  }, [selectedIdea?.slug]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleEditTitle = useCallback(async () => {
+    if (!selectedSlug || editTitle.trim() === (selectedIdea?.title ?? "")) return;
+    setSavingTitle(true);
+    setActionError(null);
+    try {
+      await updateIdea(selectedSlug, { title: editTitle.trim() });
+      await mutateDetail();
+      await mutateList();
+      showToast(`Título guardado: "${editTitle.trim()}".`);
+    } catch (err) {
+      notifyError(err);
+    } finally {
+      setSavingTitle(false);
+    }
+  }, [selectedSlug, editTitle, selectedIdea?.title, mutateDetail, mutateList, notifyError, showToast]);
 
   // ── Materialize ("usar en el mundo") ─────────────────────────────────────
   const [materializeWorld, setMaterializeWorld] = useState("");
@@ -310,6 +339,18 @@ export default function IdeasWorkshop() {
               </select>
             </div>
             <div>
+              <label htmlFor="idea-title" className="mb-1 block text-xs text-tinta-desvaida">
+                Título (opcional)
+              </label>
+              <input
+                id="idea-title"
+                value={createTitle}
+                onChange={(e) => setCreateTitle(e.target.value)}
+                placeholder="ej: prototipo de diosa"
+                className="w-full rounded-md border border-filio bg-madero px-2.5 py-1.5 text-xs text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+              />
+            </div>
+            <div>
               <label htmlFor="idea-tags" className="mb-1 block text-xs text-tinta-desvaida">
                 Etiquetas (separadas por coma)
               </label>
@@ -423,7 +464,7 @@ export default function IdeasWorkshop() {
                 >
                   <Icon name="lightbulb" size={14} className="shrink-0 opacity-60" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium">{idea.slug}</span>
+                    <span className="block truncate text-xs font-medium">{idea.title || idea.slug}</span>
                     <span className="block truncate text-xs opacity-60">
                       {TYPE_LABELS[idea.type]} · {STATUS_LABELS[idea.status]}
                     </span>
@@ -465,7 +506,7 @@ export default function IdeasWorkshop() {
         <article aria-label={`Idea ${selectedIdea.slug}`}>
           <header className="mb-4 border-b border-filio pb-4">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-heading text-h2 text-pergamino">{selectedIdea.slug}</h2>
+              <h2 className="font-heading text-h2 text-pergamino">{selectedIdea.title || selectedIdea.slug}</h2>
               <span className="rounded-full bg-llamita/10 px-2.5 py-0.5 text-xs text-llamita">
                 {TYPE_LABELS[selectedIdea.type]}
               </span>
@@ -497,9 +538,36 @@ export default function IdeasWorkshop() {
             </dl>
           </header>
 
-          <div className="mb-6 whitespace-pre-wrap break-words text-body text-pergamino">
-            {selectedIdea.body}
+          {/* Body rendered as GFM markdown (R-1). Frontmatter is stripped
+              inside MarkdownViewer (splitFrontmatter); no `mundo` prop by
+              design — /api/ideas/media/... embeds pass through MarkdownImage.
+              imageFit="contain" keeps exact proportions (no crop) so images
+              of any resolution render consistently in the idea bank. */}
+          <div className="mb-6">
+            <MarkdownViewer content={selectedIdea.body} imageFit="contain" />
           </div>
+
+          {/* Edit title */}
+          <section aria-label="Título de la idea" className="mb-4 rounded-lg border border-filio bg-madero p-4">
+            <h3 className="mb-2 text-body font-medium text-pergamino">Título</h3>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                id="edit-idea-title"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                placeholder="Sin título — se muestra el slug"
+                className="min-w-0 flex-1 rounded-md border border-filio bg-cripta px-2.5 py-1.5 text-xs text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+              />
+              <button
+                type="button"
+                onClick={() => void handleEditTitle()}
+                disabled={savingTitle || editTitle.trim() === (selectedIdea.title ?? "")}
+                className="rounded-md bg-llamita px-3 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {savingTitle ? "Guardando..." : "Guardar título"}
+              </button>
+            </div>
+          </section>
 
           {/* Reclassify */}
           <section aria-label="Reclasificar idea" className="mb-4 rounded-lg border border-filio bg-madero p-4">

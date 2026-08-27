@@ -12,10 +12,12 @@ requires a trusted local principal resolved at call time via
 
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from ideas_bank import (
@@ -39,6 +41,7 @@ class IdeaCreateRequest(BaseModel):
     body: str = Field(..., min_length=1)
     tags: list[str] | None = None
     source: str = "manual"
+    title: str | None = None
 
 
 class IdeaUpdateRequest(BaseModel):
@@ -50,6 +53,7 @@ class IdeaUpdateRequest(BaseModel):
     tags: list[str] | None = None
     used_in: list[str] | None = None
     based_on: str | None = None
+    title: str | None = None
     body: str | None = None
 
 
@@ -96,6 +100,47 @@ def create_ideas_bank_router(
             "total": len(ideas),
         }
 
+    @router.get("/media/{filename}")
+    def get_idea_media(filename: str, request: Request) -> FileResponse:
+        """Serve an image from ``<ideas_root>/media/{filename}`` (R-2, R-3).
+
+        Path-traversal protection: reject ``..``, path separators and absolute
+        paths; allowlist image extensions; serve only from ``<ideas_root>/media``
+        with a ``resolve()`` parent check as defense-in-depth.
+        """
+        _guard(request)
+        # Reject dangerous filename patterns (S-2.1). A null byte would make
+        # ``Path.resolve()`` raise ValueError (unhandled 500) — reject it too.
+        if (
+            ".." in filename
+            or "/" in filename
+            or "\\" in filename
+            or filename.startswith("/")
+            or filename.startswith("\\")
+            or "\x00" in filename
+        ):
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        # Allowlist extensions (R-3).
+        ext = Path(filename).suffix.lower()
+        if ext not in {".png", ".jpg", ".jpeg", ".gif", ".webp"}:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+        # Serve only from <ideas_root>/media (defense-in-depth).
+        media_dir = bank._ideas_root / "media"
+        try:
+            file_path = (media_dir / filename).resolve()
+        except (OSError, ValueError):
+            # A malformed filename that cannot resolve (e.g. an embedded null
+            # byte) is a bad request, never a 500.
+            raise HTTPException(status_code=400, detail="Invalid filename")
+        if file_path.parent != media_dir.resolve():
+            raise HTTPException(status_code=403, detail="Access denied")
+        if not file_path.is_file():
+            raise HTTPException(status_code=404, detail="File not found")
+        mime_type, _ = mimetypes.guess_type(filename)
+        if mime_type is None:
+            mime_type = "application/octet-stream"
+        return FileResponse(file_path, media_type=mime_type)
+
     @router.get("/{slug}")
     def get_idea(slug: str, request: Request) -> dict[str, Any]:
         """Detail of a single idea (R-IB-03)."""
@@ -116,6 +161,7 @@ def create_ideas_bank_router(
                 body=body.body,
                 tags=body.tags,
                 source=body.source,
+                title=body.title,
             )
         except (IdeaConflict, InvalidIdea) as exc:
             status_code = 409 if isinstance(exc, IdeaConflict) else 400

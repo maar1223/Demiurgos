@@ -1,15 +1,21 @@
-"""Mandatory idea enrichment provider (type classification), fail-open.
+"""Mandatory idea enrichment provider (type classification + title + body structure), fail-open.
 
 The provider is the seam the processor calls at capture time. It returns
-``(body, type)`` where ``type`` is one of the idea type taxonomy. It NEVER
-blocks or crashes the capture: on any timeout, exception, or unknown
-classification it fails open to ``sin_clasificar`` while preserving the body.
+``(body, type, title)`` where ``type`` is one of the idea type taxonomy,
+``title`` is a short human-readable title derived from the enrichment (the
+Hermes classifier for TEXT/AUDIO, the vision payload for IMAGE), and ``body``
+is the idea's canonical markdown structure (``## Descripción`` + ``## Detalles``
++ optional ``## Notas``) so every idea in the bank is scannable and parseable.
+It NEVER blocks or crashes the capture: on any timeout, exception, or unknown
+classification it fails open to ``sin_clasificar`` / ``""`` while preserving
+the raw content through the local structuring fallback.
 """
 
 from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -37,6 +43,22 @@ DEFAULT_TYPE = "sin_clasificar"
 class EnrichResult(NamedTuple):
     body: str
     type: str  # one of TYPE_TAXONOMY
+    title: str = ""  # short human-readable title from the enrichment
+
+
+def _short_title(text: str, max_words: int = 5) -> str:
+    """A short title from the first words of a description; ``""`` when empty.
+
+    Lightweight heuristic used for IMAGE captures when the vision payload
+    carries no explicit ``titulo``/``title`` field. The processor keeps its
+    own body-first-words fallback for the fail-open case.
+    """
+    if not isinstance(text, str):
+        return ""
+    words = [w for w in text.strip().split() if w]
+    if not words:
+        return ""
+    return " ".join(words[:max_words])
 
 
 def _body_from_raw(raw) -> str:
@@ -52,6 +74,50 @@ def _body_from_raw(raw) -> str:
     return text.strip()
 
 
+def _structure_body(text: str, *, bullets: list[str] | None = None,
+                    notes: str = "") -> str:
+    """Wrap a plain idea text into the canonical markdown body scheme.
+
+    Returns the ``## Descripción`` section with the main content, a
+    ``## Detalles`` bullet list when bullets are given, and an optional
+    ``## Notas`` section when ``notes`` is non-empty. The text is kept
+    verbatim (whitespace-trimmed only) and each bullet is collapsed to a
+    single line so the markdown structure stays parseable. Returns ``""``
+    when there is no content at all — the caller's caption fallback then
+    takes over.
+    """
+    parts: list[str] = []
+    text = str(text).strip() if text is not None else ""
+    if text:
+        parts.append(f"## Descripción\n\n{text}")
+    bullets = [" ".join(str(b).split()) for b in (bullets or [])
+               if isinstance(b, str) and b.strip()]
+    if bullets:
+        parts.append("## Detalles\n\n" + "\n".join(f"- {b}" for b in bullets))
+    notes = str(notes).strip() if notes is not None else ""
+    if notes:
+        parts.append(f"## Notas\n\n{notes}")
+    return "\n\n".join(parts)
+
+
+def _derive_bullets(text: str, max_bullets: int = 3) -> list[str]:
+    """Derive a small detail list from a plain text (fail-open fallback).
+
+    Splits on sentence boundaries (period/question/exclamation followed by
+    whitespace) and newlines, returning up to ``max_bullets`` non-empty
+    trimmed chunks. Best-effort: a single-sentence text yields one bullet;
+    an empty text yields ``[]``.
+    """
+    if not isinstance(text, str):
+        return []
+    chunks: list[str] = []
+    for piece in re.split(r"(?<=[.!?])\s+|\n+", text.strip()):
+        piece = " ".join(piece.split()).strip()
+        if piece and piece not in chunks:
+            chunks.append(piece)
+    return chunks[:max_bullets]
+
+
 def _normalize_type(classified) -> str:
     """Map a raw classification into the taxonomy; unknown -> sin_clasificar."""
     if isinstance(classified, str) and classified in TYPE_TAXONOMY:
@@ -64,8 +130,17 @@ class HermesEnrichProvider:
 
     ``__call__`` always returns an ``EnrichResult`` and never raises. The
     injected ``hermes`` callable is optional: when omitted (or offline) the
-    provider fails open to ``sin_clasificar``, so capture is never blocked by
-    the classifier.
+    provider fails open to ``sin_clasificar`` and an empty title, so capture
+    is never blocked by the classifier.
+
+    The injected callable may return the taxonomy label (legacy string), a
+    ``(label, title)`` tuple, or the extended ``(label, title, body,
+    details)`` tuple where ``body`` is the structured markdown and
+    ``details`` the bullet list (the gateway classifier built by
+    ``build_hermes_classifier``). Whatever it returns, the provider produces
+    a STRUCTURED ``body``: the classifier's own markdown when provided, else
+    a local ``_structure_body`` fallback over the raw text (so text/audio
+    never lose structure when the model under-delivers).
 
     ``__call__`` accepts a ``media_kind`` keyword so the processor seam can
     pass the capture's media kind through; this provider only classifies
@@ -75,40 +150,85 @@ class HermesEnrichProvider:
     provider, and this text-only provider has no use for them.
     """
 
-    def __init__(self, hermes: Callable[[object], str] | None = None,
+    def __init__(self, hermes: Callable[[object], str | tuple] | None = None,
                  timeout_seconds: float = 10.0):
         self._hermes = hermes
         self._timeout_seconds = timeout_seconds
 
     def __call__(self, raw, *, media_kind=None, media_path=None, mime=None) -> EnrichResult:
-        body = _body_from_raw(raw)
+        raw_body = _body_from_raw(raw)
         try:
-            classified = self._classify(raw)
-            type_ = _normalize_type(classified)
+            label, title, structured_body, details = self._classify(raw)
+            type_ = _normalize_type(label)
         except Exception as exc:  # noqa: BLE001 — fail open, never block capture
             log.warning("idea enrichment failed; failing open to %s: %s",
                         DEFAULT_TYPE, exc)
             type_ = DEFAULT_TYPE
-        return EnrichResult(body=body, type=type_)
+            title = ""
+            structured_body = ""
+            details = []
+        body = self._resolve_body(raw_body, structured_body, details)
+        return EnrichResult(body=body, type=type_, title=title)
 
-    def _classify(self, raw) -> str:
+    @staticmethod
+    def _resolve_body(raw_body: str, structured_body, details) -> str:
+        """Pick the canonical structured body for the idea.
+
+        The classifier's own ``body`` (``## Descripción`` + ``## Detalles``
+        markdown) wins when the model provided one; otherwise the raw text is
+        structured locally — with the classifier's ``details`` bullets when
+        given, else a simple derived list. An empty raw text yields ``""``
+        (the processor's caption fallback takes over). Never raises.
+        """
+        if isinstance(structured_body, str) and structured_body.strip():
+            return structured_body.strip()
+        if not raw_body:
+            return ""
+        bullets = [str(d) for d in details] if isinstance(details, list) else []
+        if not bullets:
+            bullets = _derive_bullets(raw_body)
+        return _structure_body(raw_body, bullets=bullets)
+
+    def _classify(self, raw) -> tuple[str, str, str, list[str]]:
         if self._hermes is None:
-            return DEFAULT_TYPE
+            return DEFAULT_TYPE, "", "", []
         if self._timeout_seconds is None or self._timeout_seconds <= 0:
-            return self._hermes(raw)
+            return self._unpack_classified(self._hermes(raw))
         executor = ThreadPoolExecutor(max_workers=1)
         try:
             future = executor.submit(self._hermes, raw)
             try:
-                return future.result(timeout=self._timeout_seconds)
+                return self._unpack_classified(future.result(timeout=self._timeout_seconds))
             except FutureTimeoutError:
                 # Timeout-bounded: return immediately, never block the capture.
                 log.warning("idea enrichment timed out after %.1fs; failing open",
                             self._timeout_seconds)
-                return DEFAULT_TYPE
+                return DEFAULT_TYPE, "", "", []
         finally:
             # Fire-and-forget the stuck classifier; do NOT wait for it.
             executor.shutdown(wait=False)
+
+    @staticmethod
+    def _unpack_classified(classified) -> tuple[str, str, str, list[str]]:
+        """Normalize a classifier result into ``(label, title, body, details)``.
+
+        New classifiers return a ``(label, title, body, details)`` tuple where
+        ``body`` is the structured markdown (``## Descripción`` + ``## Detalles``)
+        and ``details`` the bullet list; legacy string-returning classifiers
+        (and the identity default) keep empty body/details so the provider
+        structures the raw text locally (fail-open compatibility).
+        """
+        if isinstance(classified, tuple):
+            if len(classified) >= 4:
+                details = classified[3] if isinstance(classified[3], list) else []
+                return classified[0], classified[1], classified[2], details
+            if len(classified) == 3:
+                return classified[0], classified[1], classified[2], []
+            if len(classified) == 2:
+                return classified[0], classified[1], "", []
+            if len(classified) == 1:
+                return classified[0], "", "", []
+        return classified, "", "", []
 
 
 def map_tags_to_taxonomy(tags, veredicto: str = "") -> str:
@@ -170,7 +290,7 @@ class MediaEnrichProvider:
 
     def __init__(
         self,
-        hermes: Callable[[object], str] | None = None,
+        hermes: Callable[[object], str | tuple[str, str]] | None = None,
         vision_fn: Callable[[bytes, str], dict] | None = None,
         transcribe_fn: Callable[[str, str], str] | None = None,
         language_resolver: Callable[[], str] | None = None,
@@ -209,10 +329,28 @@ class MediaEnrichProvider:
             log.warning("image vision returned no payload; failing open to %s",
                         DEFAULT_TYPE)
             return EnrichResult(body="", type=DEFAULT_TYPE)
-        body = str(payload.get("descripcion") or "").strip()
+        descripcion = str(payload.get("descripcion") or "").strip()
         tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
         type_ = map_tags_to_taxonomy(tags, str(payload.get("veredicto") or ""))
-        return EnrichResult(body=body, type=type_)
+        # Title from the vision payload: an explicit ``titulo``/``title``
+        # field wins; otherwise derive a short title from the description's
+        # first words. Fails open to "" (the processor falls back to the
+        # body's first words when the title is empty).
+        title = payload.get("titulo") or payload.get("title") or ""
+        if not isinstance(title, str):
+            title = ""
+        title = title.strip()
+        if not title:
+            title = _short_title(descripcion)
+        # Structure the description into the canonical body scheme; the
+        # details derive from the description's sentences, falling back to
+        # the vision tags when there is nothing to split. An empty
+        # description stays empty so the processor's caption fallback works.
+        bullets = _derive_bullets(descripcion)
+        if not bullets:
+            bullets = [str(t) for t in tags if isinstance(t, str) and t.strip()]
+        body = _structure_body(descripcion, bullets=bullets) if descripcion else ""
+        return EnrichResult(body=body, type=type_, title=title)
 
     def _enrich_audio(self, raw, *, media_path=None, mime=None) -> EnrichResult:
         """Transcribe the audio and classify the transcript (fail-open).

@@ -209,6 +209,30 @@ def register(ctx) -> None:
     )
 
 
+def _event_has_media(event) -> bool:
+    """True when the inbound event carries media (photo/voice), not pure text.
+
+    Mirrors the ``media_urls`` check in ``IdeaCaptureHandler._update_from_event``:
+    an event with ``media_urls`` is a photo/voice turn whose bytes we must
+    preserve by capturing directly (ai mode), rather than letting the assistant
+    see only its injected description.
+    """
+    if event is None:
+        return False
+    paths = getattr(event, "media_urls", None)
+    if paths:
+        return True
+    # Voice notes may expose media via the cache path even when media_urls is
+    # empty; treat an explicit media type/kind as media too.
+    mtype = getattr(getattr(event, "message_type", None), "value", "") or ""
+    if mtype in {"photo", "image", "voice", "audio", "video", "document"}:
+        return True
+    kinds = getattr(event, "media_types", None)
+    if kinds:
+        return True
+    return False
+
+
 def capture_intake_hook(*, event, gateway, session_store, **kwargs) -> dict | None:
     """Synchronous intake for the designated capture chat.
 
@@ -240,11 +264,17 @@ def capture_intake_hook(*, event, gateway, session_store, **kwargs) -> dict | No
         return None  # S-6.2: unauthorized sender -> assistant handles
 
     if _CAPTURE_MODE == "ai":
-        # R-2 / S-2.1 / S-2.3: the authorized binding falls through so the
-        # assistant sees the turn — voice transcripts and vision descriptions
-        # are already injected by the gateway media pipeline — and decides via
-        # the capture_idea tool whether to capture or converse.
-        return None
+        # R-2 / S-2.1 / S-2.3 (adjusted): in ai mode, TEXT-only turns fall
+        # through so the assistant decides (capture via capture_idea vs.
+        # converse) — its injection and the tool are fully text-driven. But
+        # media turns (photo/voice) are captured directly here, with their
+        # real bytes: the assistant only ever sees the media as an injected
+        # description, so routing those through the tool would drop the image/
+        # audio payload and leave the idea text-only (no media_path, no
+        # visible image). Capturing media directly preserves the bytes so the
+        # image lands in ideas/media/ and renders.
+        if not _event_has_media(event):
+            return None
 
     try:
         update = handler._update_from_event_with_voice_probe(event, gateway)

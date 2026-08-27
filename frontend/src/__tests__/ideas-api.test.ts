@@ -24,6 +24,7 @@ const detail: IdeaDetail = {
   timestamp: "2026-08-25T15:00:00Z",
   source: "manual",
   type: "personaje",
+  title: "El Arquero Ciego",
   tags: ["arquero"],
   status: "fresh",
   used_in: [],

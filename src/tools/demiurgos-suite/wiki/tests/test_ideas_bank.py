@@ -264,3 +264,187 @@ def test_delete_removes_file(bank: IdeasBank) -> None:
 def test_delete_missing_raises(bank: IdeasBank) -> None:
     with pytest.raises(IdeaNotFound):
         bank.delete("no-existe")
+
+
+# ---------------------------------------------------------------------------
+# R-2 / R-3 — media_path first-class frontmatter field
+# ---------------------------------------------------------------------------
+
+def test_to_dict_includes_media_path(bank: IdeasBank) -> None:
+    """``to_dict()`` MUST carry the ``media_path`` key (None when unset)."""
+    idea = _create(bank)
+    data = idea.to_dict()
+    assert "media_path" in data
+    assert data["media_path"] is None
+
+
+def test_to_dict_media_path_value() -> None:
+    idea = Idea(
+        id="x", slug="y", timestamp="t", source="manual", type="personaje",
+        body="b", media_path="media/y.png",
+    )
+    assert idea.to_dict()["media_path"] == "media/y.png"
+
+
+def test_create_writes_media_path_frontmatter(bank: IdeasBank, tmp_path: Path) -> None:
+    """``media_path`` is a first-class frontmatter field, not a ``_body`` marker."""
+    _create(bank, slug="mp")
+    content = (tmp_path / "ideas" / "mp.md").read_text(encoding="utf-8")
+    assert "media_path:" in content
+    frontmatter = content.split("---\n")[1]
+    assert "media_path:" in frontmatter
+
+
+def test_idea_from_file_reads_media_path(bank: IdeasBank, tmp_path: Path) -> None:
+    """``_idea_from_file`` reads ``media_path`` from frontmatter."""
+    _create(bank, slug="con-media")
+    path = tmp_path / "ideas" / "con-media.md"
+    content = path.read_text(encoding="utf-8")
+    path.write_text(
+        content.replace("media_path: null", "media_path: media/con-media.png"),
+        encoding="utf-8",
+    )
+    idea = bank.read("con-media")
+    assert idea.media_path == "media/con-media.png"
+
+
+def test_update_accepts_media_path(bank: IdeasBank) -> None:
+    """``update`` accepts ``media_path`` and persists it through round-trip."""
+    _create(bank, slug="act")
+    updated = bank.update("act", {"media_path": "media/act.png"})
+    assert updated.media_path == "media/act.png"
+    assert bank.read("act").media_path == "media/act.png"
+
+
+def test_old_idea_without_media_path_loads_none(bank: IdeasBank, tmp_path: Path) -> None:
+    """Backward compat: a legacy idea without ``media_path`` loads with None (S-4.2)."""
+    (tmp_path / "ideas").mkdir(parents=True)
+    (tmp_path / "ideas" / "legacy.md").write_text(
+        "---\nid: l1\nslug: legacy\ntimestamp: '2024-01-01'\nsource: manual\n"
+        "type: concepto\ntags: []\nstatus: fresh\nused_in: []\nbased_on: null\n"
+        "---\nCuerpo legacy\n",
+        encoding="utf-8",
+    )
+    idea = bank.read("legacy")
+    assert idea.media_path is None
+    assert idea.body == "Cuerpo legacy"
+
+
+# ---------------------------------------------------------------------------
+# R-TITLE-01 — human-readable title (frontmatter field + UI concern)
+# ---------------------------------------------------------------------------
+
+def test_idea_has_title_field() -> None:
+    """``Idea.title`` defaults to ``""`` and round-trips through the dataclass."""
+    idea = Idea(id="x", slug="y", timestamp="t", source="manual", type="personaje",
+                body="b")
+    assert idea.title == ""
+    titled = Idea(id="x", slug="y", timestamp="t", source="manual", type="personaje",
+                  body="b", title="Prototipo de diosa")
+    assert titled.title == "Prototipo de diosa"
+
+
+def test_to_dict_includes_title() -> None:
+    idea = Idea(id="x", slug="y", timestamp="t", source="manual", type="personaje",
+                body="b", title="El Arquero")
+    assert idea.to_dict()["title"] == "El Arquero"
+
+
+def test_create_accepts_title(bank: IdeasBank, tmp_path: Path) -> None:
+    """``create`` persists ``title`` as a first-class frontmatter field."""
+    idea = bank.create(slug="titulada", type="personaje",
+                       body="Un arquero.", title="El Arquero Ciego")
+    assert idea.title == "El Arquero Ciego"
+    content = (tmp_path / "ideas" / "titulada.md").read_text(encoding="utf-8")
+    assert "title: El Arquero Ciego" in content
+    assert bank.read("titulada").title == "El Arquero Ciego"
+
+
+def test_create_without_title_defaults_empty(bank: IdeasBank) -> None:
+    idea = bank.create(slug="sin-titulo", type="concepto", body="Una idea.")
+    assert idea.title == ""
+
+
+def test_create_rejects_non_string_title(bank: IdeasBank) -> None:
+    with pytest.raises(InvalidIdea):
+        bank.create(slug="mala", type="personaje", body="x", title=42)
+
+
+def test_idea_from_file_reads_title(bank: IdeasBank, tmp_path: Path) -> None:
+    _create(bank, slug="con-titulo")
+    path = tmp_path / "ideas" / "con-titulo.md"
+    content = path.read_text(encoding="utf-8")
+    path.write_text(content.replace("title: ''", "title: Un Título"), encoding="utf-8")
+    idea = bank.read("con-titulo")
+    assert idea.title == "Un Título"
+
+
+def test_update_accepts_title(bank: IdeasBank) -> None:
+    """``update`` accepts ``title`` and persists it through round-trip."""
+    _create(bank, slug="act-titulo")
+    updated = bank.update("act-titulo", {"title": "El Nuevo Título"})
+    assert updated.title == "El Nuevo Título"
+    assert bank.read("act-titulo").title == "El Nuevo Título"
+
+
+def test_update_rejects_non_string_title(bank: IdeasBank) -> None:
+    _create(bank, slug="act-titulo")
+    with pytest.raises(InvalidIdea):
+        bank.update("act-titulo", {"title": 42})
+
+
+def test_legacy_idea_without_title_loads_empty(bank: IdeasBank, tmp_path: Path) -> None:
+    """Backward compat: a legacy idea without ``title`` loads as ``""``."""
+    (tmp_path / "ideas").mkdir(parents=True)
+    (tmp_path / "ideas" / "legacy.md").write_text(
+        "---\nid: l1\nslug: legacy\ntimestamp: '2024-01-01'\nsource: manual\n"
+        "type: concepto\ntags: []\nstatus: fresh\nused_in: []\nbased_on: null\n"
+        "---\nCuerpo legacy\n",
+        encoding="utf-8",
+    )
+    idea = bank.read("legacy")
+    assert idea.title == ""
+
+
+# ---------------------------------------------------------------------------
+# FMT — structured markdown bodies (## Descripción / ## Detalles / ## Notas)
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+
+REFORMATTED_IDEAS: dict[str, dict] = {
+    "2026-08-27-3fbf55b420ea": {"title": "", "media_path": None},
+    "2026-08-27-48a17af9349f": {
+        "title": "Vibrastal Oscuro criatura",
+        "media_path": "media/2026-08-27-48a17af9349f.jpg",
+    },
+    "2026-08-27-91f2c681437a": {"title": "", "media_path": None},
+    "2026-08-27-a6daf48fbbc3": {
+        "title": "",
+        "media_path": "media/2026-08-27-a6daf48fbbc3.jpg",
+    },
+}
+
+
+def test_reformatted_repo_ideas_load_with_structure() -> None:
+    """The reformatted ideas/ files keep loading: title + body + media_path.
+
+    Integration-shaped: the repo's own Taller de Ideas bank must stay
+    parseable after the markdown-structure reformat (``## Descripción`` first,
+    optional ``## Detalles`` / ``## Notas``, image embed above the heading).
+    Frontmatter fields (slug/id/title/media_path) are preserved exactly.
+    """
+    repo_bank = IdeasBank(ideas_root=_REPO_ROOT / "ideas",
+                          mundos_root=_REPO_ROOT / "mundos")
+    for slug, expected in REFORMATTED_IDEAS.items():
+        idea = repo_bank.read(slug)
+        assert idea.title == expected["title"]
+        assert idea.media_path == expected["media_path"]
+        if idea.media_path:
+            # Image ideas keep the embed at the very top, then the heading.
+            filename = Path(idea.media_path).name
+            assert idea.body.startswith(f"![idea image](/api/ideas/media/{filename})")
+            assert "## Descripción" in idea.body
+            assert idea.body.index("![idea image]") < idea.body.index("## Descripción")
+        else:
+            assert idea.body.startswith("## Descripción"), f"{slug} body must be structured"

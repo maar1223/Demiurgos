@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import logging
 import os
 import sys
@@ -434,8 +435,15 @@ def _resolve_vision_dependencies(
 CLASSIFY_PROMPT = (
     "Clasifica la idea del usuario en EXACTAMENTE UNA de estas categorías: "
     "personaje, relacion, ambientacion, trama, concepto, sin_clasificar. "
-    "Responde únicamente con la etiqueta elegida, sin puntuación ni "
-    "explicación."
+    "Responde únicamente con un objeto JSON con cuatro campos: \"label\" (la "
+    "etiqueta elegida, sin puntuación), \"title\" (un título corto de la "
+    "idea, máximo 5 palabras, en el idioma de la idea), \"body\" (el cuerpo "
+    "de la idea con estructura markdown: \"## Descripción\" con el contenido "
+    "principal y \"## Detalles\" con 2-5 viñetas \"- \" con los puntos "
+    "clave) y \"details\" (la misma lista de viñetas de \"## Detalles\" como "
+    "array de strings). Si hay algo que señalar (p. ej. \"a desarrollar\", "
+    "\"pendiente de clasificar\"), añade una sección opcional \"## Notas\". "
+    "Sin explicación fuera del JSON."
 )
 
 
@@ -539,29 +547,68 @@ def _normalize_classified_label(content: object) -> str:
     return label if label in TYPE_TAXONOMY else DEFAULT_TYPE
 
 
-def build_hermes_classifier() -> Callable[[object], str]:
+def _parse_classification(content: object) -> tuple[str, str, str, list[str]]:
+    """Parse the gateway JSON ``{"label", "title", "body", "details"}`` into a
+    ``(taxonomy label, title, structured body, details)`` tuple.
+
+    Non-JSON, non-dict, or empty responses fail open: label ->
+    ``sin_clasificar``, title/body -> ``""``, details -> ``[]``. The taxonomy
+    label keeps its exact prior semantics through
+    ``_normalize_classified_label``; the title/body/details are additive — a
+    valid JSON payload keeps them even when the label is unrecognized (the
+    processor still shows the idea under a fallback).
+    """
+    label, title, body = DEFAULT_TYPE, "", ""
+    details: list[str] = []
+    if isinstance(content, str) and content.strip():
+        try:
+            data = json.loads(content.strip())
+        except json.JSONDecodeError:
+            data = None
+        if isinstance(data, dict):
+            label = _normalize_classified_label(data.get("label"))
+            raw_title = data.get("title")
+            if isinstance(raw_title, str):
+                title = raw_title.strip()
+            raw_body = data.get("body")
+            if isinstance(raw_body, str):
+                body = raw_body.strip()
+            raw_details = data.get("details")
+            if isinstance(raw_details, list):
+                details = [d.strip() for d in raw_details
+                           if isinstance(d, str) and d.strip()]
+    return label, title, body, details
+
+
+def build_hermes_classifier() -> Callable[[object], tuple[str, str, str, list[str]]]:
     """Build a Hermes-gateway idea classifier; fail-open NO-OP when unavailable.
 
     The returned callable labels a raw text/transcript with exactly one
-    ``TYPE_TAXONOMY`` type via the Hermes gateway chat-completions endpoint
-    (the same pattern ``api_server`` uses). Building the classifier is cheap
-    and offline: the closure reads ``HERMES_GATEWAY_URL`` / ``HERMES_GATEWAY_KEY``
-    (env, then project ``.env``) at CALL time, so runtime config is honored
-    and provider construction never touches the network. When the gateway is
-    unconfigured, unreachable, times out, or returns an unrecognized label,
-    the callable returns ``sin_clasificar`` and never raises — the enrich
-    provider stays fail-open. Runs synchronously on the ``CaptureWorker``
-    thread (enrichment is already off the event loop).
+    ``TYPE_TAXONOMY`` type, derives a short human-readable title from the
+    same Hermes call, AND produces the idea's structured markdown body
+    (``## Descripción`` + ``## Detalles``) — it returns a
+    ``(label, title, body, details)`` tuple. The gateway chat-completions
+    endpoint is asked for a single JSON object ``{"label", "title", "body",
+    "details"}`` (the same pattern ``api_server`` uses). Building the
+    classifier is cheap and offline: the closure reads ``HERMES_GATEWAY_URL``
+    / ``HERMES_GATEWAY_KEY`` (env, then project ``.env``) at CALL time, so
+    runtime config is honored and provider construction never touches the
+    network. When the gateway is unconfigured, unreachable, times out,
+    returns an unrecognized label, or returns non-JSON, the callable returns
+    ``(sin_clasificar, "", "", [])`` and never raises — the enrich provider
+    stays fail-open and structures the raw text locally. Runs synchronously
+    on the ``CaptureWorker`` thread (enrichment is already off the event
+    loop).
     """
 
-    def classify(raw: object) -> str:
+    def classify(raw: object) -> tuple[str, str, str, list[str]]:
         try:
             content = _classify_via_gateway(raw)
         except Exception as exc:  # noqa: BLE001 — fail-open: classification is advisory
             log.warning("hermes classification failed; failing open to %s: %s",
                         DEFAULT_TYPE, exc)
-            return DEFAULT_TYPE
-        return _normalize_classified_label(content)
+            return DEFAULT_TYPE, "", "", []
+        return _parse_classification(content)
 
     return classify
 
