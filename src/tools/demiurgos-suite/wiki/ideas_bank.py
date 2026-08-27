@@ -86,6 +86,7 @@ class Idea:
     status: str = "fresh"
     used_in: list[str] = field(default_factory=list)
     based_on: str | None = None
+    media_path: str | None = None
     body: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -99,6 +100,7 @@ class Idea:
             "status": self.status,
             "used_in": list(self.used_in),
             "based_on": self.based_on,
+            "media_path": self.media_path,
             "body": self.body,
         }
 
@@ -225,6 +227,7 @@ class IdeasBank:
             if isinstance(data.get("used_in"), list)
             else [],
             based_on=data.get("based_on"),
+            media_path=data.get("media_path"),
             body=body.strip(),
         )
 
@@ -318,7 +321,7 @@ class IdeasBank:
         """
         if not isinstance(partial, dict):
             raise InvalidIdea("La actualización debe ser un objeto.")
-        allowed = {"type", "status", "source", "tags", "used_in", "based_on", "body"}
+        allowed = {"type", "status", "source", "tags", "used_in", "based_on", "media_path", "body"}
         unknown = set(partial) - allowed
         if unknown:
             raise InvalidIdea(
@@ -358,6 +361,7 @@ class IdeasBank:
             status=merged["status"],
             used_in=list(merged["used_in"]),
             based_on=merged.get("based_on"),
+            media_path=merged.get("media_path"),
             body=merged.get("body", idea.body),
         )
         self._write(updated)
