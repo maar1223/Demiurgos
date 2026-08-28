@@ -146,9 +146,10 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
     setSystemBusy(true);
     setSystemError(null);
     try {
-      // The local session does NOT survive a restart/shutdown: close it FIRST
-      // (DELETE session) so no stale cookie outlives the operation.
-      await logout();
+      // The operation is authenticated by the current local session, so dispatch
+      // it FIRST while the cookie is still valid. The server-side session dies
+      // with the restart/shutdown anyway — clearing it beforehand would drop the
+      // auth the endpoint requires and 401.
       try {
         await systemControlAction(action);
       } catch (cause: unknown) {
@@ -323,9 +324,10 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
           </button>
 
           {/* System-control zone — restart/shutdown of the whole stack. Only
-              available under local-dev auth: these endpoints are loopback-only
-              and the session dies with the server anyway. */}
-          {status?.enabled && (
+              available with an active local session: these endpoints require
+              local-dev auth (401 otherwise) and the session dies with the
+              server anyway. */}
+          {status?.authenticated && (
             <>
               <hr className="my-3 border-filio" />
               <div className="mt-1 space-y-2">

@@ -77,7 +77,7 @@ describe("Navbar system-control zone", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders both system-control buttons when local auth is enabled", async () => {
+  it("renders both system-control buttons when an active session exists", async () => {
     const user = userEvent.setup();
     renderNavbar();
     await openProfile(user);
@@ -88,6 +88,27 @@ describe("Navbar system-control zone", () => {
     expect(
       screen.getByRole("button", { name: "Apagar Demiurgos" }),
     ).toBeInTheDocument();
+  });
+
+  it("hides the system-control zone when logged out (auth enabled, no session)", async () => {
+    (useLocalDevAuth as Mock).mockReturnValue({
+      status: { ...loggedOutStatus },
+      isLoading: false,
+      error: null,
+      start: vi.fn(),
+      logout: vi.fn(),
+    });
+    const user = userEvent.setup();
+    renderNavbar();
+    await openProfile(user);
+
+    expect(screen.getByRole("dialog", { name: "Perfil" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reiniciar Demiurgos" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Apagar Demiurgos" }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens the ConfirmDialog when a system button is clicked (S-3.2)", async () => {
@@ -181,7 +202,7 @@ describe("Navbar system-control zone", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("calls logout BEFORE the system POST (S-3.4)", async () => {
+  it("dispatches the system POST directly without logging out first (S-3.4)", async () => {
     const logout = vi.fn().mockResolvedValue(loggedOutStatus);
     (useLocalDevAuth as Mock).mockReturnValue({
       status: { ...enabledStatus },
@@ -198,23 +219,16 @@ describe("Navbar system-control zone", () => {
     const dialog = screen.getByRole("dialog", { name: /reiniciar demiurgos/i });
     await user.click(within(dialog).getByRole("button", { name: "Reiniciar" }));
 
-    expect(logout).toHaveBeenCalledTimes(1);
     expect(systemControlAction).toHaveBeenCalledWith("restart");
-    // Ordering guarantee: the DELETE session resolves before the POST.
-    expect(logout.mock.invocationCallOrder[0]).toBeLessThan(
-      (systemControlAction as Mock).mock.invocationCallOrder[0],
-    );
+    // The POST is dispatched while the cookie is still valid — no logout is
+    // performed beforehand (that would drop the auth and 401 the endpoint).
+    expect(logout).not.toHaveBeenCalled();
   });
 
-  it("does NOT POST when logout fails (fail-closed ordering)", async () => {
-    const logout = vi.fn().mockRejectedValue(new Error("No se pudo cerrar la sesión"));
-    (useLocalDevAuth as Mock).mockReturnValue({
-      status: { ...enabledStatus },
-      isLoading: false,
-      error: null,
-      start: vi.fn(),
-      logout,
-    });
+  it("surfaces a 401 (autenticación requerida) instead of logging the user out", async () => {
+    (systemControlAction as Mock).mockRejectedValue(
+      new ApiError(401, "Autenticación requerida"),
+    );
     const user = userEvent.setup();
     renderNavbar();
     await openProfile(user);
@@ -223,8 +237,12 @@ describe("Navbar system-control zone", () => {
     const dialog = screen.getByRole("dialog", { name: /reiniciar demiurgos/i });
     await user.click(within(dialog).getByRole("button", { name: "Reiniciar" }));
 
-    expect(await screen.findByText("No se pudo cerrar la sesión")).toBeInTheDocument();
-    expect(systemControlAction).not.toHaveBeenCalled();
+    expect(
+      await screen.findByText("Autenticación requerida"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("dialog", { name: /reiniciar demiurgos/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows the connection-lost message when the POST fails with a network error (S-3.6)", async () => {

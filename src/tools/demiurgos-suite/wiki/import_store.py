@@ -381,6 +381,37 @@ class ImportJobStore:
                 "DELETE FROM jobs WHERE job_id=?", (job_id,))
             self._conn.commit()
 
+    def find_stale_nonterminal(self, cutoff_iso: str) -> list[ImportJob]:
+        """Jobs in {pending, review} with no lease, untouched since *cutoff_iso*.
+
+        These are the dead non-terminal candidates the spool reaper reclaims:
+        nothing is streaming or processing them (``lease_owner IS NULL``) and
+        they have not been updated since the cutoff. ``updated_at`` is stored
+        as ISO-8601 UTC, so the lexicographic comparison is a correct
+        chronological one. ``lease_owner`` is DB-only (not on ``ImportJob``),
+        so this filter lives in SQL.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs WHERE state IN ('pending','review')"
+                " AND lease_owner IS NULL AND updated_at < ?",
+                (cutoff_iso,),
+            ).fetchall()
+        return [self._job_from_row(r) for r in rows]
+
+    def find_terminal_jobs(self) -> list[ImportJob]:
+        """Jobs in terminal states {cancelled, failed, completed, rolled_back}.
+
+        Used by the spool reaper's Pass 2 to re-attempt cleanup of leftover
+        spool dirs for already-terminated jobs (the job row is kept).
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs WHERE state IN"
+                " ('cancelled','failed','completed','rolled_back')",
+            ).fetchall()
+        return [self._job_from_row(r) for r in rows]
+
     def delete_jobs_for_world(self, world: str) -> int:
         """Delete every import job bound to *world*; returns the number removed.
         Manual cascade (items -> candidates -> events -> approvals -> jobs).
