@@ -238,6 +238,7 @@ def create_import_router(
     # every analyze-time collision check is skipped (fail-open, §6.3
     # soft-gate: signals are advisory, never silent auto-merge).
     graph_resolver: Callable[[str], Callable[[str], list[str]] | None] | None = None,
+    on_list: Callable[[], None] | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/{mundo}/imports", tags=["world-importer"])
     _store = store if isinstance(store, ImportJobStore) else store()
@@ -310,6 +311,10 @@ def create_import_router(
         """
         principal = guard(request)
         resolve_world(mundo)
+        # Housekeeping hook (spool reaper lazy sweep): runs after auth/world
+        # validation and before the store query, once per guard interval.
+        if on_list is not None:
+            on_list()
         principal_id = str(getattr(principal, "id", str(principal)))
         try:
             jobs, next_cursor = _store.list_jobs(

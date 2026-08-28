@@ -15,6 +15,7 @@ import shutil
 import sys
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -113,7 +114,25 @@ import world_recycle_bin  # flat sibling module (world-level recycle bin)
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
 
-app = FastAPI(title="Demiurgos Wiki API")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Startup sweep: reclaim dead import spool data once, before serving any
+    # request. Failures are logged and never crash startup.
+    if gc_enabled():
+        try:
+            counts = reap_dead_spools(
+                _import_store(),
+                PROJECT_ROOT / "data" / "import-spool",
+                gc_ttl_days(),
+            )
+            if any(counts.values()):
+                logger.info("Spool GC startup sweep: %s", counts)
+        except Exception as exc:  # noqa: BLE001 — never crash startup
+            logger.warning("Spool GC startup sweep failed: %s", exc)
+    yield
+
+
+app = FastAPI(title="Demiurgos Wiki API", lifespan=_lifespan)
 
 
 def _cors_config() -> dict:
@@ -457,6 +476,38 @@ class WorldDeleteRequest(BaseModel):
 
 _last_purge_at: datetime | None = None
 _purge_lock = threading.Lock()
+
+_last_reap_at: datetime | None = None
+_reap_lock = threading.Lock()
+
+
+def _maybe_reap_spool() -> None:
+    """Lazy import spool GC on the read path, at most once per guard interval.
+
+    Mirrors ``_maybe_purge_expired`` (house style): the time-guard check sits
+    inside the lock so concurrent lazy calls are serialized, and a running
+    sweep is skipped while another sweep is in progress.
+    """
+    global _last_reap_at
+    if not gc_enabled():
+        return
+    now = datetime.now(timezone.utc)
+    with _reap_lock:
+        if _last_reap_at is not None and (
+            now - _last_reap_at
+        ) < timedelta(hours=gc_guard_hours()):
+            return
+        _last_reap_at = now
+    try:
+        counts = reap_dead_spools(
+            _import_store(),
+            PROJECT_ROOT / "data" / "import-spool",
+            gc_ttl_days(),
+        )
+        if any(counts.values()):
+            logger.info("Spool GC lazy sweep: %s", counts)
+    except Exception as exc:  # noqa: BLE001 — never break the read path
+        logger.warning("Spool GC lazy sweep failed: %s", exc)
 
 
 def _active_world() -> str:
@@ -4667,6 +4718,7 @@ from import_router import create_import_router  # noqa: E402
 from system_control import create_system_control_router  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
 from import_service import ImportService  # noqa: E402
+from import_spool_gc import gc_enabled, gc_guard_hours, gc_ttl_days, reap_dead_spools  # noqa: E402
 
 # Lazy world-importer store: reads current PROJECT_ROOT so tests can relocate it.
 _IMPORT_STORE: ImportJobStore | None = None
@@ -5001,6 +5053,7 @@ app.include_router(
         mundos_dir=lambda: MUNDOS_DIR,
         spool_dir=lambda: PROJECT_ROOT / "data" / "import-spool",
         store=_import_store,
+        on_list=_maybe_reap_spool,
         enricher=_make_import_enricher(),
         vision=_make_vision_callable(),
         structure_inference=_make_structure_inference(),
