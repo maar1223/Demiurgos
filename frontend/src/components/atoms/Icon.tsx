@@ -35,7 +35,8 @@ export type IconName =
   | "expand"
   | "minimize"
   | "corner-up-right"
-  | "refresh";
+  | "refresh"
+  | "power";
 
 interface IconProps extends SVGAttributes<SVGSVGElement> {
   name: IconName;
@@ -290,6 +291,12 @@ const ICONS: Record<IconName, React.ReactNode> = {
       <polyline points="23 4 23 10 17 10" />
       <polyline points="1 20 1 14 7 14" />
       <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+    </>
+  ),
+  power: (
+    <>
+      <path d="M12 2v10" />
+      <path d="M18.4 6.6a9 9 0 1 1-12.77.04" />
     </>
   ),
 };

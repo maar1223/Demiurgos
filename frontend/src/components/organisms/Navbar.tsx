@@ -4,6 +4,8 @@ import { Icon } from "@/components/atoms/Icon";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
+import { systemControlAction } from "@/api/wiki";
+import { ApiError } from "@/api/types";
 import type { WorldInfo } from "@/api/types";
 import {
   GENERIC_TEASER_LABEL,
@@ -48,6 +50,10 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
   const [profileOpen, setProfileOpen] = useState(false);
   const [sessionActionLoading, setSessionActionLoading] = useState(false);
   const [sessionActionError, setSessionActionError] = useState<string | null>(null);
+  const [systemAction, setSystemAction] = useState<"restart" | "shutdown" | null>(null);
+  const [systemBusy, setSystemBusy] = useState(false);
+  const [systemError, setSystemError] = useState<string | null>(null);
+  const [systemNotice, setSystemNotice] = useState<string | null>(null);
   const { status, isLoading: sessionLoading, error: sessionError, start, logout } =
     useLocalDevAuth(profileOpen);
 
@@ -101,6 +107,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
   const handleAvatarClick = () => {
     setProfileOpen((open) => !open);
     setSessionActionError(null);
+    setSystemNotice(null);
   };
 
   const handleSessionAction = async () => {
@@ -118,6 +125,60 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
       );
     } finally {
       setSessionActionLoading(false);
+    }
+  };
+
+  /** Opens the confirm dialog for a system operation (fresh error/notice). */
+  const handleSystemRequest = (action: "restart" | "shutdown") => {
+    setSystemError(null);
+    setSystemNotice(null);
+    setSystemAction(action);
+  };
+
+  /** Cancel/close must stop the busy state — never leave the dialog stuck. */
+  const handleSystemClose = () => {
+    setSystemAction(null);
+    setSystemBusy(false);
+    setSystemError(null);
+  };
+
+  const handleSystemConfirm = async (action: "restart" | "shutdown") => {
+    setSystemBusy(true);
+    setSystemError(null);
+    try {
+      // The local session does NOT survive a restart/shutdown: close it FIRST
+      // (DELETE session) so no stale cookie outlives the operation.
+      await logout();
+      try {
+        await systemControlAction(action);
+      } catch (cause: unknown) {
+        // The launcher kills uvicorn, so the connection drops mid-operation.
+        // A dropped connection is EXPECTED here — surface the dedicated
+        // message instead of a generic error.
+        if (cause instanceof ApiError && cause.status === 0) {
+          setSystemError(
+            action === "restart"
+              ? "Se perdió la conexión mientras se reiniciaba. Espera unos segundos y recarga."
+              : "Se perdió la conexión mientras se apagaba. Espera unos segundos.",
+          );
+          return;
+        }
+        throw cause;
+      }
+      // Dispatched: the stack is going down. Close the dialog and instruct
+      // re-authentication for when it comes back.
+      setSystemAction(null);
+      setSystemNotice(
+        action === "restart"
+          ? "Demiurgos se está reiniciando. Iniciá sesión nuevamente cuando vuelva."
+          : "Demiurgos se está apagando. Iniciá sesión nuevamente cuando lo vuelvas a iniciar.",
+      );
+    } catch (cause: unknown) {
+      setSystemError(
+        cause instanceof Error ? cause.message : "No se pudo completar la operación",
+      );
+    } finally {
+      setSystemBusy(false);
     }
   };
 
@@ -260,6 +321,36 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
           >
             Perfil completo
           </button>
+
+          {/* System-control zone — restart/shutdown of the whole stack. Only
+              available under local-dev auth: these endpoints are loopback-only
+              and the session dies with the server anyway. */}
+          {status?.enabled && (
+            <>
+              <hr className="my-3 border-filio" />
+              <div className="mt-1 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => handleSystemRequest("restart")}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-piedra px-3 py-2 text-small text-pergamino hover:bg-filio"
+                >
+                  <Icon name="refresh" size={16} />
+                  Reiniciar Demiurgos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSystemRequest("shutdown")}
+                  className="flex w-full items-center justify-center gap-2 rounded-lg bg-piedra px-3 py-2 text-small text-sangre hover:bg-filio"
+                >
+                  <Icon name="power" size={16} />
+                  Apagar Demiurgos
+                </button>
+                {systemNotice && (
+                  <p className="text-small text-musgo">{systemNotice}</p>
+                )}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -312,6 +403,26 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
           confirmLabel="Cambiar"
           onConfirm={confirmSwitch}
           onClose={() => setPendingSwitch(null)}
+        />
+      )}
+
+      {/* System restart/shutdown confirmation. `isBusy` disables the actions
+          while logout + POST are in flight; `error` surfaces connection-lost
+          and launcher failures. Close (X/Escape/overlay) always resets the
+          busy state. */}
+      {systemAction && (
+        <ConfirmDialog
+          title={systemAction === "restart" ? "Reiniciar Demiurgos" : "Apagar Demiurgos"}
+          message={
+            systemAction === "restart"
+              ? "¿Reiniciar Demiurgos? La sesión local se cerrará y tendrás que iniciar sesión nuevamente cuando el servidor regrese."
+              : "¿Apagar Demiurgos? La sesión local se cerrará y el servidor se detendrá."
+          }
+          confirmLabel={systemAction === "restart" ? "Reiniciar" : "Apagar"}
+          isBusy={systemBusy}
+          error={systemError}
+          onConfirm={() => void handleSystemConfirm(systemAction)}
+          onClose={handleSystemClose}
         />
       )}
     </header>
