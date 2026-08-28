@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
@@ -71,6 +71,19 @@ export default function IdeasWorkshop() {
   const [statusFilter, setStatusFilter] = useState<"" | IdeaStatus>("");
   const [sourceFilter, setSourceFilter] = useState<"" | IdeaSource>("");
 
+  // ── Search & sort (client-side) ──────────────────────────────────────────
+  type IdeaSortKey = "recent" | "oldest" | "name" | "type" | "status";
+  const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [sortKey, setSortKey] = useState<IdeaSortKey>("recent");
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc"); // name/type/status; recent/oldest ignore
+
+  // ~250ms debounce so the client-side filter only runs once typing settles.
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(searchQuery), 250);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
+
   // ── Selection & panels ───────────────────────────────────────────────────
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -132,6 +145,53 @@ export default function IdeasWorkshop() {
 
   const ideas = listData?.ideas ?? [];
   const selectedIdea = detail ?? null;
+
+  // Client-side search (title + slug + tags) and sort over the fetched list.
+  const filteredIdeas = useMemo(() => {
+    const q = debouncedQuery.trim().toLowerCase();
+    let list = ideas;
+    if (q) {
+      list = list.filter((i) =>
+        (i.title || i.slug).toLowerCase().includes(q) ||
+        i.slug.toLowerCase().includes(q) ||
+        i.tags.some((t) => t.toLowerCase().includes(q)),
+      );
+    }
+    const sorted = [...list];
+    const getRecent = (i: IdeaSummary) => {
+      const upd = i.updated_at || i.timestamp;
+      const created = i.timestamp;
+      // latest of the two
+      return upd > created ? upd : created;
+    };
+    switch (sortKey) {
+      case "recent":
+        sorted.sort((a, b) => getRecent(b).localeCompare(getRecent(a)));
+        break;
+      case "oldest":
+        sorted.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+        break;
+      case "name": {
+        const cmp = (a: IdeaSummary, b: IdeaSummary) =>
+          (a.title || a.slug).localeCompare(b.title || b.slug, "es");
+        sorted.sort(sortOrder === "asc" ? cmp : (a, b) => cmp(b, a));
+        break;
+      }
+      case "type": {
+        const cmp = (a: IdeaSummary, b: IdeaSummary) =>
+          TYPE_LABELS[a.type].localeCompare(TYPE_LABELS[b.type], "es");
+        sorted.sort(sortOrder === "asc" ? cmp : (a, b) => cmp(b, a));
+        break;
+      }
+      case "status": {
+        const cmp = (a: IdeaSummary, b: IdeaSummary) =>
+          STATUS_LABELS[a.status].localeCompare(STATUS_LABELS[b.status], "es");
+        sorted.sort(sortOrder === "asc" ? cmp : (a, b) => cmp(b, a));
+        break;
+      }
+    }
+    return sorted;
+  }, [ideas, debouncedQuery, sortKey, sortOrder]);
 
   // ── Pending captures ("Ideas por confirmar", R-8) ───────────────────────
   // SWR keyed on the pending queue: the counter badge and the review panel
@@ -554,6 +614,53 @@ export default function IdeasWorkshop() {
         </div>
       )}
 
+      <div className="space-y-1.5 border-b border-filio px-4 py-2.5">
+        <div className="relative">
+          <Icon
+            name="search"
+            size={14}
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sombra"
+          />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Buscar por título, slug o etiqueta..."
+            aria-label="Buscar ideas"
+            className="w-full rounded-md border border-filio bg-piedra py-1.5 pl-8 pr-3 text-xs text-pergamino placeholder:text-sombra transition-colors focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          <select
+            aria-label="Ordenar ideas"
+            value={sortKey}
+            onChange={(e) => setSortKey(e.target.value as IdeaSortKey)}
+            className="w-full rounded-md border border-filio bg-madero px-1.5 py-1 text-xs text-pergamino focus:border-llamita focus:outline-none"
+          >
+            <option value="recent">Recientes</option>
+            <option value="oldest">Más antiguas</option>
+            <option value="name">Nombre</option>
+            <option value="type">Tipo</option>
+            <option value="status">Estado</option>
+          </select>
+          {sortKey === "name" || sortKey === "type" || sortKey === "status" ? (
+            <select
+              aria-label="Dirección de orden"
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
+              className="w-full rounded-md border border-filio bg-madero px-1.5 py-1 text-xs text-pergamino focus:border-llamita focus:outline-none"
+            >
+              <option value="desc">Descendente</option>
+              <option value="asc">Ascendente</option>
+            </select>
+          ) : (
+            <span className="flex items-center justify-center rounded-md border border-filio bg-madero px-1.5 py-1 text-xs text-tinta-desvaida">
+              {sortKey === "recent" ? "Más reciente primero" : "Más antigua primero"}
+            </span>
+          )}
+        </div>
+      </div>
+
       <div className="grid grid-cols-3 gap-1.5 border-b border-filio px-4 py-2.5" aria-label="Filtros">
         <select
           aria-label="Filtrar por tipo"
@@ -604,9 +711,13 @@ export default function IdeasWorkshop() {
           <p className="px-4 py-6 text-center text-xs text-tinta-desvaida">
             No hay ideas. Creá la primera con "Nueva idea".
           </p>
+        ) : filteredIdeas.length === 0 ? (
+          <p className="px-4 py-6 text-center text-xs text-tinta-desvaida">
+            No hay ideas que coincidan.
+          </p>
         ) : (
           <ul aria-label="Lista de ideas" className="space-y-0.5 px-2">
-            {ideas.map((idea: IdeaSummary) => (
+            {filteredIdeas.map((idea: IdeaSummary) => (
               <li key={idea.slug}>
                 <button
                   type="button"

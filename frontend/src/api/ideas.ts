@@ -30,6 +30,8 @@ export interface IdeaSummary {
   id: string;
   slug: string;
   timestamp: string;
+  /** Server-managed last-change stamp; falls back to `timestamp` for legacy ideas. */
+  updated_at: string;
   source: IdeaSource;
   type: IdeaType;
   title: string;

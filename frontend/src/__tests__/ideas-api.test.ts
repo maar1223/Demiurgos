@@ -27,6 +27,7 @@ const detail: IdeaDetail = {
   id: "a1b2c3d4",
   slug: "arquero-ciego",
   timestamp: "2026-08-25T15:00:00Z",
+  updated_at: "2026-08-25T15:00:00Z",
   source: "manual",
   type: "personaje",
   title: "El Arquero Ciego",

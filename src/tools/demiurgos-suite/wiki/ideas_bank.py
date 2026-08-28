@@ -82,6 +82,9 @@ class Idea:
     timestamp: str
     source: str
     type: str
+    # ``updated_at`` sits with ``timestamp`` in to_dict()/frontmatter; here it
+    # must follow the required fields (dataclass: default after non-default).
+    updated_at: str = ""
     tags: list[str] = field(default_factory=list)
     status: str = "fresh"
     used_in: list[str] = field(default_factory=list)
@@ -97,6 +100,7 @@ class Idea:
             "slug": self.slug,
             "version": self.version,
             "timestamp": self.timestamp,
+            "updated_at": self.updated_at,
             "source": self.source,
             "type": self.type,
             "title": self.title,
@@ -228,6 +232,7 @@ class IdeasBank:
             id=str(data.get("id") or ""),
             slug=str(data.get("slug") or slug),
             timestamp=str(data.get("timestamp") or ""),
+            updated_at=str(data.get("updated_at") or data.get("timestamp") or ""),
             source=str(data.get("source") or ""),
             type=str(data.get("type") or "sin_clasificar"),
             tags=[t for t in data.get("tags", []) if isinstance(t, str)]
@@ -319,6 +324,7 @@ class IdeasBank:
             id=str(uuid.uuid4()),
             slug=slug,
             timestamp=now,
+            updated_at=now,
             source=source,
             type=type,
             tags=tags,
@@ -409,6 +415,7 @@ class IdeasBank:
             id=current.id,
             slug=slug,
             timestamp=current.timestamp,
+            updated_at=utcnow_iso(),  # server-managed: every update is a change
             source=merged["source"],
             type=merged["type"],
             tags=list(merged["tags"]),
