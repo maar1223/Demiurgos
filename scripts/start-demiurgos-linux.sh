@@ -68,23 +68,54 @@ remove_pid_file() {
     rm -f "$(pid_file "$1")"
 }
 
+# Send TERM, wait up to ~6s (30 x 0.2s), escalate to KILL — the standard
+# shutdown sequence for launcher-managed processes.
+_kill_process() {
+    local pid="$1"
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in {1..30}; do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 0.2
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+}
+
 stop_component() {
-    local name="$1" pid file
+    local name="$1" pid file port
     file="$(pid_file "$name")"
     if owned_pid "$name"; then
         read -r pid < "$file"
-        kill -TERM "$pid" 2>/dev/null || true
-        for _ in {1..30}; do
-            kill -0 "$pid" 2>/dev/null || break
-            sleep 0.2
-        done
-        if kill -0 "$pid" 2>/dev/null; then
-            kill -KILL "$pid" 2>/dev/null || true
-        fi
+        _kill_process "$pid"
         printf 'Stopped %s (pid %s)\n' "$name" "$pid"
-    elif [ -e "$file" ]; then
-        printf 'Skipped %s: recorded PID is not a Demiurgos process\n' "$name"
+        remove_pid_file "$name"
+        return 0
     fi
+
+    # Port-based fallback: stop Demiurgos processes started outside the
+    # launcher (no pid file). Never kill an arbitrary process squatting on
+    # the port — the cmdline check below is the safety gate.
+    case "$name" in
+        api) port="$API_PORT" ;;
+        frontend) port="$FRONTEND_PORT" ;;
+        gateway) port="$GATEWAY_PORT" ;;
+        *) remove_pid_file "$name"; return 1 ;;
+    esac
+
+    pid="$(port_owner_pid "$port" || true)"
+    if [ -z "$pid" ]; then
+        remove_pid_file "$name"
+        return 0
+    fi
+    if ! _validate_cmdline_for_name "$name" "$pid"; then
+        printf 'Skipped %s: port %s owner is not a Demiurgos process (pid %s)\n' \
+            "$name" "$port" "$pid" >&2
+        remove_pid_file "$name"
+        return 1
+    fi
+    _kill_process "$pid"
+    printf 'Stopped %s (pid %s)\n' "$name" "$pid"
     remove_pid_file "$name"
 }
 
@@ -123,10 +154,11 @@ for line in sys.stdin:
 '
 }
 
-adopt_existing_component() {
-    local name="$1" port="$2" pid="" cmdline=""
-    pid="$(port_owner_pid "$port")"
-    [ -n "$pid" ] || return 1
+# Verify that pid's cmdline identifies it as the named Demiurgos component.
+# Shared by adopt_existing_component and the stop_component port fallback so
+# both gate on the exact same matching.
+_validate_cmdline_for_name() {
+    local name="$1" pid="$2" cmdline=""
     [ -r "/proc/$pid/cmdline" ] || return 1
     cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
     case "$name" in
@@ -135,6 +167,13 @@ adopt_existing_component() {
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] || return 1 ;;
         *) return 1 ;;
     esac
+}
+
+adopt_existing_component() {
+    local name="$1" port="$2" pid=""
+    pid="$(port_owner_pid "$port")"
+    [ -n "$pid" ] || return 1
+    _validate_cmdline_for_name "$name" "$pid" || return 1
     printf '%s\n' "$pid" > "$(pid_file "$name")"
     printf 'Adopted existing %s (pid %s)\n' "$name" "$pid"
 }
