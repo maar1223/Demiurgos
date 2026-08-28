@@ -74,6 +74,15 @@ data/*.sqlite3
 data/*.sqlite3-*
 data/*.lock
 data/local-state.json
+# Artefacto temporal que deja el sincronizador (filesystem de fusión)
+data/.fuse_hidden*
+
+# ============================================================
+# Banco global de ideas (ideas/) — contenido narrativo del Autor,
+# generado por capturas de Telegram/Asistente. Es dato de usuario,
+# NO código: no se versiona.
+# ============================================================
+ideas/
 
 # ============================================================
 # OpenCode Telegram bridge — tooling personal del Autor para
