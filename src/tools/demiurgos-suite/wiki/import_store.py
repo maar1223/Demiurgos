@@ -399,6 +399,24 @@ class ImportJobStore:
             ).fetchall()
         return [self._job_from_row(r) for r in rows]
 
+    def find_reapable_nonterminal(self) -> list[ImportJob]:
+        """Jobs in {pending, review} with no lease — the reaper's Pass 1 set.
+
+        Unlike ``find_stale_nonterminal`` this does NOT filter on
+        ``updated_at``: the spool reaper decides per job whether it is
+        reclaimable by age (older than TTL) OR by being inaccessible (its
+        ``world`` no longer exists under ``mundos/``). A young job for a
+        deleted world is stranded and unreachable from the UI, so it must
+        still be reclaimed immediately rather than waiting out a TTL that its
+        owner can never act on.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM jobs WHERE state IN ('pending','review')"
+                " AND lease_owner IS NULL",
+            ).fetchall()
+        return [self._job_from_row(r) for r in rows]
+
     def find_terminal_jobs(self) -> list[ImportJob]:
         """Jobs in terminal states {cancelled, failed, completed, rolled_back}.
 

@@ -124,6 +124,7 @@ async def _lifespan(app: FastAPI):
                 _import_store(),
                 PROJECT_ROOT / "data" / "import-spool",
                 gc_ttl_days(),
+                mundos_dir=MUNDOS_DIR,
             )
             if any(counts.values()):
                 logger.info("Spool GC startup sweep: %s", counts)
@@ -503,6 +504,7 @@ def _maybe_reap_spool() -> None:
             _import_store(),
             PROJECT_ROOT / "data" / "import-spool",
             gc_ttl_days(),
+            mundos_dir=MUNDOS_DIR,
         )
         if any(counts.values()):
             logger.info("Spool GC lazy sweep: %s", counts)

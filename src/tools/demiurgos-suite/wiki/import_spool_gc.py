@@ -2,10 +2,12 @@
 
 Reclaims abandoned data under ``data/import-spool/`` across three passes:
 
-  1. Stale non-terminal jobs (``pending``/``review``, no lease, ``updated_at``
-     older than TTL) are transitioned to ``cancelled`` (event
-     ``stale_reaped``), their spool dir is cleaned, and the job row is
-     cascade-deleted.
+  1. Stale non-terminal jobs (``pending``/``review``, no lease) are
+     reclaimed when they are stale by age (``updated_at`` older than TTL) OR
+     inaccessible (their ``world`` no longer exists under ``mundos/``). Each
+     is transitioned to ``cancelled`` (event ``stale_reaped`` /
+     ``inaccessible_world_reaped``), its spool dir is cleaned, and the job row
+     is cascade-deleted.
   2. Terminal-dead jobs (``cancelled``/``failed``/``completed``/``rolled_back``)
      whose spool dir still exists on disk are re-cleaned (the job row is kept).
   3. Orphan spool dirs with no matching job row and an mtime older than TTL
@@ -27,7 +29,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 from import_intake import BoundedSpool
@@ -64,22 +66,50 @@ def _age_days(iso: str, now: datetime) -> float | None:
     return (now - ts).total_seconds() / 86400.0
 
 
+def _job_world_exists(job: ImportJob, mundos_dir: Path | None) -> bool:
+    """Whether the job's world directory exists (it is then UI-reachable).
+
+    Only consulted when ``mundos_dir`` is supplied; otherwise no world rule
+    applies (backward-compatible age-only behavior).
+    """
+    if mundos_dir is None:
+        return True
+    try:
+        return (Path(mundos_dir) / job.world).is_dir()
+    except OSError:
+        return False
+
+
 def _reap_stale_nonterminal(
     store: ImportJobStore,
     spool_dir: Path,
-    cutoff_iso: str,
+    ttl_days: int,
     *,
     now: datetime,
     log: logging.Logger,
+    mundos_dir: Path | None = None,
 ) -> int:
-    """Pass 1 — cancel + cleanup + cascade-delete stale non-terminal jobs."""
+    """Pass 1 — cancel + cleanup + cascade-delete dead non-terminal jobs.
+
+    A non-terminal job (``pending``/``review``, no lease) is reclaimed when
+    EITHER it is stale by age (``updated_at`` older than TTL) OR it is
+    inaccessible because its ``world`` no longer exists under ``mundos/``.
+    Inaccessible jobs carry no grace period: the UI cannot show them, so
+    keeping them only accumulates dead weight.
+    """
     count = 0
-    for job in store.find_stale_nonterminal(cutoff_iso):
+    for job in store.find_reapable_nonterminal():
+        age_days = _age_days(job.updated_at, now)
+        stale_by_age = age_days is not None and age_days > ttl_days
+        inaccessible = not _job_world_exists(job, mundos_dir)
+        if not (stale_by_age or inaccessible):
+            continue
+        reason = "inaccessible_world_reaped" if inaccessible else "stale_reaped"
         try:
             # Audit trail first, then the guarded terminal transition. The
             # event is recorded before the mutation so it survives even if a
             # later step fails.
-            store.add_event(job.job_id, "stale_reaped")
+            store.add_event(job.job_id, reason)
             store.update_job(
                 job.job_id,
                 expected_revision=job.revision,
@@ -90,16 +120,16 @@ def _reap_stale_nonterminal(
             # this write — this is no longer the stale snapshot we examined,
             # so leave it alone rather than clobber a live transition.
             log.warning(
-                "spool_gc: skipped stale job %s (revision changed concurrently)",
-                job.job_id,
+                "spool_gc: skipped %s job %s (revision changed concurrently)",
+                reason, job.job_id,
             )
             continue
         BoundedSpool(spool_dir, job.job_id, job.world).cleanup()
         store.delete_job(job.job_id)
         count += 1
         log.info(
-            "spool_gc: job_id=%s state=%s age_days=%s reason=stale_reaped",
-            job.job_id, job.state.value, _age_days(job.updated_at, now),
+            "spool_gc: job_id=%s state=%s age_days=%s reason=%s",
+            job.job_id, job.state.value, age_days, reason,
         )
     return count
 
@@ -171,8 +201,14 @@ def reap_dead_spools(
     ttl_days: int = 7,
     *,
     logger: logging.Logger | None = None,
+    mundos_dir: Path | None = None,
 ) -> dict[str, int]:
     """Run all three reaper passes. Returns counts per reason.
+
+    ``mundos_dir`` enables the inaccessible-world rule: a non-terminal job
+    whose ``world`` no longer exists is reclaimed immediately (no TTL grace),
+    because the UI cannot reach it and it will never be approved. When
+    ``mundos_dir`` is ``None`` the reaper falls back to age-only staleness.
 
     Early-returns ``{}`` (no-op) when ``gc_enabled()`` is False.
     """
@@ -180,11 +216,10 @@ def reap_dead_spools(
         return {}
     log = logger if logger is not None else logging.getLogger("demiurgos-api")
     now = datetime.now(timezone.utc)
-    cutoff_iso = (now - timedelta(days=ttl_days)).isoformat()
     spool = Path(spool_dir)
     return {
         "stale_reaped": _reap_stale_nonterminal(
-            store, spool, cutoff_iso, now=now, log=log),
+            store, spool, ttl_days, now=now, log=log, mundos_dir=mundos_dir),
         "terminal_recleaned": _reap_terminal_dead(
             store, spool, now=now, log=log),
         "orphan_purged": _reap_orphans(
