@@ -4664,6 +4664,7 @@ from assistant_settings import create_assistant_settings_router  # noqa: E402
 from telegram_settings import create_telegram_settings_router  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 from import_router import create_import_router  # noqa: E402
+from system_control import create_system_control_router  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
 from import_service import ImportService  # noqa: E402
 
@@ -4764,6 +4765,19 @@ app.include_router(
         require_principal=lambda request: _resolve_principal(request),
         mundos_dir=lambda: MUNDOS_DIR,
         evidence_dir=lambda: PROJECT_ROOT / "data" / "migration-evidence",
+    ),
+)
+
+# System control — UI-driven restart/shutdown (/api/system). The launcher is
+# dispatched DETACHED (Popen + start_new_session): the server answers 200
+# before the launcher stops/restarts the stack, and shutdown kills this very
+# process only after the response is flushed. Immediate launcher failures
+# (bad path, permission) surface via a short non-blocking peek. The local
+# session is NOT closed server-side — the client logs out first (S-2.5/S-3.4).
+app.include_router(
+    create_system_control_router(
+        require_principal=lambda request: _resolve_principal(request),
+        launcher_path=PROJECT_ROOT / "scripts" / "start-demiurgos-linux.sh",
     ),
 )
 
