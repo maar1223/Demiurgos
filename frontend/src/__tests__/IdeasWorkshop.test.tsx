@@ -70,6 +70,7 @@ const summary: ideasApi.IdeaSummary = {
   id: "a1",
   slug: "arquero-ciego",
   timestamp: "2026-08-25T15:00:00Z",
+  updated_at: "2026-08-25T15:00:00Z",
   source: "manual",
   type: "personaje",
   title: "El Arquero Ciego",
@@ -179,6 +180,59 @@ describe("IdeasWorkshop", () => {
         source: undefined,
       }),
     );
+  });
+
+  it("filters the list when typing in the search box (title/slug/tags)", async () => {
+    const user = userEvent.setup();
+    listIdeasMock.mockResolvedValue({
+      ideas: [
+        summary,
+        { ...summary, slug: "el-otro", title: "El Otro", tags: [], timestamp: "2026-08-20T10:00:00Z", updated_at: "2026-08-20T10:00:00Z" },
+      ],
+      total: 2,
+    });
+    renderPage();
+
+    await screen.findByRole("button", { name: /El Arquero Ciego/ });
+    expect(screen.getByRole("button", { name: /El Otro/ })).toBeInTheDocument();
+
+    // "arquero" matches title/slug/tags of the first idea only.
+    await user.type(screen.getByRole("textbox", { name: "Buscar ideas" }), "arquero");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /El Otro/ })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: /El Arquero Ciego/ })).toBeInTheDocument();
+  });
+
+  it("shows the no-match state when the search filters everything out", async () => {
+    const user = userEvent.setup();
+    renderPage();
+
+    await screen.findByRole("button", { name: /El Arquero Ciego/ });
+
+    await user.type(screen.getByRole("textbox", { name: "Buscar ideas" }), "zzz");
+
+    expect(await screen.findByText("No hay ideas que coincidan.")).toBeInTheDocument();
+  });
+
+  it("sorts by most recent by default (Recientes)", async () => {
+    listIdeasMock.mockResolvedValue({
+      ideas: [
+        { ...summary, slug: "vieja", title: "Idea Vieja", timestamp: "2026-08-01T10:00:00Z", updated_at: "2026-08-01T10:00:00Z" },
+        { ...summary, slug: "nueva", title: "Idea Nueva", timestamp: "2026-08-25T15:00:00Z", updated_at: "2026-08-26T09:00:00Z" },
+      ],
+      total: 2,
+    });
+    renderPage();
+
+    const list = await screen.findByRole("list", { name: "Lista de ideas" });
+    await waitFor(() => expect(within(list).getAllByRole("button")).toHaveLength(2));
+
+    const buttons = within(list).getAllByRole("button");
+    // Default "Recientes" uses the latest of created/updated → Idea Nueva first.
+    expect(buttons[0].textContent).toContain("Idea Nueva");
+    expect(buttons[1].textContent).toContain("Idea Vieja");
   });
 
   it("creates a manual idea from the form", async () => {

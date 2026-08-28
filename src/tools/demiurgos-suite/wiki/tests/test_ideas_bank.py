@@ -84,7 +84,7 @@ def test_create_writes_well_formed_file(bank: IdeasBank, tmp_path: Path) -> None
     assert path.is_file(), "idea must be persisted to ideas/{slug}.md"
     content = path.read_text(encoding="utf-8")
     assert content.startswith("---\n")
-    for field in ("id:", "slug:", "timestamp:", "source:", "type:", "tags:",
+    for field in ("id:", "slug:", "timestamp:", "updated_at:", "source:", "type:", "tags:",
                   "status:", "used_in:", "based_on:"):
         assert field in content, f"frontmatter must carry {field}"
     assert "Un arquero que perdió la vista." in content
@@ -761,3 +761,62 @@ def test_update_preserves_version(bank: IdeasBank) -> None:
     updated = bank.update("preserva", {"status": "used"})
     assert updated.version == 2
     assert bank.read("preserva").version == 2
+
+
+# ---------------------------------------------------------------------------
+# R-UPDATED-01 — updated_at: server-managed "last change" field
+# ---------------------------------------------------------------------------
+
+def test_create_sets_updated_at_equal_to_timestamp(bank: IdeasBank) -> None:
+    """``create()`` stamps ``updated_at`` with the same ``now`` as ``timestamp``:
+    a brand-new idea was just created, so its latest change IS its creation."""
+    idea = _create(bank)
+    assert idea.updated_at == idea.timestamp
+    assert idea.to_dict()["updated_at"] == idea.timestamp
+
+
+def test_idea_without_updated_at_falls_back_to_timestamp(
+    bank: IdeasBank, tmp_path: Path
+) -> None:
+    """Backward compat: a pre-``updated_at`` file reads ``updated_at`` =
+    ``timestamp`` (the frontend's "Recientes" sort still has a date to use)."""
+    (tmp_path / "ideas").mkdir(parents=True)
+    (tmp_path / "ideas" / "legacy.md").write_text(
+        "---\nid: l1\nslug: legacy\ntimestamp: '2024-01-01'\nsource: manual\n"
+        "type: concepto\ntags: []\nstatus: fresh\nused_in: []\nbased_on: null\n"
+        "---\nCuerpo legacy\n",
+        encoding="utf-8",
+    )
+    idea = bank.read("legacy")
+    assert idea.updated_at == "2024-01-01"
+    assert idea.to_dict()["updated_at"] == "2024-01-01"
+    # An explicit frontmatter updated_at wins over the timestamp fallback.
+    (tmp_path / "ideas" / "moderna.md").write_text(
+        "---\nid: m1\nslug: moderna\ntimestamp: '2024-01-01'\n"
+        "updated_at: '2024-06-15'\nsource: manual\n"
+        "type: concepto\ntags: []\nstatus: fresh\nused_in: []\nbased_on: null\n"
+        "---\nCuerpo moderna\n",
+        encoding="utf-8",
+    )
+    idea = bank.read("moderna")
+    assert idea.updated_at == "2024-06-15"
+
+
+def test_update_versioned_bumps_updated_at(bank: IdeasBank) -> None:
+    """A versioned edit re-stamps ``updated_at`` (server-side) and persists it."""
+    _create(bank, slug="tocar")
+    updated = bank.update_versioned("tocar", {"body": "revisado"})
+    assert updated.updated_at != ""
+    assert updated.updated_at >= updated.timestamp
+    # Round-trips through read() and lands in the frontmatter.
+    assert bank.read("tocar").updated_at == updated.updated_at
+    content = (bank._ideas_root / "tocar.md").read_text(encoding="utf-8")
+    assert "updated_at:" in content
+    assert updated.updated_at in content  # quote-agnostic (yaml quotes ISO strings)
+
+
+def test_update_rejects_client_updated_at(bank: IdeasBank) -> None:
+    """``updated_at`` is server-managed: clients cannot set it via update."""
+    _create(bank, slug="cerrada")
+    with pytest.raises(InvalidIdea):
+        bank.update("cerrada", {"updated_at": "2020-01-01"})
