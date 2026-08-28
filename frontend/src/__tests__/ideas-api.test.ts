@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  attachIdeaMedia,
   confirmCapture,
   createIdea,
   deleteIdea,
@@ -33,6 +34,7 @@ const detail: IdeaDetail = {
   status: "fresh",
   used_in: [],
   based_on: null,
+  media_path: null,
   body: "Un arquero que no ve.",
 };
 
@@ -257,5 +259,37 @@ describe("ideas bank API", () => {
       }),
     );
     expect(result.ok).toBe(true);
+  });
+
+  it("attaches media with POST /{slug}/media as multipart (raw fetch)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ ...detail, media_path: "media/arquero-ciego.png" }, 201),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const file = new File(["fakedata"], "img.png", { type: "image/png" });
+    const result = await attachIdeaMedia("arquero-ciego", file);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/ideas/arquero-ciego/media");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("same-origin");
+    // Multipart: body must be a FormData, never a JSON content-type.
+    expect(init.body).toBeInstanceOf(FormData);
+    expect(init.headers).toBeUndefined();
+    expect(result.media_path).toBe("media/arquero-ciego.png");
+  });
+
+  it("attachIdeaMedia surfaces the backend detail on error", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({ detail: "El archivo está vacío." }, 400),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const file = new File([], "img.png", { type: "image/png" });
+    await expect(attachIdeaMedia("arquero-ciego", file)).rejects.toMatchObject({
+      status: 400,
+      detail: "El archivo está vacío.",
+    });
   });
 });

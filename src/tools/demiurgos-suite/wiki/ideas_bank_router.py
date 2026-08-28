@@ -2,7 +2,8 @@
 
 Exposes the global ``ideas/`` bank over FastAPI: list (with type/status/source
 filters), read, create (manual origin), update (incl. type correction),
-delete, and the materialization-link seam (``POST /{slug}/materialize``).
+delete, image attach (``POST /{slug}/media``), and the materialization-link
+seam (``POST /{slug}/materialize``).
 
 Auth mirrors the sibling routers (``create_idea_capture_router``): every route
 requires a trusted local principal resolved at call time via
@@ -17,7 +18,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -141,6 +142,33 @@ def create_ideas_bank_router(
         if mime_type is None:
             mime_type = "application/octet-stream"
         return FileResponse(file_path, media_type=mime_type)
+
+    @router.post("/{slug}/media", status_code=201)
+    async def attach_idea_media(
+        slug: str,
+        request: Request,
+        file: UploadFile = File(...),
+    ) -> dict[str, Any]:
+        """Attach an image to an existing idea (versioned, R-2 extension).
+
+        Reads the uploaded bytes and delegates to
+        ``IdeasBank.attach_media()``: the image is written to
+        ``ideas/media/{slug}{ext}``, ``media_path`` is recorded and the embed
+        is prepended to the body (current version archived, version bumped).
+        Empty uploads are 400; unknown slug is 404.
+        """
+        _guard(request)
+        image_bytes = await file.read()
+        if not image_bytes:
+            raise HTTPException(status_code=400, detail="El archivo está vacío.")
+        mime = file.content_type or "image/jpeg"
+        try:
+            idea = bank.attach_media(slug, image_bytes, mime)
+        except IdeaNotFound as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except InvalidIdea as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return _detail(idea)
 
     @router.get("/{slug}")
     def get_idea(slug: str, request: Request) -> dict[str, Any]:

@@ -1,4 +1,5 @@
 import { apiFetch } from "@/api/client";
+import { ApiError } from "@/api/types";
 import { API_BASE_URL } from "@/lib/constants";
 
 /**
@@ -36,6 +37,8 @@ export interface IdeaSummary {
   status: IdeaStatus;
   used_in: string[];
   based_on: string | null;
+  /** Relative path under the ideas bank, e.g. `media/{slug}.png` (null = no image). */
+  media_path: string | null;
 }
 
 /** Detail — includes the free-text body. */
@@ -176,6 +179,39 @@ export function materializeIdea(
     body: JSON.stringify({ world, ...(canonRel ? { canon_rel: canonRel } : {}) }),
     ...CREDENTIALS,
   });
+}
+
+/**
+ * POST /api/ideas/{slug}/media — attach an image to an existing idea
+ * (multipart, versioned). Uses raw fetch on purpose: apiFetch would set a
+ * JSON content-type that breaks the multipart boundary — same pattern as
+ * `uploadImage` in `@/api/wiki`.
+ */
+export async function attachIdeaMedia(
+  slug: string,
+  file: File,
+): Promise<IdeaDetail> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(ideasUrl([slug, "media"]), {
+    method: "POST",
+    body: formData,
+    credentials: "same-origin",
+  });
+
+  if (!response.ok) {
+    let detail: string | undefined;
+    try {
+      const body = await response.json();
+      detail = body.detail;
+    } catch {
+      // ignore parse errors
+    }
+    throw new ApiError(response.status, detail ?? `HTTP ${response.status}`, detail);
+  }
+
+  return (await response.json()) as IdeaDetail;
 }
 
 /**

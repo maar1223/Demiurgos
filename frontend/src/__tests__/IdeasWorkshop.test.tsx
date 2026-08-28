@@ -77,6 +77,7 @@ const summary: ideasApi.IdeaSummary = {
   status: "fresh",
   used_in: [],
   based_on: null,
+  media_path: null,
 };
 
 const detail: IdeaDetail = { ...summary, body: "Un arquero que no ve." };

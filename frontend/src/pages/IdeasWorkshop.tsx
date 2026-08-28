@@ -9,6 +9,7 @@ import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useWorlds } from "@/hooks/useWorlds";
 import {
+  attachIdeaMedia,
   confirmCapture,
   createIdea,
   deleteIdea,
@@ -293,6 +294,32 @@ export default function IdeasWorkshop() {
       setSavingTitle(false);
     }
   }, [selectedSlug, editTitle, selectedIdea?.title, mutateDetail, mutateList, mutateVersions, notifyError, showToast]);
+
+  // ── Attach image ("adjuntar imagen", POST /api/ideas/{slug}/media) ─────
+  const [attachingMedia, setAttachingMedia] = useState(false);
+
+  const handleAttachMedia = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const input = event.target;
+      const file = input.files?.[0];
+      if (!file || !selectedSlug) return;
+      setAttachingMedia(true);
+      setActionError(null);
+      try {
+        await attachIdeaMedia(selectedSlug, file);
+        await mutateDetail();
+        await mutateList();
+        await mutateVersions();
+        showToast("Imagen adjuntada.");
+      } catch (err) {
+        notifyError(err);
+      } finally {
+        setAttachingMedia(false);
+        input.value = "";
+      }
+    },
+    [selectedSlug, mutateDetail, mutateList, mutateVersions, notifyError, showToast],
+  );
 
   // ── Materialize ("usar en el mundo") ─────────────────────────────────────
   const [materializeWorld, setMaterializeWorld] = useState("");
@@ -676,6 +703,35 @@ export default function IdeasWorkshop() {
           <div className="mb-6">
             <MarkdownViewer content={selectedIdea.body} imageFit="contain" />
           </div>
+
+          {/* Attach image (POST /api/ideas/{slug}/media) — a <label> styled
+              as a button opens the hidden file input; the embed is added to
+              the body server-side, so only the three SWR keys refresh. */}
+          <section aria-label="Imagen de la idea" className="mb-4 rounded-lg border border-filio bg-madero p-4">
+            <h3 className="mb-2 text-body font-medium text-pergamino">Imagen</h3>
+            {selectedIdea.media_path ? (
+              <p className="mb-2 text-xs text-tinta-desvaida">
+                Ya tiene imagen adjunta: {selectedIdea.media_path.split("/").pop()}
+              </p>
+            ) : (
+              <p className="mb-2 text-xs text-tinta-desvaida">Sin imagen</p>
+            )}
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-llamita px-3 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta">
+              <Icon name="image" size={13} />
+              {attachingMedia
+                ? "Adjuntando..."
+                : selectedIdea.media_path
+                  ? "Reemplazar imagen"
+                  : "Adjuntar imagen"}
+              <input
+                type="file"
+                accept="image/*"
+                className="hidden"
+                disabled={attachingMedia}
+                onChange={handleAttachMedia}
+              />
+            </label>
+          </section>
 
           {/* Edit title */}
           <section aria-label="Título de la idea" className="mb-4 rounded-lg border border-filio bg-madero p-4">

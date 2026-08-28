@@ -24,13 +24,14 @@ Idea-bank tools (world-agnostic, global ``ideas/`` bank — no mundo needed):
   - ideas_list(tag?, status?)                 → {ideas: [IdeaSummary, ...]}
   - ideas_read(slug)                          → {idea: {...}, exists: bool}
   - ideas_search(query)                       → {matches: [IdeaSummary, ...], query}
-  - update_idea(slug, body?, title?, tags?, type?) → {slug, version, previous_version, archived_at}
+  - update_idea(slug, body?, title?, tags?, type?, media_path?) → {slug, version, previous_version, archived_at}
   - idea_history(slug)                        → {slug, versions: [{version, path}]}
 """
 
 from __future__ import annotations
 
 import argparse
+import mimetypes
 import re
 import signal
 import sys
@@ -316,14 +317,16 @@ def ideas_search(query: str) -> dict:
 
 
 @mcp.tool()
-def update_idea(slug: str, body: str = "", title: str = "", tags: list[str] = [], type: str = "") -> dict:
+def update_idea(slug: str, body: str = "", title: str = "", tags: list[str] = [], type: str = "", media_path: str = "") -> dict:
     """Update an existing idea, creating a new version (S-6.1, R-6).
 
-    Delegates to ``IdeasBank.update_versioned()``: the current
+    Text updates delegate to ``IdeasBank.update_versioned()``: the current
     ``ideas/{slug}.md`` is archived to ``ideas/versions/{slug}-vN.md`` and the
-    live file gets the next filesystem-derived version. The tool never moves
-    media and never deletes; the ``version`` is derived from the core, never
-    passed by the caller. Returns
+    live file gets the next filesystem-derived version. When ``media_path`` is
+    given, the local image is attached via ``IdeasBank.attach_media()`` — the
+    bytes are copied to ``ideas/media/``, ``media_path`` is recorded and the
+    embed is prepended (still versioned). The tool never deletes; the
+    ``version`` is derived from the core, never passed by the caller. Returns
     ``{slug, version, previous_version, archived_at}``.
     """
     bank = IdeasBank()
@@ -337,7 +340,26 @@ def update_idea(slug: str, body: str = "", title: str = "", tags: list[str] = []
     if type:
         partial["type"] = type
     try:
-        updated = bank.update_versioned(slug, partial)
+        if media_path:
+            try:
+                image_bytes = Path(media_path).read_bytes()
+            except OSError as exc:
+                return {"error": f"cannot read media {media_path}: {exc}"}
+            ext = Path(media_path).suffix.lower()
+            mime = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".webp": "image/webp",
+            }.get(ext)
+            if mime is None:
+                mime, _ = mimetypes.guess_type(media_path)
+                if mime is None:
+                    mime = "image/jpeg"
+            updated = bank.attach_media(slug, image_bytes, mime, partial or None)
+        else:
+            updated = bank.update_versioned(slug, partial)
     except IdeaNotFound:
         return {"error": f"idea '{slug}' not found"}
     except InvalidIdea as exc:

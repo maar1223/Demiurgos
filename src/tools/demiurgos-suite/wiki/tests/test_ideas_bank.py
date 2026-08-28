@@ -331,6 +331,79 @@ def test_old_idea_without_media_path_loads_none(bank: IdeasBank, tmp_path: Path)
 
 
 # ---------------------------------------------------------------------------
+# attach_media — versioned image attach (R-2 extension)
+# ---------------------------------------------------------------------------
+
+def test_attach_media_writes_file_and_sets_media_path(
+    bank: IdeasBank, tmp_path: Path
+) -> None:
+    """attach_media() persists the bytes to ideas/media/{slug}.png and records
+    media_path, prepending the canonical embed to the body."""
+    _create(bank, slug="con-imagen")
+    updated = bank.attach_media(
+        "con-imagen", b"\x89PNG\r\n\x1a\nfakedata", "image/png"
+    )
+    target = tmp_path / "ideas" / "media" / "con-imagen.png"
+    assert target.is_file()
+    assert target.read_bytes() == b"\x89PNG\r\n\x1a\nfakedata"
+    assert updated.media_path == "media/con-imagen.png"
+    assert bank.read("con-imagen").media_path == "media/con-imagen.png"
+    assert updated.body == (
+        "![idea image](/api/ideas/media/con-imagen.png)\n\n"
+        "Un arquero que perdió la vista."
+    )
+
+
+def test_attach_media_unknown_mime_defaults_jpg(
+    bank: IdeasBank, tmp_path: Path
+) -> None:
+    """Unknown MIME defaults to .jpg, mirroring idea_capture's processor."""
+    _create(bank, slug="jpega")
+    bank.attach_media("jpega", b"\xff\xd8\xff\xe0data", "application/octet-stream")
+    assert (tmp_path / "ideas" / "media" / "jpega.jpg").is_file()
+
+
+def test_attach_media_does_not_duplicate_embed(
+    bank: IdeasBank, tmp_path: Path
+) -> None:
+    """When the embed is already in the body it is not prepended twice."""
+    embed = "![idea image](/api/ideas/media/ya.png)"
+    _create(bank, slug="ya", body=f"{embed}\n\nCuerpo original")
+    updated = bank.attach_media("ya", b"bytes", "image/png")
+    assert updated.body.count(embed) == 1
+    assert updated.body == f"{embed}\n\nCuerpo original"
+
+
+def test_attach_media_empty_body_embeds_only(bank: IdeasBank) -> None:
+    """A body that is empty/whitespace becomes just the embed."""
+    _create(bank, slug="vac")
+    updated = bank.attach_media("vac", b"bytes", "image/png", partial={"body": "   "})
+    assert updated.body == "![idea image](/api/ideas/media/vac.png)"
+
+
+def test_attach_media_bumps_version(bank: IdeasBank, tmp_path: Path) -> None:
+    """attach_media() routes through update_versioned(): archives v1 and bumps."""
+    _create(bank, slug="bump", body="v1")
+    assert not (tmp_path / "ideas" / "versions").exists()
+    updated = bank.attach_media("bump", b"bytes", "image/png")
+    assert updated.version == 2
+    assert (tmp_path / "ideas" / "versions" / "bump-v1.md").is_file()
+
+
+def test_attach_media_empty_bytes_raises(bank: IdeasBank) -> None:
+    """Empty image bytes fail closed with InvalidIdea (no file is written)."""
+    _create(bank, slug="e")
+    with pytest.raises(InvalidIdea):
+        bank.attach_media("e", b"", "image/png")
+
+
+def test_attach_media_unknown_slug_raises(bank: IdeasBank) -> None:
+    """Attaching media to a missing slug raises IdeaNotFound."""
+    with pytest.raises(IdeaNotFound):
+        bank.attach_media("no-existe", b"bytes", "image/jpeg")
+
+
+# ---------------------------------------------------------------------------
 # R-TITLE-01 — human-readable title (frontmatter field + UI concern)
 # ---------------------------------------------------------------------------
 

@@ -422,6 +422,53 @@ class IdeasBank:
         )
         return current, updated
 
+    @staticmethod
+    def _ext_for_mime(mime: str) -> str:
+        """Map a MIME type to its file extension; unknown image MIMEs default
+        to ``.jpg`` so the media endpoint's allowlist still serves them."""
+        return {
+            "image/jpeg": ".jpg",
+            "image/png": ".png",
+            "image/gif": ".gif",
+            "image/webp": ".webp",
+        }.get(mime, ".jpg")
+
+    def attach_media(
+        self,
+        slug: str,
+        image_bytes: bytes,
+        mime: str,
+        partial: dict[str, Any] | None = None,
+    ) -> Idea:
+        """Attach an image to an existing idea (versioned, R-2 extension).
+
+        Writes ``image_bytes`` to ``ideas/media/{slug}{ext}`` (ext derived
+        from ``mime`` via ``_ext_for_mime``) and records it as the idea's
+        ``media_path``. The body gets the canonical embed
+        ``![idea image](/api/ideas/media/{slug}{ext})`` prepended — never
+        duplicated when the embed is already present. Content changes go
+        through ``update_versioned()``, so the current version is archived
+        and the version bumps. Raises ``IdeaNotFound`` when the slug does not
+        exist and ``InvalidIdea`` when ``image_bytes`` is empty.
+        """
+        if not image_bytes:
+            raise InvalidIdea("No se puede adjuntar una imagen vacía.")
+        current = self.read(slug)
+        ext = self._ext_for_mime(mime)
+        media_dir = self._ideas_root / "media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+        target = media_dir / f"{slug}{ext}"
+        target.write_bytes(image_bytes)
+        embed = f"![idea image](/api/ideas/media/{slug}{ext})"
+        body = (partial or {}).get("body", current.body)
+        if embed not in body:
+            body = f"{embed}\n\n{body}" if body.strip() else embed
+        merged_partial = dict(partial or {})
+        # media_path/body are authoritative — the embed must never be lost.
+        merged_partial["media_path"] = f"media/{slug}{ext}"
+        merged_partial["body"] = body
+        return self.update_versioned(slug, merged_partial)
+
     def _archive_path(self, slug: str, version: int) -> Path:
         """Resolve ``ideas/versions/<slug>-v<version>.md`` (R-2)."""
         if not _valid_slug(slug):

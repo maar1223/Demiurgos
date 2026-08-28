@@ -304,6 +304,60 @@ def test_media_jpeg_mime(client: TestClient, tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# R-2 extension — POST /api/ideas/{slug}/media (attach image, versioned)
+# ---------------------------------------------------------------------------
+
+def test_attach_media_upload(client: TestClient, tmp_path: Path) -> None:
+    """Uploading an image attaches it: media_path set, bytes persisted, embed
+    prepended and version bumped (archive created)."""
+    _create(client, slug="con-imagen")
+    resp = client.post(
+        "/api/ideas/con-imagen/media",
+        files={"file": ("img.png", b"\x89PNG\r\n\x1a\nfakedata", "image/png")},
+    )
+    assert resp.status_code == 201, resp.text
+    data = resp.json()
+    assert data["media_path"] == "media/con-imagen.png"
+    assert data["version"] == 2
+    assert data["body"].startswith("![idea image](/api/ideas/media/con-imagen.png)")
+    target = tmp_path / "ideas" / "media" / "con-imagen.png"
+    assert target.is_file()
+    assert target.read_bytes() == b"\x89PNG\r\n\x1a\nfakedata"
+    assert (tmp_path / "ideas" / "versions" / "con-imagen-v1.md").is_file()
+    # The served media round-trips through the GET endpoint.
+    served = client.get("/api/ideas/media/con-imagen.png")
+    assert served.status_code == 200
+    assert served.content == b"\x89PNG\r\n\x1a\nfakedata"
+
+
+def test_attach_media_unknown_slug_is_404(client: TestClient) -> None:
+    resp = client.post(
+        "/api/ideas/no-existe/media",
+        files={"file": ("img.png", b"\x89PNG\r\n\x1a\nfakedata", "image/png")},
+    )
+    assert resp.status_code == 404
+
+
+def test_attach_media_empty_bytes_is_400(client: TestClient) -> None:
+    _create(client)
+    resp = client.post(
+        "/api/ideas/arquero-ciego/media",
+        files={"file": ("img.png", b"", "image/png")},
+    )
+    assert resp.status_code == 400
+
+
+def test_attach_media_requires_auth(tmp_path: Path) -> None:
+    """Fail-closed auth: the media attach route returns 401 without a principal."""
+    closed, _ = _make_closed_client(tmp_path)
+    resp = closed.post(
+        "/api/ideas/x/media",
+        files={"file": ("img.png", b"\x89PNG\r\n\x1a\nfakedata", "image/png")},
+    )
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
 # R-CG-04 — materialize
 # ---------------------------------------------------------------------------
 

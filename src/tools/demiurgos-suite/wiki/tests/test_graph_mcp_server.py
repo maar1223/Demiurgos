@@ -973,7 +973,7 @@ class TestIdeaBankTools:
         assert list(sig_search.parameters.keys()) == ["query"]
 
         sig_update = inspect.signature(update_idea)
-        assert list(sig_update.parameters.keys()) == ["slug", "body", "title", "tags", "type"]
+        assert list(sig_update.parameters.keys()) == ["slug", "body", "title", "tags", "type", "media_path"]
 
         sig_history = inspect.signature(idea_history)
         assert list(sig_history.parameters.keys()) == ["slug"]
@@ -1170,6 +1170,55 @@ class TestIdeaBankTools:
             result = update_idea("nope", body="x")
 
         assert result["error"]
+
+    def test_update_idea_with_media_path_delegates_to_attach_media(
+        self, tmp_path
+    ) -> None:
+        """media_path reads the local file and delegates to attach_media()
+        with the inferred MIME and the text partial (S-6.1 extension)."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import update_idea  # noqa: F811
+
+        media_file = tmp_path / "img.png"
+        media_file.write_bytes(b"\x89PNG\r\n\x1a\nfakedata")
+
+        bank_mock = MagicMock()
+        bank_mock.attach_media.return_value = _make_idea(
+            slug="arquero-ciego", body="Con imagen.", version=2
+        )
+        bank_mock._archive_path.return_value = Path(
+            "ideas/versions/arquero-ciego-v1.md"
+        )
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = update_idea(
+                "arquero-ciego", body="Con imagen.", media_path=str(media_file)
+            )
+
+        assert result["version"] == 2
+        bank_mock.update_versioned.assert_not_called()
+        bank_mock.attach_media.assert_called_once_with(
+            "arquero-ciego",
+            b"\x89PNG\r\n\x1a\nfakedata",
+            "image/png",
+            {"body": "Con imagen."},
+        )
+
+    def test_update_idea_unreadable_media_returns_error(self) -> None:
+        """An unreadable media_path returns {error} and never reaches the bank."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import update_idea  # noqa: F811
+
+        bank_mock = MagicMock()
+
+        with patch("wiki.graph_mcp_server.IdeasBank", return_value=bank_mock):
+            result = update_idea("arquero-ciego", media_path="/no/such/file.png")
+
+        assert result["error"].startswith("cannot read media /no/such/file.png")
+        bank_mock.attach_media.assert_not_called()
+        bank_mock.update_versioned.assert_not_called()
 
     def test_idea_history_returns_ascending_versions(self) -> None:
         """idea_history() returns versions ascending via _versions_for()."""
