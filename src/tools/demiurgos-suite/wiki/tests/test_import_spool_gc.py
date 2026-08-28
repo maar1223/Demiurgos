@@ -184,6 +184,72 @@ class TestPass1Stale:
 
 
 # ---------------------------------------------------------------------------
+# Pass 1b — inaccessible world (R-1b): non-terminal job whose world no longer
+# exists is reaped immediately (no TTL grace), because the UI cannot reach it.
+# ---------------------------------------------------------------------------
+
+
+def _mk_worlds(tmp_path: Path, *names: str) -> Path:
+    mundos = tmp_path / "mundos"
+    mundos.mkdir()
+    for name in names:
+        (mundos / name).mkdir()
+    return mundos
+
+
+class TestInaccessibleWorldReap:
+    def test_young_review_for_missing_world_reaped(self, store, spool, tmp_path):
+        mundos = _mk_worlds(tmp_path, "demo")
+        store.create_job(_job("j1", ImportJobState.REVIEW, updated_days_ago=2,
+                              world="ghost"))
+        (spool / "j1").mkdir()
+        counts = gc.reap_dead_spools(store, spool, ttl_days=7, mundos_dir=mundos)
+        assert counts["stale_reaped"] == 1
+        assert store.get_job("j1") is None
+        assert not (spool / "j1").exists()
+
+    def test_young_review_for_existing_world_not_reaped(self, store, spool, tmp_path):
+        mundos = _mk_worlds(tmp_path, "demo")
+        store.create_job(_job("j1", ImportJobState.REVIEW, updated_days_ago=2,
+                              world="demo"))
+        (spool / "j1").mkdir()
+        counts = gc.reap_dead_spools(store, spool, ttl_days=7, mundos_dir=mundos)
+        assert counts["stale_reaped"] == 0
+        assert store.get_job("j1") is not None
+        assert (spool / "j1").exists()
+
+    def test_old_review_for_existing_world_reaped_by_age(self, store, spool, tmp_path):
+        mundos = _mk_worlds(tmp_path, "demo")
+        store.create_job(_job("j1", ImportJobState.REVIEW, updated_days_ago=10,
+                              world="demo"))
+        (spool / "j1").mkdir()
+        counts = gc.reap_dead_spools(store, spool, ttl_days=7, mundos_dir=mundos)
+        assert counts["stale_reaped"] == 1
+        assert store.get_job("j1") is None
+        assert not (spool / "j1").exists()
+
+    def test_no_mundos_dir_falls_back_to_age_only(self, store, spool):
+        # Without mundos_dir the inaccessible-world rule is off: a young job
+        # for a non-existent world is NOT reaped (age-only, backward compat).
+        store.create_job(_job("j1", ImportJobState.REVIEW, updated_days_ago=2,
+                              world="ghost"))
+        (spool / "j1").mkdir()
+        counts = gc.reap_dead_spools(store, spool, ttl_days=7)
+        assert counts["stale_reaped"] == 0
+        assert store.get_job("j1") is not None
+
+    def test_inaccessible_reason_logged(self, store, spool, tmp_path, caplog):
+        mundos = _mk_worlds(tmp_path, "demo")
+        store.create_job(_job("j1", ImportJobState.REVIEW, updated_days_ago=2,
+                              world="ghost"))
+        (spool / "j1").mkdir()
+        with caplog.at_level(logging.INFO, logger="demiurgos-api"):
+            gc.reap_dead_spools(store, spool, ttl_days=7, mundos_dir=mundos)
+        assert any("reason=inaccessible_world_reaped" in r.message
+                   for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
 # Pass 2 — terminal-dead re-cleanup (R4)
 # ---------------------------------------------------------------------------
 
@@ -484,5 +550,15 @@ class TestLazyEndpoint:
 class TestPathScoping:
     def test_module_has_no_forbidden_references(self):
         src = Path(gc.__file__).read_text(encoding="utf-8")
-        for forbidden in ("world_recycle_bin", "PAPELERA_RETENTION_DAYS", "mundos/"):
+        # Hard out-of-scope domains: the reaper must never reference the world
+        # recycle bin or the papelera retention policy (separate domain).
+        for forbidden in ("world_recycle_bin", "PAPELERA_RETENTION_DAYS"):
             assert forbidden not in src
+        # mundos/ is READ ONLY, never written. The reaper probes world
+        # existence via ``_job_world_exists`` (which only calls ``.is_dir()``)
+        # and its single destructive call (``shutil.rmtree``) targets spool
+        # entries — never a mundos path.
+        assert "mundos_dir" in src
+        assert "def _job_world_exists" in src
+        assert "is_dir()" in src
+        assert src.count("shutil.rmtree") == 1
