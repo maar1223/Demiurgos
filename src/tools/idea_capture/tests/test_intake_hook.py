@@ -524,11 +524,15 @@ def test_strict_mode_authorized_text_skips(monkeypatch):
             runtime.close()
 
 
-def test_ai_mode_voice_and_photo_captured_directly(monkeypatch):
-    """S-2.3 (adjusted): ai mode — text-only turns fall through to the assistant
-    (None, so the assistant decides), while voice/photo turns are captured
-    directly by the hook (skip) so their real bytes reach ideas/media/ (the
-    assistant only sees an injected description, which would lose the media)."""
+def test_ai_mode_voice_and_photo_fall_through_and_stash(monkeypatch):
+    """SDD Slice 2 (R-2.1/R-2.2, S-2.1.x/S-2.2.x): ai mode media NEVER auto-captures.
+
+    Voice/photo turns fall through (None) so the assistant decides
+    idea-vs-conversation — the gateway's own media pipeline (STT for voice,
+    vision for images) builds the description the assistant sees. The real
+    media bytes are stashed keyed by (chat_id, user_id) for the save branch;
+    nothing is persisted by the hook and no capture prompt is sent.
+    """
     with tempfile.TemporaryDirectory() as directory:
 
         def _reader(path):
@@ -542,20 +546,57 @@ def test_ai_mode_voice_and_photo_captured_directly(monkeypatch):
         monkeypatch.setattr(hermes_handler, "_probe_voice_duration",
                             lambda path: 30.0)
         try:
-            voice = _event(1, _source(), media_urls=[".hermes/cache/audio/note.ogg"],
+            source = _source()
+            voice = _event(1, source, media_urls=[".hermes/cache/audio/note.ogg"],
                            media_types=["audio/ogg"], message_type="voice")
             result = _run_hook(plugin, event=voice,
                                gateway=FakeGateway(adapter), session_store=None)
-            assert result == {"action": "skip", "reason": "idea-capture"}
-            photo = _event(2, _source(), text="caption",
+            assert result is None  # assistant decides, never skip
+            assert runtime.store.count() == 0  # nothing captured by the hook
+            assert adapter.sent == []  # no capture prompt
+            stash = plugin._MEDIA_STASH[("7", "8")]
+            assert stash["type"] == "voice"
+            assert stash["path"] == ".hermes/cache/audio/note.ogg"
+            assert stash["mime"] == "audio/ogg"
+
+            photo = _event(2, source, text="caption",
                            media_urls=[".hermes/cache/images/img.png"],
                            media_types=["image/png"], message_type="photo")
             result = _run_hook(plugin, event=photo,
                                gateway=FakeGateway(adapter), session_store=None)
-            assert result == {"action": "skip", "reason": "idea-capture"}
-            # both media turns persisted; the hook prompts the owner to confirm
-            assert runtime.store.count() == 2
-            assert adapter.sent != []
+            assert result is None  # assistant decides, never skip
+            stash = plugin._MEDIA_STASH[("7", "8")]  # same binding: latest wins
+            assert stash["type"] == "image"
+            assert stash["path"] == ".hermes/cache/images/img.png"
+            assert stash["mime"] == "image/png"
+            assert stash["description"] == "caption"
+            assert runtime.store.count() == 0
+        finally:
+            runtime.close()
+
+
+def test_ai_mode_unsupported_media_falls_through_without_stash(monkeypatch):
+    """SDD Slice 2: video/document in ai mode -> None, and NOT stashed.
+
+    Only capturable voice/image media is stashed for the save branch; other
+    media falls through to the assistant (gateway handles it) with no stash
+    entry, so a later capture_idea never attaches bytes it cannot validate.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        handler, runtime = _handler(Path(directory))
+        plugin = _load_plugin()
+        plugin._handler = handler
+        plugin._CAPTURE_MODE = "ai"
+        adapter = FakeAdapter()
+        try:
+            video = _event(1, _source(),
+                           media_urls=[".hermes/cache/videos/clip.mp4"],
+                           media_types=["video/mp4"], message_type="video")
+            result = _run_hook(plugin, event=video,
+                               gateway=FakeGateway(adapter), session_store=None)
+            assert result is None
+            assert plugin._MEDIA_STASH == {}
+            assert runtime.store.count() == 0
         finally:
             runtime.close()
 

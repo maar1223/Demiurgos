@@ -314,6 +314,57 @@ class MediaEnrichProvider:
         # TEXT and unrecognized kinds classify as text (the prior behavior).
         return self._hermes(raw)
 
+    def describe(self, raw, *, media_kind=None, media_path=None, mime=None) -> str:
+        """Return the RAW media description, without classifying or structuring.
+
+        Unlike ``__call__`` (which classifies and structures for the idea
+        body), this returns the raw description only — what a caller needs as
+        plain turn text or as a caption seed:
+
+        - VOICE -> the Whisper transcript (raw, unclassified),
+        - IMAGE -> the vision payload's ``descripcion`` field (raw),
+        - TEXT/unknown -> the raw text (or ``""``).
+
+        This is the seam behind "build the description via
+        ``build_media_enrich_provider``" (bot-capture-and-conversation,
+        T-2.2). Never raises: any failure — disabled vision, missing
+        transcriber, unreadable media, empty result — returns ``""`` so the
+        caller degrades to its own placeholder (e.g. the gateway's injected
+        description). Media bytes that cannot be read are handled exactly like
+        ``_enrich_audio``: the persisted ``media_path`` is preferred and a
+        temp copy of the raw bytes is used otherwise (and cleaned up).
+        """
+        kind = _normalize_media_kind(media_kind)
+        if kind is MediaKind.IMAGE:
+            if not self._vision_enabled or self._vision_fn is None:
+                return ""
+            try:
+                payload = self._vision_fn(raw, "")
+            except Exception:  # noqa: BLE001 — fail open, never raise
+                return ""
+            if not isinstance(payload, dict):
+                return ""
+            return str(payload.get("descripcion") or "").strip()
+        if kind is MediaKind.VOICE:
+            if self._transcribe_fn is None:
+                return ""
+            temp_path: str | None = None
+            try:
+                language = (self._language_resolver() if self._language_resolver is not None
+                            else "es")
+                audio_path, temp_path = self._resolve_audio_path(raw, media_path, mime)
+                transcript = self._transcribe_fn(audio_path, language)
+            except Exception:  # noqa: BLE001 — fail open, never raise
+                return ""
+            finally:
+                if temp_path is not None:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass
+            return transcript.strip() if isinstance(transcript, str) else ""
+        return _body_from_raw(raw)
+
     def _enrich_image(self, raw) -> EnrichResult:
         if not self._vision_enabled or self._vision_fn is None:
             log.warning("image vision is disabled or unavailable; failing open "

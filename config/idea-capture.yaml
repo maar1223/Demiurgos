@@ -7,8 +7,18 @@
 #     987654321: [123456789, 555000111]
 #
 # Loaded by src/tools/idea_capture/config.py (load_policy). Hermes consumes
-# authorized_bindings after its own gateway authorization. The legacy `serve`
-# entrypoint remains compatibility-only and is not the production supervisor.
+# authorized_bindings after its own gateway authorization.
+#
+# ALLOWLIST CONFIRMATION (bot-capture-and-conversation, R-3.1 / T-3.1):
+# The gateway-level allowlist is the FIRST authorization gate and is already
+# enforced (default-deny). It lives in the Hermes runtime env:
+#   ~/.hermes/.env -> TELEGRAM_ALLOWED_USERS=<telegram-id>   (authorized sender)
+# The gateway (gateway/authz_mixin.py _is_user_authorized) drops any message
+# from a user not in that list WITHOUT responding, so an unauthorized sender
+# can never use the bot as a free LLM or inject content. This file's
+# authorized_bindings must stay in sync with TELEGRAM_ALLOWED_USERS (both
+# carry user_id <telegram-id>). The legacy `serve` entrypoint remains
+# compatibility-only and is not the production supervisor.
 private_chat_ids: [<telegram-id>]
 approved_groups:
   {}
