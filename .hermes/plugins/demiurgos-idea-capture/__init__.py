@@ -78,6 +78,24 @@ no loop, the send runs in its own event loop on a daemon background thread
 synchronous raw Bot API send (``sendMessage`` with the project
 ``TELEGRAM_BOT_TOKEN``) guarantees the user is notified about the parked
 capture.
+
+SDD ``bot-capture-and-conversation`` Slice 2 (media decision): in ``ai`` mode
+media events (voice/image) are NO LONGER auto-captured by the intake hook.
+They fall through to the assistant's idea-vs-conversation decision: the
+description the assistant sees is produced by the gateway's own media pipeline
+(STT for voice via ``_enrich_message_with_transcription``, vision for images
+via ``_enrich_message_with_vision`` / native image routing — gateway/run.py),
+NOT by rewriting ``event.text`` from the hook. The design proposed
+``{"action": "rewrite", "text": <description>}`` and that contract IS supported
+(gateway/run.py:14756-14761 replaces ``event.text`` and continues dispatch),
+but the gateway prepends its OWN transcript/description for media events, so a
+rewrite would double-transcribe / double-describe the media and duplicate the
+turn text. Falling through (``None``) produces the description exactly once.
+The real media bytes are stashed in ``_MEDIA_STASH`` (keyed by
+``(chat_id, user_id)``, 5-minute TTL) so the ``capture_idea`` save branch can
+attach the actual voice/image file via ``build_media_enrich_provider``
+(R-2.3); a missing/unreadable stash degrades the capture to text-only and
+never breaks it. ``strict`` mode and the text flow are unchanged (R-2.4).
 """
 
 from __future__ import annotations
@@ -93,6 +111,7 @@ import sys
 import tempfile
 import threading
 import time
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -127,6 +146,21 @@ _wake_notice_sent = False
 # Delay before the wake notice fires, letting the Telegram drain settle (R-6).
 # Kept on the module so tests can collapse it to ~0.
 _WAKE_NOTICE_DELAY = 5.0
+
+# SDD bot-capture-and-conversation Slice 2 (media decision, T-2.3): the real
+# media of an ai-mode voice/image event is stashed here — keyed by the
+# normalized ``(chat_id, user_id)`` binding, value ``{"path", "type", "mime",
+# "description", "stored_at"}`` — so the ``capture_idea`` save branch can
+# attach the ACTUAL file bytes when the assistant decides "idea". The
+# assistant itself only ever sees the description (gateway media pipeline);
+# the stash is what preserves the bytes. Entries expire after
+# ``_MEDIA_STASH_TTL`` seconds (lazy sweep on every hook invocation and pop),
+# so a "conversation" decision never leaks a reference: the stash entry dies
+# and the Hermes-cached file stays gateway-managed (the plugin never deletes
+# cache files it does not own). A missing entry makes the save branch degrade
+# to text-only — capture is never blocked.
+_MEDIA_STASH_TTL = 300.0
+_MEDIA_STASH: dict[tuple[str, str], dict] = {}
 
 # PR idea-capture-ai-gate (R-1): capture mode resolved once at registration and
 # cached for the process lifetime. ``None`` until ``register()`` runs; the
@@ -391,9 +425,10 @@ def _event_has_media(event) -> bool:
     """True when the inbound event carries media (photo/voice), not pure text.
 
     Mirrors the ``media_urls`` check in ``IdeaCaptureHandler._update_from_event``:
-    an event with ``media_urls`` is a photo/voice turn whose bytes we must
-    preserve by capturing directly (ai mode), rather than letting the assistant
-    see only its injected description.
+    an event with ``media_urls`` is a photo/voice turn. In ``strict`` mode its
+    bytes are preserved by capturing directly; in ``ai`` mode it routes to the
+    assistant's decision (Slice 2) with the real bytes stashed for the save
+    branch.
     """
     if event is None:
         return False
@@ -409,6 +444,95 @@ def _event_has_media(event) -> bool:
     if kinds:
         return True
     return False
+
+
+# -- SDD bot-capture-and-conversation Slice 2: media stash (T-2.3) ------------
+
+
+def _stash_key(source) -> tuple[str, str]:
+    """Normalized ``(chat_id, user_id)`` key shared by the hook and the tool.
+
+    Both the intake hook (``event.source``) and the ``capture_idea`` tool
+    (``_session_source()``) stringify the identity, so keying on normalized
+    strings keeps the save-branch lookup stable regardless of whether the
+    platform reports ints or strings.
+    """
+    return (str(getattr(source, "chat_id", "")),
+            str(getattr(source, "user_id", "")))
+
+
+def _stash_sweep() -> None:
+    """Drop expired media-stash entries (TTL). Never raises."""
+    now = time.monotonic()
+    expired = [key for key, entry in _MEDIA_STASH.items()
+               if now - entry.get("stored_at", 0.0) > _MEDIA_STASH_TTL]
+    for key in expired:
+        _MEDIA_STASH.pop(key, None)
+
+
+def _event_media_kind(event) -> str | None:
+    """Classify the event's capturable media as ``'voice'`` or ``'image'``.
+
+    Mirrors the classification in ``IdeaCaptureHandler._update_from_event``
+    (MIME first, ``message_type`` fallback) without reading any bytes, so the
+    stash and the capture path agree on what is attachable. Returns ``None``
+    for text and for media the save branch cannot attach (video/document) —
+    those still fall through to the assistant in ai mode but are never
+    stashed.
+    """
+    types = getattr(event, "media_types", None) or []
+    mime = str(types[0]) if types else ""
+    mtype = getattr(getattr(event, "message_type", None), "value", "") or ""
+    if mime.startswith("image/") or mtype in {"photo", "image"}:
+        return "image"
+    if mime.startswith("audio/") or mtype in {"voice", "audio"}:
+        return "voice"
+    return None
+
+
+def _stash_event_media(event) -> None:
+    """Stash the event's real media for the save branch (T-2.3).
+
+    Records the Hermes-cached media path, the capturable kind, the MIME and
+    the event caption (a cheap text seed) keyed by the session binding. The
+    real bytes are read lazily at save time via the handler's ``media_reader``,
+    so the hook never blocks the event loop with file I/O or STT/vision work
+    (the gateway pipeline already produced the description the assistant
+    sees). Never raises: any failure simply means the save branch degrades to
+    text-only.
+    """
+    _stash_sweep()
+    source = getattr(event, "source", None)
+    if source is None:
+        return
+    kind = _event_media_kind(event)
+    if kind is None:
+        return
+    paths = getattr(event, "media_urls", None) or []
+    if not paths:
+        return
+    types = getattr(event, "media_types", None) or []
+    _MEDIA_STASH[_stash_key(source)] = {
+        "path": str(paths[0]),
+        "type": kind,
+        "mime": str(types[0]) if types else "",
+        "description": str(getattr(event, "text", "") or ""),
+        "stored_at": time.monotonic(),
+    }
+
+
+def _stash_pop(source) -> dict | None:
+    """Consume the session's stash entry (TTL-checked); ``None`` when absent.
+
+    Popping (rather than peeking) matches the design's cleanup contract:
+    ``capture_idea`` consumes the media exactly once — a later unrelated text
+    capture in the same session within the TTL window sees no stash and stays
+    text-only.
+    """
+    if source is None:
+        return None
+    _stash_sweep()
+    return _MEDIA_STASH.pop(_stash_key(source), None)
 
 
 def capture_intake_hook(*, event, gateway, session_store, **kwargs) -> dict | None:
@@ -459,17 +583,28 @@ def capture_intake_hook(*, event, gateway, session_store, **kwargs) -> dict | No
         _schedule_wake_notice(_active_gateway or gateway, handler)
 
     if _CAPTURE_MODE == "ai":
-        # R-2 / S-2.1 / S-2.3 (adjusted): in ai mode, TEXT-only turns fall
-        # through so the assistant decides (capture via capture_idea vs.
-        # converse) — its injection and the tool are fully text-driven. But
-        # media turns (photo/voice) are captured directly here, with their
-        # real bytes: the assistant only ever sees the media as an injected
-        # description, so routing those through the tool would drop the image/
-        # audio payload and leave the idea text-only (no media_path, no
-        # visible image). Capturing media directly preserves the bytes so the
-        # image lands in ideas/media/ and renders.
+        # R-2 / S-2.4.1: text-only turns fall through (None) so the assistant
+        # decides (capture via capture_idea vs. converse) — unchanged.
         if not _event_has_media(event):
             return None
+        # SDD Slice 2 (R-2.1 / R-2.2 / S-2.1.x / S-2.2.x): media events in ai
+        # mode are NEVER auto-captured here. They fall through (None) to the
+        # assistant's idea-vs-conversation decision. The description the
+        # assistant sees is built by the GATEWAY's own media pipeline — STT
+        # for voice (``_enrich_message_with_transcription``, gateway/run.py)
+        # and vision for images (``_enrich_message_with_vision`` / native
+        # image routing) — NOT by rewriting event.text from the hook. The
+        # design proposed ``{"action": "rewrite", "text": <description>}`` and
+        # that contract IS supported (gateway/run.py:14756-14761 replaces
+        # event.text and continues dispatch), but the gateway PREPENDS its own
+        # transcript/description for media events, so a rewrite would
+        # double-transcribe / double-describe the media and duplicate the turn
+        # text. Falling through lets the gateway produce the description
+        # exactly once. The real bytes are stashed for the save branch
+        # (T-2.3): when the assistant decides "idea", ``capture_idea`` reads
+        # them via ``build_media_enrich_provider`` and attaches the file.
+        _stash_event_media(event)
+        return None
 
     try:
         update = handler._update_from_event_with_voice_probe(event, gateway)
@@ -864,6 +999,13 @@ def _capture_idea_tool(args: dict, **kwargs) -> str:
         return json.dumps({"error": "unauthorized session"})  # S-3.3
     try:
         update = _build_tool_update(args)
+        # SDD Slice 2 (T-2.3 / S-2.3.1): when the assistant captures an idea
+        # for a media turn, attach the REAL media bytes stashed by the intake
+        # hook so the parked capture carries the voice/image file. Explicit
+        # image_bytes/audio_bytes in the tool args always win (the update is
+        # not text-only); a missing, expired, or unreadable stash degrades to
+        # text-only — the save branch never breaks.
+        update = _attach_stashed_media(update, handler)
         receipt = handler.runtime.service.accept(update)
     except Exception as exc:  # noqa: BLE001 — bounded error to the model
         log.warning("capture_idea tool rejected update: %s", exc)
@@ -884,6 +1026,53 @@ def _capture_idea_tool(args: dict, **kwargs) -> str:
         return json.dumps({"error": f"capture parked failed: {exc}"})
     _schedule_park_prompt(receipt.capture_id)
     return json.dumps({"capture_id": receipt.capture_id, "status": receipt.status})
+
+
+def _attach_stashed_media(update, handler) -> "TelegramUpdate":
+    """Attach the stashed media bytes to a text-only tool update (T-2.3).
+
+    The intake hook stashed the media event's real cache path keyed by the
+    session binding; when the assistant then calls ``capture_idea`` for that
+    turn, this reads the actual bytes via the handler's ``media_reader`` and
+    replaces the text-only ``MediaInput`` with an IMAGE/VOICE one, so the
+    saved idea carries the real file (enriched by the runtime's
+    ``build_media_enrich_provider`` at processing time). Explicit
+    ``image_bytes``/``audio_bytes`` tool args win (``media.kind`` is not
+    TEXT). Every failure degrades to the original text-only update — the save
+    branch never breaks.
+    """
+    from idea_capture.models import MediaInput, MediaKind  # local: plugin discipline
+    if update.media.kind is not MediaKind.TEXT:
+        return update
+    source = _session_source()
+    if source is None:
+        return update
+    stashed = _stash_pop(source)
+    if stashed is None:
+        return update
+    try:
+        data = handler.media_reader(stashed["path"])
+    except Exception as exc:  # noqa: BLE001 — degrade, never break capture
+        log.warning("idea-capture stash: media bytes unavailable at %s; "
+                    "capturing text-only: %s", stashed.get("path"), exc)
+        return update
+    mime = stashed.get("mime") or ""
+    text = update.media.text or stashed.get("description") or ""
+    if stashed.get("type") == "image":
+        if not mime.startswith("image/"):
+            return update  # validate_media would reject; keep text-only
+        return replace(update, media=MediaInput(
+            MediaKind.IMAGE, data=data, mime=mime, text=text))
+    # Voice: validate_media requires a probed duration; fail closed to
+    # text-only when the probe cannot determine it (never breaks the capture).
+    duration = _probe_voice_duration_from_bytes(data, mime)
+    if duration is None:
+        log.warning("idea-capture stash: voice duration probe failed for %s; "
+                    "capturing text-only", stashed.get("path"))
+        return update
+    return replace(update, media=MediaInput(
+        MediaKind.VOICE, data=data, mime=mime or "audio/ogg",
+        duration_seconds=duration, text=text))
 
 
 def _schedule_park_prompt(capture_id: str) -> None:
