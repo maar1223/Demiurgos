@@ -1389,6 +1389,15 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
         for media in f.media:
             media_name = Path(media.spool_relative_path).name
             existing = placement_by_name.get(media_name)
+            if existing is None:
+                # BUG 2 (spool collision rename): the spool target already
+                # existed, so the bytes landed under a renamed name
+                # (``pic-1.png``) while the inline placement refs keep the
+                # ORIGINAL ``ImageEntry.filename`` (``pic.png``). Resolve by
+                # the original name too before falling back to a synthetic
+                # placement on the first ficha.
+                existing = placement_by_name.get(
+                    Path(media.image.filename or "").name)
             if existing is not None:
                 owner = next(
                     (c for c in ficha_candidates

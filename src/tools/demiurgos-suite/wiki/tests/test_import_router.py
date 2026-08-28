@@ -434,6 +434,68 @@ class TestRouterVisionSeam:
         assert placement.heading_path == "Breve Historia"
         assert placement.context_text == "Retrato"
 
+    def test_spool_collision_rename_keeps_media_on_owning_ficha(
+            self, tmp_path, monkeypatch):
+        """BUG 2 gap — when a spool collision renames the stored file
+        (``pic.png`` -> ``pic-1.png`` because a same-stem sibling source in
+        the same job already stored it under ``media/Enciclopedia/``), the
+        media must still be attributed to the ficha whose body references
+        the ORIGINAL name (never folded into the FIRST ficha), with the
+        DOCX position contract intact."""
+        monkeypatch.setattr(
+            "sync_lore.utils.converter.convert_to_markdown",
+            lambda _p: "# El Origen\n\nHistoria antigua.\n\n"
+                       "# Breve Historia\n\n"
+                       "![pic](media/pic.png)\n",
+        )
+        monkeypatch.setattr(
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": ExtractionResult(
+                images=[_entry(filename="pic.png", page=None,
+                               data=b"PIC-BYTES",
+                               document_order=1, paragraph_index=2,
+                               anchor_type="inline",
+                               structural_path="body/p[2]/r[0]/inline[0]",
+                               heading_path="Breve Historia",
+                               context_text="Retrato")],
+                markdown=converted_markdown))
+        client, store, spool, _ = _make_app(tmp_path)
+        job = _create_job(client)
+        _stream(client, job["job_id"], b"PK..fake")
+        # Same-stem sibling source in the same job already stored pic.png
+        # under media/Enciclopedia/ — the docx image then collides and is
+        # renamed on disk (the injected ref keeps the ORIGINAL name).
+        # Binary bytes so the stale file is not picked up as a text source.
+        media_dir = spool / job["job_id"] / "media" / "Enciclopedia"
+        media_dir.mkdir(parents=True)
+        (media_dir / "pic.png").write_bytes(b"\x89PNG\r\n\x1a\nSTALE")
+        _analyze(client, job["job_id"])
+        # ``BoundedSpool._load_existing`` walks the job dir, so the seeded
+        # media file is also listed as an intake source; it reads as binary
+        # garbage and yields an empty, harmless candidate. Only the docx
+        # fichas matter for this scenario.
+        cands = {c.canonical_id: c for c in store.candidates_for(job["job_id"])
+                 if c.canonical_id in {"El Origen", "Breve Historia"}}
+        assert set(cands) == {"El Origen", "Breve Historia"}
+        # The collision really fired: bytes landed under the renamed path and
+        # the stale sibling file was not overwritten.
+        assert (media_dir / "pic-1.png").read_bytes() == b"PIC-BYTES"
+        assert (media_dir / "pic.png").read_bytes() == b"\x89PNG\r\n\x1a\nSTALE"
+        # The image is owned by the ficha whose body references the ORIGINAL
+        # name — never folded into the FIRST ficha.
+        owner = cands["Breve Historia"]
+        assert any("pic" in p.relative_media_path for p in owner.images)
+        assert not any("pic" in p.relative_media_path
+                       for p in cands["El Origen"].images)
+        # DOCX position contract survives the spool rename.
+        placement = next(
+            p for p in owner.images if "pic" in p.relative_media_path)
+        assert placement.document_order == 1
+        assert placement.paragraph_index == 2
+        assert placement.anchor_type == "inline"
+        assert placement.structural_path == "body/p[2]/r[0]/inline[0]"
+        assert placement.heading_path == "Breve Historia"
+
     def test_reimport_backfills_media_on_candidate_created_without_images(
             self, tmp_path, monkeypatch):
         """A candidate persisted while media extraction was unavailable (e.g.

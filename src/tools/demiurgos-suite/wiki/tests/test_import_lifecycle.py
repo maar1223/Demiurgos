@@ -109,6 +109,31 @@ class TestFrontmatterMaterialization:
         assert '  - "[[Ayagares::Descripción Física]]"' in content
         assert content.endswith("Fundada en el 1200 AE por los primeros colonos.")
 
+    def test_approved_materialization_keeps_ficha_heading_in_body(
+            self, store, service):
+        """Bug 3 — the ficha's own heading line is part of its content body
+        (``_ficha_from`` re-inserts it so the ficha is self-descriptive) and
+        must be written into the body, not only into the frontmatter
+        ``title``. The materialized OKF file opens its body with the heading
+        verbatim (``# Title``), so opening the .md shows the rendered ficha
+        under its own title."""
+        job = _job()
+        store.create_job(job)
+        heading = "# Ayagares"
+        body = "Fundada en el 1200 AE por los primeros colonos."
+        store.add_candidate(_candidate(
+            content_preview=f"{heading}\n\n{body}",
+            display_title="Ayagares"))
+        approval = service.issue_approval(job, "tester", [])
+        outcomes = service.execute(job, "tester", approval.digest, approval.token)
+        assert outcomes[0].written
+        content = _written(service)
+        # The heading survives in the BODY (after the frontmatter block), not
+        # only as ``title:`` — the ficha is self-descriptive when opened.
+        body_block = content.split("---", 2)[2].lstrip("\n")
+        assert body_block.startswith(heading), body_block
+        assert body_block.endswith(body)
+
     def test_legacy_candidate_without_frontmatter_writes_body_as_is(
             self, store, service):
         """Task 3.5 — a legacy candidate (frontmatter None) keeps the

@@ -495,12 +495,19 @@ def _position_lookup(media: list[ExtractedMedia]) -> dict[str, ExtractedMedia]:
     """Map media filename → ExtractedMedia for position enrichment.
 
     First occurrence wins so document order is preserved for duplicate
-    filenames (``pic.png`` vs ``pic-1.png`` spool collisions).
+    filenames. Keys by BOTH the spool basename (the on-disk name, possibly
+    renamed on collision) and the original ``ImageEntry.filename``, so an
+    injected markdown ref (``media/pic.png``) still resolves when the spool
+    renamed the file (``pic-1.png``) because the target already existed
+    (BUG 2 — spool collision rename vs injected ref attribution).
     """
     lookup: dict[str, ExtractedMedia] = {}
     for entry in media:
         name = Path(entry.spool_relative_path).name
         lookup.setdefault(name, entry)
+        original = Path(entry.image.filename or "").name
+        if original and original != name:
+            lookup.setdefault(original, entry)
     return lookup
 
 

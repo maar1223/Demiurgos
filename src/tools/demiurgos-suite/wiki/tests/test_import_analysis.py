@@ -715,6 +715,69 @@ class TestDocxStrategyIntegration:
         assert analyzed.media[0].document_order == 1
         assert analyzed.media[0].anchor_type == "inline"
 
+    def test_spool_collision_rename_preserves_position_enrichment(
+            self, monkeypatch, tmp_path):
+        """BUG 2 gap — spool collision rename vs injected ref attribution.
+
+        When ``store_media_in_spool`` renames a file on disk because the
+        target already exists (``pic.png`` -> ``pic-1.png`` — e.g. a
+        same-stem sibling source like ``Lore/Enciclopedia.md`` already
+        stored ``pic.png`` under ``media/Enciclopedia/`` in the same job),
+        the markdown ref injected by the DOCX strategy still points at the
+        ORIGINAL name (``media/pic.png``). ``_enrich_placements`` matches by
+        basename, so the ref must still resolve to the renamed media —
+        otherwise the DOCX position contract (``document_order`` /
+        ``paragraph_index``) is lost and the placement is silently
+        unenriched.
+        """
+        # Pre-existing spool file simulates a same-stem sibling source in
+        # the same job that already stored ``pic.png`` under this stem dir.
+        spool = tmp_path / "spool"
+        media_dir = spool / "media" / "Enciclopedia"
+        media_dir.mkdir(parents=True)
+        (media_dir / "pic.png").write_bytes(b"STALE-SIBLING-BYTES")
+
+        converted = "# Origen\n\nLa fundadora partió al exilio."
+        enriched = (
+            "# Origen\n\nLa fundadora partió al exilio.\n"
+            "![pic](media/pic.png)"
+        )
+        entry = _entry(
+            filename="pic.png", page=None, data=b"PIC-BYTES",
+            document_order=1, paragraph_index=2, anchor_type="inline",
+            structural_path="body/p[2]/r[0]/inline[0]",
+            heading_path="Origen", context_text="La fundadora partió",
+        )
+        monkeypatch.setattr(
+            "sync_lore.utils.converter.convert_to_markdown",
+            lambda _p: converted)
+        monkeypatch.setattr(
+            "sync_lore.import_docx_parser.extract_by_extension",
+            lambda _p, converted_markdown="": _strategy_result(
+                [entry], markdown=enriched))
+        (spool / "Lore").mkdir(parents=True)
+        (spool / "Lore" / "Enciclopedia.docx").write_bytes(b"PK..fake")
+        files = [{"relative": "Lore/Enciclopedia.docx",
+                  "sha256": "abc", "size": 8}]
+        report = analyze_source(files, _read_file(spool),
+                                file_path=_path_for(spool),
+                                spool_root=spool)
+        analyzed = report.ordered_files()[0]
+        # The collision really fired: the extracted bytes were stored under a
+        # renamed path and the stale file was not overwritten.
+        assert [m.spool_relative_path for m in analyzed.media] == \
+            ["media/Enciclopedia/pic-1.png"]
+        assert (media_dir / "pic.png").read_bytes() == b"STALE-SIBLING-BYTES"
+        assert (media_dir / "pic-1.png").read_bytes() == b"PIC-BYTES"
+        # The injected ref keeps pointing at the ORIGINAL name, and the DOCX
+        # position contract must survive the spool rename.
+        placement = analyzed.chunks[0].images[0]
+        assert placement.relative_media_path == "media/pic.png"
+        assert placement.document_order == 1
+        assert placement.paragraph_index == 2
+        assert placement.anchor_type == "inline"
+        assert placement.structural_path == "body/p[2]/r[0]/inline[0]"
+
     def test_strategy_warnings_flow_to_analyzed_file(
             self, monkeypatch, tmp_path):
         """R1-S2 — file-level strategy warnings (headers/SmartArt) surface on
