@@ -57,6 +57,17 @@ export interface LocalDevSessionStatus {
   label: string | null;
 }
 
+/**
+ * Response from POST /api/system/{action} (restart/shutdown). `accepted: true`
+ * means the launcher was dispatched and the stack is going down; a 500 carries
+ * the launcher's stderr excerpt in `error`.
+ */
+export interface SystemControlResponse {
+  action: "restart" | "shutdown";
+  accepted: boolean;
+  error?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Global runtime configuration (GET /api/config)
 // ---------------------------------------------------------------------------

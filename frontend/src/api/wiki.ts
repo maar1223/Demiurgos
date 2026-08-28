@@ -19,6 +19,7 @@ import type {
   ConfirmedEditRequest,
   RestoreFileRequest,
   SuccessResponse,
+  SystemControlResponse,
   TrashEntry,
   TrashListResponse,
   UploadResponse,
@@ -51,6 +52,23 @@ export function logoutLocalDevSession(): Promise<LocalDevSessionStatus> {
   return apiFetch<LocalDevSessionStatus>(
     apiUrl(["api", "auth", "local-dev", "session"]),
     { method: "DELETE", credentials: "same-origin" },
+  );
+}
+
+/**
+ * POST /api/system/{action} — dispatch a launcher-driven restart or shutdown
+ * of the whole Demiurgos stack. The launcher takes a while to tear services
+ * down and (for restart) bring them back, so this call MUST use an explicit
+ * long timeout (≥90s) instead of the apiFetch default 5s. The local session
+ * is expected to be closed (logout) BEFORE this call — the session does not
+ * survive a restart.
+ */
+export function systemControlAction(
+  action: "restart" | "shutdown",
+): Promise<SystemControlResponse> {
+  return apiFetch<SystemControlResponse>(
+    apiUrl(["api", "system", action]),
+    { method: "POST", credentials: "same-origin", timeout: 90_000 },
   );
 }
 
