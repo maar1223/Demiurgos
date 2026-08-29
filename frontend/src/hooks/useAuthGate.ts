@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getLocalDevSession } from "@/api/wiki";
+import { getAuthStatus } from "@/api/wiki";
 
 export interface AuthGateState {
   loading: boolean;
@@ -8,15 +8,17 @@ export interface AuthGateState {
 }
 
 /**
- * Authentication gate: when local auth is enabled (DEMIURGOS_AUTH_MODE=local-dev),
- * the user MUST be authenticated before accessing the application.
+ * Authentication gate: when auth is enabled (DEMIURGOS_AUTH_MODE=local-dev or
+ * =google), the user MUST be authenticated before accessing the application.
  *
  * This is a HARD GATE, not a soft redirect. When auth is enabled and the user
  * is not authenticated, they cannot access any application surface. This
  * prevents the common UX failure where users navigate the app without realizing
  * they need to authenticate, then encounter silent failures on write operations.
  *
- * When auth is disabled (default), the gate always passes through.
+ * Mode-aware: the unified GET /api/auth/session/status endpoint covers every
+ * mode (disabled | local-dev | google). When auth is disabled (default), the
+ * gate always passes through.
  */
 export function useAuthGate(): AuthGateState {
   const [state, setState] = useState<AuthGateState>({
@@ -27,7 +29,7 @@ export function useAuthGate(): AuthGateState {
 
   useEffect(() => {
     let active = true;
-    void getLocalDevSession()
+    void getAuthStatus()
       .then((status) => {
         if (!active) return;
         setState({
