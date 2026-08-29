@@ -20,6 +20,7 @@ This module is pure and filesystem-scoped: it writes ONLY under the given
 
 from __future__ import annotations
 
+import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -201,6 +202,30 @@ def create_world(
     )
 
 
+def _is_case_insensitive_fs(path: Path) -> bool:
+    """True when the filesystem at ``path`` is case-insensitive (R-CIM-05).
+
+    Probes the filesystem at runtime: creates a temp file and checks whether
+    its swapcased name resolves to the same entry. Cleans up after itself
+    (stateless, no side effects). Defaults to False (case-sensitive) on
+    read-only filesystems or any OSError so Linux CI never breaks when the
+    probe fails.
+    """
+    try:
+        with tempfile.NamedTemporaryFile(dir=path, delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            swapcase_path = tmp_path.parent / tmp_path.name.swapcase()
+            if swapcase_path == tmp_path:
+                # No cased characters to swap — cannot probe; stay conservative.
+                return False
+            return swapcase_path.exists()
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except OSError:
+        return False
+
+
 def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
     """Read-only legacy-layout detection (ONB-4.2).
 
@@ -209,14 +234,15 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
     ``lore``/``personajes`` (OC7). Each finding is
     ``{"world": <name>, "folders": [folder, ...]}``.
 
+    FS-aware (R-CIM-05): on case-insensitive filesystems (macOS APFS,
+    Windows NTFS), a folder named ``Lore`` matches the canonical ``lore``
+    case-insensitively — the runtime already operates on the canonical tree
+    through legacy-cased paths — so it is NOT reported as legacy. On
+    case-sensitive filesystems the existing behavior is preserved.
+
     Detection is STRICTLY read-only: it never renames, moves, deletes, or
-    writes anything. Runtime paths are case-sensitive, so a legacy folder is
-    invisible to the canonical readers; migration is a separate,
-    explicitly-approved step (ONB-4.3) and never automatic. Visibility rules
-    mirror ``_list_worlds`` (hidden/``_``-prefixed entries and ``Ideas`` are
-    skipped); names are compared as directory-entry strings, so a world with
-    only the lowercase canonical folders is never reported even on
-    case-insensitive filesystems.
+    writes anything. Visibility rules mirror ``_list_worlds`` (hidden/``_``-
+    prefixed entries and ``Ideas`` are skipped).
     """
     findings: list[dict] = []
     root = Path(mundos_dir)
@@ -226,6 +252,7 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
         entries = sorted(root.iterdir())
     except OSError:
         return findings
+    case_insensitive = _is_case_insensitive_fs(root)
     for entry in entries:
         if not entry.is_dir():
             continue
@@ -237,7 +264,14 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
             }
         except OSError:
             continue
-        found = [folder for folder in LEGACY_FOLDERS if folder in top_dir_names]
+        if case_insensitive:
+            top_lower = {name.lower() for name in top_dir_names}
+            found = [
+                folder for folder in LEGACY_FOLDERS
+                if folder in top_dir_names and folder.lower() not in top_lower
+            ]
+        else:
+            found = [folder for folder in LEGACY_FOLDERS if folder in top_dir_names]
         if found:
             findings.append({"world": entry.name, "folders": found})
     return findings
