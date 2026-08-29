@@ -4113,7 +4113,22 @@ class TestOnboardingRoutes:
         assert "ai" in body["remote_pending"]
         assert "telegram" in body["remote_pending"]
 
-    def test_step0_write_fails_closed_without_principal(self, empty_client: TestClient):
+    def test_step0_write_allowed_without_principal_when_vault_off(
+            self, empty_client: TestClient):
+        """S-AC-02a — with the vault OFF (default fresh install) step0 needs
+        no authentication."""
+        resp = _post_step0(empty_client)
+        assert resp.status_code == 200, resp.text
+
+    def test_step0_write_fails_closed_without_principal_when_vault_on(
+            self, empty_client: TestClient):
+        """S-AC-02b — with the vault ON (persisted flag) unauthenticated
+        step0 fails closed (401)."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state.setdefault("capabilities", {})["vault"] = {
+            "enabled": True, "reauth_interval_d": 14}
+        registry.atomic_commit(state)
         resp = _post_step0(empty_client)
         assert resp.status_code == 401
 
@@ -4176,10 +4191,15 @@ class TestWorldCreateEndpoint:
         assert resp.status_code == 201, resp.text
         assert resp.json()["kind"] == "created"
 
-    def test_create_fails_closed_without_principal_when_auth_enabled(
-            self, empty_client: TestClient, monkeypatch):
-        """When auth is enabled, world creation requires authentication."""
-        monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
+    def test_create_fails_closed_without_principal_when_vault_on(
+            self, empty_client: TestClient):
+        """S-AC-02d — with the vault ON (persisted flag) world creation
+        requires authentication."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state.setdefault("capabilities", {})["vault"] = {
+            "enabled": True, "reauth_interval_d": 14}
+        registry.atomic_commit(state)
         resp = empty_client.post("/api/worlds", json={"name": "mundo-x", "lore_skeleton": False})
         assert resp.status_code == 401
 
@@ -4914,8 +4934,14 @@ class TestOfflineContinuation:
             self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
         """An expired local-dev session must not authorize gated writes: it is
         pruned on access and every write fails closed (OC1/OC5 — expired
-        authorization is never reused)."""
+        authorization is never reused). The vault flag is ON so the
+        onboarding/world gates are active (S-AC-02b/d)."""
         monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state.setdefault("capabilities", {})["vault"] = {
+            "enabled": True, "reauth_interval_d": 14}
+        registry.atomic_commit(state)
         started = empty_client.post("/api/auth/local-dev/session")
         assert started.status_code == 200
         # Expire the stored session directly (simulates TTL passage).

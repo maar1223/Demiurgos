@@ -231,10 +231,10 @@ def test_account_creation_requires_username(credentials_client: TestClient):
 
 def test_credentials_endpoints_forbidden_outside_credentials_mode(
         credentials_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """With the vault OFF (mode disabled, no flag), vault-only endpoints are
+    forbidden (403). Account creation is the exception: it is part of the
+    default onboarding flow and stays allowed on fresh installs (S-AC-01b)."""
     monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "disabled")
-    assert credentials_client.post(
-        "/api/auth/credentials/account",
-        json={"username": "x"}).status_code == 403
     assert credentials_client.post(
         "/api/auth/credentials/login", json={}).status_code == 403
     assert credentials_client.post(

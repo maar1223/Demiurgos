@@ -360,10 +360,13 @@ def get_locale():
 
 @app.post("/api/onboarding/step0")
 def onboarding_step0(body: OnboardingStep0Request, request: Request):
-    """Persist step 0 locale. Gated: unauthenticated access fails closed."""
-    principal = _resolve_principal(request)
-    if principal is None:
-        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    """Persist step 0 locale. Gated ONLY when the vault is ON: fresh installs
+    with the vault OFF must onboard without authentication (S-AC-02a);
+    with the vault ON unauthenticated access fails closed (401, S-AC-02b)."""
+    if _vault_active():
+        principal = _resolve_principal(request)
+        if principal is None:
+            return JSONResponse(status_code=401, content={"detail": "Authentication required."})
     registry = _local_state()
     try:
         next_state = _commit_step0(
@@ -381,11 +384,13 @@ def onboarding_step0(body: OnboardingStep0Request, request: Request):
 def create_world(body: WorldCreateRequest, request: Request):
     """Create a canonical new world (lowercase tree + optional OC8 skeleton).
 
-    Gated write; idempotent repeats are harmless; collisions and unsafe names
-    are rejected without mutation. When local auth is disabled, creation is
-    allowed without authentication (development mode).
+    Gated write when the vault is ON (fail-closed 401, S-AC-02d); with the
+    vault OFF creation needs no authentication (S-AC-02c) — the local-only
+    threat model treats the vault flag as the single source of truth.
+    Idempotent repeats are harmless; collisions and unsafe names are rejected
+    without mutation.
     """
-    if _local_auth_enabled():
+    if _vault_active():
         principal = _resolve_principal(request)
         if principal is None:
             return JSONResponse(status_code=401, content={"detail": "Authentication required."})
@@ -854,13 +859,26 @@ def _local_session_for_request(request: Request | None) -> dict | None:
         return _sessions.get(token_hash)
 
 
-def _credentials_auth_enabled() -> bool:
-    return _auth_mode() == _CREDENTIALS_AUTH_MODE
+def _vault_active() -> bool:
+    """Vault is active when the operator override OR the persisted flag is on.
+
+    PRIMARY: ``capabilities.vault.enabled`` in local state (R-VC-01). The
+    ``DEMIURGOS_AUTH_MODE=credentials`` env override is the operator escape
+    hatch (S-VC-01b): it forces the vault on regardless of the flag. This
+    helper replaces ``_credentials_auth_enabled`` as the single auth gate for
+    every credentials endpoint and for the onboarding/world fail-closed gates
+    (R-AC-01, R-AC-02, R-VC-06).
+    """
+    if _auth_mode() == _CREDENTIALS_AUTH_MODE:
+        return True
+    state = _local_state().snapshot()
+    vault = state.get("capabilities", {}).get("vault") or {}
+    return bool(vault.get("enabled"))
 
 
 def _credentials_session_for_request(request: Request | None) -> dict | None:
     """Resolve a credentials-vault session. NOT loopback-bound (unlike local-dev)."""
-    if not _credentials_auth_enabled():
+    if not _vault_active():
         return None
     token = request.cookies.get(_SESSION_COOKIE) if request else None
     if not token:
@@ -876,11 +894,12 @@ def _session_for_request(request: Request | None) -> dict | None:
     """Unified session resolution across every provider in the active mode.
 
     ``local-dev`` keeps its loopback-only binding; credentials-vault sessions
-    are NOT loopback-bound. Disabled mode never resolves a session.
+    are NOT loopback-bound and resolve whenever the vault is active (flag or
+    env override, R-VC-06). Disabled mode never resolves a session.
     """
     if _auth_mode() == _LOCAL_AUTH_MODE:
         return _local_session_for_request(request)
-    if _auth_mode() == _CREDENTIALS_AUTH_MODE:
+    if _vault_active():
         return _credentials_session_for_request(request)
     return None
 
@@ -923,23 +942,54 @@ def _local_status(request: Request) -> dict:
 
 
 def _reauth_interval_d() -> int:
-    """Soft re-auth countdown interval in days (R-AC-04, default 14)."""
-    return int(os.environ.get(
-        "DEMIURGOS_REAUTH_INTERVAL_D", str(_DEFAULT_REAUTH_INTERVAL_D)))
+    """Soft re-auth countdown interval in days (R-VC-05).
+
+    PRIMARY: ``capabilities.vault.reauth_interval_d`` persisted in local
+    state (default 14, R-VC-01). ``DEMIURGOS_REAUTH_INTERVAL_D`` is the
+    operator override and wins when set (S-VC-05b).
+    """
+    override = os.environ.get("DEMIURGOS_REAUTH_INTERVAL_D")
+    if override is not None and override.strip():
+        return int(override)
+    state = _local_state().snapshot()
+    vault = state.get("capabilities", {}).get("vault") or {}
+    return int(vault.get("reauth_interval_d", _DEFAULT_REAUTH_INTERVAL_D))
+
+
+def _vault_config() -> dict:
+    """Public vault status for the Settings panel (R-VC-02, S-VC-02a/b).
+
+    Read-only and safe to expose without authentication: it never returns the
+    words hash, the password hash, or any session material.
+    """
+    account = account_get_account(_local_state())
+    return {
+        "enabled": _vault_active(),
+        "account_exists": account is not None,
+        "username": account.get("username") if account else None,
+        "has_password": bool(account and account.get("password_hash")),
+        "reauth_interval_d": _reauth_interval_d(),
+        "env_override": _auth_mode() == _CREDENTIALS_AUTH_MODE,
+    }
 
 
 def _session_status(request: Request) -> dict:
-    """Unified mode-aware session status (R-ID-01): provider included when an
-    active session exists (local-dev | credentials). Credentials sessions
-    additionally expose ``last_auth_at`` (ISO 8601) and ``days_until_reauth``
-    (clamped at 0) for the soft re-auth countdown (R-AC-04, S-AC-04b/d).
+    """Unified mode-aware session status (R-ID-01 / R-VC-06): provider
+    included when an active session exists (local-dev | credentials).
+    Credentials sessions additionally expose ``last_auth_at`` (ISO 8601) and
+    ``days_until_reauth`` (clamped at 0) for the soft re-auth countdown
+    (R-AC-04, S-AC-04b/d).
 
-    Credentials mode ALWAYS exposes ``has_password`` (bool) so the login UI
+    ``enabled`` equals ``_vault_active()`` (R-VC-06): when the vault is OFF
+    the app is open and the AuthGate passes through; when it is ON
+    unauthenticated users MUST be redirected to login (S-VC-06a/b).
+
+    An active vault ALWAYS exposes ``has_password`` (bool) so the login UI
     can choose between the password prompt and the passwordless "Enter"
     button from the account slot instead of adapting to server errors
     (R-AC-02, S-AC-02a/b)."""
     mode = _auth_mode()
-    enabled = mode in (_LOCAL_AUTH_MODE, _CREDENTIALS_AUTH_MODE)
+    enabled = _vault_active()
     session = _session_for_request(request) if enabled else None
     status = {
         "mode": mode,
@@ -948,7 +998,7 @@ def _session_status(request: Request) -> dict:
         "label": session["label"] if session else None,
         "provider": session["provider"] if session else None,
     }
-    if mode == _CREDENTIALS_AUTH_MODE:
+    if _vault_active():
         account = account_get_account(_local_state())
         status["has_password"] = bool(account and account.get("password_hash"))
     if session and session.get("provider") == _CREDENTIALS_PROVIDER:
@@ -1051,9 +1101,12 @@ def credentials_account_create(payload: CredentialsAccountRequest, request: Requ
     only their Argon2id hash is stored (S-AC-01a). ``password`` is optional:
     a null ``password_hash`` marks the account passwordless (S-AC-01b). The
     account step is recorded as completed in onboarding (blocking step).
+
+    NOT gated on the vault being active: the account step is part of the
+    default onboarding flow and must work on a fresh install with the vault
+    OFF (S-AC-01b) as well as with the vault ON via the flag (S-AC-01a). A
+    second account is always rejected (409).
     """
-    if not _credentials_auth_enabled():
-        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     if account_get_account(_local_state()) is not None:
         raise HTTPException(status_code=409, detail="Account already exists")
     username = payload.username.strip()
@@ -1079,7 +1132,7 @@ def credentials_login(payload: CredentialsLoginRequest, request: Request, respon
     words (S-AC-02c, R-ERK-02). On success the HttpOnly vault session cookie
     is set with the remember-me TTL (30d) or the 8h default (R-AC-03).
     """
-    if not _credentials_auth_enabled():
+    if not _vault_active():
         raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     account = account_get_account(_local_state())
     if account is None:
@@ -1136,7 +1189,7 @@ def credentials_recover(payload: CredentialsRecoverRequest, request: Request, re
     minutes. Wrong words are rate-limited on the words limiter (R-ERK-02),
     independent from the password limiter.
     """
-    if not _credentials_auth_enabled():
+    if not _vault_active():
         raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     account = account_get_account(_local_state())
     if account is None:
@@ -1165,7 +1218,7 @@ def credentials_recover_complete(payload: CredentialsRecoverCompleteRequest, req
     ``new_password=None`` leaves the password untouched; ``new_username=None``
     leaves the username untouched.
     """
-    if not _credentials_auth_enabled():
+    if not _vault_active():
         raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     token_hash = _hash_token(payload.recovery_token)
     with _local_session_lock:
@@ -1191,7 +1244,7 @@ class CredentialsPasswordRequest(BaseModel):
 @app.post("/api/auth/credentials/password")
 def credentials_change_password(payload: CredentialsPasswordRequest, request: Request, response: Response):
     """Change the password by proving ownership with the recovery words (R-AC-05a)."""
-    if not _credentials_auth_enabled():
+    if not _vault_active():
         raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -1211,7 +1264,7 @@ class CredentialsPasswordRemoveRequest(BaseModel):
 @app.post("/api/auth/credentials/password/remove")
 def credentials_remove_password(payload: CredentialsPasswordRemoveRequest, request: Request, response: Response):
     """Remove the password (back to passwordless) via the recovery words (R-AC-05b)."""
-    if not _credentials_auth_enabled():
+    if not _vault_active():
         raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -1232,7 +1285,7 @@ class CredentialsUsernameRequest(BaseModel):
 @app.post("/api/auth/credentials/username")
 def credentials_change_username(payload: CredentialsUsernameRequest, request: Request, response: Response):
     """Change the username by proving ownership with the recovery words (R-AC-05c)."""
-    if not _credentials_auth_enabled():
+    if not _vault_active():
         raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -1255,12 +1308,141 @@ def credentials_rotate_words(request: Request):
     Returns the new plaintext words exactly once; the old words are
     invalidated by the atomic commit of the new Argon2id hash.
     """
-    if not _credentials_auth_enabled():
+    if not _vault_active():
         raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     words, _ = account_rotate_words(_local_state())
     return {"new_words": words}
+
+
+# ---------------------------------------------------------------------------
+# R-VC-02..R-VC-05 — vault lifecycle (vault-settings-configure)
+# ---------------------------------------------------------------------------
+
+
+class VaultEnableRequest(BaseModel):
+    username: str | None = None
+    password: str | None = None
+    words: str | None = None
+
+
+class VaultDisableRequest(BaseModel):
+    words: str | None = None
+
+
+class VaultReauthIntervalRequest(BaseModel):
+    reauth_interval_d: int
+
+
+@app.get("/api/auth/vault/config")
+def vault_config():
+    """Public vault status for the Settings panel (R-VC-02, S-VC-02a/b).
+
+    NOT auth-gated: the panel must be reachable before login so fresh
+    installs can activate the vault from onboarding/settings (S-VC-02a), and
+    an ON vault still exposes only read-only status, never secrets (S-VC-02b).
+    """
+    return _vault_config()
+
+
+@app.post("/api/auth/vault/enable")
+def vault_enable(payload: VaultEnableRequest):
+    """Activate the vault (R-VC-03, S-VC-03a/b/c/d).
+
+    Precondition: vault OFF and either no account (create the account and
+    return the words exactly once, S-VC-03a) or an existing account whose
+    recovery words verify (ownership proof, S-VC-03b; wrong words -> 400 and
+    the flag stays off, S-VC-03c). An already-ON vault is rejected (409,
+    S-VC-03d). The persisted ``capabilities.vault.enabled`` flag becomes the
+    PRIMARY source; the env override still wins when set (S-VC-01b).
+    """
+    if _vault_active():
+        raise HTTPException(status_code=409, detail="Vault is already enabled")
+    registry = _local_state()
+    account = account_get_account(registry)
+    if account is None:
+        username = (payload.username or "").strip()
+        if not username:
+            raise HTTPException(status_code=422, detail="Username is required")
+        words, _ = account_create_account(registry, username, payload.password)
+        state = registry.snapshot()
+        caps = state.setdefault("capabilities", {})
+        caps["vault"] = {
+            "enabled": True,
+            "reauth_interval_d": int(
+                (caps.get("vault") or {}).get(
+                    "reauth_interval_d", _DEFAULT_REAUTH_INTERVAL_D)),
+        }
+        registry.atomic_commit(state)
+        registry.atomic_commit(_commit_account_created(registry.snapshot()))
+        return {"enabled": True, "words": words}
+    if not payload.words:
+        raise HTTPException(status_code=400, detail="Recovery words are required")
+    if not account_verify_words(
+            payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=400, detail="Invalid or rate-limited recovery words")
+    state = registry.snapshot()
+    caps = state.setdefault("capabilities", {})
+    caps["vault"] = {
+        "enabled": True,
+        "reauth_interval_d": int(
+            (caps.get("vault") or {}).get(
+                "reauth_interval_d", _DEFAULT_REAUTH_INTERVAL_D)),
+    }
+    registry.atomic_commit(state)
+    return {"enabled": True}
+
+
+@app.post("/api/auth/vault/disable")
+def vault_disable(payload: VaultDisableRequest):
+    """Disable the vault (R-VC-04, S-VC-04a/b/c).
+
+    Words are the mandatory ownership proof and verification is rate-limited
+    (S-VC-04c); a session alone NEVER suffices (S-VC-04b). Missing or wrong
+    words return 400 (S-VC-04b/c). An already-disabled vault returns 409.
+    """
+    if not _vault_active():
+        raise HTTPException(status_code=409, detail="Vault is already disabled")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=409, detail="No account configured")
+    if not payload.words:
+        raise HTTPException(status_code=400, detail="Recovery words are required")
+    if not account_verify_words(
+            payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=400, detail="Invalid or rate-limited recovery words")
+    registry = _local_state()
+    state = registry.snapshot()
+    caps = state.setdefault("capabilities", {})
+    caps["vault"] = {
+        "enabled": False,
+        "reauth_interval_d": int(
+            (caps.get("vault") or {}).get(
+                "reauth_interval_d", _DEFAULT_REAUTH_INTERVAL_D)),
+    }
+    registry.atomic_commit(state)
+    return {"enabled": False}
+
+
+@app.post("/api/auth/vault/reauth-interval")
+def vault_set_reauth_interval(payload: VaultReauthIntervalRequest):
+    """Adjust the soft re-auth countdown interval (R-VC-05, S-VC-05a/b).
+
+    Persists ``capabilities.vault.reauth_interval_d`` (PRIMARY); the
+    ``DEMIURGOS_REAUTH_INTERVAL_D`` env override still wins when set
+    (S-VC-05b). The response always reports the EFFECTIVE interval.
+    """
+    if not _vault_active():
+        raise HTTPException(status_code=403, detail="Vault is disabled")
+    if payload.reauth_interval_d < 1:
+        raise HTTPException(status_code=422, detail="reauth_interval_d must be >= 1")
+    registry = _local_state()
+    state = registry.snapshot()
+    vault = state.setdefault("capabilities", {}).setdefault("vault", {})
+    vault["reauth_interval_d"] = payload.reauth_interval_d
+    registry.atomic_commit(state)
+    return {"reauth_interval_d": _reauth_interval_d()}
 
 
 def _resolve_principal(request=None) -> EditPrincipal | None:
