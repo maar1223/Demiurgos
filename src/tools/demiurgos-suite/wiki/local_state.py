@@ -70,6 +70,9 @@ def default_state() -> dict[str, Any]:
             "world": "pending",
             "offline": "pending",
             "import": "pending",
+            # Instance configuration state (not a card state): Argon2id hash of
+            # the offline emergency recovery key, or null when unset.
+            "emergency_key_hash": None,
         },
     }
 

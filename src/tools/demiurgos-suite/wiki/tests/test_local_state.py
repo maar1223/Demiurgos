@@ -31,6 +31,12 @@ def state_file(tmp_path: Path) -> Path:
     return tmp_path / "data" / "local-state.json"
 
 
+def test_default_state_includes_emergency_key_hash_slot() -> None:
+    data = default_state()
+    assert "emergency_key_hash" in data["capabilities"]
+    assert data["capabilities"]["emergency_key_hash"] is None
+
+
 def test_load_absent_file_returns_safe_default(state_file: Path) -> None:
     state = LocalState(state_file)
     data = state.snapshot()
