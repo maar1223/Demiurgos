@@ -80,6 +80,16 @@ def default_state() -> dict[str, Any]:
                 "password_hash": None,
                 "words_hash": None,
             },
+            # Vault lifecycle slot (vault-settings-configure, R-VC-01): the
+            # persisted PRIMARY source for "vault is ON". Existing installs
+            # without this slot fall back to ``{enabled: False,
+            # reauth_interval_d: 14}`` via safe ``.get()`` — never regenerating
+            # words. ``DEMIURGOS_AUTH_MODE=credentials`` stays an optional
+            # operator override.
+            "vault": {
+                "enabled": False,
+                "reauth_interval_d": 14,
+            },
         },
     }
 

@@ -1,11 +1,11 @@
 """ONB-1.8 — local_editor readiness probe: storage write→read→delete round-trip.
 Readiness is derived runtime truth, never configuration claims.
 
-Also covers the auth-vault-credentials identity contract (R-ID-01, S-ID-01a/b/c):
-the identity card is ``configured`` ONLY when a local account exists in the
-registry (``capabilities.account`` with username + words_hash) OR when
-``DEMIURGOS_AUTH_MODE=credentials`` is active; registry claims never configure
-it.
+Also covers the vault-settings-configure identity contract (R-ID-01,
+S-ID-01a/b): the identity card is ``configured`` ONLY when the persisted
+vault flag is on (``capabilities.vault.enabled``, PRIMARY) OR when
+``DEMIURGOS_AUTH_MODE=credentials`` is active; an account alone never
+configures it (S-ID-01b) and registry claims never configure it.
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def test_probe_readback_mismatch_detected(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 # ---------------------------------------------------------------------------
-# R-ID-01 — identity card dedicated contract (S-ID-01a/b/c)
+# R-ID-01 — identity card dedicated contract (S-ID-01a/b)
 # ---------------------------------------------------------------------------
 
 
@@ -80,13 +80,33 @@ def _account_state(username: str | None = "ada", words_hash: str | None = "$argo
     }
 
 
-def test_identity_configured_when_account_exists(
+def _vault_on_state(username: str | None = "ada",
+                    words_hash: str | None = "$argon2id$abc") -> dict:
+    """Account slot + persisted vault flag ON (S-ID-01a)."""
+    state = _account_state(username, words_hash)
+    state["capabilities"]["vault"] = {"enabled": True, "reauth_interval_d": 14}
+    return state
+
+
+def test_identity_configured_when_vault_flag_on(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    """S-ID-01a — a real account (username + words_hash) configures identity,
-    regardless of auth mode."""
+    """S-ID-01a — the persisted vault flag (with an account) configures
+    identity, regardless of auth mode."""
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    cards = project_cards(_vault_on_state(), worlds=[], probe_ok=True)
+    assert cards["identity"] == "configured"
+    # The identity contract is local configuration, not connectivity: it must
+    # never surface as remote-pending (R-ID-01).
+    assert "identity" not in project_offline(cards)["remote_pending"]
+
+
+def test_identity_pending_when_account_exists_but_vault_off(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """S-ID-01b — an account alone NEVER configures identity: without the
+    vault flag (or the env override) the card stays pending."""
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     cards = project_cards(_account_state(), worlds=[], probe_ok=True)
-    assert cards["identity"] == "configured"
+    assert cards["identity"] == "pending"
     # The identity contract is local configuration, not connectivity: it must
     # never surface as remote-pending (R-ID-01).
     assert "identity" not in project_offline(cards)["remote_pending"]
@@ -138,6 +158,7 @@ def test_identity_configured_helper_contract(
     assert identity_configured() is False
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     assert identity_configured() is False
-    # Account branch is mode-independent (OR contract, S-ID-01a).
-    assert identity_configured(_account_state()) is True
+    # Flag branch is mode-independent (flag-primary contract, S-ID-01a/b).
+    assert identity_configured(_vault_on_state()) is True
+    assert identity_configured(_account_state()) is False  # account alone, flag OFF
     assert identity_configured(_account_state(words_hash=None)) is False
