@@ -12,9 +12,11 @@ import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
 import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { getReadiness } from "@/api/onboarding";
+import { getAuthStatus, logoutSession, rotateEmergencyKey } from "@/api/wiki";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
-import type { ReadinessSnapshot, WorldInfo } from "@/api/types";
+import { reloadPage } from "@/lib/reloadPage";
+import type { AuthSessionStatus, ReadinessSnapshot, WorldInfo } from "@/api/types";
 import {
   CARD_DEFS,
   ESSENTIAL_BADGES,
@@ -30,20 +32,77 @@ import { cn } from "@/lib/utils";
 type ProfileSection = "sesion" | "configuracion" | "integraciones" | "asistente" | "mundos";
 
 /** Sesión de edición — the same local-dev session controls as the Navbar
- *  dropdown, kept accessible from the full Profile page. */
+ *  dropdown, kept accessible from the full Profile page. Mode-aware: in the
+ *  google vault mode (DEMIURGOS_AUTH_MODE=google) the panel shows the vault
+ *  session (logout + emergency-key rotation); local-dev and disabled keep
+ *  their legacy behavior unchanged. */
 function SessionSection() {
-  const { status, isLoading, error, start, logout } = useLocalDevAuth(true);
+  const localDev = useLocalDevAuth(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Unified status decides the vault branch; on failure the panel degrades
+  // to the local-dev view — a low-stakes read, never a wall.
+  const [vaultStatus, setVaultStatus] = useState<AuthSessionStatus | null>(null);
+  const [rotating, setRotating] = useState(false);
+  const [newKey, setNewKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void getAuthStatus()
+      .then((next) => {
+        if (active) setVaultStatus(next);
+      })
+      .catch(() => {
+        if (active) setVaultStatus(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const handleVaultLogout = async () => {
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await logoutSession();
+      reloadPage();
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error ? cause.message : "No se pudo cerrar la sesión",
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRotate = async () => {
+    setRotating(true);
+    setActionError(null);
+    setNewKey(null);
+    try {
+      const { new_key } = await rotateEmergencyKey();
+      // The server persists only the hash; the plaintext is shown once.
+      setNewKey(new_key);
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error
+          ? cause.message
+          : "No se pudo rotar la clave de emergencia",
+      );
+    } finally {
+      setRotating(false);
+    }
+  };
 
   const handleAction = async () => {
     setActionLoading(true);
     setActionError(null);
     try {
-      if (status?.authenticated) {
-        await logout();
+      if (localDev.status?.authenticated) {
+        await localDev.logout();
       } else {
-        await start();
+        await localDev.start();
       }
     } catch (cause) {
       setActionError(
@@ -54,7 +113,66 @@ function SessionSection() {
     }
   };
 
-  if (isLoading) {
+  // Google vault mode: session controls + emergency-key rotation.
+  if (vaultStatus?.mode === "google") {
+    return (
+      <div className="rounded-lg border border-filio bg-madero p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-heading text-body text-pergamino">Sesión de edición</h3>
+          <span className="text-small text-tinta-desvaida">Bóveda</span>
+        </div>
+
+        {vaultStatus.authenticated ? (
+          <>
+            <p className="mt-3 text-small text-musgo">Sesión activa</p>
+            <p className="mt-1 text-small text-tinta-desvaida">{vaultStatus.label}</p>
+            <p className="mt-1 text-small text-tinta-desvaida">
+              Proveedor: {providerLabel(vaultStatus.provider)}
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => void handleVaultLogout()}
+                disabled={actionLoading}
+              >
+                {actionLoading ? "Cerrando…" : "Cerrar sesión"}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void handleRotate()}
+                disabled={rotating}
+              >
+                {rotating ? "Rotando…" : "Rotar clave de emergencia"}
+              </Button>
+            </div>
+            {newKey && (
+              <div
+                role="status"
+                className="mt-4 rounded-lg border border-musgo/40 bg-cripta/50 p-3"
+              >
+                <p className="text-small text-musgo">
+                  Nueva clave de recuperación — guardala fuera del navegador:
+                </p>
+                <p className="mt-2 break-words font-mono text-small text-pergamino">
+                  {newKey}
+                </p>
+              </div>
+            )}
+          </>
+        ) : (
+          <p className="mt-3 text-small text-tinta-desvaida">
+            No hay una sesión de bóveda activa. Iniciá sesión para editar y
+            configurar el perfil.
+          </p>
+        )}
+
+        {actionError && <p className="mt-3 text-small text-sangre">{actionError}</p>}
+      </div>
+    );
+  }
+
+  // Local-dev / disabled: legacy panel (unchanged).
+  if (localDev.isLoading) {
     return (
       <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida">
         <Spinner size="sm" /> Comprobando sesión local…
@@ -62,11 +180,11 @@ function SessionSection() {
     );
   }
 
-  if (error) {
-    return <p className="text-small text-sangre">{error.message}</p>;
+  if (localDev.error) {
+    return <p className="text-small text-sangre">{localDev.error.message}</p>;
   }
 
-  if (!status) return null;
+  if (!localDev.status) return null;
 
   return (
     <div className="rounded-lg border border-filio bg-madero p-4">
@@ -75,10 +193,10 @@ function SessionSection() {
         <span className="text-small text-tinta-desvaida">Local</span>
       </div>
 
-      {status.authenticated && (
+      {localDev.status.authenticated && (
         <>
           <p className="mt-3 text-small text-musgo">Sesión local activa</p>
-          <p className="mt-1 text-small text-tinta-desvaida">{status.label}</p>
+          <p className="mt-1 text-small text-tinta-desvaida">{localDev.status.label}</p>
           <Button
             variant="secondary"
             onClick={() => void handleAction()}
@@ -90,7 +208,7 @@ function SessionSection() {
         </>
       )}
 
-      {!status.authenticated && status.enabled && (
+      {!localDev.status.authenticated && localDev.status.enabled && (
         <>
           <p className="mt-3 text-small text-tinta-desvaida">
             Sesión local no iniciada. Iniciala para editar y configurar el perfil.
@@ -106,7 +224,7 @@ function SessionSection() {
         </>
       )}
 
-      {!status.enabled && (
+      {!localDev.status.enabled && (
         <p className="mt-3 text-small text-tinta-desvaida">
           Autenticación local desactivada. Activá{" "}
           <code className="text-plata">DEMIURGOS_AUTH_MODE=local-dev</code> en{" "}
@@ -117,6 +235,20 @@ function SessionSection() {
       {actionError && <p className="mt-3 text-small text-sangre">{actionError}</p>}
     </div>
   );
+}
+
+/** Human label for the active session provider. */
+function providerLabel(provider?: AuthSessionStatus["provider"]): string {
+  switch (provider) {
+    case "google":
+      return "Google";
+    case "emergency":
+      return "Clave de emergencia";
+    case "local-dev":
+      return "Local";
+    default:
+      return "Desconocido";
+  }
 }
 
 /** Perfil → Integraciones → Captura de ideas — the single Telegram surface.

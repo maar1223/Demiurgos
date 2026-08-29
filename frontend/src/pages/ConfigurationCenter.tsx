@@ -30,17 +30,22 @@ export const STATE_META: Record<CardState, { label: string; badge: "default" | "
  * reports "configured" for one of these keys, the UI forces the honest
  * pending state instead of overstating readiness.
  *
- * - identity / backup: remote capabilities whose dedicated contracts do not
- *   exist in this change.
+ * - backup: remote capability whose dedicated contract does not exist in
+ *   this change (Drive consent stays separate from Google identity).
  * - import (ONB-3.5): the importer is a separate SDD; its card exposes
  *   entry/pending only and must never claim an import happened.
  *
- * NOTE (WU-3b1): telegram is intentionally NOT in this set anymore — ONB-3.3
+ * NOTE (auth-google-vault R-ID1): identity is intentionally NOT in this set
+ * anymore — its dedicated backend contract (`identity_configured` in
+ * readiness.py) proves the "configured" state when DEMIURGOS_AUTH_MODE=google
+ * AND GOOGLE_CLIENT_ID is set, so the card may truthfully render configured.
+ *
+ * NOTE (WU-3b1): telegram is intentionally NOT in this set either — ONB-3.3
  * gave it a dedicated backend contract whose `configured` state is proven by
  * a real server-side getMe check, so its card may truthfully render
  * configured.
  */
-export const DEFERRED_CARD_KEYS: ReadonlySet<string> = new Set(["identity", "backup", "import"]);
+export const DEFERRED_CARD_KEYS: ReadonlySet<string> = new Set(["backup", "import"]);
 
 /** Essential local readiness badges (OC11/OC21): World + local editor. */
 export const ESSENTIAL_BADGES: { key: string; title: string }[] = [
