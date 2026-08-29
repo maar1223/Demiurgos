@@ -20,6 +20,7 @@ This module is pure and filesystem-scoped: it writes ONLY under the given
 
 from __future__ import annotations
 
+import os
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
@@ -219,7 +220,11 @@ def _is_case_insensitive_fs(path: Path) -> bool:
             if swapcase_path == tmp_path:
                 # No cased characters to swap — cannot probe; stay conservative.
                 return False
-            return swapcase_path.exists()
+            # samefile compares volume+file id, so it correctly reports the same
+            # entry even when the spelling differs (NTFS/APFS). On a
+            # case-sensitive FS the swapcased name does not exist -> OSError
+            # caught below -> False.
+            return os.path.samefile(tmp_path, swapcase_path)
         finally:
             tmp_path.unlink(missing_ok=True)
     except OSError:
