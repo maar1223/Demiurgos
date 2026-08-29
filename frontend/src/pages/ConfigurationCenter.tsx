@@ -31,14 +31,15 @@ export const STATE_META: Record<CardState, { label: string; badge: "default" | "
  * pending state instead of overstating readiness.
  *
  * - backup: remote capability whose dedicated contract does not exist in
- *   this change (Drive consent stays separate from Google identity).
+ *   this change (Drive consent stays separate from identity).
  * - import (ONB-3.5): the importer is a separate SDD; its card exposes
  *   entry/pending only and must never claim an import happened.
  *
- * NOTE (auth-google-vault R-ID1): identity is intentionally NOT in this set
- * anymore — its dedicated backend contract (`identity_configured` in
- * readiness.py) proves the "configured" state when DEMIURGOS_AUTH_MODE=google
- * AND GOOGLE_CLIENT_ID is set, so the card may truthfully render configured.
+ * NOTE (auth-vault-credentials R-ID1): identity is intentionally NOT in this
+ * set anymore — its dedicated backend contract (`identity_configured` in
+ * readiness.py) proves the "configured" state when a local account exists
+ * (or credentials mode is active), so the card may truthfully render
+ * configured.
  *
  * NOTE (WU-3b1): telegram is intentionally NOT in this set either — ONB-3.3
  * gave it a dedicated backend contract whose `configured` state is proven by
@@ -74,7 +75,7 @@ interface CardDef {
 }
 
 export const CARD_DEFS: CardDef[] = [
-  { key: "identity", title: "Identidad", description: "Cuenta local / Google: revalidación online y recuperación autorizada.", action: { label: "Ir a Perfil", to: "/perfil" } },
+  { key: "identity", title: "Identidad", description: "Cuenta local: contraseña o palabras claves para recuperación autorizada.", action: { label: "Ir a Perfil", to: "/perfil" } },
   { key: "assistant", title: "IA texto y visión", description: "Modelo principal del Asistente (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
   { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: null },
   { key: "backup", title: "Respaldo y restauración", description: "Google Drive / rclone: respaldo y restauración, con consentimiento separado de la identidad.", action: null },

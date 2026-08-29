@@ -648,14 +648,14 @@ function ConfigurationSection() {
                     Google Drive / rclone backup is not implemented in
                     this change; the card stays pending and is only an
                     entry for its dedicated contract. Drive consent is
-                    separate from the Google identity consent, and backup
+                    separate from the identity consent, and backup
                     and restore are distinct flows (OC10/OC24). */}
                 <div className="mt-4 border-t border-filio pt-4">
                   <p className="text-small text-tinta-desvaida">
                     El respaldo y la restauración (Google Drive / rclone) no están
                     implementados en esta versión: la tarjeta queda pendiente y es solo la
                     entrada para su contrato dedicado. El consentimiento de Drive es
-                    independiente del consentimiento de identidad de Google, y respaldo y
+                    independiente del consentimiento de identidad, y respaldo y
                     restauración son flujos distintos. Nunca se afirma configurado sin ese
                     contrato.
                   </p>

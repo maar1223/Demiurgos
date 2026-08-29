@@ -9,7 +9,8 @@ export interface AuthGateState {
 
 /**
  * Authentication gate: when auth is enabled (DEMIURGOS_AUTH_MODE=local-dev or
- * =google), the user MUST be authenticated before accessing the application.
+ * =credentials), the user MUST be authenticated before accessing the
+ * application.
  *
  * This is a HARD GATE, not a soft redirect. When auth is enabled and the user
  * is not authenticated, they cannot access any application surface. This
@@ -17,8 +18,8 @@ export interface AuthGateState {
  * they need to authenticate, then encounter silent failures on write operations.
  *
  * Mode-aware: the unified GET /api/auth/session/status endpoint covers every
- * mode (disabled | local-dev | google). When auth is disabled (default), the
- * gate always passes through.
+ * mode (disabled | local-dev | credentials). When auth is disabled (default),
+ * the gate always passes through.
  */
 export function useAuthGate(): AuthGateState {
   const [state, setState] = useState<AuthGateState>({

@@ -58,7 +58,7 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     for (const key of DEFERRED_CARD_KEYS) {
       expect(cardState(stale, key)).toBe("pending");
     }
-    // identity (auth-google-vault R-ID1 backend contract), telegram (WU-3b1,
+    // identity (auth-vault-credentials R-ID1 backend contract), telegram (WU-3b1,
     // ONB-3.3), assistant, locale, world and offline may truthfully render
     // configured.
     for (const key of ["identity", "telegram", "assistant", "locale", "world", "offline"]) {
