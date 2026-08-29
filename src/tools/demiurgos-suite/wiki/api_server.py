@@ -904,17 +904,20 @@ def _session_for_request(request: Request | None) -> dict | None:
     return None
 
 
-def _cookie_secure() -> bool:
-    """Mode-based cookie Secure flag + explicit env override (R-AC-03).
+def _cookie_secure(request: Request) -> bool:
+    """Scheme-aware cookie Secure flag + explicit env override (R-AC-03).
 
-    Credentials mode targets production (HTTPS) -> secure=True; local-dev is
-    loopback-bound -> secure=False. ``DEMIURGOS_COOKIE_SECURE`` overrides the
-    mode default explicitly (no auto-detection behind reverse proxies).
+    The default follows the request scheme so the session cookie works on any
+    deployment without configuration: HTTPS -> secure=True; plain HTTP
+    (http://localhost on Windows/Linux, or a VPS served over HTTP) ->
+    secure=False so the browser actually sends the cookie back and the login
+    persists. ``DEMIURGOS_COOKIE_SECURE`` overrides the scheme default
+    explicitly (the operator's call, e.g. behind a TLS-terminating proxy).
     """
     override = os.environ.get("DEMIURGOS_COOKIE_SECURE")
     if override is not None:
         return override.strip().lower() in ("1", "true", "yes", "on")
-    return _auth_mode() == _CREDENTIALS_AUTH_MODE
+    return request.url.scheme == "https"
 
 
 def _session_ttl(remember_me: bool) -> timedelta:
@@ -1164,7 +1167,7 @@ def credentials_login(payload: CredentialsLoginRequest, request: Request, respon
         max_age=int(ttl.total_seconds()),
         httponly=True,
         samesite="lax",
-        secure=_cookie_secure(),
+        secure=_cookie_secure(request),
         path="/",
     )
     return {

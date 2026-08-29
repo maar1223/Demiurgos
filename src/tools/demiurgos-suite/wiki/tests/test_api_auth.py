@@ -6,7 +6,7 @@ Integration coverage for the credentials auth seam:
   password, words returned exactly once, blocking onboarding step).
 - R-AC-02: POST /api/auth/credentials/login (password when set, passwordless
   "Enter" button when not), rate-limited wrong passwords.
-- R-AC-03: cookie contract (httponly, samesite=lax, mode-aware secure +
+- R-AC-03: cookie contract (httponly, samesite=lax, scheme-aware secure +
   ``DEMIURGOS_COOKIE_SECURE`` override, 8h / 30d TTL).
 - R-AC-04: session status exposes ``last_auth_at`` (ISO 8601) and
   ``days_until_reauth`` countdown (clamped at 0).
@@ -23,11 +23,13 @@ Integration coverage for the credentials auth seam:
   combos, the missing-slot migration defaults, and integration tests cover the
   four vault lifecycle endpoints (config/enable/disable/reauth-interval).
 
-NOTE on the http test transport: the real server sets Secure cookies in
-credentials mode; an http transport would never send them back. The tests
-force those cookies into the client jar WITHOUT the Secure flag so the flow
-stays hermetic, while the Set-Cookie attribute assertions (including Secure)
-are made directly on the response headers.
+NOTE on the http test transport: the Secure cookie attribute is scheme-aware
+by default — over plain http the server sets a non-Secure cookie that the
+transport jar keeps and sends back; when ``DEMIURGOS_COOKIE_SECURE`` pins
+Secure=true, an http transport would never send it back. The tests force
+those tokens into the client jar WITHOUT the Secure flag so the flow stays
+hermetic, while the Set-Cookie attribute assertions (including Secure) are
+made directly on the response headers.
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -62,6 +65,7 @@ def _make_vault_client(
     monkeypatch: pytest.MonkeyPatch,
     *,
     vault_enabled: bool,
+    base_url: str = "http://testserver",
 ) -> TestClient:
     """Build a TestClient sandboxed to *tmp_path* with the vault ON or OFF.
 
@@ -70,6 +74,8 @@ def _make_vault_client(
     for per-test isolation. ``DEMIURGOS_AUTH_MODE`` stays UNSET so the vault
     state comes exclusively from the persisted ``capabilities.vault.enabled``
     flag — the PRIMARY source (R-VC-01, S-VC-01c) — never the env override.
+    ``base_url`` selects the request scheme for the scheme-aware Secure cookie
+    tests (http://localhost, https://localhost, ...).
     """
     mundos = tmp_path / "mundos"
     lore = mundos / "test_mundo" / "lore"
@@ -97,7 +103,11 @@ def _make_vault_client(
             "enabled": True, "reauth_interval_d": 14,
         }
         registry.atomic_commit(state)
-    return TestClient(api_server.app, client=("127.0.0.1", 50000))
+    return TestClient(
+        api_server.app,
+        base_url=base_url,
+        client=("127.0.0.1", 50000),
+    )
 
 
 @pytest.fixture()
@@ -308,10 +318,11 @@ def test_login_with_password_sets_secure_httponly_cookie(
         credentials_client: TestClient, monkeypatch: pytest.MonkeyPatch):
     """S-AC-03a — an HTTPS deployment pins the Secure cookie attribute.
 
-    The flag-primary fixture runs with no env override, so the mode-based
-    Secure default would be False; the explicit ``DEMIURGOS_COOKIE_SECURE``
-    override pins the secure-cookie contract here (the mode-aware default
-    itself is covered by test_cookie_secure_flag_is_mode_aware_with_env_override).
+    Over plain http the scheme-aware default would NOT set Secure; the
+    explicit ``DEMIURGOS_COOKIE_SECURE=true`` override pins the secure-cookie
+    contract here (the scheme-aware default itself is covered by
+    test_cookie_secure_flag_is_scheme_aware_with_env_override and the
+    http/https integration tests below).
     """
     monkeypatch.setenv("DEMIURGOS_COOKIE_SECURE", "true")
     _create_account(credentials_client, password=PASSWORD)
@@ -392,23 +403,94 @@ def test_login_default_ttl_is_8_hours(credentials_client: TestClient):
     assert f"max-age={DEFAULT_TTL_SECONDS}" in _session_cookie(started)
 
 
-def test_cookie_secure_flag_is_mode_aware_with_env_override(
-        monkeypatch: pytest.MonkeyPatch):
-    """S-AC-03c: mode-based default + explicit DEMIURGOS_COOKIE_SECURE."""
-    monkeypatch.delenv("DEMIURGOS_COOKIE_SECURE", raising=False)
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "credentials")
-    assert api_server._cookie_secure() is True
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
-    assert api_server._cookie_secure() is False
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "disabled")
-    assert api_server._cookie_secure() is False
+def _scheme_request(scheme: str) -> SimpleNamespace:
+    """Minimal request stand-in exposing the URL scheme (for unit tests)."""
+    return SimpleNamespace(url=SimpleNamespace(scheme=scheme))
 
-    # The explicit env override wins in every mode.
-    monkeypatch.setenv("DEMIURGOS_COOKIE_SECURE", "true")
-    assert api_server._cookie_secure() is True
-    monkeypatch.setenv("DEMIURGOS_COOKIE_SECURE", "false")
+
+def test_cookie_secure_flag_is_scheme_aware_with_env_override(
+        monkeypatch: pytest.MonkeyPatch):
+    """S-AC-03c: scheme-aware default + explicit DEMIURGOS_COOKIE_SECURE.
+
+    The default follows the request scheme (https -> Secure, http -> not),
+    independent of the auth mode; the env override wins in both directions.
+    """
+    monkeypatch.delenv("DEMIURGOS_COOKIE_SECURE", raising=False)
+    assert api_server._cookie_secure(_scheme_request("https")) is True
+    assert api_server._cookie_secure(_scheme_request("http")) is False
+
+    # Auth mode no longer drives the default (the bug being fixed): even in
+    # credentials mode a plain-http request gets a non-Secure cookie.
     monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "credentials")
-    assert api_server._cookie_secure() is False
+    assert api_server._cookie_secure(_scheme_request("http")) is False
+    assert api_server._cookie_secure(_scheme_request("https")) is True
+
+    # The explicit env override wins over the scheme in every mode.
+    monkeypatch.setenv("DEMIURGOS_COOKIE_SECURE", "true")
+    assert api_server._cookie_secure(_scheme_request("http")) is True
+    monkeypatch.setenv("DEMIURGOS_COOKIE_SECURE", "false")
+    assert api_server._cookie_secure(_scheme_request("https")) is False
+
+
+def test_login_over_http_sets_non_secure_cookie_and_session_persists(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Scheme-aware default over plain http (localhost / VPS over HTTP): the
+    session cookie is NOT Secure, so the browser jar keeps it and the login
+    actually persists end-to-end (the case the mode-based Secure default
+    broke: a Secure cookie is never sent back over http)."""
+    client = _make_vault_client(
+        tmp_path, monkeypatch, vault_enabled=True, base_url="http://localhost")
+    _create_account(client, password=PASSWORD)
+    started = client.post(
+        "/api/auth/credentials/login", json={"password": PASSWORD})
+    assert started.status_code == 200
+    assert "secure" not in _session_cookie(started)
+    # The non-Secure cookie landed in the jar and is sent back: the session
+    # persists with NO manual cookie forcing.
+    assert client.get(
+        "/api/auth/session/status").json()["authenticated"] is True
+
+
+def test_login_over_https_sets_secure_cookie(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Scheme-aware default over https: the session cookie IS Secure."""
+    client = _make_vault_client(
+        tmp_path, monkeypatch, vault_enabled=True, base_url="https://localhost")
+    _create_account(client, password=PASSWORD)
+    started = client.post(
+        "/api/auth/credentials/login", json={"password": PASSWORD})
+    assert started.status_code == 200
+    assert "secure" in _session_cookie(started)
+
+
+def test_cookie_secure_env_override_forces_true_over_http(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """DEMIURGOS_COOKIE_SECURE=true forces the Secure flag even over http."""
+    client = _make_vault_client(
+        tmp_path, monkeypatch, vault_enabled=True, base_url="http://localhost")
+    # The override is read at request time: set it after the sandboxed client
+    # is built (the helper clears the env var for isolation).
+    monkeypatch.setenv("DEMIURGOS_COOKIE_SECURE", "true")
+    _create_account(client, password=PASSWORD)
+    started = client.post(
+        "/api/auth/credentials/login", json={"password": PASSWORD})
+    assert started.status_code == 200
+    assert "secure" in _session_cookie(started)
+
+
+def test_cookie_secure_env_override_forces_false_over_https(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """DEMIURGOS_COOKIE_SECURE=false strips the Secure flag even over https."""
+    client = _make_vault_client(
+        tmp_path, monkeypatch, vault_enabled=True, base_url="https://localhost")
+    # The override is read at request time: set it after the sandboxed client
+    # is built (the helper clears the env var for isolation).
+    monkeypatch.setenv("DEMIURGOS_COOKIE_SECURE", "false")
+    _create_account(client, password=PASSWORD)
+    started = client.post(
+        "/api/auth/credentials/login", json={"password": PASSWORD})
+    assert started.status_code == 200
+    assert "secure" not in _session_cookie(started)
 
 
 # ---------------------------------------------------------------------------
