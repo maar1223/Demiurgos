@@ -11,8 +11,10 @@ pydantic>=2.7
 PyYAML>=6.0
 # Multipart form parsing for file uploads (importer media/uploads)
 python-multipart>=0.0.9
-# MCP (graph server, tool protocol)
-mcp>=1.0.0
+# MCP (graph server, tool protocol). The backend uses the v1 API
+# (mcp.server.fastmcp.FastMCP); mcp 2.x renamed it to MCPServer and
+# broke compat, so pin below 2.
+mcp>=1.0.0,<2.0.0
 # Deterministic BM25 search used by the entity graph index
 rank_bm25>=0.2.2,<0.3.0
 # File watching for live index updates
