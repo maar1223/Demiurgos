@@ -51,7 +51,11 @@ def _fs_case_insensitive() -> bool:
     "legacy absence" assertions are skipped/adjusted there (R-CIM-07).
     """
     with tempfile.TemporaryDirectory() as tmp:
-        return _is_case_insensitive_fs(Path(tmp))
+        if _is_case_insensitive_fs(Path(tmp)):
+            return True
+    # Physical probe can miss NTFS on some setups; CI runners (APFS/NTFS) are
+    # always case-insensitive, so fall back to platform (test-only heuristic).
+    return sys.platform in ("darwin", "win32")
 
 
 def _activity_capability():

@@ -62,7 +62,12 @@ def _fs_case_insensitive() -> bool:
     skipped or adjusted there (portable fixtures, R-CIM-07).
     """
     with tempfile.TemporaryDirectory() as tmp:
-        return _is_case_insensitive_fs(Path(tmp))
+        if _is_case_insensitive_fs(Path(tmp)):
+            return True
+    # The physical probe can miss NTFS on some setups; CI runners (APFS/NTFS)
+    # are always case-insensitive, so fall back to platform as a conservative
+    # test-only heuristic (does not affect production detection).
+    return sys.platform in ("darwin", "win32")
 
 
 def _tree_sha256(root: Path) -> str:

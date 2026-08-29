@@ -27,3 +27,7 @@ markitdown[docx]>=0.1.0
 lxml>=4.9.0
 # Argon2id hashing for passwords and recovery words (auth-vault-credentials)
 argon2-cffi>=21.0.0
+# IANA timezone database for zoneinfo on Windows (Linux/macOS ship it via
+# /usr/share/zoneinfo; Windows needs the tzdata package or IANA timezone
+# validation fails). Required for onboarding step0/locale handling.
+tzdata>=2024.1
