@@ -37,7 +37,11 @@ def test_generated_code_has_8_to_10_words() -> None:
         code = generate_code()
         words = code.split()
         assert len(words) in range(8, 11), f"word count {len(words)} outside 8-10"
-        assert all(word.isalpha() for word in words), "every word must be plain alpha"
+        # The EFF list legitimately contains hyphenated words (drop-down,
+        # yo-yo, ...): "plain" means ASCII letters with optional hyphens.
+        assert all(
+            all(ch.isalpha() or ch == "-" for ch in word) for word in words
+        ), "every word must be plain alpha (hyphens allowed)"
 
 
 def test_generated_codes_are_unique_and_high_entropy() -> None:
