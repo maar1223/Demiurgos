@@ -1,6 +1,5 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
-import { GoogleOAuthProvider } from "@react-oauth/google";
 import WikiHome from "@/pages/WikiHome";
 import WikiWorld from "@/pages/WikiWorld";
 import WikiEditor from "@/pages/WikiEditor";
@@ -14,8 +13,6 @@ import LoginScreen from "@/pages/LoginScreen";
 import NotFound from "@/pages/NotFound";
 import { useOnboardingGate } from "@/hooks/useOnboardingGate";
 import { useAuthGate } from "@/hooks/useAuthGate";
-import { GoogleScriptErrorContext } from "@/hooks/useGoogleAuth";
-import { GOOGLE_CLIENT_ID } from "@/lib/constants";
 
 /** Lazy-loaded entity page — code-split because it's only used on entity routes */
 const EntityPage = lazy(() => import("@/pages/EntityPage"));
@@ -101,71 +98,58 @@ function FirstRunGate() {
  * by React Router, but is listed before `:section/*` for clarity.
  */
 export default function App() {
-  // GSI script-load failures are threaded through the GoogleScriptErrorContext
-  // so the LoginScreen can fall back to the emergency key. The client id is
-  // public OAuth material; the provider is inert in disabled/local-dev modes
-  // (LoginScreen never renders the Google button there).
-  const [gsiScriptError, setGsiScriptError] = useState(false);
-
   return (
-    <GoogleOAuthProvider
-      clientId={GOOGLE_CLIENT_ID}
-      onScriptLoadError={() => setGsiScriptError(true)}
-    >
-      <GoogleScriptErrorContext.Provider value={gsiScriptError}>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Navigate to="/wiki" replace />} />
-            <Route path="/onboarding" element={<Onboarding />} />
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Navigate to="/wiki" replace />} />
+        <Route path="/onboarding" element={<Onboarding />} />
 
-            <Route element={<AuthGate />}>
-              <Route element={<FirstRunGate />}>
-                <Route path="/wiki" element={<WikiHome />} />
-                <Route path="/taller-herramientas" element={<ToolWorkshop />} />
-                <Route
-                  path="/ideas"
-                  element={
-                    <Suspense
-                      fallback={
-                        <div className="flex min-h-screen items-center justify-center bg-cripta">
-                          <span className="text-tinta-desvaida">Cargando Taller de Ideas…</span>
-                        </div>
-                      }
-                    >
-                      <IdeasWorkshop />
-                    </Suspense>
+        <Route element={<AuthGate />}>
+          <Route element={<FirstRunGate />}>
+            <Route path="/wiki" element={<WikiHome />} />
+            <Route path="/taller-herramientas" element={<ToolWorkshop />} />
+            <Route
+              path="/ideas"
+              element={
+                <Suspense
+                  fallback={
+                    <div className="flex min-h-screen items-center justify-center bg-cripta">
+                      <span className="text-tinta-desvaida">Cargando Taller de Ideas…</span>
+                    </div>
                   }
-                />
-                <Route path="/taller-mundo" element={<WorldWorkshop />} />
-                <Route path="/perfil" element={<ProfilePage />} />
-                <Route
-                  path="/wiki/:mundo/entity/*"
-                  element={
-                    <Suspense
-                      fallback={
-                        <div className="flex min-h-screen items-center justify-center bg-cripta">
-                          <span className="text-tinta-desvaida">Cargando entidad…</span>
-                        </div>
-                      }
-                    >
-                      <EntityPage />
-                    </Suspense>
+                >
+                  <IdeasWorkshop />
+                </Suspense>
+              }
+            />
+            <Route path="/taller-mundo" element={<WorldWorkshop />} />
+            <Route path="/perfil" element={<ProfilePage />} />
+            <Route
+              path="/wiki/:mundo/entity/*"
+              element={
+                <Suspense
+                  fallback={
+                    <div className="flex min-h-screen items-center justify-center bg-cripta">
+                      <span className="text-tinta-desvaida">Cargando entidad…</span>
+                    </div>
                   }
-                />
-                <Route path="/wiki/:mundo" element={<WikiWorld />} />
-                <Route
-                  path="/taller-mundo/:mundo/relaciones-canon"
-                  element={<RelacionesCanon />}
-                />
-                <Route path="/wiki/:mundo/importer" element={<WorldImporter />} />
-                <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
-              </Route>
-            </Route>
+                >
+                  <EntityPage />
+                </Suspense>
+              }
+            />
+            <Route path="/wiki/:mundo" element={<WikiWorld />} />
+            <Route
+              path="/taller-mundo/:mundo/relaciones-canon"
+              element={<RelacionesCanon />}
+            />
+            <Route path="/wiki/:mundo/importer" element={<WorldImporter />} />
+            <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
+          </Route>
+        </Route>
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </GoogleScriptErrorContext.Provider>
-    </GoogleOAuthProvider>
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

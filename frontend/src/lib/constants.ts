@@ -1,14 +1,5 @@
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
-/**
- * Google Identity Services client ID (public OAuth 2.0 client identifier).
- * Served to the browser via VITE_GOOGLE_CLIENT_ID; the server verifies the
- * resulting id_token with the SAME client id from GOOGLE_CLIENT_ID (.env).
- * Empty when the vault login is not configured — the app keeps working in
- * `disabled` / `local-dev` modes.
- */
-export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID ?? "";
-
 export const VALID_SECTIONS = ["lore", "personajes", "referencias"] as const;
 export type Section = (typeof VALID_SECTIONS)[number];
 
