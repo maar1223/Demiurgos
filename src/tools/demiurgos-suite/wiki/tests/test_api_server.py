@@ -4345,6 +4345,10 @@ class TestLegacyDetectionEndpoint:
         (legacy / "Lore" / "00_inicio.md").write_text("# X\n", encoding="utf-8")
         body = empty_client.get("/api/onboarding/readiness").json()
         finding = next((f for f in body["legacy"] if f["world"] == "legacy-x"), None)
+        print("DIAG platform=", sys.platform,
+              "same=", _same_physical_dir(legacy / "Lore", legacy / "lore"),
+              "lore_exists=", (legacy / "lore").exists(),
+              "finding=", finding, file=sys.stderr)
         if _same_physical_dir(legacy / "Lore", legacy / "lore"):
             # R-CIM-05: on a case-insensitive FS `Lore` matches canonical
             # `lore` (same physical dir) — NOT reported as legacy.
