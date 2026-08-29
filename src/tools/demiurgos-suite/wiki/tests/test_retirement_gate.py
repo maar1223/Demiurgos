@@ -176,9 +176,7 @@ def test_zero_legacy_mutation_passes_on_case_insensitive_fs():
     and still verifies the tree was not mutated (before == after)."""
     with tempfile.TemporaryDirectory() as tmp:
         with mock.patch(
-            "wiki.retirement_gate._is_case_insensitive_fs", return_value=True
-        ), mock.patch(
-            "wiki.world_authority._is_case_insensitive_fs", return_value=True
+            "wiki.retirement_gate._same_physical_dir", return_value=True
         ):
             check = gate.check_zero_legacy_mutation(Path(tmp))
         assert check.passed

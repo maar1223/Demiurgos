@@ -29,7 +29,7 @@ for _p in (str(_WIKI), str(_SUITE)):
 
 from local_state import LocalState  # noqa: E402
 from readiness import project_cards, probe_local_storage  # noqa: E402
-from world_authority import (WorldResultKind, _is_case_insensitive_fs,  # noqa: E402
+from world_authority import (WorldResultKind, _same_physical_dir,  # noqa: E402
                              canonical_dirs, create_world,
                              detect_legacy_layout)
 
@@ -234,7 +234,7 @@ def check_zero_legacy_mutation(project_root: Path) -> GateCheck:
         (world / "Personajes" / "anisa.md").write_text("---\nname: Anisa\n---\n",
                                                        encoding="utf-8")
         before = {str(p): p.read_bytes() for p in world.rglob("*") if p.is_file()}
-        case_insensitive = _is_case_insensitive_fs(Path(tmp))
+        case_insensitive = _same_physical_dir(world / "Lore", world / "lore")
         findings = detect_legacy_layout(Path(tmp))
         detected = any(f["world"] == "legacy-gate"
                        and f["folders"] == ["Lore", "Personajes"] for f in findings)

@@ -232,6 +232,21 @@ def _is_case_insensitive_fs(path: Path) -> bool:
         return False
 
 
+def _same_physical_dir(a: Path, b: Path) -> bool:
+    """True when *a* and *b* refer to the same physical directory entry.
+
+    Uses ``os.path.samefile`` (volume + file id) with existence guards. False
+    when either does not exist (e.g. a case-sensitive FS where the canonical
+    lowercased name is absent) or when samefile is unavailable (OSError).
+    """
+    if not a.exists() or not b.exists():
+        return False
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
 def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
     """Read-only legacy-layout detection (ONB-4.2).
 
@@ -270,14 +285,22 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
             }
         except OSError:
             continue
-        if case_insensitive:
-            top_lower = {name.lower() for name in top_dir_names}
-            found = [
-                folder for folder in LEGACY_FOLDERS
-                if folder in top_dir_names and folder.lower() not in top_lower
-            ]
-        else:
-            found = [folder for folder in LEGACY_FOLDERS if folder in top_dir_names]
+        # FS-aware (R-CIM-05): on a case-insensitive FS a folder named ``Lore``
+        # IS the same physical directory as canonical ``lore``, so the runtime
+        # already operates on the canonical tree through it — do NOT report it
+        # as legacy. Detect per-world via samefile (immune to a global probe),
+        # so a case-insensitive alias is never misreported as legacy.
+        found = []
+        for folder in LEGACY_FOLDERS:
+            if folder not in top_dir_names:
+                continue
+            legacy_path = entry / folder
+            canonical_path = entry / folder.lower()
+            if canonical_path != legacy_path and _same_physical_dir(
+                legacy_path, canonical_path
+            ):
+                continue
+            found.append(folder)
         if found:
             findings.append({"world": entry.name, "folders": found})
     return findings

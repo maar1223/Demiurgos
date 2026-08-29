@@ -467,7 +467,7 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         (legacy / "Lore").mkdir(parents=True)
         (legacy / "Personajes").mkdir()
         with mock.patch(
-            "wiki.world_authority._is_case_insensitive_fs", return_value=True
+            "wiki.world_authority._same_physical_dir", return_value=True
         ):
             findings = detect_legacy_layout(mundos)
         self.assertEqual(findings, [],
