@@ -16,7 +16,12 @@ vi.mock("@/api/onboarding", () => ({
 
 vi.mock("@/api/wiki", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/api/wiki")>();
-  return { ...original, listWorlds: vi.fn() };
+  return {
+    ...original,
+    listWorlds: vi.fn(),
+    getAuthStatus: vi.fn(),
+    createAccount: vi.fn(),
+  };
 });
 
 import {
@@ -24,22 +29,40 @@ import {
   getOnboardingStatus,
   submitStep0,
 } from "@/api/onboarding";
-import { listWorlds } from "@/api/wiki";
+import { createAccount, getAuthStatus, listWorlds } from "@/api/wiki";
 import type { Mock } from "vitest";
+
+const CREDENTIALS_AUTH = {
+  mode: "credentials",
+  enabled: true,
+  authenticated: false,
+  label: null,
+  provider: "credentials",
+};
 
 const FRESH_STATUS = {
   completed: false,
   current_step: "step0",
   completed_steps: [],
-  pending_steps: ["step0", "ai", "telegram", "world", "backup_handoff", "ready"],
+  pending_steps: ["step0", "account", "ai", "telegram", "world", "backup_handoff", "ready"],
   remote_pending: ["ai", "telegram", "backup_handoff"],
   blocking_pending: ["step0"],
 };
 
+/** After step 0 the backend derives the BLOCKING account step (R-AC-01). */
 const STEP0_DONE_STATUS = {
   ...FRESH_STATUS,
-  current_step: "world",
+  current_step: "account",
   completed_steps: ["step0"],
+  pending_steps: ["account", "ai", "telegram", "world", "backup_handoff", "ready"],
+  blocking_pending: ["account"],
+};
+
+/** After the account step the flow resumes at the world step. */
+const ACCOUNT_DONE_STATUS = {
+  ...FRESH_STATUS,
+  current_step: "world",
+  completed_steps: ["step0", "account"],
   pending_steps: ["ai", "telegram", "world", "backup_handoff", "ready"],
   blocking_pending: ["world"],
 };
@@ -89,11 +112,14 @@ describe("useOnboardingGate (ONB-1.1 first-run gate)", () => {
   });
 });
 
-describe("Onboarding page (ONB-1.1/ONB-1.4)", () => {
+describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
   beforeEach(() => {
     (getOnboardingStatus as Mock).mockReset();
     (submitStep0 as Mock).mockReset();
     (createWorld as Mock).mockReset();
+    (getAuthStatus as Mock).mockReset();
+    (createAccount as Mock).mockReset();
+    (getAuthStatus as Mock).mockResolvedValue(CREDENTIALS_AUTH);
   });
 
   afterEach(() => {
@@ -140,22 +166,95 @@ describe("Onboarding page (ONB-1.1/ONB-1.4)", () => {
         iana_timezone: "America/Argentina/Buenos_Aires",
       }),
     );
-    // After step 0, the world step is offered (not replayed step 0).
-    expect(await screen.findByRole("heading", { name: "Creá tu mundo" })).toBeInTheDocument();
+    // After step 0, the BLOCKING account step is offered (not step 0 again).
+    expect(await screen.findByRole("heading", { name: "Creá tu cuenta" })).toBeInTheDocument();
   });
 
-  it("resumes at the world step after a restart: step 0 is never replayed", async () => {
+  it("creates the account and shows the recovery words exactly once", async () => {
+    (getOnboardingStatus as Mock)
+      .mockResolvedValueOnce(STEP0_DONE_STATUS)
+      .mockResolvedValue(ACCOUNT_DONE_STATUS);
+    (createAccount as Mock).mockResolvedValue({
+      username: "el-autor",
+      words: "alpha beta gamma delta",
+    });
+    const user = userEvent.setup();
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: "Creá tu cuenta" });
+    await user.type(screen.getByLabelText("Usuario"), "el-autor");
+    await user.type(screen.getByLabelText("Contraseña (opcional)"), "clave-fuerte");
+    await user.click(screen.getByRole("button", { name: "Crear cuenta" }));
+
+    await waitFor(() =>
+      expect(createAccount).toHaveBeenCalledWith("el-autor", "clave-fuerte"),
+    );
+
+    // The words are shown once (S-AC-01a) with the loss warning (R-NF-03).
+    expect(await screen.findByTestId("onboarding-words")).toHaveTextContent(
+      "alpha beta gamma delta",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Guardé mis palabras" }));
+
+    // Words never shown again; the world step is offered next.
+    expect(screen.queryByTestId("onboarding-words")).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Creá tu mundo" }),
+    ).toBeInTheDocument();
+  });
+
+  it("creates a passwordless account (empty password → undefined)", async () => {
+    (getOnboardingStatus as Mock).mockResolvedValue(STEP0_DONE_STATUS);
+    (createAccount as Mock).mockResolvedValue({
+      username: "el-autor",
+      words: "alpha beta gamma delta",
+    });
+    const user = userEvent.setup();
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: "Creá tu cuenta" });
+    await user.type(screen.getByLabelText("Usuario"), "el-autor");
+    await user.click(screen.getByRole("button", { name: "Crear cuenta" }));
+
+    await waitFor(() =>
+      expect(createAccount).toHaveBeenCalledWith("el-autor", undefined),
+    );
+  });
+
+  it("skips the account step outside credentials mode", async () => {
+    (getAuthStatus as Mock).mockResolvedValue({
+      mode: "local-dev",
+      enabled: true,
+      authenticated: true,
+      label: "Local development user",
+      provider: "local-dev",
+    });
     (getOnboardingStatus as Mock).mockResolvedValue(STEP0_DONE_STATUS);
     renderOnboarding();
 
-    expect(await screen.findByRole("heading", { name: "Creá tu mundo" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Creá tu mundo" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Creá tu cuenta" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("resumes at the account step after a restart: step 0 is never replayed", async () => {
+    (getOnboardingStatus as Mock).mockResolvedValue(STEP0_DONE_STATUS);
+    renderOnboarding();
+
+    expect(
+      await screen.findByRole("heading", { name: "Creá tu cuenta" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: /Paso 1: idioma/ }),
     ).not.toBeInTheDocument();
   });
 
   it("creates a world and completes onboarding", async () => {
-    (getOnboardingStatus as Mock).mockResolvedValue(STEP0_DONE_STATUS);
+    (getOnboardingStatus as Mock).mockResolvedValue(ACCOUNT_DONE_STATUS);
     (createWorld as Mock).mockResolvedValue({ kind: "created", name: "mi-mundo", path: "/x", message: "" });
     const user = userEvent.setup();
     renderOnboarding();
@@ -183,7 +282,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4)", () => {
   });
 
   it("keeps remote capabilities visibly pending offline", async () => {
-    (getOnboardingStatus as Mock).mockResolvedValue(STEP0_DONE_STATUS);
+    (getOnboardingStatus as Mock).mockResolvedValue(ACCOUNT_DONE_STATUS);
     renderOnboarding();
 
     await screen.findByRole("heading", { name: "Creá tu mundo" });
