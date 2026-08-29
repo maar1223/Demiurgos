@@ -4266,6 +4266,51 @@ class TestWorldCreateEndpoint:
         assert status["completed"] is True
         assert status["current_step"] == "ready"
 
+    def test_full_onboarding_flow_with_real_principal_without_stubbing(
+            self, empty_client: TestClient):
+        """The REAL onboarding happy path with the vault ON — no stubbing of
+        ``_resolve_principal``: the account is created, the credentials login
+        plants a real vault session, and step0 + world creation resolve the
+        principal from that session (R-AC-01/R-AC-02, S-AC-02b/d)."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state.setdefault("capabilities", {})["vault"] = {
+            "enabled": True, "reauth_interval_d": 14}
+        registry.atomic_commit(state)
+        # Fail-closed while ON and unauthenticated (S-AC-02b).
+        assert _post_step0(empty_client).status_code == 401
+        # Account creation is allowed with the vault ON (S-AC-01a).
+        account = empty_client.post(
+            "/api/auth/credentials/account",
+            json={"username": "real-user", "password": "secret-pass"},
+        )
+        assert account.status_code == 200, account.text
+        assert account.json()["words"]
+        # Real credentials login: the vault session cookie lands in the jar
+        # (no env override -> the cookie is not Secure, so the http transport
+        # keeps it).
+        login = empty_client.post(
+            "/api/auth/credentials/login", json={"password": "secret-pass"})
+        assert login.status_code == 200, login.text
+        assert login.json()["authenticated"] is True
+        # step0 now resolves the real principal from the vault session. The
+        # account step was already completed by the account creation above, so
+        # the flow resumes at world.
+        step0 = _post_step0(empty_client)
+        assert step0.status_code == 200, step0.text
+        body = step0.json()
+        assert "step0" in body["completed_steps"]
+        assert "account" in body["completed_steps"]
+        assert body["current_step"] == "world"
+        # World creation resolves the same real principal (S-AC-02d satisfied).
+        created = empty_client.post(
+            "/api/worlds", json={"name": "real-mundo", "lore_skeleton": True})
+        assert created.status_code == 201, created.text
+        assert created.json()["kind"] == "created"
+        status = empty_client.get("/api/onboarding/status").json()
+        assert status["completed"] is True
+        assert status["current_step"] == "ready"
+
 
 # ---------------------------------------------------------------------------
 # ONB-4.1 / ONB-4.2 — read-only legacy detection: uppercase Lore/Personajes
