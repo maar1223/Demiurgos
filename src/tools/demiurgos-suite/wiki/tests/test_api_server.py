@@ -39,7 +39,19 @@ import idea_capture_ui  # noqa: E402
 import telegram_settings  # noqa: E402
 from wiki import migration as migration_module  # noqa: E402
 from wiki.graph_indexer import EntityGraphIndex  # noqa: E402
+from wiki.world_authority import _is_case_insensitive_fs  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
+
+
+def _fs_case_insensitive() -> bool:
+    """True when the sandbox filesystem is case-insensitive (macOS/Windows CI).
+
+    On a case-insensitive FS ``Lore`` and ``lore`` are the same physical
+    directory: fixtures that create both spellings, rollback injection, and
+    "legacy absence" assertions are skipped/adjusted there (R-CIM-07).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        return _is_case_insensitive_fs(Path(tmp))
 
 
 def _activity_capability():
@@ -4328,13 +4340,19 @@ class TestLegacyDetectionEndpoint:
         (legacy / "Lore" / "00_inicio.md").write_text("# X\n", encoding="utf-8")
         body = empty_client.get("/api/onboarding/readiness").json()
         finding = next((f for f in body["legacy"] if f["world"] == "legacy-x"), None)
-        assert finding is not None
-        assert set(finding["folders"]) == {"Lore", "Personajes"}
+        if _fs_case_insensitive():
+            # R-CIM-05: on a case-insensitive FS `Lore` matches canonical
+            # `lore` (same physical dir) — NOT reported as legacy.
+            assert finding is None
+        else:
+            assert finding is not None
+            assert set(finding["folders"]) == {"Lore", "Personajes"}
         # Detection is strictly read-only: the GET mutated nothing.
         assert (legacy / "Lore").is_dir()
         assert (legacy / "Personajes").is_dir()
         assert (legacy / "Lore" / "00_inicio.md").exists()
-        assert not (legacy / "lore").exists(), "never auto-renamed to lowercase"
+        if not _fs_case_insensitive():
+            assert not (legacy / "lore").exists(), "never auto-renamed to lowercase"
 
     def test_readiness_does_not_report_canonical_worlds(
             self, empty_client: TestClient):
@@ -4397,8 +4415,9 @@ class TestMigrationApprovalEndpoint:
         # Fail-closed: nothing was planned or moved.
         assert (root / "Lore").is_dir()
         assert (root / "Personajes").is_dir()
-        assert not (root / "lore").exists()
-        assert not (root / "personajes").exists()
+        if not _fs_case_insensitive():
+            assert not (root / "lore").exists()
+            assert not (root / "personajes").exists()
 
     def test_migration_no_preview_or_history_endpoints_beyond_readiness(
             self, empty_client: TestClient, monkeypatch):
@@ -4432,7 +4451,8 @@ class TestMigrationApprovalEndpoint:
         assert resp.status_code == 400
         assert resp.json()["code"] == "empty_approval"
         assert (root / "Lore").is_dir()
-        assert not (root / "lore").exists()
+        if not _fs_case_insensitive():
+            assert not (root / "lore").exists()
 
     def test_migration_unknown_folder_rejected_without_mutation(
             self, empty_client: TestClient, monkeypatch):
@@ -4442,7 +4462,8 @@ class TestMigrationApprovalEndpoint:
         assert resp.status_code == 400
         assert resp.json()["code"] == "unknown_folder"
         assert (root / "Lore").is_dir()
-        assert not (root / "lore").exists()
+        if not _fs_case_insensitive():
+            assert not (root / "lore").exists()
 
     def test_migration_invalid_world_rejected_without_mutation(
             self, empty_client: TestClient, monkeypatch):
@@ -4464,10 +4485,14 @@ class TestMigrationApprovalEndpoint:
         assert resp.json()["code"] == "invalid_world"
         # The escape target is untouched: nothing moved or was renamed.
         assert (outside / "Lore" / "secret.md").exists()
-        assert not (outside / "lore").exists()
+        if not _fs_case_insensitive():
+            assert not (outside / "lore").exists()
 
     def test_migration_destination_collision_rejected_without_mutation(
             self, empty_client: TestClient, monkeypatch):
+        if _fs_case_insensitive():
+            pytest.skip("Lore and lore are the same physical dir on "
+                        "case-insensitive FS (natural noop, not a collision)")
         root = self._legacy_world()
         (root / "lore").mkdir()
         (root / "lore" / "exists.md").write_text("# y\n", encoding="utf-8")
@@ -4493,17 +4518,26 @@ class TestMigrationApprovalEndpoint:
         assert {step["folder"] for step in body["steps"]} == {"Lore", "Personajes"}
         for step in body["steps"]:
             assert step["destination_hash"] == step["source_hash"]
-        # Lowercase canonical tree replaced the legacy folders.
-        assert not (root / "Lore").exists()
-        assert not (root / "Personajes").exists()
+        # Canonical-side content is reachable after the step (moved or noop).
         assert (root / "lore" / "00_inicio.md").exists()
         assert (root / "personajes" / "pc.md").exists()
+        if _fs_case_insensitive():
+            # Natural noop: the legacy-cased folders still resolve (same
+            # physical dir); nothing was renamed (R-CIM-02).
+            assert (root / "Lore").is_dir()
+            assert (root / "Personajes").is_dir()
+            assert all(step["is_noop"] for step in body["steps"])
+        else:
+            # Lowercase canonical tree replaced the legacy folders.
+            assert not (root / "Lore").exists()
+            assert not (root / "Personajes").exists()
         # Evidence persisted as JSON by the engine, keyed by the txn id.
         evidence_file = self._evidence_file(body["transaction_id"])
         assert evidence_file.is_file()
         persisted = json.loads(evidence_file.read_text(encoding="utf-8"))
         assert persisted["outcome"] == "completed"
         assert persisted["transaction_id"] == body["transaction_id"]
+        assert "is_noop" in persisted["steps"][0]
 
     def test_migration_unapproved_folders_never_touched(
             self, empty_client: TestClient, monkeypatch):
@@ -4514,15 +4548,50 @@ class TestMigrationApprovalEndpoint:
         body = resp.json()
         assert body["status"] == "completed"
         assert [step["folder"] for step in body["steps"]] == ["Lore"]
-        assert not (root / "Lore").exists()
         assert (root / "lore").is_dir()
+        if _fs_case_insensitive():
+            # Natural noop: `Lore` still resolves (same physical dir).
+            assert (root / "Lore").is_dir()
+        else:
+            assert not (root / "Lore").exists()
         # The unapproved legacy folder stays exactly as it was (no auto-rename).
         assert (root / "Personajes").is_dir()
         assert (root / "Personajes" / "pc.md").exists()
-        assert not (root / "personajes").exists()
+        if not _fs_case_insensitive():
+            assert not (root / "personajes").exists()
+
+    def test_migration_same_physical_directory_is_noop_not_409(
+            self, empty_client: TestClient, monkeypatch):
+        """R-CIM-04 — when source and destination are the same physical
+        directory (simulated here on Linux; natural on case-insensitive FS),
+        the endpoint returns 200 with a noop step instead of HTTP 409."""
+        root = self._legacy_world()
+        # Mirror the canonical tree so the noop evidence hash is computable on
+        # case-sensitive Linux; on case-insensitive FS it already IS the same
+        # physical directory.
+        if not (root / "lore").exists():
+            (root / "lore").mkdir()
+            (root / "lore" / "00_inicio.md").write_text("# X\n", encoding="utf-8")
+        if not (root / "personajes").exists():
+            (root / "personajes").mkdir()
+            (root / "personajes" / "pc.md").write_text("# PC\n", encoding="utf-8")
+        _principal(monkeypatch)
+        monkeypatch.setattr(
+            migration_module, "_is_same_physical_directory", lambda _s, _d: True)
+        resp = self._execute(empty_client)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "completed"
+        assert all(step["is_noop"] for step in body["steps"])
+        # Nothing moved; legacy-cased folders still resolve.
+        assert (root / "Lore").is_dir()
+        assert (root / "Personajes").is_dir()
 
     def test_migration_mid_transaction_failure_rolls_back_with_evidence(
             self, empty_client: TestClient, monkeypatch):
+        if _fs_case_insensitive():
+            pytest.skip("rollback only applies to real moves, which never "
+                        "happen for noop steps on case-insensitive FS")
         root = self._legacy_world()
         _principal(monkeypatch)
         real_move = migration_module._atomic_move

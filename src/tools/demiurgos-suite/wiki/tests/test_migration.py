@@ -44,9 +44,25 @@ from wiki.migration import (  # noqa: E402
     MigrationOutcome,
     MigrationPlan,
     MigrationStep,
+    _destination_collision,
+    _is_same_physical_directory,
+    _step_to_dict,
     build_migration_plan,
     execute_migration,
 )
+from wiki.world_authority import _is_case_insensitive_fs  # noqa: E402
+
+
+def _fs_case_insensitive() -> bool:
+    """True when the temp filesystem is case-insensitive (macOS/Windows CI).
+
+    Used to branch assertions: on a case-insensitive FS ``Lore`` and ``lore``
+    are the same physical directory (natural noop), so fixtures that create
+    both spellings, rollback injection, and "legacy absence" assertions are
+    skipped or adjusted there (portable fixtures, R-CIM-07).
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        return _is_case_insensitive_fs(Path(tmp))
 
 
 def _tree_sha256(root: Path) -> str:
@@ -122,6 +138,31 @@ class _MigrationTestCase(unittest.TestCase):
             (world / extra_dir / "nota.md").write_text("nota\n", encoding="utf-8")
         return world
 
+    def _noop_world(
+        self,
+        mundos: Path,
+        name: str = "legacy-x",
+    ) -> Path:
+        """A legacy world whose canonical lowercase mirrors also exist.
+
+        On a case-insensitive FS the mirror already IS the legacy folder (same
+        physical directory); on case-sensitive Linux the mirror is created
+        explicitly so a mocked ``_is_same_physical_directory`` can treat each
+        pair as one physical directory (noop simulation, R-CIM-02).
+        """
+        world = self._legacy_world(mundos, name)
+        if not (world / "lore").exists():
+            (world / "lore" / "reglas").mkdir(parents=True)
+            (world / "lore" / "reglas" / "magia.md").write_text(
+                "# Magia\n\nReglas de magia.\n", encoding="utf-8"
+            )
+        if not (world / "personajes").exists():
+            (world / "personajes").mkdir()
+            (world / "personajes" / "anisa.md").write_text(
+                "---\ntype: Personaje\nname: Anisa\n---\n", encoding="utf-8"
+            )
+        return world
+
 
 class TestMigrationPlan(_MigrationTestCase):
     """ONB-4.3 — plan records source hashes + transaction id, rejects unsafe
@@ -169,6 +210,9 @@ class TestMigrationPlan(_MigrationTestCase):
         self.assertEqual(ctx.exception.kind, MigrationErrorKind.INVALID_WORLD)
 
     def test_plan_rejects_nonempty_destination_collision(self) -> None:
+        if _fs_case_insensitive():
+            self.skipTest("Lore and lore are the same physical dir on "
+                          "case-insensitive FS (natural noop, not a collision)")
         mundos = self._mundos()
         world = self._legacy_world(mundos)
         (world / "lore").mkdir()
@@ -179,6 +223,9 @@ class TestMigrationPlan(_MigrationTestCase):
         self.assertTrue((world / "Lore").is_dir(), "collision must not mutate")
 
     def test_plan_allows_empty_destination_dir(self) -> None:
+        if _fs_case_insensitive():
+            self.skipTest("an empty lowercase dir cannot exist separately from "
+                          "its legacy-cased alias on case-insensitive FS")
         mundos = self._mundos()
         world = self._legacy_world(mundos)
         (world / "lore").mkdir()  # empty lowercase dir: safe to replace
@@ -211,14 +258,19 @@ class TestMigrationExecute(_MigrationTestCase):
         plan = build_migration_plan(mundos, "legacy-x", ["Lore"])
         evidence = execute_migration(plan, self._evidence_dir())
         self.assertEqual(evidence.outcome, MigrationOutcome.COMPLETED)
-        # Approved folder moved to lowercase; content preserved.
+        # Canonical side reachable after the step (moved or natural noop).
         self.assertTrue((world / "lore").is_dir())
-        self.assertFalse((world / "Lore").exists(), "approved folder must move")
         self.assertTrue((world / "lore" / "reglas" / "magia.md").exists())
-        # Unapproved legacy folder + unapproved extra dir + sagas untouched.
-        self.assertTrue((world / "Personajes").is_dir(), "unapproved legacy folder untouched")
-        self.assertFalse((world / "personajes").exists())
-        self.assertTrue((world / "Personajes" / "anisa.md").exists())
+        if _fs_case_insensitive():
+            # Natural noop: legacy-cased path still resolves (same physical dir).
+            self.assertTrue((world / "Lore").is_dir(), "noop: nothing moved")
+            self.assertTrue((world / "Personajes").is_dir())
+            self.assertTrue(evidence.steps[0].is_noop)
+        else:
+            self.assertFalse((world / "Lore").exists(), "approved folder must move")
+            # Unapproved legacy folder + unapproved extra dir + sagas untouched.
+            self.assertTrue((world / "Personajes").is_dir(), "unapproved legacy folder untouched")
+            self.assertFalse((world / "personajes").exists())
         self.assertTrue((world / "Notas").is_dir())
         self.assertTrue((world / "sagas").is_dir())
         self.assertEqual([step.folder for step in evidence.steps], ["Lore"])
@@ -266,10 +318,15 @@ class TestMigrationExecute(_MigrationTestCase):
         self.assertEqual(len(record["steps"]), 2)
         self.assertEqual(record["steps"][0]["folder"], "Lore")
         self.assertEqual(record["steps"][0]["destination_hash"], record["steps"][0]["source_hash"])
+        self.assertIn("is_noop", record["steps"][0],
+                      "evidence steps carry the per-step noop flag (R-CIM-03)")
         # The plan's transaction id is the same one recorded in evidence.
         self.assertEqual(record["transaction_id"], plan.transaction_id)
 
     def test_failure_restores_originals_and_records_rollback_evidence(self) -> None:
+        if _fs_case_insensitive():
+            self.skipTest("rollback only applies to real moves, which never "
+                          "happen for noop steps on case-insensitive FS")
         mundos = self._mundos()
         world = self._legacy_world(mundos)
         plan = build_migration_plan(mundos, "legacy-x", ["Lore", "Personajes"])
@@ -316,6 +373,9 @@ class TestMigrationExecute(_MigrationTestCase):
         self.assertTrue((world / "Notas" / "nota.md").exists())
 
     def test_execute_rejects_collision_before_any_move(self) -> None:
+        if _fs_case_insensitive():
+            self.skipTest("destination and source are the same physical dir on "
+                          "case-insensitive FS (noop, never a raced collision)")
         mundos = self._mundos()
         world = self._legacy_world(mundos)
         plan = build_migration_plan(mundos, "legacy-x", ["Lore"])
@@ -328,6 +388,103 @@ class TestMigrationExecute(_MigrationTestCase):
         self.assertEqual(ctx.exception.transaction_id, plan.transaction_id)
         self.assertTrue((world / "Lore").is_dir(), "nothing may move on collision")
         self.assertTrue((world / "lore" / "ajeno.md").exists())
+
+
+class TestMigrationNoop(_MigrationTestCase):
+    """R-CIM-01..04 — same-physical-directory detection and noop steps.
+
+    The noop path is deterministic on every filesystem: on a case-insensitive
+    FS ``Lore`` and ``lore`` are the same physical directory (real samefile);
+    on case-sensitive Linux ``_is_same_physical_directory`` is mocked to True
+    so the engine's noop behavior is exercised identically in CI.
+    """
+
+    def test_is_same_physical_directory(self) -> None:
+        mundos = self._mundos()
+        world = self._legacy_world(mundos)
+        # Same path -> same physical directory (True everywhere).
+        self.assertTrue(_is_same_physical_directory(world / "Lore", world / "Lore"))
+        # Distinct existing directories -> False.
+        self.assertFalse(
+            _is_same_physical_directory(world / "Lore", world / "Personajes")
+        )
+        # Missing destination/source -> False (existence guards, R-CIM-01).
+        self.assertFalse(
+            _is_same_physical_directory(world / "Lore", world / "no-existe")
+        )
+        self.assertFalse(
+            _is_same_physical_directory(world / "no-existe", world / "Lore")
+        )
+
+    def test_destination_collision_not_raised_for_same_physical_directory(self) -> None:
+        mundos = self._mundos()
+        world = self._noop_world(mundos)
+        with mock.patch(
+            "wiki.migration._is_same_physical_directory", return_value=True
+        ):
+            collision = _destination_collision(world / "lore", source=world / "Lore")
+        self.assertFalse(collision, "same physical dir is not a collision (R-CIM-04)")
+        # Without source, the occupied destination still counts as a collision.
+        self.assertTrue(_destination_collision(world / "lore"))
+
+    def test_plan_marks_noop_step_and_skips_collision(self) -> None:
+        mundos = self._mundos()
+        world = self._noop_world(mundos)
+        with mock.patch(
+            "wiki.migration._is_same_physical_directory", return_value=True
+        ):
+            plan = build_migration_plan(mundos, "legacy-x", ["Lore", "Personajes"])
+        self.assertIsInstance(plan, MigrationPlan)
+        self.assertTrue(all(step.is_noop for step in plan.steps),
+                        "same physical dir steps must be marked noop (R-CIM-02)")
+        for step in plan.steps:
+            self.assertEqual(step.source, world / step.folder)
+            self.assertEqual(step.destination, world / step.folder.lower())
+            self.assertRegex(step.source_hash, r"^[0-9a-f]{64}$")
+        # No COLLISION raised: same physical directory is a noop, not a collision.
+
+    def test_execute_migration_noop_registers_honest_evidence(self) -> None:
+        mundos = self._mundos()
+        world = self._noop_world(mundos)
+        with mock.patch(
+            "wiki.migration._is_same_physical_directory", return_value=True
+        ):
+            plan = build_migration_plan(mundos, "legacy-x", ["Lore", "Personajes"])
+            evidence_dir = self._evidence_dir()
+            evidence = execute_migration(plan, evidence_dir)
+        self.assertEqual(evidence.outcome, MigrationOutcome.COMPLETED)
+        self.assertEqual([step.folder for step in evidence.steps],
+                         ["Lore", "Personajes"])
+        for step in evidence.steps:
+            self.assertTrue(step.is_noop, "noop steps carry the flag (R-CIM-03)")
+            self.assertEqual(step.destination_hash, step.source_hash,
+                             "noop evidence: destination hash == source hash")
+        # Nothing moved: the legacy-cased folders still resolve (same dir).
+        self.assertTrue((world / "Lore").is_dir())
+        self.assertTrue((world / "Personajes").is_dir())
+        self.assertTrue((world / "lore" / "reglas" / "magia.md").exists())
+        # Persisted evidence JSON carries schema 1 + the per-step noop flag.
+        record = json.loads(
+            (evidence_dir / f"{evidence.transaction_id}.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(record["schema"], 1)
+        self.assertEqual(record["outcome"], "completed")
+        self.assertTrue(all(step["is_noop"] for step in record["steps"]))
+        for step in record["steps"]:
+            self.assertEqual(step["destination_hash"], step["source_hash"])
+
+    def test_migration_step_is_noop_defaults_false_and_serializes(self) -> None:
+        step = MigrationStep(
+            folder="Lore",
+            source=Path("/x/Lore"),
+            destination=Path("/x/lore"),
+            source_hash="0" * 64,
+        )
+        self.assertFalse(step.is_noop,
+                         "backward-compatible default is False (R-CIM-03)")
+        payload = _step_to_dict(step)
+        self.assertIs(payload["is_noop"], False)
+        self.assertEqual(payload["folder"], "Lore")
 
 
 if __name__ == "__main__":

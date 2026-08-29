@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 _SRC_DIR = Path(__file__).resolve().parent.parent.parent  # demiurgos-suite/
 if str(_SRC_DIR) not in sys.path:
@@ -449,6 +450,38 @@ class TestLegacyLayoutDetection(unittest.TestCase):
 
     def test_missing_mundos_dir_returns_empty(self) -> None:
         self.assertEqual(detect_legacy_layout(self._mundos()), [])
+
+    def test_case_insensitive_fs_does_not_report_legacy(self) -> None:
+        """R-CIM-05 — on a case-insensitive FS, `Lore` matches the canonical
+        `lore` case-insensitively (same physical directory), so it is NOT
+        reported as legacy: the runtime already operates on the canonical tree
+        through legacy-cased paths."""
+        mundos = self._mundos()
+        legacy = mundos / "legacy-x"
+        (legacy / "Lore").mkdir(parents=True)
+        (legacy / "Personajes").mkdir()
+        with mock.patch(
+            "wiki.world_authority._is_case_insensitive_fs", return_value=True
+        ):
+            findings = detect_legacy_layout(mundos)
+        self.assertEqual(findings, [],
+                         "case-insensitive FS: legacy-cased dirs are canonical")
+
+    def test_case_sensitive_fs_still_reports_legacy(self) -> None:
+        """R-CIM-05/R-CIM-06 — on a case-sensitive FS the existing detection
+        is preserved: `Lore`/`Personajes` ARE reported as legacy (no
+        regression on Linux)."""
+        mundos = self._mundos()
+        legacy = mundos / "legacy-x"
+        (legacy / "Lore").mkdir(parents=True)
+        (legacy / "Personajes").mkdir()
+        with mock.patch(
+            "wiki.world_authority._is_case_insensitive_fs", return_value=False
+        ):
+            findings = detect_legacy_layout(mundos)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["world"], "legacy-x")
+        self.assertEqual(set(findings[0]["folders"]), {"Lore", "Personajes"})
 
 
 class TestCanonicalIdentity(unittest.TestCase):
