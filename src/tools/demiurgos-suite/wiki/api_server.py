@@ -77,7 +77,17 @@ from demiurgos_language import (
     resolve_ui_language,
 )
 from local_state import LocalState
+from account import (
+    create_account as account_create_account,
+    get_account as account_get_account,
+    rotate_words as account_rotate_words,
+    update_account as account_update_account,
+    verify_password as account_verify_password,
+    verify_words as account_verify_words,
+)
+import emergency_key
 from onboarding import (
+    commit_account_created as _commit_account_created,
     commit_step0 as _commit_step0,
     commit_world_created as _commit_world_created,
     status_from as _onboarding_status_from,
@@ -350,10 +360,13 @@ def get_locale():
 
 @app.post("/api/onboarding/step0")
 def onboarding_step0(body: OnboardingStep0Request, request: Request):
-    """Persist step 0 locale. Gated: unauthenticated access fails closed."""
-    principal = _resolve_principal(request)
-    if principal is None:
-        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    """Persist step 0 locale. Gated ONLY when the vault is ON: fresh installs
+    with the vault OFF must onboard without authentication (S-AC-02a);
+    with the vault ON unauthenticated access fails closed (401, S-AC-02b)."""
+    if _vault_active():
+        principal = _resolve_principal(request)
+        if principal is None:
+            return JSONResponse(status_code=401, content={"detail": "Authentication required."})
     registry = _local_state()
     try:
         next_state = _commit_step0(
@@ -371,11 +384,13 @@ def onboarding_step0(body: OnboardingStep0Request, request: Request):
 def create_world(body: WorldCreateRequest, request: Request):
     """Create a canonical new world (lowercase tree + optional OC8 skeleton).
 
-    Gated write; idempotent repeats are harmless; collisions and unsafe names
-    are rejected without mutation. When local auth is disabled, creation is
-    allowed without authentication (development mode).
+    Gated write when the vault is ON (fail-closed 401, S-AC-02d); with the
+    vault OFF creation needs no authentication (S-AC-02c) — the local-only
+    threat model treats the vault flag as the single source of truth.
+    Idempotent repeats are harmless; collisions and unsafe names are rejected
+    without mutation.
     """
-    if _local_auth_enabled():
+    if _vault_active():
         principal = _resolve_principal(request)
         if principal is None:
             return JSONResponse(status_code=401, content={"detail": "Authentication required."})
@@ -768,10 +783,36 @@ class EditPrincipal:
 
 
 _LOCAL_AUTH_MODE = "local-dev"
+_CREDENTIALS_AUTH_MODE = "credentials"
+_CREDENTIALS_PROVIDER = "credentials"
 _LOCAL_SESSION_COOKIE = "demiurgos_local_session"
+_SESSION_COOKIE = "demiurgos_session"
 _LOCAL_SESSION_TTL = timedelta(hours=8)
-_local_sessions: dict[str, dict] = {}
+_DEFAULT_SESSION_TTL_H = 8
+_DEFAULT_REMEMBER_ME_TTL_D = 30
+_DEFAULT_REAUTH_INTERVAL_D = 14
+_RECOVERY_TOKEN_TTL = timedelta(minutes=5)
+# Generalized multi-provider session store: one dict for local-dev and
+# credentials sessions, keyed by the sha256 hash of the bearer token.
+# Records carry ``{provider, principal_id, label, expires_at, remember_me}``;
+# credentials sessions additionally carry ``last_auth_at`` (R-AC-04).
+_sessions: dict[str, dict] = {}
+# Backward-compatible alias: existing tests/fixtures clear the store by its
+# legacy name; both names reference the SAME generalized store.
+_local_sessions = _sessions
 _local_session_lock = threading.Lock()
+
+# Independent in-memory rate limiters for password and recovery-words
+# verification (R-ERK-02): exhausting one auth factor never locks out the
+# other. Kill-switch property: counters reset on process restart (filesystem
+# access already means the vault is compromised).
+_password_rate_limiter = emergency_key.RateLimiter()
+_words_rate_limiter = emergency_key.RateLimiter()
+
+# Short-lived, single-use recovery tokens (forgot-password flow, R-AC-05),
+# keyed by the sha256 hash of the token. Same kill-switch property as the
+# session store: tokens vanish on process restart.
+_recovery_tokens: dict[str, dict] = {}
 
 
 def _auth_mode() -> str:
@@ -780,10 +821,15 @@ def _auth_mode() -> str:
 
 
 def _is_loopback_request(request: Request | None) -> bool:
-    """Use the socket peer only; Host and forwarded headers are untrusted."""
-    if request is None or request.client is None:
+    """Use the socket peer only; Host and forwarded headers are untrusted.
+
+    ``getattr`` keeps the check safe for request-like objects that carry no
+    socket peer (e.g. test doubles): no client means no loopback proof.
+    """
+    client = getattr(request, "client", None) if request is not None else None
+    if client is None:
         return False
-    return request.client.host in {"127.0.0.1", "::1"}
+    return client.host in {"127.0.0.1", "::1"}
 
 
 def _local_auth_enabled() -> bool:
@@ -791,12 +837,13 @@ def _local_auth_enabled() -> bool:
 
 
 def _prune_local_sessions(now: datetime | None = None) -> None:
+    """Prune expired sessions from the shared multi-provider store."""
     current = now or datetime.now(timezone.utc)
     for token_hash in [
-        key for key, record in _local_sessions.items()
+        key for key, record in _sessions.items()
         if record["expires_at"] <= current
     ]:
-        _local_sessions.pop(token_hash, None)
+        _sessions.pop(token_hash, None)
 
 
 def _local_session_for_request(request: Request | None) -> dict | None:
@@ -809,7 +856,79 @@ def _local_session_for_request(request: Request | None) -> dict | None:
     token_hash = _hash_token(token)
     with _local_session_lock:
         _prune_local_sessions(now)
-        return _local_sessions.get(token_hash)
+        return _sessions.get(token_hash)
+
+
+def _vault_active() -> bool:
+    """Vault is active when the operator override OR the persisted flag is on.
+
+    PRIMARY: ``capabilities.vault.enabled`` in local state (R-VC-01). The
+    ``DEMIURGOS_AUTH_MODE=credentials`` env override is the operator escape
+    hatch (S-VC-01b): it forces the vault on regardless of the flag. This
+    helper replaces ``_credentials_auth_enabled`` as the single auth gate for
+    every credentials endpoint and for the onboarding/world fail-closed gates
+    (R-AC-01, R-AC-02, R-VC-06).
+    """
+    if _auth_mode() == _CREDENTIALS_AUTH_MODE:
+        return True
+    state = _local_state().snapshot()
+    vault = state.get("capabilities", {}).get("vault") or {}
+    return bool(vault.get("enabled"))
+
+
+def _credentials_session_for_request(request: Request | None) -> dict | None:
+    """Resolve a credentials-vault session. NOT loopback-bound (unlike local-dev)."""
+    if not _vault_active():
+        return None
+    token = request.cookies.get(_SESSION_COOKIE) if request else None
+    if not token:
+        return None
+    now = datetime.now(timezone.utc)
+    token_hash = _hash_token(token)
+    with _local_session_lock:
+        _prune_local_sessions(now)
+        return _sessions.get(token_hash)
+
+
+def _session_for_request(request: Request | None) -> dict | None:
+    """Unified session resolution across every provider in the active mode.
+
+    ``local-dev`` keeps its loopback-only binding; credentials-vault sessions
+    are NOT loopback-bound and resolve whenever the vault is active (flag or
+    env override, R-VC-06). Disabled mode never resolves a session.
+    """
+    if _auth_mode() == _LOCAL_AUTH_MODE:
+        return _local_session_for_request(request)
+    if _vault_active():
+        return _credentials_session_for_request(request)
+    return None
+
+
+def _cookie_secure(request: Request) -> bool:
+    """Scheme-aware cookie Secure flag + explicit env override (R-AC-03).
+
+    The default follows the request scheme so the session cookie works on any
+    deployment without configuration: HTTPS -> secure=True; plain HTTP
+    (http://localhost on Windows/Linux, or a VPS served over HTTP) ->
+    secure=False so the browser actually sends the cookie back and the login
+    persists. ``DEMIURGOS_COOKIE_SECURE`` overrides the scheme default
+    explicitly (the operator's call, e.g. behind a TLS-terminating proxy).
+    """
+    override = os.environ.get("DEMIURGOS_COOKIE_SECURE")
+    if override is not None:
+        return override.strip().lower() in ("1", "true", "yes", "on")
+    return request.url.scheme == "https"
+
+
+def _session_ttl(remember_me: bool) -> timedelta:
+    """Session TTL from env: 8h default, 30d with remember_me (R-AC-03)."""
+    if remember_me:
+        days = int(os.environ.get(
+            "DEMIURGOS_REMEMBER_ME_TTL_D", str(_DEFAULT_REMEMBER_ME_TTL_D)))
+        return timedelta(days=days)
+    hours = int(os.environ.get(
+        "DEMIURGOS_SESSION_TTL_H", str(_DEFAULT_SESSION_TTL_H)))
+    return timedelta(hours=hours)
 
 
 def _local_status(request: Request) -> dict:
@@ -823,6 +942,76 @@ def _local_status(request: Request) -> dict:
         "authenticated": session is not None,
         "label": session["label"] if session else None,
     }
+
+
+def _reauth_interval_d() -> int:
+    """Soft re-auth countdown interval in days (R-VC-05).
+
+    PRIMARY: ``capabilities.vault.reauth_interval_d`` persisted in local
+    state (default 14, R-VC-01). ``DEMIURGOS_REAUTH_INTERVAL_D`` is the
+    operator override and wins when set (S-VC-05b).
+    """
+    override = os.environ.get("DEMIURGOS_REAUTH_INTERVAL_D")
+    if override is not None and override.strip():
+        return int(override)
+    state = _local_state().snapshot()
+    vault = state.get("capabilities", {}).get("vault") or {}
+    return int(vault.get("reauth_interval_d", _DEFAULT_REAUTH_INTERVAL_D))
+
+
+def _vault_config() -> dict:
+    """Public vault status for the Settings panel (R-VC-02, S-VC-02a/b).
+
+    Read-only and safe to expose without authentication: it never returns the
+    words hash, the password hash, or any session material.
+    """
+    account = account_get_account(_local_state())
+    return {
+        "enabled": _vault_active(),
+        "account_exists": account is not None,
+        "username": account.get("username") if account else None,
+        "has_password": bool(account and account.get("password_hash")),
+        "reauth_interval_d": _reauth_interval_d(),
+        "env_override": _auth_mode() == _CREDENTIALS_AUTH_MODE,
+    }
+
+
+def _session_status(request: Request) -> dict:
+    """Unified mode-aware session status (R-ID-01 / R-VC-06): provider
+    included when an active session exists (local-dev | credentials).
+    Credentials sessions additionally expose ``last_auth_at`` (ISO 8601) and
+    ``days_until_reauth`` (clamped at 0) for the soft re-auth countdown
+    (R-AC-04, S-AC-04b/d).
+
+    ``enabled`` equals ``_vault_active()`` (R-VC-06): when the vault is OFF
+    the app is open and the AuthGate passes through; when it is ON
+    unauthenticated users MUST be redirected to login (S-VC-06a/b).
+
+    An active vault ALWAYS exposes ``has_password`` (bool) so the login UI
+    can choose between the password prompt and the passwordless "Enter"
+    button from the account slot instead of adapting to server errors
+    (R-AC-02, S-AC-02a/b)."""
+    mode = _auth_mode()
+    enabled = _vault_active()
+    session = _session_for_request(request) if enabled else None
+    status = {
+        "mode": mode,
+        "enabled": enabled,
+        "authenticated": session is not None,
+        "label": session["label"] if session else None,
+        "provider": session["provider"] if session else None,
+    }
+    if _vault_active():
+        account = account_get_account(_local_state())
+        status["has_password"] = bool(account and account.get("password_hash"))
+    if session and session.get("provider") == _CREDENTIALS_PROVIDER:
+        last_auth_at = session.get("last_auth_at")
+        if last_auth_at is not None:
+            elapsed_days = (datetime.now(timezone.utc) - last_auth_at).days
+            status["last_auth_at"] = last_auth_at.isoformat()
+            status["days_until_reauth"] = max(
+                0, _reauth_interval_d() - elapsed_days)
+    return status
 
 
 @app.get("/api/auth/local-dev/session")
@@ -842,9 +1031,11 @@ def local_dev_session_start(request: Request, response: Response):
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     session = {
+        "provider": _LOCAL_AUTH_MODE,
         "principal_id": f"local-dev-session-{secrets.token_hex(16)}",
         "label": "Local development user",
         "expires_at": now + _LOCAL_SESSION_TTL,
+        "remember_me": False,
     }
     with _local_session_lock:
         _prune_local_sessions(now)
@@ -874,22 +1065,400 @@ def local_dev_session_logout(request: Request, response: Response):
     token = request.cookies.get(_LOCAL_SESSION_COOKIE)
     if token:
         with _local_session_lock:
-            _local_sessions.pop(_hash_token(token), None)
+            _sessions.pop(_hash_token(token), None)
     response.delete_cookie(_LOCAL_SESSION_COOKIE, path="/", samesite="lax")
     return _local_status(request)
+
+
+@app.get("/api/auth/session/status")
+def auth_session_status(request: Request):
+    """Unified mode-aware session status (R-ID-01 / R-AC-04)."""
+    return _session_status(request)
+
+
+@app.delete("/api/auth/session")
+def auth_session_logout(request: Request, response: Response):
+    """Unified logout (R-AC-06): remove the active session and clear its cookie."""
+    if _auth_mode() == _LOCAL_AUTH_MODE:
+        cookie = _LOCAL_SESSION_COOKIE
+    else:
+        cookie = _SESSION_COOKIE
+    token = request.cookies.get(cookie)
+    if token:
+        with _local_session_lock:
+            _sessions.pop(_hash_token(token), None)
+    response.delete_cookie(cookie, path="/", samesite="lax")
+    return _session_status(request)
+
+
+class CredentialsAccountRequest(BaseModel):
+    username: str
+    password: str | None = None
+
+
+@app.post("/api/auth/credentials/account")
+def credentials_account_create(payload: CredentialsAccountRequest, request: Request, response: Response):
+    """Create the single local account during onboarding (R-AC-01).
+
+    The recovery words are generated and returned in plaintext exactly once;
+    only their Argon2id hash is stored (S-AC-01a). ``password`` is optional:
+    a null ``password_hash`` marks the account passwordless (S-AC-01b). The
+    account step is recorded as completed in onboarding (blocking step).
+
+    NOT gated on the vault being active: the account step is part of the
+    default onboarding flow and must work on a fresh install with the vault
+    OFF (S-AC-01b) as well as with the vault ON via the flag (S-AC-01a). A
+    second account is always rejected (409).
+    """
+    if account_get_account(_local_state()) is not None:
+        raise HTTPException(status_code=409, detail="Account already exists")
+    username = payload.username.strip()
+    if not username:
+        raise HTTPException(status_code=422, detail="Username is required")
+    words, _ = account_create_account(_local_state(), username, payload.password)
+    registry = _local_state()
+    registry.atomic_commit(_commit_account_created(registry.snapshot()))
+    return {"username": username, "words": words}
+
+
+class CredentialsLoginRequest(BaseModel):
+    password: str | None = None
+    remember_me: bool = False
+
+
+@app.post("/api/auth/credentials/login")
+def credentials_login(payload: CredentialsLoginRequest, request: Request, response: Response):
+    """Start a credentials session: password if set, else passwordless (R-AC-02).
+
+    A passwordless account needs no secret: clicking "Enter" is enough
+    (S-AC-02b). Wrong passwords are rate-limited independently from recovery
+    words (S-AC-02c, R-ERK-02). On success the HttpOnly vault session cookie
+    is set with the remember-me TTL (30d) or the 8h default (R-AC-03).
+    """
+    if not _vault_active():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    stored_hash = account.get("password_hash")
+    if stored_hash:
+        if not payload.password:
+            raise HTTPException(status_code=422, detail="Password required")
+        if not account_verify_password(payload.password, stored_hash, _password_rate_limiter):
+            raise HTTPException(status_code=401, detail="Invalid or rate-limited password")
+
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    ttl = _session_ttl(payload.remember_me)
+    session = {
+        "provider": _CREDENTIALS_PROVIDER,
+        "principal_id": f"credentials-session-{secrets.token_hex(16)}",
+        "label": account.get("username") or "Demiurgos account",
+        "expires_at": now + ttl,
+        "remember_me": payload.remember_me,
+        "last_auth_at": now,
+    }
+    with _local_session_lock:
+        _prune_local_sessions(now)
+        _sessions[_hash_token(token)] = session
+    response.set_cookie(
+        _SESSION_COOKIE,
+        token,
+        max_age=int(ttl.total_seconds()),
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(request),
+        path="/",
+    )
+    return {
+        "mode": _CREDENTIALS_AUTH_MODE,
+        "enabled": True,
+        "authenticated": True,
+        "label": session["label"],
+        "provider": _CREDENTIALS_PROVIDER,
+    }
+
+
+class CredentialsRecoverRequest(BaseModel):
+    words: str
+
+
+@app.post("/api/auth/credentials/recover")
+def credentials_recover(payload: CredentialsRecoverRequest, request: Request, response: Response):
+    """Verify the recovery words and issue a short-lived recovery token (R-AC-05).
+
+    Lets a user who forgot the password prove ownership (words = ownership
+    key) and reset credentials. The token is single-use and expires after 5
+    minutes. Wrong words are rate-limited on the words limiter (R-ERK-02),
+    independent from the password limiter.
+    """
+    if not _vault_active():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    if not account_verify_words(payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited recovery words")
+    token = secrets.token_urlsafe(32)
+    with _local_session_lock:
+        _recovery_tokens[_hash_token(token)] = {
+            "expires_at": datetime.now(timezone.utc) + _RECOVERY_TOKEN_TTL,
+        }
+    return {"recovery_token": token}
+
+
+class CredentialsRecoverCompleteRequest(BaseModel):
+    recovery_token: str
+    new_username: str | None = None
+    new_password: str | None = None
+
+
+@app.post("/api/auth/credentials/recover/complete")
+def credentials_recover_complete(payload: CredentialsRecoverCompleteRequest, request: Request, response: Response):
+    """Consume the recovery token and set the new username/password (R-AC-05).
+
+    The token is single-use: it is consumed by this call and a replay fails.
+    ``new_password=None`` leaves the password untouched; ``new_username=None``
+    leaves the username untouched.
+    """
+    if not _vault_active():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    token_hash = _hash_token(payload.recovery_token)
+    with _local_session_lock:
+        record = _recovery_tokens.pop(token_hash, None)  # single-use
+    if record is None or record["expires_at"] <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Invalid or expired recovery token")
+    new_username = payload.new_username.strip() if payload.new_username else None
+    if not new_username and payload.new_password is None:
+        raise HTTPException(status_code=422, detail="Nothing to update")
+    account_update_account(
+        _local_state(),
+        new_username=new_username,
+        new_password=payload.new_password,
+    )
+    return {"success": True}
+
+
+class CredentialsPasswordRequest(BaseModel):
+    words: str
+    new_password: str
+
+
+@app.post("/api/auth/credentials/password")
+def credentials_change_password(payload: CredentialsPasswordRequest, request: Request, response: Response):
+    """Change the password by proving ownership with the recovery words (R-AC-05a)."""
+    if not _vault_active():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    if not account_verify_words(payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited recovery words")
+    account_update_account(_local_state(), new_password=payload.new_password)
+    return {"success": True}
+
+
+class CredentialsPasswordRemoveRequest(BaseModel):
+    words: str
+
+
+@app.post("/api/auth/credentials/password/remove")
+def credentials_remove_password(payload: CredentialsPasswordRemoveRequest, request: Request, response: Response):
+    """Remove the password (back to passwordless) via the recovery words (R-AC-05b)."""
+    if not _vault_active():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    if not account_verify_words(payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited recovery words")
+    account_update_account(_local_state(), remove_password=True)
+    return {"success": True}
+
+
+class CredentialsUsernameRequest(BaseModel):
+    words: str
+    new_username: str
+
+
+@app.post("/api/auth/credentials/username")
+def credentials_change_username(payload: CredentialsUsernameRequest, request: Request, response: Response):
+    """Change the username by proving ownership with the recovery words (R-AC-05c)."""
+    if not _vault_active():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    if not account_verify_words(payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited recovery words")
+    new_username = payload.new_username.strip()
+    if not new_username:
+        raise HTTPException(status_code=422, detail="Username is required")
+    account_update_account(_local_state(), new_username=new_username)
+    return {"success": True}
+
+
+@app.post("/api/auth/credentials/words/rotate")
+def credentials_rotate_words(request: Request):
+    """Rotate the recovery words (R-ERK-01); requires an active session.
+
+    Returns the new plaintext words exactly once; the old words are
+    invalidated by the atomic commit of the new Argon2id hash.
+    """
+    if not _vault_active():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    words, _ = account_rotate_words(_local_state())
+    return {"new_words": words}
+
+
+# ---------------------------------------------------------------------------
+# R-VC-02..R-VC-05 — vault lifecycle (vault-settings-configure)
+# ---------------------------------------------------------------------------
+
+
+class VaultEnableRequest(BaseModel):
+    username: str | None = None
+    password: str | None = None
+    words: str | None = None
+
+
+class VaultDisableRequest(BaseModel):
+    words: str | None = None
+
+
+class VaultReauthIntervalRequest(BaseModel):
+    reauth_interval_d: int
+
+
+@app.get("/api/auth/vault/config")
+def vault_config():
+    """Public vault status for the Settings panel (R-VC-02, S-VC-02a/b).
+
+    NOT auth-gated: the panel must be reachable before login so fresh
+    installs can activate the vault from onboarding/settings (S-VC-02a), and
+    an ON vault still exposes only read-only status, never secrets (S-VC-02b).
+    """
+    return _vault_config()
+
+
+@app.post("/api/auth/vault/enable")
+def vault_enable(payload: VaultEnableRequest):
+    """Activate the vault (R-VC-03, S-VC-03a/b/c/d).
+
+    Precondition: vault OFF and either no account (create the account and
+    return the words exactly once, S-VC-03a) or an existing account whose
+    recovery words verify (ownership proof, S-VC-03b; wrong words -> 400 and
+    the flag stays off, S-VC-03c). An already-ON vault is rejected (409,
+    S-VC-03d). The persisted ``capabilities.vault.enabled`` flag becomes the
+    PRIMARY source; the env override still wins when set (S-VC-01b).
+    """
+    if _vault_active():
+        raise HTTPException(status_code=409, detail="Vault is already enabled")
+    registry = _local_state()
+    account = account_get_account(registry)
+    if account is None:
+        username = (payload.username or "").strip()
+        if not username:
+            raise HTTPException(status_code=422, detail="Username is required")
+        words, _ = account_create_account(registry, username, payload.password)
+        state = registry.snapshot()
+        caps = state.setdefault("capabilities", {})
+        caps["vault"] = {
+            "enabled": True,
+            "reauth_interval_d": int(
+                (caps.get("vault") or {}).get(
+                    "reauth_interval_d", _DEFAULT_REAUTH_INTERVAL_D)),
+        }
+        registry.atomic_commit(state)
+        registry.atomic_commit(_commit_account_created(registry.snapshot()))
+        return {"enabled": True, "words": words}
+    if not payload.words:
+        raise HTTPException(status_code=400, detail="Recovery words are required")
+    if not account_verify_words(
+            payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=400, detail="Invalid or rate-limited recovery words")
+    state = registry.snapshot()
+    caps = state.setdefault("capabilities", {})
+    caps["vault"] = {
+        "enabled": True,
+        "reauth_interval_d": int(
+            (caps.get("vault") or {}).get(
+                "reauth_interval_d", _DEFAULT_REAUTH_INTERVAL_D)),
+    }
+    registry.atomic_commit(state)
+    return {"enabled": True}
+
+
+@app.post("/api/auth/vault/disable")
+def vault_disable(payload: VaultDisableRequest):
+    """Disable the vault (R-VC-04, S-VC-04a/b/c).
+
+    Words are the mandatory ownership proof and verification is rate-limited
+    (S-VC-04c); a session alone NEVER suffices (S-VC-04b). Missing or wrong
+    words return 400 (S-VC-04b/c). An already-disabled vault returns 409.
+    """
+    if not _vault_active():
+        raise HTTPException(status_code=409, detail="Vault is already disabled")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=409, detail="No account configured")
+    if not payload.words:
+        raise HTTPException(status_code=400, detail="Recovery words are required")
+    if not account_verify_words(
+            payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=400, detail="Invalid or rate-limited recovery words")
+    registry = _local_state()
+    state = registry.snapshot()
+    caps = state.setdefault("capabilities", {})
+    caps["vault"] = {
+        "enabled": False,
+        "reauth_interval_d": int(
+            (caps.get("vault") or {}).get(
+                "reauth_interval_d", _DEFAULT_REAUTH_INTERVAL_D)),
+    }
+    registry.atomic_commit(state)
+    return {"enabled": False}
+
+
+@app.post("/api/auth/vault/reauth-interval")
+def vault_set_reauth_interval(payload: VaultReauthIntervalRequest):
+    """Adjust the soft re-auth countdown interval (R-VC-05, S-VC-05a/b).
+
+    Persists ``capabilities.vault.reauth_interval_d`` (PRIMARY); the
+    ``DEMIURGOS_REAUTH_INTERVAL_D`` env override still wins when set
+    (S-VC-05b). The response always reports the EFFECTIVE interval.
+    """
+    if not _vault_active():
+        raise HTTPException(status_code=403, detail="Vault is disabled")
+    if payload.reauth_interval_d < 1:
+        raise HTTPException(status_code=422, detail="reauth_interval_d must be >= 1")
+    registry = _local_state()
+    state = registry.snapshot()
+    vault = state.setdefault("capabilities", {}).setdefault("vault", {})
+    vault["reauth_interval_d"] = payload.reauth_interval_d
+    registry.atomic_commit(state)
+    return {"reauth_interval_d": _reauth_interval_d()}
 
 
 def _resolve_principal(request=None) -> EditPrincipal | None:
     """Resolve the trusted edit principal for a request.
 
-    Local development auth is the only built-in provider. It requires the
-    explicit ``DEMIURGOS_AUTH_MODE=local-dev`` setting, a loopback socket peer,
-    and a server-issued HttpOnly session cookie. Until those conditions hold,
-    every gated write fails closed. This function MUST NOT trust caller-
-    supplied identity: request headers and body fields are forgeable and are
-    deliberately ignored.
+    Sessions come from the explicit loopback-only local development provider
+    (``DEMIURGOS_AUTH_MODE=local-dev``) or from the credentials vault mode
+    (``DEMIURGOS_AUTH_MODE=credentials``), whose sessions are NOT loopback-
+    bound. Until a valid session exists, every gated write fails closed. This
+    function MUST NOT trust caller-supplied identity: request headers and body
+    fields are forgeable and are deliberately ignored.
     """
-    session = _local_session_for_request(request)
+    session = _session_for_request(request)
     if session is None:
         return None
     return EditPrincipal(session["principal_id"], label=session["label"])

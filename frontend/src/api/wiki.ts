@@ -1,7 +1,10 @@
 import { apiFetch } from "@/api/client";
 import { ApiError } from "@/api/types";
 import type {
+  AccountCreateResult,
   AiAskResponse,
+  AuthSessionStatus,
+  CredentialChangeResult,
   DiffPreview,
   DuplicateResponse,
   EmptyTrashResponse,
@@ -17,12 +20,17 @@ import type {
   MediaList,
   MoveResponse,
   ConfirmedEditRequest,
+  ReauthIntervalResult,
+  RecoveryTokenResponse,
   RestoreFileRequest,
   SuccessResponse,
   SystemControlResponse,
   TrashEntry,
   TrashListResponse,
   UploadResponse,
+  VaultConfig,
+  VaultDisableResult,
+  VaultEnableResult,
   WorldInfo,
 } from "@/api/types";
 import { API_BASE_URL } from "@/lib/constants";
@@ -51,6 +59,214 @@ export function startLocalDevSession(): Promise<LocalDevSessionStatus> {
 export function logoutLocalDevSession(): Promise<LocalDevSessionStatus> {
   return apiFetch<LocalDevSessionStatus>(
     apiUrl(["api", "auth", "local-dev", "session"]),
+    { method: "DELETE", credentials: "same-origin" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vault authentication (credentials mode — DEMIURGOS_AUTH_MODE=credentials)
+// ---------------------------------------------------------------------------
+
+/** GET /api/auth/session/status — unified mode-aware session status. */
+export function getAuthStatus(): Promise<AuthSessionStatus> {
+  return apiFetch<AuthSessionStatus>(
+    apiUrl(["api", "auth", "session", "status"]),
+    { credentials: "same-origin" },
+  );
+}
+
+/** POST /api/auth/credentials/account — create the single local account
+ *  during onboarding (R-AC-01). Returns the recovery words in plaintext
+ *  exactly once; the server persists only their hash. `password` is optional
+ *  (a missing/null password marks the account passwordless). */
+export function createAccount(
+  username: string,
+  password?: string,
+): Promise<AccountCreateResult> {
+  return apiFetch<AccountCreateResult>(
+    apiUrl(["api", "auth", "credentials", "account"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ username, password: password || undefined }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/login — start a credentials session. Accounts
+ *  with a password MUST send it; passwordless accounts pass an empty/absent
+ *  password ("Enter" button, S-AC-02b). `remember_me` extends the TTL from 8h
+ *  to 30d (R-AC-03). */
+export function credentialsLogin(
+  password: string | undefined,
+  rememberMe: boolean,
+): Promise<AuthSessionStatus> {
+  return apiFetch<AuthSessionStatus>(
+    apiUrl(["api", "auth", "credentials", "login"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ password: password || undefined, remember_me: rememberMe }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/recover — verify the recovery words (ownership
+ *  proof) and issue the short-lived single-use recovery token (R-AC-05). */
+export function recoverAccount(words: string): Promise<RecoveryTokenResponse> {
+  return apiFetch<RecoveryTokenResponse>(
+    apiUrl(["api", "auth", "credentials", "recover"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/recover/complete — consume the recovery token
+ *  and set the new username/password (both optional, at least one required). */
+export function completeRecovery(
+  recoveryToken: string,
+  newUsername?: string,
+  newPassword?: string,
+): Promise<CredentialChangeResult> {
+  return apiFetch<CredentialChangeResult>(
+    apiUrl(["api", "auth", "credentials", "recover", "complete"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({
+        recovery_token: recoveryToken,
+        new_username: newUsername || undefined,
+        new_password: newPassword || undefined,
+      }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/password — change the password by proving
+ *  ownership with the recovery words (R-AC-05a, requires a session). */
+export function changePassword(
+  words: string,
+  newPassword: string,
+): Promise<CredentialChangeResult> {
+  return apiFetch<CredentialChangeResult>(
+    apiUrl(["api", "auth", "credentials", "password"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words, new_password: newPassword }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/password/remove — drop the password back to
+ *  passwordless via the recovery words (R-AC-05b, requires a session). */
+export function removePassword(words: string): Promise<CredentialChangeResult> {
+  return apiFetch<CredentialChangeResult>(
+    apiUrl(["api", "auth", "credentials", "password", "remove"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/username — change the username via the
+ *  recovery words (R-AC-05c, requires a session). */
+export function changeUsername(
+  words: string,
+  newUsername: string,
+): Promise<CredentialChangeResult> {
+  return apiFetch<CredentialChangeResult>(
+    apiUrl(["api", "auth", "credentials", "username"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words, new_username: newUsername }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/words/rotate — rotate the recovery words
+ *  (R-ERK-01, requires a session). Returns the new plaintext words once. */
+export function rotateWords(): Promise<{ new_words: string }> {
+  return apiFetch<{ new_words: string }>(
+    apiUrl(["api", "auth", "credentials", "words", "rotate"]),
+    { method: "POST", credentials: "same-origin" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vault lifecycle (vault-settings-configure)
+// ---------------------------------------------------------------------------
+
+/** GET /api/auth/vault/config — vault lifecycle state. NOT auth-gated
+ *  (read-only status; never carries secrets). */
+export function getVaultConfig(): Promise<VaultConfig> {
+  return apiFetch<VaultConfig>(
+    apiUrl(["api", "auth", "vault", "config"]),
+    { credentials: "same-origin" },
+  );
+}
+
+/** POST /api/auth/vault/enable — activate the vault. With no account it
+ *  creates one (username + optional password) and returns the recovery words
+ *  exactly once; with an existing account it verifies the provided words
+ *  (ownership proof) before enabling. */
+export function enableVault(input: {
+  username?: string;
+  password?: string;
+  words?: string;
+}): Promise<VaultEnableResult> {
+  return apiFetch<VaultEnableResult>(
+    apiUrl(["api", "auth", "vault", "enable"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({
+        username: input.username || undefined,
+        password: input.password || undefined,
+        words: input.words || undefined,
+      }),
+    },
+  );
+}
+
+/** POST /api/auth/vault/disable — deactivate the vault. Requires the recovery
+ *  words (ownership proof) and is rate-limited server-side. */
+export function disableVault(words: string): Promise<VaultDisableResult> {
+  return apiFetch<VaultDisableResult>(
+    apiUrl(["api", "auth", "vault", "disable"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words }),
+    },
+  );
+}
+
+/** POST /api/auth/vault/reauth-interval — adjust the soft re-auth interval
+ *  (days). Returns the effective value (an env override may win). */
+export function setReauthInterval(
+  reauthIntervalD: number,
+): Promise<ReauthIntervalResult> {
+  return apiFetch<ReauthIntervalResult>(
+    apiUrl(["api", "auth", "vault", "reauth-interval"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ reauth_interval_d: reauthIntervalD }),
+    },
+  );
+}
+
+/** DELETE /api/auth/session — unified logout for any provider. */
+export function logoutSession(): Promise<AuthSessionStatus> {
+  return apiFetch<AuthSessionStatus>(
+    apiUrl(["api", "auth", "session"]),
     { method: "DELETE", credentials: "same-origin" },
   );
 }

@@ -1,42 +1,71 @@
-# Demiurgos — Sistema de Creación Narrativa
+# Demiurgos — Plataforma de Lore y Worldbuilding
 
-Bienvenido a Demiurgos, el motor narrativo para Hermes Agent. Crea, indexa y escribe historias con asistencia de IA, manteniendo coherencia de canon y continuidad entre arcos.
+Bienvenido a Demiurgos, la plataforma web de worldbuilding y gestión de lore: frontend React, backend FastAPI, grafo de entidades, memoria persistente (Engram) y asistente conversacional (Hermes). Gestiona cualquier mundo ficticio en **formato OKF** (Markdown + frontmatter YAML) sin acoplarse a un universo concreto.
 
-Si eres un nuevo usuario, este documento es tu **Punto de Partida**.
+Si eres un usuario nuevo, este documento es tu **Punto de Partida**.
 
 ---
 
-## 1. El Rol de la IA
+## 1. Estado de la instalación
+
+> ⚠️ **La instalación oficial aún no está disponible.** Los instaladores (Docker, Windows, Linux) están **en desarrollo**. Hoy Demiurgos se arranca desde el repositorio: clonar → crear `venv` → `npm install` → launchers (ver sección 4). `install.sh` solo prepara el stack CLI de desarrollo (Hermes, Engram y las skills narrativas); **no** instala la plataforma web.
+
+---
+
+## 2. El Rol de la IA
 
 Demiurgos opera bajo las reglas establecidas en `Agente_Maestro.md`. Las directrices principales son:
 
-1. **Protector del Canon:** La IA es guardiana de la coherencia. Las reglas del mundo (carpeta `mundos/{mundo_activo}/Lore/`) son sagradas. Si pides algo que contradice el canon, la IA te advertirá y propondrá una solución coherente.
+1. **Protector del Canon:** La IA es guardiana de la coherencia. Las reglas del mundo (carpeta `mundos/{mundo_activo}/lore/`) son sagradas. Si pides algo que contradice el canon, la IA te advertirá y propondrá una solución coherente.
 2. **Tono:** Épico, místico y honesto. Sin lenguaje genérico ni complaciente.
-3. **Fases:** Demiurgos usa 13 fases narrativas para cada paso del proceso creativo.
+3. **Fases:** El subsistema narrativo de Demiurgos usa 13 fases para el proceso creativo guiado por intención (vía Hermes).
 
 ---
 
-## 2. Estructura del Proyecto
+## 3. Estructura del Proyecto
 
 ```
-tu-mundo/
-├── AGENTS.md                       ← Orquestador (system prompt)
-├── .env                            ← DEMIURGOS_WORLD=tu-mundo
-├── .demiurgos-estado.json          ← Tracking de arcos
-├── mundos/tu-mundo/
-│   ├── Lore/                       ← Reglas del mundo, política, tecnología
-│   ├── Personajes/                 ← Fichas de personajes
-│   ├── sagas/                      ← Relatos y capítulos terminados
-│   └── Ideas/                      ← Banco de ideas
-├── plantillas/                     ← Catálogos narrativos (Snyder, tramas)
-└── .gitignore
+Demiurgos/
+├── frontend/                    ← App web (React + Vite + TypeScript + Tailwind)
+├── src/tools/demiurgos-suite/   ← Backend FastAPI y subsistema narrativo
+│   └── wiki/                    ← api_server.py, grafo, importador, bóveda
+├── mundos/                      ← Datos de los mundos (formato OKF)
+│   └── {mundo}/
+│       ├── lore/                ← Reglas del mundo, política, tecnología
+│       ├── personajes/          ← Fichas de personajes
+│       ├── sagas/               ← Relatos y capítulos terminados
+│       ├── ideas/               ← Banco de ideas
+│       └── ...
+├── scripts/                     ← Launchers y utilidades (Linux/macOS)
+├── start-demiurgos.ps1          ← Launcher de Windows
+├── plantillas/                  ← Catálogos narrativos (Snyder, tramas)
+├── docs/                        ← Documentación técnica y de arquitectura
+└── install.sh                   ← Stack CLI de desarrollo (Hermes/Engram/skills)
 ```
 
 ---
 
-## 3. El Flujo de Trabajo
+## 4. Cómo Empezar
 
-Demiurgos es **intent-driven**: hablas naturalmente y el orquestador interpreta qué fase necesitas.
+1. **Clona el repositorio:** `git clone https://github.com/maar1223/Demiurgos.git && cd Demiurgos`
+2. **Prepara el backend:**
+   ```bash
+   python3 -m venv .venv
+   .venv/bin/pip install -r src/tools/demiurgos-suite/requirements.txt
+   ```
+3. **Prepara el frontend:** `cd frontend && npm install && cd ..`
+4. **Arranca la plataforma:**
+   - Linux / macOS: `./scripts/start-demiurgos-linux.sh start`
+   - Windows: `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1`
+5. **Abre la app:** `http://127.0.0.1:5173` — el primer arranque muestra el onboarding (idioma, proveedores LLM, crear o importar un mundo).
+
+> **Opcional:** si quieres el stack CLI de desarrollo (Hermes Agent, Engram y las skills narrativas de las 13 fases), ejecuta una vez: `bash install.sh`. No es necesario para usar la app web.
+
+---
+
+## 5. El Flujo de Trabajo Narrativo (vía Hermes)
+
+El subsistema narrativo es **intent-driven**: hablas naturalmente y el orquestador interpreta qué fase necesitas. Se usa desde Hermes, no desde la app web.
 
 | Si dices... | Demiurgos ejecuta... |
 |-------------|---------------------|
@@ -48,15 +77,3 @@ Demiurgos es **intent-driven**: hablas naturalmente y el orquestador interpreta 
 | "¿en qué estábamos?" | Recupera el estado y sugiere la siguiente fase |
 
 No necesitas memorizar comandos. La conversación natural es el camino principal.
-
----
-
-## 4. Cómo Empezar
-
-1. **Instala Demiurgos:** `curl -fsSL https://get.demiurgos.dev | bash`
-2. **Elige:** Crear un mundo nuevo o cargar uno existente
-3. **Entra a tu mundo:** `cd ~/demiurgos/tu-mundo`
-4. **Inicia Hermes:** `hermes`
-5. **Di:** "arranquemos"
-
-La IA tomará el control desde ahí, guiándote por las fases narrativas.

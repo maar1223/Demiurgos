@@ -54,13 +54,14 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     const stale: Record<string, CardState> = Object.fromEntries(
       CARD_DEFS.map((card) => [card.key, "configured"]),
     );
-    // identity, backup and import lack dedicated contracts → forced pending.
+    // backup and import lack dedicated contracts → forced pending.
     for (const key of DEFERRED_CARD_KEYS) {
       expect(cardState(stale, key)).toBe("pending");
     }
-    // telegram (WU-3b1, ONB-3.3 backend contract), assistant, locale, world
-    // and offline may truthfully render configured.
-    for (const key of ["telegram", "assistant", "locale", "world", "offline"]) {
+    // identity (auth-vault-credentials R-ID1 backend contract), telegram (WU-3b1,
+    // ONB-3.3), assistant, locale, world and offline may truthfully render
+    // configured.
+    for (const key of ["identity", "telegram", "assistant", "locale", "world", "offline"]) {
       expect(cardState(stale, key)).toBe("configured");
     }
     // Unknown keys default to pending.

@@ -12,9 +12,27 @@ import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
 import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { getReadiness } from "@/api/onboarding";
+import {
+  changePassword,
+  changeUsername,
+  disableVault,
+  enableVault,
+  getAuthStatus,
+  getVaultConfig,
+  logoutSession,
+  removePassword,
+  rotateWords,
+  setReauthInterval,
+} from "@/api/wiki";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
-import type { ReadinessSnapshot, WorldInfo } from "@/api/types";
+import { reloadPage } from "@/lib/reloadPage";
+import type {
+  AuthSessionStatus,
+  ReadinessSnapshot,
+  VaultConfig,
+  WorldInfo,
+} from "@/api/types";
 import {
   CARD_DEFS,
   ESSENTIAL_BADGES,
@@ -27,23 +45,51 @@ import {
 } from "@/pages/ConfigurationCenter";
 import { cn } from "@/lib/utils";
 
-type ProfileSection = "sesion" | "configuracion" | "integraciones" | "asistente" | "mundos";
+type ProfileSection =
+  | "sesion"
+  | "seguridad"
+  | "configuracion"
+  | "integraciones"
+  | "asistente"
+  | "mundos";
 
 /** Sesión de edición — the same local-dev session controls as the Navbar
- *  dropdown, kept accessible from the full Profile page. */
+ *  dropdown, kept accessible from the full Profile page. Mode-aware: in the
+ *  credentials vault mode (DEMIURGOS_AUTH_MODE=credentials) the panel shows
+ *  the Account section (session + logout + credential management via words +
+ *  re-auth indicator); local-dev and disabled keep their legacy behavior
+ *  unchanged. */
 function SessionSection() {
-  const { status, isLoading, error, start, logout } = useLocalDevAuth(true);
+  const localDev = useLocalDevAuth(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Unified status decides the vault branch; on failure the panel degrades
+  // to the local-dev view — a low-stakes read, never a wall.
+  const [vaultStatus, setVaultStatus] = useState<AuthSessionStatus | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void getAuthStatus()
+      .then((next) => {
+        if (active) setVaultStatus(next);
+      })
+      .catch(() => {
+        if (active) setVaultStatus(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleAction = async () => {
     setActionLoading(true);
     setActionError(null);
     try {
-      if (status?.authenticated) {
-        await logout();
+      if (localDev.status?.authenticated) {
+        await localDev.logout();
       } else {
-        await start();
+        await localDev.start();
       }
     } catch (cause) {
       setActionError(
@@ -54,7 +100,13 @@ function SessionSection() {
     }
   };
 
-  if (isLoading) {
+  // Credentials vault mode: Account section (session + credential management).
+  if (vaultStatus?.mode === "credentials") {
+    return <AccountSection status={vaultStatus} />;
+  }
+
+  // Local-dev / disabled: legacy panel (unchanged).
+  if (localDev.isLoading) {
     return (
       <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida">
         <Spinner size="sm" /> Comprobando sesión local…
@@ -62,11 +114,11 @@ function SessionSection() {
     );
   }
 
-  if (error) {
-    return <p className="text-small text-sangre">{error.message}</p>;
+  if (localDev.error) {
+    return <p className="text-small text-sangre">{localDev.error.message}</p>;
   }
 
-  if (!status) return null;
+  if (!localDev.status) return null;
 
   return (
     <div className="rounded-lg border border-filio bg-madero p-4">
@@ -75,10 +127,10 @@ function SessionSection() {
         <span className="text-small text-tinta-desvaida">Local</span>
       </div>
 
-      {status.authenticated && (
+      {localDev.status.authenticated && (
         <>
           <p className="mt-3 text-small text-musgo">Sesión local activa</p>
-          <p className="mt-1 text-small text-tinta-desvaida">{status.label}</p>
+          <p className="mt-1 text-small text-tinta-desvaida">{localDev.status.label}</p>
           <Button
             variant="secondary"
             onClick={() => void handleAction()}
@@ -90,7 +142,7 @@ function SessionSection() {
         </>
       )}
 
-      {!status.authenticated && status.enabled && (
+      {!localDev.status.authenticated && localDev.status.enabled && (
         <>
           <p className="mt-3 text-small text-tinta-desvaida">
             Sesión local no iniciada. Iniciala para editar y configurar el perfil.
@@ -106,7 +158,7 @@ function SessionSection() {
         </>
       )}
 
-      {!status.enabled && (
+      {!localDev.status.enabled && (
         <p className="mt-3 text-small text-tinta-desvaida">
           Autenticación local desactivada. Activá{" "}
           <code className="text-plata">DEMIURGOS_AUTH_MODE=local-dev</code> en{" "}
@@ -117,6 +169,806 @@ function SessionSection() {
       {actionError && <p className="mt-3 text-small text-sangre">{actionError}</p>}
     </div>
   );
+}
+
+/**
+ * Credentials Account section (R-AC-05, replaces the vault session panel):
+ * session info + logout, the soft re-auth indicator (R-AC-04d), and the
+ * credential-management actions — change username, change/remove password and
+ * rotate the recovery words — each gated on the recovery words (ownership
+ * key). The words are NEVER displayed here (S-AC-01c); rotation returns new
+ * plaintext words exactly once.
+ */
+function AccountSection({ status }: { status: AuthSessionStatus }) {
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const daysUntilReauth =
+    status.authenticated && typeof status.days_until_reauth === "number"
+      ? status.days_until_reauth
+      : null;
+
+  const handleLogout = async () => {
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await logoutSession();
+      reloadPage();
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error ? cause.message : "No se pudo cerrar la sesión",
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-filio bg-madero p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-heading text-body text-pergamino">Cuenta</h3>
+        <span className="text-small text-tinta-desvaida">Credenciales</span>
+      </div>
+
+      {status.authenticated ? (
+        <>
+          <p className="mt-3 text-small text-musgo">Sesión activa</p>
+          <p className="mt-1 text-small text-tinta-desvaida">{status.label}</p>
+          <p className="mt-1 text-small text-tinta-desvaida">
+            Proveedor: {providerLabel(status.provider)}
+          </p>
+
+          {daysUntilReauth !== null && (
+            <div
+              role="status"
+              className="mt-3 rounded-lg border border-filio bg-cripta/50 p-3"
+            >
+              <p className="text-small text-pergamino">
+                {daysUntilReauth <= 0
+                  ? "Reingreso recomendado: hoy"
+                  : `Reingreso recomendado en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}`}
+              </p>
+              <p className="mt-2 text-small text-tinta-desvaida">
+                Si no reingresas tu contraseña, la sesión de Demiurgos se
+                cerrará. Y si olvidaste tu contraseña, solo vas a poder
+                recuperarla con tus palabras claves.
+              </p>
+            </div>
+          )}
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => void handleLogout()}
+              disabled={actionLoading}
+            >
+              {actionLoading ? "Cerrando…" : "Cerrar sesión"}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <p className="mt-3 text-small text-tinta-desvaida">
+          No hay una sesión de cuenta activa. Iniciá sesión para editar y
+          configurar el perfil.
+        </p>
+      )}
+
+      {actionError && <p className="mt-3 text-small text-sangre">{actionError}</p>}
+
+      <div className="mt-5 space-y-4 border-t border-filio pt-4">
+        <WordsForm
+          title="Cambiar usuario"
+          description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
+          extraLabel="Nuevo usuario"
+          extraPlaceholder="nuevo-usuario"
+          submitLabel="Cambiar usuario"
+          busyLabel="Cambiando…"
+          onSubmit={async (words, newUsername) => {
+            await changeUsername(words, newUsername);
+          }}
+        />
+
+        <WordsForm
+          title="Cambiar contraseña"
+          description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
+          extraLabel="Nueva contraseña"
+          extraType="password"
+          extraPlaceholder="Nueva contraseña"
+          extraRequired
+          submitLabel="Cambiar contraseña"
+          busyLabel="Cambiando…"
+          onSubmit={async (words, newPassword) => {
+            await changePassword(words, newPassword);
+          }}
+        />
+
+        <WordsForm
+          title="Retirar contraseña"
+          description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
+          submitLabel="Retirar contraseña"
+          busyLabel="Retirando…"
+          confirmLabel="¿Confirmás el retiro?"
+          onSubmit={async (words) => {
+            await removePassword(words);
+          }}
+        />
+
+        <RotateWordsCard />
+      </div>
+    </div>
+  );
+}
+
+interface WordsFormProps {
+  title: string;
+  description: string;
+  extraLabel?: string;
+  extraType?: string;
+  extraPlaceholder?: string;
+  /** Require a non-empty extra value (e.g. the new password). */
+  extraRequired?: boolean;
+  submitLabel: string;
+  busyLabel: string;
+  /** Two-click confirm for destructive actions (e.g. password removal). */
+  confirmLabel?: string;
+  onSubmit: (words: string, extra: string) => Promise<void>;
+}
+
+/**
+ * A words-gated credential action (R-AC-05): recovery words + optional extra
+ * value (new username/password). The words are the ownership proof; every
+ * action shows its own inline busy/error/success state.
+ */
+function WordsForm({
+  title,
+  description,
+  extraLabel,
+  extraType = "text",
+  extraPlaceholder,
+  extraRequired = false,
+  submitLabel,
+  busyLabel,
+  confirmLabel,
+  onSubmit,
+}: WordsFormProps) {
+  const [words, setWords] = useState("");
+  const [extra, setExtra] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+
+  const handleSubmit = async () => {
+    if (extraRequired && extra.trim() === "") {
+      setError(`Completá el campo ${extraLabel?.toLowerCase() ?? "obligatorio"}.`);
+      return;
+    }
+    if (confirmLabel && !confirming) {
+      setConfirming(true);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await onSubmit(words.trim(), extra.trim());
+      setDone(true);
+      setWords("");
+      setExtra("");
+      setConfirming(false);
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "No se pudo completar la acción",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-filio bg-cripta/50 p-3">
+      <h4 className="font-heading text-body text-pergamino">{title}</h4>
+      <p className="mt-1 text-small text-tinta-desvaida">{description}</p>
+
+      <label htmlFor={`${title}-words`} className="sr-only">
+        Palabras claves para {title}
+      </label>
+      <input
+        id={`${title}-words`}
+        type="text"
+        autoComplete="off"
+        placeholder="Palabras claves"
+        value={words}
+        onChange={(event) => {
+          setWords(event.target.value);
+          setError(null);
+          setConfirming(false);
+        }}
+        disabled={busy}
+        className="mt-3 w-full rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
+      />
+
+      {extraLabel && (
+        <label
+          htmlFor={`${title}-extra`}
+          className="mt-3 block text-small text-pergamino"
+        >
+          {extraLabel}
+          <input
+            id={`${title}-extra`}
+            type={extraType}
+            autoComplete="off"
+            placeholder={extraPlaceholder}
+            value={extra}
+            onChange={(event) => {
+              setExtra(event.target.value);
+              setError(null);
+            }}
+            disabled={busy}
+            className="mt-1 w-full rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
+          />
+        </label>
+      )}
+
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => void handleSubmit()}
+        disabled={busy || words.trim() === ""}
+        className="mt-3"
+      >
+        {busy
+          ? busyLabel
+          : confirming && confirmLabel
+            ? confirmLabel
+            : submitLabel}
+      </Button>
+
+      {error && (
+        <p className="mt-2 text-small text-sangre" role="alert">
+          {error}
+        </p>
+      )}
+      {done && (
+        <p className="mt-2 text-small text-musgo" role="status">
+          Listo. Cambio guardado.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Rotate the recovery words (R-ERK-01): the new plaintext words are shown
+ *  exactly once; the previous words are invalidated server-side. */
+function RotateWordsCard() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [newWords, setNewWords] = useState<string | null>(null);
+
+  const handleRotate = async () => {
+    setBusy(true);
+    setError(null);
+    setNewWords(null);
+    try {
+      const { new_words } = await rotateWords();
+      // The server persists only the hash; the plaintext is shown once.
+      setNewWords(new_words);
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : "No se pudieron rotar las palabras de recuperación",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-filio bg-cripta/50 p-3">
+      <h4 className="font-heading text-body text-pergamino">
+        Rotar palabras claves
+      </h4>
+      <p className="mt-1 text-small text-tinta-desvaida">
+        Generá unas palabras nuevas y anulá las anteriores. Las palabras son tu
+        única forma de recuperar la cuenta si olvidás la contraseña.
+      </p>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={() => void handleRotate()}
+        disabled={busy}
+        className="mt-3"
+      >
+        {busy ? "Rotando…" : "Rotar palabras claves"}
+      </Button>
+      {error && (
+        <p className="mt-2 text-small text-sangre" role="alert">
+          {error}
+        </p>
+      )}
+      {newWords && (
+        <div
+          role="status"
+          className="mt-3 rounded-lg border border-musgo/40 bg-madero p-3"
+        >
+          <p className="text-small text-musgo">
+            Nuevas palabras claves — guardalas fuera del navegador; solo se
+            muestran una vez:
+          </p>
+          <p className="mt-2 break-words font-mono text-small text-pergamino">
+            {newWords}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Perfil → Seguridad / Bóveda — the vault lifecycle panel, driven by
+ * GET /api/auth/vault/config (`vault.enabled`, the persisted flag + optional
+ * env override — NOT the auth-mode string). When the vault is OFF it renders
+ * the ACTIVATION panel (create an account with the words shown exactly once,
+ * or verify an existing account's words); when ON it renders the MANAGEMENT
+ * panel (session, change user/password via words, remove password, rotate
+ * words, adjust the soft re-auth interval, and disable with the words).
+ */
+function VaultSection() {
+  const [config, setConfig] = useState<VaultConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+
+  const load = () => {
+    setError(null);
+    void getVaultConfig()
+      .then(setConfig)
+      .catch((cause: unknown) => setError(cause))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida">
+        <Spinner size="sm" /> Comprobando la bóveda…
+      </div>
+    );
+  }
+
+  if (!!error && !config) {
+    return (
+      <ErrorBanner message="No se pudo cargar el estado de la bóveda." onRetry={load} />
+    );
+  }
+
+  if (!config) return null;
+
+  return config.enabled ? (
+    <ManagementPanel config={config} onChanged={load} />
+  ) : (
+    <ActivationPanel config={config} onActivated={load} />
+  );
+}
+
+/** Vault OFF — activation. With no account: create one (username + optional
+ *  password); the recovery words are shown EXACTLY once (S-VC-03a). With an
+ *  existing account (e.g. a migrated install): verify the words (ownership
+ *  proof) before enabling (S-VC-03b/c). */
+function ActivationPanel({
+  config,
+  onActivated,
+}: {
+  config: VaultConfig;
+  onActivated: () => void;
+}) {
+  const [words, setWords] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [verifyWords, setVerifyWords] = useState("");
+
+  const handleActivate = async (body: {
+    username?: string;
+    password?: string;
+    words?: string;
+  }) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await enableVault(body);
+      if (result.words) {
+        // New account: the words are shown exactly once before continuing.
+        setWords(result.words);
+      } else {
+        onActivated();
+      }
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "No se pudo activar la bóveda",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (words) {
+    return (
+      <section className="rounded-lg border border-musgo/40 bg-madero p-4">
+        <h4 className="font-heading text-body text-pergamino">Bóveda activada</h4>
+        <p className="mt-1 text-small text-tinta-desvaida">
+          Se creó tu cuenta. Estas son tus palabras claves — guardalas fuera del
+          navegador: solo se muestran una vez.
+        </p>
+        <p
+          data-testid="vault-words"
+          className="mt-4 break-words rounded-lg border border-filio bg-cripta p-4 font-mono text-body text-pergamino"
+        >
+          {words}
+        </p>
+        <Button className="mt-4" onClick={onActivated}>
+          Guardé mis palabras
+        </Button>
+      </section>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-lg border border-filio bg-madero p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-heading text-body text-pergamino">
+            Seguridad / Bóveda
+          </h3>
+          <span className="text-small text-tinta-desvaida">Apagada</span>
+        </div>
+        <p className="mt-1 text-small text-tinta-desvaida">
+          La bóveda protege tu instalación con una cuenta y tus palabras
+          claves. Activarla exige demostrar que la cuenta es tuya.
+        </p>
+        {config.env_override && (
+          <p className="mt-3 rounded-lg border border-filio bg-cripta/50 p-3 text-small text-tinta-desvaida">
+            La autenticación está forzada por la variable de entorno{" "}
+            <code className="text-plata">DEMIURGOS_AUTH_MODE=credentials</code>.
+          </p>
+        )}
+      </section>
+
+      {config.account_exists ? (
+        <form
+          className="rounded-lg border border-filio bg-madero p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleActivate({ words: verifyWords.trim() });
+          }}
+        >
+          <h4 className="font-heading text-body text-pergamino">
+            Activar la bóveda
+          </h4>
+          <p className="mt-1 text-small text-tinta-desvaida">
+            Ya existe una cuenta ({config.username ?? "sin usuario"}). Demostrá
+            que es tuya con tus palabras claves para activar la bóveda.
+          </p>
+          <label htmlFor="vault-verify-words" className="sr-only">
+            Palabras claves para activar la bóveda
+          </label>
+          <input
+            id="vault-verify-words"
+            type="text"
+            autoComplete="off"
+            placeholder="Palabras claves"
+            value={verifyWords}
+            onChange={(e) => {
+              setVerifyWords(e.target.value);
+              setError(null);
+            }}
+            disabled={busy}
+            className="mt-3 w-full rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
+          />
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            disabled={busy || verifyWords.trim() === ""}
+            className="mt-3"
+          >
+            {busy ? "Activando…" : "Activar bóveda"}
+          </Button>
+        </form>
+      ) : (
+        <form
+          className="rounded-lg border border-filio bg-madero p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleActivate({
+              username: username.trim(),
+              password: password || undefined,
+            });
+          }}
+        >
+          <h4 className="font-heading text-body text-pergamino">
+            Crear cuenta y activar
+          </h4>
+          <p className="mt-1 text-small text-tinta-desvaida">
+            No hay una cuenta todavía. Creala ahora: la contraseña es opcional
+            y se generan tus palabras claves (se muestran una sola vez).
+          </p>
+          <div className="mt-3 grid gap-4">
+            <label
+              htmlFor="vault-create-username"
+              className="flex flex-col gap-1 text-small text-pergamino"
+            >
+              Usuario
+              <input
+                id="vault-create-username"
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setError(null);
+                }}
+                disabled={busy}
+                autoComplete="username"
+                placeholder="tu-usuario"
+                className="rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
+              />
+            </label>
+            <label
+              htmlFor="vault-create-password"
+              className="flex flex-col gap-1 text-small text-pergamino"
+            >
+              Contraseña (opcional)
+              <input
+                id="vault-create-password"
+                type="password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  setError(null);
+                }}
+                disabled={busy}
+                autoComplete="new-password"
+                placeholder="Dejalo vacío para entrar sin contraseña"
+                className="rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
+              />
+            </label>
+          </div>
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            disabled={busy || username.trim() === ""}
+            className="mt-3"
+          >
+            {busy ? "Activando…" : "Crear cuenta y activar"}
+          </Button>
+        </form>
+      )}
+
+      {error && (
+        <p className="text-small text-sangre" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Vault ON — management: session info + logout, credential management via
+ *  the words (change user/password, remove password, rotate words), the soft
+ *  re-auth interval, and disabling the vault (words + confirmation). */
+function ManagementPanel({
+  config,
+  onChanged,
+}: {
+  config: VaultConfig;
+  onChanged: () => void;
+}) {
+  const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const handleLogout = async () => {
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      await logoutSession();
+      reloadPage();
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error ? cause.message : "No se pudo cerrar la sesión",
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-lg border border-filio bg-madero p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-heading text-body text-pergamino">
+            Seguridad / Bóveda
+          </h3>
+          <span className="text-small text-tinta-desvaida">Activa</span>
+        </div>
+        <p className="mt-1 text-small text-tinta-desvaida">
+          Cuenta: <span className="text-pergamino">{config.username ?? "—"}</span>
+          {config.has_password ? " · contraseña definida" : " · sin contraseña"}
+          {config.env_override && (
+            <span className="text-tinta-desvaida">
+              {" "}
+              · forzada por <code className="text-plata">DEMIURGOS_AUTH_MODE</code>
+            </span>
+          )}
+        </p>
+        <div className="mt-4">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void handleLogout()}
+            disabled={actionLoading}
+          >
+            {actionLoading ? "Cerrando…" : "Cerrar sesión"}
+          </Button>
+        </div>
+        {actionError && <p className="mt-3 text-small text-sangre">{actionError}</p>}
+      </section>
+
+      <div className="space-y-4">
+        <WordsForm
+          title="Cambiar usuario"
+          description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
+          extraLabel="Nuevo usuario"
+          extraPlaceholder="nuevo-usuario"
+          submitLabel="Cambiar usuario"
+          busyLabel="Cambiando…"
+          onSubmit={async (words, newUsername) => {
+            await changeUsername(words, newUsername);
+            onChanged();
+          }}
+        />
+
+        <WordsForm
+          title="Cambiar contraseña"
+          description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
+          extraLabel="Nueva contraseña"
+          extraType="password"
+          extraPlaceholder="Nueva contraseña"
+          extraRequired
+          submitLabel="Cambiar contraseña"
+          busyLabel="Cambiando…"
+          onSubmit={async (words, newPassword) => {
+            await changePassword(words, newPassword);
+            onChanged();
+          }}
+        />
+
+        <WordsForm
+          title="Retirar contraseña"
+          description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
+          submitLabel="Retirar contraseña"
+          busyLabel="Retirando…"
+          confirmLabel="¿Confirmás el retiro?"
+          onSubmit={async (words) => {
+            await removePassword(words);
+            onChanged();
+          }}
+        />
+
+        <RotateWordsCard />
+
+        <ReauthIntervalForm config={config} onSaved={onChanged} />
+
+        <WordsForm
+          title="Desactivar bóveda"
+          description="Apagar la bóveda quita la autenticación de la instalación. Lo confirmás con tus palabras claves."
+          submitLabel="Desactivar bóveda"
+          busyLabel="Desactivando…"
+          confirmLabel="¿Confirmás la desactivación?"
+          onSubmit={async (words) => {
+            await disableVault(words);
+            onChanged();
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** Adjust the soft re-auth interval (days) via POST /api/auth/vault/reauth-interval. */
+function ReauthIntervalForm({
+  config,
+  onSaved,
+}: {
+  config: VaultConfig;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(String(config.reauth_interval_d));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState(false);
+
+  const handleSubmit = async () => {
+    const days = Number(value);
+    if (!Number.isFinite(days) || days < 1) {
+      setError("Ingresá un intervalo válido en días.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setDone(false);
+    try {
+      await setReauthInterval(days);
+      setDone(true);
+      onSaved();
+    } catch (cause) {
+      setError(
+        cause instanceof Error ? cause.message : "No se pudo ajustar el intervalo",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-filio bg-cripta/50 p-3">
+      <h4 className="font-heading text-body text-pergamino">
+        Intervalo de reingreso
+      </h4>
+      <p className="mt-1 text-small text-tinta-desvaida">
+        Cada cuántos días se te pide reingresar la contraseña.
+      </p>
+      <div className="mt-3 flex items-center gap-3">
+        <label htmlFor="reauth-interval" className="sr-only">
+          Días entre reingresos
+        </label>
+        <input
+          id="reauth-interval"
+          type="number"
+          min={1}
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value);
+            setError(null);
+          }}
+          disabled={busy}
+          className="w-28 rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino focus:border-plata focus:outline-none disabled:opacity-50"
+        />
+        <span className="text-small text-tinta-desvaida">días</span>
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => void handleSubmit()}
+          disabled={busy}
+        >
+          {busy ? "Guardando…" : "Guardar"}
+        </Button>
+      </div>
+      {error && (
+        <p className="mt-2 text-small text-sangre" role="alert">
+          {error}
+        </p>
+      )}
+      {done && (
+        <p className="mt-2 text-small text-musgo" role="status">
+          Listo. Intervalo guardado.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Human label for the active session provider. */
+function providerLabel(provider?: AuthSessionStatus["provider"]): string {
+  switch (provider) {
+    case "credentials":
+      return "Credenciales";
+    case "local-dev":
+      return "Local";
+    default:
+      return "Desconocido";
+  }
 }
 
 /** Perfil → Integraciones → Captura de ideas — the single Telegram surface.
@@ -266,14 +1118,14 @@ function ConfigurationSection() {
                     Google Drive / rclone backup is not implemented in
                     this change; the card stays pending and is only an
                     entry for its dedicated contract. Drive consent is
-                    separate from the Google identity consent, and backup
+                    separate from the identity consent, and backup
                     and restore are distinct flows (OC10/OC24). */}
                 <div className="mt-4 border-t border-filio pt-4">
                   <p className="text-small text-tinta-desvaida">
                     El respaldo y la restauración (Google Drive / rclone) no están
                     implementados en esta versión: la tarjeta queda pendiente y es solo la
                     entrada para su contrato dedicado. El consentimiento de Drive es
-                    independiente del consentimiento de identidad de Google, y respaldo y
+                    independiente del consentimiento de identidad, y respaldo y
                     restauración son flujos distintos. Nunca se afirma configurado sin ese
                     contrato.
                   </p>
@@ -505,6 +1357,7 @@ export default function ProfilePage() {
 
   const tabs: { id: ProfileSection; label: string }[] = [
     { id: "sesion", label: "Sesión de edición" },
+    { id: "seguridad", label: "Seguridad / Bóveda" },
     { id: "configuracion", label: "Centro de Configuración" },
     { id: "integraciones", label: "Integraciones" },
     { id: "asistente", label: "Asistente IA" },
@@ -541,6 +1394,8 @@ export default function ProfilePage() {
           <section className="min-w-0 flex-1">
             {section === "sesion" ? (
               <SessionSection />
+            ) : section === "seguridad" ? (
+              <VaultSection />
             ) : section === "configuracion" ? (
               <ConfigurationSection />
             ) : section === "integraciones" ? (

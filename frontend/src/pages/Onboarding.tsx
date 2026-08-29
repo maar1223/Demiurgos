@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { createWorld, getOnboardingStatus, submitStep0 } from "@/api/onboarding";
+import { createAccount } from "@/api/wiki";
 import { ApiError, type LocaleInput, type OnboardingStatus } from "@/api/types";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -9,11 +10,18 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 /**
  * First-run onboarding (OC1/OC2, Slice 1).
  *
- * Flow: step 0 (locale) → world creation → ready. Remote steps (AI, Telegram,
- * Backup) are NEVER blocking and are reported as pending — they are resumed
- * from the Centro de Configuración tab inside the Profile (`/perfil`).
- * Completed steps are never replayed after a
- * restart (server is authoritative).
+ * Flow: step 0 (locale) → account (always active on a fresh install) → world
+ * creation → ready. Remote steps (AI, Telegram, Backup) are NEVER blocking and
+ * are reported as pending — they are resumed from the Centro de Configuración
+ * tab inside the Profile (`/perfil`). Completed steps are never replayed
+ * after a restart (server is authoritative).
+ *
+ * The account step (R-AC-01) is BLOCKING and ALWAYS active on a fresh install
+ * (vault-settings-configure removed the credentials-mode guard): username +
+ * optional password, and the recovery words are generated server-side and
+ * shown to the user EXACTLY ONCE. The backend derives "account" as the next
+ * step; the account creation endpoint answers 200 with the vault OFF
+ * (S-AC-01b), so no `.env` edit is required.
  *
  * Writes are gated on the authenticated local principal; a 401 surfaces a
  * clear hint (fail closed, never a silent bypass).
@@ -82,6 +90,15 @@ export default function Onboarding() {
   const [worldName, setWorldName] = useState("");
   const [loreSkeleton, setLoreSkeleton] = useState(true);
 
+  // Account form (always active on a fresh install — R-AC-01)
+  const [accountUsername, setAccountUsername] = useState("");
+  const [accountPassword, setAccountPassword] = useState("");
+  // Plaintext recovery words shown EXACTLY once after account creation
+  // (S-AC-01a/b) — the server persists only their hash.
+  const [accountWords, setAccountWords] = useState<string | null>(null);
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState<unknown>(null);
+
   const loadStatus = () => {
     setLoading(true);
     setError(null);
@@ -147,6 +164,33 @@ export default function Onboarding() {
       });
   };
 
+  const handleCreateAccount = (event: FormEvent) => {
+    event.preventDefault();
+    setAccountBusy(true);
+    setAccountError(null);
+    void createAccount(
+      accountUsername.trim(),
+      accountPassword || undefined,
+    )
+      .then(({ words }) => {
+        // The words are shown exactly once; the account step is already
+        // recorded server-side (blocking step committed by the endpoint).
+        setAccountWords(words);
+        setAccountBusy(false);
+      })
+      .catch((cause: unknown) => {
+        setAccountError(cause);
+        setAccountBusy(false);
+      });
+  };
+
+  const handleWordsConfirmed = () => {
+    // Hide the one-time words card, then refresh the status: the account
+    // step is done server-side, so the world step is offered next.
+    setAccountWords(null);
+    loadStatus();
+  };
+
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-cripta">
@@ -179,14 +223,28 @@ export default function Onboarding() {
         )}
 
         {status && !status.completed && status.completed_steps.includes("step0") ? (
-          <WorldStep
-            worldName={worldName}
-            onWorldName={setWorldName}
-            loreSkeleton={loreSkeleton}
-            onLoreSkeleton={setLoreSkeleton}
-            busy={busy}
-            onSubmit={handleCreateWorld}
-          />
+          accountWords ? (
+            <WordsCard words={accountWords} onConfirm={handleWordsConfirmed} />
+          ) : !status.completed_steps.includes("account") ? (
+            <AccountStep
+              username={accountUsername}
+              onUsername={setAccountUsername}
+              password={accountPassword}
+              onPassword={setAccountPassword}
+              busy={accountBusy}
+              error={accountError}
+              onSubmit={handleCreateAccount}
+            />
+          ) : (
+            <WorldStep
+              worldName={worldName}
+              onWorldName={setWorldName}
+              loreSkeleton={loreSkeleton}
+              onLoreSkeleton={setLoreSkeleton}
+              busy={busy}
+              onSubmit={handleCreateWorld}
+            />
+          )
         ) : (
           status && (
             <Step0Form
@@ -411,5 +469,107 @@ function PendingCards(props: { remotePending: string[]; worldDone: boolean }) {
         )}
       </div>
     </section>
+  );
+}
+
+function AccountStep(props: {
+  username: string;
+  onUsername: (v: string) => void;
+  password: string;
+  onPassword: (v: string) => void;
+  busy: boolean;
+  error: unknown;
+  onSubmit: (e: FormEvent) => void;
+}) {
+  const hint = authHint(props.error);
+  return (
+    <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-filio bg-madero p-6">
+      <h2 className="font-heading text-h4 text-pergamino">Creá tu cuenta</h2>
+      <p className="mt-1 text-small text-tinta-desvaida">
+        La cuenta protege tu instalación. La contraseña es opcional: sin ella
+        alcanza con el botón Entrar para ingresar.
+      </p>
+
+      <div className="mt-5 grid gap-4">
+        <label htmlFor="onboarding-account-username" className="flex flex-col gap-1 text-small text-pergamino">
+          Usuario
+          <input
+            id="onboarding-account-username"
+            value={props.username}
+            onChange={(e) => props.onUsername(e.target.value)}
+            required
+            autoComplete="username"
+            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino focus:border-plata focus:outline-none"
+            placeholder="tu-usuario"
+          />
+        </label>
+
+        <label htmlFor="onboarding-account-password" className="flex flex-col gap-1 text-small text-pergamino">
+          Contraseña (opcional)
+          <input
+            id="onboarding-account-password"
+            type="password"
+            value={props.password}
+            onChange={(e) => props.onPassword(e.target.value)}
+            autoComplete="new-password"
+            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino focus:border-plata focus:outline-none"
+            placeholder="Dejalo vacío para entrar sin contraseña"
+          />
+        </label>
+      </div>
+
+      <div className="mt-5 rounded-lg border border-llamita/40 bg-llamita/10 p-3">
+        <p className="text-small text-pergamino">
+          Al crear la cuenta se generan tus{" "}
+          <span className="font-medium">palabras claves</span>: son tu única
+          forma de recuperarla si olvidás la contraseña. Se muestran una sola
+          vez y no se pueden volver a ver.
+        </p>
+      </div>
+
+      {hint && (
+        <div className="mt-4" role="alert">
+          <ErrorBanner message={hint} onRetry={() => undefined} />
+        </div>
+      )}
+      {!!props.error && !hint && (
+        <p className="mt-4 text-small text-sangre" role="alert">
+          {props.error instanceof Error
+            ? props.error.message
+            : "No se pudo crear la cuenta"}
+        </p>
+      )}
+
+      <div className="mt-6 flex items-center justify-end">
+        <Button type="submit" disabled={props.busy || !props.username.trim()}>
+          {props.busy ? "Creando…" : "Crear cuenta"}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+/** The recovery words, shown EXACTLY once after account creation (S-AC-01a/b)
+ *  or rotation. The server persists only their hash — losing them plus the
+ *  password means the vault is permanently locked (R-NF-03). */
+function WordsCard({ words, onConfirm }: { words: string; onConfirm: () => void }) {
+  return (
+    <div className="mt-8 rounded-lg border border-musgo/40 bg-madero p-6">
+      <h2 className="font-heading text-h4 text-pergamino">Tus palabras claves</h2>
+      <p className="mt-1 text-small text-tinta-desvaida">
+        Guardalas en un lugar seguro, fuera del navegador. Solo se muestran una
+        vez: si las perdés y olvidás la contraseña, la cuenta queda bloqueada
+        para siempre.
+      </p>
+      <p
+        className="mt-4 break-words rounded-lg border border-filio bg-cripta p-4 font-mono text-body text-pergamino"
+        data-testid="onboarding-words"
+      >
+        {words}
+      </p>
+      <div className="mt-6 flex items-center justify-end">
+        <Button onClick={onConfirm}>Guardé mis palabras</Button>
+      </div>
+    </div>
   );
 }

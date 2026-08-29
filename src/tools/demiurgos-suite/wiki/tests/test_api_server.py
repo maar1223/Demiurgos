@@ -4113,7 +4113,22 @@ class TestOnboardingRoutes:
         assert "ai" in body["remote_pending"]
         assert "telegram" in body["remote_pending"]
 
-    def test_step0_write_fails_closed_without_principal(self, empty_client: TestClient):
+    def test_step0_write_allowed_without_principal_when_vault_off(
+            self, empty_client: TestClient):
+        """S-AC-02a — with the vault OFF (default fresh install) step0 needs
+        no authentication."""
+        resp = _post_step0(empty_client)
+        assert resp.status_code == 200, resp.text
+
+    def test_step0_write_fails_closed_without_principal_when_vault_on(
+            self, empty_client: TestClient):
+        """S-AC-02b — with the vault ON (persisted flag) unauthenticated
+        step0 fails closed (401)."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state.setdefault("capabilities", {})["vault"] = {
+            "enabled": True, "reauth_interval_d": 14}
+        registry.atomic_commit(state)
         resp = _post_step0(empty_client)
         assert resp.status_code == 401
 
@@ -4124,7 +4139,7 @@ class TestOnboardingRoutes:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert "step0" in body["completed_steps"]
-        assert body["current_step"] == "world"
+        assert body["current_step"] == "account"
         state = api_server._local_state().snapshot()
         assert state["locale"]["conversation"] == "es"
         assert state["locale"]["region"] == "AR"
@@ -4160,7 +4175,7 @@ class TestOnboardingRoutes:
         resp = empty_client.get("/api/onboarding/status")
         body = resp.json()
         assert body["completed"] is False
-        assert body["current_step"] == "world"
+        assert body["current_step"] == "account"
         assert set(body["remote_pending"]) == {"ai", "telegram", "backup_handoff"}
 
 
@@ -4176,10 +4191,15 @@ class TestWorldCreateEndpoint:
         assert resp.status_code == 201, resp.text
         assert resp.json()["kind"] == "created"
 
-    def test_create_fails_closed_without_principal_when_auth_enabled(
-            self, empty_client: TestClient, monkeypatch):
-        """When auth is enabled, world creation requires authentication."""
-        monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
+    def test_create_fails_closed_without_principal_when_vault_on(
+            self, empty_client: TestClient):
+        """S-AC-02d — with the vault ON (persisted flag) world creation
+        requires authentication."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state.setdefault("capabilities", {})["vault"] = {
+            "enabled": True, "reauth_interval_d": 14}
+        registry.atomic_commit(state)
         resp = empty_client.post("/api/worlds", json={"name": "mundo-x", "lore_skeleton": False})
         assert resp.status_code == 401
 
@@ -4232,9 +4252,61 @@ class TestWorldCreateEndpoint:
     def test_world_creation_marks_operational_step(
             self, empty_client: TestClient, monkeypatch):
         _principal(monkeypatch)
+        # Full onboarding happy path: step0 -> account (R-AC-01 blocking) -> world.
+        monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "credentials")
         _post_step0(empty_client)
+        account = empty_client.post(
+            "/api/auth/credentials/account",
+            json={"username": "vault-user", "password": "secret-pass"},
+        )
+        assert account.status_code == 200
         created = empty_client.post("/api/worlds", json={"name": "final", "lore_skeleton": True})
         assert created.status_code == 201
+        status = empty_client.get("/api/onboarding/status").json()
+        assert status["completed"] is True
+        assert status["current_step"] == "ready"
+
+    def test_full_onboarding_flow_with_real_principal_without_stubbing(
+            self, empty_client: TestClient):
+        """The REAL onboarding happy path with the vault ON — no stubbing of
+        ``_resolve_principal``: the account is created, the credentials login
+        plants a real vault session, and step0 + world creation resolve the
+        principal from that session (R-AC-01/R-AC-02, S-AC-02b/d)."""
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state.setdefault("capabilities", {})["vault"] = {
+            "enabled": True, "reauth_interval_d": 14}
+        registry.atomic_commit(state)
+        # Fail-closed while ON and unauthenticated (S-AC-02b).
+        assert _post_step0(empty_client).status_code == 401
+        # Account creation is allowed with the vault ON (S-AC-01a).
+        account = empty_client.post(
+            "/api/auth/credentials/account",
+            json={"username": "real-user", "password": "secret-pass"},
+        )
+        assert account.status_code == 200, account.text
+        assert account.json()["words"]
+        # Real credentials login: the vault session cookie lands in the jar
+        # (no env override -> the cookie is not Secure, so the http transport
+        # keeps it).
+        login = empty_client.post(
+            "/api/auth/credentials/login", json={"password": "secret-pass"})
+        assert login.status_code == 200, login.text
+        assert login.json()["authenticated"] is True
+        # step0 now resolves the real principal from the vault session. The
+        # account step was already completed by the account creation above, so
+        # the flow resumes at world.
+        step0 = _post_step0(empty_client)
+        assert step0.status_code == 200, step0.text
+        body = step0.json()
+        assert "step0" in body["completed_steps"]
+        assert "account" in body["completed_steps"]
+        assert body["current_step"] == "world"
+        # World creation resolves the same real principal (S-AC-02d satisfied).
+        created = empty_client.post(
+            "/api/worlds", json={"name": "real-mundo", "lore_skeleton": True})
+        assert created.status_code == 201, created.text
+        assert created.json()["kind"] == "created"
         status = empty_client.get("/api/onboarding/status").json()
         assert status["completed"] is True
         assert status["current_step"] == "ready"
@@ -4874,11 +4946,13 @@ class TestOfflineContinuation:
     def test_readiness_reports_offline_local_ready_and_remote_pending(
             self, empty_client: TestClient):
         """The offline card needs an honest breakdown: the local core is
-        ready (storage probe ok) while remote capabilities stay pending."""
+        ready (storage probe ok) while remote capabilities stay pending.
+        ``identity`` is NOT remote-pending: the vault identity contract is
+        local configuration (mode + client id), not connectivity-bound."""
         body = empty_client.get("/api/onboarding/readiness").json()
         offline = body["offline"]
         assert offline["local_ready"] is True
-        assert "identity" in offline["remote_pending"]
+        assert "identity" not in offline["remote_pending"]
         assert "telegram" in offline["remote_pending"]
         assert "backup" in offline["remote_pending"]
         assert "assistant" in offline["remote_pending"]
@@ -4905,8 +4979,14 @@ class TestOfflineContinuation:
             self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
         """An expired local-dev session must not authorize gated writes: it is
         pruned on access and every write fails closed (OC1/OC5 — expired
-        authorization is never reused)."""
+        authorization is never reused). The vault flag is ON so the
+        onboarding/world gates are active (S-AC-02b/d)."""
         monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state.setdefault("capabilities", {})["vault"] = {
+            "enabled": True, "reauth_interval_d": 14}
+        registry.atomic_commit(state)
         started = empty_client.post("/api/auth/local-dev/session")
         assert started.status_code == 200
         # Expire the stored session directly (simulates TTL passage).

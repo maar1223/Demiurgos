@@ -57,6 +57,93 @@ export interface LocalDevSessionStatus {
   label: string | null;
 }
 
+/** Auth mode reported by the backend (DEMIURGOS_AUTH_MODE). */
+export type AuthMode = "disabled" | "local-dev" | "credentials";
+
+/** Active session provider reported by the unified status endpoint. */
+export type AuthProvider = "local-dev" | "credentials";
+
+/**
+ * Unified mode-aware session status (GET /api/auth/session/status). Works for
+ * every auth mode: `provider` is present only when a session is active.
+ * Credentials sessions additionally expose the soft re-auth countdown
+ * (R-AC-04): `last_auth_at` (ISO 8601) and `days_until_reauth` (clamped at 0).
+ */
+export interface AuthSessionStatus {
+  mode: AuthMode;
+  enabled: boolean;
+  authenticated: boolean;
+  label: string | null;
+  provider?: AuthProvider;
+  /** ISO 8601 timestamp of the last password entry — credentials sessions only. */
+  last_auth_at?: string;
+  /** Days left before the soft re-auth reminder (0 once the interval elapsed). */
+  days_until_reauth?: number;
+  /** True when the local account has a password (credentials mode only).
+   *  False for passwordless accounts — the login UI then renders the
+   *  "Enter" button without a password field (S-AC-02b). */
+  has_password?: boolean;
+}
+
+/** The single local account (credentials mode). `has_password` is false for
+ *  passwordless accounts (password_hash = null server-side). */
+export interface AccountInfo {
+  username: string;
+  has_password: boolean;
+}
+
+/** Response of POST /api/auth/credentials/account — the recovery words are
+ *  returned in plaintext exactly once; the server persists only their hash. */
+export interface AccountCreateResult {
+  username: string;
+  words: string;
+}
+
+/**
+ * State of the local vault (GET /api/auth/vault/config). `enabled` mirrors
+ * `_vault_active()`: the persisted `capabilities.vault.enabled` flag (PRIMARY)
+ * OR the `DEMIURGOS_AUTH_MODE=credentials` operator override. The endpoint is
+ * NOT auth-gated — read-only status, never secrets.
+ */
+export interface VaultConfig {
+  enabled: boolean;
+  account_exists: boolean;
+  username: string | null;
+  has_password: boolean;
+  reauth_interval_d: number;
+  env_override: boolean;
+}
+
+/** Result of POST /api/auth/vault/enable. When activation created a new
+ *  account, `words` carries the recovery words in plaintext EXACTLY once. */
+export interface VaultEnableResult {
+  enabled: boolean;
+  words?: string;
+}
+
+/** Result of POST /api/auth/vault/disable — removes auth entirely. */
+export interface VaultDisableResult {
+  enabled: boolean;
+}
+
+/** Result of POST /api/auth/vault/reauth-interval — the effective interval
+ *  (may differ from the request when an env override is set). */
+export interface ReauthIntervalResult {
+  reauth_interval_d: number;
+}
+
+/** Response of POST /api/auth/credentials/recover — short-lived single-use
+ *  token proving recovery-words ownership. */
+export interface RecoveryTokenResponse {
+  recovery_token: string;
+}
+
+/** Success envelope of every credential-management write
+ *  (recover/complete, password, password/remove, username). */
+export interface CredentialChangeResult {
+  success: boolean;
+}
+
 /**
  * Response from POST /api/system/{action} (restart/shutdown). `accepted: true`
  * means the launcher was dispatched and the stack is going down; a 500 carries
@@ -87,6 +174,7 @@ export interface AppConfig {
 
 export type OnboardingStep =
   | "step0"
+  | "account"
   | "ai"
   | "telegram"
   | "world"
