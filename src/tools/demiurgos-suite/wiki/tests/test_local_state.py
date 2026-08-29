@@ -40,6 +40,16 @@ def test_default_state_includes_account_slot() -> None:
     }
 
 
+def test_default_state_includes_vault_slot() -> None:
+    """R-VC-01 — fresh installs seed the persisted vault flag OFF with the
+    default reauth interval (14 days)."""
+    data = default_state()
+    assert data["capabilities"]["vault"] == {
+        "enabled": False,
+        "reauth_interval_d": 14,
+    }
+
+
 def test_load_absent_file_returns_safe_default(state_file: Path) -> None:
     state = LocalState(state_file)
     data = state.snapshot()

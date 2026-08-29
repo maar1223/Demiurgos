@@ -162,3 +162,13 @@ def test_identity_configured_helper_contract(
     assert identity_configured(_vault_on_state()) is True
     assert identity_configured(_account_state()) is False  # account alone, flag OFF
     assert identity_configured(_account_state(words_hash=None)) is False
+
+
+def test_identity_configured_flag_primary_without_env(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Direct helper contract mapping S-ID-01a/b: with no env override the
+    persisted flag alone decides identity — ON configures it, OFF leaves it
+    pending even when an account exists."""
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    assert identity_configured(_vault_on_state()) is True   # S-ID-01a
+    assert identity_configured(_account_state()) is False   # S-ID-01b
