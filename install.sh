@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================
-# Demiurgos — One-Command Installer
-# Usage: curl -fsSL https://get.demiurgos.dev | bash
+# Demiurgos — Preparación del entorno de desarrollo CLI
+# Instala el stack CLI de desarrollo: Hermes Agent, Engram
+# (memoria persistente) y las skills narrativas de Demiurgos.
+# NO instala la plataforma web: la instalación oficial
+# (Docker, Windows, Linux) está EN DESARROLLO y aún no está
+# disponible. La app web se arranca desde el repositorio con
+# los launchers (scripts/start-demiurgos-linux.sh, start-demiurgos.ps1).
 # ============================================================
 set -euo pipefail
 
@@ -31,7 +36,7 @@ ask()     { echo -ne "${CYAN}?${NC} $1 "; }
 
 # ── Stage 1: Prerequisites ────────────────────────────────
 check_prerequisites() {
-    header "Demiurgos — Instalador"
+    header "Demiurgos — Preparación del entorno CLI de desarrollo"
     
     # Detect OS
     case "$(uname -s)" in

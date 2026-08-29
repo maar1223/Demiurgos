@@ -1,50 +1,62 @@
-# Demiurgos — Guía Rápida
+# Demiurgos — Guía de Comandos
 
-> **Paradigma: Intent-Driven.** Habla naturalmente y Demiurgos interpreta tu intención. No necesitas memorizar comandos.
->
-> Los comandos listados abajo son **atajos opcionales** para cuando quieras ser explícito.
+Comandos reales de la plataforma web Demiurgos, verificados contra el repositorio (`scripts/`, `frontend/package.json`, `src/tools/demiurgos-suite/`).
 
----
-
-## Fases Narrativas (13 skills)
-
-| Fase | Comando | Qué produce |
-|------|---------|-------------|
-| Init | `/narrative-init` | Inicializa el proyecto narrativo |
-| Explore | `/narrative-explore` | Reporte de lore, personajes, contexto |
-| Propose | `/narrative-propose` | Propuesta de arco (logline, MICE) |
-| World Spec | `/narrative-world-spec` | Reglas y restricciones del mundo |
-| Character Spec | `/narrative-character-spec` | Fichas de personaje |
-| Design | `/narrative-design` | Beats Snyder, capítulos |
-| Tasks | `/narrative-tasks` | Escenas desglosadas |
-| Outline | `/narrative-outline` | Contexto completo para escribir |
-| Draft | `/narrative-draft` | Prosa narrativa |
-| Revise | `/narrative-revise` | Revisión estructural y de voz |
-| Verify | `/narrative-verify` | Validación de canon |
-| Archive | `/narrative-archive` | Cierre de arco + CHANGELOG |
-| Idea Bank | `/narrative-idea` | Captura, búsqueda, sync de ideas |
+> ⚠️ **La instalación oficial (Docker, Windows, Linux) está en desarrollo.** Hoy Demiurgos se arranca desde el repositorio con los launchers.
 
 ---
 
-## Orden de fases
+## Arranque (launchers)
 
-```
-narrative-init → explore (opcional) → propose → world-spec ∥ character-spec
-                                                      ↓
-                                                  design → tasks → outline → draft → revise → verify → archive
-```
+| Plataforma | Comando | Inicia |
+|-----------|---------|--------|
+| **Linux / macOS** | `./scripts/start-demiurgos-linux.sh start` | Gateway de Hermes (8642), API de la wiki (8000), Frontend (5173) |
+| **Windows** | `powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1` | El mismo stack + warm-up del grafo |
 
----
-
-## Atajos mentales
-
-- **Habla naturalmente** — es el camino principal. Di "sigamos" o "¿en qué estábamos?" y el orquestador entiende.
-- **`/narrative-verify`** — verifica antes de archivar SIEMPRE.
+- Acciones del launcher Linux: `start`, `restart`, `stop`, `install` (crea el acceso de escritorio).
+- App: `http://127.0.0.1:5173` · Health de la API: `http://127.0.0.1:8000/health`
+- En Windows puedes arrancar solo la API con `start-api.ps1`.
 
 ---
 
-## Lo que NUNCA pasa
+## Frontend (`frontend/`)
 
-- El planner **no escribe** archivos (solo artefactos en Engram)
-- El writer **no toca** `Lore/` ni `Personajes/` (solo `sagas/`)
-- El validator **no edita** borradores (solo verifica y archiva)
+| Comando | Qué hace |
+|---------|----------|
+| `npm install` | Instala las dependencias |
+| `npm test` | Vitest (ejecución única) |
+| `npm run typecheck` | TypeScript sin emitir (`tsc --noEmit`) |
+| `npm run build` | Typecheck + build de producción (`tsc --noEmit && vite build`) |
+| `npm run dev` | Servidor de desarrollo Vite |
+
+---
+
+## Backend (`src/tools/demiurgos-suite/wiki/`)
+
+| Comando | Qué hace |
+|---------|----------|
+| `python3 -m venv .venv` | Crea el entorno virtual |
+| `.venv/bin/pip install -r src/tools/demiurgos-suite/requirements.txt` | Instala las dependencias del backend |
+| `pytest tests/` | Suite de tests (o `pytest tests/test_x.py` para un archivo) |
+| `.venv/bin/python -m uvicorn api_server:app --reload --port 8001` | API en desarrollo |
+
+---
+
+## Endpoints principales
+
+| Endpoint | Qué hace |
+|----------|----------|
+| `GET /health` | Health check de la API |
+| `GET /api/worlds` | Lista los mundos cargados |
+| `GET /api/{mundo}/graph/search` | Búsqueda en el grafo de entidades |
+| `GET /api/{mundo}/graph/entity` | Entidad y sus relaciones |
+| `POST /api/{mundo}/ai/ask` | Asistente de IA (streaming SSE) |
+| `POST /api/{mundo}/ai/edit-suggest` | Sugerencias de edición |
+| `GET /api/{mundo}/{section}/tree` | Árbol de archivos de una sección |
+| `POST /api/{mundo}/{section}/save` | Guardar una ficha (con compuerta de confirmación) |
+
+---
+
+## Subsistema narrativo CLI (Hermes)
+
+Las 13 fases narrativas (`/narrative-init`, `/narrative-explore`, `/narrative-propose`, `/narrative-world-spec`, `/narrative-character-spec`, `/narrative-design`, `/narrative-tasks`, `/narrative-outline`, `/narrative-draft`, `/narrative-revise`, `/narrative-verify`, `/narrative-archive`, `/narrative-idea`) siguen existiendo como subsistema CLI del stack de desarrollo, gestionado por Hermes Agent (skills en `src/skills/narrative-*` y `skills/`). No requieren instalación adicional: `bash install.sh` prepara ese stack opcional. Se usan desde Hermes, no desde la app web.

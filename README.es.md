@@ -17,9 +17,11 @@
 | CLI de [Hermes Agent](https://hermes-agent.nousresearch.com) | Proveedor conversacional (asistente y gateway en el puerto 8642) |
 | `git` | Clonar el repositorio |
 
-> `install.sh` prepara el stack CLI opcional (Hermes Agent, [Engram](https://github.com/Gentleman-Programming/engram) como memoria persistente y las skills narrativas). Ejecútalo **una vez** si aún no tienes Hermes/Engram: `bash install.sh`.
+> `install.sh` prepara el stack **CLI de desarrollo** opcional (Hermes Agent, [Engram](https://github.com/Gentleman-Programming/engram) como memoria persistente y las skills narrativas). Ejecútalo **una vez** si aún no tienes Hermes/Engram: `bash install.sh`. Es una preparación del entorno de desarrollo — **no** instala la plataforma web.
 
 ### 2. Instalación
+
+> ⚠️ **Los instaladores oficiales aún no están disponibles.** La instalación oficial (Docker, Windows, Linux) está **en desarrollo**. Hasta que exista, Demiurgos se arranca desde el repositorio: clonar, `venv`, `npm install` y lanzar con los launchers de abajo.
 
 ```bash
 git clone https://github.com/maar1223/Demiurgos.git
@@ -153,7 +155,7 @@ pytest tests/                    # o un archivo: pytest tests/test_x.py
 # Frontend
 cd frontend
 npm test                         # vitest (ejecución única)
-npm run type-check               # tsc --noEmit
+npm run typecheck                # tsc --noEmit
 npm run build                    # tsc + vite build
 ```
 
