@@ -298,6 +298,11 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
                 continue
             legacy_path = entry / folder
             canonical_path = entry / folder.lower()
+            import sys as _s
+            print("DDIAG entry=", entry, "folder=", folder,
+                  "canon_exists=", canonical_path.exists(),
+                  "legacy_exists=", legacy_path.exists(),
+                  "top=", top_dir_names, file=_s.stderr)
             if canonical_path != legacy_path and canonical_path.exists():
                 continue
             found.append(folder)
