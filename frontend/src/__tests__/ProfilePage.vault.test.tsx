@@ -4,10 +4,14 @@ import ProfilePage from "@/pages/ProfilePage";
 import {
   changePassword,
   changeUsername,
+  disableVault,
+  enableVault,
   getAuthStatus,
+  getVaultConfig,
   logoutSession,
   removePassword,
   rotateWords,
+  setReauthInterval,
 } from "@/api/wiki";
 import { getReadiness } from "@/api/onboarding";
 import { reloadPage } from "@/lib/reloadPage";
@@ -28,6 +32,10 @@ vi.mock("@/api/wiki", () => ({
   changePassword: vi.fn(),
   removePassword: vi.fn(),
   rotateWords: vi.fn(),
+  getVaultConfig: vi.fn(),
+  enableVault: vi.fn(),
+  disableVault: vi.fn(),
+  setReauthInterval: vi.fn(),
 }));
 
 vi.mock("@/hooks/useLocalDevAuth", () => ({
@@ -226,5 +234,242 @@ describe("ProfilePage account section (credentials mode)", () => {
 
     await waitFor(() => expect(logoutSession).toHaveBeenCalled());
     await waitFor(() => expect(reloadPage).toHaveBeenCalled());
+  });
+});
+
+describe("ProfilePage vault panel (Seguridad / Bóveda, R-VC-02..05)", () => {
+  beforeEach(() => {
+    (getAuthStatus as Mock).mockResolvedValue(credentialsStatus);
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: {},
+      offline: { local_ready: true, remote_pending: [] },
+      legacy: [],
+    });
+    (getVaultConfig as Mock).mockResolvedValue({
+      enabled: false,
+      account_exists: false,
+      username: null,
+      has_password: false,
+      reauth_interval_d: 14,
+      env_override: false,
+    });
+    (enableVault as Mock).mockResolvedValue({ enabled: true });
+    (disableVault as Mock).mockResolvedValue({ enabled: false });
+    (setReauthInterval as Mock).mockResolvedValue({ reauth_interval_d: 7 });
+  });
+
+  async function openVaultTab() {
+    render(<ProfilePage />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Seguridad / Bóveda" }),
+    );
+  }
+
+  it("renders the create-account activation form when vault OFF and no account", async () => {
+    await openVaultTab();
+
+    expect(
+      await screen.findByRole("heading", { name: "Seguridad / Bóveda" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Apagada")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Crear cuenta y activar" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Usuario")).toBeInTheDocument();
+    expect(screen.getByLabelText("Contraseña (opcional)")).toBeInTheDocument();
+    // Management-only surfaces must not render while OFF.
+    expect(
+      screen.queryByRole("heading", { name: "Desactivar bóveda" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("creates the account on activation and shows the words exactly once (S-VC-03a)", async () => {
+    (getVaultConfig as Mock)
+      .mockResolvedValueOnce({
+        enabled: false,
+        account_exists: false,
+        username: null,
+        has_password: false,
+        reauth_interval_d: 14,
+        env_override: false,
+      })
+      .mockResolvedValue({
+        enabled: true,
+        account_exists: true,
+        username: "el-autor",
+        has_password: true,
+        reauth_interval_d: 14,
+        env_override: false,
+      });
+    (enableVault as Mock).mockResolvedValue({
+      enabled: true,
+      words: "alpha beta gamma delta",
+    });
+    await openVaultTab();
+
+    fireEvent.change(await screen.findByLabelText("Usuario"), {
+      target: { value: "el-autor" },
+    });
+    fireEvent.change(screen.getByLabelText("Contraseña (opcional)"), {
+      target: { value: "clave-fuerte" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Crear cuenta y activar" }),
+    );
+
+    await waitFor(() =>
+      expect(enableVault).toHaveBeenCalledWith({
+        username: "el-autor",
+        password: "clave-fuerte",
+      }),
+    );
+    // Words are shown exactly once; confirming reloads into the management UI.
+    expect(
+      await screen.findByTestId("vault-words"),
+    ).toHaveTextContent("alpha beta gamma delta");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Guardé mis palabras" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Desactivar bóveda" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("vault-words")).not.toBeInTheDocument();
+  });
+
+  it("activates an existing account by verifying the words (S-VC-03b/c)", async () => {
+    (getVaultConfig as Mock).mockResolvedValue({
+      enabled: false,
+      account_exists: true,
+      username: "el-autor",
+      has_password: true,
+      reauth_interval_d: 14,
+      env_override: false,
+    });
+    await openVaultTab();
+
+    fireEvent.change(
+      await screen.findByLabelText("Palabras claves para activar la bóveda"),
+      { target: { value: "alpha beta gamma" } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Activar bóveda" }),
+    );
+
+    await waitFor(() =>
+      expect(enableVault).toHaveBeenCalledWith({
+        words: "alpha beta gamma",
+      }),
+    );
+  });
+
+  it("renders the management UI when the vault is ON (R-VC-02b)", async () => {
+    (getVaultConfig as Mock).mockResolvedValue({
+      enabled: true,
+      account_exists: true,
+      username: "el-autor",
+      has_password: true,
+      reauth_interval_d: 14,
+      env_override: false,
+    });
+    await openVaultTab();
+
+    expect(await screen.findByText("Activa")).toBeInTheDocument();
+    expect(screen.getByText(/Cuenta:/)).toBeInTheDocument();
+    expect(screen.getByText("el-autor")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Cambiar usuario" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Cambiar contraseña" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Retirar contraseña" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Rotar palabras claves" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Intervalo de reingreso" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Desactivar bóveda" }),
+    ).toBeInTheDocument();
+    // Activation-only surfaces must not render while ON.
+    expect(
+      screen.queryByRole("button", { name: "Activar bóveda" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Crear cuenta y activar" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("adjusts the reauth interval (S-VC-05a)", async () => {
+    (getVaultConfig as Mock).mockResolvedValue({
+      enabled: true,
+      account_exists: true,
+      username: "el-autor",
+      has_password: true,
+      reauth_interval_d: 14,
+      env_override: false,
+    });
+    await openVaultTab();
+
+    const input = await screen.findByLabelText("Días entre reingresos");
+    fireEvent.change(input, { target: { value: "7" } });
+    fireEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    await waitFor(() =>
+      expect(setReauthInterval).toHaveBeenCalledWith(7),
+    );
+    expect(
+      await screen.findByText("Listo. Intervalo guardado."),
+    ).toBeInTheDocument();
+  });
+
+  it("disables the vault with the words after a two-click confirm (S-VC-04a/b)", async () => {
+    (getVaultConfig as Mock)
+      .mockResolvedValueOnce({
+        enabled: true,
+        account_exists: true,
+        username: "el-autor",
+        has_password: true,
+        reauth_interval_d: 14,
+        env_override: false,
+      })
+      .mockResolvedValue({
+        enabled: false,
+        account_exists: true,
+        username: "el-autor",
+        has_password: true,
+        reauth_interval_d: 14,
+        env_override: false,
+      });
+    await openVaultTab();
+
+    const form = await screen
+      .findByRole("heading", { name: "Desactivar bóveda" })
+      .then((heading) => heading.closest("div") as HTMLElement);
+    fireEvent.change(
+      within(form).getByLabelText("Palabras claves para Desactivar bóveda"),
+      { target: { value: "alpha beta gamma" } },
+    );
+    fireEvent.click(
+      within(form).getByRole("button", { name: "Desactivar bóveda" }),
+    );
+
+    // First click only arms the confirmation; nothing was sent yet.
+    expect(disableVault).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(form).getByRole("button", { name: "¿Confirmás la desactivación?" }),
+    );
+
+    await waitFor(() =>
+      expect(disableVault).toHaveBeenCalledWith("alpha beta gamma"),
+    );
+    // After the reload the panel is back in activation mode (vault OFF).
+    expect(
+      await screen.findByRole("heading", { name: "Activar la bóveda" }),
+    ).toBeInTheDocument();
   });
 });
