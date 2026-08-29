@@ -29,9 +29,9 @@ for _p in (str(_WIKI), str(_SUITE)):
 
 from local_state import LocalState  # noqa: E402
 from readiness import project_cards, probe_local_storage  # noqa: E402
-from world_authority import (WorldResultKind, _same_physical_dir,  # noqa: E402
-                             canonical_dirs, create_world,
-                             detect_legacy_layout)
+from wiki.world_authority import (WorldResultKind,  # noqa: E402
+                                  canonical_dirs, create_world,
+                                  detect_legacy_layout)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 INSTALL_SH = "install.sh"
