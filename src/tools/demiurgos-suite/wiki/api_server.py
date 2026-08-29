@@ -77,6 +77,13 @@ from demiurgos_language import (
     resolve_ui_language,
 )
 from local_state import LocalState
+from google_auth import (
+    generate_nonce as google_auth_generate_nonce,
+    get_google_client_id as google_auth_get_client_id,
+    verify_id_token as google_auth_verify_id_token,
+)
+import emergency_key
+from emergency_key import rotate as emergency_key_rotate, verify as emergency_key_verify
 from onboarding import (
     commit_step0 as _commit_step0,
     commit_world_created as _commit_world_created,
@@ -768,9 +775,22 @@ class EditPrincipal:
 
 
 _LOCAL_AUTH_MODE = "local-dev"
+_GOOGLE_AUTH_MODE = "google"
+_EMERGENCY_PROVIDER = "emergency"
 _LOCAL_SESSION_COOKIE = "demiurgos_local_session"
+_SESSION_COOKIE = "demiurgos_session"
+_GOOGLE_NONCE_COOKIE = "demiurgos_google_nonce"
+_GOOGLE_NONCE_TTL = timedelta(seconds=300)
 _LOCAL_SESSION_TTL = timedelta(hours=8)
-_local_sessions: dict[str, dict] = {}
+_DEFAULT_SESSION_TTL_H = 8
+_DEFAULT_REMEMBER_ME_TTL_D = 14
+# Generalized multi-provider session store: one dict for local-dev, google,
+# and emergency sessions, keyed by the sha256 hash of the bearer token.
+# Records carry ``{provider, principal_id, label, expires_at, remember_me}``.
+_sessions: dict[str, dict] = {}
+# Backward-compatible alias: existing tests/fixtures clear the store by its
+# legacy name; both names reference the SAME generalized store.
+_local_sessions = _sessions
 _local_session_lock = threading.Lock()
 
 
@@ -780,10 +800,15 @@ def _auth_mode() -> str:
 
 
 def _is_loopback_request(request: Request | None) -> bool:
-    """Use the socket peer only; Host and forwarded headers are untrusted."""
-    if request is None or request.client is None:
+    """Use the socket peer only; Host and forwarded headers are untrusted.
+
+    ``getattr`` keeps the check safe for request-like objects that carry no
+    socket peer (e.g. test doubles): no client means no loopback proof.
+    """
+    client = getattr(request, "client", None) if request is not None else None
+    if client is None:
         return False
-    return request.client.host in {"127.0.0.1", "::1"}
+    return client.host in {"127.0.0.1", "::1"}
 
 
 def _local_auth_enabled() -> bool:
@@ -791,12 +816,13 @@ def _local_auth_enabled() -> bool:
 
 
 def _prune_local_sessions(now: datetime | None = None) -> None:
+    """Prune expired sessions from the shared multi-provider store."""
     current = now or datetime.now(timezone.utc)
     for token_hash in [
-        key for key, record in _local_sessions.items()
+        key for key, record in _sessions.items()
         if record["expires_at"] <= current
     ]:
-        _local_sessions.pop(token_hash, None)
+        _sessions.pop(token_hash, None)
 
 
 def _local_session_for_request(request: Request | None) -> dict | None:
@@ -809,7 +835,56 @@ def _local_session_for_request(request: Request | None) -> dict | None:
     token_hash = _hash_token(token)
     with _local_session_lock:
         _prune_local_sessions(now)
-        return _local_sessions.get(token_hash)
+        return _sessions.get(token_hash)
+
+
+def _google_auth_enabled() -> bool:
+    return _auth_mode() == _GOOGLE_AUTH_MODE
+
+
+def _google_session_for_request(request: Request | None) -> dict | None:
+    """Resolve a Google-vault session. NOT loopback-bound (unlike local-dev)."""
+    if not _google_auth_enabled():
+        return None
+    token = request.cookies.get(_SESSION_COOKIE) if request else None
+    if not token:
+        return None
+    now = datetime.now(timezone.utc)
+    token_hash = _hash_token(token)
+    with _local_session_lock:
+        _prune_local_sessions(now)
+        return _sessions.get(token_hash)
+
+
+def _session_for_request(request: Request | None) -> dict | None:
+    """Unified session resolution across every provider in the active mode.
+
+    ``local-dev`` keeps its loopback-only binding; Google-vault sessions
+    (google or emergency provider) are NOT loopback-bound. Disabled mode
+    never resolves a session.
+    """
+    if _auth_mode() == _LOCAL_AUTH_MODE:
+        return _local_session_for_request(request)
+    if _auth_mode() == _GOOGLE_AUTH_MODE:
+        return _google_session_for_request(request)
+    return None
+
+
+def _cookie_secure() -> bool:
+    """Scheme-aware cookie Secure flag (R-GA2): True for the Google vault
+    mode (HTTPS production), False for loopback/local development."""
+    return _auth_mode() == _GOOGLE_AUTH_MODE
+
+
+def _session_ttl(remember_me: bool) -> timedelta:
+    """Session TTL from env: 8h default, 14d with remember_me (R-GA2)."""
+    if remember_me:
+        days = int(os.environ.get(
+            "DEMIURGOS_REMEMBER_ME_TTL_D", str(_DEFAULT_REMEMBER_ME_TTL_D)))
+        return timedelta(days=days)
+    hours = int(os.environ.get(
+        "DEMIURGOS_SESSION_TTL_H", str(_DEFAULT_SESSION_TTL_H)))
+    return timedelta(hours=hours)
 
 
 def _local_status(request: Request) -> dict:
@@ -822,6 +897,21 @@ def _local_status(request: Request) -> dict:
         "enabled": enabled,
         "authenticated": session is not None,
         "label": session["label"] if session else None,
+    }
+
+
+def _session_status(request: Request) -> dict:
+    """Unified mode-aware session status (R-ID1): provider included when an
+    active session exists (local-dev | google | emergency)."""
+    mode = _auth_mode()
+    enabled = mode in (_LOCAL_AUTH_MODE, _GOOGLE_AUTH_MODE)
+    session = _session_for_request(request) if enabled else None
+    return {
+        "mode": mode,
+        "enabled": enabled,
+        "authenticated": session is not None,
+        "label": session["label"] if session else None,
+        "provider": session["provider"] if session else None,
     }
 
 
@@ -842,9 +932,11 @@ def local_dev_session_start(request: Request, response: Response):
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
     session = {
+        "provider": _LOCAL_AUTH_MODE,
         "principal_id": f"local-dev-session-{secrets.token_hex(16)}",
         "label": "Local development user",
         "expires_at": now + _LOCAL_SESSION_TTL,
+        "remember_me": False,
     }
     with _local_session_lock:
         _prune_local_sessions(now)
@@ -874,22 +966,193 @@ def local_dev_session_logout(request: Request, response: Response):
     token = request.cookies.get(_LOCAL_SESSION_COOKIE)
     if token:
         with _local_session_lock:
-            _local_sessions.pop(_hash_token(token), None)
+            _sessions.pop(_hash_token(token), None)
     response.delete_cookie(_LOCAL_SESSION_COOKIE, path="/", samesite="lax")
     return _local_status(request)
+
+
+@app.get("/api/auth/session/status")
+def auth_session_status(request: Request):
+    """Unified mode-aware session status (R-ID1 / R-GA2)."""
+    return _session_status(request)
+
+
+@app.get("/api/auth/google/nonce")
+def google_auth_nonce(request: Request, response: Response):
+    """Issue a short-lived nonce bound to this browser for id_token login.
+
+    The nonce lives in a 5-minute HttpOnly cookie and MUST match the
+    ``nonce`` claim of the id_token presented at ``POST /api/auth/google/
+    session`` (R-GA1, S-GA1b). Re-issuing a nonce replaces the previous one.
+    """
+    if not _google_auth_enabled():
+        raise HTTPException(status_code=403, detail="Google auth is disabled")
+    nonce = google_auth_generate_nonce()
+    response.set_cookie(
+        _GOOGLE_NONCE_COOKIE,
+        nonce,
+        max_age=int(_GOOGLE_NONCE_TTL.total_seconds()),
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(),
+        path="/",
+    )
+    return {"nonce": nonce}
+
+
+class GoogleSessionRequest(BaseModel):
+    id_token: str
+    remember_me: bool = False
+
+
+@app.post("/api/auth/google/session")
+def google_session_start(payload: GoogleSessionRequest, request: Request, response: Response):
+    """Verify a Google id_token and issue an HttpOnly vault session cookie.
+
+    Maps every verification failure (bad signature, expired, wrong iss/aud,
+    missing or mismatched nonce) to a 401 with no session issued (S-GA1b).
+    The browser-bound nonce cookie is consumed on success (single use).
+    """
+    if not _google_auth_enabled():
+        raise HTTPException(status_code=403, detail="Google auth is disabled")
+    client_id = google_auth_get_client_id()
+    if not client_id:
+        raise HTTPException(status_code=401, detail="Google auth is not configured")
+    expected_nonce = request.cookies.get(_GOOGLE_NONCE_COOKIE)
+    if not expected_nonce:
+        raise HTTPException(status_code=401, detail="Missing or expired login nonce")
+    try:
+        claims = google_auth_verify_id_token(payload.id_token, client_id, expected_nonce)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    response.delete_cookie(_GOOGLE_NONCE_COOKIE, path="/", samesite="lax")
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    ttl = _session_ttl(payload.remember_me)
+    session = {
+        "provider": _GOOGLE_AUTH_MODE,
+        "principal_id": claims["sub"],
+        "label": claims.get("email") or claims["sub"],
+        "expires_at": now + ttl,
+        "remember_me": payload.remember_me,
+    }
+    with _local_session_lock:
+        _prune_local_sessions(now)
+        _sessions[_hash_token(token)] = session
+    response.set_cookie(
+        _SESSION_COOKIE,
+        token,
+        max_age=int(ttl.total_seconds()),
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(),
+        path="/",
+    )
+    return {
+        "mode": _GOOGLE_AUTH_MODE,
+        "enabled": True,
+        "authenticated": True,
+        "label": session["label"],
+        "provider": _GOOGLE_AUTH_MODE,
+    }
+
+
+@app.delete("/api/auth/session")
+def auth_session_logout(request: Request, response: Response):
+    """Unified logout (R-GA3): remove the active session and clear its cookie."""
+    if _auth_mode() == _LOCAL_AUTH_MODE:
+        cookie = _LOCAL_SESSION_COOKIE
+    else:
+        cookie = _SESSION_COOKIE
+    token = request.cookies.get(cookie)
+    if token:
+        with _local_session_lock:
+            _sessions.pop(_hash_token(token), None)
+    response.delete_cookie(cookie, path="/", samesite="lax")
+    return _session_status(request)
+
+
+class EmergencySessionRequest(BaseModel):
+    key: str
+
+
+# In-memory rate limiter for emergency key verification (R-ERK3). Kill-switch
+# property: counters reset on process restart (filesystem access already means
+# the vault is compromised). Exposed for test isolation (reset between tests).
+_emergency_rate_limiter = emergency_key.RateLimiter()
+
+
+@app.post("/api/auth/emergency/session")
+def emergency_session_start(payload: EmergencySessionRequest, request: Request, response: Response):
+    """Verify the offline emergency recovery key and issue a vault session.
+
+    100% offline: ``emergency_key.verify`` performs the rate-limit gate plus
+    the Argon2id comparison with ZERO network calls (R-ERK2, R-ERK3).
+    """
+    if not _google_auth_enabled():
+        raise HTTPException(status_code=403, detail="Emergency key requires google auth mode")
+    stored_hash = _local_state().snapshot().get("capabilities", {}).get("emergency_key_hash")
+    if not emergency_key_verify(payload.key, stored_hash, _emergency_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited emergency key")
+
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    ttl = _session_ttl(False)
+    session = {
+        "provider": _EMERGENCY_PROVIDER,
+        "principal_id": f"emergency-session-{secrets.token_hex(16)}",
+        "label": "Emergency recovery",
+        "expires_at": now + ttl,
+        "remember_me": False,
+    }
+    with _local_session_lock:
+        _prune_local_sessions(now)
+        _sessions[_hash_token(token)] = session
+    response.set_cookie(
+        _SESSION_COOKIE,
+        token,
+        max_age=int(ttl.total_seconds()),
+        httponly=True,
+        samesite="lax",
+        secure=_cookie_secure(),
+        path="/",
+    )
+    return {
+        "mode": _GOOGLE_AUTH_MODE,
+        "enabled": True,
+        "authenticated": True,
+        "label": session["label"],
+        "provider": _EMERGENCY_PROVIDER,
+    }
+
+
+@app.post("/api/auth/emergency/rotate")
+def emergency_key_rotate_endpoint(request: Request):
+    """Rotate the emergency recovery key (R-ERK4); requires an active session.
+
+    Returns the new plaintext key exactly once; the old key is invalidated by
+    the atomic commit of the new Argon2id hash.
+    """
+    if not _google_auth_enabled():
+        raise HTTPException(status_code=403, detail="Emergency key requires google auth mode")
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    plaintext, _ = emergency_key_rotate(_local_state())
+    return {"new_key": plaintext}
 
 
 def _resolve_principal(request=None) -> EditPrincipal | None:
     """Resolve the trusted edit principal for a request.
 
-    Local development auth is the only built-in provider. It requires the
-    explicit ``DEMIURGOS_AUTH_MODE=local-dev`` setting, a loopback socket peer,
-    and a server-issued HttpOnly session cookie. Until those conditions hold,
-    every gated write fails closed. This function MUST NOT trust caller-
-    supplied identity: request headers and body fields are forgeable and are
-    deliberately ignored.
+    Sessions come from the explicit loopback-only local development provider
+    (``DEMIURGOS_AUTH_MODE=local-dev``) or from the Google vault mode
+    (``DEMIURGOS_AUTH_MODE=google``), whose google/emergency sessions are NOT
+    loopback-bound. Until a valid session exists, every gated write fails
+    closed. This function MUST NOT trust caller-supplied identity: request
+    headers and body fields are forgeable and are deliberately ignored.
     """
-    session = _local_session_for_request(request)
+    session = _session_for_request(request)
     if session is None:
         return None
     return EditPrincipal(session["principal_id"], label=session["label"])
