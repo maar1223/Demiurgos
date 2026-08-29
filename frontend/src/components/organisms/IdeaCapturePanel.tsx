@@ -11,23 +11,24 @@ import {
   setIdeaCaptureToken,
 } from "@/api/ideaCapture";
 import type {
+  AuthSessionStatus,
   ChatCandidate,
   ChatDiscoveryResult,
   IdeaCaptureConfig,
   IdeaCaptureStatus,
-  LocalDevSessionStatus,
 } from "@/api/types";
 import { ApiError } from "@/api/types";
 import { cn } from "@/lib/utils";
 
-/** Local session controller surfaced by useLocalDevAuth — passed in so the
- *  panel stays decoupled from the hook and easy to test. */
-export interface LocalAuthController {
-  status: LocalDevSessionStatus | null;
+/** Unified session controller surfaced by useAuthSession — passed in so the
+ *  panel stays decoupled from the hook and easy to test. `start`/`logout`
+ *  are optional because only the local-dev flow exposes them. */
+export interface AuthSessionController {
+  status: AuthSessionStatus | null;
   isLoading: boolean;
   error: Error | null;
-  start: () => Promise<LocalDevSessionStatus>;
-  logout: () => Promise<LocalDevSessionStatus>;
+  start?: () => Promise<AuthSessionStatus>;
+  logout?: () => Promise<AuthSessionStatus>;
 }
 
 interface GroupRow {
@@ -96,15 +97,14 @@ function countAuthorized(privateText: string, groupRows: GroupRow[]): number {
  *   4. Finalizar — save confirmation, exact Hermes gateway command, next
  *      action to start capture. The panel NEVER auto-starts Telegram.
  *
- * Everything lives behind the local-dev session boundary: without an
- * authenticated loopback session the panel only shows the auth gate. The bot
- * token is stored server-side in .env and is never returned — the input is
- * masked by default and reveal/copy only apply to a value being typed.
- * Configure/discover is a migration-only flow. Production ingress is owned by
- * Hermes; the legacy serve command is never started from the panel.
+ * Everything lives behind the unified session boundary (credentials vault OR
+ * local-dev): without an authenticated session the panel only shows the auth
+ * gate. The bot token is stored server-side in .env and is never returned —
+ * the input is masked by default and reveal/copy only apply to a value being
+ * typed. Configure/discover is a migration-only flow. Production ingress is
+ * owned by Hermes; the legacy serve command is never started from the panel.
  */
-export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
-  const enabled = auth.status?.enabled ?? false;
+export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
   const authenticated = auth.status?.authenticated ?? false;
 
   // ------------------------------------------------------------------ data
@@ -376,43 +376,57 @@ export function IdeaCapturePanel({ auth }: { auth: LocalAuthController }) {
   };
 
   // ------------------------------------------------------------------ gate
+  // Unified session gate (credentials vault OR local-dev). Auth disabled
+  // (enabled=false) fails open: the panel renders and any 401 surfaces
+  // through the existing error handlers.
   if (auth.isLoading) {
     return (
       <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida">
-        <Spinner size="sm" /> Comprobando sesión local…
+        <Spinner size="sm" /> Comprobando sesión…
       </div>
     );
   }
 
-  if (!enabled) {
+  if (auth.error) {
     return (
       <div className="rounded-lg border border-filio bg-madero p-4">
         <p className="text-small text-tinta-desvaida">
-          La configuración de captura de ideas requiere la sesión local.
-          Activá <code className="text-plata">DEMIURGOS_AUTH_MODE=local-dev</code>{" "}
-          en <code className="text-plata">.env</code> para probarla.
+          No se pudo comprobar la sesión. Verifica la conexión con el servidor
+          e intenta de nuevo.
         </p>
-      </div>
-    );
-  }
-
-  if (!authenticated) {
-    return (
-      <div className="rounded-lg border border-filio bg-madero p-4">
-        <p className="text-small text-tinta-desvaida">
-          Sesión local no iniciada. Iniciá sesión para ver y editar la
-          configuración de captura de ideas.
-        </p>
-        <Button
-          variant="primary"
-          onClick={() => void auth.start()}
-          className="mt-3"
-        >
-          Iniciar sesión local
-        </Button>
-        {auth.error && (
+        {auth.error.message && (
           <p className="mt-2 text-small text-sangre">{auth.error.message}</p>
         )}
+      </div>
+    );
+  }
+
+  if (auth.status?.enabled && !authenticated) {
+    if (auth.status.mode === "local-dev") {
+      return (
+        <div className="rounded-lg border border-filio bg-madero p-4">
+          <p className="text-small text-tinta-desvaida">
+            Sesión local no iniciada. Inicia sesión para ver y editar la
+            configuración de captura de ideas.
+          </p>
+          <Button
+            variant="primary"
+            onClick={() => void auth.start?.()}
+            className="mt-3"
+          >
+            Iniciar sesión local
+          </Button>
+        </div>
+      );
+    }
+    // Credentials vault mode: the login surface is the app-level AuthGate, so
+    // the panel only explains the expired session (no in-page login here).
+    return (
+      <div className="rounded-lg border border-filio bg-madero p-4">
+        <p className="text-small text-tinta-desvaida">
+          Tu sesión venció. Inicia sesión de nuevo para ver y editar la
+          configuración de captura de ideas.
+        </p>
       </div>
     );
   }

@@ -282,7 +282,7 @@ function isExcludedSourcePath(relative: string): boolean {
 function importErrorMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 401) {
-      return "Tu sesión local venció. Iniciá sesión e intentá de nuevo.";
+      return "La sesión expiró. Inicia sesión e intenta de nuevo.";
     }
     if (err.status === 0) {
       return "No se pudo conectar al servidor. Verificá que esté corriendo.";

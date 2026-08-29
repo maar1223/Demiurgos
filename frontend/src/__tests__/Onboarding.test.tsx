@@ -280,7 +280,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     await user.click(screen.getByRole("button", { name: "Continuar" }));
 
     expect(
-      await screen.findByText(/DEMIURGOS_AUTH_MODE=local-dev/i),
+      await screen.findByText(/La sesión expiró/i),
     ).toBeInTheDocument();
   });
 

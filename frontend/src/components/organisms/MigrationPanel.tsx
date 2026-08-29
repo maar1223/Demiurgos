@@ -167,12 +167,12 @@ export function MigrationPanel({
 }
 
 /** Map a migration failure to honest, retryable guidance. Server error codes
- *  are the stable remediation keys (ApiError.code); a missing local session
- *  maps to 401. Never surfaces raw paths or evidence internals. */
+ *  are the stable remediation keys (ApiError.code); an expired/missing
+ *  session maps to 401. Never surfaces raw paths or evidence internals. */
 function errorText(cause: unknown): string {
   if (cause instanceof ApiError) {
     if (cause.status === 401) {
-      return "La sesión local terminó. Iniciala desde el Perfil e intentá de nuevo.";
+      return "La sesión expiró. Inicia sesión e intenta de nuevo.";
     }
     if (cause.code && ERROR_GUIDANCE[cause.code]) {
       return ERROR_GUIDANCE[cause.code];

@@ -12,7 +12,7 @@ import {
 } from "@/api/ideaCapture";
 import {
   IdeaCapturePanel,
-  type LocalAuthController,
+  type AuthSessionController,
 } from "@/components/organisms/IdeaCapturePanel";
 import { ApiError, type IdeaCaptureStatus } from "@/api/types";
 
@@ -54,7 +54,7 @@ function makeStatus(overrides: Partial<IdeaCaptureStatus> = {}): IdeaCaptureStat
   };
 }
 
-function makeAuth(overrides: Partial<LocalAuthController> = {}): LocalAuthController {
+function makeAuth(overrides: Partial<AuthSessionController> = {}): AuthSessionController {
   return {
     status: {
       mode: "local-dev",
@@ -70,7 +70,7 @@ function makeAuth(overrides: Partial<LocalAuthController> = {}): LocalAuthContro
   };
 }
 
-function renderPanel(auth: LocalAuthController) {
+function renderPanel(auth: AuthSessionController) {
   return render(<IdeaCapturePanel auth={auth} />);
 }
 
@@ -113,7 +113,27 @@ describe("IdeaCapturePanel — wizard navigation", () => {
     expect(mocked.getIdeaCaptureStatus).not.toHaveBeenCalled();
   });
 
-  it("explains how to enable local auth when disabled, without fetching", () => {
+  it("shows the expired-session message in credentials mode without a local-dev button", () => {
+    renderPanel(
+      makeAuth({
+        status: {
+          mode: "credentials",
+          enabled: true,
+          authenticated: false,
+          label: null,
+          provider: "credentials",
+        },
+      }),
+    );
+
+    expect(screen.getByText(/Tu sesión venció/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Iniciar sesión local" }),
+    ).not.toBeInTheDocument();
+    expect(mocked.getIdeaCaptureStatus).not.toHaveBeenCalled();
+  });
+
+  it("fails open when auth is disabled: no session wall, no fetch", () => {
     renderPanel(
       makeAuth({
         status: {
@@ -125,9 +145,11 @@ describe("IdeaCapturePanel — wizard navigation", () => {
       }),
     );
 
+    // Auth disabled → the panel renders instead of a session gate.
     expect(
-      screen.getByText(/DEMIURGOS_AUTH_MODE=local-dev/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/DEMIURGOS_AUTH_MODE=local-dev/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/Cómo funciona/i)).toBeInTheDocument();
     expect(mocked.getIdeaCaptureStatus).not.toHaveBeenCalled();
   });
 

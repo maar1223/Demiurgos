@@ -34,6 +34,19 @@ vi.mock("@/hooks/useLocalDevAuth", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useAuthSession", () => ({
+  useAuthSession: () => ({
+    status: {
+      mode: "local-dev",
+      enabled: true,
+      authenticated: true,
+      label: "Local development user",
+    },
+    isLoading: false,
+    error: null,
+  }),
+}));
+
 vi.mock("@/components/organisms/Navbar", () => ({
   Navbar: () => <div aria-label="navbar" />,
 }));

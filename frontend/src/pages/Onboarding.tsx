@@ -60,7 +60,7 @@ const REMOTE_PENDING: Record<string, { title: string; description: string }> = {
 
 function authHint(error: unknown): string | null {
   if (error instanceof ApiError && error.status === 401) {
-    return "La configuración requiere una sesión local. Activá DEMIURGOS_AUTH_MODE=local-dev e iniciá sesión local desde el perfil.";
+    return "La sesión expiró. Inicia sesión e intenta de nuevo.";
   }
   return null;
 }

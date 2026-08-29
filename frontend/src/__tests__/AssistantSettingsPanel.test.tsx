@@ -14,7 +14,7 @@ import {
 } from "@/api/assistantSettings";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import type { AssistantModelOption, AssistantProbeResult, AssistantSettingsStatus } from "@/api/types";
-import type { LocalAuthController } from "@/components/organisms/IdeaCapturePanel";
+import type { AuthSessionController } from "@/components/organisms/IdeaCapturePanel";
 
 vi.mock("@/api/assistantSettings", () => ({
   clearAssistantKey: vi.fn(),
@@ -53,7 +53,7 @@ const status: AssistantSettingsStatus = {
   runtime_state: "active",
 };
 
-const auth: LocalAuthController = {
+const auth: AuthSessionController = {
   status: {
     mode: "local-dev",
     enabled: true,

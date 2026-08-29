@@ -12,12 +12,12 @@ interface CreateWorldModalProps {
 
 /**
  * The 401 guidance matching Onboarding's fail-closed auth hint: creation is a
- * gated write, so a missing local session surfaces the exact remediation
- * instead of retrying.
+ * gated write, so a missing session surfaces the exact remediation instead of
+ * retrying.
  */
 function authHint(error: unknown): string | null {
   if (error instanceof ApiError && error.status === 401) {
-    return "La configuración requiere una sesión local. Activá DEMIURGOS_AUTH_MODE=local-dev e iniciá sesión local desde el perfil.";
+    return "La sesión expiró. Inicia sesión e intenta de nuevo.";
   }
   return null;
 }

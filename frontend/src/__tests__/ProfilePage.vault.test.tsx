@@ -53,6 +53,20 @@ vi.mock("@/hooks/useLocalDevAuth", () => ({
   }),
 }));
 
+vi.mock("@/hooks/useAuthSession", () => ({
+  useAuthSession: () => ({
+    status: {
+      mode: "credentials",
+      enabled: true,
+      authenticated: true,
+      label: "el-autor",
+      provider: "credentials",
+    },
+    isLoading: false,
+    error: null,
+  }),
+}));
+
 vi.mock("@/components/organisms/Navbar", () => ({
   Navbar: () => <div aria-label="navbar" />,
 }));

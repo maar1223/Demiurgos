@@ -16,7 +16,7 @@ import type {
 } from "@/api/types";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
-import type { LocalAuthController } from "@/components/organisms/IdeaCapturePanel";
+import type { AuthSessionController } from "@/components/organisms/IdeaCapturePanel";
 
 type Step = "provider" | "connection" | "models" | "capability" | "confirmation";
 type Validation = "idle" | "validated" | "failed";
@@ -75,7 +75,7 @@ function modelDescription(model: AssistantModelOption | null): string {
   return model.capability === "multimodal" ? "Multimodal" : "Solo texto";
 }
 
-export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) {
+export function AssistantSettingsPanel({ auth }: { auth: AuthSessionController }) {
   const navigate = useNavigate();
   const authenticated = auth.status?.authenticated ?? false;
   const [status, setStatus] = useState<AssistantSettingsStatus | null>(null);
@@ -124,11 +124,20 @@ export function AssistantSettingsPanel({ auth }: { auth: LocalAuthController }) 
   if (auth.isLoading || loading) {
     return <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida"><Spinner size="sm" /> Cargando configuración…</div>;
   }
-  if (!auth.status?.enabled) {
-    return <p className="rounded-lg border border-filio bg-madero p-4 text-small text-tinta-desvaida">La configuración requiere la sesión local.</p>;
+  if (auth.error) {
+    return <p className="rounded-lg border border-filio bg-madero p-4 text-small text-tinta-desvaida">No se pudo comprobar la sesión. Verifica la conexión con el servidor e intenta de nuevo.</p>;
   }
-  if (!authenticated) {
-    return <div className="rounded-lg border border-filio bg-madero p-4"><p className="text-small text-tinta-desvaida">Iniciá la sesión local para configurar el asistente.</p><Button className="mt-3" onClick={() => void auth.start()}>Iniciar sesión local</Button></div>;
+  if (auth.status?.enabled && !authenticated) {
+    if (auth.status.mode === "local-dev") {
+      return <div className="rounded-lg border border-filio bg-madero p-4"><p className="text-small text-tinta-desvaida">Inicia la sesión local para configurar el asistente.</p><Button className="mt-3" onClick={() => void auth.start?.()}>Iniciar sesión local</Button></div>;
+    }
+    // Credentials vault mode: the login surface is the app-level AuthGate.
+    return (
+      <div className="rounded-lg border border-filio bg-madero p-4">
+        <p className="text-small text-tinta-desvaida">Tu sesión venció. Inicia sesión de nuevo para configurar el asistente.</p>
+        <Button className="mt-3" onClick={() => navigate("/")}>Iniciar sesión</Button>
+      </div>
+    );
   }
   if (!status) return <p className="text-small text-sangre">{error ?? "No se pudo cargar la configuración"}</p>;
 

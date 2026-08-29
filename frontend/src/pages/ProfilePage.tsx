@@ -26,6 +26,7 @@ import {
 } from "@/api/wiki";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
+import { useAuthSession } from "@/hooks/useAuthSession";
 import { reloadPage } from "@/lib/reloadPage";
 import type {
   AuthSessionStatus,
@@ -975,7 +976,7 @@ function providerLabel(provider?: AuthSessionStatus["provider"]): string {
  *  The guided wizard covers the write-only bot token (save/replace/clear) and
  *  getMe-backed connection validation via the "Detectar chat" step. */
 function IntegrationsSection() {
-  const auth = useLocalDevAuth(true);
+  const auth = useAuthSession(true);
   return (
     <div>
       <h3 className="font-heading text-body text-pergamino">Captura de ideas</h3>
@@ -990,7 +991,7 @@ function IntegrationsSection() {
 }
 
 function AssistantSection() {
-  const auth = useLocalDevAuth(true);
+  const auth = useAuthSession(true);
   return <AssistantSettingsPanel auth={auth} />;
 }
 
@@ -1343,13 +1344,13 @@ function WorldsSection() {
 /**
  * Profile page (`/perfil`) — the unified configuration surface.
  *
- * Sections: Sesión de edición (local-dev auth, same controls as the Navbar
+ * Sections: Sesión de edición (unified session controls, same as the Navbar
  * dropdown), Centro de Configuración (configuration capabilities without a
  * Profile home: backup, locale, offline + essential readiness), Integraciones
  * (idea-capture wizard — the single Telegram surface, ONB-3.3), Asistente IA
  * (assistant settings) and Mundos (world delete + recycle bin + legacy-folder
- * migration, ONB-4.3). The whole page sits behind the same local-dev auth
- * boundary as wiki editing.
+ * migration, ONB-4.3). The gated sections depend on the unified session
+ * (credentials vault or local-dev), matching the wiki editing boundary.
  */
 export default function ProfilePage() {
   const { worlds } = useWorlds();
