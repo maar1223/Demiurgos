@@ -9,7 +9,5 @@ Pillow>=10.0.0
 markitdown[docx]>=0.1.0
 # Streaming OOXML parsing for DOCX image extraction with precise positioning
 lxml>=4.9.0
-# Google id_token verification for vault login (auth-google-vault)
-google-auth>=2.0.0
-# Argon2id hashing for the offline emergency recovery key (auth-google-vault)
+# Argon2id hashing for passwords and recovery words (auth-vault-credentials)
 argon2-cffi>=21.0.0

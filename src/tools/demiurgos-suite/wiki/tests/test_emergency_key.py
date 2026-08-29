@@ -1,4 +1,4 @@
-"""R-ERK1..R-ERK4 — offline emergency recovery key (auth-google-vault).
+"""R-ERK1..R-ERK4 — offline emergency recovery key (auth-vault-credentials).
 
 Unit tests covering:
 - 7.2: word count 8-10 + entropy, Argon2id hash/verify round-trip,

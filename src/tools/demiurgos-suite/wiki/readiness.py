@@ -48,7 +48,7 @@ from local_state import CARD_STATES
 
 # Cloud/remote capabilities without a dedicated contract: their cards can
 # never be derived to ``configured`` from local evidence in this slice
-# (ONB-3.1). ``identity`` is excluded because auth-google-vault (R-ID1)
+# (ONB-3.1). ``identity`` is excluded because auth-vault-credentials (R-ID1)
 # provides its dedicated contract below. Telegram is excluded here because
 # ONB-3.3 provides its dedicated backend contract; its state is passed in
 # explicitly.

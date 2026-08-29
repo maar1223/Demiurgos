@@ -1,4 +1,4 @@
-"""Offline emergency recovery key for vault cold-start (auth-google-vault).
+"""Offline emergency recovery key for vault cold-start (auth-vault-credentials).
 
 R-ERK1..R-ERK4: generated recovery code (EFF long wordlist, 8-10 words),
 stored ONLY as an Argon2id hash, verified 100% offline with in-memory rate
