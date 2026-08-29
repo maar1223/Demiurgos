@@ -240,6 +240,24 @@ export function useAIAssistantSessions(
   const activeSession = sessions.find((s) => s.id === activeSessionId) ?? null;
 
   const createSession = useCallback(() => {
+    // A conversation that never received a message is not a real conversation:
+    // reuse the existing empty draft instead of stacking empty "Nueva sesi├│n"
+    // entries every time the user taps "Nueva conversación" / "+ Nueva Sesión".
+    const activeEmpty = activeSessionId
+      ? sessions.find((s) => s.id === activeSessionId && s.messages.length === 0)
+      : undefined;
+    const existingEmpty = sessions.find((s) => s.messages.length === 0);
+    const target = activeEmpty ?? existingEmpty;
+
+    if (target) {
+      // Focus the empty draft and drop any other empty drafts left behind so
+      // empty conversations never accumulate in the history.
+      setSessions(sessions.filter((s) => s.id === target.id || s.messages.length > 0));
+      setActiveSessionId(target.id);
+      setError(null);
+      return;
+    }
+
     const id = generateId();
     const session: Session = {
       id,
@@ -247,10 +265,10 @@ export function useAIAssistantSessions(
       messages: [],
       createdAt: Date.now(),
     };
-    setSessions((prev) => [session, ...prev]);
+    setSessions([session, ...sessions]);
     setActiveSessionId(id);
     setError(null);
-  }, []);
+  }, [activeSessionId, sessions]);
 
   const switchSession = useCallback((id: string) => {
     setActiveSessionId(id);

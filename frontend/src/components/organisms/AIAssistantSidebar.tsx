@@ -129,6 +129,7 @@ interface ChatScreenProps {
   whisperStopRecording: () => void;
   whisperError: string | null;
   onHistoryClick: () => void;
+  onNewChat: () => void;
   onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
   resolveGuidedProposal: (accept: boolean) => Promise<void>;
   requestGuidedReview?: () => Promise<EditProposal | null>;
@@ -244,6 +245,7 @@ function ChatScreen({
   whisperStopRecording,
   whisperError,
   onHistoryClick,
+  onNewChat,
   onProposeEdit,
   onGuidedReview,
   resolveGuidedProposal,
@@ -388,15 +390,27 @@ function ChatScreen({
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onHistoryClick}
-          className="flex h-7 w-7 items-center justify-center rounded-md text-tinta-desvaida hover:text-pergamino hover:bg-piedra transition-colors shrink-0"
-          title="Historial de sesiones"
-          aria-label="Historial de sesiones"
-        >
-          <Icon name="history" size={14} />
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            onClick={onNewChat}
+            disabled={confirmationPending}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-tinta-desvaida hover:text-pergamino hover:bg-piedra transition-colors shrink-0 disabled:opacity-40"
+            title="Nueva conversación"
+            aria-label="Nueva conversación"
+          >
+            <Icon name="plus" size={14} />
+          </button>
+          <button
+            type="button"
+            onClick={onHistoryClick}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-tinta-desvaida hover:text-pergamino hover:bg-piedra transition-colors shrink-0"
+            title="Historial de sesiones"
+            aria-label="Historial de sesiones"
+          >
+            <Icon name="history" size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Messages area */}
@@ -815,6 +829,7 @@ export function AIAssistantSidebar({
           whisperStopRecording={whisper.stopRecording}
           whisperError={whisper.error}
           onHistoryClick={switchToHistory}
+          onNewChat={sessions.createSession}
           onProposeEdit={onProposeEdit}
           onGuidedReview={onGuidedReview}
           resolveGuidedProposal={sessions.resolveGuidedProposal}

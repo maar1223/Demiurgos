@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { GuidedCharacterSession } from "@/api/types";
 
 vi.mock("@/hooks/useAIAssistantSessions", () => ({
   useAIAssistantSessions: vi.fn(),
@@ -666,5 +667,55 @@ describe("AIAssistantSidebar semantic decision UX", () => {
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+describe("AIAssistantSidebar new conversation", () => {
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue("es");
+  });
+
+  it("creates a new session from the chat header button", async () => {
+    const createSession = vi.fn();
+    useSessionsMock.mockReturnValue(createSessionsState({ createSession }));
+    const user = userEvent.setup();
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await user.click(screen.getByRole("button", { name: "Nueva conversación" }));
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("is disabled while a guided confirmation is pending", () => {
+    const guided = {
+      protocol_version: "1",
+      session_id: "g-1",
+      world: "Vibrantes",
+      phase: "confirmation",
+      mode: "full",
+      depth: "standard",
+      revision: 1,
+      pending_question: null,
+      messages: [],
+      candidate: { proposals: {}, accepted_canon: {} },
+      proposal: null,
+    } as unknown as GuidedCharacterSession;
+
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Nueva sesión",
+        messages: [],
+        createdAt: 1,
+        guided,
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByRole("button", { name: "Nueva conversación" }),
+    ).toBeDisabled();
   });
 });

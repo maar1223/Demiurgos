@@ -107,6 +107,52 @@ describe("useAIAssistantSessions active session persistence", () => {
   });
 });
 
+describe("useAIAssistantSessions empty-draft reuse", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("does not stack an empty draft when the active session is already empty", () => {
+    seedSessions([makeSession("s1"), makeSession("s2")]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("s1"));
+
+    const { result } = renderHook(() => useAIAssistantSessions("mundo"));
+    expect(result.current.sessions).toHaveLength(2);
+
+    act(() => {
+      result.current.createSession();
+    });
+
+    // The active empty draft is reused and the other empty draft is pruned.
+    expect(result.current.sessions).toHaveLength(1);
+    expect(result.current.sessions[0].id).toBe("s1");
+    expect(result.current.activeSessionId).toBe("s1");
+  });
+
+  it("reuses an existing empty draft instead of creating another empty one", () => {
+    const withMessages: Session = {
+      id: "real",
+      title: "Real chat",
+      messages: [{ role: "user", content: "Hola" }],
+      createdAt: Date.now(),
+    };
+    seedSessions([withMessages, makeSession("empty")]);
+
+    const { result } = renderHook(() => useAIAssistantSessions("mundo"));
+    expect(result.current.sessions).toHaveLength(2);
+
+    act(() => {
+      result.current.createSession();
+    });
+
+    // No new session was added: the existing empty draft is focused and the
+    // conversation with messages is preserved.
+    expect(result.current.sessions).toHaveLength(2);
+    expect(result.current.activeSessionId).toBe("empty");
+    expect(result.current.sessions.map((s) => s.id).sort()).toEqual(["empty", "real"]);
+  });
+});
+
 describe("useAIAssistantSessions null-mundo (global context)", () => {
   const streamMock = vi.mocked(streamAssistantActivity);
   const askMock = vi.mocked(askAssistant);

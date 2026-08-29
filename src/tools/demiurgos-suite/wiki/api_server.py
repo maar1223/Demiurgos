@@ -1755,6 +1755,9 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
     Every file node also carries a ``status`` field (draft|stable) when
     the file's leading frontmatter declares a known OKF ficha status;
     the field is omitted for unknown values and for directories.
+    Directories are always listed, including empty ones, so the optional
+    OC8 lore skeleton folders ("carpetas vacías") remain visible after
+    world creation instead of being pruned.
     """
     if section not in VALID_SECTIONS:
         return []
@@ -1782,16 +1785,19 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
                     continue
                 rel = entry.relative_to(base)
                 children = _build_tree(entry, base)
-                if children:  # Only include dirs with files
-                    node = {
-                        "name": entry.name,
-                        "path": str(rel).replace("\\", "/"),
-                        "is_dir": True,
-                        "children": children,
-                    }
-                    if covers:
-                        node["portada"] = None
-                    items.append(node)
+                # Include directories even when empty so the recommended OC8
+                # lore skeleton (empty folders) — and any folder created for a
+                # future file — is visible in the section tree instead of being
+                # pruned into invisibility right after creation.
+                node = {
+                    "name": entry.name,
+                    "path": str(rel).replace("\\", "/"),
+                    "is_dir": True,
+                    "children": children,
+                }
+                if covers:
+                    node["portada"] = None
+                items.append(node)
             for entry in entries:
                 if not entry.is_file():
                     continue

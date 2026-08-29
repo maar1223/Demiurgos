@@ -244,12 +244,13 @@ class TestTreeOrdering:
         inner_names = [node["name"] for node in alpha["children"]]
         assert inner_names == ["aleph", "Beta", "Delta.md", "gamma.md"]
 
-    def test_dirs_without_files_are_omitted(self, client_sorted: TestClient):
-        """Empty dirs and dirs without included files are still pruned."""
+    def test_empty_dirs_are_listed(self, client_sorted: TestClient):
+        """Empty dirs are surfaced so the OC8 lore skeleton (empty folders)
+        stays visible after world creation instead of being pruned."""
         (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "vacio").mkdir()
         tree = client_sorted.get("/api/test_mundo/lore/tree").json()
         names = [node["name"] for node in tree]
-        assert "vacio" not in names
+        assert "vacio" in names
 
 
 class TestSaveEndpoint:
@@ -4194,6 +4195,13 @@ class TestWorldCreateEndpoint:
         assert (root / "personajes").is_dir()
         assert not (root / "relaciones").exists()
         assert not (root / "_context").exists()
+        # The empty OC8 skeleton folders must be visible in the section tree —
+        # the checkbox promises "carpetas vacías" and the user must see them.
+        tree = empty_client.get("/api/mundo-x/lore/tree").json()
+        lore_names = [node["name"] for node in tree]
+        for sub in ("reglas", "lugares", "culturas", "criaturas", "facciones",
+                    "artefactos", "historia"):
+            assert sub in lore_names, f"{sub} should be listed in the lore tree"
 
     def test_unsafe_name_returns_400_without_mutation(
             self, empty_client: TestClient, monkeypatch):
