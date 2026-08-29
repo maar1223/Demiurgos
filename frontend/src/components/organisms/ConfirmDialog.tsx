@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
 
@@ -37,7 +38,7 @@ export function ConfirmDialog({
     return () => document.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
       onClick={(e) => {
@@ -97,6 +98,7 @@ export function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

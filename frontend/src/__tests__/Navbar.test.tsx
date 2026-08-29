@@ -10,10 +10,17 @@ import {
 import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
 import type { WorldInfo } from "@/api/types";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
+import { getAuthStatus, logoutSession } from "@/api/wiki";
 import type { Mock } from "vitest";
 
 vi.mock("@/hooks/useLocalDevAuth", () => ({
   useLocalDevAuth: vi.fn(),
+}));
+
+vi.mock("@/api/wiki", () => ({
+  getAuthStatus: vi.fn(),
+  logoutSession: vi.fn(),
+  systemControlAction: vi.fn(),
 }));
 
 const worlds: WorldInfo[] = [
@@ -89,6 +96,18 @@ describe("Navbar", () => {
       error: null,
       start: vi.fn(),
       logout: vi.fn(),
+    });
+    (getAuthStatus as Mock).mockResolvedValue({
+      mode: "local-dev",
+      enabled: true,
+      authenticated: false,
+      label: null,
+    });
+    (logoutSession as Mock).mockResolvedValue({
+      mode: "local-dev",
+      enabled: true,
+      authenticated: false,
+      label: null,
     });
   });
 

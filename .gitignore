@@ -74,6 +74,7 @@ data/*.sqlite3
 data/*.sqlite3-*
 data/*.lock
 data/local-state.json
+data/sessions.json
 # Artefacto temporal que deja el sincronizador (filesystem de fusión)
 data/.fuse_hidden*
 

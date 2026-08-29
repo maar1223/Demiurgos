@@ -802,6 +802,82 @@ _sessions: dict[str, dict] = {}
 _local_sessions = _sessions
 _local_session_lock = threading.Lock()
 
+
+def _sessions_file() -> Path:
+    """Persisted session store path (R-AC-03): survives server restarts.
+
+    Lives alongside the other local state under ``<project>/data/``. Not
+    gitignored paths would leak tokens, so ``data/sessions.json`` is ignored.
+    """
+    return PROJECT_ROOT / "data" / "sessions.json"
+
+
+def _load_persisted_sessions() -> None:
+    """Restore active sessions from disk so a restart keeps the session.
+
+    R-AC-03: a remember-me session (and the default 8h session) must survive a
+    server restart, not just a page reload. Prunes expired records. Never
+    raises: a missing/corrupt file simply means no sessions to restore.
+    """
+    global _sessions
+    path = _sessions_file()
+    if not path.exists():
+        return
+    try:
+        raw = path.read_text(encoding="utf-8")
+        records = json.loads(raw)
+    except (OSError, ValueError):
+        return
+    now = datetime.now(timezone.utc)
+    restored: dict[str, dict] = {}
+    for key, record in records.items():
+        if not isinstance(record, dict):
+            continue
+        record = dict(record)
+        expires = record.get("expires_at")
+        if isinstance(expires, str):
+            try:
+                record["expires_at"] = datetime.fromisoformat(expires)
+            except ValueError:
+                continue
+        last_auth = record.get("last_auth_at")
+        if isinstance(last_auth, str):
+            try:
+                record["last_auth_at"] = datetime.fromisoformat(last_auth)
+            except ValueError:
+                record.pop("last_auth_at", None)
+        if record.get("expires_at", now) > now:
+            restored[key] = record
+    _sessions.update(restored)
+
+
+def _persist_sessions() -> None:
+    """Write active sessions to disk atomically (tmp + rename).
+
+    Called on session mutations (login/logout) so a restart restores them.
+    Never raises: persistence is best-effort and must not break auth.
+    """
+    path = _sessions_file()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            key: {
+                field: (value.isoformat() if isinstance(value, datetime) else value)
+                for field, value in rec.items()
+            }
+            for key, rec in _sessions.items()
+        }
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(path)
+    except OSError:
+        pass
+
+
+# Restore sessions persisted by a previous run (single-user local app:
+# survives server restarts so the author is not re-prompted each time).
+_load_persisted_sessions()
+
 # Independent in-memory rate limiters for password and recovery-words
 # verification (R-ERK-02): exhausting one auth factor never locks out the
 # other. Kill-switch property: counters reset on process restart (filesystem
@@ -897,10 +973,10 @@ def _session_for_request(request: Request | None) -> dict | None:
     are NOT loopback-bound and resolve whenever the vault is active (flag or
     env override, R-VC-06). Disabled mode never resolves a session.
     """
-    if _auth_mode() == _LOCAL_AUTH_MODE:
-        return _local_session_for_request(request)
     if _vault_active():
         return _credentials_session_for_request(request)
+    if _auth_mode() == _LOCAL_AUTH_MODE:
+        return _local_session_for_request(request)
     return None
 
 
@@ -991,7 +1067,11 @@ def _session_status(request: Request) -> dict:
     can choose between the password prompt and the passwordless "Enter"
     button from the account slot instead of adapting to server errors
     (R-AC-02, S-AC-02a/b)."""
-    mode = _auth_mode()
+    # The vault flag persisted in local state is PRIMARY (R-VC-01): once the
+    # vault is active it MUST be the credentials mode, regardless of a local-dev
+    # env override still present for development. Otherwise the login UI would
+    # show the passwordless local-dev button even though a password is set.
+    mode = _CREDENTIALS_AUTH_MODE if _vault_active() else _auth_mode()
     enabled = _vault_active()
     session = _session_for_request(request) if enabled else None
     status = {
@@ -1040,6 +1120,7 @@ def local_dev_session_start(request: Request, response: Response):
     with _local_session_lock:
         _prune_local_sessions(now)
         _local_sessions[_hash_token(token)] = session
+    _persist_sessions()
     response.set_cookie(
         _LOCAL_SESSION_COOKIE,
         token,
@@ -1066,6 +1147,7 @@ def local_dev_session_logout(request: Request, response: Response):
     if token:
         with _local_session_lock:
             _sessions.pop(_hash_token(token), None)
+        _persist_sessions()
     response.delete_cookie(_LOCAL_SESSION_COOKIE, path="/", samesite="lax")
     return _local_status(request)
 
@@ -1079,7 +1161,14 @@ def auth_session_status(request: Request):
 @app.delete("/api/auth/session")
 def auth_session_logout(request: Request, response: Response):
     """Unified logout (R-AC-06): remove the active session and clear its cookie."""
-    if _auth_mode() == _LOCAL_AUTH_MODE:
+    # Clear the cookie of the ACTIVE session provider, resolving it the same
+    # way the session resolver does (R-VC-01). When the vault is active the
+    # credentials session is authoritative, so the env-derived local-dev cookie
+    # must NOT be cleared instead (that would leave the real session alive).
+    active = _session_for_request(request)
+    if active and active.get("provider") == _CREDENTIALS_PROVIDER:
+        cookie = _SESSION_COOKIE
+    elif _local_auth_enabled():
         cookie = _LOCAL_SESSION_COOKIE
     else:
         cookie = _SESSION_COOKIE
@@ -1087,6 +1176,7 @@ def auth_session_logout(request: Request, response: Response):
     if token:
         with _local_session_lock:
             _sessions.pop(_hash_token(token), None)
+        _persist_sessions()
     response.delete_cookie(cookie, path="/", samesite="lax")
     return _session_status(request)
 
@@ -1161,6 +1251,7 @@ def credentials_login(payload: CredentialsLoginRequest, request: Request, respon
     with _local_session_lock:
         _prune_local_sessions(now)
         _sessions[_hash_token(token)] = session
+    _persist_sessions()
     response.set_cookie(
         _SESSION_COOKIE,
         token,

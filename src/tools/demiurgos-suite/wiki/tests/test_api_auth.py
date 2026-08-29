@@ -698,12 +698,13 @@ def test_rotate_words_returns_new_words_once(credentials_client: TestClient):
 def test_session_status_exposes_credentials_provider(
         credentials_client: TestClient):
     """R-VC-06 — with the vault ON via the PERSISTED flag (no env override)
-    ``enabled`` is True while ``mode`` stays the env default: the AuthGate
-    follows the flag, not the mode string."""
+    the reported ``mode`` is ``credentials`` (the flag is PRIMARY, R-VC-01):
+    the login UI must ask for the password once the vault is active, even if
+    the env still defaults to disabled/local-dev."""
     status = credentials_client.get("/api/auth/session/status")
     assert status.status_code == 200
     assert status.json() == {
-        "mode": "disabled",
+        "mode": "credentials",
         "enabled": True,
         "authenticated": False,
         "label": None,

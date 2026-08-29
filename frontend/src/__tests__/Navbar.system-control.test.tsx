@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { Navbar } from "@/components/organisms/Navbar";
 import { ApiError } from "@/api/types";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
-import { systemControlAction } from "@/api/wiki";
+import { getAuthStatus, logoutSession, systemControlAction } from "@/api/wiki";
+import { reloadPage } from "@/lib/reloadPage";
 import type { Mock } from "vitest";
 
 vi.mock("@/hooks/useLocalDevAuth", () => ({
@@ -13,7 +14,13 @@ vi.mock("@/hooks/useLocalDevAuth", () => ({
 }));
 
 vi.mock("@/api/wiki", () => ({
+  getAuthStatus: vi.fn(),
+  logoutSession: vi.fn(),
   systemControlAction: vi.fn(),
+}));
+
+vi.mock("@/lib/reloadPage", () => ({
+  reloadPage: vi.fn(),
 }));
 
 const enabledStatus = {
@@ -49,7 +56,15 @@ describe("Navbar system-control zone", () => {
       start: vi.fn(),
       logout: vi.fn().mockResolvedValue(loggedOutStatus),
     });
+    (getAuthStatus as Mock).mockResolvedValue({
+      mode: "local-dev",
+      enabled: true,
+      authenticated: false,
+      label: null,
+    });
+    (logoutSession as Mock).mockResolvedValue(loggedOutStatus);
     (systemControlAction as Mock).mockResolvedValue({ action: "restart", accepted: true });
+    (reloadPage as Mock).mockClear();
   });
 
   afterEach(() => {
@@ -153,7 +168,7 @@ describe("Navbar system-control zone", () => {
     const dialog = screen.getByRole("dialog", { name: /reiniciar demiurgos/i });
     await user.click(within(dialog).getByRole("button", { name: "Reiniciar" }));
 
-    // Busy: both actions disabled while logout + POST are pending.
+    // Busy: both actions disabled while the POST is pending.
     expect(
       within(dialog).getByRole("button", { name: "Reiniciar" }),
     ).toBeDisabled();
@@ -162,9 +177,13 @@ describe("Navbar system-control zone", () => {
     ).toBeDisabled();
 
     resolveFetch({ action: "restart", accepted: true });
+    // On success the dialog closes and the full-screen restart overlay shows.
     expect(
-      await screen.findByText(/Demiurgos se está reiniciando/i),
+      await screen.findByText(/Reiniciando Demiurgos/i),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: /reiniciar demiurgos/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("closing mid-operation stops the busy state (no stuck dialog)", async () => {
@@ -191,12 +210,8 @@ describe("Navbar system-control zone", () => {
       screen.queryByRole("dialog", { name: /reiniciar demiurgos/i }),
     ).not.toBeInTheDocument();
 
-    // The in-flight operation resolves afterwards without crashing or
-    // leaving the dialog stuck.
+    // Resolving afterwards must not resurrect the dialog.
     resolveFetch({ action: "restart", accepted: true });
-    expect(
-      await screen.findByText(/Demiurgos se está reiniciando/i),
-    ).toBeInTheDocument();
     expect(
       screen.queryByRole("dialog", { name: /reiniciar demiurgos/i }),
     ).not.toBeInTheDocument();
@@ -240,14 +255,15 @@ describe("Navbar system-control zone", () => {
     expect(
       await screen.findByText("Autenticación requerida"),
     ).toBeInTheDocument();
+    // A real auth error keeps the dialog open so the user can retry/close.
     expect(
       screen.getByRole("dialog", { name: /reiniciar demiurgos/i }),
     ).toBeInTheDocument();
   });
 
-  it("shows the connection-lost message when the POST fails with a network error (S-3.6)", async () => {
+  it("treats a dropped connection on restart as success (overlay)", async () => {
     (systemControlAction as Mock).mockRejectedValue(
-      new ApiError(0, "No se pudo conectar al servidor. Verificá que esté corriendo."),
+      new ApiError(0, "connection dropped"),
     );
     const user = userEvent.setup();
     renderNavbar();
@@ -257,16 +273,17 @@ describe("Navbar system-control zone", () => {
     const dialog = screen.getByRole("dialog", { name: /reiniciar demiurgos/i });
     await user.click(within(dialog).getByRole("button", { name: "Reiniciar" }));
 
+    // A dropped connection means the launcher killed uvicorn = expected. The
+    // dialog closes and the restart overlay shows (no error).
     expect(
-      await screen.findByText(/Se perdió la conexión mientras se reiniciaba/i),
+      await screen.findByText(/Reiniciando Demiurgos/i),
     ).toBeInTheDocument();
-    // The dialog stays open so the user sees the failure and can retry/close.
     expect(
-      screen.getByRole("dialog", { name: /reiniciar demiurgos/i }),
-    ).toBeInTheDocument();
+      screen.queryByRole("dialog", { name: /reiniciar demiurgos/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it("instructs re-authentication after a successful restart (S-3.7)", async () => {
+  it("auto-reloads the page when the server is back after a restart (S-3.7)", async () => {
     const user = userEvent.setup();
     renderNavbar();
     await openProfile(user);
@@ -275,9 +292,12 @@ describe("Navbar system-control zone", () => {
     const dialog = screen.getByRole("dialog", { name: /reiniciar demiurgos/i });
     await user.click(within(dialog).getByRole("button", { name: "Reiniciar" }));
 
+    // Overlay shows while the server restarts; the polling effect detects the
+    // backend is back (getAuthStatus resolves) and reloads the page.
     expect(
-      await screen.findByText(/Iniciá sesión nuevamente cuando vuelva/i),
+      await screen.findByText(/Reiniciando Demiurgos/i),
     ).toBeInTheDocument();
+    await waitFor(() => expect(reloadPage).toHaveBeenCalled(), { timeout: 5000 });
     expect(
       screen.queryByRole("dialog", { name: /reiniciar demiurgos/i }),
     ).not.toBeInTheDocument();
@@ -294,7 +314,7 @@ describe("Navbar system-control zone", () => {
 
     expect(systemControlAction).toHaveBeenCalledWith("shutdown");
     expect(
-      await screen.findByText(/Iniciá sesión nuevamente cuando lo vuelvas a iniciar/i),
+      await screen.findByText(/Apagando Demiurgos/i),
     ).toBeInTheDocument();
   });
 });

@@ -309,7 +309,10 @@ main() {
     local action="${1:-restart}"
     case "$action" in
         start) start_all; open_frontend; show_status ;;
-        restart) stop_all; start_all; open_frontend; show_status ;;
+        # Restart does NOT reopen the browser: the already-open tab detects the
+        # backend is back and reloads itself (auto-reload in the Navbar), so
+        # opening a new tab would double-enter the app.
+        restart) stop_all; start_all; show_status ;;
         stop) stop_all ;;
         install) install_desktop ;;
         *) usage >&2; return 2 ;;
