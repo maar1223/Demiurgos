@@ -2,8 +2,10 @@ import { apiFetch } from "@/api/client";
 import { ApiError } from "@/api/types";
 import type {
   AiAskResponse,
+  AuthSessionStatus,
   DiffPreview,
   DuplicateResponse,
+  EmergencyKeyRotationResponse,
   EmptyTrashResponse,
   EditConfirmation,
   EditConfirmationRequest,
@@ -12,6 +14,7 @@ import type {
   FichaStatus,
   FileContent,
   FileNode,
+  GoogleNonceResponse,
   HistoryListResponse,
   LocalDevSessionStatus,
   MediaList,
@@ -51,6 +54,74 @@ export function startLocalDevSession(): Promise<LocalDevSessionStatus> {
 export function logoutLocalDevSession(): Promise<LocalDevSessionStatus> {
   return apiFetch<LocalDevSessionStatus>(
     apiUrl(["api", "auth", "local-dev", "session"]),
+    { method: "DELETE", credentials: "same-origin" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vault authentication (google mode — DEMIURGOS_AUTH_MODE=google)
+// ---------------------------------------------------------------------------
+
+/** GET /api/auth/session/status — unified mode-aware session status. */
+export function getAuthStatus(): Promise<AuthSessionStatus> {
+  return apiFetch<AuthSessionStatus>(
+    apiUrl(["api", "auth", "session", "status"]),
+    { credentials: "same-origin" },
+  );
+}
+
+/** GET /api/auth/google/nonce — short-lived nonce bound to this browser. */
+export function getGoogleNonce(): Promise<GoogleNonceResponse> {
+  return apiFetch<GoogleNonceResponse>(
+    apiUrl(["api", "auth", "google", "nonce"]),
+    { credentials: "same-origin" },
+  );
+}
+
+/**
+ * POST /api/auth/google/session — verify the GIS id_token (iss, aud, exp,
+ * nonce) and issue the HttpOnly vault session cookie. `remember_me` extends
+ * the session TTL from 8h to 14d.
+ */
+export function startGoogleSession(
+  id_token: string,
+  remember_me: boolean,
+): Promise<AuthSessionStatus> {
+  return apiFetch<AuthSessionStatus>(
+    apiUrl(["api", "auth", "google", "session"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ id_token, remember_me }),
+    },
+  );
+}
+
+/** POST /api/auth/emergency/session — offline recovery-key login. */
+export function startEmergencySession(key: string): Promise<AuthSessionStatus> {
+  return apiFetch<AuthSessionStatus>(
+    apiUrl(["api", "auth", "emergency", "session"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ key }),
+    },
+  );
+}
+
+/** POST /api/auth/emergency/rotate — rotate the recovery key (requires an
+ *  active session). Returns the new plaintext key exactly once. */
+export function rotateEmergencyKey(): Promise<EmergencyKeyRotationResponse> {
+  return apiFetch<EmergencyKeyRotationResponse>(
+    apiUrl(["api", "auth", "emergency", "rotate"]),
+    { method: "POST", credentials: "same-origin" },
+  );
+}
+
+/** DELETE /api/auth/session — unified logout for any provider. */
+export function logoutSession(): Promise<AuthSessionStatus> {
+  return apiFetch<AuthSessionStatus>(
+    apiUrl(["api", "auth", "session"]),
     { method: "DELETE", credentials: "same-origin" },
   );
 }

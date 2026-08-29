@@ -57,6 +57,37 @@ export interface LocalDevSessionStatus {
   label: string | null;
 }
 
+/** Auth mode reported by the backend (DEMIURGOS_AUTH_MODE). */
+export type AuthMode = "disabled" | "local-dev" | "google";
+
+/** Active session provider reported by the unified status endpoint. */
+export type AuthProvider = "local-dev" | "google" | "emergency";
+
+/**
+ * Unified mode-aware session status (GET /api/auth/session/status). Works for
+ * every auth mode: `provider` is present only when a session is active.
+ */
+export interface AuthSessionStatus {
+  mode: AuthMode;
+  enabled: boolean;
+  authenticated: boolean;
+  label: string | null;
+  provider?: AuthProvider;
+}
+
+/** Response of GET /api/auth/google/nonce — short-lived browser-bound nonce. */
+export interface GoogleNonceResponse {
+  nonce: string;
+}
+
+/**
+ * Response of POST /api/auth/emergency/rotate — the new plaintext recovery
+ * key, shown to the user exactly once (the server persists only its hash).
+ */
+export interface EmergencyKeyRotationResponse {
+  new_key: string;
+}
+
 /**
  * Response from POST /api/system/{action} (restart/shutdown). `accepted: true`
  * means the launcher was dispatched and the stack is going down; a 500 carries
