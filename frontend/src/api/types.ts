@@ -278,6 +278,11 @@ export interface MigrationStep {
   source_hash: string;
   destination_hash: string;
   restored: boolean;
+  /** True when source and destination were the SAME physical directory
+   *  (case-insensitive filesystems: macOS APFS, Windows NTFS), so nothing
+   *  moved — the folder was already canonical. The UI must not tell the user
+   *  that files were moved in that case. */
+  is_noop: boolean;
 }
 
 /** Response of POST /api/migration/execute — mirrors the persisted evidence

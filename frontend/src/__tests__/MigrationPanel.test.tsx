@@ -36,6 +36,7 @@ const completed: MigrationExecuteResult = {
       source_hash: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       destination_hash: "sha256:1111111111111111111111111111111111111111111111111111111111111111",
       restored: false,
+      is_noop: false,
     },
   ],
 };
