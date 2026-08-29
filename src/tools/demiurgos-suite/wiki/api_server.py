@@ -77,14 +77,17 @@ from demiurgos_language import (
     resolve_ui_language,
 )
 from local_state import LocalState
-from google_auth import (
-    generate_nonce as google_auth_generate_nonce,
-    get_google_client_id as google_auth_get_client_id,
-    verify_id_token as google_auth_verify_id_token,
+from account import (
+    create_account as account_create_account,
+    get_account as account_get_account,
+    rotate_words as account_rotate_words,
+    update_account as account_update_account,
+    verify_password as account_verify_password,
+    verify_words as account_verify_words,
 )
 import emergency_key
-from emergency_key import rotate as emergency_key_rotate, verify as emergency_key_verify
 from onboarding import (
+    commit_account_created as _commit_account_created,
     commit_step0 as _commit_step0,
     commit_world_created as _commit_world_created,
     status_from as _onboarding_status_from,
@@ -775,23 +778,36 @@ class EditPrincipal:
 
 
 _LOCAL_AUTH_MODE = "local-dev"
-_GOOGLE_AUTH_MODE = "google"
-_EMERGENCY_PROVIDER = "emergency"
+_CREDENTIALS_AUTH_MODE = "credentials"
+_CREDENTIALS_PROVIDER = "credentials"
 _LOCAL_SESSION_COOKIE = "demiurgos_local_session"
 _SESSION_COOKIE = "demiurgos_session"
-_GOOGLE_NONCE_COOKIE = "demiurgos_google_nonce"
-_GOOGLE_NONCE_TTL = timedelta(seconds=300)
 _LOCAL_SESSION_TTL = timedelta(hours=8)
 _DEFAULT_SESSION_TTL_H = 8
-_DEFAULT_REMEMBER_ME_TTL_D = 14
-# Generalized multi-provider session store: one dict for local-dev, google,
-# and emergency sessions, keyed by the sha256 hash of the bearer token.
-# Records carry ``{provider, principal_id, label, expires_at, remember_me}``.
+_DEFAULT_REMEMBER_ME_TTL_D = 30
+_DEFAULT_REAUTH_INTERVAL_D = 14
+_RECOVERY_TOKEN_TTL = timedelta(minutes=5)
+# Generalized multi-provider session store: one dict for local-dev and
+# credentials sessions, keyed by the sha256 hash of the bearer token.
+# Records carry ``{provider, principal_id, label, expires_at, remember_me}``;
+# credentials sessions additionally carry ``last_auth_at`` (R-AC-04).
 _sessions: dict[str, dict] = {}
 # Backward-compatible alias: existing tests/fixtures clear the store by its
 # legacy name; both names reference the SAME generalized store.
 _local_sessions = _sessions
 _local_session_lock = threading.Lock()
+
+# Independent in-memory rate limiters for password and recovery-words
+# verification (R-ERK-02): exhausting one auth factor never locks out the
+# other. Kill-switch property: counters reset on process restart (filesystem
+# access already means the vault is compromised).
+_password_rate_limiter = emergency_key.RateLimiter()
+_words_rate_limiter = emergency_key.RateLimiter()
+
+# Short-lived, single-use recovery tokens (forgot-password flow, R-AC-05),
+# keyed by the sha256 hash of the token. Same kill-switch property as the
+# session store: tokens vanish on process restart.
+_recovery_tokens: dict[str, dict] = {}
 
 
 def _auth_mode() -> str:
@@ -838,13 +854,13 @@ def _local_session_for_request(request: Request | None) -> dict | None:
         return _sessions.get(token_hash)
 
 
-def _google_auth_enabled() -> bool:
-    return _auth_mode() == _GOOGLE_AUTH_MODE
+def _credentials_auth_enabled() -> bool:
+    return _auth_mode() == _CREDENTIALS_AUTH_MODE
 
 
-def _google_session_for_request(request: Request | None) -> dict | None:
-    """Resolve a Google-vault session. NOT loopback-bound (unlike local-dev)."""
-    if not _google_auth_enabled():
+def _credentials_session_for_request(request: Request | None) -> dict | None:
+    """Resolve a credentials-vault session. NOT loopback-bound (unlike local-dev)."""
+    if not _credentials_auth_enabled():
         return None
     token = request.cookies.get(_SESSION_COOKIE) if request else None
     if not token:
@@ -859,25 +875,31 @@ def _google_session_for_request(request: Request | None) -> dict | None:
 def _session_for_request(request: Request | None) -> dict | None:
     """Unified session resolution across every provider in the active mode.
 
-    ``local-dev`` keeps its loopback-only binding; Google-vault sessions
-    (google or emergency provider) are NOT loopback-bound. Disabled mode
-    never resolves a session.
+    ``local-dev`` keeps its loopback-only binding; credentials-vault sessions
+    are NOT loopback-bound. Disabled mode never resolves a session.
     """
     if _auth_mode() == _LOCAL_AUTH_MODE:
         return _local_session_for_request(request)
-    if _auth_mode() == _GOOGLE_AUTH_MODE:
-        return _google_session_for_request(request)
+    if _auth_mode() == _CREDENTIALS_AUTH_MODE:
+        return _credentials_session_for_request(request)
     return None
 
 
 def _cookie_secure() -> bool:
-    """Scheme-aware cookie Secure flag (R-GA2): True for the Google vault
-    mode (HTTPS production), False for loopback/local development."""
-    return _auth_mode() == _GOOGLE_AUTH_MODE
+    """Mode-based cookie Secure flag + explicit env override (R-AC-03).
+
+    Credentials mode targets production (HTTPS) -> secure=True; local-dev is
+    loopback-bound -> secure=False. ``DEMIURGOS_COOKIE_SECURE`` overrides the
+    mode default explicitly (no auto-detection behind reverse proxies).
+    """
+    override = os.environ.get("DEMIURGOS_COOKIE_SECURE")
+    if override is not None:
+        return override.strip().lower() in ("1", "true", "yes", "on")
+    return _auth_mode() == _CREDENTIALS_AUTH_MODE
 
 
 def _session_ttl(remember_me: bool) -> timedelta:
-    """Session TTL from env: 8h default, 14d with remember_me (R-GA2)."""
+    """Session TTL from env: 8h default, 30d with remember_me (R-AC-03)."""
     if remember_me:
         days = int(os.environ.get(
             "DEMIURGOS_REMEMBER_ME_TTL_D", str(_DEFAULT_REMEMBER_ME_TTL_D)))
@@ -900,19 +922,35 @@ def _local_status(request: Request) -> dict:
     }
 
 
+def _reauth_interval_d() -> int:
+    """Soft re-auth countdown interval in days (R-AC-04, default 14)."""
+    return int(os.environ.get(
+        "DEMIURGOS_REAUTH_INTERVAL_D", str(_DEFAULT_REAUTH_INTERVAL_D)))
+
+
 def _session_status(request: Request) -> dict:
-    """Unified mode-aware session status (R-ID1): provider included when an
-    active session exists (local-dev | google | emergency)."""
+    """Unified mode-aware session status (R-ID-01): provider included when an
+    active session exists (local-dev | credentials). Credentials sessions
+    additionally expose ``last_auth_at`` (ISO 8601) and ``days_until_reauth``
+    (clamped at 0) for the soft re-auth countdown (R-AC-04, S-AC-04b/d)."""
     mode = _auth_mode()
-    enabled = mode in (_LOCAL_AUTH_MODE, _GOOGLE_AUTH_MODE)
+    enabled = mode in (_LOCAL_AUTH_MODE, _CREDENTIALS_AUTH_MODE)
     session = _session_for_request(request) if enabled else None
-    return {
+    status = {
         "mode": mode,
         "enabled": enabled,
         "authenticated": session is not None,
         "label": session["label"] if session else None,
         "provider": session["provider"] if session else None,
     }
+    if session and session.get("provider") == _CREDENTIALS_PROVIDER:
+        last_auth_at = session.get("last_auth_at")
+        if last_auth_at is not None:
+            elapsed_days = (datetime.now(timezone.utc) - last_auth_at).days
+            status["last_auth_at"] = last_auth_at.isoformat()
+            status["days_until_reauth"] = max(
+                0, _reauth_interval_d() - elapsed_days)
+    return status
 
 
 @app.get("/api/auth/local-dev/session")
@@ -973,94 +1011,13 @@ def local_dev_session_logout(request: Request, response: Response):
 
 @app.get("/api/auth/session/status")
 def auth_session_status(request: Request):
-    """Unified mode-aware session status (R-ID1 / R-GA2)."""
+    """Unified mode-aware session status (R-ID-01 / R-AC-04)."""
     return _session_status(request)
-
-
-@app.get("/api/auth/google/nonce")
-def google_auth_nonce(request: Request, response: Response):
-    """Issue a short-lived nonce bound to this browser for id_token login.
-
-    The nonce lives in a 5-minute HttpOnly cookie and MUST match the
-    ``nonce`` claim of the id_token presented at ``POST /api/auth/google/
-    session`` (R-GA1, S-GA1b). Re-issuing a nonce replaces the previous one.
-    """
-    if not _google_auth_enabled():
-        raise HTTPException(status_code=403, detail="Google auth is disabled")
-    nonce = google_auth_generate_nonce()
-    response.set_cookie(
-        _GOOGLE_NONCE_COOKIE,
-        nonce,
-        max_age=int(_GOOGLE_NONCE_TTL.total_seconds()),
-        httponly=True,
-        samesite="lax",
-        secure=_cookie_secure(),
-        path="/",
-    )
-    return {"nonce": nonce}
-
-
-class GoogleSessionRequest(BaseModel):
-    id_token: str
-    remember_me: bool = False
-
-
-@app.post("/api/auth/google/session")
-def google_session_start(payload: GoogleSessionRequest, request: Request, response: Response):
-    """Verify a Google id_token and issue an HttpOnly vault session cookie.
-
-    Maps every verification failure (bad signature, expired, wrong iss/aud,
-    missing or mismatched nonce) to a 401 with no session issued (S-GA1b).
-    The browser-bound nonce cookie is consumed on success (single use).
-    """
-    if not _google_auth_enabled():
-        raise HTTPException(status_code=403, detail="Google auth is disabled")
-    client_id = google_auth_get_client_id()
-    if not client_id:
-        raise HTTPException(status_code=401, detail="Google auth is not configured")
-    expected_nonce = request.cookies.get(_GOOGLE_NONCE_COOKIE)
-    if not expected_nonce:
-        raise HTTPException(status_code=401, detail="Missing or expired login nonce")
-    try:
-        claims = google_auth_verify_id_token(payload.id_token, client_id, expected_nonce)
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
-
-    response.delete_cookie(_GOOGLE_NONCE_COOKIE, path="/", samesite="lax")
-    token = secrets.token_urlsafe(32)
-    now = datetime.now(timezone.utc)
-    ttl = _session_ttl(payload.remember_me)
-    session = {
-        "provider": _GOOGLE_AUTH_MODE,
-        "principal_id": claims["sub"],
-        "label": claims.get("email") or claims["sub"],
-        "expires_at": now + ttl,
-        "remember_me": payload.remember_me,
-    }
-    with _local_session_lock:
-        _prune_local_sessions(now)
-        _sessions[_hash_token(token)] = session
-    response.set_cookie(
-        _SESSION_COOKIE,
-        token,
-        max_age=int(ttl.total_seconds()),
-        httponly=True,
-        samesite="lax",
-        secure=_cookie_secure(),
-        path="/",
-    )
-    return {
-        "mode": _GOOGLE_AUTH_MODE,
-        "enabled": True,
-        "authenticated": True,
-        "label": session["label"],
-        "provider": _GOOGLE_AUTH_MODE,
-    }
 
 
 @app.delete("/api/auth/session")
 def auth_session_logout(request: Request, response: Response):
-    """Unified logout (R-GA3): remove the active session and clear its cookie."""
+    """Unified logout (R-AC-06): remove the active session and clear its cookie."""
     if _auth_mode() == _LOCAL_AUTH_MODE:
         cookie = _LOCAL_SESSION_COOKIE
     else:
@@ -1073,38 +1030,69 @@ def auth_session_logout(request: Request, response: Response):
     return _session_status(request)
 
 
-class EmergencySessionRequest(BaseModel):
-    key: str
+class CredentialsAccountRequest(BaseModel):
+    username: str
+    password: str | None = None
 
 
-# In-memory rate limiter for emergency key verification (R-ERK3). Kill-switch
-# property: counters reset on process restart (filesystem access already means
-# the vault is compromised). Exposed for test isolation (reset between tests).
-_emergency_rate_limiter = emergency_key.RateLimiter()
+@app.post("/api/auth/credentials/account")
+def credentials_account_create(payload: CredentialsAccountRequest, request: Request, response: Response):
+    """Create the single local account during onboarding (R-AC-01).
 
-
-@app.post("/api/auth/emergency/session")
-def emergency_session_start(payload: EmergencySessionRequest, request: Request, response: Response):
-    """Verify the offline emergency recovery key and issue a vault session.
-
-    100% offline: ``emergency_key.verify`` performs the rate-limit gate plus
-    the Argon2id comparison with ZERO network calls (R-ERK2, R-ERK3).
+    The recovery words are generated and returned in plaintext exactly once;
+    only their Argon2id hash is stored (S-AC-01a). ``password`` is optional:
+    a null ``password_hash`` marks the account passwordless (S-AC-01b). The
+    account step is recorded as completed in onboarding (blocking step).
     """
-    if not _google_auth_enabled():
-        raise HTTPException(status_code=403, detail="Emergency key requires google auth mode")
-    stored_hash = _local_state().snapshot().get("capabilities", {}).get("emergency_key_hash")
-    if not emergency_key_verify(payload.key, stored_hash, _emergency_rate_limiter):
-        raise HTTPException(status_code=401, detail="Invalid or rate-limited emergency key")
+    if not _credentials_auth_enabled():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    if account_get_account(_local_state()) is not None:
+        raise HTTPException(status_code=409, detail="Account already exists")
+    username = payload.username.strip()
+    if not username:
+        raise HTTPException(status_code=422, detail="Username is required")
+    words, _ = account_create_account(_local_state(), username, payload.password)
+    registry = _local_state()
+    registry.atomic_commit(_commit_account_created(registry.snapshot()))
+    return {"username": username, "words": words}
+
+
+class CredentialsLoginRequest(BaseModel):
+    password: str | None = None
+    remember_me: bool = False
+
+
+@app.post("/api/auth/credentials/login")
+def credentials_login(payload: CredentialsLoginRequest, request: Request, response: Response):
+    """Start a credentials session: password if set, else passwordless (R-AC-02).
+
+    A passwordless account needs no secret: clicking "Enter" is enough
+    (S-AC-02b). Wrong passwords are rate-limited independently from recovery
+    words (S-AC-02c, R-ERK-02). On success the HttpOnly vault session cookie
+    is set with the remember-me TTL (30d) or the 8h default (R-AC-03).
+    """
+    if not _credentials_auth_enabled():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    stored_hash = account.get("password_hash")
+    if stored_hash:
+        if not payload.password:
+            raise HTTPException(status_code=422, detail="Password required")
+        if not account_verify_password(payload.password, stored_hash, _password_rate_limiter):
+            raise HTTPException(status_code=401, detail="Invalid or rate-limited password")
 
     token = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
-    ttl = _session_ttl(False)
+    ttl = _session_ttl(payload.remember_me)
     session = {
-        "provider": _EMERGENCY_PROVIDER,
-        "principal_id": f"emergency-session-{secrets.token_hex(16)}",
-        "label": "Emergency recovery",
+        "provider": _CREDENTIALS_PROVIDER,
+        "principal_id": f"credentials-session-{secrets.token_hex(16)}",
+        "label": account.get("username") or "Demiurgos account",
         "expires_at": now + ttl,
-        "remember_me": False,
+        "remember_me": payload.remember_me,
+        "last_auth_at": now,
     }
     with _local_session_lock:
         _prune_local_sessions(now)
@@ -1119,38 +1107,163 @@ def emergency_session_start(payload: EmergencySessionRequest, request: Request, 
         path="/",
     )
     return {
-        "mode": _GOOGLE_AUTH_MODE,
+        "mode": _CREDENTIALS_AUTH_MODE,
         "enabled": True,
         "authenticated": True,
         "label": session["label"],
-        "provider": _EMERGENCY_PROVIDER,
+        "provider": _CREDENTIALS_PROVIDER,
     }
 
 
-@app.post("/api/auth/emergency/rotate")
-def emergency_key_rotate_endpoint(request: Request):
-    """Rotate the emergency recovery key (R-ERK4); requires an active session.
+class CredentialsRecoverRequest(BaseModel):
+    words: str
 
-    Returns the new plaintext key exactly once; the old key is invalidated by
-    the atomic commit of the new Argon2id hash.
+
+@app.post("/api/auth/credentials/recover")
+def credentials_recover(payload: CredentialsRecoverRequest, request: Request, response: Response):
+    """Verify the recovery words and issue a short-lived recovery token (R-AC-05).
+
+    Lets a user who forgot the password prove ownership (words = ownership
+    key) and reset credentials. The token is single-use and expires after 5
+    minutes. Wrong words are rate-limited on the words limiter (R-ERK-02),
+    independent from the password limiter.
     """
-    if not _google_auth_enabled():
-        raise HTTPException(status_code=403, detail="Emergency key requires google auth mode")
+    if not _credentials_auth_enabled():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    if not account_verify_words(payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited recovery words")
+    token = secrets.token_urlsafe(32)
+    with _local_session_lock:
+        _recovery_tokens[_hash_token(token)] = {
+            "expires_at": datetime.now(timezone.utc) + _RECOVERY_TOKEN_TTL,
+        }
+    return {"recovery_token": token}
+
+
+class CredentialsRecoverCompleteRequest(BaseModel):
+    recovery_token: str
+    new_username: str | None = None
+    new_password: str | None = None
+
+
+@app.post("/api/auth/credentials/recover/complete")
+def credentials_recover_complete(payload: CredentialsRecoverCompleteRequest, request: Request, response: Response):
+    """Consume the recovery token and set the new username/password (R-AC-05).
+
+    The token is single-use: it is consumed by this call and a replay fails.
+    ``new_password=None`` leaves the password untouched; ``new_username=None``
+    leaves the username untouched.
+    """
+    if not _credentials_auth_enabled():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    token_hash = _hash_token(payload.recovery_token)
+    with _local_session_lock:
+        record = _recovery_tokens.pop(token_hash, None)  # single-use
+    if record is None or record["expires_at"] <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=401, detail="Invalid or expired recovery token")
+    new_username = payload.new_username.strip() if payload.new_username else None
+    if not new_username and payload.new_password is None:
+        raise HTTPException(status_code=422, detail="Nothing to update")
+    account_update_account(
+        _local_state(),
+        new_username=new_username,
+        new_password=payload.new_password,
+    )
+    return {"success": True}
+
+
+class CredentialsPasswordRequest(BaseModel):
+    words: str
+    new_password: str
+
+
+@app.post("/api/auth/credentials/password")
+def credentials_change_password(payload: CredentialsPasswordRequest, request: Request, response: Response):
+    """Change the password by proving ownership with the recovery words (R-AC-05a)."""
+    if not _credentials_auth_enabled():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Authentication required")
-    plaintext, _ = emergency_key_rotate(_local_state())
-    return {"new_key": plaintext}
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    if not account_verify_words(payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited recovery words")
+    account_update_account(_local_state(), new_password=payload.new_password)
+    return {"success": True}
+
+
+class CredentialsPasswordRemoveRequest(BaseModel):
+    words: str
+
+
+@app.post("/api/auth/credentials/password/remove")
+def credentials_remove_password(payload: CredentialsPasswordRemoveRequest, request: Request, response: Response):
+    """Remove the password (back to passwordless) via the recovery words (R-AC-05b)."""
+    if not _credentials_auth_enabled():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    if not account_verify_words(payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited recovery words")
+    account_update_account(_local_state(), remove_password=True)
+    return {"success": True}
+
+
+class CredentialsUsernameRequest(BaseModel):
+    words: str
+    new_username: str
+
+
+@app.post("/api/auth/credentials/username")
+def credentials_change_username(payload: CredentialsUsernameRequest, request: Request, response: Response):
+    """Change the username by proving ownership with the recovery words (R-AC-05c)."""
+    if not _credentials_auth_enabled():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    if not account_verify_words(payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited recovery words")
+    new_username = payload.new_username.strip()
+    if not new_username:
+        raise HTTPException(status_code=422, detail="Username is required")
+    account_update_account(_local_state(), new_username=new_username)
+    return {"success": True}
+
+
+@app.post("/api/auth/credentials/words/rotate")
+def credentials_rotate_words(request: Request):
+    """Rotate the recovery words (R-ERK-01); requires an active session.
+
+    Returns the new plaintext words exactly once; the old words are
+    invalidated by the atomic commit of the new Argon2id hash.
+    """
+    if not _credentials_auth_enabled():
+        raise HTTPException(status_code=403, detail="Credentials auth is disabled")
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    words, _ = account_rotate_words(_local_state())
+    return {"new_words": words}
 
 
 def _resolve_principal(request=None) -> EditPrincipal | None:
     """Resolve the trusted edit principal for a request.
 
     Sessions come from the explicit loopback-only local development provider
-    (``DEMIURGOS_AUTH_MODE=local-dev``) or from the Google vault mode
-    (``DEMIURGOS_AUTH_MODE=google``), whose google/emergency sessions are NOT
-    loopback-bound. Until a valid session exists, every gated write fails
-    closed. This function MUST NOT trust caller-supplied identity: request
-    headers and body fields are forgeable and are deliberately ignored.
+    (``DEMIURGOS_AUTH_MODE=local-dev``) or from the credentials vault mode
+    (``DEMIURGOS_AUTH_MODE=credentials``), whose sessions are NOT loopback-
+    bound. Until a valid session exists, every gated write fails closed. This
+    function MUST NOT trust caller-supplied identity: request headers and body
+    fields are forgeable and are deliberately ignored.
     """
     session = _session_for_request(request)
     if session is None:
