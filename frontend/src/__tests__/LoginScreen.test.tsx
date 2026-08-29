@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import App from "@/App";
+import { MemoryRouter } from "react-router-dom";
+import LoginScreen from "@/pages/LoginScreen";
 import { reloadPage } from "@/lib/reloadPage";
 
 /**
@@ -13,79 +14,45 @@ vi.mock("@/lib/reloadPage", () => ({
   reloadPage: vi.fn(),
 }));
 
-/**
- * GIS mock — the real GoogleOAuthProvider would inject the GSI script, which
- * jsdom never loads. The mock renders children and can fire the
- * `onScriptLoadError` provider callback (the emergency-fallback trigger).
- * `GoogleLogin` is replaced by a plain button that resolves with an id_token.
- */
-const gsi = vi.hoisted(() => ({ fireScriptError: false }));
-
-vi.mock("@react-oauth/google", async () => {
-  const React = await import("react");
-  return {
-    GoogleOAuthProvider: ({
-      children,
-      onScriptLoadError,
-    }: {
-      children: React.ReactNode;
-      onScriptLoadError?: () => void;
-    }) => {
-      React.useEffect(() => {
-        if (gsi.fireScriptError) onScriptLoadError?.();
-      }, [onScriptLoadError]);
-      return <>{children}</>;
-    },
-    GoogleLogin: ({
-      onSuccess,
-    }: {
-      onSuccess: (response: { credential?: string }) => void;
-    }) => (
-      <button
-        type="button"
-        onClick={() => onSuccess({ credential: "test-id-token" })}
-      >
-        Continuar con Google
-      </button>
-    ),
-  };
-});
-
-const unauthenticatedGoogle = {
-  mode: "google",
+const unauthenticatedCredentials = {
+  mode: "credentials",
   enabled: true,
   authenticated: false,
-  label: null,
+  label: "el-autor",
+  provider: "credentials",
 };
 
-function jsonResponse(body: unknown) {
+function authenticatedCredentials(
+  daysUntilReauth: number | null,
+  lastAuthAt?: string,
+) {
   return {
-    ok: true,
-    status: 200,
+    mode: "credentials",
+    enabled: true,
+    authenticated: true,
+    label: "el-autor",
+    provider: "credentials",
+    last_auth_at: lastAuthAt ?? new Date().toISOString(),
+    days_until_reauth: daysUntilReauth,
+  };
+}
+
+function jsonResponse(body: unknown, status = 200) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
     json: vi.fn().mockResolvedValue(body),
     headers: new Headers(),
   };
 }
 
-/** Route-based fetch mock for the vault endpoints used by the login flow. */
-function mockVaultRoutes(overrides: Record<string, unknown> = {}) {
+/** Route-based fetch mock for the credentials endpoints used by the flow. */
+function mockCredentialsRoutes(overrides: Record<string, unknown> = {}) {
   const routes: Record<string, unknown> = {
-    "/api/auth/session/status": unauthenticatedGoogle,
-    "/api/auth/google/nonce": { nonce: "test-nonce" },
-    "/api/auth/google/session": {
-      mode: "google",
-      enabled: true,
-      authenticated: true,
-      label: "author@example.com",
-      provider: "google",
-    },
-    "/api/auth/emergency/session": {
-      mode: "google",
-      enabled: true,
-      authenticated: true,
-      label: "Emergency recovery",
-      provider: "emergency",
-    },
+    "/api/auth/session/status": unauthenticatedCredentials,
+    "/api/auth/credentials/login": authenticatedCredentials(null),
+    "/api/auth/credentials/recover": { recovery_token: "token-abc" },
+    "/api/auth/credentials/recover/complete": { success: true },
     ...overrides,
   };
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
@@ -97,121 +64,250 @@ function mockVaultRoutes(overrides: Record<string, unknown> = {}) {
           : String(input);
     const body = routes[url];
     if (body === undefined) {
-      return Promise.resolve({
-        ok: false,
-        status: 404,
-        json: vi.fn().mockResolvedValue({ detail: "not found" }),
-      } as unknown as Response);
+      return Promise.resolve(jsonResponse({ detail: "not found" }, 404));
     }
-    return Promise.resolve(jsonResponse(body) as unknown as Response);
+    if (typeof body === "object" && body !== null && "status" in body) {
+      const { status, ...payload } = body as { status: number } & Record<string, unknown>;
+      return Promise.resolve(jsonResponse(payload, status));
+    }
+    return Promise.resolve(jsonResponse(body));
   });
   globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
   return fetchMock;
 }
 
-describe("LoginScreen (google vault mode)", () => {
+function renderLogin() {
+  return render(
+    <MemoryRouter initialEntries={["/"]}>
+      <LoginScreen />
+    </MemoryRouter>,
+  );
+}
+
+describe("LoginScreen (credentials vault mode)", () => {
   beforeEach(() => {
-    gsi.fireScriptError = false;
     (reloadPage as ReturnType<typeof vi.fn>).mockClear();
   });
 
   afterEach(() => {
-    gsi.fireScriptError = false;
     vi.restoreAllMocks();
   });
 
-  it("posts the Google id_token to /api/auth/google/session and reloads", async () => {
-    const fetchMock = mockVaultRoutes();
+  it("prompts for the password without a username field and posts password + remember_me", async () => {
+    const fetchMock = mockCredentialsRoutes();
     const user = userEvent.setup();
 
-    render(<App />);
+    renderLogin();
 
-    await user.click(
-      await screen.findByRole("button", { name: "Continuar con Google" }),
+    expect(
+      await screen.findByRole("button", { name: "Entrar" }),
+    ).toBeInTheDocument();
+    // R-AC-02: no username field — the vault holds a single account.
+    expect(screen.queryByLabelText("Usuario")).not.toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("Contraseña"),
+      "mi-contraseña-secreta",
     );
+    await user.click(screen.getByLabelText(/recordarme/i));
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(
-        ([url]) => url === "/api/auth/google/session",
+        ([url]) => url === "/api/auth/credentials/login",
       );
       expect(call).toBeDefined();
       const [, options] = call as unknown as [string, RequestInit];
       expect(options.method).toBe("POST");
       expect(options.credentials).toBe("same-origin");
       expect(JSON.parse(options.body as string)).toEqual({
-        id_token: "test-id-token",
+        password: "mi-contraseña-secreta",
+        remember_me: true,
+      });
+    });
+    await waitFor(() => expect(reloadPage).toHaveBeenCalled());
+  });
+
+  it("logs in passwordless: Entrar with an empty password omits the field", async () => {
+    const fetchMock = mockCredentialsRoutes();
+    const user = userEvent.setup();
+
+    renderLogin();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Entrar" }),
+    );
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url]) => url === "/api/auth/credentials/login",
+      );
+      expect(call).toBeDefined();
+      const [, options] = call as unknown as [string, RequestInit];
+      expect(JSON.parse(options.body as string)).toEqual({
         remember_me: false,
       });
     });
     await waitFor(() => expect(reloadPage).toHaveBeenCalled());
   });
 
-  it("sends remember_me=true when the checkbox is selected", async () => {
-    const fetchMock = mockVaultRoutes();
-    const user = userEvent.setup();
-
-    render(<App />);
-
-    await user.click(
-      await screen.findByRole("checkbox", { name: /recordarme/i }),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Continuar con Google" }),
-    );
-
-    await waitFor(() => {
-      const call = fetchMock.mock.calls.find(
-        ([url]) => url === "/api/auth/google/session",
-      );
-      expect(call).toBeDefined();
-      const [, options] = call as unknown as [string, RequestInit];
-      expect(JSON.parse(options.body as string)).toEqual({
-        id_token: "test-id-token",
-        remember_me: true,
-      });
+  it("asks for the password when a password-protected account sends none (422)", async () => {
+    mockCredentialsRoutes({
+      "/api/auth/credentials/login": {
+        status: 422,
+        detail: "Password required",
+      },
     });
-  });
-
-  it("shows the emergency fallback when the GSI script fails to load", async () => {
-    gsi.fireScriptError = true;
-    mockVaultRoutes();
-
-    render(<App />);
-
-    expect(
-      await screen.findByRole("heading", { name: "Acceso de emergencia" }),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("Clave de emergencia")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Ingresar con clave de emergencia" }),
-    ).toBeInTheDocument();
-  });
-
-  it("posts the emergency key to /api/auth/emergency/session and reloads", async () => {
-    gsi.fireScriptError = true;
-    const fetchMock = mockVaultRoutes();
     const user = userEvent.setup();
 
-    render(<App />);
+    renderLogin();
 
+    await user.click(await screen.findByRole("button", { name: "Entrar" }));
+
+    expect(
+      await screen.findByText("Ingresá tu contraseña para continuar."),
+    ).toBeInTheDocument();
+  });
+
+  it("surfaces the server error for a wrong password", async () => {
+    mockCredentialsRoutes({
+      "/api/auth/credentials/login": {
+        status: 401,
+        detail: "Invalid or rate-limited password",
+      },
+    });
+    const user = userEvent.setup();
+
+    renderLogin();
+
+    await user.type(await screen.findByLabelText("Contraseña"), "incorrecta");
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
+
+    expect(
+      await screen.findByText("Invalid or rate-limited password"),
+    ).toBeInTheDocument();
+  });
+
+  it("routes a fresh install (no account) to onboarding", async () => {
+    mockCredentialsRoutes({
+      "/api/auth/credentials/login": {
+        status: 401,
+        detail: "No account configured",
+      },
+    });
+    const user = userEvent.setup();
+
+    renderLogin();
+
+    await user.click(await screen.findByRole("button", { name: "Entrar" }));
+
+    expect(
+      await screen.findByRole("link", { name: /configurá tu cuenta/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("recovers the account: words → token → new username/password", async () => {
+    const fetchMock = mockCredentialsRoutes();
+    const user = userEvent.setup();
+
+    renderLogin();
+
+    await user.click(
+      await screen.findByRole("button", { name: "¿Olvidaste tu contraseña?" }),
+    );
+
+    // Step 1: prove ownership with the recovery words.
     await user.type(
-      await screen.findByLabelText("Clave de emergencia"),
-      "clave secreta",
+      screen.getByLabelText("Palabras claves"),
+      "alpha beta gamma",
     );
-    await user.click(
-      screen.getByRole("button", { name: "Ingresar con clave de emergencia" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Recuperar" }));
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(
-        ([url]) => url === "/api/auth/emergency/session",
+        ([url]) => url === "/api/auth/credentials/recover",
+      );
+      expect(call).toBeDefined();
+      const [, options] = call as unknown as [string, RequestInit];
+      expect(JSON.parse(options.body as string)).toEqual({ words: "alpha beta gamma" });
+    });
+
+    // Step 2: change username + password with the recovery token.
+    expect(
+      await screen.findByRole("heading", { name: "Cambiar usuario o contraseña" }),
+    ).toBeInTheDocument();
+    await user.clear(screen.getByLabelText("Usuario"));
+    await user.type(screen.getByLabelText("Usuario"), "nuevo-autor");
+    await user.type(screen.getByLabelText(/nueva contraseña/i), "nueva-clave");
+    await user.click(screen.getByRole("button", { name: "Guardar cambios" }));
+
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url]) => url === "/api/auth/credentials/recover/complete",
       );
       expect(call).toBeDefined();
       const [, options] = call as unknown as [string, RequestInit];
       expect(JSON.parse(options.body as string)).toEqual({
-        key: "clave secreta",
+        recovery_token: "token-abc",
+        new_username: "nuevo-autor",
+        new_password: "nueva-clave",
       });
     });
-    await waitFor(() => expect(reloadPage).toHaveBeenCalled());
+
+    expect(
+      await screen.findByText(/credenciales actualizadas/i),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Volver al inicio de sesión" }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Entrar" }),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the dismissible re-auth banner once the interval elapsed", async () => {
+    mockCredentialsRoutes({
+      "/api/auth/session/status": authenticatedCredentials(0),
+    });
+    const user = userEvent.setup();
+
+    renderLogin();
+
+    // The banner is an alert; the countdown card (role=status) is always
+    // visible and carries the same warning copy (S-AC-04b/d).
+    const banner = await screen.findByRole("alert");
+    expect(
+      within(banner).getByText(
+        /si no reingresas tu contraseña, la sesión de demiurgos se cerrará/i,
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(banner).getByRole("button", { name: "Descartar aviso" }),
+    );
+
+    // Dismissed: the banner disappears, the countdown card stays.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
+  });
+
+  it("keeps the countdown and warning always visible on the welcome card", async () => {
+    mockCredentialsRoutes({
+      "/api/auth/session/status": authenticatedCredentials(4),
+    });
+
+    renderLogin();
+
+    expect(
+      await screen.findByText("Reingreso recomendado en 4 días"),
+    ).toBeInTheDocument();
+    const countdown = screen.getByRole("status");
+    expect(
+      within(countdown).getByText(
+        /si no reingresas tu contraseña, la sesión de demiurgos se cerrará/i,
+      ),
+    ).toBeInTheDocument();
+    // The banner only appears once the interval elapsed (reauthDue).
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
