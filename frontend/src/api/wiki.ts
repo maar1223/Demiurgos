@@ -1,8 +1,10 @@
 import { apiFetch } from "@/api/client";
 import { ApiError } from "@/api/types";
 import type {
+  AccountCreateResult,
   AiAskResponse,
   AuthSessionStatus,
+  CredentialChangeResult,
   DiffPreview,
   DuplicateResponse,
   EmergencyKeyRotationResponse,
@@ -14,12 +16,12 @@ import type {
   FichaStatus,
   FileContent,
   FileNode,
-  GoogleNonceResponse,
   HistoryListResponse,
   LocalDevSessionStatus,
   MediaList,
   MoveResponse,
   ConfirmedEditRequest,
+  RecoveryTokenResponse,
   RestoreFileRequest,
   SuccessResponse,
   SystemControlResponse,
@@ -59,7 +61,7 @@ export function logoutLocalDevSession(): Promise<LocalDevSessionStatus> {
 }
 
 // ---------------------------------------------------------------------------
-// Vault authentication (google mode — DEMIURGOS_AUTH_MODE=google)
+// Vault authentication (credentials mode — DEMIURGOS_AUTH_MODE=credentials)
 // ---------------------------------------------------------------------------
 
 /** GET /api/auth/session/status — unified mode-aware session status. */
@@ -70,30 +72,127 @@ export function getAuthStatus(): Promise<AuthSessionStatus> {
   );
 }
 
-/** GET /api/auth/google/nonce — short-lived nonce bound to this browser. */
-export function getGoogleNonce(): Promise<GoogleNonceResponse> {
-  return apiFetch<GoogleNonceResponse>(
-    apiUrl(["api", "auth", "google", "nonce"]),
-    { credentials: "same-origin" },
-  );
-}
-
-/**
- * POST /api/auth/google/session — verify the GIS id_token (iss, aud, exp,
- * nonce) and issue the HttpOnly vault session cookie. `remember_me` extends
- * the session TTL from 8h to 14d.
- */
-export function startGoogleSession(
-  id_token: string,
-  remember_me: boolean,
-): Promise<AuthSessionStatus> {
-  return apiFetch<AuthSessionStatus>(
-    apiUrl(["api", "auth", "google", "session"]),
+/** POST /api/auth/credentials/account — create the single local account
+ *  during onboarding (R-AC-01). Returns the recovery words in plaintext
+ *  exactly once; the server persists only their hash. `password` is optional
+ *  (a missing/null password marks the account passwordless). */
+export function createAccount(
+  username: string,
+  password?: string,
+): Promise<AccountCreateResult> {
+  return apiFetch<AccountCreateResult>(
+    apiUrl(["api", "auth", "credentials", "account"]),
     {
       method: "POST",
       credentials: "same-origin",
-      body: JSON.stringify({ id_token, remember_me }),
+      body: JSON.stringify({ username, password: password || undefined }),
     },
+  );
+}
+
+/** POST /api/auth/credentials/login — start a credentials session. Accounts
+ *  with a password MUST send it; passwordless accounts pass an empty/absent
+ *  password ("Enter" button, S-AC-02b). `remember_me` extends the TTL from 8h
+ *  to 30d (R-AC-03). */
+export function credentialsLogin(
+  password: string | undefined,
+  rememberMe: boolean,
+): Promise<AuthSessionStatus> {
+  return apiFetch<AuthSessionStatus>(
+    apiUrl(["api", "auth", "credentials", "login"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ password: password || undefined, remember_me: rememberMe }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/recover — verify the recovery words (ownership
+ *  proof) and issue the short-lived single-use recovery token (R-AC-05). */
+export function recoverAccount(words: string): Promise<RecoveryTokenResponse> {
+  return apiFetch<RecoveryTokenResponse>(
+    apiUrl(["api", "auth", "credentials", "recover"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/recover/complete — consume the recovery token
+ *  and set the new username/password (both optional, at least one required). */
+export function completeRecovery(
+  recoveryToken: string,
+  newUsername?: string,
+  newPassword?: string,
+): Promise<CredentialChangeResult> {
+  return apiFetch<CredentialChangeResult>(
+    apiUrl(["api", "auth", "credentials", "recover", "complete"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({
+        recovery_token: recoveryToken,
+        new_username: newUsername || undefined,
+        new_password: newPassword || undefined,
+      }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/password — change the password by proving
+ *  ownership with the recovery words (R-AC-05a, requires a session). */
+export function changePassword(
+  words: string,
+  newPassword: string,
+): Promise<CredentialChangeResult> {
+  return apiFetch<CredentialChangeResult>(
+    apiUrl(["api", "auth", "credentials", "password"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words, new_password: newPassword }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/password/remove — drop the password back to
+ *  passwordless via the recovery words (R-AC-05b, requires a session). */
+export function removePassword(words: string): Promise<CredentialChangeResult> {
+  return apiFetch<CredentialChangeResult>(
+    apiUrl(["api", "auth", "credentials", "password", "remove"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/username — change the username via the
+ *  recovery words (R-AC-05c, requires a session). */
+export function changeUsername(
+  words: string,
+  newUsername: string,
+): Promise<CredentialChangeResult> {
+  return apiFetch<CredentialChangeResult>(
+    apiUrl(["api", "auth", "credentials", "username"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words, new_username: newUsername }),
+    },
+  );
+}
+
+/** POST /api/auth/credentials/words/rotate — rotate the recovery words
+ *  (R-ERK-01, requires a session). Returns the new plaintext words once. */
+export function rotateWords(): Promise<{ new_words: string }> {
+  return apiFetch<{ new_words: string }>(
+    apiUrl(["api", "auth", "credentials", "words", "rotate"]),
+    { method: "POST", credentials: "same-origin" },
   );
 }
 

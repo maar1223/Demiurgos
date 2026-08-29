@@ -58,14 +58,16 @@ export interface LocalDevSessionStatus {
 }
 
 /** Auth mode reported by the backend (DEMIURGOS_AUTH_MODE). */
-export type AuthMode = "disabled" | "local-dev" | "google";
+export type AuthMode = "disabled" | "local-dev" | "credentials";
 
 /** Active session provider reported by the unified status endpoint. */
-export type AuthProvider = "local-dev" | "google" | "emergency";
+export type AuthProvider = "local-dev" | "credentials";
 
 /**
  * Unified mode-aware session status (GET /api/auth/session/status). Works for
  * every auth mode: `provider` is present only when a session is active.
+ * Credentials sessions additionally expose the soft re-auth countdown
+ * (R-AC-04): `last_auth_at` (ISO 8601) and `days_until_reauth` (clamped at 0).
  */
 export interface AuthSessionStatus {
   mode: AuthMode;
@@ -73,11 +75,36 @@ export interface AuthSessionStatus {
   authenticated: boolean;
   label: string | null;
   provider?: AuthProvider;
+  /** ISO 8601 timestamp of the last password entry — credentials sessions only. */
+  last_auth_at?: string;
+  /** Days left before the soft re-auth reminder (0 once the interval elapsed). */
+  days_until_reauth?: number;
 }
 
-/** Response of GET /api/auth/google/nonce — short-lived browser-bound nonce. */
-export interface GoogleNonceResponse {
-  nonce: string;
+/** The single local account (credentials mode). `has_password` is false for
+ *  passwordless accounts (password_hash = null server-side). */
+export interface AccountInfo {
+  username: string;
+  has_password: boolean;
+}
+
+/** Response of POST /api/auth/credentials/account — the recovery words are
+ *  returned in plaintext exactly once; the server persists only their hash. */
+export interface AccountCreateResult {
+  username: string;
+  words: string;
+}
+
+/** Response of POST /api/auth/credentials/recover — short-lived single-use
+ *  token proving recovery-words ownership. */
+export interface RecoveryTokenResponse {
+  recovery_token: string;
+}
+
+/** Success envelope of every credential-management write
+ *  (recover/complete, password, password/remove, username). */
+export interface CredentialChangeResult {
+  success: boolean;
 }
 
 /**
@@ -118,6 +145,7 @@ export interface AppConfig {
 
 export type OnboardingStep =
   | "step0"
+  | "account"
   | "ai"
   | "telegram"
   | "world"
