@@ -206,27 +206,28 @@ def create_world(
 def _is_case_insensitive_fs(path: Path) -> bool:
     """True when the filesystem at ``path`` is case-insensitive (R-CIM-05).
 
-    Probes the filesystem at runtime: creates a temp file and checks whether
-    its swapcased name resolves to the same entry. Cleans up after itself
-    (stateless, no side effects). Defaults to False (case-sensitive) on
-    read-only filesystems or any OSError so Linux CI never breaks when the
+    Probes the filesystem at runtime: writes a mixed-case file and checks
+    whether its swapcased spelling resolves to the SAME entry via
+    ``os.path.samefile`` (volume+file id, reliable on NTFS/APFS). Cleans up
+    after itself (stateless, no side effects). Defaults to False (sensitive)
+    on read-only filesystems or any OSError so Linux CI never breaks when the
     probe fails.
     """
+    probe_name = "DemiurgOs_CaseProbe"
+    probe_dir = Path(path)
+    probe_file = probe_dir / probe_name
     try:
-        with tempfile.NamedTemporaryFile(dir=path, delete=False) as tmp:
-            tmp_path = Path(tmp.name)
+        probe_file.write_text("probe", encoding="utf-8")
         try:
-            swapcase_path = tmp_path.parent / tmp_path.name.swapcase()
-            if swapcase_path == tmp_path:
+            swapped = probe_dir / probe_name.swapcase()
+            if swapped == probe_file:
                 # No cased characters to swap — cannot probe; stay conservative.
                 return False
-            # samefile compares volume+file id, so it correctly reports the same
-            # entry even when the spelling differs (NTFS/APFS). On a
-            # case-sensitive FS the swapcased name does not exist -> OSError
-            # caught below -> False.
-            return os.path.samefile(tmp_path, swapcase_path)
+            # samefile works even when the spelling differs; on a case-sensitive
+            # FS the swapped name does not exist -> FileNotFoundError -> False.
+            return os.path.samefile(probe_file, swapped)
         finally:
-            tmp_path.unlink(missing_ok=True)
+            probe_file.unlink(missing_ok=True)
     except OSError:
         return False
 
