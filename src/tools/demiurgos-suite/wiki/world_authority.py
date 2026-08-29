@@ -298,9 +298,7 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
                 continue
             legacy_path = entry / folder
             canonical_path = entry / folder.lower()
-            if canonical_path != legacy_path and _same_physical_dir(
-                legacy_path, canonical_path
-            ):
+            if canonical_path != legacy_path and canonical_path.exists():
                 continue
             found.append(folder)
         if found:

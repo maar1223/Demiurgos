@@ -427,7 +427,7 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         (legacy / "Lore").mkdir(parents=True)
         (legacy / "Personajes").mkdir()
         findings = detect_legacy_layout(mundos)
-        if _same_physical_dir(legacy / "Lore", legacy / "lore"):
+        if (legacy / "lore").exists():
             # case-insensitive FS: `Lore` IS the canonical `lore` — not legacy
             # (R-CIM-05). The runtime operates on the canonical tree already.
             self.assertEqual(findings, [])
@@ -467,7 +467,7 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         legacy = mundos / "legacy-x"
         (legacy / "Lore").mkdir(parents=True)
         (legacy / "Personajes").mkdir()
-        if not _same_physical_dir(legacy / "Lore", legacy / "lore"):
+        if not (legacy / "lore").exists():
             self.skipTest("case-sensitive FS: not applicable")
         findings = detect_legacy_layout(mundos)
         self.assertEqual(findings, [],
@@ -481,7 +481,7 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         legacy = mundos / "legacy-x"
         (legacy / "Lore").mkdir(parents=True)
         (legacy / "Personajes").mkdir()
-        if _same_physical_dir(legacy / "Lore", legacy / "lore"):
+        if (legacy / "lore").exists():
             self.skipTest("case-insensitive FS: legacy aliases are canonical")
         findings = detect_legacy_layout(mundos)
         self.assertEqual(len(findings), 1)

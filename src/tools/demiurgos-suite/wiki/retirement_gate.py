@@ -234,7 +234,7 @@ def check_zero_legacy_mutation(project_root: Path) -> GateCheck:
         (world / "Personajes" / "anisa.md").write_text("---\nname: Anisa\n---\n",
                                                        encoding="utf-8")
         before = {str(p): p.read_bytes() for p in world.rglob("*") if p.is_file()}
-        case_insensitive = _same_physical_dir(world / "Lore", world / "lore")
+        case_insensitive = (world / "lore").exists()
         findings = detect_legacy_layout(Path(tmp))
         detected = any(f["world"] == "legacy-gate"
                        and f["folders"] == ["Lore", "Personajes"] for f in findings)

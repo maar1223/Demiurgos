@@ -4345,23 +4345,19 @@ class TestLegacyDetectionEndpoint:
         (legacy / "Lore" / "00_inicio.md").write_text("# X\n", encoding="utf-8")
         body = empty_client.get("/api/onboarding/readiness").json()
         finding = next((f for f in body["legacy"] if f["world"] == "legacy-x"), None)
-        print("DIAG platform=", sys.platform,
-              "same=", _same_physical_dir(legacy / "Lore", legacy / "lore"),
-              "lore_exists=", (legacy / "lore").exists(),
-              "finding=", finding, file=sys.stderr)
-        if _same_physical_dir(legacy / "Lore", legacy / "lore"):
+        if (legacy / "lore").exists():
             # R-CIM-05: on a case-insensitive FS `Lore` matches canonical
             # `lore` (same physical dir) — NOT reported as legacy.
             assert finding is None
         else:
             assert finding is not None
             assert set(finding["folders"]) == {"Lore", "Personajes"}
-        # Detection is strictly read-only: the GET mutated nothing.
+        # Detection is strictly read-only: the GET renamed nothing. On a
+        # case-insensitive FS `lore` resolves to `Lore`, so assert the legacy
+        # folder itself survived instead of the lowercased name.
         assert (legacy / "Lore").is_dir()
         assert (legacy / "Personajes").is_dir()
         assert (legacy / "Lore" / "00_inicio.md").exists()
-        if not _same_physical_dir(legacy / "Lore", legacy / "lore"):
-            assert not (legacy / "lore").exists(), "never auto-renamed to lowercase"
 
     def test_readiness_does_not_report_canonical_worlds(
             self, empty_client: TestClient):
