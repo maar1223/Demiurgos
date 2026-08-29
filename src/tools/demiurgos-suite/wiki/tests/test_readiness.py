@@ -1,9 +1,11 @@
 """ONB-1.8 — local_editor readiness probe: storage write→read→delete round-trip.
 Readiness is derived runtime truth, never configuration claims.
 
-Also covers the auth-google-vault identity contract (R-ID1, 7.6): the
-identity card is ``configured`` ONLY when ``DEMIURGOS_AUTH_MODE=google`` AND
-``GOOGLE_CLIENT_ID`` are set; registry claims never configure it.
+Also covers the auth-vault-credentials identity contract (R-ID-01, S-ID-01a/b/c):
+the identity card is ``configured`` ONLY when a local account exists in the
+registry (``capabilities.account`` with username + words_hash) OR when
+``DEMIURGOS_AUTH_MODE=credentials`` is active; registry claims never configure
+it.
 """
 
 from __future__ import annotations
@@ -62,33 +64,48 @@ def test_probe_readback_mismatch_detected(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 # ---------------------------------------------------------------------------
-# 7.6 — identity card dedicated contract (R-ID1, S-ID1a/b)
+# R-ID-01 — identity card dedicated contract (S-ID-01a/b/c)
 # ---------------------------------------------------------------------------
 
 
-def test_identity_configured_when_google_mode_and_client_id_set(
+def _account_state(username: str | None = "ada", words_hash: str | None = "$argon2id$abc") -> dict:
+    return {
+        "capabilities": {
+            "account": {
+                "username": username,
+                "password_hash": None,
+                "words_hash": words_hash,
+            }
+        }
+    }
+
+
+def test_identity_configured_when_account_exists(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "google")
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
-    cards = project_cards({}, worlds=[], probe_ok=True)
+    """S-ID-01a — a real account (username + words_hash) configures identity,
+    regardless of auth mode."""
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    cards = project_cards(_account_state(), worlds=[], probe_ok=True)
     assert cards["identity"] == "configured"
     # The identity contract is local configuration, not connectivity: it must
-    # never surface as remote-pending (R-ID1).
+    # never surface as remote-pending (R-ID-01).
     assert "identity" not in project_offline(cards)["remote_pending"]
 
 
-def test_identity_pending_when_mode_is_not_google(
+def test_identity_configured_when_credentials_mode_active(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client.apps.googleusercontent.com")
+    """S-ID-01b — credentials mode configures identity even before the account
+    is created (onboarding needs the card available)."""
+    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "credentials")
     cards = project_cards({}, worlds=[], probe_ok=True)
-    assert cards["identity"] == "pending"
+    assert cards["identity"] == "configured"
 
 
-def test_identity_pending_when_client_id_missing(
+def test_identity_pending_without_account_and_without_credentials_mode(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "google")
-    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+    """S-ID-01c — no account and a non-credentials mode leaves identity
+    pending."""
+    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
     cards = project_cards({}, worlds=[], probe_ok=True)
     assert cards["identity"] == "pending"
 
@@ -96,21 +113,31 @@ def test_identity_pending_when_client_id_missing(
 def test_identity_pending_ignores_registry_claims(
         monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
-    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
     cards = project_cards(
         {"capabilities": {"identity": "configured"}}, worlds=[], probe_ok=True)
     assert cards["identity"] == "pending"
 
 
+def test_identity_pending_for_partial_account(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """A slot with a username but no words hash is not a configured account."""
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    cards = project_cards(_account_state(words_hash=None), worlds=[], probe_ok=True)
+    assert cards["identity"] == "pending"
+    cards = project_cards(_account_state(username=None), worlds=[], probe_ok=True)
+    assert cards["identity"] == "pending"
+
+
 def test_identity_configured_helper_contract(
         monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "google")
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "c")
+    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "credentials")
     assert identity_configured() is True
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "GOOGLE")
+    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "CREDENTIALS")
     assert identity_configured() is True  # mode is case-normalized
     monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
     assert identity_configured() is False
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "google")
-    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     assert identity_configured() is False
+    # Account branch is mode-independent (OR contract, S-ID-01a).
+    assert identity_configured(_account_state()) is True
+    assert identity_configured(_account_state(words_hash=None)) is False
