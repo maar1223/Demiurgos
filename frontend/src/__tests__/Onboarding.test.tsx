@@ -222,7 +222,10 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     );
   });
 
-  it("skips the account step outside credentials mode", async () => {
+  it("shows the account step even outside credentials mode (no authMode guard)", async () => {
+    // vault-settings-configure: the account step is ALWAYS active on a fresh
+    // install (R-AC-01) — the old `authMode === "credentials"` guard is gone,
+    // so local-dev/disabled onboarding offers the account step too (S-AC-01b).
     (getAuthStatus as Mock).mockResolvedValue({
       mode: "local-dev",
       enabled: true,
@@ -234,10 +237,10 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     renderOnboarding();
 
     expect(
-      await screen.findByRole("heading", { name: "Creá tu mundo" }),
+      await screen.findByRole("heading", { name: "Creá tu cuenta" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Creá tu cuenta" }),
+      screen.queryByRole("heading", { name: "Creá tu mundo" }),
     ).not.toBeInTheDocument();
   });
 

@@ -2,8 +2,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { createWorld, getOnboardingStatus, submitStep0 } from "@/api/onboarding";
 import { createAccount } from "@/api/wiki";
-import { getAuthStatus } from "@/api/wiki";
-import { ApiError, type AuthMode, type LocaleInput, type OnboardingStatus } from "@/api/types";
+import { ApiError, type LocaleInput, type OnboardingStatus } from "@/api/types";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
@@ -11,18 +10,18 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 /**
  * First-run onboarding (OC1/OC2, Slice 1).
  *
- * Flow: step 0 (locale) → account (credentials mode only) → world creation →
- * ready. Remote steps (AI, Telegram, Backup) are NEVER blocking and are
- * reported as pending — they are resumed from the Centro de Configuración
+ * Flow: step 0 (locale) → account (always active on a fresh install) → world
+ * creation → ready. Remote steps (AI, Telegram, Backup) are NEVER blocking and
+ * are reported as pending — they are resumed from the Centro de Configuración
  * tab inside the Profile (`/perfil`). Completed steps are never replayed
  * after a restart (server is authoritative).
  *
- * The account step (R-AC-01) is BLOCKING and only exists in credentials mode
- * (DEMIURGOS_AUTH_MODE=credentials): username + optional password, and the
- * recovery words are generated server-side and shown to the user EXACTLY
- * ONCE. In local-dev/disabled mode the step is skipped (the backend still
- * derives "account" as the next step, but the account endpoint answers 403
- * outside credentials mode).
+ * The account step (R-AC-01) is BLOCKING and ALWAYS active on a fresh install
+ * (vault-settings-configure removed the credentials-mode guard): username +
+ * optional password, and the recovery words are generated server-side and
+ * shown to the user EXACTLY ONCE. The backend derives "account" as the next
+ * step; the account creation endpoint answers 200 with the vault OFF
+ * (S-AC-01b), so no `.env` edit is required.
  *
  * Writes are gated on the authenticated local principal; a 401 surfaces a
  * clear hint (fail closed, never a silent bypass).
@@ -91,8 +90,7 @@ export default function Onboarding() {
   const [worldName, setWorldName] = useState("");
   const [loreSkeleton, setLoreSkeleton] = useState(true);
 
-  // Account form (credentials mode)
-  const [authMode, setAuthMode] = useState<AuthMode | null>(null);
+  // Account form (always active on a fresh install — R-AC-01)
   const [accountUsername, setAccountUsername] = useState("");
   const [accountPassword, setAccountPassword] = useState("");
   // Plaintext recovery words shown EXACTLY once after account creation
@@ -116,23 +114,6 @@ export default function Onboarding() {
   };
 
   useEffect(loadStatus, [navigate, reconfigure]);
-
-  // The account step only renders in credentials mode: the creation endpoint
-  // answers 403 outside it, so local-dev/disabled onboarding skips the step.
-  useEffect(() => {
-    let active = true;
-    void getAuthStatus()
-      .then((next) => {
-        if (active) setAuthMode(next.mode);
-      })
-      .catch(() => {
-        // Fail open to non-credentials (skip the account step).
-        if (active) setAuthMode(null);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   const handleStep0 = (event: FormEvent) => {
     event.preventDefault();
@@ -244,8 +225,7 @@ export default function Onboarding() {
         {status && !status.completed && status.completed_steps.includes("step0") ? (
           accountWords ? (
             <WordsCard words={accountWords} onConfirm={handleWordsConfirmed} />
-          ) : authMode === "credentials" &&
-            !status.completed_steps.includes("account") ? (
+          ) : !status.completed_steps.includes("account") ? (
             <AccountStep
               username={accountUsername}
               onUsername={setAccountUsername}
