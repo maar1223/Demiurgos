@@ -57,7 +57,7 @@ check_prerequisites() {
     # Check required tools
     for cmd in curl git; do
         if ! command -v "$cmd" &>/dev/null; then
-            fail "'$cmd' no está instalado. Instalalo primero (apt install $cmd / brew install $cmd)."
+            fail "'$cmd' no está instalado. Instálalo primero (apt install $cmd / brew install $cmd)."
         fi
     done
     ok "Herramientas base: curl, git disponibles"
@@ -78,7 +78,7 @@ install_hermes() {
     if ! command -v hermes &>/dev/null; then
         export PATH="$HOME/.hermes/bin:$PATH"
         if ! command -v hermes &>/dev/null; then
-            fail "Hermes Agent se instaló pero no está en el PATH. Reiniciá la terminal o ejecutá: export PATH=\$HOME/.hermes/bin:\$PATH"
+            fail "Hermes Agent se instaló pero no está en el PATH. Reinicia la terminal o ejecuta: export PATH=\$HOME/.hermes/bin:\$PATH"
         fi
     fi
     
@@ -110,7 +110,7 @@ install_engram() {
         download_url="${download_url}.exe"
     fi
     
-    curl -fsSL "$download_url" -o "$engram_bin" || fail "No se pudo descargar Engram. Verificá tu conexión."
+    curl -fsSL "$download_url" -o "$engram_bin" || fail "No se pudo descargar Engram. Verifica tu conexión."
     chmod +x "$engram_bin"
     
     export PATH="$DEMIURGOS_HOME/bin:$PATH"
@@ -178,7 +178,7 @@ install_demiurgos() {
         ok "Demiurgos ya instalado en $DEMIURGOS_HOME/repo"
     else
         git clone --depth 1 "$DEMIURGOS_REPO" "$DEMIURGOS_HOME/repo" 2>/dev/null || \
-            fail "No se pudo clonar Demiurgos. Verificá tu conexión a GitHub."
+            fail "No se pudo clonar Demiurgos. Verifica tu conexión a GitHub."
         ok "Demiurgos clonado"
     fi
     
@@ -225,7 +225,7 @@ configure_mcp_profile() {
     hermes profile create demiurgos-mcp $clone_source \
         --description "Demiurgos MCP serve — narrative agent with file, terminal, clarify, skills, mcp toolsets" \
         --no-alias 2>/dev/null || {
-            warn "No se pudo crear el perfil demiurgos-mcp. Creálo manualmente con: hermes profile create demiurgos-mcp"
+            warn "No se pudo crear el perfil demiurgos-mcp. Créalo manualmente con: hermes profile create demiurgos-mcp"
             return 1
         }
     
