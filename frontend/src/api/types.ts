@@ -79,6 +79,10 @@ export interface AuthSessionStatus {
   last_auth_at?: string;
   /** Days left before the soft re-auth reminder (0 once the interval elapsed). */
   days_until_reauth?: number;
+  /** True when the local account has a password (credentials mode only).
+   *  False for passwordless accounts — the login UI then renders the
+   *  "Enter" button without a password field (S-AC-02b). */
+  has_password?: boolean;
 }
 
 /** The single local account (credentials mode). `has_password` is false for

@@ -932,7 +932,12 @@ def _session_status(request: Request) -> dict:
     """Unified mode-aware session status (R-ID-01): provider included when an
     active session exists (local-dev | credentials). Credentials sessions
     additionally expose ``last_auth_at`` (ISO 8601) and ``days_until_reauth``
-    (clamped at 0) for the soft re-auth countdown (R-AC-04, S-AC-04b/d)."""
+    (clamped at 0) for the soft re-auth countdown (R-AC-04, S-AC-04b/d).
+
+    Credentials mode ALWAYS exposes ``has_password`` (bool) so the login UI
+    can choose between the password prompt and the passwordless "Enter"
+    button from the account slot instead of adapting to server errors
+    (R-AC-02, S-AC-02a/b)."""
     mode = _auth_mode()
     enabled = mode in (_LOCAL_AUTH_MODE, _CREDENTIALS_AUTH_MODE)
     session = _session_for_request(request) if enabled else None
@@ -943,6 +948,9 @@ def _session_status(request: Request) -> dict:
         "label": session["label"] if session else None,
         "provider": session["provider"] if session else None,
     }
+    if mode == _CREDENTIALS_AUTH_MODE:
+        account = account_get_account(_local_state())
+        status["has_password"] = bool(account and account.get("password_hash"))
     if session and session.get("provider") == _CREDENTIALS_PROVIDER:
         last_auth_at = session.get("last_auth_at")
         if last_auth_at is not None:

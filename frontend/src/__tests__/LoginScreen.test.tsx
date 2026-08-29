@@ -20,6 +20,8 @@ const unauthenticatedCredentials = {
   authenticated: false,
   label: "el-autor",
   provider: "credentials",
+  // Default fixture: the account has a password (S-AC-02a).
+  has_password: true,
 };
 
 function authenticatedCredentials(
@@ -128,15 +130,25 @@ describe("LoginScreen (credentials vault mode)", () => {
     await waitFor(() => expect(reloadPage).toHaveBeenCalled());
   });
 
-  it("logs in passwordless: Entrar with an empty password omits the field", async () => {
-    const fetchMock = mockCredentialsRoutes();
+  it("logs in passwordless: hides the password field and omits it from the body", async () => {
+    const fetchMock = mockCredentialsRoutes({
+      "/api/auth/session/status": {
+        ...unauthenticatedCredentials,
+        has_password: false,
+      },
+    });
     const user = userEvent.setup();
 
     renderLogin();
 
-    await user.click(
+    // S-AC-02b: a passwordless account shows no password field — only the
+    // "Entrar" button (decided by the backend has_password flag).
+    expect(
       await screen.findByRole("button", { name: "Entrar" }),
-    );
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Contraseña")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
 
     await waitFor(() => {
       const call = fetchMock.mock.calls.find(
@@ -190,6 +202,10 @@ describe("LoginScreen (credentials vault mode)", () => {
 
   it("routes a fresh install (no account) to onboarding", async () => {
     mockCredentialsRoutes({
+      "/api/auth/session/status": {
+        ...unauthenticatedCredentials,
+        has_password: false,
+      },
       "/api/auth/credentials/login": {
         status: 401,
         detail: "No account configured",

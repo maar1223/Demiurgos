@@ -560,6 +560,8 @@ def test_session_status_exposes_credentials_provider(
         "authenticated": False,
         "label": None,
         "provider": None,
+        # No account yet: nothing to log in with, so no password prompt.
+        "has_password": False,
     }
 
     _create_account(credentials_client, password=PASSWORD)
@@ -568,6 +570,17 @@ def test_session_status_exposes_credentials_provider(
     assert status["authenticated"] is True
     assert status["provider"] == "credentials"
     assert status["label"] == USERNAME
+    # The account has a password: the login UI must show the password prompt.
+    assert status["has_password"] is True
+
+
+def test_session_status_exposes_has_password_for_passwordless_account(
+        credentials_client: TestClient):
+    """S-AC-02b: a passwordless account reports has_password=false so the
+    login UI renders the "Enter" button without a password field."""
+    _create_account(credentials_client, password=None)
+    status = credentials_client.get("/api/auth/session/status").json()
+    assert status["has_password"] is False
 
 
 def test_session_status_exposes_last_auth_at_and_reauth_countdown(

@@ -18,6 +18,10 @@ export interface CredentialsAuthState {
   /** Days until the soft re-auth reminder; null without a credentials
    *  session or when the backend omits the countdown. */
   daysUntilReauth: number | null;
+  /** True when the account has a password (show the password prompt);
+   *  false for passwordless accounts ("Entrar" only); null while unknown
+   *  (status not loaded or not in credentials mode). */
+  hasPassword: boolean | null;
   /** The re-auth interval elapsed (countdown reached 0) — show the banner. */
   reauthDue: boolean;
   /** POST /api/auth/credentials/login; reloads the app on success. */
@@ -107,6 +111,10 @@ export function useCredentialsAuth(enabled: boolean): CredentialsAuthState {
     isCredentialsSession && typeof status?.days_until_reauth === "number"
       ? status.days_until_reauth
       : null;
+  const hasPassword =
+    enabled && typeof status?.has_password === "boolean"
+      ? status.has_password
+      : null;
 
   return {
     enabled,
@@ -116,6 +124,7 @@ export function useCredentialsAuth(enabled: boolean): CredentialsAuthState {
     loginError,
     noAccount,
     daysUntilReauth,
+    hasPassword,
     reauthDue: daysUntilReauth !== null && daysUntilReauth <= 0,
     login,
     clearLoginError,

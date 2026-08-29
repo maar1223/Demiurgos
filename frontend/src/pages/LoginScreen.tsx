@@ -183,6 +183,7 @@ export default function LoginScreen() {
             loginLoading={creds.loginLoading}
             loginError={creds.loginError}
             noAccount={creds.noAccount}
+            hasPassword={creds.hasPassword}
             onLogin={(password, rememberMe) =>
               void creds.login(password, rememberMe)
             }
@@ -236,13 +237,15 @@ interface CredentialsLoginProps {
   loginLoading: boolean;
   loginError: string | null;
   noAccount: boolean;
+  /** False hides the password field (passwordless account, S-AC-02b). */
+  hasPassword: boolean | null;
   onLogin: (password: string, rememberMe: boolean) => void;
   onClearError: () => void;
 }
 
 /**
  * Credentials login block: the password input (or the "Entrar" button for a
- * passwordless account — an empty password is accepted server-side,
+ * passwordless account — decided by the backend `has_password` flag,
  * S-AC-02b), the remember-me opt-in and the "¿Olvidaste tu contraseña?"
  * recovery flow. There is intentionally NO username field: the vault holds a
  * single account (R-AC-02).
@@ -252,6 +255,7 @@ function CredentialsLogin({
   loginLoading,
   loginError,
   noAccount,
+  hasPassword,
   onLogin,
   onClearError,
 }: CredentialsLoginProps) {
@@ -279,21 +283,25 @@ function CredentialsLogin({
   return (
     <form onSubmit={handleSubmit} className="mt-6">
       <div className="flex flex-col gap-3">
-        <label htmlFor="credentials-password" className="sr-only">
-          Contraseña
-        </label>
-        <input
-          id="credentials-password"
-          type="password"
-          autoComplete="current-password"
-          placeholder="Contraseña"
-          value={password}
-          onChange={(event) => {
-            setPassword(event.target.value);
-            onClearError();
-          }}
-          className="w-full rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none"
-        />
+        {hasPassword !== false && (
+          <>
+            <label htmlFor="credentials-password" className="sr-only">
+              Contraseña
+            </label>
+            <input
+              id="credentials-password"
+              type="password"
+              autoComplete="current-password"
+              placeholder="Contraseña"
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                onClearError();
+              }}
+              className="w-full rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none"
+            />
+          </>
+        )}
 
         <label className="flex items-center gap-2 text-small text-tinta-desvaida">
           <input
