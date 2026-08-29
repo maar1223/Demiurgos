@@ -8,18 +8,20 @@ export interface AuthGateState {
 }
 
 /**
- * Authentication gate: when auth is enabled (DEMIURGOS_AUTH_MODE=local-dev or
- * =credentials), the user MUST be authenticated before accessing the
- * application.
+ * Authentication gate: when auth is enabled (the local vault flag
+ * `capabilities.vault.enabled` OR `DEMIURGOS_AUTH_MODE=credentials`, evaluated
+ * server-side as `_vault_active()`), the user MUST be authenticated before
+ * accessing the application.
  *
  * This is a HARD GATE, not a soft redirect. When auth is enabled and the user
  * is not authenticated, they cannot access any application surface. This
  * prevents the common UX failure where users navigate the app without realizing
  * they need to authenticate, then encounter silent failures on write operations.
  *
- * Mode-aware: the unified GET /api/auth/session/status endpoint covers every
- * mode (disabled | local-dev | credentials). When auth is disabled (default),
- * the gate always passes through.
+ * Server-driven: `enabled` comes verbatim from the unified
+ * GET /api/auth/session/status endpoint, whose `enabled` equals `_vault_active()`
+ * (R-VC-06). When the vault is OFF the gate always passes through — the
+ * Settings panel stays reachable without login (S-VC-06a).
  */
 export function useAuthGate(): AuthGateState {
   const [state, setState] = useState<AuthGateState>({
