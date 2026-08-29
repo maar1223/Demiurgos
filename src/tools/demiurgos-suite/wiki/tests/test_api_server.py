@@ -4124,7 +4124,7 @@ class TestOnboardingRoutes:
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert "step0" in body["completed_steps"]
-        assert body["current_step"] == "world"
+        assert body["current_step"] == "account"
         state = api_server._local_state().snapshot()
         assert state["locale"]["conversation"] == "es"
         assert state["locale"]["region"] == "AR"
@@ -4160,7 +4160,7 @@ class TestOnboardingRoutes:
         resp = empty_client.get("/api/onboarding/status")
         body = resp.json()
         assert body["completed"] is False
-        assert body["current_step"] == "world"
+        assert body["current_step"] == "account"
         assert set(body["remote_pending"]) == {"ai", "telegram", "backup_handoff"}
 
 
@@ -4232,7 +4232,14 @@ class TestWorldCreateEndpoint:
     def test_world_creation_marks_operational_step(
             self, empty_client: TestClient, monkeypatch):
         _principal(monkeypatch)
+        # Full onboarding happy path: step0 -> account (R-AC-01 blocking) -> world.
+        monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "credentials")
         _post_step0(empty_client)
+        account = empty_client.post(
+            "/api/auth/credentials/account",
+            json={"username": "vault-user", "password": "secret-pass"},
+        )
+        assert account.status_code == 200
         created = empty_client.post("/api/worlds", json={"name": "final", "lore_skeleton": True})
         assert created.status_code == 201
         status = empty_client.get("/api/onboarding/status").json()

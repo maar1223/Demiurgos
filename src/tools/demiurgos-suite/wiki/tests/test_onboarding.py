@@ -18,6 +18,7 @@ from demiurgos_language import normalize_locale  # noqa: E402
 from onboarding import (  # noqa: E402
     REMOTE_STEPS,
     STEP_ORDER,
+    commit_account_created,
     commit_step0,
     commit_world_created,
     default_onboarding,
@@ -44,7 +45,7 @@ def test_fresh_installation_needs_step0_and_lists_remote_pending() -> None:
     assert set(status["remote_pending"]) == set(REMOTE_STEPS)
 
 
-def test_after_step0_without_world_current_step_is_world() -> None:
+def test_after_step0_without_account_current_step_is_account() -> None:
     state = commit_step0(
         _fresh_state(),
         {
@@ -56,24 +57,57 @@ def test_after_step0_without_world_current_step_is_world() -> None:
     )
     status = status_from(state, world_names=[])
     assert status["completed"] is False
-    assert status["current_step"] == "world"
+    assert status["current_step"] == "account"
     assert "step0" in status["completed_steps"]
     # step0 is not offered again — completed steps are never replayed.
     assert "step0" not in status["pending_steps"]
+    # The local account is the next BLOCKING step (R-AC-01).
+    assert "account" in status["blocking_pending"]
 
 
-def test_completed_requires_step0_and_world() -> None:
+def test_after_account_without_world_current_step_is_world() -> None:
     state = commit_step0(
         _fresh_state(),
         {"ui": "en", "conversation": "en", "content": "en",
          "region": "US", "region_explicit": True, "iana_timezone": "America/New_York"},
         normalize_locale=normalize_locale,
     )
+    state = commit_account_created(state)
+    status = status_from(state, world_names=[])
+    assert status["completed"] is False
+    assert status["current_step"] == "world"
+    assert "account" in status["completed_steps"]
+    assert "account" not in status["pending_steps"]
+
+
+def test_completed_requires_step0_account_and_world() -> None:
+    state = commit_step0(
+        _fresh_state(),
+        {"ui": "en", "conversation": "en", "content": "en",
+         "region": "US", "region_explicit": True, "iana_timezone": "America/New_York"},
+        normalize_locale=normalize_locale,
+    )
+    state = commit_account_created(state)
     state = commit_world_created(state)
     status = status_from(state, world_names=["mundo-nuevo"])
     assert status["completed"] is True
     assert status["current_step"] == "ready"
     assert set(status["remote_pending"]) == set(REMOTE_STEPS)
+
+
+def test_completion_blocks_until_account_created() -> None:
+    """The account step is BLOCKING: step0 + world alone never complete."""
+    state = commit_step0(
+        _fresh_state(),
+        {"ui": "es", "conversation": "es", "content": "es",
+         "region": None, "region_explicit": False, "iana_timezone": "UTC"},
+        normalize_locale=normalize_locale,
+    )
+    state = commit_world_created(state)
+    status = status_from(state, world_names=["un-mundo"])
+    assert status["completed"] is False
+    assert status["current_step"] == "account"
+    assert "account" in status["blocking_pending"]
 
 
 def test_remote_steps_never_claimed_ready_without_world() -> None:
@@ -141,3 +175,20 @@ def test_world_commit_marks_operational_step() -> None:
     after = commit_world_created(state)
     assert "world" in after["onboarding"]["completed_steps"]
     assert after["capabilities"]["world"] == "configured"
+    # The local account is still missing: the flow resumes there and
+    # completion stays pending until it is created (R-AC-01 blocking).
+    assert after["onboarding"]["completed"] is False
+    assert after["onboarding"]["current_step"] == "account"
+
+
+def test_account_commit_marks_blocking_step() -> None:
+    state = commit_step0(
+        _fresh_state(),
+        {"ui": "es", "conversation": "es", "content": "es",
+         "region": None, "region_explicit": False, "iana_timezone": "UTC"},
+        normalize_locale=normalize_locale,
+    )
+    after = commit_account_created(state)
+    assert "account" in after["onboarding"]["completed_steps"]
+    assert after["onboarding"]["current_step"] == "world"
+    assert after["onboarding"]["completed"] is False

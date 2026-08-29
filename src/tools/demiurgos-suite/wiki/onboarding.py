@@ -2,7 +2,7 @@
 
 Implements the first-run gate and the resumable step machine:
 
-    new → step0 → ai → telegram → world → backup_handoff → ready
+    new → step0 → account → ai → telegram → world → backup_handoff → ready
 
 Rules enforced here:
 - Onboarding runs once; completed steps are NEVER replayed after a restart.
@@ -24,9 +24,12 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Mapping, Sequence
 
-# Strict MVP order (OC2). Steps are addressable, resumable units.
+# Strict MVP order (OC2). Steps are addressable, resumable units. "account"
+# is the local account creation step (auth-vault-credentials, R-AC-01): it
+# sits right after step0 and blocks onboarding completion (BLOCKING_STEPS).
 STEP_ORDER: tuple[str, ...] = (
     "step0",
+    "account",
     "ai",
     "telegram",
     "world",
@@ -41,9 +44,9 @@ REMOTE_STEPS: frozenset[str] = frozenset({"ai", "telegram", "backup_handoff"})
 # Steps that are optional: skipping them never blocks onboarding completion.
 OPTIONAL_STEPS: frozenset[str] = frozenset({"ai", "telegram", "backup_handoff"})
 
-# Blocking local steps: step 0 (locale) and the world (last operational step,
-# blocking only for the Taller de Mundo, not for the local core).
-BLOCKING_STEPS: tuple[str, ...] = ("step0", "world")
+# Blocking local steps: step 0 (locale), the local account (R-AC-01), and the
+# world (last operational step, blocking only for the Taller de Mundo).
+BLOCKING_STEPS: tuple[str, ...] = ("step0", "account", "world")
 
 
 def default_onboarding() -> dict[str, Any]:
@@ -69,10 +72,11 @@ def status_from(
     completed = [s for s in STEP_ORDER if s in completed_raw]
 
     step0_done = "step0" in completed
+    account_done = "account" in completed
     world_exists = bool(world_names)
 
-    current_step = _current_step(completed, step0_done, world_exists)
-    complete = step0_done and world_exists
+    current_step = _current_step(completed, step0_done, account_done, world_exists)
+    complete = step0_done and account_done and world_exists
 
     pending = [s for s in STEP_ORDER if s not in completed]
     return {
@@ -85,9 +89,16 @@ def status_from(
     }
 
 
-def _current_step(completed: Sequence[str], step0_done: bool, world_exists: bool) -> str:
+def _current_step(
+    completed: Sequence[str],
+    step0_done: bool,
+    account_done: bool,
+    world_exists: bool,
+) -> str:
     if not step0_done:
         return "step0"
+    if not account_done:
+        return "account"
     if not world_exists:
         return "world"
     return "ready"
@@ -113,6 +124,25 @@ def commit_step0(
     if "step0" not in steps:
         steps.append("step0")
     onboarding["completed_steps"] = steps
+    onboarding["current_step"] = "account"
+    onboarding["completed"] = False
+    next_state["onboarding"] = onboarding
+    return next_state
+
+
+def commit_account_created(state: Mapping[str, Any]) -> dict[str, Any]:
+    """Record the local account creation step (R-AC-01, blocking).
+
+    Called by the credentials account endpoint after ``account.create_account``
+    commits the account slot; this only mirrors the step so the registry
+    reflects the blocking local step without inventing content.
+    """
+    next_state = deepcopy(dict(state))
+    onboarding = deepcopy(next_state.get("onboarding") or default_onboarding())
+    steps = list(onboarding.get("completed_steps", []))
+    if "account" not in steps:
+        steps.append("account")
+    onboarding["completed_steps"] = steps
     onboarding["current_step"] = "world"
     onboarding["completed"] = False
     next_state["onboarding"] = onboarding
@@ -132,9 +162,11 @@ def commit_world_created(state: Mapping[str, Any]) -> dict[str, Any]:
         if step not in steps:
             steps.append(step)
     onboarding["completed_steps"] = steps
-    onboarding["current_step"] = "ready"
-    # Completion is truthful: it requires step 0 (locale) to have been done.
-    onboarding["completed"] = "step0" in steps and "world" in steps
+    # Completion is truthful: it requires step 0 (locale), the local account
+    # (R-AC-01), and a world. Without the account the flow resumes there.
+    account_done = "account" in steps
+    onboarding["current_step"] = "ready" if account_done else "account"
+    onboarding["completed"] = "step0" in steps and account_done and "world" in steps
     next_state["onboarding"] = onboarding
     caps = deepcopy(next_state.get("capabilities") or {})
     caps["world"] = "configured"
