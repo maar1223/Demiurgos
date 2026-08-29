@@ -7,7 +7,6 @@ import type {
   CredentialChangeResult,
   DiffPreview,
   DuplicateResponse,
-  EmergencyKeyRotationResponse,
   EmptyTrashResponse,
   EditConfirmation,
   EditConfirmationRequest,
@@ -192,27 +191,6 @@ export function changeUsername(
 export function rotateWords(): Promise<{ new_words: string }> {
   return apiFetch<{ new_words: string }>(
     apiUrl(["api", "auth", "credentials", "words", "rotate"]),
-    { method: "POST", credentials: "same-origin" },
-  );
-}
-
-/** POST /api/auth/emergency/session — offline recovery-key login. */
-export function startEmergencySession(key: string): Promise<AuthSessionStatus> {
-  return apiFetch<AuthSessionStatus>(
-    apiUrl(["api", "auth", "emergency", "session"]),
-    {
-      method: "POST",
-      credentials: "same-origin",
-      body: JSON.stringify({ key }),
-    },
-  );
-}
-
-/** POST /api/auth/emergency/rotate — rotate the recovery key (requires an
- *  active session). Returns the new plaintext key exactly once. */
-export function rotateEmergencyKey(): Promise<EmergencyKeyRotationResponse> {
-  return apiFetch<EmergencyKeyRotationResponse>(
-    apiUrl(["api", "auth", "emergency", "rotate"]),
     { method: "POST", credentials: "same-origin" },
   );
 }

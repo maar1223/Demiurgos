@@ -112,14 +112,6 @@ export interface CredentialChangeResult {
 }
 
 /**
- * Response of POST /api/auth/emergency/rotate — the new plaintext recovery
- * key, shown to the user exactly once (the server persists only its hash).
- */
-export interface EmergencyKeyRotationResponse {
-  new_key: string;
-}
-
-/**
  * Response from POST /api/system/{action} (restart/shutdown). `accepted: true`
  * means the launcher was dispatched and the stack is going down; a 500 carries
  * the launcher's stderr excerpt in `error`.
