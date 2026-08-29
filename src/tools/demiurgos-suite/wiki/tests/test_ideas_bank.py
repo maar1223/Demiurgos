@@ -483,8 +483,6 @@ def test_legacy_idea_without_title_loads_empty(bank: IdeasBank, tmp_path: Path) 
 # FMT — structured markdown bodies (## Descripción / ## Detalles / ## Notas)
 # ---------------------------------------------------------------------------
 
-_REPO_ROOT = Path(__file__).resolve().parents[5]
-
 REFORMATTED_IDEAS: dict[str, dict] = {
     "2026-08-27-3fbf55b420ea": {"title": "", "media_path": None},
     "2026-08-27-48a17af9349f": {
@@ -499,16 +497,68 @@ REFORMATTED_IDEAS: dict[str, dict] = {
 }
 
 
-def test_reformatted_repo_ideas_load_with_structure() -> None:
+def _write_reformatted_idea(ideas_root: Path, slug: str, expected: dict) -> None:
+    """Write a structured-format idea file into ``ideas_root``.
+
+    Recreates the reformatted markdown layout the parser must read:
+    ``## Descripción`` first, optional ``## Detalles`` / ``## Notas``, and for
+    image ideas the embed line at the very top, before the heading. Frontmatter
+    carries slug/id/title/media_path exactly as the reformat produced them.
+    """
+    media_path = expected["media_path"]
+    title = expected["title"]
+
+    if media_path:
+        filename = Path(media_path).name
+        body = (
+            f"![idea image](/api/ideas/media/{filename})\n\n"
+            "## Descripción\n\nCuerpo descriptivo de la idea.\n\n"
+            "## Detalles\n\nDetalles adicionales.\n"
+        )
+    else:
+        body = (
+            "## Descripción\n\nCuerpo descriptivo de la idea.\n\n"
+            "## Detalles\n\nDetalles adicionales.\n\n"
+            "## Notas\n\nNotas finales.\n"
+        )
+
+    frontmatter = (
+        "---\n"
+        f"slug: {slug}\n"
+        f"id: {slug}\n"
+        f"title: {title!r}\n"
+        f"media_path: {media_path if media_path else 'null'}\n"
+        "timestamp: '2026-08-27T00:00:00Z'\n"
+        "source: manual\n"
+        "type: concepto\n"
+        "tags: []\n"
+        "status: fresh\n"
+        "used_in: []\n"
+        "based_on: null\n"
+        "---\n\n"
+    )
+    (ideas_root / f"{slug}.md").write_text(
+        frontmatter + body, encoding="utf-8"
+    )
+
+
+def test_reformatted_repo_ideas_load_with_structure(tmp_path: Path) -> None:
     """The reformatted ideas/ files keep loading: title + body + media_path.
 
-    Integration-shaped: the repo's own Taller de Ideas bank must stay
-    parseable after the markdown-structure reformat (``## Descripción`` first,
-    optional ``## Detalles`` / ``## Notas``, image embed above the heading).
-    Frontmatter fields (slug/id/title/media_path) are preserved exactly.
+    Integration-shaped: the Taller de Ideas bank must stay parseable after the
+    markdown-structure reformat (``## Descripción`` first, optional
+    ``## Detalles`` / ``## Notas``, image embed above the heading). Frontmatter
+    fields (slug/id/title/media_path) are preserved exactly.
+
+    Hermetic: the ideas are created under ``tmp_path`` instead of relying on
+    the gitignored ``ideas/`` directory that is absent on a clean CI checkout.
     """
-    repo_bank = IdeasBank(ideas_root=_REPO_ROOT / "ideas",
-                          mundos_root=_REPO_ROOT / "mundos")
+    ideas_root = tmp_path / "ideas"
+    ideas_root.mkdir(parents=True)
+    for slug, expected in REFORMATTED_IDEAS.items():
+        _write_reformatted_idea(ideas_root, slug, expected)
+
+    repo_bank = IdeasBank(ideas_root=ideas_root, mundos_root=tmp_path / "mundos")
     for slug, expected in REFORMATTED_IDEAS.items():
         idea = repo_bank.read(slug)
         assert idea.title == expected["title"]
