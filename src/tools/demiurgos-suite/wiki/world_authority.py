@@ -273,7 +273,6 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
         entries = sorted(root.iterdir())
     except OSError:
         return findings
-    case_insensitive = _is_case_insensitive_fs(root)
     for entry in entries:
         if not entry.is_dir():
             continue

@@ -35,6 +35,7 @@ from wiki.world_authority import (  # noqa: E402
     CANONICAL_DIRS,
     OC8_LORE_SKELETON,
     WorldResultKind,
+    _same_physical_dir,
     create_world,
     detect_legacy_layout,
     normalize_world_name,
@@ -425,16 +426,16 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         legacy = mundos / "legacy-x"
         (legacy / "Lore").mkdir(parents=True)
         (legacy / "Personajes").mkdir()
-        # Force the case-sensitive detection branch so this test is portable:
-        # on a case-insensitive FS (macOS/Windows) detect_legacy_layout is
-        # FS-aware and correctly reports NO legacy (R-CIM-05).
-        with mock.patch(
-            "wiki.world_authority._is_case_insensitive_fs", return_value=False
-        ):
-            findings = detect_legacy_layout(mundos)
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["world"], "legacy-x")
-        self.assertEqual(set(findings[0]["folders"]), {"Lore", "Personajes"})
+        findings = detect_legacy_layout(mundos)
+        if _same_physical_dir(legacy / "Lore", legacy / "lore"):
+            # case-insensitive FS: `Lore` IS the canonical `lore` — not legacy
+            # (R-CIM-05). The runtime operates on the canonical tree already.
+            self.assertEqual(findings, [])
+        else:
+            # case-sensitive FS: uppercase folders reported as legacy.
+            self.assertEqual(len(findings), 1)
+            self.assertEqual(findings[0]["world"], "legacy-x")
+            self.assertEqual(set(findings[0]["folders"]), {"Lore", "Personajes"})
 
     def test_canonical_lowercase_worlds_are_not_reported(self) -> None:
         mundos = self._mundos()
@@ -466,10 +467,9 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         legacy = mundos / "legacy-x"
         (legacy / "Lore").mkdir(parents=True)
         (legacy / "Personajes").mkdir()
-        with mock.patch(
-            "wiki.world_authority._same_physical_dir", return_value=True
-        ):
-            findings = detect_legacy_layout(mundos)
+        if not _same_physical_dir(legacy / "Lore", legacy / "lore"):
+            self.skipTest("case-sensitive FS: not applicable")
+        findings = detect_legacy_layout(mundos)
         self.assertEqual(findings, [],
                          "case-insensitive FS: legacy-cased dirs are canonical")
 
@@ -481,10 +481,9 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         legacy = mundos / "legacy-x"
         (legacy / "Lore").mkdir(parents=True)
         (legacy / "Personajes").mkdir()
-        with mock.patch(
-            "wiki.world_authority._is_case_insensitive_fs", return_value=False
-        ):
-            findings = detect_legacy_layout(mundos)
+        if _same_physical_dir(legacy / "Lore", legacy / "lore"):
+            self.skipTest("case-insensitive FS: legacy aliases are canonical")
+        findings = detect_legacy_layout(mundos)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["world"], "legacy-x")
         self.assertEqual(set(findings[0]["folders"]), {"Lore", "Personajes"})

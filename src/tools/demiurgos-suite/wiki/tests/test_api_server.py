@@ -40,6 +40,7 @@ import telegram_settings  # noqa: E402
 from wiki import migration as migration_module  # noqa: E402
 from wiki.graph_indexer import EntityGraphIndex  # noqa: E402
 from wiki.world_authority import _is_case_insensitive_fs  # noqa: E402
+from wiki.world_authority import _same_physical_dir  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 
 
@@ -4344,7 +4345,7 @@ class TestLegacyDetectionEndpoint:
         (legacy / "Lore" / "00_inicio.md").write_text("# X\n", encoding="utf-8")
         body = empty_client.get("/api/onboarding/readiness").json()
         finding = next((f for f in body["legacy"] if f["world"] == "legacy-x"), None)
-        if _fs_case_insensitive():
+        if _same_physical_dir(legacy / "Lore", legacy / "lore"):
             # R-CIM-05: on a case-insensitive FS `Lore` matches canonical
             # `lore` (same physical dir) — NOT reported as legacy.
             assert finding is None
@@ -4355,7 +4356,7 @@ class TestLegacyDetectionEndpoint:
         assert (legacy / "Lore").is_dir()
         assert (legacy / "Personajes").is_dir()
         assert (legacy / "Lore" / "00_inicio.md").exists()
-        if not _fs_case_insensitive():
+        if not _same_physical_dir(legacy / "Lore", legacy / "lore"):
             assert not (legacy / "lore").exists(), "never auto-renamed to lowercase"
 
     def test_readiness_does_not_report_canonical_worlds(
