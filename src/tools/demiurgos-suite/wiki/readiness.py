@@ -8,10 +8,13 @@ never proves readiness. It never overstates a remote/cloud capability.
 ``project_cards`` derives the OC12 card states from authoritative local
 truth (ONB-3.1/3.2, OC11/OC12/OC21):
 
-- Cloud cards WITHOUT a dedicated contract (identity, backup) NEVER become
+- Cloud cards WITHOUT a dedicated contract (backup) NEVER become
   ``configured`` from local evidence: only their dedicated contracts may mark
-  them configured, and none exists in this slice. A stale registry claim is
-  downgraded to ``pending`` instead of being trusted.
+  them configured. A stale registry claim is downgraded to ``pending``
+  instead of being trusted.
+- The identity card HAS a dedicated contract (auth-google-vault, R-ID1): it
+  is ``configured`` ONLY when ``DEMIURGOS_AUTH_MODE=google`` AND
+  ``GOOGLE_CLIENT_ID`` is set; a registry claim never configures it.
 - The telegram card HAS a dedicated contract (ONB-3.3 backend): its state is
   supplied by the backend from real evidence (write-only token presence plus
   the last Telegram API connection-test outcome), never from a bare registry
@@ -33,6 +36,7 @@ remote-pending — never claimed available offline.
 
 from __future__ import annotations
 
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -42,15 +46,19 @@ from local_state import CARD_STATES
 
 # Cloud/remote capabilities without a dedicated contract: their cards can
 # never be derived to ``configured`` from local evidence in this slice
-# (ONB-3.1). Telegram is excluded here because ONB-3.3 provides its dedicated
-# backend contract; its state is passed in explicitly.
-CLOUD_CARDS: frozenset[str] = frozenset({"identity", "backup"})
+# (ONB-3.1). ``identity`` is excluded because auth-google-vault (R-ID1)
+# provides its dedicated contract below. Telegram is excluded here because
+# ONB-3.3 provides its dedicated backend contract; its state is passed in
+# explicitly.
+CLOUD_CARDS: frozenset[str] = frozenset({"backup"})
 
 # Remote capabilities whose readiness depends on connectivity (OC5): they are
 # never available offline. ``assistant`` is included because a cloud/multimodal
 # model needs its provider; a pending assistant (no proven multimodal model)
 # therefore surfaces as remote-pending while the local core keeps working.
-REMOTE_CARDS: tuple[str, ...] = ("identity", "telegram", "backup", "assistant")
+# ``identity`` is NOT remote-pending: the vault identity contract is local
+# (mode + client id), not connectivity-bound.
+REMOTE_CARDS: tuple[str, ...] = ("telegram", "backup", "assistant")
 
 # Assistant proof evidence keys required before the card may be configured.
 ASSISTANT_PROOF_KEYS: tuple[str, ...] = ("text", "vision", "runtime")
@@ -78,6 +86,18 @@ def assistant_proven(state: Mapping[str, Any]) -> bool:
     )
 
 
+def identity_configured() -> bool:
+    """Dedicated identity contract (R-ID1, S-ID1a/b).
+
+    The identity card is ``configured`` ONLY when the Google vault mode is
+    active AND the OAuth client id is set: ``DEMIURGOS_AUTH_MODE=google`` +
+    ``GOOGLE_CLIENT_ID``. Any other mode or a missing client id leaves the
+    card ``pending``. Registry claims never configure identity.
+    """
+    mode = os.environ.get("DEMIURGOS_AUTH_MODE", "").strip().lower()
+    return mode == "google" and bool(os.environ.get("GOOGLE_CLIENT_ID"))
+
+
 def project_cards(
     state: Mapping[str, Any],
     worlds: Sequence[str],
@@ -96,6 +116,9 @@ def project_cards(
     cards: dict[str, str] = {}
     for key in CLOUD_CARDS:
         cards[key] = "pending"
+    # Identity HAS a dedicated contract (auth-google-vault, R-ID1): the card
+    # follows the live Google vault configuration, never a registry claim.
+    cards["identity"] = "configured" if identity_configured() else "pending"
     # The importer has no dedicated contract in this change (ONB-3.5): its
     # card exposes entry/pending only and can never be derived to configured
     # from local evidence. The dedicated importer SDD owns completion.

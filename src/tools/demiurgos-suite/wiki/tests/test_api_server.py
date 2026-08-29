@@ -4874,11 +4874,13 @@ class TestOfflineContinuation:
     def test_readiness_reports_offline_local_ready_and_remote_pending(
             self, empty_client: TestClient):
         """The offline card needs an honest breakdown: the local core is
-        ready (storage probe ok) while remote capabilities stay pending."""
+        ready (storage probe ok) while remote capabilities stay pending.
+        ``identity`` is NOT remote-pending: the vault identity contract is
+        local configuration (mode + client id), not connectivity-bound."""
         body = empty_client.get("/api/onboarding/readiness").json()
         offline = body["offline"]
         assert offline["local_ready"] is True
-        assert "identity" in offline["remote_pending"]
+        assert "identity" not in offline["remote_pending"]
         assert "telegram" in offline["remote_pending"]
         assert "backup" in offline["remote_pending"]
         assert "assistant" in offline["remote_pending"]
