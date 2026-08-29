@@ -369,7 +369,7 @@ def update_idea(slug: str, body: str = "", title: str = "", tags: list[str] = []
         "slug": slug,
         "version": updated.version,
         "previous_version": previous_version,
-        "archived_at": str(bank._archive_path(slug, previous_version)),
+        "archived_at": bank._archive_path(slug, previous_version).as_posix(),
     }
 
 
@@ -383,7 +383,7 @@ def idea_history(slug: str) -> dict:
     """
     bank = IdeasBank()
     versions = [
-        {"version": int(match.group(1)), "path": str(path)}
+        {"version": int(match.group(1)), "path": path.as_posix()}
         for path in bank._versions_for(slug)
         for match in [re.search(r"-v(\d+)\.md$", path.name)]
         if match

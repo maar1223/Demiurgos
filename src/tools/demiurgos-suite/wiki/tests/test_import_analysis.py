@@ -217,18 +217,20 @@ class TestSafeConversion:
     def test_analyze_source_legacy_two_arg_flow(self, tmp_path):
         """Preserve existing functionality — without a file_path resolver the
         legacy flow is untouched (binaries yield empty candidates, markdown
-        is analyzed from read_file text)."""
+        is analyzed from read_file text). Uses a non-case-colliding sibling
+        dir (portable fixture, R-CIM-07): `Lore`/`lore` are the same physical
+        directory on case-insensitive filesystems."""
         (tmp_path / "lore").mkdir(parents=True)
         (tmp_path / "lore" / "City.md").write_text(
             "# City\n\nThe capital.", encoding="utf-8")
         # Real .docx bytes are invalid UTF-8 so read_text raises, mirroring
         # the router's read_file closure (binary -> "").
-        (tmp_path / "Lore" / "Enciclopedia.docx").parent.mkdir(parents=True)
-        (tmp_path / "Lore" / "Enciclopedia.docx").write_bytes(
+        (tmp_path / "fuentes").mkdir(parents=True)
+        (tmp_path / "fuentes" / "Enciclopedia.docx").write_bytes(
             b"\xff\xfe\x00binary-docx")
         files = [
             {"relative": "lore/City.md", "sha256": "abc", "size": 15},
-            {"relative": "Lore/Enciclopedia.docx", "sha256": "def", "size": 8},
+            {"relative": "fuentes/Enciclopedia.docx", "sha256": "def", "size": 8},
         ]
         report = analyze_source(files, _read_file(tmp_path))
         md, docx = report.ordered_files()
@@ -236,7 +238,7 @@ class TestSafeConversion:
         assert "The capital." in md.content_preview()
         assert md.media == [] and md.diagnostics == []
         # Binary without the seam: empty candidate, no conversion, no media.
-        assert docx.source_path == "Lore/Enciclopedia.docx"
+        assert docx.source_path == "fuentes/Enciclopedia.docx"
         assert docx.content_preview() == ""
         assert docx.media == [] and docx.diagnostics == []
 

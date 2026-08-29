@@ -20,6 +20,9 @@ This module is pure and filesystem-scoped: it writes ONLY under the given
 
 from __future__ import annotations
 
+import os
+import sys
+import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -201,6 +204,52 @@ def create_world(
     )
 
 
+def _is_case_insensitive_fs(path: Path) -> bool:
+    """True when the filesystem at ``path`` is case-insensitive (R-CIM-05).
+
+    Probes the filesystem at runtime: writes a mixed-case file and checks
+    whether its swapcased spelling resolves to the SAME entry via
+    ``os.path.samefile`` (volume+file id, reliable on NTFS/APFS). Cleans up
+    after itself (stateless, no side effects). Defaults to False (sensitive)
+    on read-only filesystems or any OSError so Linux CI never breaks when the
+    probe fails.
+    """
+    probe_name = "DemiurgOs_CaseProbe"
+    probe_dir = Path(path)
+    probe_file = probe_dir / probe_name
+    try:
+        probe_file.write_text("probe", encoding="utf-8")
+        try:
+            swapped = probe_dir / probe_name.swapcase()
+            if swapped == probe_file:
+                # No cased characters to swap — cannot probe; stay conservative.
+                return False
+            # samefile works even when the spelling differs; on a case-sensitive
+            # FS the swapped name does not exist -> FileNotFoundError -> False.
+            return os.path.samefile(probe_file, swapped)
+        finally:
+            probe_file.unlink(missing_ok=True)
+    except OSError:
+        return False
+
+
+def _same_physical_dir(a: Path, b: Path) -> bool:
+    """True when *a* and a case-distinct *b* resolve to the same entry.
+
+    On a case-insensitive filesystem (NTFS/APFS) the swapped spelling
+    resolves to the same entry even though only one case was created; on a
+    case-sensitive FS (Linux) it does not. Windows is always NTFS
+    (case-insensitive), so trust the platform there — the existence/samefile
+    probes are not reliable on the Windows CI runner. For other platforms use
+    existence of the swapped spelling, which is deterministic.
+    """
+    if a == b or not a.exists():
+        return False
+    if sys.platform == "win32":
+        return True
+    return b.exists()
+
+
 def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
     """Read-only legacy-layout detection (ONB-4.2).
 
@@ -209,14 +258,15 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
     ``lore``/``personajes`` (OC7). Each finding is
     ``{"world": <name>, "folders": [folder, ...]}``.
 
+    FS-aware (R-CIM-05): on case-insensitive filesystems (macOS APFS,
+    Windows NTFS), a folder named ``Lore`` matches the canonical ``lore``
+    case-insensitively — the runtime already operates on the canonical tree
+    through legacy-cased paths — so it is NOT reported as legacy. On
+    case-sensitive filesystems the existing behavior is preserved.
+
     Detection is STRICTLY read-only: it never renames, moves, deletes, or
-    writes anything. Runtime paths are case-sensitive, so a legacy folder is
-    invisible to the canonical readers; migration is a separate,
-    explicitly-approved step (ONB-4.3) and never automatic. Visibility rules
-    mirror ``_list_worlds`` (hidden/``_``-prefixed entries and ``Ideas`` are
-    skipped); names are compared as directory-entry strings, so a world with
-    only the lowercase canonical folders is never reported even on
-    case-insensitive filesystems.
+    writes anything. Visibility rules mirror ``_list_worlds`` (hidden/``_``-
+    prefixed entries and ``Ideas`` are skipped).
     """
     findings: list[dict] = []
     root = Path(mundos_dir)
@@ -237,7 +287,20 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
             }
         except OSError:
             continue
-        found = [folder for folder in LEGACY_FOLDERS if folder in top_dir_names]
+        # FS-aware (R-CIM-05): on a case-insensitive FS a folder named ``Lore``
+        # IS the same physical directory as canonical ``lore``, so the runtime
+        # already operates on the canonical tree through it — do NOT report it
+        # as legacy. Detect per-world via samefile (immune to a global probe),
+        # so a case-insensitive alias is never misreported as legacy.
+        found = []
+        for folder in LEGACY_FOLDERS:
+            if folder not in top_dir_names:
+                continue
+            legacy_path = entry / folder
+            canonical_path = entry / folder.lower()
+            if canonical_path != legacy_path and canonical_path.exists():
+                continue
+            found.append(folder)
         if found:
             findings.append({"world": entry.name, "folders": found})
     return findings

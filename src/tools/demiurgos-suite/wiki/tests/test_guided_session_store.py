@@ -84,7 +84,10 @@ def test_default_configuration_resolves_to_durable_local_path(monkeypatch, tmp_p
     monkeypatch.setattr(guided_session_store, "default_db_path", lambda: default)
 
     resolved = default_db_path()
-    assert str(resolved).endswith("data/guided-sessions.sqlite3")
+    # Portable: on Windows Path renders backslashes, so compare components
+    # rather than a forward-slash suffix.
+    assert resolved.parent.name == "data"
+    assert resolved.name == "guided-sessions.sqlite3"
     assert ":memory:" not in str(resolved)
 
     store = GuidedSessionStore()

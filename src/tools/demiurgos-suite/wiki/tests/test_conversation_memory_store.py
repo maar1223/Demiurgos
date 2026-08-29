@@ -210,7 +210,10 @@ class TestConcurrency:
 class TestDefaultPath:
     def test_default_db_path_follows_data_convention(self) -> None:
         resolved = default_db_path()
-        assert str(resolved).endswith("data/conversation-memory.sqlite3")
+        # Portable: on Windows Path renders backslashes, so compare components
+        # rather than a forward-slash suffix.
+        assert resolved.parent.name == "data"
+        assert resolved.name == "conversation-memory.sqlite3"
         assert ":memory:" not in str(resolved)
 
     def test_no_argument_store_resolves_to_default(self, monkeypatch, tmp_path: Path) -> None:

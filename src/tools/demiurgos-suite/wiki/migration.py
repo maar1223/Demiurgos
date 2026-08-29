@@ -23,6 +23,12 @@ folders; failure restores originals"):
   hash (content-intact proof). Any mid-transaction failure rolls every
   already-moved folder back to its original location and re-verifies the
   source hashes.
+- Case-insensitive filesystems (macOS APFS, Windows NTFS): when a source and
+  its lowercase destination are the SAME physical directory (``Lore`` is
+  ``lore`` at the FS level), the step is a NOOP (R-CIM-02): no rename, no
+  rmdir, no collision. It still registers honest ``completed`` evidence with
+  ``destination_hash == source_hash`` (both ``_tree_sha256`` of the same
+  tree) plus the per-step ``is_noop`` flag (R-CIM-03).
 - Every execution (completed or rolled back) persists a JSON evidence record
   — plan identity (transaction id), world, per-folder source/destination
   hashes, restore flags, and outcome — under ``evidence_dir`` via an atomic
@@ -54,7 +60,11 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterable
 
-from wiki.world_authority import LEGACY_FOLDERS, normalize_world_name
+from wiki.world_authority import (
+    LEGACY_FOLDERS,
+    _is_case_insensitive_fs,
+    normalize_world_name,
+)
 
 logger = logging.getLogger("demiurgos-migration")
 
@@ -106,6 +116,7 @@ class MigrationStep:
     source_hash: str  # sha256 of the source tree at plan time
     destination_hash: str | None = None  # sha256 of the moved tree, after move
     restored: bool = False  # True when a rolled-back step was hash-verified
+    is_noop: bool = False  # True when source and destination are the same physical dir
 
 
 @dataclass(frozen=True)
@@ -179,13 +190,34 @@ def _tree_sha256(root: Path) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _destination_collision(destination: Path) -> bool:
+def _is_same_physical_directory(source: Path, destination: Path) -> bool:
+    """True when *source* and *destination* are the same physical directory.
+
+    Uses ``os.path.samefile`` guarded by existence checks on both paths
+    (R-CIM-01): returns False when either path does not exist or the
+    comparison fails, leaving the caller's existing collision/rename logic
+    untouched. This is how a case-only ``Lore`` → ``lore`` step on a
+    case-insensitive filesystem is recognized as a noop (R-CIM-02).
+    """
+    if not source.exists() or not destination.exists():
+        return False
+    try:
+        return os.path.samefile(source, destination)
+    except OSError:
+        return False
+
+
+def _destination_collision(destination: Path, source: Path | None = None) -> bool:
     """True when *destination* is occupied by something other than an empty dir.
 
     An empty directory is safe to replace (no content loss); a file, a
     symlink, or a non-empty directory would destroy or hide content, so those
-    count as collisions.
+    count as collisions. When *source* is provided and both resolve to the
+    same physical directory (the natural case-only noop on a case-insensitive
+    filesystem), this is NOT a collision (R-CIM-04).
     """
+    if source is not None and _is_same_physical_directory(source, destination):
+        return False
     if not destination.exists() and not destination.is_symlink():
         return False
     if destination.is_dir() and not destination.is_symlink():
@@ -259,7 +291,35 @@ def build_migration_plan(
                 f"La carpeta '{folder}' no existe en '{normalized}'.",
             )
         destination = world_root / folder.lower()
-        if _destination_collision(destination):
+        if _is_same_physical_directory(source, destination):
+            # R-CIM-02: source and destination are the same physical directory
+            # (the natural case-only noop on a case-insensitive filesystem) —
+            # no rename, no collision. The step still records the source hash
+            # so execution can register honest evidence with
+            # destination_hash == source_hash (R-CIM-03).
+            try:
+                source_hash = _tree_sha256(source)
+            except OSError as exc:
+                raise MigrationError(
+                    MigrationErrorKind.IO_ERROR,
+                    f"No se pudo leer '{folder}' para calcular el hash: {exc}",
+                ) from exc
+            logger.info(
+                "migration plan: '%s' -> '%s' is a noop (same physical directory%s)",
+                folder, folder.lower(),
+                " on case-insensitive fs" if _is_case_insensitive_fs(world_root) else "",
+            )
+            steps.append(
+                MigrationStep(
+                    folder=folder,
+                    source=source,
+                    destination=destination,
+                    source_hash=source_hash,
+                    is_noop=True,
+                )
+            )
+            continue
+        if _destination_collision(destination, source=source):
             raise MigrationError(
                 MigrationErrorKind.COLLISION,
                 f"El destino '{destination.name}' ya contiene contenido; no se migra.",
@@ -317,7 +377,9 @@ def execute_migration(plan: MigrationPlan, evidence_dir: Path) -> MigrationEvide
     """
     started_at = _iso_now()
     for step in plan.steps:
-        if _destination_collision(step.destination):
+        if step.is_noop:
+            continue
+        if _destination_collision(step.destination, source=step.source):
             raise MigrationError(
                 MigrationErrorKind.COLLISION,
                 f"El destino '{step.destination.name}' se ocupó antes de migrar; "
@@ -328,8 +390,33 @@ def execute_migration(plan: MigrationPlan, evidence_dir: Path) -> MigrationEvide
     moved: list[MigrationStep] = []
     try:
         for step in plan.steps:
+            if step.is_noop:
+                # R-CIM-02/R-CIM-03: same physical directory — nothing moves.
+                # Register honest evidence: destination hash equals the source
+                # hash (both `_tree_sha256` of the same tree) plus the noop flag.
+                try:
+                    destination_hash = _tree_sha256(step.destination)
+                except OSError as exc:
+                    raise OSError(
+                        f"noop step '{step.folder}': {exc}"
+                    ) from exc
+                if destination_hash != step.source_hash:
+                    raise OSError(
+                        f"content hash mismatch for noop step '{step.folder}'"
+                    )
+                moved.append(
+                    MigrationStep(
+                        folder=step.folder,
+                        source=step.source,
+                        destination=step.destination,
+                        source_hash=step.source_hash,
+                        destination_hash=destination_hash,
+                        is_noop=True,
+                    )
+                )
+                continue
             # Per-move re-check: another process could race in between moves.
-            if _destination_collision(step.destination):
+            if _destination_collision(step.destination, source=step.source):
                 raise OSError(
                     f"destination '{step.destination.name}' became occupied "
                     "before the move"
@@ -379,6 +466,21 @@ def _rollback(
     restore_failures: list[str] = []
     verified = True
     for step in reversed(moved):
+        if step.is_noop:
+            # Nothing was moved for a noop step — nothing to restore. Keep it
+            # in the rollback evidence with `restored=True` (intact as-is).
+            restored_steps.append(
+                MigrationStep(
+                    folder=step.folder,
+                    source=step.source,
+                    destination=step.destination,
+                    source_hash=step.source_hash,
+                    destination_hash=step.destination_hash,
+                    restored=True,
+                    is_noop=True,
+                )
+            )
+            continue
         try:
             if _destination_collision(step.source):
                 raise OSError(f"source '{step.source.name}' is occupied")
@@ -439,6 +541,7 @@ def _step_to_dict(step: MigrationStep) -> dict:
         "source_hash": step.source_hash,
         "destination_hash": step.destination_hash,
         "restored": step.restored,
+        "is_noop": step.is_noop,
     }
 
 

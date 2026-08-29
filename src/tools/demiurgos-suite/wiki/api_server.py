@@ -97,8 +97,8 @@ from telegram_settings import (
     has_token as telegram_has_token,
     telegram_state,
 )
-from world_authority import WorldResultKind, create_world as _create_world
-from world_authority import detect_legacy_layout
+from wiki.world_authority import WorldResultKind, create_world as _create_world
+from wiki.world_authority import detect_legacy_layout
 from methodology_library import (
     AlreadyPublishedError,
     MethodologyLibrary,

@@ -101,6 +101,7 @@ def _outcome_payload(evidence: MigrationEvidence) -> dict[str, Any]:
                 "source_hash": step.source_hash,
                 "destination_hash": step.destination_hash,
                 "restored": step.restored,
+                "is_noop": step.is_noop,
             }
             for step in evidence.steps
         ],

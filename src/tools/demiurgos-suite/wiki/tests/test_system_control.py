@@ -219,6 +219,10 @@ def _write_launcher_stub(tmp_path: Path) -> Path:
     return stub
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="detached POSIX launcher stub (bash + os.waitpid/os.kill) is POSIX-only",
+)
 def test_integration_dispatches_launcher_detached_and_returns_fast(
     tmp_path: Path,
 ) -> None:

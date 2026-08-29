@@ -30,6 +30,7 @@ jobs:
       - name: Run backend tests (exclude live-Hermes e2e)
         env:
           DEMIURGOS_AUTH_MODE: local-dev
+        shell: bash
         run: |
           python -m pytest src/tools/demiurgos-suite/wiki/tests/ \
             --ignore=src/tools/demiurgos-suite/wiki/tests/test_semantic_e2e.py \

@@ -44,7 +44,7 @@ from import_models import (
     normalize_identity_segment,
 )
 from okf_contract import CANONICAL_ID_SEPARATOR, is_canonical_id
-from world_authority import is_importer_scope_permitted
+from wiki.world_authority import is_importer_scope_permitted
 
 if TYPE_CHECKING:
     from sync_lore.schemas import ImageEntry

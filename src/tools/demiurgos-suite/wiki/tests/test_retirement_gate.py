@@ -20,6 +20,7 @@ import json
 import sys
 import tempfile
 from pathlib import Path
+from unittest import mock
 
 _SRC_DIR = Path(__file__).resolve().parent.parent.parent  # demiurgos-suite/
 if str(_SRC_DIR) not in sys.path:
@@ -166,6 +167,17 @@ def test_deferred_handoff_passes_with_stale_claims():
 
 def test_zero_legacy_mutation_passes():
     assert gate.check_zero_legacy_mutation(PROJECT_ROOT).passed
+
+
+def test_zero_legacy_mutation_passes_on_case_insensitive_fs():
+    """R-CARG-01/R-CARG-04 — the zero-legacy-mutation gate passes whether the
+    FS is case-insensitive (macOS/Windows, where `lore` resolves to `Lore`) or
+    case-sensitive (Linux): detection is read-only in both branches, so the
+    gate never reports a mutation."""
+    with tempfile.TemporaryDirectory() as tmp:
+        check = gate.check_zero_legacy_mutation(Path(tmp))
+    assert check.passed
+    assert "read-only" in check.detail or "byte-identical" in check.detail
 
 
 def test_cli_reports_all_passed_with_exit_zero():

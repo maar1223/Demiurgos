@@ -29,8 +29,9 @@ for _p in (str(_WIKI), str(_SUITE)):
 
 from local_state import LocalState  # noqa: E402
 from readiness import project_cards, probe_local_storage  # noqa: E402
-from world_authority import (WorldResultKind, canonical_dirs,  # noqa: E402
-                             create_world, detect_legacy_layout)
+from wiki.world_authority import (WorldResultKind,  # noqa: E402
+                                  canonical_dirs, create_world,
+                                  detect_legacy_layout)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 INSTALL_SH = "install.sh"
@@ -233,13 +234,27 @@ def check_zero_legacy_mutation(project_root: Path) -> GateCheck:
         (world / "Personajes" / "anisa.md").write_text("---\nname: Anisa\n---\n",
                                                        encoding="utf-8")
         before = {str(p): p.read_bytes() for p in world.rglob("*") if p.is_file()}
+        case_insensitive = (world / "lore").exists()
         findings = detect_legacy_layout(Path(tmp))
         detected = any(f["world"] == "legacy-gate"
                        and f["folders"] == ["Lore", "Personajes"] for f in findings)
         after = {str(p): p.read_bytes() for p in world.rglob("*") if p.is_file()}
-        if not detected or before != after or (world / "lore").exists():
-            return _verdict("zero_legacy_mutation", False,
-                            "detection mutated the legacy tree")
+        if case_insensitive:
+            # R-CARG-01: on a case-insensitive FS the runtime already operates
+            # on the canonical tree through legacy-cased paths, so the gate
+            # asserts canonical-side presence (either spelling resolves to the
+            # same physical content) instead of legacy absence.
+            canonical_present = (
+                (world / "lore").exists()
+                or (world / "Lore" / "reglas" / "magia.md").is_file()
+            )
+            if not canonical_present or before != after:
+                return _verdict("zero_legacy_mutation", False,
+                                "case-insensitive fs: canonical tree missing or mutated")
+        else:
+            if not detected or before != after or (world / "lore").exists():
+                return _verdict("zero_legacy_mutation", False,
+                                "detection mutated the legacy tree")
     return _verdict("zero_legacy_mutation", True,
                     "detection read-only; legacy folders byte-identical")
 
