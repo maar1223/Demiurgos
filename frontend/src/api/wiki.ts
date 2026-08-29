@@ -20,6 +20,7 @@ import type {
   MediaList,
   MoveResponse,
   ConfirmedEditRequest,
+  ReauthIntervalResult,
   RecoveryTokenResponse,
   RestoreFileRequest,
   SuccessResponse,
@@ -27,6 +28,9 @@ import type {
   TrashEntry,
   TrashListResponse,
   UploadResponse,
+  VaultConfig,
+  VaultDisableResult,
+  VaultEnableResult,
   WorldInfo,
 } from "@/api/types";
 import { API_BASE_URL } from "@/lib/constants";
@@ -192,6 +196,70 @@ export function rotateWords(): Promise<{ new_words: string }> {
   return apiFetch<{ new_words: string }>(
     apiUrl(["api", "auth", "credentials", "words", "rotate"]),
     { method: "POST", credentials: "same-origin" },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Vault lifecycle (vault-settings-configure)
+// ---------------------------------------------------------------------------
+
+/** GET /api/auth/vault/config — vault lifecycle state. NOT auth-gated
+ *  (read-only status; never carries secrets). */
+export function getVaultConfig(): Promise<VaultConfig> {
+  return apiFetch<VaultConfig>(
+    apiUrl(["api", "auth", "vault", "config"]),
+    { credentials: "same-origin" },
+  );
+}
+
+/** POST /api/auth/vault/enable — activate the vault. With no account it
+ *  creates one (username + optional password) and returns the recovery words
+ *  exactly once; with an existing account it verifies the provided words
+ *  (ownership proof) before enabling. */
+export function enableVault(input: {
+  username?: string;
+  password?: string;
+  words?: string;
+}): Promise<VaultEnableResult> {
+  return apiFetch<VaultEnableResult>(
+    apiUrl(["api", "auth", "vault", "enable"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({
+        username: input.username || undefined,
+        password: input.password || undefined,
+        words: input.words || undefined,
+      }),
+    },
+  );
+}
+
+/** POST /api/auth/vault/disable — deactivate the vault. Requires the recovery
+ *  words (ownership proof) and is rate-limited server-side. */
+export function disableVault(words: string): Promise<VaultDisableResult> {
+  return apiFetch<VaultDisableResult>(
+    apiUrl(["api", "auth", "vault", "disable"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words }),
+    },
+  );
+}
+
+/** POST /api/auth/vault/reauth-interval — adjust the soft re-auth interval
+ *  (days). Returns the effective value (an env override may win). */
+export function setReauthInterval(
+  reauthIntervalD: number,
+): Promise<ReauthIntervalResult> {
+  return apiFetch<ReauthIntervalResult>(
+    apiUrl(["api", "auth", "vault", "reauth-interval"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ reauth_interval_d: reauthIntervalD }),
+    },
   );
 }
 

@@ -99,6 +99,39 @@ export interface AccountCreateResult {
   words: string;
 }
 
+/**
+ * State of the local vault (GET /api/auth/vault/config). `enabled` mirrors
+ * `_vault_active()`: the persisted `capabilities.vault.enabled` flag (PRIMARY)
+ * OR the `DEMIURGOS_AUTH_MODE=credentials` operator override. The endpoint is
+ * NOT auth-gated — read-only status, never secrets.
+ */
+export interface VaultConfig {
+  enabled: boolean;
+  account_exists: boolean;
+  username: string | null;
+  has_password: boolean;
+  reauth_interval_d: number;
+  env_override: boolean;
+}
+
+/** Result of POST /api/auth/vault/enable. When activation created a new
+ *  account, `words` carries the recovery words in plaintext EXACTLY once. */
+export interface VaultEnableResult {
+  enabled: boolean;
+  words?: string;
+}
+
+/** Result of POST /api/auth/vault/disable — removes auth entirely. */
+export interface VaultDisableResult {
+  enabled: boolean;
+}
+
+/** Result of POST /api/auth/vault/reauth-interval — the effective interval
+ *  (may differ from the request when an env override is set). */
+export interface ReauthIntervalResult {
+  reauth_interval_d: number;
+}
+
 /** Response of POST /api/auth/credentials/recover — short-lived single-use
  *  token proving recovery-words ownership. */
 export interface RecoveryTokenResponse {
