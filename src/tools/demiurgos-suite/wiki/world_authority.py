@@ -21,6 +21,7 @@ This module is pure and filesystem-scoped: it writes ONLY under the given
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
@@ -237,12 +238,15 @@ def _same_physical_dir(a: Path, b: Path) -> bool:
 
     On a case-insensitive filesystem (NTFS/APFS) the swapped spelling
     resolves to the same entry even though only one case was created; on a
-    case-sensitive FS (Linux) it does not. Uses existence of the swapped
-    spelling, which is deterministic across platforms (os.path.samefile is
-    not reliable for case-differing paths on the Windows CI runner).
+    case-sensitive FS (Linux) it does not. Windows is always NTFS
+    (case-insensitive), so trust the platform there — the existence/samefile
+    probes are not reliable on the Windows CI runner. For other platforms use
+    existence of the swapped spelling, which is deterministic.
     """
     if a == b or not a.exists():
         return False
+    if sys.platform == "win32":
+        return True
     return b.exists()
 
 
