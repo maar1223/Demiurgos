@@ -233,18 +233,17 @@ def _is_case_insensitive_fs(path: Path) -> bool:
 
 
 def _same_physical_dir(a: Path, b: Path) -> bool:
-    """True when *a* and *b* refer to the same physical directory entry.
+    """True when *a* and a case-distinct *b* resolve to the same entry.
 
-    Uses ``os.path.samefile`` (volume + file id) with existence guards. False
-    when either does not exist (e.g. a case-sensitive FS where the canonical
-    lowercased name is absent) or when samefile is unavailable (OSError).
+    On a case-insensitive filesystem (NTFS/APFS) the swapped spelling
+    resolves to the same entry even though only one case was created; on a
+    case-sensitive FS (Linux) it does not. Uses existence of the swapped
+    spelling, which is deterministic across platforms (os.path.samefile is
+    not reliable for case-differing paths on the Windows CI runner).
     """
-    if not a.exists() or not b.exists():
+    if a == b or not a.exists():
         return False
-    try:
-        return os.path.samefile(a, b)
-    except OSError:
-        return False
+    return b.exists()
 
 
 def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
