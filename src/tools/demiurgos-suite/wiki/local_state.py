@@ -70,9 +70,16 @@ def default_state() -> dict[str, Any]:
             "world": "pending",
             "offline": "pending",
             "import": "pending",
-            # Instance configuration state (not a card state): Argon2id hash of
-            # the offline emergency recovery key, or null when unset.
-            "emergency_key_hash": None,
+            # Local account slot (auth-vault-credentials, R-AC-01): the single
+            # per-instance account. ``password_hash`` is the Argon2id hash of
+            # the optional password, or null for passwordless accounts;
+            # ``words_hash`` is ALWAYS an Argon2id hash once the account exists
+            # (the recovery words are the ownership + recovery key).
+            "account": {
+                "username": None,
+                "password_hash": None,
+                "words_hash": None,
+            },
         },
     }
 
