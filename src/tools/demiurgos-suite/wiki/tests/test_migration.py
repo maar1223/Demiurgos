@@ -178,8 +178,8 @@ class TestMigrationPlan(_MigrationTestCase):
         self.assertEqual([step.folder for step in plan.steps], ["Lore", "Personajes"])
         for step in plan.steps:
             self.assertRegex(step.source_hash, r"^[0-9a-f]{64}$")
-            self.assertEqual(step.source, world / step.folder)
-            self.assertEqual(step.destination, world / step.folder.lower())
+            self.assertEqual(step.source, (world / step.folder).resolve())
+            self.assertEqual(step.destination, (world / step.folder.lower()).resolve())
         # Plan-time hash equals an independent hash of the same tree.
         self.assertEqual(
             plan.steps[0].source_hash,
@@ -438,8 +438,8 @@ class TestMigrationNoop(_MigrationTestCase):
         self.assertTrue(all(step.is_noop for step in plan.steps),
                         "same physical dir steps must be marked noop (R-CIM-02)")
         for step in plan.steps:
-            self.assertEqual(step.source, world / step.folder)
-            self.assertEqual(step.destination, world / step.folder.lower())
+            self.assertEqual(step.source, (world / step.folder).resolve())
+            self.assertEqual(step.destination, (world / step.folder.lower()).resolve())
             self.assertRegex(step.source_hash, r"^[0-9a-f]{64}$")
         # No COLLISION raised: same physical directory is a noop, not a collision.
 

@@ -425,7 +425,13 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         legacy = mundos / "legacy-x"
         (legacy / "Lore").mkdir(parents=True)
         (legacy / "Personajes").mkdir()
-        findings = detect_legacy_layout(mundos)
+        # Force the case-sensitive detection branch so this test is portable:
+        # on a case-insensitive FS (macOS/Windows) detect_legacy_layout is
+        # FS-aware and correctly reports NO legacy (R-CIM-05).
+        with mock.patch(
+            "wiki.world_authority._is_case_insensitive_fs", return_value=False
+        ):
+            findings = detect_legacy_layout(mundos)
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0]["world"], "legacy-x")
         self.assertEqual(set(findings[0]["folders"]), {"Lore", "Personajes"})
