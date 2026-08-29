@@ -17,6 +17,11 @@ Integration coverage for the credentials auth seam:
 - R-ERK-02: password and words verification use SEPARATE rate limiters.
 - _resolve_principal with an active credentials session returns the correct
   EditPrincipal and gated writes accept that principal via the cookie alone.
+- vault-settings-configure (R-VC-01..05, S-VC-01..05): the ``credentials_client``
+  fixture now activates the vault via the PERSISTED ``capabilities.vault.enabled``
+  flag (PRIMARY source, no env override); unit tests cover ``_vault_active()``
+  combos, the missing-slot migration defaults, and integration tests cover the
+  four vault lifecycle endpoints (config/enable/disable/reauth-interval).
 
 NOTE on the http test transport: the real server sets Secure cookies in
 credentials mode; an http transport would never send them back. The tests
@@ -28,6 +33,7 @@ are made directly on the response headers.
 from __future__ import annotations
 
 import hashlib
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -51,13 +57,19 @@ REMEMBER_ME_TTL_SECONDS = 30 * 24 * 3600
 REAUTH_INTERVAL_D = 14
 
 
-@pytest.fixture()
-def credentials_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """TestClient with a temp world + local state, running in credentials mode.
+def _make_vault_client(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    vault_enabled: bool,
+) -> TestClient:
+    """Build a TestClient sandboxed to *tmp_path* with the vault ON or OFF.
 
     ``_LOCAL_STATE`` is reset so the registry binds to the sandboxed project
     root; the session store, recovery tokens, and both rate limiters are reset
-    for per-test isolation.
+    for per-test isolation. ``DEMIURGOS_AUTH_MODE`` stays UNSET so the vault
+    state comes exclusively from the persisted ``capabilities.vault.enabled``
+    flag — the PRIMARY source (R-VC-01, S-VC-01c) — never the env override.
     """
     mundos = tmp_path / "mundos"
     lore = mundos / "test_mundo" / "lore"
@@ -67,7 +79,7 @@ def credentials_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestC
     )
     monkeypatch.setattr(api_server, "MUNDOS_DIR", mundos)
     monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "credentials")
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     monkeypatch.delenv("DEMIURGOS_COOKIE_SECURE", raising=False)
     monkeypatch.delenv("DEMIURGOS_REAUTH_INTERVAL_D", raising=False)
     api_server._graph_indices.clear()
@@ -78,7 +90,41 @@ def credentials_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestC
         api_server._recovery_tokens.clear()
     api_server._password_rate_limiter.reset()
     api_server._words_rate_limiter.reset()
-    yield TestClient(api_server.app, client=("127.0.0.1", 50000))
+    if vault_enabled:
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state.setdefault("capabilities", {})["vault"] = {
+            "enabled": True, "reauth_interval_d": 14,
+        }
+        registry.atomic_commit(state)
+    return TestClient(api_server.app, client=("127.0.0.1", 50000))
+
+
+@pytest.fixture()
+def credentials_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """TestClient with a temp world + local state, vault ON via the persisted
+    flag (flag-primary path, R-VC-01 / S-VC-01c).
+
+    The env override is deliberately NOT set: the vault state must come from
+    ``capabilities.vault.enabled`` so the whole credentials flow runs through
+    the PRIMARY source. The ``DEMIURGOS_AUTH_MODE=credentials`` override path
+    is covered by dedicated tests (S-VC-01b).
+    """
+    client = _make_vault_client(tmp_path, monkeypatch, vault_enabled=True)
+    yield client
+    api_server._LOCAL_STATE = None
+    api_server._password_rate_limiter.reset()
+    api_server._words_rate_limiter.reset()
+    with api_server._local_session_lock:
+        api_server._recovery_tokens.clear()
+
+
+@pytest.fixture()
+def vault_off_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """TestClient with a fresh install: vault OFF, no account, no env override
+    (S-VC-02a, S-AC-02a/c — the activation starting point)."""
+    client = _make_vault_client(tmp_path, monkeypatch, vault_enabled=False)
+    yield client
     api_server._LOCAL_STATE = None
     api_server._password_rate_limiter.reset()
     api_server._words_rate_limiter.reset()
@@ -229,12 +275,16 @@ def test_account_creation_requires_username(credentials_client: TestClient):
     assert missing.status_code == 422
 
 
-def test_credentials_endpoints_forbidden_outside_credentials_mode(
-        credentials_client: TestClient, monkeypatch: pytest.MonkeyPatch):
-    """With the vault OFF (mode disabled, no flag), vault-only endpoints are
-    forbidden (403). Account creation is the exception: it is part of the
-    default onboarding flow and stays allowed on fresh installs (S-AC-01b)."""
-    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "disabled")
+def test_credentials_endpoints_forbidden_when_vault_off(
+        credentials_client: TestClient):
+    """With the vault OFF (flag cleared, no env override) vault-only endpoints
+    are forbidden (403): the PERSISTED flag is the PRIMARY gate (R-AC-01).
+    Account creation is the exception: it is part of the default onboarding
+    flow and stays allowed on fresh installs (S-AC-01b)."""
+    registry = api_server._local_state()
+    state = registry.snapshot()
+    state["capabilities"]["vault"] = {"enabled": False, "reauth_interval_d": 14}
+    registry.atomic_commit(state)
     assert credentials_client.post(
         "/api/auth/credentials/login", json={}).status_code == 403
     assert credentials_client.post(
@@ -242,6 +292,11 @@ def test_credentials_endpoints_forbidden_outside_credentials_mode(
         json={"words": "x"}).status_code == 403
     assert credentials_client.post(
         "/api/auth/credentials/words/rotate").status_code == 403
+    # S-AC-01b: the onboarding account step must still work with vault OFF.
+    created = credentials_client.post(
+        "/api/auth/credentials/account",
+        json={"username": "fresh-user", "password": "x"})
+    assert created.status_code == 200, created.text
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +305,15 @@ def test_credentials_endpoints_forbidden_outside_credentials_mode(
 
 
 def test_login_with_password_sets_secure_httponly_cookie(
-        credentials_client: TestClient):
+        credentials_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """S-AC-03a — an HTTPS deployment pins the Secure cookie attribute.
+
+    The flag-primary fixture runs with no env override, so the mode-based
+    Secure default would be False; the explicit ``DEMIURGOS_COOKIE_SECURE``
+    override pins the secure-cookie contract here (the mode-aware default
+    itself is covered by test_cookie_secure_flag_is_mode_aware_with_env_override).
+    """
+    monkeypatch.setenv("DEMIURGOS_COOKIE_SECURE", "true")
     _create_account(credentials_client, password=PASSWORD)
     started = credentials_client.post(
         "/api/auth/credentials/login", json={"password": PASSWORD})
@@ -552,10 +615,13 @@ def test_rotate_words_returns_new_words_once(credentials_client: TestClient):
 
 def test_session_status_exposes_credentials_provider(
         credentials_client: TestClient):
+    """R-VC-06 — with the vault ON via the PERSISTED flag (no env override)
+    ``enabled`` is True while ``mode`` stays the env default: the AuthGate
+    follows the flag, not the mode string."""
     status = credentials_client.get("/api/auth/session/status")
     assert status.status_code == 200
     assert status.json() == {
-        "mode": "credentials",
+        "mode": "disabled",
         "enabled": True,
         "authenticated": False,
         "label": None,
@@ -671,3 +737,288 @@ def test_resolve_principal_with_credentials_session_returns_edit_principal(
 def test_resolve_principal_fails_closed_without_credentials_session(
         credentials_client: TestClient):
     assert api_server._resolve_principal(_CookieOnlyRequest({})) is None
+
+
+# ---------------------------------------------------------------------------
+# vault-settings-configure — _vault_active() combos (S-VC-01a/b/c)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def vault_registry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Point api_server at a fresh temp registry and reset the cache so
+    ``_vault_active``/``_reauth_interval_d``/``_vault_config`` read the
+    sandboxed local state file. Yields the LocalState instance."""
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    monkeypatch.delenv("DEMIURGOS_REAUTH_INTERVAL_D", raising=False)
+    api_server._LOCAL_STATE = None
+    yield api_server._local_state()
+    api_server._LOCAL_STATE = None
+
+
+def _persist_vault_flag(registry, *, enabled: bool) -> None:
+    state = registry.snapshot()
+    state.setdefault("capabilities", {})["vault"] = {
+        "enabled": enabled, "reauth_interval_d": 14,
+    }
+    registry.atomic_commit(state)
+
+
+def test_vault_active_flag_only(vault_registry, monkeypatch: pytest.MonkeyPatch):
+    """S-VC-01c — the persisted flag alone (no env override) activates."""
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    _persist_vault_flag(vault_registry, enabled=True)
+    assert api_server._vault_active() is True
+
+
+def test_vault_active_env_only(vault_registry, monkeypatch: pytest.MonkeyPatch):
+    """S-VC-01b — the env override alone (flag OFF) activates."""
+    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "credentials")
+    assert api_server._vault_active() is True
+
+
+def test_vault_active_both_flag_and_env(vault_registry, monkeypatch: pytest.MonkeyPatch):
+    """S-VC-01b/c — flag AND override both on: still active."""
+    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "credentials")
+    _persist_vault_flag(vault_registry, enabled=True)
+    assert api_server._vault_active() is True
+
+
+def test_vault_active_neither_flag_nor_env(vault_registry, monkeypatch: pytest.MonkeyPatch):
+    """Neither source set: vault inactive (fresh install default)."""
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    _persist_vault_flag(vault_registry, enabled=False)
+    assert api_server._vault_active() is False
+
+
+# ---------------------------------------------------------------------------
+# vault-settings-configure — migration defaults (S-VC-01a)
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_install_without_vault_slot_defaults_via_get(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """S-VC-01a — an installation written before the vault slot existed loads
+    cleanly; ``_vault_active()``/``_reauth_interval_d()`` fall back to
+    ``{enabled: False, reauth_interval_d: 14}`` via safe ``.get()`` — no
+    error, and words are never regenerated (the legacy account stays
+    untouched, still unconfigured)."""
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    monkeypatch.delenv("DEMIURGOS_REAUTH_INTERVAL_D", raising=False)
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+    api_server._LOCAL_STATE = None
+    state_path = tmp_path / "data" / "local-state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "schema_version": 1,
+        "revision": 3,
+        "onboarding": {
+            "completed": True,
+            "current_step": "ready",
+            "completed_steps": ["step0", "account", "world"],
+        },
+        "locale": {"ui": "es", "conversation": "es", "content": "es",
+                   "region": "AR", "region_explicit": True,
+                   "iana_timezone": "America/Argentina/Buenos_Aires"},
+        "capabilities": {
+            # Pre-vault install: account exists, NO vault slot.
+            "account": {
+                "username": "ada",
+                "password_hash": None,
+                "words_hash": "$argon2id$legacy-install",
+            },
+        },
+    }), encoding="utf-8")
+
+    registry = api_server._local_state()
+    assert "vault" not in registry.snapshot()["capabilities"]
+    # .get() defaults: vault OFF, reauth interval 14, no error.
+    assert api_server._vault_active() is False
+    assert api_server._reauth_interval_d() == 14
+    # The public config mirrors the defaults; the legacy account alone never
+    # activates the vault (S-ID-01b).
+    config = api_server._vault_config()
+    assert config["enabled"] is False
+    assert config["env_override"] is False
+    assert config["account_exists"] is True
+    assert config["reauth_interval_d"] == 14
+    api_server._LOCAL_STATE = None
+
+
+# ---------------------------------------------------------------------------
+# vault-settings-configure — vault lifecycle endpoints (S-VC-02..05)
+# ---------------------------------------------------------------------------
+
+
+def test_vault_config_public_when_vault_off(vault_off_client: TestClient):
+    """S-VC-02a — vault OFF, no account: config is public and reports the
+    defaults."""
+    resp = vault_off_client.get("/api/auth/vault/config")
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "enabled": False,
+        "account_exists": False,
+        "username": None,
+        "has_password": False,
+        "reauth_interval_d": REAUTH_INTERVAL_D,
+        "env_override": False,
+    }
+
+
+def test_vault_config_public_when_vault_on(credentials_client: TestClient):
+    """S-VC-02b — vault ON: config stays public for the Settings panel and
+    never exposes secrets (no words, no password hash, no session material)."""
+    _create_account(credentials_client, password=PASSWORD)
+    resp = credentials_client.get("/api/auth/vault/config")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["enabled"] is True
+    assert body["account_exists"] is True
+    assert body["username"] == USERNAME
+    assert body["has_password"] is True
+    assert body["reauth_interval_d"] == REAUTH_INTERVAL_D
+    assert body["env_override"] is False
+    assert "words" not in body
+    assert "password" not in body
+    assert "hash" not in str(body)
+
+
+def test_vault_enable_without_account_creates_and_returns_words_once(
+        vault_off_client: TestClient):
+    """S-VC-03a — no account: enable creates the account, activates the vault
+    via the persisted flag, and returns the words exactly once."""
+    resp = vault_off_client.post(
+        "/api/auth/vault/enable",
+        json={"username": USERNAME, "password": PASSWORD})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["enabled"] is True
+    words = body["words"]
+    assert words and len(words.split()) >= 8
+
+    registry = api_server._local_state()
+    snapshot = registry.snapshot()
+    account = snapshot["capabilities"]["account"]
+    assert account["username"] == USERNAME
+    assert account["password_hash"]
+    assert account["words_hash"]
+    assert snapshot["capabilities"]["vault"]["enabled"] is True
+    # The plaintext words verify against the stored hash and are NEVER stored.
+    assert "words" not in account
+    assert api_server.account_verify_words(
+        words, account["words_hash"], api_server._words_rate_limiter) is True
+    # The config now reports the ON state.
+    config = vault_off_client.get("/api/auth/vault/config").json()
+    assert config["enabled"] is True
+    assert config["account_exists"] is True
+    # A second enable is rejected: the vault is already ON (S-VC-03d).
+    again = vault_off_client.post(
+        "/api/auth/vault/enable",
+        json={"username": USERNAME, "password": PASSWORD})
+    assert again.status_code == 409
+
+
+def test_vault_enable_with_existing_account_verifies_words(
+        vault_off_client: TestClient):
+    """S-VC-03b/c — account exists, vault OFF: correct words activate the
+    vault; wrong words return 400 and the flag stays OFF."""
+    words = _create_account(vault_off_client, password=PASSWORD)
+
+    wrong = vault_off_client.post(
+        "/api/auth/vault/enable", json={"words": "totally wrong words"})
+    assert wrong.status_code == 400
+    assert api_server._local_state().snapshot()[
+        "capabilities"]["vault"]["enabled"] is False
+
+    ok = vault_off_client.post("/api/auth/vault/enable", json={"words": words})
+    assert ok.status_code == 200, ok.text
+    assert ok.json() == {"enabled": True}
+    assert api_server._local_state().snapshot()[
+        "capabilities"]["vault"]["enabled"] is True
+
+
+def test_vault_enable_conflict_when_already_on(credentials_client: TestClient):
+    """S-VC-03d — vault already ON: enable is rejected with 409."""
+    _create_account(credentials_client, password=PASSWORD)
+    resp = credentials_client.post(
+        "/api/auth/vault/enable",
+        json={"username": USERNAME, "password": PASSWORD})
+    assert resp.status_code == 409
+
+
+def test_vault_disable_with_correct_words(credentials_client: TestClient):
+    """S-VC-04a — correct words disable the vault and persist the flag."""
+    words = _create_account(credentials_client, password=PASSWORD)
+    resp = credentials_client.post(
+        "/api/auth/vault/disable", json={"words": words})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"enabled": False}
+    assert api_server._local_state().snapshot()[
+        "capabilities"]["vault"]["enabled"] is False
+
+
+def test_vault_disable_without_words_returns_400(credentials_client: TestClient):
+    """S-VC-04b — a session alone NEVER suffices: missing words -> 400."""
+    _create_account(credentials_client, password=PASSWORD)
+    resp = credentials_client.post("/api/auth/vault/disable", json={})
+    assert resp.status_code == 400
+    assert api_server._local_state().snapshot()[
+        "capabilities"]["vault"]["enabled"] is True
+
+
+def test_vault_disable_wrong_words_400_and_rate_limited(
+        credentials_client: TestClient):
+    """S-VC-04c — wrong words return 400 AND increment the words rate limiter;
+    the 6th attempt is blocked even with the correct words."""
+    words = _create_account(credentials_client, password=PASSWORD)
+    for _ in range(5):
+        rejected = credentials_client.post(
+            "/api/auth/vault/disable", json={"words": "wrong words"})
+        assert rejected.status_code == 400
+    blocked = credentials_client.post(
+        "/api/auth/vault/disable", json={"words": words})
+    assert blocked.status_code == 400
+    assert api_server._words_rate_limiter.check() is False
+
+
+def test_vault_disable_when_off_returns_409(vault_off_client: TestClient):
+    """Vault already OFF: disable is rejected (409, no mutation)."""
+    resp = vault_off_client.post(
+        "/api/auth/vault/disable", json={"words": "x y"})
+    assert resp.status_code == 409
+
+
+def test_vault_reauth_interval_persists_and_is_effective(
+        credentials_client: TestClient):
+    """S-VC-05a — with the vault ON and authenticated, the interval persists
+    and the session countdown follows it."""
+    _create_account(credentials_client, password=PASSWORD)
+    _login(credentials_client, password=PASSWORD)
+    resp = credentials_client.post(
+        "/api/auth/vault/reauth-interval", json={"reauth_interval_d": 7})
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"reauth_interval_d": 7}
+    assert api_server._local_state().snapshot()[
+        "capabilities"]["vault"]["reauth_interval_d"] == 7
+    assert credentials_client.get(
+        "/api/auth/vault/config").json()["reauth_interval_d"] == 7
+    assert credentials_client.get(
+        "/api/auth/session/status").json()["days_until_reauth"] == 7
+
+
+def test_vault_reauth_interval_env_override_wins(
+        credentials_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """S-VC-05b — DEMIURGOS_REAUTH_INTERVAL_D overrides the persisted value:
+    the response and config report the EFFECTIVE interval while the flag value
+    is still persisted."""
+    monkeypatch.setenv("DEMIURGOS_REAUTH_INTERVAL_D", "30")
+    resp = credentials_client.post(
+        "/api/auth/vault/reauth-interval", json={"reauth_interval_d": 7})
+    assert resp.status_code == 200
+    assert resp.json() == {"reauth_interval_d": 30}
+    assert credentials_client.get(
+        "/api/auth/vault/config").json()["reauth_interval_d"] == 30
+    # The flag value IS persisted (7) — the override only wins on reads.
+    assert api_server._local_state().snapshot()[
+        "capabilities"]["vault"]["reauth_interval_d"] == 7
