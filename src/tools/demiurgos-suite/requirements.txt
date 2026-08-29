@@ -1,3 +1,17 @@
+# Web framework (FastAPI + ASGI server)
+fastapi>=0.110
+uvicorn>=0.29
+# HTTP client (backend requests to Hermes gateway, tests)
+httpx>=0.27
+# CLI/HTTP client used by some tools and probes
+requests>=2.31
+# Pydantic models shared by the API (FastAPI dependency)
+pydantic>=2.7
+# YAML parsing (config, frontmatter, imports)
+PyYAML>=6.0
+# Multipart form parsing for file uploads (importer media/uploads)
+python-multipart>=0.0.9
+# MCP (graph server, tool protocol)
 mcp>=1.0.0
 # Deterministic BM25 search used by the entity graph index
 rank_bm25>=0.2.2,<0.3.0
