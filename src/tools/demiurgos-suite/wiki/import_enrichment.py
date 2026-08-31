@@ -1530,6 +1530,7 @@ def analyze_ficha_funnel(
     rel_vocab: Iterable[str] | None = None,
     provenance: dict[str, str] | None = None,
     progress_cb: Callable[[int, int], None] | None = None,
+    on_phase: Callable[[str], None] | None = None,
     max_workers: int | None = None,
     chunk_budget: int | None = None,
 ) -> list[Candidate]:
@@ -1644,6 +1645,8 @@ def analyze_ficha_funnel(
                                    type(_exc).__name__, exc_info=True)
         # Document-wide type recovery for fichas left without a ``type`` by
         # their chunk (the amplified pass now sees the WHOLE import's summaries).
+        if on_phase is not None:
+            on_phase("last_filter")
         return _recover_types_document_wide(
             final_flat, hermes_runner, f"{base_session_id}:type-recovery",
             catalog=catalog, rel_vocab=rel_vocab, max_workers=workers)
@@ -1688,6 +1691,8 @@ def analyze_ficha_funnel(
                                type(_exc).__name__, exc_info=True)
     # Document-wide type recovery for fichas left without a ``type`` by their
     # chunk (the amplified pass now sees the WHOLE import's summaries).
+    if on_phase is not None:
+        on_phase("last_filter")
     return _recover_types_document_wide(
         ordered, hermes_runner, f"{base_session_id}:type-recovery",
         catalog=catalog, rel_vocab=rel_vocab, max_workers=workers)

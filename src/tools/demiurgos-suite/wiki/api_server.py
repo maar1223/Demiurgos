@@ -5552,9 +5552,9 @@ def _make_import_enricher():
     """
     from import_enrichment import analyze_ficha_funnel as _funnel
 
-    def enricher(candidates, progress_cb=None):
+    def enricher(candidates, progress_cb=None, on_phase=None):
         return _funnel(candidates, hermes_runner=_sync_hermes_enricher,
-                       progress_cb=progress_cb)
+                       progress_cb=progress_cb, on_phase=on_phase)
 
     return enricher
 

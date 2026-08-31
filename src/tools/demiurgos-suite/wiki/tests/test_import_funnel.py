@@ -1356,10 +1356,10 @@ class TestFunnelRouterWiring:
         summary + frontmatter persisted on the candidate rows."""
         from import_enrichment import analyze_ficha_funnel
 
-        def enricher(candidates, progress_cb=None):
+        def enricher(candidates, progress_cb=None, on_phase=None):
             return analyze_ficha_funnel(
                 candidates, hermes_runner=_scripted_funnel_runner(),
-                progress_cb=progress_cb)
+                progress_cb=progress_cb, on_phase=on_phase)
 
         client, store, spool, _ = _funnel_app(tmp_path, enricher=enricher)
         resp = client.post(

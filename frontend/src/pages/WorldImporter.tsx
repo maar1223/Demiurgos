@@ -311,6 +311,73 @@ type FolderInputAttrs = React.InputHTMLAttributes<HTMLInputElement> & {
   directory?: string;
 };
 
+/**
+ * Phase checklist for the slow analysis step (Windows-10-installer style).
+ *
+ * The previous progress bar was misleading: it jumped to ~80% once the parallel
+ * chunks finished, then sat frozen on "ficha 60 de 60" while the doc-wide
+ * last-filter recovery ran (it never updated the counter). A checklist with
+ * discrete phases + a ficha counter reads as real progress instead. The stage
+ * comes straight from the server's `progress_stage` (the funnel emits
+ * "Consultando asistente — ficha X de Y" per chunk and "Recuperando fichas
+ * pendientes" when the last filter starts).
+ */
+function Checklist({
+  stage,
+}: {
+  stage: string;
+  pct: number | null;
+}) {
+  const consulting = stage.includes("Consultando asistente");
+  const recovering = stage.includes("Recuperando fichas pendientes");
+  const fichaMatch = stage.match(/ficha (\d+) de (\d+)/);
+  const steps = [
+    { id: "analyze", label: "Analizando contenido", done: true, current: false, detail: undefined as string | undefined },
+    {
+      id: "consult",
+      label: "Consultando asistente",
+      done: recovering,
+      current: consulting && !recovering,
+      detail: fichaMatch ? `ficha ${fichaMatch[1]} de ${fichaMatch[2]} del documento` : undefined,
+    },
+    {
+      id: "recover",
+      label: "Recuperando fichas sin clasificar",
+      done: false,
+      current: recovering,
+      detail: recovering ? "último filtro (contexto completo)…" : undefined,
+    },
+  ];
+
+  return (
+    <ul className="mt-4 space-y-2" role="status" aria-live="polite">
+      {steps.map((s) => (
+        <li key={s.id} className="flex items-center gap-2 text-small">
+          <span
+            aria-hidden
+            className={cn(
+              "flex h-4 w-4 shrink-0 items-center justify-center",
+              s.done ? "text-status-success" : s.current ? "text-action" : "text-muted",
+            )}
+          >
+            {s.done ? (
+              <Icon name="check" size={14} />
+            ) : s.current ? (
+              <Spinner size="sm" />
+            ) : (
+              <span className="block h-1.5 w-1.5 rounded-full bg-muted/50" />
+            )}
+          </span>
+          <span className={cn(s.current ? "text-primary" : "text-muted")}>
+            {s.label}
+            {s.detail && <span className="ml-1 text-muted">· {s.detail}</span>}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function WorldImporter() {
   const navigate = useNavigate();
   const { mundo } = useParams<{ mundo: string }>();
@@ -1692,28 +1759,10 @@ export default function WorldImporter() {
               </div>
             )}
             {analysisProgress && !streamProgress && (
-              <div
-                className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-surface-raised"
-                role="progressbar"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={analysisProgress.pct ?? 0}
-                aria-valuetext={
-                  analysisProgress.pct === null
-                    ? "Progreso indeterminado"
-                    : `${analysisProgress.pct}%`
-                }
-                aria-label="Progreso del análisis"
-              >
-                <div
-                  className="h-full bg-action transition-all"
-                  style={{
-                    width: `${
-                      analysisProgress.pct === null ? 18 : analysisProgress.pct
-                    }%`,
-                  }}
-                />
-              </div>
+              <Checklist
+                stage={analysisProgress.stage}
+                pct={analysisProgress.pct}
+              />
             )}
             <div className="mt-5">
               <Button variant="ghost" onClick={handleCancel}>

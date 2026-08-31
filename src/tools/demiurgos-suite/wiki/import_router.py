@@ -629,9 +629,19 @@ def create_import_router(
                 # Only run the enricher on candidates without cached enrichment.
                 if cache_misses:
                     try:
+
+                        def _on_phase(phase: str) -> None:
+                            """Distinct stage when the doc-wide last filter runs,
+                            so the live checklist shows the recovery as its own
+                            phase instead of freezing on "ficha 60 de 60"."""
+                            if phase == "last_filter":
+                                _store.update_progress(
+                                    job_id, "Recuperando fichas pendientes", 96)
+
                         enriched_misses = enricher(
                             list(cache_misses),
                             progress_cb=_live_enrichment_progress,
+                            on_phase=_on_phase,
                         )
                         if not isinstance(enriched_misses, list):
                             raise MalformedProviderError(
