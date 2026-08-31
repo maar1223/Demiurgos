@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useCurrentWorld } from "@/hooks/useCurrentWorld";
 import { setCurrentWorld } from "@/lib/currentWorld";
-import { Navbar } from "@/components/organisms/Navbar";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import { CategoryCard } from "@/components/molecules/CategoryCard";
 import { EmptyState } from "@/components/organisms/EmptyState";
@@ -57,14 +56,12 @@ export default function WorldWorkshop() {
   };
 
   return (
-    <WikiHomeLayout
-      header={<Navbar worlds={worlds} />}
-    >
+    <WikiHomeLayout>
       <div className="col-span-full">
-        <h1 className="font-heading text-h3 text-pergamino">
+        <h1 className="font-heading text-h3 text-primary">
           Taller de Mundo
         </h1>
-        <p className="mt-2 text-body text-tinta-desvaida">
+        <p className="mt-2 text-body text-muted">
           Construí tu mundo y mantenelo conectado: lore y personajes,
           con creación de personajes guiada y exportación de ficha a PDF.
         </p>

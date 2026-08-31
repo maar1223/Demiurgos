@@ -3,7 +3,6 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { getCurrentWorld, setCurrentWorld } from "@/lib/currentWorld";
 import { useBacklinks } from "@/hooks/useBacklinks";
-import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { EntityDetail } from "@/components/organisms/EntityDetail";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
@@ -44,7 +43,7 @@ export default function EntityPage() {
     return "asistente";
   });
 
-  // World list for Navbar and validation
+  // World list for validation
   const { worlds, isLoading: worldsLoading } = useWorlds();
 
   const worldExists = worlds.some((w) => w.name === mundo);
@@ -80,7 +79,7 @@ export default function EntityPage() {
   // --- Loading worlds ---
   if (worldsLoading) {
     return (
-      <EditorLayout header={<Navbar worlds={[]} />} sidebar={null}>
+      <EditorLayout sidebar={null}>
         <div className="flex items-center justify-center py-24">
           <Spinner size="lg" />
         </div>
@@ -91,7 +90,7 @@ export default function EntityPage() {
   // --- Missing mundo param ---
   if (!mundo) {
     return (
-      <EditorLayout header={<Navbar worlds={worlds} />} sidebar={null}>
+      <EditorLayout sidebar={null}>
         <EmptyState
           icon="error"
           message="Falta el parámetro de mundo. Seleccioná un mundo desde la página principal."
@@ -105,18 +104,15 @@ export default function EntityPage() {
   // --- World not found ---
   if (!worldExists) {
     return (
-      <EditorLayout
-        header={<Navbar worlds={worlds} currentWorld={mundo} />}
-        sidebar={null}
-      >
+      <EditorLayout sidebar={null}>
         <div className="flex flex-col items-center justify-center gap-4 py-24">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-piedra text-sangre">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-raised text-status-error">
             <Icon name="error" size={32} />
           </div>
-          <h2 className="font-heading text-h3 text-pergamino">
+          <h2 className="font-heading text-h3 text-primary">
             Mundo no encontrado
           </h2>
-          <p className="text-body text-tinta-desvaida">
+          <p className="text-body text-muted">
             No existe un mundo llamado "{mundo}".
           </p>
           <Button variant="secondary" onClick={() => navigate("/wiki")}>
@@ -131,7 +127,6 @@ export default function EntityPage() {
   // --- Ready ---
   return (
     <EditorLayout
-      header={<Navbar worlds={worlds} currentWorld={mundo} />}
       sidebar={null}
       rightPanel={rightPanelContent}
     >
@@ -207,7 +202,7 @@ function ConnectionsPanel({
 
   return (
     <div className="flex-1 overflow-y-auto px-3 py-2">
-      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-sombra">
+      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">
         Conexiones ({links.length})
       </p>
       <ul className="space-y-1">
@@ -221,16 +216,16 @@ function ConnectionsPanel({
             <li key={`${link.source}-${link.target}-${link.kind}-${i}`}>
               <Link
                 to={linkUrl}
-                className="group flex items-center gap-2 rounded px-2 py-1.5 text-small text-pergamino hover:bg-piedra/50 transition-colors"
+                className="group flex items-center gap-2 rounded px-2 py-1.5 text-small text-primary hover:bg-surface-hover/50 transition-colors"
               >
                 <Icon
                   name="file"
                   size={12}
-                  className="flex-shrink-0 text-sombra group-hover:text-plata"
+                  className="flex-shrink-0 text-muted group-hover:text-icon-muted"
                 />
                 <span className="flex-1 truncate">{displayName}</span>
                 {link.kind && (
-                  <span className="flex-shrink-0 rounded bg-piedra px-1.5 py-0.5 text-xs text-sombra uppercase">
+                  <span className="flex-shrink-0 rounded bg-surface-raised px-1.5 py-0.5 text-xs text-muted uppercase">
                     {link.kind}
                   </span>
                 )}

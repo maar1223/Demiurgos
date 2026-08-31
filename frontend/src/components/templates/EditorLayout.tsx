@@ -3,7 +3,9 @@ import { Icon } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
 
 interface EditorLayoutProps {
-  header: ReactNode;
+  /** Optional in-page header slot. The global Navbar is hoisted to the shared
+   *  AppLayout, so pages no longer pass it here. */
+  header?: ReactNode;
   sidebar: ReactNode;
   children: ReactNode;
   /** Right panel content (Asistente IA / Contexto). When provided, a resizable
@@ -115,7 +117,7 @@ export function EditorLayout({
   }, []);
 
   return (
-    <div className="flex h-screen supports-[height:100dvh]:h-dvh flex-col overflow-hidden bg-cripta">
+    <div className="flex h-[calc(100vh-3.5rem)] supports-[height:100dvh]:h-[calc(100dvh-3.5rem)] flex-col overflow-hidden bg-surface">
       {header}
 
       <div className="relative flex flex-1 overflow-hidden">
@@ -124,7 +126,7 @@ export function EditorLayout({
         <button
           type="button"
           onClick={() => setSidebarOpen((prev) => !prev)}
-          className="fixed bottom-4 left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-llamita text-cripta shadow-lg hover:bg-llama-alta md:hidden"
+          className="fixed bottom-4 left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-action text-action-text shadow-lg hover:bg-action-hover md:hidden"
           aria-label={sidebarOpen ? "Cerrar panel" : "Abrir panel"}
           aria-expanded={sidebarOpen}
         >
@@ -134,7 +136,7 @@ export function EditorLayout({
         <aside
           style={{ "--left-w": `${leftWidth}px` } as React.CSSProperties}
           className={cn(
-            "border-r border-filio bg-madero",
+            "border-r border-edge bg-surface-raised",
             // Desktop: always visible, resizable width, full viewport height.
             // Focus mode hides the aside at ALL breakpoints (display:none wins
             // over the mobile overlay positioning — deliberate behavior).
@@ -147,12 +149,12 @@ export function EditorLayout({
           )}
         >
           {/* Mobile close button */}
-          <div className="flex items-center justify-between border-b border-filio px-4 py-3 md:hidden">
-            <span className="text-small text-tinta-desvaida">Archivos</span>
+          <div className="flex items-center justify-between border-b border-edge px-4 py-3 md:hidden">
+            <span className="text-small text-muted">Archivos</span>
             <button
               type="button"
               onClick={() => setSidebarOpen(false)}
-              className="text-plata hover:text-pergamino"
+              className="text-icon-muted hover:text-primary"
               aria-label="Cerrar panel"
             >
               <Icon name="close" size={16} />
@@ -164,9 +166,9 @@ export function EditorLayout({
         {/* Mobile backdrop for left sidebar */}
         {sidebarOpen && (
           <div
-            className="fixed inset-0 z-20 bg-cripta/60 backdrop-blur-sm md:hidden"
-            onClick={() => setSidebarOpen(false)}
-          />
+className="fixed inset-0 z-20 bg-surface/60 backdrop-blur-sm md:hidden"
+                onClick={() => setRightOpen(false)}
+              />
         )}
 
         {/* ── Left divider (desktop: resizable) ─────────────────────────── */}
@@ -186,11 +188,11 @@ export function EditorLayout({
                 setLeftWidth((w) => Math.min(max, w + step));
             }}
             className={cn(
-              "hidden md:flex w-2 cursor-col-resize items-center justify-center border-r border-filio bg-madero hover:bg-filio active:bg-filio transition-colors",
-              dragging && "bg-filio select-none",
+              "hidden md:flex w-2 cursor-col-resize items-center justify-center border-r border-edge bg-surface-raised hover:bg-surface-hover active:bg-surface-hover transition-colors",
+              dragging && "bg-surface-hover select-none",
             )}
           >
-            <Icon name="grip" size={14} className="text-sombra" />
+            <Icon name="grip" size={14} className="text-muted" />
           </div>
         )}
 
@@ -220,20 +222,20 @@ export function EditorLayout({
               className={cn(
                 "hidden md:flex",
                 "w-2 cursor-col-resize items-center justify-center",
-                "border-l border-filio bg-madero",
-                "hover:bg-filio active:bg-filio transition-colors",
-                dragging && "bg-filio",
+                "border-l border-edge bg-surface-raised",
+                "hover:bg-surface-hover active:bg-surface-hover transition-colors",
+                dragging && "bg-surface-hover",
                 // Prevent text selection while dragging
                 dragging && "select-none",
               )}
             >
-              <Icon name="grip" size={14} className="text-sombra" />
+<Icon name="grip" size={14} className="text-muted" />
             </div>
 
             {/* Right panel — desktop: resizable static, mobile: overlay */}
             <aside
               className={cn(
-                "border-l border-filio bg-madero",
+                "border-l border-edge bg-surface-raised",
                 // Desktop
                 "hidden md:flex md:flex-col",
                 // Mobile: overlay
@@ -243,12 +245,12 @@ export function EditorLayout({
               style={{ width: rightWidth }}
             >
               {/* Mobile close button */}
-              <div className="flex items-center justify-between border-b border-filio px-4 py-3 md:hidden">
-                <span className="text-small text-tinta-desvaida">Panel</span>
+              <div className="flex items-center justify-between border-b border-edge px-4 py-3 md:hidden">
+                <span className="text-small text-muted">Panel</span>
                 <button
                   type="button"
                   onClick={() => setRightOpen(false)}
-                  className="text-plata hover:text-pergamino"
+                  className="text-icon-muted hover:text-primary"
                   aria-label="Cerrar panel"
                 >
                   <Icon name="close" size={16} />
@@ -262,7 +264,7 @@ export function EditorLayout({
             {/* Mobile backdrop for right panel */}
             {rightOpen && (
               <div
-                className="fixed inset-0 z-20 bg-cripta/60 backdrop-blur-sm md:hidden"
+className="fixed inset-0 z-20 bg-surface/60 backdrop-blur-sm md:hidden"
                 onClick={() => setRightOpen(false)}
               />
             )}
@@ -274,8 +276,8 @@ export function EditorLayout({
               className={cn(
                 "fixed bottom-4 right-4 z-40 flex h-12 w-12 items-center justify-center rounded-full shadow-lg md:hidden",
                 rightOpen
-                  ? "bg-sangre text-cripta hover:bg-sangre/80"
-                  : "bg-llamita text-cripta hover:bg-llama-alta",
+                  ? "bg-status-error text-action-text hover:bg-status-error/80"
+                  : "bg-action text-action-text hover:bg-action-hover",
               )}
               aria-label={rightOpen ? "Cerrar panel derecho" : "Abrir panel derecho"}
               aria-expanded={rightOpen}

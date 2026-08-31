@@ -1,7 +1,5 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
-import { useWorlds } from "@/hooks/useWorlds";
-import { Navbar } from "@/components/organisms/Navbar";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import GraphView from "@/components/GraphView";
 import { EmptyState } from "@/components/organisms/EmptyState";
@@ -26,18 +24,15 @@ const TABS: readonly { key: TabKey; label: string }[] = [
  */
 export default function RelacionesCanon() {
   const { mundo } = useParams<{ mundo: string }>();
-  const { worlds } = useWorlds();
   const [activeTab, setActiveTab] = useState<TabKey>("grafo");
 
   return (
-    <WikiHomeLayout
-      header={<Navbar worlds={worlds} />}
-    >
+    <WikiHomeLayout>
       <div className="col-span-full">
-        <h1 className="font-heading text-h3 text-pergamino">
+        <h1 className="font-heading text-h3 text-primary">
           Relaciones y Canon
         </h1>
-        <p className="mt-2 text-body text-tinta-desvaida">
+        <p className="mt-2 text-body text-muted">
           Grafo de entidades del mundo, estados de certeza y conexiones.
         </p>
       </div>
@@ -46,7 +41,7 @@ export default function RelacionesCanon() {
         <div
           role="tablist"
           aria-label="Secciones de Relaciones y Canon"
-          className="mb-4 flex gap-2 border-b border-filio"
+          className="mb-4 flex gap-2 border-b border-edge"
         >
           {TABS.map((tab) => (
             <button
@@ -58,8 +53,8 @@ export default function RelacionesCanon() {
               className={cn(
                 "border-b-2 px-4 py-2 text-small font-medium transition-colors",
                 activeTab === tab.key
-                  ? "border-llamita text-llamita"
-                  : "border-transparent text-tinta-desvaida hover:text-pergamino",
+                  ? "border-action text-action"
+                  : "border-transparent text-muted hover:text-primary",
               )}
             >
               {tab.label}
@@ -79,10 +74,10 @@ export default function RelacionesCanon() {
         ) : (
           <div
             data-testid="placeholder-panel"
-            className="flex flex-col items-center justify-center gap-2 rounded-xl border border-filio bg-madero py-24"
+            className="flex flex-col items-center justify-center gap-2 rounded-xl border border-edge bg-surface-raised py-24"
           >
-            <Icon name="lightbulb" size={32} className="text-sombra" />
-            <p className="text-body text-tinta-desvaida">
+            <Icon name="lightbulb" size={32} className="text-muted" />
+            <p className="text-body text-muted">
               {GENERIC_TEASER_LABEL}
             </p>
           </div>

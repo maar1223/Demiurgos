@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
-import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { TabBar, type SidebarTab } from "@/components/molecules/TabBar";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
@@ -439,15 +438,15 @@ export default function IdeasWorkshop() {
   // ── Left panel: filters + list + create form ─────────────────────────────
   const sidebar = (
     <div className="flex h-full flex-col">
-      <div className="border-b border-filio px-4 py-3">
+      <div className="border-b border-edge px-4 py-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-heading text-body font-medium text-pergamino">Ideas</h2>
-          <span className="text-xs text-tinta-desvaida">{ideas.length}</span>
+          <h2 className="font-heading text-body font-medium text-primary">Ideas</h2>
+          <span className="text-xs text-muted">{ideas.length}</span>
         </div>
 
         {/* S-8.1: pending queue counter (shared SWR key with the panel) */}
         {pendingCount > 0 && (
-          <div className="mt-2 rounded-md border border-llamita/30 bg-llamita/10 px-2.5 py-1.5 text-xs font-medium text-llamita">
+          <div className="mt-2 rounded-md border border-action/30 bg-action/10 px-2.5 py-1.5 text-xs font-medium text-action">
             Ideas por confirmar ({pendingCount})
           </div>
         )}
@@ -458,7 +457,7 @@ export default function IdeasWorkshop() {
             setActionError(null);
             setShowCreate((prev) => !prev);
           }}
-          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-llamita px-2.5 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta"
+          className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover"
           aria-label="Nueva idea"
         >
           <Icon name="plus" size={13} />
@@ -473,26 +472,26 @@ export default function IdeasWorkshop() {
         <div
           role="region"
           aria-label="Revisar capturas por confirmar"
-          className="border-b border-filio bg-cripta/60 px-4 py-3"
+          className="border-b border-edge bg-surface/60 px-4 py-3"
         >
-          <h3 className="mb-2 text-xs font-medium text-pergamino">Por confirmar</h3>
+          <h3 className="mb-2 text-xs font-medium text-primary">Por confirmar</h3>
           <ul className="space-y-2">
             {pendingCaptures.map((capture: PendingCapture) => (
               <li
                 key={capture.capture_id}
-                className="rounded-md border border-filio bg-madero p-2.5"
+                className="rounded-md border border-edge bg-surface-raised p-2.5"
               >
                 <div className="mb-1 flex items-center justify-between gap-2">
-                  <span className="truncate text-xs font-medium text-pergamino">
+                  <span className="truncate text-xs font-medium text-primary">
                     {capture.slug}
                   </span>
                   {capture.event_ts && (
-                    <span className="shrink-0 text-[10px] text-tinta-desvaida">
+                    <span className="shrink-0 text-[10px] text-muted">
                       {new Date(capture.event_ts).toLocaleString()}
                     </span>
                   )}
                 </div>
-                <p className="mb-2 line-clamp-2 text-xs text-tinta-desvaida">
+                <p className="mb-2 line-clamp-2 text-xs text-muted">
                   {capture.raw_text}
                 </p>
                 <div className="flex gap-2">
@@ -500,7 +499,7 @@ export default function IdeasWorkshop() {
                     type="button"
                     onClick={() => void handleConfirmPending(capture.capture_id)}
                     disabled={actingCaptureId === capture.capture_id}
-                    className="flex-1 rounded-md bg-llamita px-2 py-1 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex-1 rounded-md bg-action px-2 py-1 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Guardar como idea
                   </button>
@@ -508,7 +507,7 @@ export default function IdeasWorkshop() {
                     type="button"
                     onClick={() => void handleDiscardPending(capture.capture_id)}
                     disabled={actingCaptureId === capture.capture_id}
-                    className="flex-1 rounded-md border border-sangre/30 px-2 py-1 text-xs text-sangre transition-colors hover:bg-sangre/10 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex-1 rounded-md border border-status-error/30 px-2 py-1 text-xs text-status-error transition-colors hover:bg-status-error/10 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     Descartar
                   </button>
@@ -523,11 +522,11 @@ export default function IdeasWorkshop() {
         <div
           role="group"
           aria-label="Crear idea"
-          className="border-b border-filio bg-cripta/60 px-4 py-3"
+          className="border-b border-edge bg-surface/60 px-4 py-3"
         >
           <div className="space-y-2">
             <div>
-              <label htmlFor="idea-slug" className="mb-1 block text-xs text-tinta-desvaida">
+              <label htmlFor="idea-slug" className="mb-1 block text-xs text-muted">
                 Slug
               </label>
               <input
@@ -535,18 +534,18 @@ export default function IdeasWorkshop() {
                 value={createSlug}
                 onChange={(e) => setCreateSlug(e.target.value)}
                 placeholder="ej: arquero-ciego"
-                className="w-full rounded-md border border-filio bg-madero px-2.5 py-1.5 text-xs text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+                className="w-full rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
             </div>
             <div>
-              <label htmlFor="idea-type" className="mb-1 block text-xs text-tinta-desvaida">
+              <label htmlFor="idea-type" className="mb-1 block text-xs text-muted">
                 Tipo
               </label>
               <select
                 id="idea-type"
                 value={createType}
                 onChange={(e) => setCreateType(e.target.value as IdeaType)}
-                className="w-full rounded-md border border-filio bg-madero px-2.5 py-1.5 text-xs text-pergamino focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+                className="w-full rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               >
                 {IDEA_TYPES.map((type) => (
                   <option key={type} value={type}>
@@ -556,7 +555,7 @@ export default function IdeasWorkshop() {
               </select>
             </div>
             <div>
-              <label htmlFor="idea-title" className="mb-1 block text-xs text-tinta-desvaida">
+              <label htmlFor="idea-title" className="mb-1 block text-xs text-muted">
                 Título (opcional)
               </label>
               <input
@@ -564,11 +563,11 @@ export default function IdeasWorkshop() {
                 value={createTitle}
                 onChange={(e) => setCreateTitle(e.target.value)}
                 placeholder="ej: prototipo de diosa"
-                className="w-full rounded-md border border-filio bg-madero px-2.5 py-1.5 text-xs text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+                className="w-full rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
             </div>
             <div>
-              <label htmlFor="idea-tags" className="mb-1 block text-xs text-tinta-desvaida">
+              <label htmlFor="idea-tags" className="mb-1 block text-xs text-muted">
                 Etiquetas (separadas por coma)
               </label>
               <input
@@ -576,11 +575,11 @@ export default function IdeasWorkshop() {
                 value={createTags}
                 onChange={(e) => setCreateTags(e.target.value)}
                 placeholder="ej: arquero, ciego"
-                className="w-full rounded-md border border-filio bg-madero px-2.5 py-1.5 text-xs text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+                className="w-full rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
             </div>
             <div>
-              <label htmlFor="idea-body" className="mb-1 block text-xs text-tinta-desvaida">
+              <label htmlFor="idea-body" className="mb-1 block text-xs text-muted">
                 Cuerpo
               </label>
               <textarea
@@ -589,7 +588,7 @@ export default function IdeasWorkshop() {
                 onChange={(e) => setCreateBody(e.target.value)}
                 rows={4}
                 placeholder="Describí la idea..."
-                className="w-full resize-none rounded-md border border-filio bg-madero px-2.5 py-1.5 text-xs text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+                className="w-full resize-none rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
             </div>
             <div className="flex gap-2">
@@ -597,7 +596,7 @@ export default function IdeasWorkshop() {
                 type="button"
                 onClick={() => void handleCreate()}
                 disabled={creating}
-                className="flex-1 rounded-md bg-llamita px-2.5 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex-1 rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {creating ? "Creando..." : "Crear idea"}
               </button>
@@ -605,7 +604,7 @@ export default function IdeasWorkshop() {
                 type="button"
                 onClick={resetCreateForm}
                 disabled={creating}
-                className="rounded-md border border-filio px-2.5 py-1.5 text-xs text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino disabled:opacity-50"
+                className="rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
               >
                 Cancelar
               </button>
@@ -614,12 +613,12 @@ export default function IdeasWorkshop() {
         </div>
       )}
 
-      <div className="space-y-1.5 border-b border-filio px-4 py-2.5">
+      <div className="space-y-1.5 border-b border-edge px-4 py-2.5">
         <div className="relative">
           <Icon
             name="search"
             size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sombra"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
           />
           <input
             type="text"
@@ -627,7 +626,7 @@ export default function IdeasWorkshop() {
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Buscar por título, slug o etiqueta..."
             aria-label="Buscar ideas"
-            className="w-full rounded-md border border-filio bg-piedra py-1.5 pl-8 pr-3 text-xs text-pergamino placeholder:text-sombra transition-colors focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+            className="w-full rounded-md border border-edge bg-surface-raised py-1.5 pl-8 pr-3 text-xs text-primary placeholder:text-muted transition-colors focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
           />
         </div>
         <div className="grid grid-cols-2 gap-1.5">
@@ -635,7 +634,7 @@ export default function IdeasWorkshop() {
             aria-label="Ordenar ideas"
             value={sortKey}
             onChange={(e) => setSortKey(e.target.value as IdeaSortKey)}
-            className="w-full rounded-md border border-filio bg-madero px-1.5 py-1 text-xs text-pergamino focus:border-llamita focus:outline-none"
+            className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
           >
             <option value="recent">Recientes</option>
             <option value="oldest">Más antiguas</option>
@@ -648,25 +647,25 @@ export default function IdeasWorkshop() {
               aria-label="Dirección de orden"
               value={sortOrder}
               onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
-              className="w-full rounded-md border border-filio bg-madero px-1.5 py-1 text-xs text-pergamino focus:border-llamita focus:outline-none"
+              className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
             >
               <option value="desc">Descendente</option>
               <option value="asc">Ascendente</option>
             </select>
           ) : (
-            <span className="flex items-center justify-center rounded-md border border-filio bg-madero px-1.5 py-1 text-xs text-tinta-desvaida">
+            <span className="flex items-center justify-center rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-muted">
               {sortKey === "recent" ? "Más reciente primero" : "Más antigua primero"}
             </span>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-1.5 border-b border-filio px-4 py-2.5" aria-label="Filtros">
+      <div className="grid grid-cols-3 gap-1.5 border-b border-edge px-4 py-2.5" aria-label="Filtros">
         <select
           aria-label="Filtrar por tipo"
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value as "" | IdeaType)}
-          className="w-full rounded-md border border-filio bg-madero px-1.5 py-1 text-xs text-pergamino focus:border-llamita focus:outline-none"
+          className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
         >
           <option value="">Tipo</option>
           {IDEA_TYPES.map((type) => (
@@ -679,7 +678,7 @@ export default function IdeasWorkshop() {
           aria-label="Filtrar por estado"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as "" | IdeaStatus)}
-          className="w-full rounded-md border border-filio bg-madero px-1.5 py-1 text-xs text-pergamino focus:border-llamita focus:outline-none"
+          className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
         >
           <option value="">Estado</option>
           <option value="fresh">{STATUS_LABELS.fresh}</option>
@@ -689,7 +688,7 @@ export default function IdeasWorkshop() {
           aria-label="Filtrar por origen"
           value={sourceFilter}
           onChange={(e) => setSourceFilter(e.target.value as "" | IdeaSource)}
-          className="w-full rounded-md border border-filio bg-madero px-1.5 py-1 text-xs text-pergamino focus:border-llamita focus:outline-none"
+          className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
         >
           <option value="">Origen</option>
           <option value="telegram">{SOURCE_LABELS.telegram}</option>
@@ -704,15 +703,15 @@ export default function IdeasWorkshop() {
             <Spinner size="md" />
           </div>
         ) : listError ? (
-          <p className="px-4 py-6 text-center text-xs text-sangre">
+          <p className="px-4 py-6 text-center text-xs text-status-error">
             {getErrorMessage((listError as ApiError).status, (listError as ApiError).detail)}
           </p>
         ) : ideas.length === 0 ? (
-          <p className="px-4 py-6 text-center text-xs text-tinta-desvaida">
+          <p className="px-4 py-6 text-center text-xs text-muted">
             No hay ideas. Creá la primera con "Nueva idea".
           </p>
         ) : filteredIdeas.length === 0 ? (
-          <p className="px-4 py-6 text-center text-xs text-tinta-desvaida">
+          <p className="px-4 py-6 text-center text-xs text-muted">
             No hay ideas que coincidan.
           </p>
         ) : (
@@ -726,14 +725,14 @@ export default function IdeasWorkshop() {
                   className={[
                     "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors",
                     selectedSlug === idea.slug
-                      ? "bg-llamita/10 text-llamita"
-                      : "text-tinta-desvaida hover:bg-piedra hover:text-pergamino",
+                      ? "bg-action/20 text-action"
+                      : "hover:bg-surface-hover",
                   ].join(" ")}
                 >
                   <Icon name="lightbulb" size={14} className="shrink-0 opacity-60" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium">{idea.title || idea.slug}</span>
-                    <span className="block truncate text-xs opacity-60">
+                    <span className="block truncate text-sm font-medium text-primary">{idea.title || idea.slug}</span>
+                    <span className="block truncate text-sm text-muted">
                       {TYPE_LABELS[idea.type]} · {STATUS_LABELS[idea.status]}
                     </span>
                   </span>
@@ -755,34 +754,34 @@ export default function IdeasWorkshop() {
         </div>
       ) : detailError ? (
         <div className="py-16 text-center">
-          <p className="text-body text-sangre">
+          <p className="text-body text-status-error">
             {getErrorMessage((detailError as ApiError).status, (detailError as ApiError).detail)}
           </p>
         </div>
       ) : !selectedIdea ? (
         <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-llamita/10 text-llamita">
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-action/10 text-action">
             <Icon name="lightbulb" size={28} />
           </div>
-          <h2 className="font-heading text-h3 text-pergamino">Banco global de ideas</h2>
-          <p className="max-w-sm text-body text-tinta-desvaida">
+          <h2 className="font-heading text-h3 text-primary">Banco global de ideas</h2>
+          <p className="max-w-sm text-body text-muted">
             Seleccioná una idea del listado para verla en detalle, reclasificarla o
             materializarla en un mundo.
           </p>
         </div>
       ) : (
         <article aria-label={`Idea ${selectedIdea.slug}`}>
-          <header className="mb-4 border-b border-filio pb-4">
+          <header className="mb-4 border-b border-edge pb-4">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-heading text-h2 text-pergamino">{selectedIdea.title || selectedIdea.slug}</h2>
-              <span className="rounded-full bg-llamita/10 px-2.5 py-0.5 text-xs text-llamita">
+              <h2 className="font-heading text-h2 text-primary">{selectedIdea.title || selectedIdea.slug}</h2>
+              <span className="rounded-full bg-action/10 px-2.5 py-0.5 text-xs text-action">
                 {TYPE_LABELS[selectedIdea.type]}
               </span>
-              <span className="rounded-full bg-piedra px-2.5 py-0.5 text-xs text-tinta-desvaida">
+              <span className="rounded-full bg-surface-raised px-2.5 py-0.5 text-xs text-muted">
                 {STATUS_LABELS[selectedIdea.status]}
               </span>
             </div>
-            <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-tinta-desvaida">
+            <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
               <div>
                 <dt className="inline">Origen: </dt>
                 <dd className="inline">{SOURCE_LABELS[selectedIdea.source]}</dd>
@@ -818,16 +817,16 @@ export default function IdeasWorkshop() {
           {/* Attach image (POST /api/ideas/{slug}/media) — a <label> styled
               as a button opens the hidden file input; the embed is added to
               the body server-side, so only the three SWR keys refresh. */}
-          <section aria-label="Imagen de la idea" className="mb-4 rounded-lg border border-filio bg-madero p-4">
-            <h3 className="mb-2 text-body font-medium text-pergamino">Imagen</h3>
+          <section aria-label="Imagen de la idea" className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
+            <h3 className="mb-2 text-body font-medium text-primary">Imagen</h3>
             {selectedIdea.media_path ? (
-              <p className="mb-2 text-xs text-tinta-desvaida">
+              <p className="mb-2 text-xs text-muted">
                 Ya tiene imagen adjunta: {selectedIdea.media_path.split("/").pop()}
               </p>
             ) : (
-              <p className="mb-2 text-xs text-tinta-desvaida">Sin imagen</p>
+              <p className="mb-2 text-xs text-muted">Sin imagen</p>
             )}
-            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-llamita px-3 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover">
               <Icon name="image" size={13} />
               {attachingMedia
                 ? "Adjuntando..."
@@ -845,21 +844,21 @@ export default function IdeasWorkshop() {
           </section>
 
           {/* Edit title */}
-          <section aria-label="Título de la idea" className="mb-4 rounded-lg border border-filio bg-madero p-4">
-            <h3 className="mb-2 text-body font-medium text-pergamino">Título</h3>
+          <section aria-label="Título de la idea" className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
+            <h3 className="mb-2 text-body font-medium text-primary">Título</h3>
             <div className="flex flex-wrap items-center gap-2">
               <input
                 id="edit-idea-title"
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
                 placeholder="Sin título — se muestra el slug"
-                className="min-w-0 flex-1 rounded-md border border-filio bg-cripta px-2.5 py-1.5 text-xs text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+                className="min-w-0 flex-1 rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
               <button
                 type="button"
                 onClick={() => void handleEditTitle()}
                 disabled={savingTitle || editTitle.trim() === (selectedIdea.title ?? "")}
-                className="rounded-md bg-llamita px-3 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {savingTitle ? "Guardando..." : "Guardar título"}
               </button>
@@ -867,14 +866,14 @@ export default function IdeasWorkshop() {
           </section>
 
           {/* Reclassify */}
-          <section aria-label="Reclasificar idea" className="mb-4 rounded-lg border border-filio bg-madero p-4">
-            <h3 className="mb-2 text-body font-medium text-pergamino">Clasificación</h3>
+          <section aria-label="Reclasificar idea" className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
+            <h3 className="mb-2 text-body font-medium text-primary">Clasificación</h3>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 aria-label="Tipo de la idea"
                 value={reclassifyType}
                 onChange={(e) => setReclassifyType(e.target.value as IdeaType)}
-                className="rounded-md border border-filio bg-cripta px-2.5 py-1.5 text-xs text-pergamino focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+                className="rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               >
                 {IDEA_TYPES.map((type) => (
                   <option key={type} value={type}>
@@ -886,7 +885,7 @@ export default function IdeasWorkshop() {
                 type="button"
                 onClick={() => void handleReclassify()}
                 disabled={reclassifying || reclassifyType === selectedIdea.type}
-                className="rounded-md bg-llamita px-3 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {reclassifying ? "Guardando..." : "Guardar tipo"}
               </button>
@@ -894,8 +893,8 @@ export default function IdeasWorkshop() {
           </section>
 
           {/* Materialize */}
-          <section aria-label="Usar idea en un mundo" className="mb-4 rounded-lg border border-filio bg-madero p-4">
-            <h3 className="mb-2 text-body font-medium text-pergamino">Usar en un mundo</h3>
+          <section aria-label="Usar idea en un mundo" className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
+            <h3 className="mb-2 text-body font-medium text-primary">Usar en un mundo</h3>
             {materializeFor !== selectedIdea.slug ? (
               <button
                 type="button"
@@ -903,7 +902,7 @@ export default function IdeasWorkshop() {
                   setActionError(null);
                   setMaterializeFor(selectedIdea.slug);
                 }}
-                className="flex items-center gap-1.5 rounded-md border border-filio px-3 py-1.5 text-xs text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino"
+                className="flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary"
               >
                 <Icon name="world" size={13} />
                 Materializar
@@ -911,14 +910,14 @@ export default function IdeasWorkshop() {
             ) : (
               <div className="space-y-2">
                 <div>
-                  <label htmlFor="materialize-world" className="mb-1 block text-xs text-tinta-desvaida">
+                  <label htmlFor="materialize-world" className="mb-1 block text-xs text-muted">
                     Mundo
                   </label>
                   <select
                     id="materialize-world"
                     value={materializeWorld}
                     onChange={(e) => setMaterializeWorld(e.target.value)}
-                    className="w-full rounded-md border border-filio bg-cripta px-2.5 py-1.5 text-xs text-pergamino focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
                   >
                     <option value="">Elegí un mundo...</option>
                     {worlds.map((world) => (
@@ -929,7 +928,7 @@ export default function IdeasWorkshop() {
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="materialize-canon-rel" className="mb-1 block text-xs text-tinta-desvaida">
+                  <label htmlFor="materialize-canon-rel" className="mb-1 block text-xs text-muted">
                     Ruta canónica (opcional)
                   </label>
                   <input
@@ -937,7 +936,7 @@ export default function IdeasWorkshop() {
                     value={materializeCanonRel}
                     onChange={(e) => setMaterializeCanonRel(e.target.value)}
                     placeholder="ej: personajes/arquero.md"
-                    className="w-full rounded-md border border-filio bg-cripta px-2.5 py-1.5 text-xs text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
                   />
                 </div>
                 <div className="flex gap-2">
@@ -945,7 +944,7 @@ export default function IdeasWorkshop() {
                     type="button"
                     onClick={() => void handleMaterialize()}
                     disabled={materializing || !materializeWorld}
-                    className="rounded-md bg-llamita px-3 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {materializing ? "Materializando..." : "Materializar"}
                   </button>
@@ -957,7 +956,7 @@ export default function IdeasWorkshop() {
                       setMaterializeCanonRel("");
                     }}
                     disabled={materializing}
-                    className="rounded-md border border-filio px-3 py-1.5 text-xs text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino disabled:opacity-50"
+                    className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
                   >
                     Cancelar
                   </button>
@@ -972,20 +971,20 @@ export default function IdeasWorkshop() {
               value: consultable archive of every prior version. */}
           <section
             aria-label="Historial de versiones"
-            className="mb-4 rounded-lg border border-filio bg-madero p-4"
+            className="mb-4 rounded-lg border border-edge bg-surface-raised p-4"
           >
-            <h3 className="mb-2 text-body font-medium text-pergamino">
+            <h3 className="mb-2 text-body font-medium text-primary">
               Historial de versiones
             </h3>
             {versionsError ? (
-              <p className="text-xs text-sangre">
+              <p className="text-xs text-status-error">
                 {getErrorMessage(
                   (versionsError as ApiError).status,
                   (versionsError as ApiError).detail,
                 )}
               </p>
             ) : archivedVersions.length === 0 ? (
-              <p className="text-xs text-tinta-desvaida">
+              <p className="text-xs text-muted">
                 Sin versiones archivadas. La idea actual es la versión viva.
               </p>
             ) : (
@@ -993,13 +992,13 @@ export default function IdeasWorkshop() {
                 {archivedVersions.map((v) => (
                   <li
                     key={v.version}
-                    className="flex items-baseline justify-between gap-2 rounded-md bg-cripta px-2.5 py-1.5 text-xs"
+                    className="flex items-baseline justify-between gap-2 rounded-md bg-surface px-2.5 py-1.5 text-xs"
                   >
-                    <span className="shrink-0 font-medium text-pergamino">
+                    <span className="shrink-0 font-medium text-primary">
                       Versión {v.version}
                     </span>
                     <span
-                      className="min-w-0 truncate text-tinta-desvaida"
+                      className="min-w-0 truncate text-muted"
                       title={v.path}
                     >
                       {v.path}
@@ -1011,12 +1010,12 @@ export default function IdeasWorkshop() {
           </section>
 
           {/* Delete */}
-          <div className="flex justify-end border-t border-filio pt-4">
+          <div className="flex justify-end border-t border-edge pt-4">
             <button
               type="button"
               onClick={() => void handleDelete()}
               disabled={deleting}
-              className="flex items-center gap-1.5 rounded-md border border-sangre/30 px-3 py-1.5 text-xs text-sangre transition-colors hover:bg-sangre/10 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md border border-status-error/30 px-3 py-1.5 text-xs text-status-error transition-colors hover:bg-status-error/10 disabled:opacity-50"
               aria-label={`Eliminar idea ${selectedIdea.slug}`}
             >
               <Icon name="trash" size={13} />
@@ -1031,25 +1030,25 @@ export default function IdeasWorkshop() {
   // ── Right panel: persistent assistant (null-mundo) ───────────────────────
   const contextPanel = (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4">
-      <h2 className="mb-2 text-body font-medium text-pergamino">Contexto</h2>
-      <p className="text-xs leading-relaxed text-tinta-desvaida">
+      <h2 className="mb-2 text-body font-medium text-primary">Contexto</h2>
+      <p className="text-xs leading-relaxed text-muted">
         El Taller de Ideas es un banco global, sin mundo activo. Las ideas son
         arquetipos reutilizables que podés materializar en cualquier mundo.
       </p>
-      <dl className="mt-4 space-y-2 text-xs text-tinta-desvaida">
+      <dl className="mt-4 space-y-2 text-xs text-muted">
         <div className="flex justify-between">
           <dt>Ideas en el banco</dt>
-          <dd className="text-pergamino">{ideas.length}</dd>
+          <dd className="text-primary">{ideas.length}</dd>
         </div>
         {selectedIdea && (
           <>
             <div className="flex justify-between">
               <dt>Idea seleccionada</dt>
-              <dd className="text-pergamino">{selectedIdea.slug}</dd>
+              <dd className="text-primary">{selectedIdea.slug}</dd>
             </div>
             <div className="flex justify-between">
               <dt>Estado</dt>
-              <dd className="text-pergamino">{STATUS_LABELS[selectedIdea.status]}</dd>
+              <dd className="text-primary">{STATUS_LABELS[selectedIdea.status]}</dd>
             </div>
           </>
         )}
@@ -1070,19 +1069,18 @@ export default function IdeasWorkshop() {
 
   return (
     <EditorLayout
-      header={<Navbar worlds={worlds} />}
       sidebar={sidebar}
       rightPanel={rightPanel}
     >
       {(actionError || toast) && (
         <div className="mb-4">
           {actionError && (
-            <div role="alert" className="rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-xs text-sangre">
+            <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error">
               {actionError}
             </div>
           )}
           {toast && (
-            <div role="status" className="rounded-lg border border-llamita/30 bg-llamita/10 px-3 py-2 text-xs text-pergamino">
+            <div role="status" className="rounded-lg border border-action/30 bg-action/10 px-3 py-2 text-xs text-primary">
               {toast}
             </div>
           )}

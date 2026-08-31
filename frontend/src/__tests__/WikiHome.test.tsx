@@ -99,9 +99,11 @@ describe("WikiHome", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders navbar with world selector", () => {
+  it("does not render the Navbar (hoisted to the shared AppLayout)", () => {
     renderWikiHome();
-    expect(screen.getByText("Mundos")).toBeInTheDocument();
+    // The page-level Navbar is gone — the world selector label "Mundos" now
+    // comes from the shared AppLayout, not from this page.
+    expect(screen.queryByText("Mundos")).not.toBeInTheDocument();
   });
 
   it("redirects to the active world when one is persisted", () => {

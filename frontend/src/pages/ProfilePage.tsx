@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Navbar } from "@/components/organisms/Navbar";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
@@ -10,6 +9,7 @@ import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
 import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
+import { SecretInput } from "@/components/molecules/SecretInput";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { getReadiness } from "@/api/onboarding";
 import {
@@ -109,29 +109,29 @@ function SessionSection() {
   // Local-dev / disabled: legacy panel (unchanged).
   if (localDev.isLoading) {
     return (
-      <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida">
+      <div className="flex items-center gap-2 py-6 text-small text-muted">
         <Spinner size="sm" /> Comprobando sesión local…
       </div>
     );
   }
 
   if (localDev.error) {
-    return <p className="text-small text-sangre">{localDev.error.message}</p>;
+    return <p className="text-small text-status-error">{localDev.error.message}</p>;
   }
 
   if (!localDev.status) return null;
 
   return (
-    <div className="rounded-lg border border-filio bg-madero p-4">
+    <div className="rounded-lg border border-edge bg-surface-raised p-4">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="font-heading text-body text-pergamino">Sesión de edición</h3>
-        <span className="text-small text-tinta-desvaida">Local</span>
+        <h3 className="font-heading text-body text-primary">Sesión de edición</h3>
+        <span className="text-small text-muted">Local</span>
       </div>
 
       {localDev.status.authenticated && (
         <>
-          <p className="mt-3 text-small text-musgo">Sesión local activa</p>
-          <p className="mt-1 text-small text-tinta-desvaida">{localDev.status.label}</p>
+          <p className="mt-3 text-small text-status-success">Sesión local activa</p>
+          <p className="mt-1 text-small text-muted">{localDev.status.label}</p>
           <Button
             variant="secondary"
             onClick={() => void handleAction()}
@@ -145,7 +145,7 @@ function SessionSection() {
 
       {!localDev.status.authenticated && localDev.status.enabled && (
         <>
-          <p className="mt-3 text-small text-tinta-desvaida">
+          <p className="mt-3 text-small text-muted">
             Sesión local no iniciada. Iniciala para editar y configurar el perfil.
           </p>
           <Button
@@ -160,14 +160,14 @@ function SessionSection() {
       )}
 
       {!localDev.status.enabled && (
-        <p className="mt-3 text-small text-tinta-desvaida">
+        <p className="mt-3 text-small text-muted">
           Autenticación local desactivada. Activá{" "}
-          <code className="text-plata">DEMIURGOS_AUTH_MODE=local-dev</code> en{" "}
-          <code className="text-plata">.env</code> para probar la edición.
+          <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=local-dev</code> en{" "}
+          <code className="text-icon-muted">.env</code> para probar la edición.
         </p>
       )}
 
-      {actionError && <p className="mt-3 text-small text-sangre">{actionError}</p>}
+      {actionError && <p className="mt-3 text-small text-status-error">{actionError}</p>}
     </div>
   );
 }
@@ -205,31 +205,31 @@ function AccountSection({ status }: { status: AuthSessionStatus }) {
   };
 
   return (
-    <div className="rounded-lg border border-filio bg-madero p-4">
+    <div className="rounded-lg border border-edge bg-surface-raised p-4">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="font-heading text-body text-pergamino">Cuenta</h3>
-        <span className="text-small text-tinta-desvaida">Credenciales</span>
+        <h3 className="font-heading text-body text-primary">Cuenta</h3>
+        <span className="text-small text-muted">Credenciales</span>
       </div>
 
       {status.authenticated ? (
         <>
-          <p className="mt-3 text-small text-musgo">Sesión activa</p>
-          <p className="mt-1 text-small text-tinta-desvaida">{status.label}</p>
-          <p className="mt-1 text-small text-tinta-desvaida">
+          <p className="mt-3 text-small text-status-success">Sesión activa</p>
+          <p className="mt-1 text-small text-muted">{status.label}</p>
+          <p className="mt-1 text-small text-muted">
             Proveedor: {providerLabel(status.provider)}
           </p>
 
           {daysUntilReauth !== null && (
             <div
               role="status"
-              className="mt-3 rounded-lg border border-filio bg-cripta/50 p-3"
+              className="mt-3 rounded-lg border border-edge bg-surface/50 p-3"
             >
-              <p className="text-small text-pergamino">
+              <p className="text-small text-primary">
                 {daysUntilReauth <= 0
                   ? "Reingreso recomendado: hoy"
                   : `Reingreso recomendado en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}`}
               </p>
-              <p className="mt-2 text-small text-tinta-desvaida">
+              <p className="mt-2 text-small text-muted">
                 Si no reingresas tu contraseña, la sesión de Demiurgos se
                 cerrará. Y si olvidaste tu contraseña, solo vas a poder
                 recuperarla con tus palabras claves.
@@ -248,15 +248,15 @@ function AccountSection({ status }: { status: AuthSessionStatus }) {
           </div>
         </>
       ) : (
-        <p className="mt-3 text-small text-tinta-desvaida">
+        <p className="mt-3 text-small text-muted">
           No hay una sesión de cuenta activa. Iniciá sesión para editar y
           configurar el perfil.
         </p>
       )}
 
-      {actionError && <p className="mt-3 text-small text-sangre">{actionError}</p>}
+      {actionError && <p className="mt-3 text-small text-status-error">{actionError}</p>}
 
-      <div className="mt-5 space-y-4 border-t border-filio pt-4">
+      <div className="mt-5 space-y-4 border-t border-edge pt-4">
         <WordsForm
           title="Cambiar usuario"
           description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
@@ -366,9 +366,9 @@ function WordsForm({
   };
 
   return (
-    <div className="rounded-lg border border-filio bg-cripta/50 p-3">
-      <h4 className="font-heading text-body text-pergamino">{title}</h4>
-      <p className="mt-1 text-small text-tinta-desvaida">{description}</p>
+    <div className="rounded-lg border border-edge bg-surface/50 p-3">
+      <h4 className="font-heading text-body text-primary">{title}</h4>
+      <p className="mt-1 text-small text-muted">{description}</p>
 
       <label htmlFor={`${title}-words`} className="sr-only">
         Palabras claves para {title}
@@ -385,30 +385,54 @@ function WordsForm({
           setConfirming(false);
         }}
         disabled={busy}
-        className="mt-3 w-full rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
+        className="mt-3 w-full rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
       />
 
-      {extraLabel && (
-        <label
-          htmlFor={`${title}-extra`}
-          className="mt-3 block text-small text-pergamino"
-        >
-          {extraLabel}
-          <input
-            id={`${title}-extra`}
-            type={extraType}
-            autoComplete="off"
-            placeholder={extraPlaceholder}
-            value={extra}
-            onChange={(event) => {
-              setExtra(event.target.value);
-              setError(null);
-            }}
-            disabled={busy}
-            className="mt-1 w-full rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
-          />
-        </label>
-      )}
+      {extraLabel &&
+        (extraType === "password" ? (
+          <div className="mt-3 block">
+            <label
+              htmlFor={`${title}-extra`}
+              className="block text-small text-primary"
+            >
+              {extraLabel}
+            </label>
+            <div className="mt-1">
+              <SecretInput
+                id={`${title}-extra`}
+                autoComplete="off"
+                placeholder={extraPlaceholder}
+                value={extra}
+                onChange={(event) => {
+                  setExtra(event.target.value);
+                  setError(null);
+                }}
+                disabled={busy}
+                className="rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
+              />
+            </div>
+          </div>
+        ) : (
+          <label
+            htmlFor={`${title}-extra`}
+            className="mt-3 block text-small text-primary"
+          >
+            {extraLabel}
+            <input
+              id={`${title}-extra`}
+              type={extraType}
+              autoComplete="off"
+              placeholder={extraPlaceholder}
+              value={extra}
+              onChange={(event) => {
+                setExtra(event.target.value);
+                setError(null);
+              }}
+              disabled={busy}
+              className="mt-1 w-full rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
+            />
+          </label>
+        ))}
 
       <Button
         variant="secondary"
@@ -425,12 +449,12 @@ function WordsForm({
       </Button>
 
       {error && (
-        <p className="mt-2 text-small text-sangre" role="alert">
+        <p className="mt-2 text-small text-status-error" role="alert">
           {error}
         </p>
       )}
       {done && (
-        <p className="mt-2 text-small text-musgo" role="status">
+        <p className="mt-2 text-small text-status-success" role="status">
           Listo. Cambio guardado.
         </p>
       )}
@@ -465,11 +489,11 @@ function RotateWordsCard() {
   };
 
   return (
-    <div className="rounded-lg border border-filio bg-cripta/50 p-3">
-      <h4 className="font-heading text-body text-pergamino">
+    <div className="rounded-lg border border-edge bg-surface/50 p-3">
+      <h4 className="font-heading text-body text-primary">
         Rotar palabras claves
       </h4>
-      <p className="mt-1 text-small text-tinta-desvaida">
+      <p className="mt-1 text-small text-muted">
         Generá unas palabras nuevas y anulá las anteriores. Las palabras son tu
         única forma de recuperar la cuenta si olvidás la contraseña.
       </p>
@@ -483,20 +507,20 @@ function RotateWordsCard() {
         {busy ? "Rotando…" : "Rotar palabras claves"}
       </Button>
       {error && (
-        <p className="mt-2 text-small text-sangre" role="alert">
+        <p className="mt-2 text-small text-status-error" role="alert">
           {error}
         </p>
       )}
       {newWords && (
         <div
           role="status"
-          className="mt-3 rounded-lg border border-musgo/40 bg-madero p-3"
+          className="mt-3 rounded-lg border border-status-success/40 bg-surface-raised p-3"
         >
-          <p className="text-small text-musgo">
+          <p className="text-small text-status-success">
             Nuevas palabras claves — guardalas fuera del navegador; solo se
             muestran una vez:
           </p>
-          <p className="mt-2 break-words font-mono text-small text-pergamino">
+          <p className="mt-2 break-words font-mono text-small text-primary">
             {newWords}
           </p>
         </div>
@@ -531,7 +555,7 @@ function VaultSection() {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida">
+      <div className="flex items-center gap-2 py-6 text-small text-muted">
         <Spinner size="sm" /> Comprobando la bóveda…
       </div>
     );
@@ -597,15 +621,15 @@ function ActivationPanel({
 
   if (words) {
     return (
-      <section className="rounded-lg border border-musgo/40 bg-madero p-4">
-        <h4 className="font-heading text-body text-pergamino">Bóveda activada</h4>
-        <p className="mt-1 text-small text-tinta-desvaida">
+      <section className="rounded-lg border border-status-success/40 bg-surface-raised p-4">
+        <h4 className="font-heading text-body text-primary">Bóveda activada</h4>
+        <p className="mt-1 text-small text-muted">
           Se creó tu cuenta. Estas son tus palabras claves — guardalas fuera del
           navegador: solo se muestran una vez.
         </p>
         <p
           data-testid="vault-words"
-          className="mt-4 break-words rounded-lg border border-filio bg-cripta p-4 font-mono text-body text-pergamino"
+          className="mt-4 break-words rounded-lg border border-edge bg-surface p-4 font-mono text-body text-primary"
         >
           {words}
         </p>
@@ -618,37 +642,37 @@ function ActivationPanel({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-filio bg-madero p-4">
+      <section className="rounded-lg border border-edge bg-surface-raised p-4">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="font-heading text-body text-pergamino">
+          <h3 className="font-heading text-body text-primary">
             Seguridad / Bóveda
           </h3>
-          <span className="text-small text-tinta-desvaida">Apagada</span>
+          <span className="text-small text-muted">Apagada</span>
         </div>
-        <p className="mt-1 text-small text-tinta-desvaida">
+        <p className="mt-1 text-small text-muted">
           La bóveda protege tu instalación con una cuenta y tus palabras
           claves. Activarla exige demostrar que la cuenta es tuya.
         </p>
         {config.env_override && (
-          <p className="mt-3 rounded-lg border border-filio bg-cripta/50 p-3 text-small text-tinta-desvaida">
+          <p className="mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-small text-muted">
             La autenticación está forzada por la variable de entorno{" "}
-            <code className="text-plata">DEMIURGOS_AUTH_MODE=credentials</code>.
+            <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=credentials</code>.
           </p>
         )}
       </section>
 
       {config.account_exists ? (
         <form
-          className="rounded-lg border border-filio bg-madero p-4"
+          className="rounded-lg border border-edge bg-surface-raised p-4"
           onSubmit={(e) => {
             e.preventDefault();
             void handleActivate({ words: verifyWords.trim() });
           }}
         >
-          <h4 className="font-heading text-body text-pergamino">
+          <h4 className="font-heading text-body text-primary">
             Activar la bóveda
           </h4>
-          <p className="mt-1 text-small text-tinta-desvaida">
+          <p className="mt-1 text-small text-muted">
             Ya existe una cuenta ({config.username ?? "sin usuario"}). Demostrá
             que es tuya con tus palabras claves para activar la bóveda.
           </p>
@@ -666,7 +690,7 @@ function ActivationPanel({
               setError(null);
             }}
             disabled={busy}
-            className="mt-3 w-full rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
+            className="mt-3 w-full rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
           />
           <Button
             type="submit"
@@ -680,7 +704,7 @@ function ActivationPanel({
         </form>
       ) : (
         <form
-          className="rounded-lg border border-filio bg-madero p-4"
+          className="rounded-lg border border-edge bg-surface-raised p-4"
           onSubmit={(e) => {
             e.preventDefault();
             void handleActivate({
@@ -689,17 +713,17 @@ function ActivationPanel({
             });
           }}
         >
-          <h4 className="font-heading text-body text-pergamino">
+          <h4 className="font-heading text-body text-primary">
             Crear cuenta y activar
           </h4>
-          <p className="mt-1 text-small text-tinta-desvaida">
+          <p className="mt-1 text-small text-muted">
             No hay una cuenta todavía. Creala ahora: la contraseña es opcional
             y se generan tus palabras claves (se muestran una sola vez).
           </p>
           <div className="mt-3 grid gap-4">
             <label
               htmlFor="vault-create-username"
-              className="flex flex-col gap-1 text-small text-pergamino"
+              className="flex flex-col gap-1 text-small text-primary"
             >
               Usuario
               <input
@@ -712,17 +736,18 @@ function ActivationPanel({
                 disabled={busy}
                 autoComplete="username"
                 placeholder="tu-usuario"
-                className="rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
+                className="rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
               />
             </label>
-            <label
-              htmlFor="vault-create-password"
-              className="flex flex-col gap-1 text-small text-pergamino"
-            >
-              Contraseña (opcional)
-              <input
+            <div className="flex flex-col gap-1">
+              <label
+                htmlFor="vault-create-password"
+                className="text-small text-primary"
+              >
+                Contraseña (opcional)
+              </label>
+              <SecretInput
                 id="vault-create-password"
-                type="password"
                 value={password}
                 onChange={(e) => {
                   setPassword(e.target.value);
@@ -731,9 +756,9 @@ function ActivationPanel({
                 disabled={busy}
                 autoComplete="new-password"
                 placeholder="Dejalo vacío para entrar sin contraseña"
-                className="rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none disabled:opacity-50"
+                className="rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
               />
-            </label>
+            </div>
           </div>
           <Button
             type="submit"
@@ -748,7 +773,7 @@ function ActivationPanel({
       )}
 
       {error && (
-        <p className="text-small text-sangre" role="alert">
+        <p className="text-small text-status-error" role="alert">
           {error}
         </p>
       )}
@@ -786,20 +811,20 @@ function ManagementPanel({
 
   return (
     <div className="space-y-4">
-      <section className="rounded-lg border border-filio bg-madero p-4">
+      <section className="rounded-lg border border-edge bg-surface-raised p-4">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="font-heading text-body text-pergamino">
+          <h3 className="font-heading text-body text-primary">
             Seguridad / Bóveda
           </h3>
-          <span className="text-small text-tinta-desvaida">Activa</span>
+          <span className="text-small text-muted">Activa</span>
         </div>
-        <p className="mt-1 text-small text-tinta-desvaida">
-          Cuenta: <span className="text-pergamino">{config.username ?? "—"}</span>
+        <p className="mt-1 text-small text-muted">
+          Cuenta: <span className="text-primary">{config.username ?? "—"}</span>
           {config.has_password ? " · contraseña definida" : " · sin contraseña"}
           {config.env_override && (
-            <span className="text-tinta-desvaida">
+            <span className="text-muted">
               {" "}
-              · forzada por <code className="text-plata">DEMIURGOS_AUTH_MODE</code>
+              · forzada por <code className="text-icon-muted">DEMIURGOS_AUTH_MODE</code>
             </span>
           )}
         </p>
@@ -813,7 +838,7 @@ function ManagementPanel({
             {actionLoading ? "Cerrando…" : "Cerrar sesión"}
           </Button>
         </div>
-        {actionError && <p className="mt-3 text-small text-sangre">{actionError}</p>}
+        {actionError && <p className="mt-3 text-small text-status-error">{actionError}</p>}
       </section>
 
       <div className="space-y-4">
@@ -913,11 +938,11 @@ function ReauthIntervalForm({
   };
 
   return (
-    <div className="rounded-lg border border-filio bg-cripta/50 p-3">
-      <h4 className="font-heading text-body text-pergamino">
+    <div className="rounded-lg border border-edge bg-surface/50 p-3">
+      <h4 className="font-heading text-body text-primary">
         Intervalo de reingreso
       </h4>
-      <p className="mt-1 text-small text-tinta-desvaida">
+      <p className="mt-1 text-small text-muted">
         Cada cuántos días se te pide reingresar la contraseña.
       </p>
       <div className="mt-3 flex items-center gap-3">
@@ -934,9 +959,9 @@ function ReauthIntervalForm({
             setError(null);
           }}
           disabled={busy}
-          className="w-28 rounded-lg border border-filio bg-madero px-3 py-2 text-body text-pergamino focus:border-plata focus:outline-none disabled:opacity-50"
+          className="w-28 rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary focus:border-icon-muted focus:outline-none disabled:opacity-50"
         />
-        <span className="text-small text-tinta-desvaida">días</span>
+        <span className="text-small text-muted">días</span>
         <Button
           variant="secondary"
           size="sm"
@@ -947,12 +972,12 @@ function ReauthIntervalForm({
         </Button>
       </div>
       {error && (
-        <p className="mt-2 text-small text-sangre" role="alert">
+        <p className="mt-2 text-small text-status-error" role="alert">
           {error}
         </p>
       )}
       {done && (
-        <p className="mt-2 text-small text-musgo" role="status">
+        <p className="mt-2 text-small text-status-success" role="status">
           Listo. Intervalo guardado.
         </p>
       )}
@@ -979,8 +1004,8 @@ function IntegrationsSection() {
   const auth = useAuthSession(true);
   return (
     <div>
-      <h3 className="font-heading text-body text-pergamino">Captura de ideas</h3>
-      <p className="mt-1 text-small text-tinta-desvaida">
+      <h3 className="font-heading text-body text-primary">Captura de ideas</h3>
+      <p className="mt-1 text-small text-muted">
         Hermes / Telegram — ingreso de ideas nativo desde el bot.
       </p>
       <div className="mt-4">
@@ -1030,7 +1055,7 @@ function ConfigurationSection() {
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida">
+      <div className="flex items-center gap-2 py-6 text-small text-muted">
         <Spinner size="sm" /> Comprobando configuración…
       </div>
     );
@@ -1057,17 +1082,17 @@ function ConfigurationSection() {
       {/* Essential local readiness (OC11/OC21) — the tab's intro block. */}
       <section
         aria-labelledby="config-readiness-title"
-        className="rounded-lg border border-filio bg-madero p-4"
+        className="rounded-lg border border-edge bg-surface-raised p-4"
       >
         <div className="flex items-center justify-between gap-3">
           <h3
             id="config-readiness-title"
-            className="font-heading text-body text-pergamino"
+            className="font-heading text-body text-primary"
           >
             Listo para trabajar
           </h3>
         </div>
-        <p className="mt-1 text-small text-tinta-desvaida">
+        <p className="mt-1 text-small text-muted">
           Capacidades esenciales locales: Mundo y editor local.
         </p>
         <div className="mt-3 flex flex-wrap gap-3">
@@ -1075,7 +1100,7 @@ function ConfigurationSection() {
             const meta = essentialBadgeFor(readiness, cards, badge.key);
             return (
               <span key={badge.key} className="flex items-center gap-2">
-                <span className="text-small text-tinta-desvaida">{badge.title}:</span>
+                <span className="text-small text-muted">{badge.title}:</span>
                 <Badge variant={meta.badge}>{meta.label}</Badge>
                 <span className="sr-only">Estado: {meta.label}</span>
               </span>
@@ -1094,12 +1119,12 @@ function ConfigurationSection() {
           <section
             key={card.key}
             aria-labelledby={`config-card-title-${card.key}`}
-            className="rounded-lg border border-filio bg-madero p-4"
+            className="rounded-lg border border-edge bg-surface-raised p-4"
           >
             <div className="flex items-center justify-between gap-3">
               <h3
                 id={`config-card-title-${card.key}`}
-                className="font-heading text-body text-pergamino"
+                className="font-heading text-body text-primary"
               >
                 {card.title}
               </h3>
@@ -1108,11 +1133,11 @@ function ConfigurationSection() {
                 <span className="sr-only">Estado: {label}</span>
               </span>
             </div>
-            <p className="mt-1 text-small text-tinta-desvaida">{card.description}</p>
+            <p className="mt-1 text-small text-muted">{card.description}</p>
 
             {card.key === "backup" && (
               <>
-                <p className="mt-3 text-small text-sombra">
+                <p className="mt-3 text-small text-muted">
                   Pendiente — contrato dedicado en definición
                 </p>
                 {/* ONB-4.5 (WU-4d) — Backup/restore card: entry only.
@@ -1121,8 +1146,8 @@ function ConfigurationSection() {
                     entry for its dedicated contract. Drive consent is
                     separate from the identity consent, and backup
                     and restore are distinct flows (OC10/OC24). */}
-                <div className="mt-4 border-t border-filio pt-4">
-                  <p className="text-small text-tinta-desvaida">
+                <div className="mt-4 border-t border-edge pt-4">
+                  <p className="text-small text-muted">
                     El respaldo y la restauración (Google Drive / rclone) no están
                     implementados en esta versión: la tarjeta queda pendiente y es solo la
                     entrada para su contrato dedicado. El consentimiento de Drive es
@@ -1147,9 +1172,9 @@ function ConfigurationSection() {
             )}
 
             {card.key === "offline" && (
-              <dl className="mt-4 space-y-3 border-t border-filio pt-4">
+              <dl className="mt-4 space-y-3 border-t border-edge pt-4">
                 <div className="flex items-center justify-between gap-3">
-                  <dt className="text-small text-tinta-desvaida">Núcleo local</dt>
+                  <dt className="text-small text-muted">Núcleo local</dt>
                   <dd className="flex items-center gap-2">
                     <Badge variant={readiness.offline.local_ready ? "success" : "error"}>
                       {readiness.offline.local_ready ? "Listo" : "No disponible"}
@@ -1160,8 +1185,8 @@ function ConfigurationSection() {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-small text-tinta-desvaida">Remoto</dt>
-                  <dd className="mt-1 text-small text-tinta-desvaida">
+                  <dt className="text-small text-muted">Remoto</dt>
+                  <dd className="mt-1 text-small text-muted">
                     {readiness.offline.remote_pending.length > 0 ? (
                       <span>
                         Capacidades remotas pendientes (requieren conexión):{" "}
@@ -1246,26 +1271,26 @@ function WorldsSection() {
 
   return (
     <div>
-      <h3 className="font-heading text-body text-pergamino">Mundos</h3>
-      <p className="mt-1 text-small text-tinta-desvaida">
+      <h3 className="font-heading text-body text-primary">Mundos</h3>
+      <p className="mt-1 text-small text-muted">
         Gestioná los mundos del taller: eliminá uno (queda recuperable 30 días en la papelera) o
         restaurá mundos eliminados.
       </p>
 
       {/* Zona peligrosa — 3-step confirmation before any delete. */}
-      <div className="mt-4 rounded-lg border border-sangre/30 bg-sangre/10 p-4">
-        <h4 className="flex items-center gap-2 font-heading text-body text-sangre">
+      <div className="mt-4 rounded-lg border border-status-error/30 bg-status-error/10 p-4">
+        <h4 className="flex items-center gap-2 font-heading text-body text-status-error">
           <Icon name="trash" size={18} />
           Zona peligrosa
         </h4>
-        <p className="mt-1 text-small text-tinta-desvaida">
+        <p className="mt-1 text-small text-muted">
           Eliminar un mundo lo mueve a la papelera durante 30 días; no se destruye de inmediato.
         </p>
 
         {error && (
           <div
             role="alert"
-            className="mt-3 rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-small text-sangre"
+            className="mt-3 rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-small text-status-error"
           >
             {error.message}
           </div>
@@ -1276,7 +1301,7 @@ function WorldsSection() {
             <Spinner size="md" />
           </div>
         ) : worlds.length === 0 ? (
-          <p className="mt-3 text-small text-tinta-desvaida">No hay mundos creados todavía.</p>
+          <p className="mt-3 text-small text-muted">No hay mundos creados todavía.</p>
         ) : (
           <ul className="mt-3 flex flex-col gap-2">
             {worlds.map((world) => {
@@ -1289,11 +1314,11 @@ function WorldsSection() {
               return (
                 <li
                   key={world.name}
-                  className="flex items-center gap-3 rounded-lg border border-filio bg-cripta/50 px-3 py-2"
+                  className="flex items-center gap-3 rounded-lg border border-edge bg-surface/50 px-3 py-2"
                 >
-                  <Icon name="world" size={18} className="shrink-0 text-plata" />
+                  <Icon name="world" size={18} className="shrink-0 text-icon-muted" />
                   <div className="min-w-0 flex-1">
-                    <p className="truncate font-mono text-small text-pergamino">{world.name}</p>
+                    <p className="truncate font-mono text-small text-primary">{world.name}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-1">
                       <Badge>Lore {world.lore_count}</Badge>
                       <Badge>Personajes {world.character_count}</Badge>
@@ -1353,7 +1378,6 @@ function WorldsSection() {
  * (credentials vault or local-dev), matching the wiki editing boundary.
  */
 export default function ProfilePage() {
-  const { worlds } = useWorlds();
   const [section, setSection] = useState<ProfileSection>("sesion");
 
   const tabs: { id: ProfileSection; label: string }[] = [
@@ -1366,10 +1390,9 @@ export default function ProfilePage() {
   ];
 
   return (
-    <div className="flex min-h-screen flex-col bg-cripta">
-      <Navbar worlds={worlds} />
+    <div className="flex min-h-screen flex-col bg-surface">
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
-        <h1 className="font-heading text-h3 text-pergamino">Perfil</h1>
+        <h1 className="font-heading text-h3 text-primary">Perfil</h1>
         <div className="mt-6 flex flex-col gap-6 md:flex-row">
           <nav
             aria-label="Secciones del perfil"
@@ -1384,8 +1407,8 @@ export default function ProfilePage() {
                 className={cn(
                   "rounded-lg px-3 py-2 text-left text-body transition-colors",
                   section === tab.id
-                    ? "bg-piedra text-pergamino"
-                    : "text-tinta-desvaida hover:bg-madero hover:text-pergamino",
+                    ? "bg-surface-raised text-primary"
+                    : "text-muted hover:bg-surface-raised hover:text-primary",
                 )}
               >
                 {tab.label}

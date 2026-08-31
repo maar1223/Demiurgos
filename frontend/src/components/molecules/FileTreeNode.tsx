@@ -28,7 +28,7 @@ interface FileTreeNodeProps {
  *
  * - Directories: expand/collapse toggle on click, shows children recursively
  * - Files: click to select
- * - Selected file gets a `bg-filio` background and `border-l-2 border-llamita`
+ * - Selected file gets a `bg-surface-raised` background and `border-l-2 border-action`
  * - Depth-based left padding for nesting visual
  *
  * Drag & drop (same section): every node is draggable; directories are drop
@@ -125,15 +125,15 @@ export function FileTreeNode({
         className={cn(
           "flex w-full items-center gap-2 rounded-r-lg py-1.5 pr-3 text-left text-small transition-all",
           isSelected
-            ? "border-l-2 border-llamita bg-filio text-pergamino"
-            : "border-l-2 border-transparent text-tinta-desvaida hover:bg-piedra hover:text-pergamino",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50",
-          // Drag feedback: dimmed source, sangre tint on invalid hover,
-          // llamita ring + slight grow on a valid folder target.
+            ? "border-l-2 border-action bg-surface-active text-primary"
+            : "border-l-2 border-transparent text-muted hover:bg-surface-hover hover:text-primary",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50",
+          // Drag feedback: dimmed source, status-error tint on invalid hover,
+          // action ring + slight grow on a valid folder target.
           isDragSource && "cursor-grabbing opacity-50 shadow-lg",
-          invalidHover && "ring-2 ring-inset ring-sangre/50",
+          invalidHover && "ring-2 ring-inset ring-status-error/50",
           targetValid &&
-            "scale-[1.03] bg-piedra ring-2 ring-inset ring-llamita",
+            "scale-[1.03] bg-surface-raised ring-2 ring-inset ring-action",
           isAbsorbing && "scale-75 opacity-0",
           movedPath === node.path && "fade-slide-in",
         )}
@@ -146,7 +146,7 @@ export function FileTreeNode({
           <Icon
             name={expanded ? "chevron-down" : "chevron-right"}
             size={14}
-            className="shrink-0 text-sombra"
+            className="shrink-0 text-muted"
           />
         ) : (
           <span className="w-3.5 shrink-0" />
@@ -166,7 +166,7 @@ export function FileTreeNode({
           size={16}
           className={cn(
             "shrink-0",
-            isDirectory ? "text-llamita" : "text-plata",
+            isDirectory ? "text-action" : "text-icon-muted",
           )}
         />
 

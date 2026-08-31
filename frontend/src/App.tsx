@@ -1,5 +1,12 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from "react-router-dom";
+import {
+  BrowserRouter,
+  Navigate,
+  Outlet,
+  Route,
+  Routes,
+} from "react-router-dom";
+import { AppLayout } from "@/components/templates/AppLayout";
 import WikiHome from "@/pages/WikiHome";
 import WikiWorld from "@/pages/WikiWorld";
 import WikiEditor from "@/pages/WikiEditor";
@@ -13,6 +20,7 @@ import LoginScreen from "@/pages/LoginScreen";
 import NotFound from "@/pages/NotFound";
 import { useOnboardingGate } from "@/hooks/useOnboardingGate";
 import { useAuthGate } from "@/hooks/useAuthGate";
+import { useTheme } from "@/hooks/useTheme";
 
 /** Lazy-loaded entity page — code-split because it's only used on entity routes */
 const EntityPage = lazy(() => import("@/pages/EntityPage"));
@@ -35,8 +43,8 @@ function AuthGate() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-cripta">
-        <span className="text-tinta-desvaida">Verificando autenticación…</span>
+      <div className="flex min-h-screen items-center justify-center bg-surface">
+        <span className="text-muted">Verificando autenticación…</span>
       </div>
     );
   }
@@ -58,8 +66,8 @@ function FirstRunGate() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-cripta">
-        <span className="text-tinta-desvaida">Comprobando configuración…</span>
+      <div className="flex min-h-screen items-center justify-center bg-surface">
+        <span className="text-muted">Comprobando configuración…</span>
       </div>
     );
   }
@@ -98,6 +106,11 @@ function FirstRunGate() {
  * by React Router, but is listed before `:section/*` for clarity.
  */
 export default function App() {
+  // Run the theme hook at the app root so the resolved theme (`.dark` class
+  // on <html> + favicon swap) stays in sync with localStorage/system for the
+  // whole tree, including screens rendered before the Navbar mounts.
+  useTheme();
+
   return (
     <BrowserRouter>
       <Routes>
@@ -106,45 +119,55 @@ export default function App() {
 
         <Route element={<AuthGate />}>
           <Route element={<FirstRunGate />}>
-            <Route path="/wiki" element={<WikiHome />} />
-            <Route path="/taller-herramientas" element={<ToolWorkshop />} />
-            <Route
-              path="/ideas"
-              element={
-                <Suspense
-                  fallback={
-                    <div className="flex min-h-screen items-center justify-center bg-cripta">
-                      <span className="text-tinta-desvaida">Cargando Taller de Ideas…</span>
-                    </div>
-                  }
-                >
-                  <IdeasWorkshop />
-                </Suspense>
-              }
-            />
-            <Route path="/taller-mundo" element={<WorldWorkshop />} />
-            <Route path="/perfil" element={<ProfilePage />} />
-            <Route
-              path="/wiki/:mundo/entity/*"
-              element={
-                <Suspense
-                  fallback={
-                    <div className="flex min-h-screen items-center justify-center bg-cripta">
-                      <span className="text-tinta-desvaida">Cargando entidad…</span>
-                    </div>
-                  }
-                >
-                  <EntityPage />
-                </Suspense>
-              }
-            />
-            <Route path="/wiki/:mundo" element={<WikiWorld />} />
-            <Route
-              path="/taller-mundo/:mundo/relaciones-canon"
-              element={<RelacionesCanon />}
-            />
-            <Route path="/wiki/:mundo/importer" element={<WorldImporter />} />
-            <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
+            {/* ONE AppLayout for ALL gated routes. A single persistent layout
+                keeps the Navbar mounted across every route change (world pages,
+                workshops, profile…) — this is what makes the sliding active-pill
+                animation work everywhere, and prevents the Navbar from
+                remounting (and losing its pill position) whenever we cross
+                between world and non-world routes. `useParams` inside
+                AppLayout captures `:mundo` directly, so no separate
+                WorldScopedLayout wrapper is needed. */}
+            <Route element={<AppLayout />}>
+              <Route path="/wiki" element={<WikiHome />} />
+              <Route path="/taller-herramientas" element={<ToolWorkshop />} />
+              <Route
+                path="/ideas"
+                element={
+                  <Suspense
+                    fallback={
+                      <div className="flex min-h-screen items-center justify-center bg-surface">
+                        <span className="text-muted">Cargando Taller de Ideas…</span>
+                      </div>
+                    }
+                  >
+                    <IdeasWorkshop />
+                  </Suspense>
+                }
+              />
+              <Route path="/taller-mundo" element={<WorldWorkshop />} />
+              <Route path="/perfil" element={<ProfilePage />} />
+              <Route
+                path="/wiki/:mundo/entity/*"
+                element={
+                  <Suspense
+                    fallback={
+                      <div className="flex min-h-screen items-center justify-center bg-surface">
+                        <span className="text-muted">Cargando entidad…</span>
+                      </div>
+                    }
+                  >
+                    <EntityPage />
+                  </Suspense>
+                }
+              />
+              <Route path="/wiki/:mundo" element={<WikiWorld />} />
+              <Route
+                path="/taller-mundo/:mundo/relaciones-canon"
+                element={<RelacionesCanon />}
+              />
+              <Route path="/wiki/:mundo/importer" element={<WorldImporter />} />
+              <Route path="/wiki/:mundo/:section/*" element={<WikiEditor />} />
+            </Route>
           </Route>
         </Route>
 

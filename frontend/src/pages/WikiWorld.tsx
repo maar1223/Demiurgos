@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { getCurrentWorld, setCurrentWorld } from "@/lib/currentWorld";
-import { Navbar } from "@/components/organisms/Navbar";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import { SectionCard } from "@/components/molecules/SectionCard";
 import { EmptyState } from "@/components/organisms/EmptyState";
@@ -63,20 +62,8 @@ export default function WikiWorld() {
     navigate(ROUTES.RELACIONES_CANON.replace(":mundo", encodeURIComponent(mundo)));
   };
 
-  const handleWorldChange = (newWorld: string) => {
-    navigate(`/wiki/${encodeURIComponent(newWorld)}`, { replace: true });
-  };
-
   return (
-    <WikiHomeLayout
-      header={
-        <Navbar
-          worlds={worlds}
-          currentWorld={mundo}
-          onWorldChange={handleWorldChange}
-        />
-      }
-    >
+    <WikiHomeLayout>
       {isLoading && (
         <div className="col-span-full flex items-center justify-center py-24">
           <Spinner size="lg" />
@@ -105,13 +92,13 @@ export default function WikiWorld() {
 
       {!isLoading && !error && mundo && !world && (
         <div className="col-span-full flex flex-col items-center justify-center gap-4 py-24">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-piedra text-sangre">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-raised text-status-error">
             <Icon name="error" size={32} />
           </div>
-          <h2 className="font-heading text-h3 text-pergamino">
+          <h2 className="font-heading text-h3 text-primary">
             Mundo no encontrado
           </h2>
-          <p className="text-body text-tinta-desvaida">
+          <p className="text-body text-muted">
             No existe un mundo llamado "{mundo}".
           </p>
           <Button variant="secondary" onClick={() => navigate("/wiki")}>
@@ -138,26 +125,26 @@ export default function WikiWorld() {
             type="button"
             onClick={handleRelacionesClick}
             className={cn(
-              "group flex w-full flex-col gap-3 rounded-xl border border-filio bg-madero p-5 text-left transition-all",
-              "hover:border-llamita/40 hover:bg-piedra",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
-              "focus-visible:ring-offset-2 focus-visible:ring-offset-cripta",
+              "group flex w-full flex-col gap-3 rounded-xl border border-edge bg-surface-raised p-5 text-left transition-all",
+              "hover:border-action/40 hover:bg-surface-hover",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
+              "focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
             )}
           >
-            <div className="flex h-32 items-center justify-center rounded-lg bg-filio/50 text-llamita transition-colors group-hover:bg-filio">
+            <div className="flex h-32 items-center justify-center rounded-lg bg-surface-raised/50 text-action transition-colors group-hover:bg-surface-raised">
               <Icon name="world" size={48} />
             </div>
             <div className="flex items-center justify-between">
-              <h3 className="font-heading text-h4 text-pergamino transition-colors group-hover:text-llamita">
+              <h3 className="font-heading text-h4 text-primary transition-colors group-hover:text-action">
                 Relaciones y Canon
               </h3>
               <Icon
                 name="chevron-right"
                 size={16}
-                className="text-plata/50 transition-colors group-hover:text-llamita"
+                className="text-icon-muted/50 transition-colors group-hover:text-action"
               />
             </div>
-            <p className="text-small text-tinta-desvaida">
+            <p className="text-small text-muted">
               Grafo de entidades, estados de certeza y conexiones
             </p>
           </button>

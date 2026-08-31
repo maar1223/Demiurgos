@@ -445,16 +445,14 @@ describe("WikiEditor", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders Navbar with worlds", () => {
+  it("no longer renders the Navbar (hoisted to the shared AppLayout)", () => {
     renderWikiEditor();
 
-    // "Vibrantes" appears both in the breadcrumb AND the world selector
-    // — use getAllByText for duplicate-safe assertions
-    expect(screen.getAllByText("Vibrantes").length).toBeGreaterThanOrEqual(1);
-    // Navbar should also show the Taller de Mundo nav link
+    // The page-level Navbar is gone — nav links like "Taller de Mundo" now
+    // come from the shared AppLayout, not from this page.
     expect(
-      screen.getByRole("button", { name: "Taller de Mundo" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Taller de Mundo" }),
+    ).not.toBeInTheDocument();
   });
 
   it("has breadcrumb segment clickable", async () => {
@@ -492,8 +490,8 @@ describe("WikiEditor", () => {
       </MemoryRouter>,
     );
 
-    // The world chip is inside the breadcrumb nav — scope the query so the
-    // Navbar world selector ("Vibrantes") cannot match.
+    // The world chip lives inside the breadcrumb nav — scope the query to it
+    // (the hoisted Navbar world selector, if present, cannot match).
     const breadcrumb = screen.getByRole("navigation", { name: "Breadcrumb" });
     await user.click(within(breadcrumb).getByRole("button", { name: "Vibrantes" }));
 

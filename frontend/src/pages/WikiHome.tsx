@@ -2,7 +2,6 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useCurrentWorld } from "@/hooks/useCurrentWorld";
-import { Navbar } from "@/components/organisms/Navbar";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import { CategoryCard } from "@/components/molecules/CategoryCard";
 import { EmptyState } from "@/components/organisms/EmptyState";
@@ -44,13 +43,7 @@ export default function WikiHome() {
   };
 
   return (
-    <WikiHomeLayout
-      header={
-        <Navbar
-          worlds={worlds}
-        />
-      }
-    >
+    <WikiHomeLayout>
       {isLoading && (
         <div className="col-span-full flex items-center justify-center py-24">
           <Spinner size="lg" />

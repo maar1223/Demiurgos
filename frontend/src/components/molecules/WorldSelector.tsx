@@ -68,7 +68,7 @@ export function WorldSelector({
         <button
           type="button"
           onClick={() => setOpen((prev) => !prev)}
-          className="flex items-center gap-1.5 rounded-lg border border-filio bg-piedra px-3 py-1.5 text-small text-pergamino transition-colors hover:bg-filio"
+          className="flex items-center gap-1.5 rounded-lg border border-edge bg-surface-raised px-3 py-1.5 text-small text-primary transition-colors hover:bg-surface-hover"
           aria-expanded={open}
           aria-haspopup="listbox"
         >
@@ -89,9 +89,9 @@ export function WorldSelector({
               className="fixed inset-0 z-10"
               onClick={() => setOpen(false)}
             />
-            <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-filio bg-madero py-1 shadow-xl">
+            <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-edge bg-surface-raised py-1 shadow-xl">
               {worlds.length === 0 ? (
-                <span className="block px-3 py-2 text-small text-sombra">
+                <span className="block px-3 py-2 text-small text-muted">
                   No hay mundos
                 </span>
               ) : (
@@ -103,10 +103,10 @@ export function WorldSelector({
                       onClick={() => handleSelect(w.name)}
                       role="option"
                       aria-selected={w.name === effectiveCurrent}
-                      className={`block w-full px-3 py-2 text-left text-small transition-colors hover:bg-piedra ${
+                      className={`block w-full px-3 py-2 text-left text-small transition-colors hover:bg-surface-hover ${
                         w.name === effectiveCurrent
-                          ? "text-llamita"
-                          : "text-pergamino"
+                          ? "text-action"
+                          : "text-primary"
                       }`}
                     >
                       {w.name}
@@ -115,14 +115,14 @@ export function WorldSelector({
                   {onRequestCreate && (
                     <>
                       <div
-                        className="my-1 border-t border-filio"
+                        className="my-1 border-t border-edge"
                         role="separator"
                       />
                       <button
                         type="button"
                         role="menuitem"
                         onClick={handleRequestCreate}
-                        className="block w-full px-3 py-2 text-left text-small text-llamita transition-colors hover:bg-piedra"
+                        className="block w-full px-3 py-2 text-left text-small text-action transition-colors hover:bg-surface-hover"
                       >
                         + Nuevo mundo
                       </button>

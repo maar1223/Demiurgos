@@ -4,7 +4,6 @@ import { useWorlds } from "@/hooks/useWorlds";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useImageUpload } from "@/hooks/useImages";
-import { Navbar } from "@/components/organisms/Navbar";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { FileTree } from "@/components/organisms/FileTree";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
@@ -215,7 +214,7 @@ export default function WikiEditor() {
   // Validate section
   const sectionValid = section && VALID_SECTIONS.includes(section as typeof VALID_SECTIONS[number]);
 
-  // Worlds (for Navbar world selector and world validation)
+  // Worlds (for world validation — the Navbar selector is hoisted to AppLayout)
   const { worlds, isLoading: worldsLoading } = useWorlds();
 
   // World not found (loaded worlds, but this one doesn't exist)
@@ -994,7 +993,7 @@ export default function WikiEditor() {
       ref={textareaRef}
       value={editedContent ?? ""}
       onChange={(e) => setEditedContent(e.target.value)}
-      className="min-h-[400px] w-full resize-y rounded-lg border border-filio bg-madero px-4 py-3 font-mono text-body text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+      className="min-h-[400px] w-full resize-y rounded-lg border border-edge bg-surface-raised px-4 py-3 font-mono text-body text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
       aria-label="Editor de contenido"
       spellCheck={false}
     />
@@ -1006,19 +1005,16 @@ export default function WikiEditor() {
   if (section && !sectionValid) {
     return (
       <EditorLayout
-        header={
-          <Navbar worlds={worlds} currentWorld={mundo} />
-        }
         sidebar={null}
       >
         <div className="flex flex-col items-center justify-center gap-4 py-24">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-piedra text-sangre">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-raised text-status-error">
             <Icon name="error" size={32} />
           </div>
-          <h2 className="font-heading text-h3 text-pergamino">
+          <h2 className="font-heading text-h3 text-primary">
             Sección no válida
           </h2>
-          <p className="text-body text-tinta-desvaida">
+          <p className="text-body text-muted">
             Secciones válidas:{" "}
             {VALID_SECTIONS.map((s) => `"${s}"`).join(", ")}
           </p>
@@ -1035,7 +1031,6 @@ export default function WikiEditor() {
   if (worldsLoading) {
     return (
       <EditorLayout
-        header={<Navbar worlds={[]} />}
         sidebar={null}
       >
         <div className="flex items-center justify-center py-24">
@@ -1049,7 +1044,6 @@ export default function WikiEditor() {
   if (!mundo || !section) {
     return (
       <EditorLayout
-        header={<Navbar worlds={worlds} />}
         sidebar={null}
       >
         <EmptyState
@@ -1065,17 +1059,16 @@ export default function WikiEditor() {
   if (!worldExists) {
     return (
       <EditorLayout
-        header={<Navbar worlds={worlds} currentWorld={mundo} />}
         sidebar={null}
       >
         <div className="flex flex-col items-center justify-center gap-4 py-24">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-piedra text-sangre">
+          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-raised text-status-error">
             <Icon name="error" size={32} />
           </div>
-          <h2 className="font-heading text-h3 text-pergamino">
+          <h2 className="font-heading text-h3 text-primary">
             Mundo no encontrado
           </h2>
-          <p className="text-body text-tinta-desvaida">
+          <p className="text-body text-muted">
             No existe un mundo llamado "{mundo}".
           </p>
           <Button variant="secondary" onClick={() => navigate("/wiki")}>
@@ -1087,22 +1080,9 @@ export default function WikiEditor() {
     );
   }
 
-  const handleWorldChange = (newWorld: string) => {
-    // Preserve the current section when switching worlds
-    const targetSection = section || "lore";
-    navigate(`/wiki/${encodeURIComponent(newWorld)}/${targetSection}`, { replace: true });
-  };
-
   // Ready state
   return (
     <EditorLayout
-      header={
-        <Navbar
-          worlds={worlds}
-          currentWorld={mundo}
-          onWorldChange={handleWorldChange}
-        />
-      }
       sidebar={
         <div className="flex h-full min-h-0 flex-col">
           <SectionTabs
@@ -1112,7 +1092,7 @@ export default function WikiEditor() {
           {/* World-level importer entry (UI1): sits at the top of the tree,
               never a folder node — analysis stays read-only until an
               explicit gated approval runs. */}
-          <div className="border-b border-filio px-3 py-2">
+          <div className="border-b border-edge px-3 py-2">
             <Button
               variant="ghost"
               size="sm"
@@ -1145,24 +1125,24 @@ export default function WikiEditor() {
     >
       {/* Unified file bar — always visible so navigation never disappears:
           file name + badges (left), breadcrumb chips (middle), actions (right) */}
-      <div className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-filio bg-madero px-4 py-2">
+      <div className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-edge bg-surface-raised px-4 py-2">
         {pendingNewFile ? (
-          <span className="min-w-0 truncate text-small text-tinta-desvaida">
+          <span className="min-w-0 truncate text-small text-muted">
             {pendingNewFile.path}
-            <span className="ml-2 rounded bg-llamita/10 px-2 py-0.5 text-xs text-llamita">
+            <span className="ml-2 rounded bg-action/10 px-2 py-0.5 text-xs text-action">
               New file review
             </span>
           </span>
         ) : filePath && file ? (
-          <span className="min-w-0 truncate text-small text-tinta-desvaida">
+          <span className="min-w-0 truncate text-small text-muted">
             {file.name}
             {isEditing && (
-              <span className="ml-2 rounded bg-llamita/10 px-2 py-0.5 text-xs text-llamita">
+              <span className="ml-2 rounded bg-action/10 px-2 py-0.5 text-xs text-action">
                 Editando
               </span>
             )}
             {saveSuccess && (
-              <span className="ml-2 rounded bg-musgo/10 px-2 py-0.5 text-xs text-musgo">
+              <span className="ml-2 rounded bg-status-success/10 px-2 py-0.5 text-xs text-status-success">
                 Guardado ✓
               </span>
             )}
@@ -1249,7 +1229,7 @@ export default function WikiEditor() {
                 aria-haspopup="menu"
                 aria-expanded={optionsOpen}
                 onClick={() => setOptionsOpen((o) => !o)}
-                className="flex h-8 w-8 items-center justify-center rounded-md border border-filio bg-cripta text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino"
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-edge bg-surface text-muted transition-colors hover:border-action/40 hover:text-primary"
               >
                 <Icon name="dots" size={14} />
               </button>
@@ -1257,7 +1237,7 @@ export default function WikiEditor() {
                 <div
                   role="menu"
                   aria-label="Opciones de ficha"
-                  className="absolute top-full right-0 z-20 min-w-48 overflow-hidden rounded-lg border border-filio bg-madero shadow-xl"
+                  className="absolute top-full right-0 z-20 min-w-48 overflow-hidden rounded-lg border border-edge bg-surface-raised shadow-xl"
                 >
                   <button
                     type="button"
@@ -1269,10 +1249,10 @@ export default function WikiEditor() {
                       });
                       setOptionsOpen(false);
                     }}
-                    className="block w-full px-3 py-2 text-left text-small text-pergamino transition-colors hover:bg-piedra hover:text-llamita focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50"
+                    className="block w-full px-3 py-2 text-left text-small text-primary transition-colors hover:bg-surface-hover hover:text-action focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50"
                   >
                     <span className="flex items-center gap-2">
-                      <Icon name="file" size={14} className="shrink-0 text-sombra" />
+                      <Icon name="file" size={14} className="shrink-0 text-muted" />
                       Exportar Ficha a PDF
                     </span>
                   </button>
@@ -1283,10 +1263,10 @@ export default function WikiEditor() {
                       setHistoryOpen(true);
                       setOptionsOpen(false);
                     }}
-                    className="block w-full px-3 py-2 text-left text-small text-pergamino transition-colors hover:bg-piedra hover:text-llamita focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50"
+                    className="block w-full px-3 py-2 text-left text-small text-primary transition-colors hover:bg-surface-hover hover:text-action focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50"
                   >
                     <span className="flex items-center gap-2">
-                      <Icon name="history" size={14} className="shrink-0 text-sombra" />
+                      <Icon name="history" size={14} className="shrink-0 text-muted" />
                       History
                     </span>
                   </button>
@@ -1297,10 +1277,10 @@ export default function WikiEditor() {
                       setTrashTarget(filePath);
                       setOptionsOpen(false);
                     }}
-                    className="block w-full px-3 py-2 text-left text-small text-pergamino transition-colors hover:bg-piedra hover:text-llamita focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50"
+                    className="block w-full px-3 py-2 text-left text-small text-primary transition-colors hover:bg-surface-hover hover:text-action focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50"
                   >
                     <span className="flex items-center gap-2">
-                      <Icon name="trash" size={14} className="shrink-0 text-sombra" />
+                      <Icon name="trash" size={14} className="shrink-0 text-muted" />
                       Eliminar Ficha
                     </span>
                   </button>
@@ -1314,7 +1294,7 @@ export default function WikiEditor() {
             title={focusMode ? "Restaurar paneles laterales" : "Modo foco: ocultar paneles"}
             aria-label={focusMode ? "Restaurar paneles laterales" : "Modo foco: ocultar paneles"}
             aria-pressed={focusMode}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-filio bg-cripta text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino"
+            className="flex h-8 w-8 items-center justify-center rounded-md border border-edge bg-surface text-muted transition-colors hover:border-action/40 hover:text-primary"
           >
             <Icon name={focusMode ? "minimize" : "expand"} size={14} />
           </button>
@@ -1470,7 +1450,7 @@ export default function WikiEditor() {
           <>
             <Suspense
               fallback={
-                <div className="flex h-[70vh] items-center justify-center rounded-lg border border-filio bg-madero">
+                <div className="flex h-[70vh] items-center justify-center rounded-lg border border-edge bg-surface-raised">
                   <Spinner size="lg" />
                 </div>
               }
@@ -1638,7 +1618,7 @@ export default function WikiEditor() {
         />
       )}
 
-      {/* Move feedback toast — success (llamita) or error (sangre) */}
+      {/* Move feedback toast — success (action) or error (status-error) */}
       {toast && <Toast message={toast.message} kind={toast.kind} />}
     </EditorLayout>
   );

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useWorlds } from "@/hooks/useWorlds";
-import { Navbar } from "@/components/organisms/Navbar";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
@@ -16,10 +15,10 @@ import { Spinner } from "@/components/atoms/Spinner";
  * version by world) and lets the Author pick which world receives the
  * activation via the shared world selector.
  *
- * World creation: this page owns the second `WorldSelector` (the one in the
- * page body, below the Navbar). It wires the `+ Nuevo mundo` entry, the
- * `CreateWorldModal`, and the post-creation switch confirmation. Local
- * `world` is only updated when the user confirms the switch — declined
+ * World creation: this page owns the page-body `WorldSelector` (the global
+ * Navbar selector is hoisted to the AppLayout). It wires the `+ Nuevo mundo`
+ * entry, the `CreateWorldModal`, and the post-creation switch confirmation.
+ * Local `world` is only updated when the user confirms the switch — declined
  * creation does not change the activation target.
  *
  * States:
@@ -49,14 +48,13 @@ export default function ToolWorkshop() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col bg-cripta">
-      <Navbar worlds={worlds} />
+    <div className="flex min-h-screen flex-col bg-surface">
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">
         <header className="mb-8">
-          <h1 className="font-heading text-h3 text-pergamino">
+          <h1 className="font-heading text-h3 text-primary">
             Taller de Herramientas
           </h1>
-          <p className="mt-2 text-body text-tinta-desvaida">
+          <p className="mt-2 text-body text-muted">
             Metodologías de construcción seguras: editar, compilar, publicar
             versiones inmutables y activarlas por mundo.
           </p>
@@ -80,7 +78,7 @@ export default function ToolWorkshop() {
                 onWorldChange={setWorld}
                 onRequestCreate={() => setCreatingWorld(true)}
               />
-              <p className="text-small text-tinta-desvaida">
+              <p className="text-small text-muted">
                 {world
                   ? `Las activaciones se aplican a «${world}».`
                   : worlds.length > 0

@@ -116,8 +116,8 @@ describe("FileTreeNode", () => {
     );
 
     const btn = screen.getByRole("button");
-    expect(btn.className).toContain("border-llamita");
-    expect(btn.className).toContain("bg-filio");
+    expect(btn.className).toContain("border-action");
+    expect(btn.className).toContain("bg-surface-active");
   });
 
   it("does not apply selected styles to non-selected file", () => {
@@ -132,7 +132,7 @@ describe("FileTreeNode", () => {
     );
 
     const btn = screen.getByRole("button");
-    expect(btn.className).not.toContain("border-llamita");
+    expect(btn.className).not.toContain("border-action");
   });
 
   it("auto-expands directory containing the selected path", () => {

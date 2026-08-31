@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
-import { Navbar } from "@/components/organisms/Navbar";
 import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
@@ -1331,13 +1330,13 @@ export default function WorldImporter() {
   const folderAttrs: FolderInputAttrs = { webkitdirectory: "", directory: "" };
 
   return (
-    <WikiHomeLayout header={<Navbar worlds={worlds} currentWorld={mundo} />}>
+    <WikiHomeLayout>
       <div className="col-span-full">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h1
             ref={headingRef}
             tabIndex={-1}
-            className="font-heading text-h3 text-pergamino focus:outline-none"
+            className="font-heading text-h3 text-primary focus:outline-none"
           >
             {headingText}
           </h1>
@@ -1349,7 +1348,7 @@ export default function WorldImporter() {
         </div>
 
         {/* Preservation-first messaging — shown from the start */}
-        <div className="mt-3 rounded-lg border border-musgo/40 bg-musgo/10 px-4 py-3 text-small text-pergamino">
+        <div className="mt-3 rounded-lg border border-status-success/40 bg-status-success/10 px-4 py-3 text-small text-primary">
           <span className="font-medium">Tu contenido actual nunca se reemplaza sin tu aprobación explícita.</span>{" "}
           Las fichas editadas se conservan; se agregan solo las imágenes y
           referencias faltantes. Los reemplazos autorizados guardan la versión
@@ -1390,7 +1389,7 @@ export default function WorldImporter() {
         <div className="col-span-full">
           {resumeNotice && (
             <div
-              className="mb-4 rounded-lg border border-llamita/40 bg-llamita/10 px-4 py-3 text-small text-pergamino"
+              className="mb-4 rounded-lg border border-action/40 bg-action/10 px-4 py-3 text-small text-primary"
               role="status"
             >
               <Icon name="lightbulb" size={16} />
@@ -1404,19 +1403,19 @@ export default function WorldImporter() {
               data as fresh. */}
           <section
             aria-labelledby="import-history-title"
-            className="mt-4 rounded-lg border border-filio bg-madero p-4"
+            className="mt-4 rounded-lg border border-edge bg-surface-raised p-4"
             data-testid="import-history"
           >
             <header className="flex flex-wrap items-center justify-between gap-2">
               <h2
                 id="import-history-title"
-                className="font-heading text-body text-pergamino"
+                className="font-heading text-body text-primary"
               >
                 Importaciones previas
               </h2>
               {historyOutage && (
                 <span
-                  className="flex items-center gap-2 text-small text-tinta-desvaida"
+                  className="flex items-center gap-2 text-small text-muted"
                   role="status"
                   aria-live="polite"
                   data-testid="history-outage"
@@ -1436,7 +1435,7 @@ export default function WorldImporter() {
             </header>
 
             {historyLoading && history.length === 0 && (
-              <div className="mt-3 flex items-center gap-2 text-small text-tinta-desvaida">
+              <div className="mt-3 flex items-center gap-2 text-small text-muted">
                 <Spinner size="sm" />
                 <span>Cargando historial…</span>
               </div>
@@ -1444,7 +1443,7 @@ export default function WorldImporter() {
 
             {!historyLoading && history.length === 0 && !historyOutage && (
               <p
-                className="mt-3 text-small text-tinta-desvaida"
+                className="mt-3 text-small text-muted"
                 data-testid="history-empty"
               >
                 No hay importaciones previas en este mundo.
@@ -1459,10 +1458,10 @@ export default function WorldImporter() {
                 {history.map((entry) => (
                   <li
                     key={entry.job_id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-filio bg-cripta px-3 py-2"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-edge bg-surface px-3 py-2"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="text-small font-medium text-pergamino">
+                      <p className="text-small font-medium text-primary">
                         {formatHistoryDate(entry.created_at)}{" "}
                         <Badge
                           variant={historyStateVariant(entry.state)}
@@ -1471,7 +1470,7 @@ export default function WorldImporter() {
                           {historyStateLabel(entry.state)}
                         </Badge>
                       </p>
-                      <p className="mt-0.5 text-xs text-tinta-desvaida">
+                      <p className="mt-0.5 text-xs text-muted">
                         {entry.source_kind} · {entry.file_count}{" "}
                         {entry.file_count === 1 ? "candidato" : "candidatos"}
                       </p>
@@ -1517,8 +1516,8 @@ export default function WorldImporter() {
             )}
           </section>
 
-          <fieldset className="mt-4 rounded-lg border border-filio bg-madero p-4">
-            <legend className="px-2 text-small font-medium text-tinta-desvaida">
+          <fieldset className="mt-4 rounded-lg border border-edge bg-surface-raised p-4">
+            <legend className="px-2 text-small font-medium text-muted">
               Tipo de fuente
             </legend>
             <div className="flex flex-wrap gap-2">
@@ -1535,10 +1534,10 @@ export default function WorldImporter() {
                   aria-pressed={sourceKind === option.kind}
                   onClick={() => handleSourceKind(option.kind)}
                   className={cn(
-                    "flex flex-col gap-0.5 rounded-lg border px-4 py-2 text-left text-small transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
+                    "flex flex-col gap-0.5 rounded-lg border px-4 py-2 text-left text-small transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
                     sourceKind === option.kind
-                      ? "border-llamita bg-llamita/10 text-pergamino"
-                      : "border-filio bg-cripta text-tinta-desvaida hover:border-llamita/40",
+                      ? "border-action bg-action/10 text-primary"
+                      : "border-edge bg-surface text-muted hover:border-action/40",
                   )}
                 >
                   <span className="font-medium">{option.label}</span>
@@ -1574,7 +1573,7 @@ export default function WorldImporter() {
           </div>
 
           {excludedCount > 0 && (
-            <p className="mt-3 text-small text-tinta-desvaida">
+            <p className="mt-3 text-small text-muted">
               {excludedCount}{" "}
               {excludedCount === 1 ? "archivo" : "archivos"} de carpetas del
               sistema u ocultas se excluyeron (no son contenido importable).
@@ -1582,17 +1581,17 @@ export default function WorldImporter() {
           )}
 
           {precheckError && (
-            <p className="mt-3 text-small text-sangre" role="alert">
+            <p className="mt-3 text-small text-status-error" role="alert">
               {precheckError}
             </p>
           )}
 
           {sources.length > 0 && (
-            <ul className="mt-4 max-h-64 divide-y divide-filio overflow-y-auto rounded-lg border border-filio bg-cripta">
+            <ul className="mt-4 max-h-64 divide-y divide-edge overflow-y-auto rounded-lg border border-edge bg-surface">
               {sources.map((s) => (
                 <li
                   key={s.relative}
-                  className="flex items-center justify-between gap-3 px-3 py-2 text-small text-pergamino"
+                  className="flex items-center justify-between gap-3 px-3 py-2 text-small text-primary"
                 >
                   <span className="min-w-0 truncate" title={s.relative}>
                     {s.relative}
@@ -1606,7 +1605,7 @@ export default function WorldImporter() {
                       value={s.section}
                       onChange={(e) => handleSectionChange(s.relative, e.target.value)}
                       aria-label={`Sección de ${s.relative}`}
-                      className="rounded border border-filio bg-cripta px-1.5 py-0.5 text-xs text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50"
+                      className="rounded border border-edge bg-surface px-1.5 py-0.5 text-xs text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
                     >
                       {CLASSIFIER_SECTIONS.map((opt) => (
                         <option key={opt} value={opt}>
@@ -1614,7 +1613,7 @@ export default function WorldImporter() {
                         </option>
                       ))}
                     </select>
-                    <span className="text-xs text-tinta-desvaida">
+                    <span className="text-xs text-muted">
                       {formatBytes(s.size)}
                     </span>
                   </span>
@@ -1634,7 +1633,7 @@ export default function WorldImporter() {
               {resumeIntaking ? "Continuar análisis" : "Analizar (solo lectura)"}
             </Button>
             {sources.length > 0 && (
-              <span className="text-small text-tinta-desvaida">
+              <span className="text-small text-muted">
                 {sources.length}{" "}
                 {sources.length === 1 ? "archivo" : "archivos"} ·{" "}
                 {formatBytes(sources.reduce((sum, s) => sum + s.size, 0))}
@@ -1646,13 +1645,13 @@ export default function WorldImporter() {
 
       {!worldsLoading && !restoring && mundo && worldExists && step === "analyzing" && (
         <div className="col-span-full">
-          <div className="rounded-lg border border-filio bg-madero p-6">
+          <div className="rounded-lg border border-edge bg-surface-raised p-6">
             <div className="flex items-center gap-3">
               <Spinner size="md" />
               <div role="status" aria-live="polite">
-                <p className="text-body text-pergamino">{phaseMessage}</p>
+                <p className="text-body text-primary">{phaseMessage}</p>
                 {streamProgress && (
-                  <p className="mt-1 text-small text-tinta-desvaida">
+                  <p className="mt-1 text-small text-muted">
                     {formatBytes(streamProgress.streamed)} de{" "}
                     {formatBytes(streamProgress.total)} · archivo{" "}
                     {streamProgress.fileIndex + 1} de{" "}
@@ -1661,10 +1660,10 @@ export default function WorldImporter() {
                 )}
                 {analysisProgress && !streamProgress && (
                   <>
-                    <p className="mt-1 text-small text-tinta-desvaida">
+                    <p className="mt-1 text-small text-muted">
                       Etapa: {analysisProgress.stage}
                     </p>
-                    <p className="mt-1 text-small text-tinta-desvaida">
+                    <p className="mt-1 text-small text-muted">
                       {monitoringAfterTimeout
                         ? "Reconectando con el servidor…"
                         : `Tiempo transcurrido: ${formatElapsed(elapsedSec)}`}
@@ -1675,7 +1674,7 @@ export default function WorldImporter() {
             </div>
             {streamProgress && streamProgress.total > 0 && (
               <div
-                className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-filio"
+                className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-surface-raised"
                 role="progressbar"
                 aria-valuemin={0}
                 aria-valuemax={streamProgress.total}
@@ -1683,7 +1682,7 @@ export default function WorldImporter() {
                 aria-label="Progreso de subida"
               >
                 <div
-                  className="h-full bg-llamita transition-all"
+                  className="h-full bg-action transition-all"
                   style={{
                     width: `${Math.round(
                       (streamProgress.streamed / streamProgress.total) * 100,
@@ -1694,7 +1693,7 @@ export default function WorldImporter() {
             )}
             {analysisProgress && !streamProgress && (
               <div
-                className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-filio"
+                className="mt-4 h-1.5 w-full overflow-hidden rounded-full bg-surface-raised"
                 role="progressbar"
                 aria-valuemin={0}
                 aria-valuemax={100}
@@ -1707,7 +1706,7 @@ export default function WorldImporter() {
                 aria-label="Progreso del análisis"
               >
                 <div
-                  className="h-full bg-llamita transition-all"
+                  className="h-full bg-action transition-all"
                   style={{
                     width: `${
                       analysisProgress.pct === null ? 18 : analysisProgress.pct
@@ -1728,7 +1727,7 @@ export default function WorldImporter() {
 
       {!worldsLoading && !restoring && mundo && worldExists && step === "review" && (
         <div className="col-span-full">
-          <p className="text-body text-tinta-desvaida">
+          <p className="text-body text-muted">
             El análisis es de solo lectura. Elegí qué aprobar y luego confirmá
             la importación: escribir es una acción explícita y separada.
           </p>
@@ -1738,10 +1737,10 @@ export default function WorldImporter() {
               empty scaffolding is preserved, so the author sees the mapping
               and empty-section behavior before approving. */}
           <details
-            className="mt-4 rounded-lg border border-filio bg-madero"
+            className="mt-4 rounded-lg border border-edge bg-surface-raised"
             data-testid="authoring-guide"
           >
-            <summary className="flex cursor-pointer items-center justify-between gap-2 px-4 py-3 text-small font-medium text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 [&::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer items-center justify-between gap-2 px-4 py-3 text-small font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50 [&::-webkit-details-marker]:hidden">
               <span>Guía de estructura H1–H5</span>
               <Icon
                 name="chevron-down"
@@ -1749,31 +1748,31 @@ export default function WorldImporter() {
                 className="transition-transform group-open:rotate-180"
               />
             </summary>
-            <div className="border-t border-filio px-4 py-3 text-xs text-tinta-desvaida">
-              <p className="text-pergamino">
+            <div className="border-t border-edge px-4 py-3 text-xs text-muted">
+              <p className="text-primary">
                 El análisis arma una jerarquía real a partir de los encabezados
                 del documento. Cada ficha conserva su texto original completo.
               </p>
               <ul className="mt-2 list-disc space-y-1 pl-4">
                 <li>
-                  <span className="text-pergamino">H1</span> — raíz/índice del
+                  <span className="text-primary">H1</span> — raíz/índice del
                   mundo. Toda sección H1 queda como carpeta raíz, incluso si
                   está vacía (el andamiaje intencional se preserva, nunca se
                   borra).
                 </li>
                 <li>
-                  <span className="text-pergamino">H2–H5</span> — encabezados
+                  <span className="text-primary">H2–H5</span> — encabezados
                   anidados bajo su H1. Un encabezado con subsecciones se
-                  convierte en una <span className="text-pergamino">ficha</span>{" "}
+                  convierte en una <span className="text-primary">ficha</span>{" "}
                   (carpeta con sus fichas hijas).
                 </li>
                 <li>
-                  <span className="text-pergamino">Texto sin subsecciones</span>{" "}
+                  <span className="text-primary">Texto sin subsecciones</span>{" "}
                   — el texto plano de un encabezado sin hijos queda en la ficha
                   padre, nunca se descarta ni se crea una ficha vacía.
                 </li>
                 <li>
-                  <span className="text-pergamino">Sin encabezados</span> — si
+                  <span className="text-primary">Sin encabezados</span> — si
                   el documento no tiene encabezados útiles, se crea una sola
                   ficha implícita con el nombre del archivo.
                 </li>
@@ -1833,8 +1832,8 @@ export default function WorldImporter() {
           {/* Grouped approval */}
           {candidates.length > 0 && (
             <>
-              <fieldset className="mt-6 rounded-lg border border-filio bg-madero p-4">
-                <legend className="px-2 text-small font-medium text-tinta-desvaida">
+              <fieldset className="mt-6 rounded-lg border border-edge bg-surface-raised p-4">
+                <legend className="px-2 text-small font-medium text-muted">
                   Grupos de aprobación
                 </legend>
                 <div className="flex flex-col gap-3">
@@ -1842,21 +1841,21 @@ export default function WorldImporter() {
                     <label
                       key={group.id}
                       className={cn(
-                        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors focus-within:ring-2 focus-within:ring-llamita/50",
+                        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors focus-within:ring-2 focus-within:ring-action/50",
                         group.requiresReview
-                          ? "border-llamita/40 bg-llamita/5"
-                          : "border-filio bg-cripta",
+                          ? "border-action/40 bg-action/5"
+                          : "border-edge bg-surface",
                       )}
                     >
                       <input
                         type="checkbox"
-                        className="mt-0.5 h-4 w-4 accent-llamita"
+                        className="mt-0.5 h-4 w-4 accent-action"
                         checked={selectedGroups.has(group.id)}
                         onChange={() => toggleGroup(group.id)}
                         aria-describedby={`group-${group.id}-desc`}
                       />
                       <span>
-                        <span className="block text-small font-medium text-pergamino">
+                        <span className="block text-small font-medium text-primary">
                           {group.label} ({group.count})
                           {group.requiresReview && (
                             <Badge variant="warning" className="ml-2">
@@ -1866,7 +1865,7 @@ export default function WorldImporter() {
                         </span>
                         <span
                           id={`group-${group.id}-desc`}
-                          className="block text-xs text-tinta-desvaida"
+                          className="block text-xs text-muted"
                         >
                           {group.description}
                         </span>
@@ -1874,7 +1873,7 @@ export default function WorldImporter() {
                     </label>
                   ))}
                   {groups.rejected.length > 0 && (
-                    <p className="text-small text-tinta-desvaida">
+                    <p className="text-small text-muted">
                       {groups.rejected.length}{" "}
                       {groups.rejected.length === 1
                         ? "candidato descartado"
@@ -1886,7 +1885,7 @@ export default function WorldImporter() {
               </fieldset>
 
               {/* Candidate detail review (expandable) */}
-              <h2 className="mt-6 font-heading text-h4 text-pergamino">
+              <h2 className="mt-6 font-heading text-h4 text-primary">
                 Detalle de candidatos
               </h2>
               <div className="mt-2 flex flex-col gap-3">
@@ -1903,16 +1902,16 @@ export default function WorldImporter() {
               </div>
 
               {/* Approval + execution gate */}
-              <div className="mt-6 rounded-lg border border-filio bg-madero p-4">
+              <div className="mt-6 rounded-lg border border-edge bg-surface-raised p-4">
                 {!approval ? (
                   <>
-                    <p className="text-small text-tinta-desvaida">
+                    <p className="text-small text-muted">
                       La aprobación se liga al diagnóstico completo revisado.
                       Cualquier cambio en las fuentes la invalida.
                     </p>
                     {approvedSuggestionIds.length > 0 && (
                       <p
-                        className="mt-2 text-small text-pergamino"
+                        className="mt-2 text-small text-primary"
                         data-testid="approved-suggestions-summary"
                       >
                         <Icon name="lightbulb" size={14} />
@@ -1936,14 +1935,14 @@ export default function WorldImporter() {
                   </>
                 ) : (
                   <>
-                    <p className="text-small text-pergamino" role="status">
+                    <p className="text-small text-primary" role="status">
                       <Icon name="check" size={16} />
                       <span className="ml-2">
                         Aprobaste {selectedGroupIds.length}{" "}
                         {selectedGroupIds.length === 1 ? "grupo" : "grupos"}.
                       </span>
                     </p>
-                    <p className="mt-2 text-small text-tinta-desvaida">
+                    <p className="mt-2 text-small text-muted">
                       La importación escribirá en tu mundo. Las versiones
                       anteriores de fichas reemplazadas quedan en la papelera
                       30 días.
@@ -1968,7 +1967,7 @@ export default function WorldImporter() {
                     </div>
                     <p
                       id="import-write-warning"
-                      className="mt-2 text-xs text-tinta-desvaida"
+                      className="mt-2 text-xs text-muted"
                     >
                       Esta acción es permanente: crea o actualiza fichas en tu
                       mundo y registra imágenes en la galería.
@@ -1987,10 +1986,10 @@ export default function WorldImporter() {
           )}
 
           {importing && (
-            <div className="mt-4 rounded-lg border border-filio bg-madero p-4" role="status" aria-live="polite">
+            <div className="mt-4 rounded-lg border border-edge bg-surface-raised p-4" role="status" aria-live="polite">
               <div className="flex items-center gap-3">
                 <Spinner size="md" />
-                <span className="text-body text-pergamino">
+                <span className="text-body text-primary">
                   {phaseMessage}
                 </span>
               </div>
@@ -2034,11 +2033,11 @@ export default function WorldImporter() {
 
 function SummaryTile({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-filio bg-madero p-4">
-      <p className="text-xs uppercase tracking-wide text-tinta-desvaida">
+    <div className="rounded-lg border border-edge bg-surface-raised p-4">
+      <p className="text-xs uppercase tracking-wide text-muted">
         {label}
       </p>
-      <p className="mt-1 font-heading text-h4 text-pergamino">{value}</p>
+      <p className="mt-1 font-heading text-h4 text-primary">{value}</p>
     </div>
   );
 }
@@ -2090,11 +2089,11 @@ function CandidateCard({
     candidate.display_title || candidate.normalized_identity;
 
   return (
-    <details className="group rounded-lg border border-filio bg-madero">
-      <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 px-4 py-3 text-small font-medium text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 [&::-webkit-details-marker]:hidden">
+    <details className="group rounded-lg border border-edge bg-surface-raised">
+      <summary className="flex cursor-pointer flex-wrap items-center justify-between gap-2 px-4 py-3 text-small font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50 [&::-webkit-details-marker]:hidden">
         <span className="min-w-0 truncate">
           {fichaTitle}
-          <span className="ml-2 text-xs font-normal text-tinta-desvaida">
+          <span className="ml-2 text-xs font-normal text-muted">
             {candidate.provenance.source_path}
           </span>
         </span>
@@ -2126,46 +2125,46 @@ function CandidateCard({
           <Icon name="chevron-down" size={14} className="transition-transform group-open:rotate-180" />
         </span>
       </summary>
-      <div className="border-t border-filio px-4 py-3">
+      <div className="border-t border-edge px-4 py-3">
         <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-small tablet:grid-cols-2">
           <div>
-            <dt className="text-xs text-tinta-desvaida">Origen</dt>
-            <dd className="text-pergamino">{candidate.provenance.source_path}</dd>
+            <dt className="text-xs text-muted">Origen</dt>
+            <dd className="text-primary">{candidate.provenance.source_path}</dd>
           </div>
           {candidate.canonical_id && (
             <div data-testid={`canonical-id-${candidate.candidate_id}`}>
-              <dt className="text-xs text-tinta-desvaida">Identidad canónica</dt>
-              <dd className="break-words font-mono text-pergamino">
+              <dt className="text-xs text-muted">Identidad canónica</dt>
+              <dd className="break-words font-mono text-primary">
                 {candidate.canonical_id}
               </dd>
             </div>
           )}
           {candidate.provenance.heading_path && (
             <div>
-              <dt className="text-xs text-tinta-desvaida">Sección de origen</dt>
-              <dd className="text-pergamino">
+              <dt className="text-xs text-muted">Sección de origen</dt>
+              <dd className="text-primary">
                 {candidate.provenance.heading_path}
               </dd>
             </div>
           )}
           {candidate.provenance.nearby_text_anchor && (
             <div>
-              <dt className="text-xs text-tinta-desvaida">Contexto cercano</dt>
-              <dd className="truncate text-tinta-desvaida" title={candidate.provenance.nearby_text_anchor}>
+              <dt className="text-xs text-muted">Contexto cercano</dt>
+              <dd className="truncate text-muted" title={candidate.provenance.nearby_text_anchor}>
                 {candidate.provenance.nearby_text_anchor}
               </dd>
             </div>
           )}
           <div>
-            <dt className="text-xs text-tinta-desvaida">Tamaño</dt>
-            <dd className="text-pergamino">{formatBytes(candidate.size_bytes)}</dd>
+            <dt className="text-xs text-muted">Tamaño</dt>
+            <dd className="text-primary">{formatBytes(candidate.size_bytes)}</dd>
           </div>
         </dl>
 
         {candidate.content_preview && (
           <div className="mt-3">
-            <p className="text-xs text-tinta-desvaida">Vista previa</p>
-            <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-filio bg-cripta p-3 text-xs text-tinta-desvaida">
+            <p className="text-xs text-muted">Vista previa</p>
+            <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-edge bg-surface p-3 text-xs text-muted">
               {candidate.content_preview}
             </pre>
           </div>
@@ -2178,44 +2177,44 @@ function CandidateCard({
             warnings (excluded from the gallery, never failing the ficha). */}
         {candidate.summary && (
           <div className="mt-3" data-testid={`summary-${candidate.candidate_id}`}>
-            <p className="text-xs text-tinta-desvaida">Resumen</p>
-            <p className="mt-1 text-xs text-pergamino">{candidate.summary}</p>
+            <p className="text-xs text-muted">Resumen</p>
+            <p className="mt-1 text-xs text-primary">{candidate.summary}</p>
           </div>
         )}
 
         {candidate.frontmatter && (
           <div
-            className="mt-3 rounded-md border border-filio bg-cripta p-3"
+            className="mt-3 rounded-md border border-edge bg-surface p-3"
             data-testid={`frontmatter-${candidate.candidate_id}`}
           >
-            <p className="text-xs text-tinta-desvaida">Frontmatter propuesto</p>
+            <p className="text-xs text-muted">Frontmatter propuesto</p>
             <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-small tablet:grid-cols-2">
               <div>
-                <dt className="text-xs text-tinta-desvaida">Título</dt>
-                <dd className="text-pergamino">{candidate.frontmatter.title}</dd>
+                <dt className="text-xs text-muted">Título</dt>
+                <dd className="text-primary">{candidate.frontmatter.title}</dd>
               </div>
               <div>
-                <dt className="text-xs text-tinta-desvaida">Tipo</dt>
-                <dd className="text-pergamino">
+                <dt className="text-xs text-muted">Tipo</dt>
+                <dd className="text-primary">
                   {candidate.frontmatter.type || "—"}
                 </dd>
               </div>
               {candidate.frontmatter.description && (
                 <div className="tablet:col-span-2">
-                  <dt className="text-xs text-tinta-desvaida">Descripción</dt>
-                  <dd className="text-pergamino">
+                  <dt className="text-xs text-muted">Descripción</dt>
+                  <dd className="text-primary">
                     {candidate.frontmatter.description}
                   </dd>
                 </div>
               )}
               {candidate.frontmatter.relaciones.length > 0 && (
                 <div className="tablet:col-span-2">
-                  <dt className="text-xs text-tinta-desvaida">Relaciones</dt>
+                  <dt className="text-xs text-muted">Relaciones</dt>
                   <dd className="flex flex-wrap gap-1">
                     {candidate.frontmatter.relaciones.map((rel) => (
                       <span
                         key={rel}
-                        className="rounded-full border border-filio bg-madero px-2 py-0.5 font-mono text-xs text-pergamino"
+                        className="rounded-full border border-edge bg-surface-raised px-2 py-0.5 font-mono text-xs text-primary"
                       >
                         {rel}
                       </span>
@@ -2229,15 +2228,15 @@ function CandidateCard({
 
         {candidate.media_diagnostics.length > 0 && (
           <div className="mt-3" data-testid={`media-diagnostics-${candidate.candidate_id}`}>
-            <p className="text-xs text-tinta-desvaida">
+            <p className="text-xs text-muted">
               Imágenes referenciadas{" "}
               {resolvedMediaCount > 0 && (
-                <span className="text-musgo">
+                <span className="text-status-success">
                   · {resolvedMediaCount} resuelta{resolvedMediaCount === 1 ? "" : "s"}
                 </span>
               )}
               {unresolvedMediaSpans.length > 0 && (
-                <span className="text-llamita">
+                <span className="text-action">
                   {" "}
                   · {unresolvedMediaSpans.length} sin resolver
                 </span>
@@ -2247,19 +2246,19 @@ function CandidateCard({
               {candidate.media_diagnostics.map((diag) => (
                 <li
                   key={diag.image_key}
-                  className="rounded-md border border-filio bg-cripta px-3 py-2"
+                  className="rounded-md border border-edge bg-surface px-3 py-2"
                 >
-                  <span className="font-mono text-xs text-pergamino">
+                  <span className="font-mono text-xs text-primary">
                     {diag.reference}
                   </span>
                   {diag.status === "unresolved" && (
-                    <span className="ml-2 text-xs text-llamita">
+                    <span className="ml-2 text-xs text-action">
                       no hay definición — se conserva tal cual, no se registra
                       en la galería
                     </span>
                   )}
                   {diag.status === "resolved" && (
-                    <span className="ml-2 text-xs text-musgo">
+                    <span className="ml-2 text-xs text-status-success">
                       {diag.target_path}
                     </span>
                   )}
@@ -2270,11 +2269,11 @@ function CandidateCard({
         )}
 
         {hasIssues && (
-          <div className="mt-3 rounded-md border border-llamita/40 bg-llamita/5 p-3">
-            <p className="text-xs font-medium text-llamita">
+          <div className="mt-3 rounded-md border border-action/40 bg-action/5 p-3">
+            <p className="text-xs font-medium text-action">
               Validación OKF pendiente
             </p>
-            <ul className="mt-1 list-disc pl-4 text-xs text-tinta-desvaida">
+            <ul className="mt-1 list-disc pl-4 text-xs text-muted">
               {candidate.okf_issues.map((issue, index) => (
                 <li key={index}>
                   {typeof issue.message === "string"
@@ -2288,7 +2287,7 @@ function CandidateCard({
 
         {candidate.images.length > 0 && (
           <div className="mt-3">
-            <p className="text-xs text-tinta-desvaida">
+            <p className="text-xs text-muted">
               Imágenes contextuales — se insertan en la sección correspondiente,
               en orden de origen, sin reordenar lo existente.
             </p>
@@ -2309,7 +2308,7 @@ function CandidateCard({
             suggested fields separate from the deterministic diagnosis. */}
         {textSuggestions.length > 0 && (
           <div className="mt-3" data-testid={`suggestions-${candidate.candidate_id}`}>
-            <p className="text-xs text-tinta-desvaida">
+            <p className="text-xs text-muted">
               Sugerencias del asistente — son orientativas. Aprobá o rechazá
               cada una antes de importar.
             </p>
@@ -2340,7 +2339,7 @@ function CandidateCard({
             className="mt-3"
             data-testid={`vision-suggestions-${candidate.candidate_id}`}
           >
-            <p className="text-xs text-tinta-desvaida">
+            <p className="text-xs text-muted">
               Imágenes analizadas con visión — orientativas. Aprobá las que
               quieras registrar en la galería; la descripción se usará como
               texto alternativo.
@@ -2370,7 +2369,7 @@ function EnrichmentStatusBanner({ status }: { status: EnrichmentStatus }) {
   if (status === "ok") {
     return (
       <div
-        className="mt-4 rounded-lg border border-musgo/40 bg-musgo/10 px-4 py-3 text-small text-pergamino"
+        className="mt-4 rounded-lg border border-status-success/40 bg-status-success/10 px-4 py-3 text-small text-primary"
         role="status"
         aria-live="polite"
         data-testid="enrichment-banner"
@@ -2387,7 +2386,7 @@ function EnrichmentStatusBanner({ status }: { status: EnrichmentStatus }) {
   if (status === "no_suggestions") {
     return (
       <div
-        className="mt-4 rounded-lg border border-filio bg-cripta px-4 py-3 text-small text-tinta-desvaida"
+        className="mt-4 rounded-lg border border-edge bg-surface px-4 py-3 text-small text-muted"
         role="status"
         aria-live="polite"
         data-testid="enrichment-banner"
@@ -2406,7 +2405,7 @@ function EnrichmentStatusBanner({ status }: { status: EnrichmentStatus }) {
   // attempted but produced nothing.
   return (
     <div
-      className="mt-4 rounded-lg border border-llamita/40 bg-llamita/5 px-4 py-3 text-small text-pergamino"
+      className="mt-4 rounded-lg border border-action/40 bg-action/5 px-4 py-3 text-small text-primary"
       role="status"
       aria-live="polite"
       data-testid="enrichment-banner"
@@ -2439,7 +2438,7 @@ function relationshipTargetLabel(rel: RelationshipSuggestion): string {
 
 /**
  * Slice 2 — one advisory suggestion card. Visual distinction:
- * ``border-musgo/40 bg-musgo/5`` for classification, ``border-filio bg-cripta``
+ * ``border-status-success/40 bg-status-success/5`` for classification, ``border-edge bg-surface``
  * for relationship. Approved/rejected states are persisted via the
  * decisions endpoint and reflected here from server truth.
  */
@@ -2477,9 +2476,9 @@ function SuggestionCard({
       className={cn(
         "flex flex-col gap-2 rounded-md border p-3",
         isClassification
-          ? "border-musgo/40 bg-musgo/5"
-          : "border-filio bg-cripta",
-        decision === "approved" && "ring-1 ring-musgo/40",
+          ? "border-status-success/40 bg-status-success/5"
+          : "border-edge bg-surface",
+        decision === "approved" && "ring-1 ring-status-success/40",
         decision === "rejected" && "opacity-70",
       )}
       data-testid={`suggestion-${suggestion.id}`}
@@ -2490,7 +2489,7 @@ function SuggestionCard({
           <Badge variant={isClassification ? "info" : "default"}>
             {isClassification ? "clasificación" : "relación"}
           </Badge>
-          <span className="text-small font-medium text-pergamino">
+          <span className="text-small font-medium text-primary">
             {isClassification
               ? `tipo: ${cls!.type || "(sin tipo)"}`
               : `${rel!.relationship_type} → ${relationshipTargetLabel(rel!)}`}
@@ -2505,19 +2504,19 @@ function SuggestionCard({
             </span>
           )}
         </div>
-        <span className="text-xs text-tinta-desvaida" title="confianza del asistente">
+        <span className="text-xs text-muted" title="confianza del asistente">
           confianza {confidencePct}%
         </span>
       </div>
       {(isClassification ? cls!.evidence : rel!.evidence) && (
         isClassification ? (
-          <p className="text-xs text-tinta-desvaida">{cls!.evidence}</p>
+          <p className="text-xs text-muted">{cls!.evidence}</p>
         ) : (
-          <p className="text-sm font-medium text-pergamino">{rel!.evidence}</p>
+          <p className="text-sm font-medium text-primary">{rel!.evidence}</p>
         )
       )}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-tinta-desvaida">
+        <span className="text-xs text-muted">
           Origen: {providerLabel}
           {modelLabel && ` · ${modelLabel}`}
         </span>
@@ -2547,7 +2546,7 @@ function SuggestionCard({
         </div>
       </div>
       {decision === "rejected" && (
-        <p className="text-xs text-tinta-desvaida">
+        <p className="text-xs text-muted">
           Sugerencia rechazada — no se aplicará al importar.
         </p>
       )}
@@ -2584,10 +2583,10 @@ function ImagePlacementRow({
     <li
       className={cn(
         "flex flex-col gap-2 rounded-md border p-3 tablet:flex-row tablet:items-start",
-        ambiguous ? "border-llamita/50 bg-llamita/5" : "border-filio bg-cripta",
+        ambiguous ? "border-action/50 bg-action/5" : "border-edge bg-surface",
       )}
     >
-      <div className="shrink-0 overflow-hidden rounded-md border border-filio bg-madero">
+      <div className="shrink-0 overflow-hidden rounded-md border border-edge bg-surface-raised">
         <img
           src={getMediaUrl(mundo, cleanPath)}
           alt={placement.alt_text || placement.relative_media_path}
@@ -2595,7 +2594,7 @@ function ImagePlacementRow({
         />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-pergamino">
+        <p className="text-xs text-primary">
           {placement.relative_media_path}
           {ambiguous && (
             <Badge variant="warning" className="ml-2">
@@ -2604,7 +2603,7 @@ function ImagePlacementRow({
           )}
         </p>
         {(documentOrder > 0 || anchorLabel || structuralPath) && (
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-tinta-desvaida">
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
             {documentOrder > 0 && (
               <span aria-label={`Orden de origen: ${documentOrder}`}>
                 #{documentOrder}
@@ -2616,41 +2615,41 @@ function ImagePlacementRow({
               </Badge>
             )}
             {structuralPath && (
-              <code className="rounded bg-madero px-1.5 py-0.5 text-tinta-desvaida">
+              <code className="rounded bg-surface-raised px-1.5 py-0.5 text-muted">
                 {structuralPath}
               </code>
             )}
           </div>
         )}
         {headingPath && (
-          <p className="mt-1 text-xs text-tinta-desvaida">
+          <p className="mt-1 text-xs text-muted">
             Sección: {headingPath}
           </p>
         )}
         {contextText && (
-          <p className="mt-1 truncate text-xs text-tinta-desvaida" title={contextText}>
+          <p className="mt-1 truncate text-xs text-muted" title={contextText}>
             Contexto: {contextText}
           </p>
         )}
-        <p className="mt-1 text-xs text-tinta-desvaida">
+        <p className="mt-1 text-xs text-muted">
           {placement.target_ficha
             ? `Ficha destino: ${placement.target_ficha}`
             : "Ficha destino: por confirmar"}
         </p>
         {warnings.length > 0 && (
           <ul
-            className="mt-2 flex flex-col gap-1 rounded-md border border-llamita/40 bg-llamita/5 p-2"
+            className="mt-2 flex flex-col gap-1 rounded-md border border-action/40 bg-action/5 p-2"
             aria-label="Advertencias de imagen"
           >
             {warnings.map((warning, index) => (
-              <li key={index} className="text-xs text-llamita">
+              <li key={index} className="text-xs text-action">
                 {warning}
               </li>
             ))}
           </ul>
         )}
-        <p className="mt-2 text-xs text-tinta-desvaida">Markdown resultante</p>
-        <code className="mt-0.5 block overflow-x-auto rounded bg-cripta px-2 py-1 text-xs text-tinta-desvaida">
+        <p className="mt-2 text-xs text-muted">Markdown resultante</p>
+        <code className="mt-0.5 block overflow-x-auto rounded bg-surface px-2 py-1 text-xs text-muted">
           {markdown}
         </code>
         <div className="mt-2 max-w-sm">
@@ -2683,8 +2682,8 @@ function ResultPanel({
   if (!job) {
     return (
       <div className="col-span-full">
-        <div className="rounded-lg border border-filio bg-madero p-6">
-          <p className="text-body text-tinta-desvaida">
+        <div className="rounded-lg border border-edge bg-surface-raised p-6">
+          <p className="text-body text-muted">
             La importación no se pudo completar y no hay un estado recuperable.
           </p>
           <div className="mt-4">
@@ -2724,10 +2723,10 @@ function ResultPanel({
       <div
         className={cn(
           "rounded-lg border p-6",
-          success ? "border-musgo/40 bg-musgo/10" : "border-filio bg-madero",
+          success ? "border-status-success/40 bg-status-success/10" : "border-edge bg-surface-raised",
         )}
       >
-        <h2 className="font-heading text-h4 text-pergamino">
+        <h2 className="font-heading text-h4 text-primary">
           {success && "Importación completada"}
           {cancelled && "Importación cancelada"}
           {failed && "La importación no se completó"}
@@ -2737,35 +2736,35 @@ function ResultPanel({
 
         {success && (
           <div className="mt-3" role="status" aria-live="polite">
-            <p className="text-body text-pergamino">
+            <p className="text-body text-primary">
               El contenido aprobado se importó a {mundo}.
             </p>
             {outcomes.length > 0 && (
               <ul className="mt-3 flex flex-wrap gap-2 text-small">
                 {summary.added > 0 && (
-                  <li className="rounded bg-cripta px-2 py-1 text-pergamino">
+                  <li className="rounded bg-surface px-2 py-1 text-primary">
                     {summary.added} fichas creadas
                   </li>
                 )}
                 {summary.replaced > 0 && (
-                  <li className="rounded bg-cripta px-2 py-1 text-pergamino">
+                  <li className="rounded bg-surface px-2 py-1 text-primary">
                     {summary.replaced} reemplazadas
                   </li>
                 )}
                 {summary.kept > 0 && (
-                  <li className="rounded bg-cripta px-2 py-1 text-tinta-desvaida">
+                  <li className="rounded bg-surface px-2 py-1 text-muted">
                     {summary.kept} sin cambios
                   </li>
                 )}
                 {summary.skipped > 0 && (
-                  <li className="rounded bg-cripta px-2 py-1 text-tinta-desvaida">
+                  <li className="rounded bg-surface px-2 py-1 text-muted">
                     {summary.skipped} omitidas (ya presentes)
                   </li>
                 )}
               </ul>
             )}
             {papeleraEntries.length > 0 && (
-              <p className="mt-3 text-small text-tinta-desvaida">
+              <p className="mt-3 text-small text-muted">
                 Versiones anteriores guardadas en la papelera (30 días).
               </p>
             )}
@@ -2773,7 +2772,7 @@ function ResultPanel({
         )}
 
         {cancelled && (
-          <p className="mt-3 text-body text-tinta-desvaida" role="status">
+          <p className="mt-3 text-body text-muted" role="status">
             El análisis se canceló en un límite seguro: nada se escribió en tu
             mundo. Podés reanudar la revisión cuando quieras.
           </p>
@@ -2781,21 +2780,21 @@ function ResultPanel({
 
         {failed && (
           <div className="mt-3">
-            <p className="text-body text-tinta-desvaida">
+            <p className="text-body text-muted">
               {job.error || "El análisis o la importación falló y quedó bloqueada."}
             </p>
           </div>
         )}
 
         {rolledBack && (
-          <p className="mt-3 text-body text-tinta-desvaida" role="status">
+          <p className="mt-3 text-body text-muted" role="status">
             La importación quedó marcada como revertida; el registro y la
             auditoría se conservan.
           </p>
         )}
 
         {!success && !cancelled && !failed && !rolledBack && (
-          <p className="mt-3 text-body text-tinta-desvaida">
+          <p className="mt-3 text-body text-muted">
             La importación quedó en estado {state}. Reanudala para continuar.
           </p>
         )}
@@ -2803,14 +2802,14 @@ function ResultPanel({
 
       {outcomes.length > 0 && (
         <div className="mt-4">
-          <h3 className="font-heading text-h4 text-pergamino">
+          <h3 className="font-heading text-h4 text-primary">
             Resultado por ítem
           </h3>
           <ul className="mt-2 flex flex-col gap-2">
             {outcomes.map((outcome) => (
               <li
                 key={outcome.candidate_id}
-                className="rounded-lg border border-filio bg-madero px-4 py-3 text-small text-pergamino"
+                className="rounded-lg border border-edge bg-surface-raised px-4 py-3 text-small text-primary"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="min-w-0 truncate">
@@ -2832,7 +2831,7 @@ function ResultPanel({
                   </span>
                 </div>
                 {outcome.detail && (
-                  <p className="mt-1 text-xs text-tinta-desvaida">
+                  <p className="mt-1 text-xs text-muted">
                     {outcome.detail}
                   </p>
                 )}
@@ -2843,8 +2842,8 @@ function ResultPanel({
       )}
 
       {summary.errors > 0 && (
-        <div className="mt-4 rounded-lg border border-llamita/40 bg-llamita/5 p-4" role="alert">
-          <p className="text-small text-pergamino">
+        <div className="mt-4 rounded-lg border border-action/40 bg-action/5 p-4" role="alert">
+          <p className="text-small text-primary">
             {summary.errors} ítem{summary.errors === 1 ? "" : "s"} requieren
             revisión o fallaron. Revisá el detalle por ítem y decidí el
             siguiente paso.

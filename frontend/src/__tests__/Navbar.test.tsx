@@ -118,7 +118,9 @@ describe("Navbar", () => {
   it("renders the brand, every nav link, world selector, and avatar", () => {
     renderNavbar({ worlds });
 
-    expect(screen.getByText("Demiurgos")).toBeInTheDocument();
+    // Brand is the theme-aware wordmark image (LOGO-01): the accessible name
+    // comes from its alt text, not a text node.
+    expect(screen.getByAltText("Demiurgos")).toBeInTheDocument();
     for (const link of NAV_LINKS) {
       expect(
         screen.getByRole("button", { name: link.label }),
@@ -216,7 +218,7 @@ describe("Navbar", () => {
     const user = userEvent.setup();
     renderNavbar({ worlds }, "/wiki/Vibrantes/lore");
 
-    await user.click(screen.getByText("Demiurgos"));
+    await user.click(screen.getByAltText("Demiurgos"));
 
     expect(screen.getByTestId("path")).toHaveTextContent("/wiki");
   });
