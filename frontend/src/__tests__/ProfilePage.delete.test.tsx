@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { SWRConfig } from "swr";
 import ProfilePage from "@/pages/ProfilePage";
 import { useWorlds } from "@/hooks/useWorlds";
@@ -83,9 +84,11 @@ let mutateSpy = vi.fn();
 
 function renderProfile() {
   return render(
-    <SWRConfig value={{ provider: () => new Map() }}>
-      <ProfilePage />
-    </SWRConfig>,
+    <MemoryRouter>
+      <SWRConfig value={{ provider: () => new Map() }}>
+        <ProfilePage />
+      </SWRConfig>
+    </MemoryRouter>,
   );
 }
 
@@ -201,6 +204,10 @@ describe("ProfilePage — Mundos tab / 3-step delete flow (W-4)", () => {
     // no longer points at a deleted world.
     await waitFor(() =>
       expect(window.localStorage.getItem(ACTIVE_WORLD_STORAGE_KEY)).toBeNull(),
+    );
+    // And the world picker opens right away so the user is steered to another.
+    await waitFor(() =>
+      expect(screen.getByText("Elegí un mundo")).toBeInTheDocument(),
     );
   });
 

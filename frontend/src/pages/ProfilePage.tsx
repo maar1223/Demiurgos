@@ -8,6 +8,8 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
+import { WorldPickerDialog } from "@/components/organisms/WorldPickerDialog";
+import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import { clearCurrentWorld, getCurrentWorld } from "@/lib/currentWorld";
 import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
 import { SecretInput } from "@/components/molecules/SecretInput";
@@ -1228,6 +1230,13 @@ function WorldsSection() {
   const [trashRefresh, setTrashRefresh] = useState(0);
   const [activeWorld, setActiveWorld] = useState("");
   const [legacy, setLegacy] = useState<ReadinessSnapshot["legacy"]>([]);
+  const navigate = useNavigate();
+  // World-picker dialog shown immediately when the deleted world was the
+  // selector's active world, so the user is steered to another world instead of
+  // being left pointing at one that no longer exists.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerMundo, setPickerMundo] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
 
   // The backend refuses to delete the active world; mirror that rule in the
   // UI with a disabled button + tooltip. Fail-open: if the idea-capture
@@ -1262,10 +1271,13 @@ function WorldsSection() {
   const handleDeleted = useCallback(() => {
     // If the deleted world was the active working world (the one the world
     // selector shows), clear it so the selector does not keep pointing at a
-    // world that no longer exists. `deleteTarget` is still set here (cleared
+    // world that no longer exists, and offer the picker right away so the user
+    // is steered to another world. `deleteTarget` is still set here (cleared
     // below), so we can compare its name against the persisted active world.
     if (deleteTarget?.name && deleteTarget.name === getCurrentWorld()) {
       clearCurrentWorld();
+      setPickerMundo(deleteTarget.name);
+      setPickerOpen(true);
     }
     void mutate();
     setTrashRefresh((n) => n + 1);
@@ -1370,6 +1382,30 @@ function WorldsSection() {
           onClose={() => setDeleteTarget(null)}
         />
       )}
+
+      {pickerOpen && (
+        <WorldPickerDialog
+          missingWorld={pickerMundo}
+          available={worlds.filter((w) => w.name !== pickerMundo)}
+          onPick={(name) => {
+            setPickerOpen(false);
+            navigate(`/wiki/${encodeURIComponent(name)}`);
+          }}
+          onCreate={() => setCreateOpen(true)}
+          onClose={() => setPickerOpen(false)}
+          footerAction={{ label: "Cancelar", onAction: () => setPickerOpen(false) }}
+        />
+      )}
+
+      <CreateWorldModal
+        isOpen={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(world) => {
+          setCreateOpen(false);
+          setPickerOpen(false);
+          navigate(`/wiki/${encodeURIComponent(world.name)}`);
+        }}
+      />
     </div>
   );
 }
