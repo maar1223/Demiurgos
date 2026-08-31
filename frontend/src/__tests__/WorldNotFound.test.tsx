@@ -3,7 +3,6 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { WorldNotFound } from "@/components/organisms/WorldNotFound";
 import { useWorlds } from "@/hooks/useWorlds";
-import type { Mock } from "vitest";
 
 vi.mock("@/hooks/useWorlds", () => ({ useWorlds: vi.fn() }));
 const useWorldsMock = vi.mocked(useWorlds);
@@ -41,23 +40,24 @@ beforeEach(() => {
 });
 
 describe("WorldNotFound", () => {
-  it("lists the surviving worlds and navigates when one is chosen", async () => {
+  it("auto-opens a dialog listing the surviving worlds and navigates when one is chosen", async () => {
     renderNotFound("Avalor");
 
-    expect(screen.getByText(/Mundo no encontrado/i)).toBeInTheDocument();
-    expect(screen.getByText(/No existe un mundo llamado «Avalor»/i)).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByText("Elegí un mundo")).toBeInTheDocument();
+    expect(screen.getByText(/El mundo «Avalor» ya no existe/)).toBeInTheDocument();
 
     // The deleted world is excluded; the remaining ones are offered.
-    expect(screen.getByRole("button", { name: /Vibrantes/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /Avalor/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Vibrantes/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Avalor/ })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Vibrantes/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Vibrantes/ }));
     await waitFor(() =>
       expect(screen.getByTestId("path")).toHaveTextContent("/wiki/Vibrantes"),
     );
   });
 
-  it("falls back to 'Volver al inicio' when there are no worlds left", () => {
+  it("offers 'Nuevo mundo' and a note when there are no other worlds", () => {
     useWorldsMock.mockReturnValue({
       worlds: [],
       isLoading: false,
@@ -67,6 +67,8 @@ describe("WorldNotFound", () => {
     });
     renderNotFound("Avalor");
 
-    expect(screen.getByRole("button", { name: /Volver al inicio/i })).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Nuevo mundo/ })).toBeInTheDocument();
+    expect(screen.getByText(/No hay otros mundos creados todavía/)).toBeInTheDocument();
   });
 });
