@@ -46,14 +46,19 @@ for _p in (str(_WIKI), str(_TOOLS)):
 
 from import_enrichment import (  # noqa: E402
     DEFAULT_TIMEOUT_SECONDS,
+    _FUNNEL_MAX_CHUNK_FICHAS,
+    _default_type_by_section,
+    _group_by_bytes,
     analyze_ficha_funnel,
     build_frontmatter_and_relationships_prompt,
     build_relationship_batch_prompt,
     build_summary_prompt,
+    build_type_disambiguation_prompt,
     build_type_frontmatter_prompt,
     parse_frontmatter_and_relationships_response,
     parse_frontmatter_response,
     parse_summary_response,
+    parse_type_disambiguation_response,
     validate_relationship_batch,
 )
 from import_models import (  # noqa: E402
@@ -78,6 +83,7 @@ def _ficha(
     preview: str = "Cuerpo de la ficha con contexto suficiente para resumir.",
     candidate_id: str | None = None,
     job_id: str = "job-funnel",
+    section: str = "",
 ) -> Candidate:
     """Build a complete-ficha candidate (Phase 2 contract)."""
     cid = canonical_id or identity
@@ -96,6 +102,7 @@ def _ficha(
         ),
         content_preview=preview,
         size_bytes=len(preview),
+        section=section,
     )
 
 
@@ -619,6 +626,177 @@ class TestFichaFunnel:
         assert len(fallback) >= 1
         # The first chunk (non-failing) yields generated candidates.
         assert generated[0].summary == f"Resumen de {generated[0].display_title}."
+
+
+class TestFichaFunnelChunkingByCount:
+    """The Steps 3+4 wholesale-fallback fix: chunking must cap candidate COUNT.
+
+    ``_group_by_bytes`` now bounds chunks by BOTH body bytes AND ficha count
+    (``max_count``), because the combined relationship+frontmatter response
+    grows with the number of summarised fichas, not their body size. The
+    ``_default_type_by_section`` helper is the user-approved terminal fallback.
+    """
+
+    def test_group_by_bytes_respects_count_cap(self):
+        fichas = [_ficha(f"F {i:02d}", preview="corto.") for i in range(25)]
+        chunks = _group_by_bytes(fichas, max_count=_FUNNEL_MAX_CHUNK_FICHAS)
+        assert sum(len(ch) for ch in chunks) == 25
+        assert all(len(ch) <= _FUNNEL_MAX_CHUNK_FICHAS for ch in chunks)
+        assert chunks[0] == fichas[:_FUNNEL_MAX_CHUNK_FICHAS]
+        # Without a count cap, small fichas pack into a single byte-bounded chunk.
+        assert len(_group_by_bytes(fichas)) == 1
+
+    def test_count_cap_splits_many_small_fichas_that_bytes_would_keep_together(self):
+        """25 tiny fichas fit in 40k bytes, so a pure byte budget keeps them all;
+        the count cap is what splits them so the combined call stays small."""
+        fichas = [_ficha(f"F {i:02d}", preview="corto.") for i in range(25)]
+        chunks = _group_by_bytes(fichas, max_count=_FUNNEL_MAX_CHUNK_FICHAS)
+        assert len(chunks) > 1
+        assert [len(ch) for ch in chunks] == [
+            _FUNNEL_MAX_CHUNK_FICHAS for _ in range(3)] + [1]
+
+    def test_default_type_by_section(self):
+        assert _default_type_by_section(
+            _ficha("A", section="personajes")) == "personaje"
+        assert _default_type_by_section(
+            _ficha("A", section="lugares")) == "concepto"
+        assert _default_type_by_section(_ficha("A", section="")) == "concepto"
+
+
+class TestTypeDisambiguationUnit:
+    """Amplified type-disambiguation prompt + parser."""
+
+    def test_prompt_includes_targets_context_catalog_and_vocab(self):
+        a = _ficha("X", canonical_id="X::1")
+        a = Candidate.model_validate({**a.model_dump(), "summary": "s"})
+        b = _ficha("Y", canonical_id="Y::2")
+        b = Candidate.model_validate({**b.model_dump(), "summary": "t"})
+        prompt = build_type_disambiguation_prompt([a], context=[a, b], catalog=[a, b])
+        assert "targets" in prompt and "context" in prompt and "catalog" in prompt
+        assert "entity_vocab" in prompt
+        assert "types" in prompt["instructions"]
+        assert prompt["targets"][0]["candidate_id"] == a.candidate_id
+        assert prompt["context"] == [
+            {"candidate_id": a.candidate_id, "canonical_id": "X::1",
+             "display_title": "X", "summary": "s"},
+            {"candidate_id": b.candidate_id, "canonical_id": "Y::2",
+             "display_title": "Y", "summary": "t"},
+        ]
+
+    def test_parse_type_disambiguation_response(self):
+        raw = json.dumps({"types": [
+            {"candidate_id": "c1", "type": "concepto"},
+            {"candidate_id": "c2", "type": None},
+            {"candidate_id": "c3", "type": ""},
+        ]})
+        out = parse_type_disambiguation_response(raw)
+        assert out["c1"] == "concepto"
+        assert out["c2"] is None
+        assert out["c3"] is None
+        assert parse_type_disambiguation_response("") == {}
+        assert parse_type_disambiguation_response("nope") == {}
+
+
+class TestTypeDisambiguationFunnel:
+    """End-to-end amplified recovery + section-default in ``_enrich_funnel_chunk``."""
+
+    def _build_runner(self, *, combined_type=None, drop_from_combined=(),
+                      amplified_types=None):
+        """Step runner: summary ok for all; combined returns ``combined_type``
+        (omitting ``drop_from_combined``); amplified returns ``amplified_types``
+        (a {cid: type} map, or null for every target)."""
+        calls = {"amplified": 0}
+
+        def runner(prompt, _session):
+            data = json.loads(prompt)
+            if "targets" in data:  # amplified disambiguation pass
+                calls["amplified"] += 1
+                types = []
+                for t in data["targets"]:
+                    cid = t["candidate_id"]
+                    v = amplified_types.get(cid) if amplified_types is not None else None
+                    types.append({"candidate_id": cid, "type": v})
+                return json.dumps({"types": types})
+            cands = data.get("candidates", [])
+            if cands and "body" in cands[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            if "rel_vocab" in data and "entity_vocab" in data:
+                fm = []
+                for c in cands:
+                    if c["candidate_id"] in drop_from_combined:
+                        continue
+                    fm.append({"candidate_id": c["candidate_id"],
+                               "title": c["display_title"],
+                               "type": combined_type,
+                               "description": "d", "relaciones": []})
+                return json.dumps({"relationships": [], "frontmatter": fm})
+            return json.dumps({})
+
+        runner.calls = calls
+        return runner
+
+    def test_amplified_recovers_type_after_combined_returns_null(self):
+        a = _ficha("Enigma")
+        b = _ficha("Sendero")
+        runner = self._build_runner(
+            combined_type=None,
+            amplified_types={a.candidate_id: "lugar",
+                             b.candidate_id: "concepto"})
+        out = analyze_ficha_funnel([a, b], runner)
+        by_id = {c.candidate_id: c for c in out}
+        assert runner.calls["amplified"] >= 1, "amplified pass must run"
+        assert by_id[a.candidate_id].frontmatter.type == "lugar"
+        assert by_id[b.candidate_id].frontmatter.type == "concepto"
+        for c in out:
+            assert c.frontmatter.state == FrontmatterState.GENERATED
+
+    def test_amplified_builds_frontmatter_for_dropped_ficha(self):
+        a = _ficha("Huérfano")
+        b = _ficha("Normal")
+        runner = self._build_runner(
+            combined_type="lugar",
+            drop_from_combined={a.candidate_id},
+            amplified_types={a.candidate_id: "personaje"})
+        out = analyze_ficha_funnel([a, b], runner)
+        by_id = {c.candidate_id: c for c in out}
+        assert by_id[a.candidate_id].frontmatter.type == "personaje"
+        assert by_id[a.candidate_id].frontmatter.state == FrontmatterState.GENERATED
+        assert by_id[a.candidate_id].frontmatter.title == a.display_title
+        assert by_id[b.candidate_id].frontmatter.type == "lugar"
+
+    def test_section_default_when_amplified_cannot_decide(self):
+        a = _ficha("Héroe", section="personajes")
+        b = _ficha("Bosque", section="lugares")
+        c = _ficha("Misterio")  # empty section
+        runner = self._build_runner(
+            combined_type=None,
+            drop_from_combined={x.candidate_id for x in (a, b, c)},
+            amplified_types=None)  # amplified returns null for all
+        out = analyze_ficha_funnel([a, b, c], runner)
+        by_id = {c.candidate_id: c for c in out}
+        assert by_id[a.candidate_id].frontmatter.type == "personaje"
+        assert by_id[b.candidate_id].frontmatter.type == "concepto"
+        assert by_id[c.candidate_id].frontmatter.type == "concepto"
+        # No model-derived metadata survived -> heuristic fallback state.
+        assert all(c.frontmatter.state == FrontmatterState.FALLBACK for c in out)
+
+    def test_count_capped_chunk_recovers_type_via_amplified_pass(self):
+        """Many small fichas are split by count; a ficha the combined pass
+        leaves type-less is recovered by the amplified pass inside its chunk."""
+        fichas = [_ficha(f"F {i:02d}", preview="corto.") for i in range(12)]
+        target = fichas[3]
+        runner = self._build_runner(
+            combined_type=None,
+            drop_from_combined={target.candidate_id},
+            amplified_types={target.candidate_id: "concepto"})
+        out = analyze_ficha_funnel(fichas, runner)
+        by_id = {c.candidate_id: c for c in out}
+        assert len(out) == 12
+        assert by_id[target.candidate_id].frontmatter.type == "concepto"
+        assert by_id[target.candidate_id].frontmatter.state == FrontmatterState.GENERATED
 
 
 class TestFichaFunnelParallelism:

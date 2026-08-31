@@ -71,19 +71,24 @@ _PREVIEW_CHAR_BUDGET = 1500
 _MAX_CANDIDATES_PER_BATCH = 100
 # Funnel chunking (importador-auto-frontmatter): keep each Hermes call's prompt
 # AND expected output small enough to avoid response truncation on large
-# imports. Chunks are bounded by BYTES, not by ficha count — a fixed count of
-# 12 large fichas can still total ~72k chars (the observed "respaldo desde el
-# 9no Stal" failure), which truncates Hermes and drops the tail of the batch.
-# ``_FUNNEL_CHUNK_BYTES`` bounds the cumulative ``content_preview`` bytes per
-# chunk; a single oversized ficha still travels COMPLETE (never split, never
-# truncated). ``_FUNNEL_FILL_GROUP_SIZE`` bounds the fill-in re-ask for
-# candidates the model omitted.
+# imports. A chunk must satisfy BOTH bounds: ``_FUNNEL_CHUNK_BYTES`` bounds the
+# cumulative ``content_preview`` bytes (Step 2 reads the full bodies), and
+# ``_FUNNEL_MAX_CHUNK_FICHAS`` bounds the candidate COUNT (Steps 3+4 reason over
+# summaries, so the combined relationship+frontmatter response grows with the
+# number of fichas, not their body size — the byte budget alone was the wrong
+# variable and let 10+ ficha chunks truncate and fall back wholesale to
+# ``type=None``). A single oversized ficha still travels COMPLETE (never split,
+# never truncated). ``_FUNNEL_FILL_GROUP_SIZE`` bounds the summary fill-in
+# re-ask; ``_FUNNEL_TYPE_FILL_GROUP_SIZE`` bounds the amplified type
+# disambiguation re-ask.
 # Tuned 2026-08-25 (live A/B, 60 real fichas, 4 workers): 40000 gives 58/60 ok
 # vs 38/60 at 60000, at only ~19% more wall-time — 60000 degrades quality
 # (22 fichas without suggestions) for a small time saving, so 40000 is the
 # default sweet spot. Never raise to 60000.
 _FUNNEL_CHUNK_BYTES = 40000
+_FUNNEL_MAX_CHUNK_FICHAS = 8
 _FUNNEL_FILL_GROUP_SIZE = 4
+_FUNNEL_TYPE_FILL_GROUP_SIZE = 4
 
 # Relationship-type vocabulary: lowercase, hyphen-separated, ASCII only.
 # Open allowlist: projects can extend by passing a custom ``rel_vocab`` to
@@ -977,6 +982,7 @@ def _group_by_bytes(
     candidates: list[Candidate],
     *,
     budget_chars: int | None = None,
+    max_count: int | None = None,
 ) -> list[list[Candidate]]:
     """Group complete fichas into chunks bounded by cumulative body bytes.
 
@@ -986,6 +992,15 @@ def _group_by_bytes(
     alone exceeds the budget still travels COMPLETE and alone — the budget is
     a packing target, not a hard truncation limit. Empty input yields no
     groups; ficha order is preserved.
+
+    ``max_count`` additionally caps the number of candidates per chunk (the
+    ``_FUNNEL_MAX_CHUNK_FICHAS`` default via ``analyze_ficha_funnel``). This is
+    the fix for the Steps 3+4 wholesale-fallback bug: the combined
+    relationship+frontmatter response grows with the candidate COUNT (each ficha
+    contributes a summary), not its body bytes, so a chunk of 10+ fichas could
+    truncate and drop the whole chunk to ``type=None`` fallback. A fixed ficha
+    cap keeps that response small even when many small fichas would otherwise
+    pack into one byte-bounded chunk.
     """
     budget = budget_chars if budget_chars is not None else _FUNNEL_CHUNK_BYTES
     groups: list[list[Candidate]] = []
@@ -993,7 +1008,10 @@ def _group_by_bytes(
     current_chars = 0
     for cand in candidates:
         cand_chars = _ficha_byte_len(cand)
-        if current and current_chars + cand_chars > budget:
+        if current and (
+            current_chars + cand_chars > budget
+            or (max_count is not None and len(current) >= max_count)
+        ):
             groups.append(current)
             current = []
             current_chars = 0
@@ -1057,6 +1075,215 @@ def _fill_missing_summaries(
     return summaries
 
 
+_PERSONAJES_SECTION = "personajes"
+
+
+def _default_type_by_section(candidate: Candidate) -> str:
+    """Final deterministic ``type`` fallback from the ficha's source section.
+
+    When neither the combined Steps 3+4 call nor the amplified disambiguation
+    pass can determine a ficha's ``type`` (its discriminating detail is not in
+    the summary, or the model genuinely cannot decide), fall back to a section
+    heuristic: fichas from the ``personajes`` section become ``personaje``,
+    everything else becomes ``concepto``. This guarantees every enriched ficha
+    carries a non-empty ``type``, so it is never bogged down in "requires your
+    decision" solely for a missing ``type`` (the user-approved terminal fallback).
+    """
+    if (candidate.section or "").strip().lower() == _PERSONAJES_SECTION:
+        return "personaje"
+    return "concepto"
+
+
+def build_type_disambiguation_prompt(
+    targets: list[Candidate],
+    *,
+    context: list[Candidate],
+    catalog: list[Candidate] | None = None,
+) -> dict[str, Any]:
+    """Amplified type-disambiguation prompt for fichas whose type is undetermined.
+
+    The combined Steps 3+4 call classifies a ficha from its OWN summary alone.
+    When a ficha comes back without a ``type``, this pass re-asks with WIDER
+    context: the ficha's own summary plus the summaries of the other fichas in
+    the batch (``context``) and the document-wide catalog (id + display_title).
+    The rationale: the discriminating detail often lives in how a ficha is
+    referenced by its neighbors, so the neighboring summaries can reveal its
+    kind without inventing facts. ``targets`` are the fichas to classify; each
+    must carry a summary. ``context`` is the batch's summarized fichas (its
+    superset); ``catalog`` is the document-wide universe for cross-references.
+    """
+    target_payload = [
+        {
+            "candidate_id": c.candidate_id,
+            "canonical_id": c.canonical_id or c.normalized_identity,
+            "display_title": c.display_title or c.normalized_identity,
+            "summary": c.summary or "",
+        }
+        for c in targets
+    ]
+    context_payload = [
+        {
+            "candidate_id": c.candidate_id,
+            "canonical_id": c.canonical_id or c.normalized_identity,
+            "display_title": c.display_title or c.normalized_identity,
+            "summary": c.summary or "",
+        }
+        for c in context
+    ]
+    instructions = (
+        "You are determining the OKF entity type for imported worldbuilding "
+        "fichas whose type could not be decided from their own summary alone. "
+        "For each target in 'targets', pick exactly ONE 'type' from the entity "
+        "vocabulary. Use the target's own summary AND the surrounding context: "
+        "the summaries of the other fichas and the document catalog below "
+        "(how this ficha is referenced elsewhere often reveals its kind). "
+        "Return a JSON object with a 'types' array; each entry must reference "
+        "one target candidate_id exactly and have a 'type' (one of the entity "
+        "types). If you genuinely cannot decide, set 'type' to null. NEVER "
+        "invent a candidate_id outside 'targets' or a type outside the "
+        "vocabulary."
+    )
+    payload: dict[str, Any] = {
+        "instructions": instructions,
+        "entity_vocab": list(entity_type_vocabulary()),
+        "provenance": _default_provenance(),
+        "targets": target_payload,
+        "context": context_payload,
+    }
+    if catalog is not None:
+        payload["catalog"] = [
+            {
+                "canonical_id": c.canonical_id or c.normalized_identity,
+                "display_title": c.display_title or c.normalized_identity,
+            }
+            for c in catalog
+        ]
+    return payload
+
+
+def parse_type_disambiguation_response(raw: str) -> dict[str, str | None]:
+    """Parse a type-disambiguation response into ``{candidate_id: type}``.
+
+    ``type`` is normalized to ``None`` when absent/invalid; an entry is kept
+    only when it references a non-empty ``candidate_id``. Fail-open: a
+    malformed/empty response yields ``{}`` (no types recovered — the caller
+    then section-defaults the ficha).
+    """
+    data = _parse_json_object(raw)
+    if data is None:
+        return {}
+    entries = data.get("types", [])
+    if not isinstance(entries, list):
+        return {}
+    out: dict[str, str | None] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        cid = entry.get("candidate_id")
+        if not isinstance(cid, str) or not cid:
+            continue
+        fm_type = entry.get("type")
+        if not isinstance(fm_type, str) or not fm_type.strip():
+            out[cid] = None
+            continue
+        out[cid] = fm_type.strip()
+    return out
+
+
+def _resolve_undetermined_types(
+    summarized: list[Candidate],
+    frontmatter: dict[str, dict[str, Any]],
+    hermes_runner: Callable[[str, str], str],
+    session_id: str,
+    *,
+    catalog: list[Candidate],
+) -> dict[str, dict[str, Any]]:
+    """Recover undetermined ``type`` for summarized fichas, then section-default.
+
+    The combined Steps 3+4 pass classifies a ficha from its own summary alone.
+    Any ficha that came back with NO frontmatter entry or with ``type: None`` is
+    re-asked through an AMPLIFIED disambiguation pass (its own summary + the
+    neighbor summaries + the document catalog) — the user's chosen recovery for
+    fichas whose discriminating detail lives in the surrounding fichas. A ficha
+    still undetermined after that pass is section-defaulted (``personajes``
+    section -> ``personaje``, else ``concepto``), guaranteeing every enriched
+    ficha carries a non-empty ``type``. Bounded, fail-open, never raises.
+
+    Returns a NEW frontmatter dict (``candidate_id -> fm dict``). Entries the
+    pass recovers from the model keep ``state: generated``; fresh entries it
+    builds purely by section-default keep ``state: fallback`` (heuristic, not
+    model-derived).
+    """
+    vocab = set(entity_type_vocabulary())
+    targets = [
+        c for c in summarized
+        if (not frontmatter.get(c.candidate_id))
+        or not (frontmatter[c.candidate_id].get("type"))
+    ]
+    if not targets:
+        return frontmatter
+    out = dict(frontmatter)
+
+    def _ask(group: list[Candidate]) -> dict[str, str]:
+        try:
+            raw = hermes_runner(
+                json.dumps(build_type_disambiguation_prompt(
+                    group, context=summarized, catalog=catalog),
+                    ensure_ascii=False),
+                session_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
+            logger.warning(
+                "funnel type disambiguation ask failed: %s",
+                type(exc).__name__, exc_info=True)
+            return {}
+        result = parse_type_disambiguation_response(raw or "")
+        # Keep only types inside the vocabulary; anything else is treated as
+        # undetermined (so it falls through to the section default).
+        return {k: v for k, v in result.items() if v is None or v in vocab}
+
+    recovered: dict[str, str] = {}
+    for start in range(0, len(targets), _FUNNEL_TYPE_FILL_GROUP_SIZE):
+        group = targets[start:start + _FUNNEL_TYPE_FILL_GROUP_SIZE]
+        for cid, t in _ask(group).items():
+            if t:
+                recovered[cid] = t
+
+    for c in targets:
+        cid = c.candidate_id
+        t = recovered.get(cid)
+        if t:
+            if out.get(cid):
+                out[cid]["type"] = t
+            else:
+                # Recovered full frontmatter for a ficha the combined pass
+                # dropped entirely: model-derived -> generated.
+                out[cid] = {
+                    "title": c.display_title or c.normalized_identity,
+                    "type": t,
+                    "description": "",
+                    "relaciones": [],
+                    "state": FrontmatterState.GENERATED.value,
+                }
+
+    for c in targets:
+        cid = c.candidate_id
+        entry = out.get(cid)
+        if not entry or not entry.get("type"):
+            t = _default_type_by_section(c)
+            if entry:
+                entry["type"] = t
+            else:
+                out[cid] = {
+                    "title": c.display_title or c.normalized_identity,
+                    "type": t,
+                    "description": "",
+                    "relaciones": [],
+                    "state": FrontmatterState.FALLBACK.value,
+                }
+    return out
+
+
 def _enrich_funnel_chunk(
     chunk: list[Candidate],
     hermes_runner: Callable[[str, str], str],
@@ -1117,6 +1344,12 @@ def _enrich_funnel_chunk(
             frontmatter = fm_out
             relationships = validate_relationship_batch(
                 rel_payload, summarized, rel_vocab=rel_vocab, catalog=catalog)
+            # Recover undetermined ``type`` via the amplified disambiguation
+            # pass + section default (see ``_resolve_undetermined_types``): a
+            # ficha the combined call could not classify is re-asked with the
+            # neighbor summaries/catalog, and the residual is section-defaulted.
+            frontmatter = _resolve_undetermined_types(
+                summarized, frontmatter, hermes_runner, session_id, catalog=catalog)
         except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
             logger.warning(
                 "funnel steps 3+4 (relationships/frontmatter) failed: %s",
@@ -1133,17 +1366,34 @@ def _enrich_funnel_chunk(
         sc = summarized_by_id.get(c.candidate_id)
         fm_data = frontmatter.get(c.candidate_id)
         if fm_data is not None:
+            fm_state = fm_data.get("state", FrontmatterState.GENERATED.value)
             candidate_fm = FrontmatterCandidate(
                 title=fm_data["title"],
                 type=fm_data["type"],
                 description=fm_data["description"],
                 relaciones=fm_data["relaciones"],
-                state=FrontmatterState.GENERATED,
+                state=FrontmatterState(
+                    fm_state
+                    if isinstance(fm_state, str)
+                    else FrontmatterState.GENERATED.value),
             )
         else:
             # Enrichment was attempted but produced no generated frontmatter
             # for this candidate -> fallback, reviewable and importable.
             candidate_fm = _fallback_frontmatter(sc or c)
+        # Terminal section-default: guarantee every enriched ficha carries a
+        # non-empty ``type`` (the user-approved fallback), so a ficha that the
+        # model could not classify is never stuck in "requires your decision"
+        # solely for a missing type. Only the enrichment path applies this; the
+        # no-runner (manual) path keeps ``type=None`` for author decisions.
+        if candidate_fm.type is None:
+            candidate_fm = FrontmatterCandidate(
+                title=candidate_fm.title,
+                type=_default_type_by_section(sc or c),
+                description=candidate_fm.description,
+                relaciones=candidate_fm.relaciones,
+                state=candidate_fm.state,
+            )
         own = rel_by_candidate.get(c.candidate_id, [])
         out.append(_copy_candidate(
             sc or c,
@@ -1236,14 +1486,20 @@ def analyze_ficha_funnel(
     during the slow Hermes phase. Never raised and never blocks enrichment.
 
     importador-auto-frontmatter (global relationship reach):
-    * Chunks are bounded by BYTES (``_group_by_bytes``), not ficha count, so a
-      large batch cannot truncate Hermes and drop the tail fichas.
+    * Chunks are bounded by BOTH body bytes AND candidate count
+      (``_group_by_bytes`` + ``_FUNNEL_MAX_CHUNK_FICHAS``), so a large batch
+      cannot truncate Hermes and drop the tail fichas (the count cap is what
+      fixes the Steps 3+4 wholesale ``type=None`` fallback).
     * Step 2 uses ``_fill_missing_summaries``: a candidate the model omits is
       re-asked in small groups, so a truncation cannot cascade into lost
       relationships for that ficha.
     * Step 3 grounds targets against a DOCUMENT-WIDE ``catalog`` (every ficha of
       the import), so a real relationship crossing two chunks is preserved
       instead of rejected as ungrounded. Sources stay per-chunk (summarized).
+    * A ficha whose ``type`` is undetermined after the combined Steps 3+4 call
+      is re-asked through an amplified disambiguation pass (neighbor summaries
+      + catalog), and the residual is section-defaulted — so every enriched
+      ficha carries a non-empty ``type``.
     """
     if hermes_runner is None or not candidates:
         # Enrichment not requested: leave candidates reviewable with a manual
@@ -1271,9 +1527,15 @@ def analyze_ficha_funnel(
     # fits in a single Step 3 call. Sources stay limited per-chunk.
     catalog = list(candidates)
 
-    # Byte-bounded chunks (per ``_group_by_bytes``; ``chunk_budget`` overrides
-    # only for this call when the caller (tests/tuning) supplies it).
-    chunks = _group_by_bytes(candidates, budget_chars=chunk_budget)
+    # Chunks bounded by BOTH body bytes AND candidate count (per ``_group_by_bytes``;
+    # ``chunk_budget`` overrides only the byte bound for this call when the caller
+    # (tests/tuning) supplies it). The ficha-count cap is the fix for the Steps 3+4
+    # wholesale-fallback bug: the combined relationship+frontmatter response grows
+    # with the candidate count, so a byte-bounded chunk of 10+ small fichas could
+    # truncate and drop the whole chunk to ``type=None`` fallback.
+    chunks = _group_by_bytes(
+        candidates, budget_chars=chunk_budget,
+        max_count=_FUNNEL_MAX_CHUNK_FICHAS)
 
     # Outer chunk callback used by both the sequential and the parallel paths.
     # It enriches chunk ``idx`` with its OWN session_id and returns
