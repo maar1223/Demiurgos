@@ -369,19 +369,32 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
   // positions — otherwise navigating to a world route measures the nav while
   // its DOM is still mid-transition, yielding stale / zero-size bounding boxes.
   const prevActive = useRef<string | null>(null);
+  const mountedRef = useRef(false);
   useEffect(() => {
-    if (prevActive.current === null) {
+    // Skip the very FIRST run: snapPill already placed the highlight on mount
+    // (or kept it hidden when there is no active taller). Using a dedicated
+    // `mountedRef` (never `prevActive === null`) is essential: `activePath` is
+    // ALSO `null` on routes with no active taller (e.g. /perfil), so a null-guard
+    // would swallow the FIRST navigation out of such a route and leave the
+    // highlight stuck on the wrong taller card.
+    if (!mountedRef.current) {
+      mountedRef.current = true;
       prevActive.current = activePath;
+      return;
+    }
+    // Leaving to a route with no active taller: hide the highlight so it never
+    // lingers on a stale workshop card (e.g. /perfil).
+    if (activePath === null) {
+      setPill((p) => (p.visible ? { ...p, visible: false } : p));
+      prevActive.current = null;
       return;
     }
     if (prevActive.current !== activePath) {
       prevActive.current = activePath;
-      if (activePath) {
-        // Defer measurement until the destination layout is painted.
-        requestAnimationFrame(() => {
-          sweepRafRef.current = requestAnimationFrame(() => sweepToActive());
-        });
-      }
+      // Defer measurement until the destination layout is painted.
+      requestAnimationFrame(() => {
+        sweepRafRef.current = requestAnimationFrame(() => sweepToActive());
+      });
     }
   }, [activePath, sweepToActive]);
 
