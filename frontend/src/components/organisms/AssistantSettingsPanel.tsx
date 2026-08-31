@@ -16,6 +16,7 @@ import type {
 } from "@/api/types";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
+import { SecretInput } from "@/components/molecules/SecretInput";
 import type { AuthSessionController } from "@/components/organisms/IdeaCapturePanel";
 
 type Step = "provider" | "connection" | "models" | "capability" | "confirmation";
@@ -45,9 +46,9 @@ const defaultBaseUrls: Record<string, string> = {
 };
 const LOCAL_PROVIDERS = new Set(["ollama", "lm-studio"]);
 const inputClass =
-  "w-full rounded-md border border-filio bg-piedra py-1.5 px-3 text-small text-pergamino " +
-  "placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50";
-const labelClass = "mb-1 block text-small text-tinta-desvaida";
+  "w-full rounded-md border border-edge bg-surface-raised py-1.5 px-3 text-small text-primary " +
+  "placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50";
+const labelClass = "mb-1 block text-small text-muted";
 
 function errorText(cause: unknown, fallback: string): string {
   return cause instanceof Error ? cause.message : fallback;
@@ -122,24 +123,24 @@ export function AssistantSettingsPanel({ auth }: { auth: AuthSessionController }
   }, [authenticated]);
 
   if (auth.isLoading || loading) {
-    return <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida"><Spinner size="sm" /> Cargando configuración…</div>;
+    return <div className="flex items-center gap-2 py-6 text-small text-muted"><Spinner size="sm" /> Cargando configuración…</div>;
   }
   if (auth.error) {
-    return <p className="rounded-lg border border-filio bg-madero p-4 text-small text-tinta-desvaida">No se pudo comprobar la sesión. Verifica la conexión con el servidor e intenta de nuevo.</p>;
+    return <p className="rounded-lg border border-edge bg-surface-raised p-4 text-small text-muted">No se pudo comprobar la sesión. Verifica la conexión con el servidor e intenta de nuevo.</p>;
   }
   if (auth.status?.enabled && !authenticated) {
     if (auth.status.mode === "local-dev") {
-      return <div className="rounded-lg border border-filio bg-madero p-4"><p className="text-small text-tinta-desvaida">Inicia la sesión local para configurar el asistente.</p><Button className="mt-3" onClick={() => void auth.start?.()}>Iniciar sesión local</Button></div>;
+      return <div className="rounded-lg border border-edge bg-surface-raised p-4"><p className="text-small text-muted">Inicia la sesión local para configurar el asistente.</p><Button className="mt-3" onClick={() => void auth.start?.()}>Iniciar sesión local</Button></div>;
     }
     // Credentials vault mode: the login surface is the app-level AuthGate.
     return (
-      <div className="rounded-lg border border-filio bg-madero p-4">
-        <p className="text-small text-tinta-desvaida">Tu sesión venció. Inicia sesión de nuevo para configurar el asistente.</p>
+      <div className="rounded-lg border border-edge bg-surface-raised p-4">
+        <p className="text-small text-muted">Tu sesión venció. Inicia sesión de nuevo para configurar el asistente.</p>
         <Button className="mt-3" onClick={() => navigate("/")}>Iniciar sesión</Button>
       </div>
     );
   }
-  if (!status) return <p className="text-small text-sangre">{error ?? "No se pudo cargar la configuración"}</p>;
+  if (!status) return <p className="text-small text-status-error">{error ?? "No se pudo cargar la configuración"}</p>;
 
   const localProvider = LOCAL_PROVIDERS.has(provider);
 
@@ -309,37 +310,37 @@ export function AssistantSettingsPanel({ auth }: { auth: AuthSessionController }
   };
 
   return (
-    <div className="rounded-lg border border-filio bg-madero p-4">
-      <h3 className="font-heading text-body text-pergamino">Asistente del Wiki</h3>
-      <p className="mt-1 text-small text-tinta-desvaida">Configuración provider-neutral. Las claves solo se envían al backend autenticado.</p>
+    <div className="rounded-lg border border-edge bg-surface-raised p-4">
+      <h3 className="font-heading text-body text-primary">Asistente del Wiki</h3>
+      <p className="mt-1 text-small text-muted">Configuración provider-neutral. Las claves solo se envían al backend autenticado.</p>
       {saved ? (
-        <div className="mt-4 rounded-lg border border-musgo/30 bg-musgo/10 p-4" role="status" aria-live="polite">
-          <h4 className="font-heading text-body text-pergamino">Configuración guardada</h4>
-          <p className="mt-1 text-small text-tinta-desvaida">La configuración se guardó correctamente en el servidor.</p>
+        <div className="mt-4 rounded-lg border border-status-success/30 bg-status-success/10 p-4" role="status" aria-live="polite">
+          <h4 className="font-heading text-body text-primary">Configuración guardada</h4>
+          <p className="mt-1 text-small text-muted">La configuración se guardó correctamente en el servidor.</p>
           <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <dt className="text-small text-tinta-desvaida">Proveedor</dt>
-              <dd className="text-small text-pergamino">{provider}</dd>
+              <dt className="text-small text-muted">Proveedor</dt>
+              <dd className="text-small text-primary">{provider}</dd>
             </div>
             <div>
-              <dt className="text-small text-tinta-desvaida">Modelo</dt>
-              <dd className="text-small text-pergamino">{selectedModel?.label ?? status.model}</dd>
+              <dt className="text-small text-muted">Modelo</dt>
+              <dd className="text-small text-primary">{selectedModel?.label ?? status.model}</dd>
             </div>
             <div>
-              <dt className="text-small text-tinta-desvaida">Capacidad</dt>
-              <dd className="text-small text-pergamino">Texto: superada · Visión: superada</dd>
+              <dt className="text-small text-muted">Capacidad</dt>
+              <dd className="text-small text-primary">Texto: superada · Visión: superada</dd>
             </div>
             <div>
-              <dt className="text-small text-tinta-desvaida">Estado runtime</dt>
-              <dd className="text-small text-pergamino">
+              <dt className="text-small text-muted">Estado runtime</dt>
+              <dd className="text-small text-primary">
                 <strong>{stateLabel(status.runtime_state)}</strong>
-                <span className="block text-small text-tinta-desvaida">{stateContext(status.runtime_state)}</span>
+                <span className="block text-small text-muted">{stateContext(status.runtime_state)}</span>
               </dd>
             </div>
           </dl>
           <div className="mt-4 flex flex-wrap gap-2">
             <Button variant="primary" onClick={changeConfiguration}>Cambiar configuración</Button>
-            <Button variant="secondary" onClick={() => navigate("/perfil")}>Volver al Perfil</Button>
+            <Button variant="secondary" onClick={() => navigate("/taller-mundo")}>Volver al Taller de Mundos</Button>
           </div>
         </div>
       ) : (
@@ -347,14 +348,14 @@ export function AssistantSettingsPanel({ auth }: { auth: AuthSessionController }
           <div className="mt-4 flex flex-wrap gap-1" aria-label="Pasos de configuración">
             {steps.map((item) => <Button key={item.id} variant={step === item.id ? "primary" : "ghost"} size="sm" onClick={() => goTo(item.id)}>{item.label}</Button>)}
           </div>
-          <p className="mt-3 text-small text-tinta-desvaida">Estado: <strong>{stateLabel(status.runtime_state)}</strong></p>
+          <p className="mt-3 text-small text-muted">Estado: <strong>{stateLabel(status.runtime_state)}</strong></p>
           <div className="mt-5 space-y-4">
-            {step === "provider" && <section><h4 className="font-heading text-body text-pergamino">Proveedor</h4><label className={labelClass} htmlFor="assistant-provider">Elegí un proveedor</label><select id="assistant-provider" className={inputClass} value={provider} onChange={(event) => { const nextProvider = event.target.value; setProvider(nextProvider); setBaseUrl(defaultBaseUrls[nextProvider] ?? (provider === "compatible" ? baseUrl : "")); setValidation("idle"); setTextProbe(null); setVisionProbe(null); }} >{providers.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select><p className="mt-2 text-small text-tinta-desvaida">OpenCode Go es la opción recomendada. Ollama y LM Studio son locales y no requieren clave. Los endpoints compatibles requieren una URL propia.</p></section>}
-            {step === "connection" && <section><h4 className="font-heading text-body text-pergamino">Conexión</h4><label className={labelClass} htmlFor="assistant-base-url">Endpoint</label><input id="assistant-base-url" className={inputClass} value={baseUrl} onChange={(event) => { setBaseUrl(event.target.value); setValidation("idle"); setTextProbe(null); setVisionProbe(null); }} placeholder="https://..." />{!localProvider && <><label className={`${labelClass} mt-3`} htmlFor="assistant-api-key">Clave API</label><input ref={apiKeyInputRef} id="assistant-api-key" type="password" autoComplete="new-password" className={inputClass} onChange={(event) => { apiKeyValueRef.current = event.target.value; setValidation("idle"); setTextProbe(null); setVisionProbe(null); }} placeholder={status.key_configured ? "Clave ya configurada — dejá vacío para usar la almacenada" : "Ingresá tu clave"} />{status.key_configured && <p className="mt-1 text-small text-tinta-desvaida">Ya hay una clave guardada para este proveedor. Podés cambiar de modelo sin reescribirla.</p>}</>}<div className="mt-3 flex flex-wrap gap-2"><Button onClick={() => void validate()} disabled={busy}>{busy ? "Validando…" : "Validar conexión"}</Button>{status.key_configured && <Button variant="secondary" onClick={() => void clear()} disabled={busy}>Eliminar clave</Button>}</div>{validation === "validated" && <p className="mt-2 text-small text-musgo">Conexión validada.</p>}</section>}
-            {step === "models" && <section><h4 className="font-heading text-body text-pergamino">Modelos</h4>{validation !== "validated" ? <p className="text-small text-tinta-desvaida">Validá la conexión para habilitar el descubrimiento.</p> : <><Button onClick={() => void discover()} disabled={busy}>{busy ? "Buscando…" : "Descubrir modelos"}</Button>{error && <p className="mt-2 text-small text-sangre">{error}</p>}{models.length > 0 && <select aria-label="Modelo descubierto" className={`${inputClass} mt-3`} value={selectedModel?.id ?? ""} onChange={(event) => { setSelectedModel(models.find((model) => model.id === event.target.value) ?? null); setTextProbe(null); setVisionProbe(null); }}>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>}<label className={`${labelClass} mt-3`} htmlFor="assistant-manual-model">ID de modelo manual</label><input id="assistant-manual-model" className={inputClass} value={manualModelId} onChange={(event) => setManualModelId(event.target.value)} placeholder="model-id" /><Button className="mt-2" variant="secondary" onClick={useManualModel}>Usar modelo manual</Button>{selectedModel && <p className="mt-3 text-small text-tinta-desvaida">{modelDescription(selectedModel)} · {selectedModel.pricing ? "Precio informado" : "Precio no disponible"}</p>}</>}</section>}
-            {step === "capability" && <section><h4 className="font-heading text-body text-pergamino">Capacidad</h4><p className="mt-1 text-small text-tinta-desvaida">El modelo debe superar la prueba de texto y, si pasa, la prueba causal de visión (verifica que realmente ve la imagen, no que la memorizó).</p><Button onClick={() => void runCapabilityProbes()} disabled={busy || !selectedModel || validation !== "validated"}>{runningProbe === "text" ? "Probando texto…" : runningProbe === "vision" ? "Probando visión…" : "Probar texto + visión"}</Button><div className="mt-3 space-y-3"><div><p className="text-small text-tinta-desvaida">Prueba de texto</p>{textProbe ? <p aria-live="polite" className={`mt-1 text-small ${textProbe.outcome === "passed" ? "text-musgo" : "text-sangre"}`}>{textProbe.outcome === "passed" ? "Prueba de texto superada." : textProbe.message ?? "La prueba de texto no pasó."}</p> : <p className="mt-1 text-small text-tinta-desvaida">Sin ejecutar.</p>}</div><div><p className="text-small text-tinta-desvaida">Prueba de visión</p>{visionProbe ? <p aria-live="polite" className={`mt-1 text-small ${visionProbe.outcome === "passed" ? "text-musgo" : "text-sangre"}`}>{visionProbe.outcome === "passed" ? "Prueba de visión superada." : visionProbe.message ?? "La prueba de visión no pasó."}</p> : textProbe && textProbe.outcome !== "passed" ? <p aria-live="polite" className="mt-1 text-small text-tinta-desvaida">La visión no se ejecutó porque la prueba de texto no pasó.</p> : <p className="mt-1 text-small text-tinta-desvaida">Sin ejecutar.</p>}</div></div></section>}
-            {step === "confirmation" && <section><h4 className="font-heading text-body text-pergamino">Confirmación</h4><p className="text-small text-tinta-desvaida">{provider} · {selectedModel?.label ?? "Sin modelo"}</p><p className="mt-2 text-small text-musgo">Prueba de texto: superada · Prueba de visión: superada</p><p className="mt-1 text-small text-tinta-desvaida">Al confirmar, el backend vuelve a ejecutar ambas pruebas antes de persistir.</p><Button className="mt-4" onClick={() => void save()} disabled={busy || saved || !selectedModel || textProbe?.outcome !== "passed" || visionProbe?.outcome !== "passed"}>{busy ? "Guardando…" : "Guardar configuración"}</Button></section>}
-            {error && step !== "models" && <p className="text-small text-sangre">{error}</p>}
+            {step === "provider" && <section><h4 className="font-heading text-body text-primary">Proveedor</h4><label className={labelClass} htmlFor="assistant-provider">Elegí un proveedor</label><select id="assistant-provider" className={inputClass} value={provider} onChange={(event) => { const nextProvider = event.target.value; setProvider(nextProvider); setBaseUrl(defaultBaseUrls[nextProvider] ?? (provider === "compatible" ? baseUrl : "")); setValidation("idle"); setTextProbe(null); setVisionProbe(null); }} >{providers.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select><p className="mt-2 text-small text-muted">OpenCode Go es la opción recomendada. Ollama y LM Studio son locales y no requieren clave. Los endpoints compatibles requieren una URL propia.</p></section>}
+            {step === "connection" && <section><h4 className="font-heading text-body text-primary">Conexión</h4><label className={labelClass} htmlFor="assistant-base-url">Endpoint</label><input id="assistant-base-url" className={inputClass} value={baseUrl} onChange={(event) => { setBaseUrl(event.target.value); setValidation("idle"); setTextProbe(null); setVisionProbe(null); }} placeholder="https://..." />{!localProvider && <><label className={`${labelClass} mt-3`} htmlFor="assistant-api-key">Clave API</label><SecretInput ref={apiKeyInputRef} copyable id="assistant-api-key" autoComplete="new-password" className={inputClass} onChange={(event) => { apiKeyValueRef.current = event.target.value; setValidation("idle"); setTextProbe(null); setVisionProbe(null); }} placeholder={status.key_configured ? "Clave ya configurada — dejá vacío para usar la almacenada" : "Ingresá tu clave"} />{status.key_configured && <p className="mt-1 text-small text-muted">Ya hay una clave guardada para este proveedor. Podés cambiar de modelo sin reescribirla.</p>}</>}<div className="mt-3 flex flex-wrap gap-2"><Button onClick={() => void validate()} disabled={busy}>{busy ? "Validando…" : "Validar conexión"}</Button>{status.key_configured && <Button variant="secondary" onClick={() => void clear()} disabled={busy}>Eliminar clave</Button>}</div>{validation === "validated" && <p className="mt-2 text-small text-status-success">Conexión validada.</p>}</section>}
+            {step === "models" && <section><h4 className="font-heading text-body text-primary">Modelos</h4>{validation !== "validated" ? <p className="text-small text-muted">Validá la conexión para habilitar el descubrimiento.</p> : <><Button onClick={() => void discover()} disabled={busy}>{busy ? "Buscando…" : "Descubrir modelos"}</Button>{error && <p className="mt-2 text-small text-status-error">{error}</p>}{models.length > 0 && <select aria-label="Modelo descubierto" className={`${inputClass} mt-3`} value={selectedModel?.id ?? ""} onChange={(event) => { setSelectedModel(models.find((model) => model.id === event.target.value) ?? null); setTextProbe(null); setVisionProbe(null); }}>{models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}</select>}<label className={`${labelClass} mt-3`} htmlFor="assistant-manual-model">ID de modelo manual</label><input id="assistant-manual-model" className={inputClass} value={manualModelId} onChange={(event) => setManualModelId(event.target.value)} placeholder="model-id" /><Button className="mt-2" variant="secondary" onClick={useManualModel}>Usar modelo manual</Button>{selectedModel && <p className="mt-3 text-small text-muted">{modelDescription(selectedModel)} · {selectedModel.pricing ? "Precio informado" : "Precio no disponible"}</p>}</>}</section>}
+            {step === "capability" && <section><h4 className="font-heading text-body text-primary">Capacidad</h4><p className="mt-1 text-small text-muted">El modelo debe superar la prueba de texto y, si pasa, la prueba causal de visión (verifica que realmente ve la imagen, no que la memorizó).</p><Button onClick={() => void runCapabilityProbes()} disabled={busy || !selectedModel || validation !== "validated"}>{runningProbe === "text" ? "Probando texto…" : runningProbe === "vision" ? "Probando visión…" : "Probar texto + visión"}</Button><div className="mt-3 space-y-3"><div><p className="text-small text-muted">Prueba de texto</p>{textProbe ? <p aria-live="polite" className={`mt-1 text-small ${textProbe.outcome === "passed" ? "text-status-success" : "text-status-error"}`}>{textProbe.outcome === "passed" ? "Prueba de texto superada." : textProbe.message ?? "La prueba de texto no pasó."}</p> : <p className="mt-1 text-small text-muted">Sin ejecutar.</p>}</div><div><p className="text-small text-muted">Prueba de visión</p>{visionProbe ? <p aria-live="polite" className={`mt-1 text-small ${visionProbe.outcome === "passed" ? "text-status-success" : "text-status-error"}`}>{visionProbe.outcome === "passed" ? "Prueba de visión superada." : visionProbe.message ?? "La prueba de visión no pasó."}</p> : textProbe && textProbe.outcome !== "passed" ? <p aria-live="polite" className="mt-1 text-small text-muted">La visión no se ejecutó porque la prueba de texto no pasó.</p> : <p className="mt-1 text-small text-muted">Sin ejecutar.</p>}</div></div></section>}
+            {step === "confirmation" && <section><h4 className="font-heading text-body text-primary">Confirmación</h4><p className="text-small text-muted">{provider} · {selectedModel?.label ?? "Sin modelo"}</p><p className="mt-2 text-small text-status-success">Prueba de texto: superada · Prueba de visión: superada</p><p className="mt-1 text-small text-muted">Al confirmar, el backend vuelve a ejecutar ambas pruebas antes de persistir.</p><Button className="mt-4" onClick={() => void save()} disabled={busy || saved || !selectedModel || textProbe?.outcome !== "passed" || visionProbe?.outcome !== "passed"}>{busy ? "Guardando…" : "Guardar configuración"}</Button></section>}
+            {error && step !== "models" && <p className="text-small text-status-error">{error}</p>}
           </div>
           <div className="mt-5 flex gap-2"><Button variant="secondary" onClick={() => move(-1)} disabled={step === "provider"}>Atrás</Button><Button variant="secondary" onClick={() => move(1)} disabled={step === "confirmation" || (step === "connection" && validation !== "validated") || (step === "capability" && (validation !== "validated" || textProbe?.outcome !== "passed" || visionProbe?.outcome !== "passed"))}>Siguiente</Button></div>
         </>

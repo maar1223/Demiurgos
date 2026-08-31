@@ -12,13 +12,13 @@ const sizeStyles = {
 };
 
 /**
- * Loading spinner using the plata color from the Demiurgos palette.
+ * Loading spinner using the icon-muted color from the Demiurgos palette.
  */
 export function Spinner({ size = "md", className }: SpinnerProps) {
   return (
     <div
       className={cn(
-        "animate-spin rounded-full border-plata/30 border-t-plata",
+        "animate-spin rounded-full border-icon-muted/30 border-t-icon-muted",
         sizeStyles[size],
         className,
       )}

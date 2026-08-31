@@ -20,10 +20,10 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-piedra text-plata/50">
+      <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-raised text-icon-muted/50">
         <Icon name={icon} size={32} />
       </div>
-      <p className="text-body text-tinta-desvaida">{message}</p>
+      <p className="text-body text-muted">{message}</p>
       {actionLabel && onAction && (
         <Button variant="secondary" size="sm" onClick={onAction}>
           {actionLabel}

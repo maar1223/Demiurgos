@@ -86,23 +86,23 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="mx-4 w-full max-w-lg rounded-xl border border-filio bg-madero shadow-2xl"
+        className="mx-4 w-full max-w-lg rounded-xl border border-edge bg-surface-raised shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="delete-world-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-filio px-6 py-4">
+        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
           <h2
             id="delete-world-title"
-            className="flex items-center gap-2 font-heading text-h4 text-sangre"
+            className="flex items-center gap-2 font-heading text-h4 text-status-error"
           >
             <Icon name="trash" size={20} />
             Eliminar mundo
@@ -110,7 +110,7 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-plata transition-colors hover:bg-piedra hover:text-pergamino"
+            className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
             aria-label="Cerrar"
           >
             <Icon name="close" size={20} />
@@ -121,13 +121,13 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
         <div className="px-6 py-4">
           {step === 1 && (
             <div className="flex flex-col gap-3">
-              <p className="text-small text-tinta-desvaida">Estás por eliminar el mundo:</p>
-              <p className="font-mono text-body text-pergamino">{world.name}</p>
+              <p className="text-small text-muted">Estás por eliminar el mundo:</p>
+              <p className="font-mono text-body text-primary">{world.name}</p>
               <div className="flex flex-wrap gap-2">
                 <Badge>Lore {world.lore_count}</Badge>
                 <Badge>Personajes {world.character_count}</Badge>
               </div>
-              <div className="rounded-lg border border-llamita/30 bg-llamita/10 px-3 py-2 text-small text-llamita">
+              <div className="rounded-lg border border-action/30 bg-action/10 px-3 py-2 text-small text-action">
                 El mundo se moverá a la papelera y quedará recuperable durante 30 días. Pasado ese
                 plazo se eliminará permanentemente junto con sus datos asociados.
               </div>
@@ -136,13 +136,13 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
 
           {step === 2 && (
             <div className="flex flex-col gap-3">
-              <p className="text-small text-tinta-desvaida">
+              <p className="text-small text-muted">
                 Para continuar, confirmá el alcance de la eliminación:
               </p>
               {SCOPE_LABELS.map((label, index) => (
                 <label
                   key={label}
-                  className="flex items-start gap-3 rounded-lg border border-filio bg-cripta/50 px-3 py-2 text-small text-pergamino"
+                  className="flex items-start gap-3 rounded-lg border border-edge bg-surface/50 px-3 py-2 text-small text-primary"
                 >
                   <input
                     type="checkbox"
@@ -158,20 +158,20 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
 
           {step === 3 && (
             <div className="flex flex-col gap-3">
-              <p className="text-small text-tinta-desvaida">
+              <p className="text-small text-muted">
                 Escribí el nombre del mundo con su ortografía exacta para confirmar:
               </p>
-              <p className="font-mono text-body text-pergamino">{world.name}</p>
+              <p className="font-mono text-body text-primary">{world.name}</p>
               <input
                 type="text"
                 value={typedName}
                 onChange={(e) => setTypedName(e.target.value)}
                 placeholder={world.name}
                 aria-label="Nombre del mundo a eliminar"
-                className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none"
+                className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary placeholder:text-muted focus:border-action focus:outline-none"
               />
               {typedName && !nameMatches && (
-                <p className="text-small text-sangre">El nombre no coincide.</p>
+                <p className="text-small text-status-error">El nombre no coincide.</p>
               )}
             </div>
           )}
@@ -179,7 +179,7 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
           {error && (
             <div
               role="alert"
-              className="mt-3 rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-small text-sangre"
+              className="mt-3 rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-small text-status-error"
             >
               {error}
             </div>
@@ -187,7 +187,7 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-2 border-t border-filio px-6 py-4">
+        <div className="flex items-center justify-between gap-2 border-t border-edge px-6 py-4">
           {step > 1 ? (
             <Button variant="ghost" size="sm" onClick={() => setStep((s) => (s - 1) as Step)} disabled={isBusy}>
               Atrás

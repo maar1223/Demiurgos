@@ -182,23 +182,23 @@ export function PapeleraPanel({
   return (
     <>
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
         onClick={(e) => {
           if (e.target === e.currentTarget) handleClose();
         }}
       >
         <div
-          className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-filio bg-madero shadow-2xl"
+          className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-edge bg-surface-raised shadow-2xl"
           onClick={(e) => e.stopPropagation()}
           role="dialog"
           aria-modal="true"
           aria-labelledby="papelera-title"
         >
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-filio px-6 py-4">
+          <div className="flex items-center justify-between border-b border-edge px-6 py-4">
             <h2
               id="papelera-title"
-              className="flex items-center gap-2 font-heading text-h4 text-pergamino"
+              className="flex items-center gap-2 font-heading text-h4 text-primary"
             >
               <Icon name="trash" size={20} />
               Papelera
@@ -206,7 +206,7 @@ export function PapeleraPanel({
             <button
               type="button"
               onClick={handleClose}
-              className="rounded-md p-1 text-plata transition-colors hover:bg-piedra hover:text-pergamino"
+              className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
               aria-label="Cerrar"
             >
               <Icon name="close" size={20} />
@@ -218,7 +218,7 @@ export function PapeleraPanel({
             {error && (
               <div
                 role="alert"
-                className="rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-small text-sangre"
+                className="rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-small text-status-error"
               >
                 {error}
               </div>
@@ -226,7 +226,7 @@ export function PapeleraPanel({
             {actionError && !dialogOpen && (
               <div
                 role="alert"
-                className="rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-small text-sangre"
+                className="rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-small text-status-error"
               >
                 {actionError}
               </div>
@@ -238,8 +238,8 @@ export function PapeleraPanel({
               </div>
             ) : entries.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-16 text-center">
-                <Icon name="trash" size={40} className="text-sombra" />
-                <p className="text-body text-tinta-desvaida">
+                <Icon name="trash" size={40} className="text-muted" />
+                <p className="text-body text-muted">
                   La papelera está vacía
                 </p>
               </div>
@@ -251,18 +251,18 @@ export function PapeleraPanel({
                     return (
                       <li
                         key={`${entry.section}/${entry.entry_id}`}
-                        className="flex items-center gap-3 rounded-lg border border-filio bg-cripta/50 px-3 py-2"
+                        className="flex items-center gap-3 rounded-lg border border-edge bg-surface/50 px-3 py-2"
                       >
                         <Icon
                           name={entry.kind === "dir" ? "folder" : "file"}
                           size={18}
-                          className="shrink-0 text-plata"
+                          className="shrink-0 text-icon-muted"
                         />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate font-mono text-small text-pergamino">
+                          <p className="truncate font-mono text-small text-primary">
                             {entry.original_path}
                           </p>
-                          <p className="text-xs text-tinta-desvaida">
+                          <p className="text-xs text-muted">
                             {SECTION_LABELS[entry.section as Section] ??
                               entry.section}
                             {" · "}
@@ -299,7 +299,7 @@ export function PapeleraPanel({
 
                 {/* Full cleanup — deliberately set apart from the per-entry
                     actions: it is total and irreversible. */}
-                <div className="flex justify-end border-t border-filio pt-4">
+                <div className="flex justify-end border-t border-edge pt-4">
                   <Button
                     variant="secondary"
                     size="sm"

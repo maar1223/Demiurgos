@@ -108,12 +108,12 @@ export function Breadcrumb({ segments, onSegmentClick }: BreadcrumbProps) {
             className="flex min-w-0 items-center gap-1.5"
           >
             {index > 0 && (
-              <Icon name="chevron-right" size={12} className="shrink-0 text-sombra" />
+              <Icon name="chevron-right" size={12} className="shrink-0 text-muted" />
             )}
             <span
               className={cn(
                 chipBase,
-                "border-filio bg-piedra text-tinta-desvaida",
+                "border-edge bg-surface-raised text-muted",
               )}
             >
               {segment}
@@ -144,7 +144,7 @@ export function Breadcrumb({ segments, onSegmentClick }: BreadcrumbProps) {
                 <Icon
                   name="chevron-right"
                   size={12}
-                  className="shrink-0 text-sombra"
+                  className="shrink-0 text-muted"
                 />
               )}
 
@@ -158,7 +158,7 @@ export function Breadcrumb({ segments, onSegmentClick }: BreadcrumbProps) {
                   }
                   className={cn(
                     chipBase,
-                    "border-llamita/40 bg-llamita/10 text-llamita hover:border-llamita/70 hover:bg-llamita/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
+                    "border-action/40 bg-action/10 text-action hover:border-action/70 hover:bg-action/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
                   )}
                 >
                   {"…"}
@@ -167,7 +167,7 @@ export function Breadcrumb({ segments, onSegmentClick }: BreadcrumbProps) {
                 <span
                   className={cn(
                     chipBase,
-                    "border-llamita/40 bg-llamita/10 text-llamita",
+                    "border-action/40 bg-action/10 text-action",
                   )}
                 >
                   {segment}
@@ -178,7 +178,7 @@ export function Breadcrumb({ segments, onSegmentClick }: BreadcrumbProps) {
                   onClick={() => onSegmentClick?.(index)}
                   className={cn(
                     chipBase,
-                    "border-filio bg-piedra text-tinta-desvaida hover:border-llamita/50 hover:bg-filio hover:text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
+                    "border-edge bg-surface-raised text-muted hover:border-action/50 hover:bg-surface-hover hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
                   )}
                 >
                   {segment}

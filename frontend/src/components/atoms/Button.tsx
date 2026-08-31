@@ -11,11 +11,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantStyles: Record<Variant, string> = {
   primary:
-    "bg-llamita text-cripta hover:bg-llama-alta active:bg-llamita/90 focus-visible:ring-llamita/50",
+    "bg-action text-action-text hover:bg-action-hover active:bg-action/90 focus-visible:ring-action/50",
   secondary:
-    "bg-piedra text-pergamino hover:bg-filio active:bg-filio/80 focus-visible:ring-filio/50",
+    "bg-surface-raised text-primary hover:bg-surface-hover active:bg-surface-raised/80 focus-visible:ring-edge/50",
   ghost:
-    "bg-transparent text-pergamino hover:bg-piedra active:bg-filio/30 focus-visible:ring-filio/50",
+    "bg-transparent text-primary hover:bg-surface-hover active:bg-surface-raised/30 focus-visible:ring-edge/50",
 };
 
 const sizeStyles: Record<Size, string> = {
@@ -45,7 +45,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         disabled={disabled}
         className={cn(
           "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-cripta",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
           "disabled:cursor-not-allowed disabled:opacity-50",
           variantStyles[variant],
           sizeStyles[size],

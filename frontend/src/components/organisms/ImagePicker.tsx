@@ -150,32 +150,32 @@ export function ImagePicker({
   };
 
   const selectClasses =
-    "rounded-md border border-filio bg-piedra px-2 py-1.5 text-small text-pergamino " +
-    "transition-colors focus:border-llamita focus:outline-none focus:ring-2 focus:ring-llamita/50";
+    "rounded-md border border-edge bg-surface-raised px-2 py-1.5 text-small text-primary " +
+    "transition-colors focus:border-action focus:outline-none focus:ring-2 focus:ring-action/50";
 
   return (
     <>
       <div
         ref={overlayRef}
-        className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
         onClick={handleOverlayClick}
       >
         <div
-          className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-xl border border-filio bg-madero shadow-2xl"
+          className="mx-4 flex max-h-[80vh] w-full max-w-3xl flex-col rounded-xl border border-edge bg-surface-raised shadow-2xl"
           onClick={(e) => e.stopPropagation()}
           role="dialog"
           aria-modal="true"
           aria-labelledby="image-picker-title"
         >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-filio px-6 py-4">
+        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
           <h2
             id="image-picker-title"
-            className="font-heading text-h4 text-pergamino"
+            className="font-heading text-h4 text-primary"
           >
             Seleccionar imagen
             {total > 0 && (
-              <span className="ml-2 text-small text-tinta-desvaida font-normal">
+              <span className="ml-2 text-small text-muted font-normal">
                 ({total} {total === 1 ? "imagen" : "imágenes"})
               </span>
             )}
@@ -183,7 +183,7 @@ export function ImagePicker({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-plata hover:text-pergamino hover:bg-piedra transition-colors"
+            className="rounded-md p-1 text-icon-muted hover:text-primary hover:bg-surface-hover transition-colors"
             aria-label="Cerrar"
           >
             <Icon name="close" size={20} />
@@ -224,14 +224,14 @@ export function ImagePicker({
                         aria-pressed={isSelected}
                         onClick={() => setSelectedPath(img.path)}
                         className={cn(
-                          "group flex w-full flex-col overflow-hidden rounded-lg border bg-piedra transition-all hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
+                          "group flex w-full flex-col overflow-hidden rounded-lg border bg-surface-raised transition-all hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
                           isSelected
-                            ? "border-llamita ring-2 ring-llamita/50"
-                            : "border-filio hover:border-llamita/50",
+                            ? "border-action ring-2 ring-action/50"
+                            : "border-edge hover:border-action/50",
                         )}
                       >
                         {/* Thumbnail */}
-                        <div className="aspect-[4/3] w-full overflow-hidden bg-cripta">
+                        <div className="aspect-[4/3] w-full overflow-hidden bg-surface">
                           <img
                             src={getMediaUrl(
                               mundo,
@@ -244,10 +244,10 @@ export function ImagePicker({
                         </div>
                         {/* Info */}
                         <div className="px-2 py-2 text-left">
-                          <p className="truncate text-small text-pergamino">
+                          <p className="truncate text-small text-primary">
                             {img.name}
                           </p>
-                          <p className="text-xs text-tinta-desvaida">
+                          <p className="text-xs text-muted">
                             {formatSize(img.size_bytes)}
                           </p>
                         </div>
@@ -260,7 +260,7 @@ export function ImagePicker({
                           aria-label={`Eliminar ${img.name}`}
                           title={`Eliminar ${img.name}`}
                           onClick={() => openDeleteDialog(img.path)}
-                          className="absolute right-2 top-2 rounded-md bg-cripta/80 p-1.5 text-plata shadow-md backdrop-blur-sm transition-colors hover:bg-sangre hover:text-pergamino focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50"
+                          className="absolute right-2 top-2 rounded-md bg-surface/80 p-1.5 text-icon-muted shadow-md backdrop-blur-sm transition-colors hover:bg-status-error hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
                         >
                           <Icon name="trash" size={16} />
                         </button>
@@ -270,17 +270,17 @@ export function ImagePicker({
                 })}
               </div>
 
-              <p className="mt-4 text-small text-tinta-desvaida">
+              <p className="mt-4 text-small text-muted">
                 {rawMode
                   ? "Selecciona la imagen que será la portada."
                   : "Selecciona una imagen y configura su posición."}
               </p>
 
               {/* Footer: alignment/size dropdowns + actions */}
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-filio pt-4">
+              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-edge pt-4">
                 {!rawMode && (
                   <div className="flex flex-wrap items-center gap-3">
-                    <label className="flex items-center gap-2 text-small text-tinta-desvaida">
+                    <label className="flex items-center gap-2 text-small text-muted">
                       Alineación:
                       <select
                         value={selectedAlign ?? ""}
@@ -299,7 +299,7 @@ export function ImagePicker({
                         <option value="center">↔ Centro</option>
                       </select>
                     </label>
-                    <label className="flex items-center gap-2 text-small text-tinta-desvaida">
+                    <label className="flex items-center gap-2 text-small text-muted">
                       Tamaño:
                       <select
                         value={selectedSize ?? ""}

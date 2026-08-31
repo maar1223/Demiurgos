@@ -68,11 +68,11 @@ export function MigrationPanel({
   };
 
   return (
-    <div className="rounded-lg border border-filio bg-madero p-4">
-      <h3 className="font-heading text-body text-pergamino">
+    <div className="rounded-lg border border-edge bg-surface-raised p-4">
+      <h3 className="font-heading text-body text-primary">
         Migración de carpetas legacy
       </h3>
-      <p className="mt-1 text-small text-tinta-desvaida">
+      <p className="mt-1 text-small text-muted">
         Las carpetas con mayúsculas no son reconocidas como contenido canónico
         porque las rutas distinguen mayúsculas y minúsculas. La migración es
         opcional y explícita: mueve solo las carpetas aprobadas, verifica su
@@ -86,8 +86,8 @@ export function MigrationPanel({
           aria-live="polite"
           className={
             outcome.status === "completed"
-              ? "mt-3 rounded-lg border border-musgo/30 bg-musgo/10 px-3 py-2 text-small text-musgo"
-              : "mt-3 rounded-lg border border-llamita/30 bg-llamita/10 px-3 py-2 text-small text-llamita"
+              ? "mt-3 rounded-lg border border-status-success/30 bg-status-success/10 px-3 py-2 text-small text-status-success"
+              : "mt-3 rounded-lg border border-action/30 bg-action/10 px-3 py-2 text-small text-action"
           }
         >
           {outcome.status === "completed" ? (
@@ -109,7 +109,7 @@ export function MigrationPanel({
       )}
 
       {error && !confirmTarget && (
-        <p role="alert" className="mt-3 text-small text-sangre">
+        <p role="alert" className="mt-3 text-small text-status-error">
           {error}
         </p>
       )}
@@ -118,10 +118,10 @@ export function MigrationPanel({
         {findings.map((finding) => (
           <li
             key={finding.world}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-filio bg-piedra px-3 py-2"
+            className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-edge bg-surface-raised px-3 py-2"
           >
             <span className="flex flex-wrap items-center gap-2 text-small">
-              <strong className="text-pergamino">{finding.world}</strong>
+              <strong className="text-primary">{finding.world}</strong>
               {finding.folders.map((folder) => (
                 <Badge key={folder} variant="warning">
                   {folder}

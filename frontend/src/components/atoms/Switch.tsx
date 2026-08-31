@@ -37,10 +37,10 @@ export function Switch({
         }
       }}
       className={cn(
-        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
+        "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
         checked
           ? "border-emerald-500/40 bg-emerald-500"
-          : "border-filio bg-cripta",
+          : "border-edge bg-surface",
         disabled && "cursor-not-allowed opacity-50",
         className,
       )}

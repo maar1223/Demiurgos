@@ -108,10 +108,10 @@ export function MethodologyLibrary({ world }: MethodologyLibraryProps) {
     <section className="space-y-6">
       <div className="flex items-baseline justify-between gap-4">
         <div>
-          <h2 className="font-heading text-h4 text-pergamino">
+          <h2 className="font-heading text-h4 text-primary">
             Bibliotecas de metodologías
           </h2>
-          <p className="mt-1 text-small text-tinta-desvaida">
+          <p className="mt-1 text-small text-muted">
             Publicá borradores validados y activá una versión inmutable por
             mundo. La activación solo afecta sesiones nuevas.
           </p>
@@ -137,16 +137,16 @@ export function MethodologyLibrary({ world }: MethodologyLibraryProps) {
             return (
               <li
                 key={`${methodology.skill_id}@${methodology.version}`}
-                className="flex items-center justify-between gap-4 rounded-lg border border-filio/20 bg-piedra/40 p-4"
+                className="flex items-center justify-between gap-4 rounded-lg border border-edge/20 bg-surface-raised/40 p-4"
               >
                 <div>
-                  <p className="font-medium text-pergamino">
+                  <p className="font-medium text-primary">
                     {methodology.name}
                   </p>
-                  <p className="text-small text-tinta-desvaida">
+                  <p className="text-small text-muted">
                     {methodology.skill_id}@{methodology.version}
                     {isActive && (
-                      <span className="ml-2 text-llamita">
+                      <span className="ml-2 text-action">
                         • Activa en {world}
                       </span>
                     )}
@@ -168,8 +168,8 @@ export function MethodologyLibrary({ world }: MethodologyLibraryProps) {
         </ul>
       )}
 
-      <div className="rounded-lg border border-filio/20 bg-piedra/40 p-4">
-        <h3 className="font-heading text-h4 text-pergamino">
+      <div className="rounded-lg border border-edge/20 bg-surface-raised/40 p-4">
+        <h3 className="font-heading text-h4 text-primary">
           Publicar un borrador
         </h3>
         <form
@@ -180,35 +180,35 @@ export function MethodologyLibrary({ world }: MethodologyLibraryProps) {
           }}
         >
           <div className="grid gap-3 sm:grid-cols-3">
-            <label className="flex flex-col gap-1 text-small text-tinta-desvaida">
+            <label className="flex flex-col gap-1 text-small text-muted">
               Skill ID
               <input
-                className="rounded-lg bg-cripta px-3 py-2 text-body text-pergamino outline-none focus:ring-2 focus:ring-llamita/50"
+                className="rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
                 value={skillId}
                 onChange={(event) => setSkillId(event.target.value)}
               />
             </label>
-            <label className="flex flex-col gap-1 text-small text-tinta-desvaida">
+            <label className="flex flex-col gap-1 text-small text-muted">
               Versión
               <input
-                className="rounded-lg bg-cripta px-3 py-2 text-body text-pergamino outline-none focus:ring-2 focus:ring-llamita/50"
+                className="rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
                 value={version}
                 onChange={(event) => setVersion(event.target.value)}
               />
             </label>
-            <label className="flex flex-col gap-1 text-small text-tinta-desvaida">
+            <label className="flex flex-col gap-1 text-small text-muted">
               Nombre
               <input
-                className="rounded-lg bg-cripta px-3 py-2 text-body text-pergamino outline-none focus:ring-2 focus:ring-llamita/50"
+                className="rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
               />
             </label>
           </div>
-          <label className="flex flex-col gap-1 text-small text-tinta-desvaida">
+          <label className="flex flex-col gap-1 text-small text-muted">
             Fuente (Markdown)
             <textarea
-              className="min-h-24 rounded-lg bg-cripta px-3 py-2 text-body text-pergamino outline-none focus:ring-2 focus:ring-llamita/50"
+              className="min-h-24 rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
               value={source}
               onChange={(event) => setSource(event.target.value)}
             />

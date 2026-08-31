@@ -13,14 +13,14 @@ interface ErrorBannerProps {
 export function ErrorBanner({ message, onRetry, className }: ErrorBannerProps) {
   return (
     <div
-      className={`flex items-start gap-3 rounded-lg border border-sangre/30 bg-sangre/10 p-4 ${className ?? ""}`}
+      className={`flex items-start gap-3 rounded-lg border border-status-error/30 bg-status-error/10 p-4 ${className ?? ""}`}
       role="alert"
     >
-      <div className="mt-0.5 shrink-0 text-sangre">
+      <div className="mt-0.5 shrink-0 text-status-error">
         <Icon name="error" size={20} />
       </div>
       <div className="flex-1">
-        <p className="text-small text-sangre">{message}</p>
+        <p className="text-small text-status-error">{message}</p>
       </div>
       {onRetry && (
         <Button variant="ghost" size="sm" onClick={onRetry}>

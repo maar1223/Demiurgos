@@ -13,8 +13,9 @@ import type { VisionSuggestion, VisionVerdict } from "@/api/types";
  * becomes the markdown alt-text at execute time; the ORIGINAL spool bytes
  * are registered in the gallery (thumbnails are preview-only).
  *
- * Visual distinction: ``border-plata/40 bg-cripta`` keeps vision cards apart
- * from classification (musgo) and relationship (filio) suggestions. The
+ * Visual distinction: ``border-icon-muted/40 bg-surface`` keeps vision cards
+ * apart from classification (status-success) and relationship (edge)
+ * suggestions. The
  * thumbnail only renders when the server provides a servable
  * ``thumbnail_url`` — review-time images live in the job spool, which the
  * media endpoint does not serve, so a broken image is never rendered.
@@ -63,8 +64,8 @@ export function VisionSuggestionCard({
   return (
     <li
       className={cn(
-        "flex flex-col gap-2 rounded-md border border-plata/40 bg-cripta p-3",
-        decision === "approved" && "ring-1 ring-musgo/40",
+        "flex flex-col gap-2 rounded-md border border-icon-muted/40 bg-surface p-3",
+        decision === "approved" && "ring-1 ring-status-success/40",
         decision === "rejected" && "opacity-70",
       )}
       data-testid={`suggestion-${suggestion.id}`}
@@ -75,7 +76,7 @@ export function VisionSuggestionCard({
             Review-time images live in the job spool (pre-gallery), so the
             fallback is an honest placeholder instead of a broken image. */}
         {suggestion.thumbnail_url ? (
-          <div className="shrink-0 overflow-hidden rounded-md border border-filio bg-madero">
+          <div className="shrink-0 overflow-hidden rounded-md border border-edge bg-surface-raised">
             <img
               src={suggestion.thumbnail_url}
               alt={suggestion.description || suggestion.relative_media_path}
@@ -84,7 +85,7 @@ export function VisionSuggestionCard({
           </div>
         ) : (
           <div
-            className="flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-filio bg-madero text-tinta-desvaida"
+            className="flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-edge bg-surface-raised text-muted"
             aria-label="Imagen sin vista previa disponible"
           >
             <Icon name="image" size={20} />
@@ -101,23 +102,23 @@ export function VisionSuggestionCard({
             </Badge>
             <Badge variant="info">visión</Badge>
             <span
-              className="truncate text-xs text-tinta-desvaida"
+              className="truncate text-xs text-muted"
               title={suggestion.relative_media_path}
             >
               {suggestion.relative_media_path}
             </span>
             <span
-              className="text-xs text-tinta-desvaida"
+              className="text-xs text-muted"
               title="confianza del asistente"
             >
               confianza {confidencePct}%
             </span>
           </div>
-          <p className="mt-1 text-small font-medium text-pergamino">
+          <p className="mt-1 text-small font-medium text-primary">
             {suggestion.description || "(sin descripción)"}
           </p>
           {suggestion.analysis && (
-            <p className="mt-0.5 text-xs text-tinta-desvaida">
+            <p className="mt-0.5 text-xs text-muted">
               {suggestion.analysis}
             </p>
           )}
@@ -134,11 +135,11 @@ export function VisionSuggestionCard({
       </div>
 
       {suggestion.evidence && (
-        <p className="text-xs text-tinta-desvaida">{suggestion.evidence}</p>
+        <p className="text-xs text-muted">{suggestion.evidence}</p>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-xs text-tinta-desvaida">
+        <span className="text-xs text-muted">
           Origen: {providerLabel}
           {modelLabel && ` · ${modelLabel}`}
         </span>
@@ -168,13 +169,13 @@ export function VisionSuggestionCard({
         </div>
       </div>
       {decision === "approved" && (
-        <p className="text-xs text-tinta-desvaida">
+        <p className="text-xs text-muted">
           Imagen aprobada — la descripción se usará como texto alternativo al
           importar.
         </p>
       )}
       {decision === "rejected" && (
-        <p className="text-xs text-tinta-desvaida">
+        <p className="text-xs text-muted">
           Imagen rechazada — no se registrará en la galería.
         </p>
       )}

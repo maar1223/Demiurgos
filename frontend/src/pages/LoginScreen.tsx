@@ -86,10 +86,10 @@ export default function LoginScreen() {
 
   if (statusLoading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-cripta">
+      <div className="flex min-h-screen items-center justify-center bg-surface">
         <div className="flex flex-col items-center gap-4">
           <Spinner size="lg" />
-          <p className="text-body text-tinta-desvaida">Verificando sesión…</p>
+          <p className="text-body text-muted">Verificando sesión…</p>
         </div>
       </div>
     );
@@ -97,11 +97,11 @@ export default function LoginScreen() {
 
   if (statusError && !status) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-cripta px-4">
-        <div className="w-full max-w-md rounded-lg border border-sangre/30 bg-madero p-6">
-          <h1 className="font-heading text-h3 text-sangre">Error de conexión</h1>
-          <p className="mt-3 text-body text-pergamino">{statusError.message}</p>
-          <p className="mt-3 text-small text-tinta-desvaida">
+      <div className="flex min-h-screen items-center justify-center bg-surface px-4">
+        <div className="w-full max-w-md rounded-lg border border-status-error/30 bg-surface-raised p-6">
+          <h1 className="font-heading text-h3 text-status-error">Error de conexión</h1>
+          <p className="mt-3 text-body text-primary">{statusError.message}</p>
+          <p className="mt-3 text-small text-muted">
             Verificá que el servidor esté corriendo y recargá la página.
           </p>
         </div>
@@ -115,18 +115,18 @@ export default function LoginScreen() {
   // show a clear message instead of blocking the user.
   if (!status.enabled) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-cripta px-4">
-        <div className="w-full max-w-md rounded-lg border border-filio bg-madero p-6">
-          <h1 className="font-heading text-h3 text-pergamino">Autenticación desactivada</h1>
-          <p className="mt-3 text-body text-tinta-desvaida">
+      <div className="flex min-h-screen items-center justify-center bg-surface px-4">
+        <div className="w-full max-w-md rounded-lg border border-edge bg-surface-raised p-6">
+          <h1 className="font-heading text-h3 text-primary">Autenticación desactivada</h1>
+          <p className="mt-3 text-body text-muted">
             La autenticación está desactivada. No es necesario iniciar sesión.
           </p>
-          <p className="mt-3 text-small text-tinta-desvaida">
+          <p className="mt-3 text-small text-muted">
             Si querés habilitar la autenticación, configurá{" "}
-            <code className="rounded bg-cripta px-1.5 py-0.5 text-plata">
+            <code className="rounded bg-surface px-1.5 py-0.5 text-icon-muted">
               DEMIURGOS_AUTH_MODE
             </code>{" "}
-            en <code className="rounded bg-cripta px-1.5 py-0.5 text-plata">.env</code>.
+            en <code className="rounded bg-surface px-1.5 py-0.5 text-icon-muted">.env</code>.
           </p>
         </div>
       </div>
@@ -141,14 +141,14 @@ export default function LoginScreen() {
 
   // Auth is enabled but the user is not authenticated: show login screen.
   return (
-    <div className="flex min-h-screen items-center justify-center bg-cripta px-4">
-      <div className="w-full max-w-md rounded-lg border border-filio bg-madero p-6">
+    <div className="flex min-h-screen items-center justify-center bg-surface px-4">
+      <div className="w-full max-w-md rounded-lg border border-edge bg-surface-raised p-6">
         {showReauthBanner && (
           <ReauthBanner onDismiss={() => setReauthDismissed(true)} />
         )}
 
-        <h1 className="font-heading text-h3 text-pergamino">Bienvenido a Demiurgos</h1>
-        <p className="mt-3 text-body text-tinta-desvaida">
+        <h1 className="font-heading text-h3 text-primary">Bienvenido a Demiurgos</h1>
+        <p className="mt-3 text-body text-muted">
           Iniciá sesión para acceder al Taller de Mundo y todas sus capacidades.
         </p>
 
@@ -157,23 +157,23 @@ export default function LoginScreen() {
             {creds.daysUntilReauth !== null && (
               <div
                 role="status"
-                className="mb-4 rounded-lg border border-filio bg-cripta/50 p-3"
+                className="mb-4 rounded-lg border border-edge bg-surface/50 p-3"
               >
-                <p className="text-small text-pergamino">
+                <p className="text-small text-primary">
                   {creds.reauthDue
                     ? "Reingreso recomendado: hoy"
                     : `Reingreso recomendado en ${creds.daysUntilReauth} día${creds.daysUntilReauth === 1 ? "" : "s"}`}
                 </p>
-                <p className="mt-2 text-small text-tinta-desvaida">
+                <p className="mt-2 text-small text-muted">
                   Si no reingresas tu contraseña, la sesión de Demiurgos se
                   cerrará. Y si olvidaste tu contraseña, solo vas a poder
                   recuperarla con tus palabras claves.
                 </p>
               </div>
             )}
-            <p className="text-small text-musgo">Sesión activa</p>
-            <p className="mt-1 text-small text-tinta-desvaida">{status.label}</p>
-            <p className="mt-3 text-small text-tinta-desvaida">
+            <p className="text-small text-status-success">Sesión activa</p>
+            <p className="mt-1 text-small text-muted">{status.label}</p>
+            <p className="mt-3 text-small text-muted">
               Redirigiendo a la aplicación…
             </p>
           </div>
@@ -211,10 +211,10 @@ function ReauthBanner({ onDismiss }: { onDismiss: () => void }) {
   return (
     <div
       role="alert"
-      className="mb-5 rounded-lg border border-llamita/40 bg-llamita/10 p-3"
+      className="mb-5 rounded-lg border border-action/40 bg-action/10 p-3"
     >
       <div className="flex items-start justify-between gap-3">
-        <p className="text-small text-pergamino">
+        <p className="text-small text-primary">
           Si no reingresas tu contraseña, la sesión de Demiurgos se cerrará. Y
           si olvidaste tu contraseña, solo vas a poder recuperarla con tus
           palabras claves.
@@ -223,7 +223,7 @@ function ReauthBanner({ onDismiss }: { onDismiss: () => void }) {
           type="button"
           aria-label="Descartar aviso"
           onClick={onDismiss}
-          className="shrink-0 rounded px-1.5 text-small text-tinta-desvaida hover:text-pergamino"
+          className="shrink-0 rounded px-1.5 text-small text-muted hover:text-primary"
         >
           ✕
         </button>
@@ -298,17 +298,17 @@ function CredentialsLogin({
                 setPassword(event.target.value);
                 onClearError();
               }}
-              className="w-full rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none"
+              className="w-full rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none"
             />
           </>
         )}
 
-        <label className="flex items-center gap-2 text-small text-tinta-desvaida">
+        <label className="flex items-center gap-2 text-small text-muted">
           <input
             type="checkbox"
             checked={rememberMe}
             onChange={(event) => setRememberMe(event.target.checked)}
-            className="h-4 w-4 rounded border-filio bg-cripta accent-musgo"
+            className="h-4 w-4 rounded border-edge bg-surface accent-status-success"
           />
           Recordarme por 30 días
         </label>
@@ -330,31 +330,31 @@ function CredentialsLogin({
         </Button>
       </div>
 
-      <p className="mt-3 text-center text-small text-tinta-desvaida">
+      <p className="mt-3 text-center text-small text-muted">
         La sesión es local y segura. No requiere credenciales externas.
       </p>
 
       {loginError && (
-        <p className="mt-3 text-small text-sangre" role="alert">
+        <p className="mt-3 text-small text-status-error" role="alert">
           {loginError}
         </p>
       )}
 
       {noAccount && (
-        <p className="mt-3 text-small text-tinta-desvaida">
+        <p className="mt-3 text-small text-muted">
           ¿Primera vez?{" "}
-          <Link to="/onboarding" className="text-plata underline">
+          <Link to="/onboarding" className="text-icon-muted underline">
             Configurá tu cuenta
           </Link>{" "}
           para poder entrar.
         </p>
       )}
 
-      <div className="mt-4 border-t border-filio pt-3 text-center">
+      <div className="mt-4 border-t border-edge pt-3 text-center">
         <button
           type="button"
           onClick={() => setRecoveryOpen(true)}
-          className="text-small text-plata underline hover:text-pergamino"
+          className="text-small text-icon-muted underline hover:text-primary"
         >
           ¿Olvidaste tu contraseña?
         </button>
@@ -429,9 +429,9 @@ function RecoveryFlow({
       <div className="mt-6">
         <div
           role="status"
-          className="rounded-lg border border-musgo/40 bg-cripta/50 p-3"
+          className="rounded-lg border border-status-success/40 bg-surface/50 p-3"
         >
-          <p className="text-small text-musgo">
+          <p className="text-small text-status-success">
             Credenciales actualizadas. Iniciá sesión con tus nuevos datos.
           </p>
         </div>
@@ -449,10 +449,10 @@ function RecoveryFlow({
   if (!recoveryToken) {
     return (
       <form onSubmit={handleRecover} className="mt-6">
-        <h2 className="font-heading text-body text-pergamino">
+        <h2 className="font-heading text-body text-primary">
           Recuperar cuenta
         </h2>
-        <p className="mt-1 text-small text-tinta-desvaida">
+        <p className="mt-1 text-small text-muted">
           Ingresá tus palabras claves para demostrar que la cuenta es tuya y
           poder cambiar el usuario o la contraseña.
         </p>
@@ -466,7 +466,7 @@ function RecoveryFlow({
           placeholder="Palabras claves"
           value={words}
           onChange={(event) => setWords(event.target.value)}
-          className="mt-3 w-full rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino placeholder:text-tinta-desvaida focus:border-plata focus:outline-none"
+          className="mt-3 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none"
         />
         <Button
           type="submit"
@@ -477,15 +477,15 @@ function RecoveryFlow({
           {busy ? "Verificando…" : "Recuperar"}
         </Button>
         {error && (
-          <p className="mt-3 text-small text-sangre" role="alert">
+          <p className="mt-3 text-small text-status-error" role="alert">
             {error}
           </p>
         )}
-        <div className="mt-4 border-t border-filio pt-3 text-center">
+        <div className="mt-4 border-t border-edge pt-3 text-center">
           <button
             type="button"
             onClick={onClose}
-            className="text-small text-plata underline hover:text-pergamino"
+            className="text-small text-icon-muted underline hover:text-primary"
           >
             Volver al inicio de sesión
           </button>
@@ -496,15 +496,15 @@ function RecoveryFlow({
 
   return (
     <form onSubmit={handleComplete} className="mt-6">
-      <h2 className="font-heading text-body text-pergamino">
+      <h2 className="font-heading text-body text-primary">
         Cambiar usuario o contraseña
       </h2>
-      <p className="mt-1 text-small text-tinta-desvaida">
+      <p className="mt-1 text-small text-muted">
         Completá al menos un campo. La contraseña es opcional: si la dejás
         vacía y ya existe, se conserva.
       </p>
 
-      <label htmlFor="recovery-username" className="mt-3 block text-small text-pergamino">
+      <label htmlFor="recovery-username" className="mt-3 block text-small text-primary">
         Usuario
         <input
           id="recovery-username"
@@ -512,11 +512,11 @@ function RecoveryFlow({
           autoComplete="username"
           value={newUsername}
           onChange={(event) => setNewUsername(event.target.value)}
-          className="mt-1 w-full rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino focus:border-plata focus:outline-none"
+          className="mt-1 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary focus:border-icon-muted focus:outline-none"
         />
       </label>
 
-      <label htmlFor="recovery-password" className="mt-3 block text-small text-pergamino">
+      <label htmlFor="recovery-password" className="mt-3 block text-small text-primary">
         Nueva contraseña (opcional)
         <input
           id="recovery-password"
@@ -524,7 +524,7 @@ function RecoveryFlow({
           autoComplete="new-password"
           value={newPassword}
           onChange={(event) => setNewPassword(event.target.value)}
-          className="mt-1 w-full rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino focus:border-plata focus:outline-none"
+          className="mt-1 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary focus:border-icon-muted focus:outline-none"
         />
       </label>
 
@@ -537,15 +537,15 @@ function RecoveryFlow({
         {busy ? "Guardando…" : "Guardar cambios"}
       </Button>
       {error && (
-        <p className="mt-3 text-small text-sangre" role="alert">
+        <p className="mt-3 text-small text-status-error" role="alert">
           {error}
         </p>
       )}
-      <div className="mt-4 border-t border-filio pt-3 text-center">
+      <div className="mt-4 border-t border-edge pt-3 text-center">
         <button
           type="button"
           onClick={onClose}
-          className="text-small text-plata underline hover:text-pergamino"
+          className="text-small text-icon-muted underline hover:text-primary"
         >
           Volver al inicio de sesión
         </button>
@@ -576,23 +576,23 @@ function LocalDevLogin({
 }: LocalDevLoginProps) {
   if (isLoading) {
     return (
-      <div className="mt-6 flex items-center gap-2 text-small text-tinta-desvaida">
+      <div className="mt-6 flex items-center gap-2 text-small text-muted">
         <Spinner size="sm" /> Verificando sesión local…
       </div>
     );
   }
 
   if (error) {
-    return <p className="mt-4 text-small text-sangre">{error.message}</p>;
+    return <p className="mt-4 text-small text-status-error">{error.message}</p>;
   }
 
   return (
     <div className="mt-6">
       {authenticated ? (
         <div>
-          <p className="text-small text-musgo">Sesión local activa</p>
-          <p className="mt-1 text-small text-tinta-desvaida">{label}</p>
-          <p className="mt-3 text-small text-tinta-desvaida">
+          <p className="text-small text-status-success">Sesión local activa</p>
+          <p className="mt-1 text-small text-muted">{label}</p>
+          <p className="mt-3 text-small text-muted">
             Redirigiendo a la aplicación…
           </p>
         </div>
@@ -613,15 +613,15 @@ function LocalDevLogin({
               "Iniciar sesión local"
             )}
           </Button>
-          <p className="mt-3 text-center text-small text-tinta-desvaida">
+          <p className="mt-3 text-center text-small text-muted">
             La sesión es local y segura. No requiere credenciales externas.
           </p>
         </div>
       )}
 
       {actionError && (
-        <div className="mt-4 rounded-lg border border-sangre/30 bg-sangre/10 p-3">
-          <p className="text-small text-sangre">{actionError}</p>
+        <div className="mt-4 rounded-lg border border-status-error/30 bg-status-error/10 p-3">
+          <p className="text-small text-status-error">{actionError}</p>
         </div>
       )}
     </div>

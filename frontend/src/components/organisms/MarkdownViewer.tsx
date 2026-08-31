@@ -34,7 +34,9 @@ interface MarkdownViewerProps {
 /**
  * Renders GFM markdown content via react-markdown + remark-gfm.
  *
- * Uses @tailwindcss/typography (`prose prose-invert`) for styling.
+ * Uses @tailwindcss/typography (`prose`) with the theme-aware
+ * `.prose-demiurgos` class, which maps prose colors to the brand role
+ * tokens (flipping light/dark via :root / :root.dark).
  *
  * Supports [[Name]] wikilinks via a custom `remarkWikiLink` plugin.
  * Wikilinks are resolved lazily against the entity search API and rendered
@@ -160,7 +162,7 @@ export function MarkdownBody({
   };
 
   return (
-    <div className={cn("prose prose-invert max-w-none", className)}>
+    <div className={cn("prose prose-demiurgos max-w-none", className)}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkWikiLink]}
         components={components}
@@ -247,7 +249,7 @@ function MarkdownImage({ src, alt, mundo = "", imageFit }: MarkdownImageProps) {
 
   if (hasError || !resolvedSrc) {
     return (
-      <span className="inline-flex items-center gap-2 rounded-lg border border-filio bg-madero px-4 py-3 text-small text-tinta-desvaida">
+      <span className="inline-flex items-center gap-2 rounded-lg border border-edge bg-surface-raised px-4 py-3 text-small text-muted">
         <Icon name="image" size={16} />
         {alt ? `«${alt}» — imagen no disponible` : "Imagen no disponible"}
       </span>

@@ -2,13 +2,61 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Brand theme variables (PR-1). Each variable holds "R G B" channels
+ * (space-separated) so Tailwind's `rgb(var(--color-x) / <alpha-value>)`
+ * mapping can apply opacity modifiers. Light in :root, dark in :root.dark
+ * (the `.dark` class lives on <html>, set by the anti-FOUC script in
+ * index.html and by hooks/useTheme).
+ */
+:root {
+  --color-surface: 255 255 252; /* #fffffc */
+  --color-surface-raised: 245 244 242; /* #f5f4f2 */
+  --color-surface-hover: 237 237 235; /* #ededeb */
+  --color-surface-active: 228 228 226; /* #e4e4e2 — selected/pressed, one step darker than hover */
+  --color-primary: 28 26 33; /* #1c1a21 */
+  --color-detail: 82 79 86; /* #524f56 */
+  --color-muted: 138 135 142; /* #8a878e */
+  --color-edge: 229 227 224; /* #e5e3e0 */
+  --color-action: 138 138 150; /* #8A8A96 pewter — CTA in the gray-silver logo family */
+  --color-action-hover: 107 107 120; /* #6B6B78 darker pewter for hover feedback */
+  --color-action-text: 28 26 33; /* #1c1a21 */
+  --color-status-success: 74 107 62; /* #4A6B3E */
+  --color-status-error: 139 45 36; /* #8B2D24 */
+  --color-diff-gutter: 245 244 242; /* #f5f4f2 */
+  --color-icon-muted: 138 135 142; /* #8a878e */
+  /* Prose-only role token: markdown headings follow primary in light (ink)
+     and detail (gold) in dark. No Tailwind utility — consumed only by the
+     .prose-demiurgos component class. */
+  --color-prose-heading: 28 26 33; /* #1c1a21 */
+}
+
+:root.dark {
+  --color-surface: 18 17 15; /* #12110f */
+  --color-surface-raised: 29 27 24; /* #1d1b18 */
+  --color-surface-hover: 37 35 32; /* #252320 */
+  --color-surface-active: 46 43 39; /* #2e2b27 — selected/pressed, one step lighter than hover */
+  --color-primary: 232 227 216; /* #e8e3d8 */
+  --color-detail: 216 190 152; /* #d8be98 */
+  --color-muted: 122 117 106; /* #7a756a */
+  --color-edge: 42 39 34; /* #2a2722 */
+  --color-action: 199 147 63; /* #C7933F bronze-gold — CTA in the golden logo family */
+  --color-action-hover: 162 106 31; /* #A26A1F deeper bronze for hover feedback */
+  --color-action-text: 28 26 33; /* #1c1a21 */
+  --color-status-success: 107 155 94; /* #6B9B5E (4.8:1) */
+  --color-status-error: 205 94 84; /* #CD5E54 (4.79:1 — AA on graphite) */
+  --color-diff-gutter: 18 17 15; /* #12110f */
+  --color-icon-muted: 122 117 106; /* #7a756a */
+  --color-prose-heading: 216 190 152; /* #d8be98 */
+}
+
 @layer base {
   html {
-    @apply bg-cripta text-pergamino;
+    @apply bg-surface text-primary;
     /* Tool-density root baseline: 15px ≈ 93.75% of the 16px browser default;
        all rem tokens/spacing scale from here. */
     font-size: 15px;
-    scrollbar-color: #3A3229 #0A0907;
+    scrollbar-color: rgb(var(--color-edge)) rgb(var(--color-surface));
     scrollbar-width: thin;
   }
 
@@ -29,7 +77,7 @@
   [tabindex]:not([tabindex="-1"]):focus-visible,
   textarea:focus-visible,
   select:focus-visible {
-    @apply outline-none ring-2 ring-llamita/50 ring-offset-2 ring-offset-cripta;
+    @apply outline-none ring-2 ring-action/50 ring-offset-2 ring-offset-surface;
   }
 }
 
@@ -44,20 +92,33 @@
 }
 
 @layer components {
-  /* Prose styles for markdown content */
+  /* Prose colors for markdown content (MarkdownBody). Applied alongside the
+     `prose` class: these element-level --tw-prose-* overrides beat the
+     typography plugin's gray defaults (this rule is emitted after `.prose`
+     in the components layer). Values reference brand role tokens via
+     rgb(var(--color-*)), which flip light↔dark through :root / :root.dark —
+     so prose is theme-aware without `prose-invert`. The print flow keeps
+     `prose` on the element so `#print-root .prose` (ID specificity) can
+     still force its ink-on-paper values. */
   .prose-demiurgos {
-    @apply prose prose-invert max-w-none;
-    --tw-prose-body: #DED5C7;
-    --tw-prose-headings: #F5C95A;
-    --tw-prose-links: #D4A853;
-    --tw-prose-bold: #DED5C7;
-    --tw-prose-code: #D4A853;
-    --tw-prose-pre-bg: #1F1B16;
-    --tw-prose-quotes: #A6988A;
-    --tw-prose-quote-borders: #3A3229;
-    --tw-prose-hr: #3A3229;
-    --tw-prose-th-borders: #3A3229;
-    --tw-prose-td-borders: #2C2A24;
+    --tw-prose-body: rgb(var(--color-primary));
+    --tw-prose-headings: rgb(var(--color-prose-heading));
+    --tw-prose-lead: rgb(var(--color-primary));
+    --tw-prose-links: rgb(var(--color-action));
+    --tw-prose-bold: rgb(var(--color-primary));
+    --tw-prose-counters: rgb(var(--color-muted));
+    --tw-prose-bullets: rgb(var(--color-muted));
+    --tw-prose-hr: rgb(var(--color-edge));
+    --tw-prose-quotes: rgb(var(--color-muted));
+    --tw-prose-quote-borders: rgb(var(--color-edge));
+    --tw-prose-captions: rgb(var(--color-muted));
+    --tw-prose-kbd: rgb(var(--color-primary));
+    --tw-prose-kbd-shadows: rgb(var(--color-primary) / 10%);
+    --tw-prose-code: rgb(var(--color-detail));
+    --tw-prose-pre-code: rgb(var(--color-primary));
+    --tw-prose-pre-bg: rgb(var(--color-surface-raised));
+    --tw-prose-th-borders: rgb(var(--color-edge));
+    --tw-prose-td-borders: rgb(var(--color-edge));
   }
 }
 
@@ -88,16 +149,16 @@
   }
 
   .scrollbar-thin::-webkit-scrollbar-track {
-    background: #0A0907;
+    background: rgb(var(--color-surface));
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: #3A3229;
+    background: rgb(var(--color-edge));
     border-radius: 3px;
   }
 
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: #4A4035;
+    background: rgb(var(--color-surface-hover));
   }
 }
 
@@ -107,9 +168,10 @@
  * The app (including the export dialog) lives inside #root and is hidden
  * entirely; the ficha body rendered by ExportPdfDialog into #print-root
  * (a portal on document.body, OUTSIDE #root) is the only printed content.
- * The palette tokens referenced here are the hex values from
- * tailwind.config.js (cripta / pergamino / llamita / …) — there are no
- * --color-* CSS variables in this stylesheet, so the values are literal.
+ * The prose colors below are literal ink-on-paper hex values (not brand
+ * role tokens — the old cripta/pergamino palette no longer exists in
+ * tailwind.config.js): they force the light print presentation even when
+ * the app is in dark mode, so exported markdown never prints cream-on-white.
  */
 @media print {
     /* The @page margin is the ONLY thing that repeats on every printed

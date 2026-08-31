@@ -9,11 +9,11 @@ interface BadgeProps {
 }
 
 const variantStyles: Record<BadgeVariant, string> = {
-  default: "bg-piedra text-pergamino border-filio",
-  success: "bg-musgo/20 text-musgo border-musgo/30",
-  error: "bg-sangre/20 text-sangre border-sangre/30",
-  warning: "bg-llamita/20 text-llamita border-llamita/30",
-  info: "bg-plata/20 text-plata border-plata/30",
+  default: "bg-surface-raised text-primary border-edge",
+  success: "bg-status-success/20 text-status-success border-status-success/30",
+  error: "bg-status-error/20 text-status-error border-status-error/30",
+  warning: "bg-action/20 text-action border-action/30",
+  info: "bg-icon-muted/20 text-icon-muted border-icon-muted/30",
 };
 
 /**

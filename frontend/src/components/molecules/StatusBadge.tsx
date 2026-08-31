@@ -78,7 +78,7 @@ export function StatusBadge({ status, onStatusChange }: StatusBadgeProps) {
         aria-expanded={open}
         className={cn(
           "flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
           meta.chipClass,
         )}
       >
@@ -100,12 +100,12 @@ export function StatusBadge({ status, onStatusChange }: StatusBadgeProps) {
         <div
           role="menu"
           aria-label={`Estado: ${meta.label}`}
-          className="absolute right-0 top-full z-20 mt-1 min-w-36 overflow-hidden rounded-lg border border-filio bg-madero shadow-xl"
+          className="absolute right-0 top-full z-20 mt-1 min-w-36 overflow-hidden rounded-lg border border-edge bg-surface-raised shadow-xl"
         >
           {error && (
             <div
               role="alert"
-              className="border-b border-filio px-3 py-2 text-small text-sangre"
+              className="border-b border-edge px-3 py-2 text-small text-status-error"
             >
               {error}
             </div>
@@ -122,16 +122,16 @@ export function StatusBadge({ status, onStatusChange }: StatusBadgeProps) {
                 disabled={loading}
                 onClick={() => void handleSelect(option)}
                 className={cn(
-                  "flex w-full items-center gap-2 px-3 py-2 text-left text-small text-pergamino transition-colors",
-                  "hover:bg-piedra hover:text-llamita focus-visible:outline-none",
-                  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50",
+                  "flex w-full items-center gap-2 px-3 py-2 text-left text-small text-primary transition-colors",
+                  "hover:bg-surface-hover hover:text-action focus-visible:outline-none",
+                  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50",
                   "disabled:cursor-not-allowed disabled:opacity-40",
                 )}
               >
                 <span
                   className={cn(
                     "h-2 w-2 shrink-0 rounded-full",
-                    selected ? "bg-llamita" : "bg-sombra",
+                    selected ? "bg-action" : "bg-muted",
                   )}
                   aria-hidden="true"
                 />

@@ -59,28 +59,28 @@ export function ImportImageModal({
   return (
     <div
       ref={overlayRef}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
       onClick={handleOverlayClick}
     >
       <div
-        className="mx-4 flex w-full max-w-lg flex-col rounded-xl border border-filio bg-madero shadow-2xl"
+        className="mx-4 flex w-full max-w-lg flex-col rounded-xl border border-edge bg-surface-raised shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="import-image-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-filio px-6 py-4">
+        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
           <h2
             id="import-image-title"
-            className="font-heading text-h4 text-pergamino"
+            className="font-heading text-h4 text-primary"
           >
             Importar Imagen
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-plata transition-colors hover:bg-piedra hover:text-pergamino"
+            className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
             aria-label="Cerrar"
           >
             <Icon name="close" size={20} />
@@ -92,25 +92,25 @@ export function ImportImageModal({
           <DropZone key={attempt} onFile={handleFile} />
 
           {isUploading && (
-            <div className="flex items-center gap-3 rounded-lg border border-llamita/40 bg-llamita/10 px-4 py-3 text-small text-pergamino">
+            <div className="flex items-center gap-3 rounded-lg border border-action/40 bg-action/10 px-4 py-3 text-small text-primary">
               <Spinner size="sm" />
               <span>
                 Subiendo imagen…
                 {fileName && (
-                  <span className="text-tinta-desvaida"> ({fileName})</span>
+                  <span className="text-muted"> ({fileName})</span>
                 )}
               </span>
             </div>
           )}
 
           {succeeded && (
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-musgo/40 bg-musgo/10 px-4 py-3">
-              <div className="flex min-w-0 items-center gap-3 text-small text-musgo">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-status-success/40 bg-status-success/10 px-4 py-3">
+              <div className="flex min-w-0 items-center gap-3 text-small text-status-success">
                 <Icon name="check" size={18} />
                 <span>
                   Imagen subida ✓
                   {fileName && (
-                    <span className="text-pergamino"> {fileName}</span>
+                    <span className="text-primary"> {fileName}</span>
                   )}
                 </span>
               </div>
@@ -121,11 +121,11 @@ export function ImportImageModal({
           )}
 
           {failed && (
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-sangre/50 bg-sangre/10 px-4 py-3">
-              <div className="min-w-0 text-small text-sangre">
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-status-error/50 bg-status-error/10 px-4 py-3">
+              <div className="min-w-0 text-small text-status-error">
                 <span>Error al subir imagen: {uploadError.message}</span>
                 {fileName && (
-                  <span className="block text-xs text-tinta-desvaida">
+                  <span className="block text-xs text-muted">
                     {fileName}
                   </span>
                 )}

@@ -203,7 +203,7 @@ export function FileTree({
           <Icon
             name="search"
             size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sombra"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
           />
           <input
             type="text"
@@ -212,10 +212,10 @@ export function FileTree({
             placeholder="Buscar archivos…"
             aria-label="Buscar archivos"
             className={cn(
-              "w-full rounded-md border border-filio bg-piedra",
+              "w-full rounded-md border border-edge bg-surface-raised",
               "py-1.5 pl-8 pr-3",
-              "text-small text-pergamino placeholder:text-sombra",
-              "focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50",
+              "text-small text-primary placeholder:text-muted",
+              "focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50",
               "transition-colors",
             )}
           />
@@ -224,7 +224,7 @@ export function FileTree({
               type="button"
               onClick={() => setQuery("")}
               aria-label="Limpiar búsqueda"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-sombra hover:text-pergamino"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-primary"
             >
               <Icon name="close" size={14} />
             </button>
@@ -235,8 +235,8 @@ export function FileTree({
       {/* Empty search results */}
       {hasQuery && filteredNodes.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-8 text-center">
-          <Icon name="search" size={20} className="text-sombra" />
-          <p className="text-small text-tinta-desvaida">Sin resultados</p>
+          <Icon name="search" size={20} className="text-muted" />
+          <p className="text-small text-muted">Sin resultados</p>
         </div>
       ) : (
         <nav aria-label="File tree">

@@ -155,12 +155,12 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
   return (
     <section
       aria-label="Actividad y evidencia"
-      className="mb-3 rounded-lg border border-filio bg-cripta/70 px-3 py-2.5 text-xs"
+      className="mb-3 rounded-lg border border-edge bg-surface/70 px-3 py-2.5 text-xs"
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="font-medium text-pergamino">Actividad y evidencia</h3>
+        <h3 className="font-medium text-primary">Actividad y evidencia</h3>
         {activity.status === "running" && (
-          <span className="text-llamita">Consultando fuentes</span>
+          <span className="text-action">Consultando fuentes</span>
         )}
       </div>
 
@@ -168,12 +168,12 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
         <ul aria-label="Actividad del asistente" className="mt-2 space-y-1.5">
           {activity.items.map((item) => (
             <li key={item.item_id} className="flex items-center justify-between gap-2">
-              <span className="text-tinta-desvaida">
+              <span className="text-muted">
                 {activityOperationLabel(item.operation)}
               </span>
               <span
                 className={cn(
-                  item.status === "failed" ? "text-sangre" : "text-tinta-desvaida",
+                  item.status === "failed" ? "text-status-error" : "text-muted",
                 )}
               >
                 {activityStatusLabel(item.status)}
@@ -184,7 +184,7 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
       )}
 
       {warnings.length > 0 && (
-        <div role="alert" className="mt-2 text-sangre">
+        <div role="alert" className="mt-2 text-status-error">
           {warnings.map((warning) => (
             <p key={warning}>{warning}</p>
           ))}
@@ -192,17 +192,17 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
       )}
 
       {sources.length > 0 ? (
-        <div className="mt-2 border-t border-filio pt-2">
+        <div className="mt-2 border-t border-edge pt-2">
           <button
             type="button"
             aria-expanded={sourcesOpen}
             onClick={() => setSourcesOpen((open) => !open)}
-            className="text-left text-tinta-desvaida hover:text-pergamino"
+            className="text-left text-muted hover:text-primary"
           >
             Fuentes confirmadas ({sources.length})
           </button>
           {sourcesOpen && (
-            <ul className="mt-1.5 space-y-1 pl-3 text-tinta-desvaida">
+            <ul className="mt-1.5 space-y-1 pl-3 text-muted">
               {sources.map((source) => (
                 <li key={source} className="break-words">
                   {source}
@@ -212,7 +212,7 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
           )}
         </div>
       ) : (
-        <p className="mt-2 border-t border-filio pt-2 text-tinta-desvaida">
+        <p className="mt-2 border-t border-edge pt-2 text-muted">
           {activity.availability === "unavailable"
             ? activity.availabilityReason === "file_evidence_contract_unverified"
               ? "Hermes no expone un contrato verificable de archivos consultados; no se muestran fuentes sin evidencia."
@@ -369,23 +369,23 @@ function ChatScreen({
   return (
     <>
       {/* Header */}
-      <div className="flex items-center justify-between border-b border-filio px-4 py-3 shrink-0">
+      <div className="flex items-center justify-between border-b border-edge px-4 py-3 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <button
             type="button"
             onClick={handleLightbulb}
             disabled={confirmationPending || isSending}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-tinta-desvaida hover:text-pergamino hover:bg-piedra transition-colors shrink-0 disabled:opacity-40"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-primary hover:bg-surface-hover transition-colors shrink-0 disabled:opacity-40"
             title="Ideas para esta sección"
             aria-label="Ideas para esta sección"
           >
             <Icon name="lightbulb" size={14} />
           </button>
           <div className="min-w-0">
-            <h2 className="text-body font-medium text-pergamino truncate">
+            <h2 className="text-body font-medium text-primary truncate">
               Asistente IA
             </h2>
-            <p className="text-xs text-tinta-desvaida truncate">
+            <p className="text-xs text-muted truncate">
               {mundo ?? "Banco global de ideas"}
             </p>
           </div>
@@ -395,7 +395,7 @@ function ChatScreen({
             type="button"
             onClick={onNewChat}
             disabled={confirmationPending}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-tinta-desvaida hover:text-pergamino hover:bg-piedra transition-colors shrink-0 disabled:opacity-40"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-primary hover:bg-surface-hover transition-colors shrink-0 disabled:opacity-40"
             title="Nueva conversación"
             aria-label="Nueva conversación"
           >
@@ -404,7 +404,7 @@ function ChatScreen({
           <button
             type="button"
             onClick={onHistoryClick}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-tinta-desvaida hover:text-pergamino hover:bg-piedra transition-colors shrink-0"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-primary hover:bg-surface-hover transition-colors shrink-0"
             title="Historial de sesiones"
             aria-label="Historial de sesiones"
           >
@@ -417,25 +417,25 @@ function ChatScreen({
       <div className="flex-1 overflow-y-auto px-4 py-4">
         {messages.length === 0 && !isSending && (
           <div className="flex h-full flex-col items-center justify-center text-center">
-            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-llamita/10 text-llamita">
+            <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-action/10 text-action">
               <Icon name="lightbulb" size={24} />
             </div>
             {mundo ? (
               <>
-                <h3 className="mb-1 text-body font-medium text-pergamino">
+                <h3 className="mb-1 text-body font-medium text-primary">
                   Preguntame sobre tu mundo
                 </h3>
-                <p className="mb-4 text-xs text-tinta-desvaida max-w-[200px]">
+                <p className="mb-4 text-xs text-muted max-w-[200px]">
                   Conozco todo el lore de{" "}
-                  <strong className="text-pergamino">{mundo}</strong>.
+                  <strong className="text-primary">{mundo}</strong>.
                 </p>
               </>
             ) : (
               <>
-                <h3 className="mb-1 text-body font-medium text-pergamino">
+                <h3 className="mb-1 text-body font-medium text-primary">
                   Preguntame sobre el banco global
                 </h3>
-                <p className="mb-4 text-xs text-tinta-desvaida max-w-[200px]">
+                <p className="mb-4 text-xs text-muted max-w-[200px]">
                   Trabajo con ideas sin atarme a un mundo: personajes,
                   relaciones, ambientaciones, tramas y conceptos.
                 </p>
@@ -447,7 +447,7 @@ function ChatScreen({
                   key={suggestion}
                   type="button"
                   onClick={() => handleSuggestion(suggestion)}
-                  className="rounded-md border border-filio bg-cripta px-2.5 py-1 text-xs text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino"
+                  className="rounded-md border border-edge bg-surface px-2.5 py-1 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary"
                 >
                   {suggestion}
                 </button>
@@ -469,8 +469,8 @@ function ChatScreen({
                 className={cn(
                   "max-w-[85%] rounded-lg px-3 py-2 text-body leading-relaxed overflow-hidden",
                   msg.role === "user"
-                    ? "bg-llamita text-cripta"
-                    : "bg-cripta text-pergamino",
+                    ? "bg-action text-action-text"
+                    : "bg-surface text-primary",
                 )}
               >
                 {msg.role === "assistant" ? (
@@ -491,12 +491,12 @@ function ChatScreen({
            {confirmationPending && (
              <section
                aria-labelledby="guided-confirmation-title"
-               className="rounded-lg border border-llamita/40 bg-llamita/10 px-3 py-3 text-sm text-pergamino"
+               className="rounded-lg border border-action/40 bg-action/10 px-3 py-3 text-sm text-primary"
              >
                <h3 id="guided-confirmation-title" className="font-medium">
                  {isSpanish ? "Confirmación necesaria" : "Confirmation needed"}
                </h3>
-               <p className="mt-1 text-xs leading-relaxed text-tinta-desvaida">
+               <p className="mt-1 text-xs leading-relaxed text-muted">
                  {isSpanish
                    ? "Si elegís No, no comenzará ninguna propuesta guiada ni se creará una candidata o ficha. La sesión se cancelará y cerrará; podés iniciar una nueva solicitud más adelante."
                    : "If you choose No, no guided proposal will start and no candidate or character sheet will be created. The session will be cancelled and closed; you can start a new request later."}
@@ -506,7 +506,7 @@ function ChatScreen({
                    type="button"
                    onClick={() => void sendMessage(isSpanish ? "sí" : "yes")}
                    disabled={isSending}
-                   className="rounded-md bg-llamita px-3 py-1.5 text-xs font-medium text-cripta transition-colors hover:bg-llama-alta disabled:cursor-not-allowed disabled:opacity-50"
+                   className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                  >
                    {isSpanish ? "Sí, comenzar" : "Yes, start"}
                  </button>
@@ -514,7 +514,7 @@ function ChatScreen({
                    type="button"
                    onClick={() => void sendMessage("no")}
                    disabled={isSending}
-                   className="rounded-md border border-filio px-3 py-1.5 text-xs text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino disabled:cursor-not-allowed disabled:opacity-50"
+                   className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
                  >
                    {isSpanish ? "No, cancelar" : "No, cancel"}
                  </button>
@@ -523,14 +523,14 @@ function ChatScreen({
            )}
 
            {activeSession?.guided?.proposal && (
-            <div className="rounded-lg border border-filio bg-cripta px-3 py-2 text-sm text-pergamino">
-              <p className="text-xs text-tinta-desvaida">
+            <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
+              <p className="text-xs text-muted">
                 {isSpanish ? "Detalle sugerido" : "Suggested detail"}
               </p>
               <p className="mt-1">{activeSession.guided.proposal.label}: {activeSession.guided.proposal.value}</p>
               <div className="mt-3 flex gap-2">
-                <button type="button" onClick={() => void resolveGuidedProposal(false)} disabled={isSending} className="rounded-md border border-filio px-2.5 py-1.5 text-xs text-tinta-desvaida disabled:opacity-50">{isSpanish ? "Rechazar" : "Reject"}</button>
-                <button type="button" onClick={() => void resolveGuidedProposal(true)} disabled={isSending} className="rounded-md bg-llamita px-2.5 py-1.5 text-xs text-cripta disabled:opacity-50">{isSpanish ? "Aceptar" : "Accept"}</button>
+                <button type="button" onClick={() => void resolveGuidedProposal(false)} disabled={isSending} className="rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted disabled:opacity-50">{isSpanish ? "Rechazar" : "Reject"}</button>
+                <button type="button" onClick={() => void resolveGuidedProposal(true)} disabled={isSending} className="rounded-md bg-action px-2.5 py-1.5 text-xs text-action-text disabled:opacity-50">{isSpanish ? "Aceptar" : "Accept"}</button>
               </div>
             </div>
           )}
@@ -540,7 +540,7 @@ function ChatScreen({
               type="button"
               onClick={() => void handleGuidedReview()}
               aria-label={isSpanish ? "Revisar y aprobar el diff del personaje" : "Review and approve character diff"}
-              className="flex w-full items-center gap-2 rounded-lg border border-llamita/50 bg-llamita/10 px-3 py-2 text-left text-sm font-medium text-pergamino transition-colors hover:border-llamita hover:bg-llamita/20 focus:outline-none focus:ring-2 focus:ring-llamita/60 active:bg-llamita/25 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex w-full items-center gap-2 rounded-lg border border-action/50 bg-action/10 px-3 py-2 text-left text-sm font-medium text-primary transition-colors hover:border-action hover:bg-action/20 focus:outline-none focus:ring-2 focus:ring-action/60 active:bg-action/25 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Icon name="edit" size={16} />
               <span>{isSpanish ? "Revisar y aprobar el diff del personaje" : "Review and approve character diff"}</span>
@@ -549,7 +549,7 @@ function ChatScreen({
 
           {isSending && (
             <div className="flex justify-start">
-              <div className="rounded-lg bg-cripta px-4 py-2.5">
+              <div className="rounded-lg bg-surface px-4 py-2.5">
                 <Spinner size="sm" />
               </div>
             </div>
@@ -564,7 +564,7 @@ function ChatScreen({
       </div>
 
       {(error || whisperError) && (
-        <div className="mx-4 mb-2 rounded-md border border-sangre/30 bg-sangre/10 px-3 py-1.5 text-xs text-sangre">
+        <div className="mx-4 mb-2 rounded-md border border-status-error/30 bg-status-error/10 px-3 py-1.5 text-xs text-status-error">
           {error || whisperError}
         </div>
       )}
@@ -573,14 +573,14 @@ function ChatScreen({
         <div
           role="alert"
           aria-label={isSpanish ? "Asistente no disponible" : "Assistant unavailable"}
-          className="mx-4 mb-2 rounded-md border border-llamita/30 bg-llamita/10 px-3 py-1.5 text-xs leading-relaxed text-pergamino"
+          className="mx-4 mb-2 rounded-md border border-action/30 bg-action/10 px-3 py-1.5 text-xs leading-relaxed text-primary"
         >
           {semanticBlockedText(isSpanish ? "es" : "en")}
         </div>
       )}
 
       {/* Input area */}
-      <div className="border-t border-filio px-4 py-3 shrink-0">
+      <div className="border-t border-edge px-4 py-3 shrink-0">
         <div className="flex items-end gap-2">
           <textarea
             value={input}
@@ -588,7 +588,7 @@ function ChatScreen({
             onKeyDown={handleKeyDown}
             placeholder="Escribí tu pregunta..."
             rows={2}
-            className="min-w-0 flex-1 resize-none rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino placeholder:text-sombra focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50"
+            className="min-w-0 flex-1 resize-none rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
             disabled={confirmationPending || isSending}
           />
           <div className="flex shrink-0 items-center gap-1">
@@ -599,10 +599,10 @@ function ChatScreen({
               className={cn(
                 "flex h-9 w-9 items-center justify-center rounded-lg transition-colors shrink-0",
                 whisperStatus === "recording"
-                  ? "bg-sangre text-pergamino animate-pulse"
+                  ? "bg-status-error text-primary animate-pulse"
                   : whisperStatus === "transcribing"
-                    ? "text-llamita"
-                    : "text-tinta-desvaida hover:text-pergamino hover:bg-piedra",
+                    ? "text-action"
+                    : "text-muted hover:text-primary hover:bg-surface-hover",
               )}
               aria-label={
                 whisperIsRecording
@@ -626,7 +626,7 @@ function ChatScreen({
               type="button"
               onClick={handleSend}
               disabled={confirmationPending || isSending || !input.trim()}
-              className="flex h-9 w-9 items-center justify-center rounded-lg bg-llamita text-cripta hover:bg-llama-alta disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+              className="flex h-9 w-9 items-center justify-center rounded-lg bg-action text-action-text hover:bg-action-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
               aria-label="Enviar"
             >
               {isSending ? (
@@ -644,16 +644,16 @@ function ChatScreen({
             disabled={!canProposeEdit}
             title={proposeEditDisabledReason}
             aria-label="Proponer edición"
-            className="flex items-center gap-1.5 rounded-md border border-filio px-2.5 py-1.5 text-xs text-tinta-desvaida transition-colors hover:border-llamita/40 hover:text-pergamino disabled:cursor-not-allowed disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Icon name="edit" size={13} />
             Proponer edición
           </button>
           {!canProposeEdit && (
-            <span className="text-xs text-sombra">{proposeEditDisabledReason}</span>
+            <span className="text-xs text-muted">{proposeEditDisabledReason}</span>
           )}
         </div>
-        <p className="mt-1 text-xs text-sombra">
+        <p className="mt-1 text-xs text-muted">
           Enter para enviar · Shift+Enter para nueva línea
         </p>
       </div>
@@ -700,19 +700,19 @@ function HistoryScreen({
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-filio px-4 py-3 shrink-0">
+      <div className="flex items-center justify-between border-b border-edge px-4 py-3 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="flex h-7 w-7 items-center justify-center rounded-md text-llamita shrink-0">
+          <div className="flex h-7 w-7 items-center justify-center rounded-md text-action shrink-0">
             <Icon name="history" size={16} />
           </div>
-          <h2 className="text-body font-medium text-pergamino truncate">
+          <h2 className="text-body font-medium text-primary truncate">
             Historial
           </h2>
         </div>
         <button
           type="button"
           onClick={handleNewSession}
-          className="flex items-center gap-1 rounded-md bg-llamita px-2.5 py-1.5 text-xs font-medium text-cripta hover:bg-llama-alta transition-colors shrink-0"
+          className="flex items-center gap-1 rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-text hover:bg-action-hover transition-colors shrink-0"
           aria-label="Nueva sesión"
         >
           <Icon name="plus" size={12} />
@@ -723,7 +723,7 @@ function HistoryScreen({
       <div className="flex-1 overflow-y-auto py-2">
         {sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
-            <p className="text-xs text-tinta-desvaida">
+            <p className="text-xs text-muted">
               No hay sesiones todavía.
             </p>
           </div>
@@ -737,8 +737,8 @@ function HistoryScreen({
                 className={cn(
                   "flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors",
                   session.id === activeSessionId
-                    ? "bg-llamita/10 text-llamita"
-                    : "text-tinta-desvaida hover:bg-piedra hover:text-pergamino",
+                    ? "bg-action/10 text-action"
+                    : "text-muted hover:bg-surface-hover hover:text-primary",
                 )}
               >
                 <Icon
@@ -764,8 +764,8 @@ function HistoryScreen({
         )}
       </div>
 
-      <div className="border-t border-filio px-4 py-2 shrink-0">
-        <p className="text-xs text-sombra text-center">
+      <div className="border-t border-edge px-4 py-2 shrink-0">
+        <p className="text-xs text-muted text-center">
           Mostrando {sessions.length} sesion
           {sessions.length !== 1 ? "es" : ""} ·{" "}
           {totalMessages} mensaje{totalMessages !== 1 ? "s" : ""} en total

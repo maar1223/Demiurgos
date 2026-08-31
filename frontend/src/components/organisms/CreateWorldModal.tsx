@@ -140,7 +140,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
       onClick={handleOverlayClick}
     >
       <div
@@ -148,21 +148,21 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
         role="dialog"
         aria-modal="true"
         aria-labelledby="create-world-title"
-        className="mx-4 w-full max-w-md rounded-xl border border-filio bg-madero shadow-2xl"
+        className="mx-4 w-full max-w-md rounded-xl border border-edge bg-surface-raised shadow-2xl"
         onClick={(event) => event.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-filio px-6 py-4">
+        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
           <h2
             id="create-world-title"
-            className="font-heading text-h4 text-pergamino"
+            className="font-heading text-h4 text-primary"
           >
             Nuevo mundo
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-plata transition-colors hover:bg-piedra hover:text-pergamino"
+            className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
             aria-label="Cerrar"
           >
             <Icon name="close" size={20} />
@@ -174,7 +174,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
           <div className="flex flex-col gap-4 px-6 py-4">
             <label
               htmlFor="create-world-name"
-              className="flex flex-col gap-1 text-small text-pergamino"
+              className="flex flex-col gap-1 text-small text-primary"
             >
               Nombre del mundo
               <input
@@ -186,11 +186,11 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
                   if (error) setError(null);
                 }}
                 placeholder="mi-mundo"
-                className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino"
+                className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
               />
             </label>
 
-            <label className="flex items-center gap-2 text-small text-pergamino">
+            <label className="flex items-center gap-2 text-small text-primary">
               <input
                 type="checkbox"
                 checked={loreSkeleton}
@@ -203,14 +203,14 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
             {error && (
               <div
                 role="alert"
-                className="rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-small text-sangre"
+                className="rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-small text-status-error"
               >
                 {error}
               </div>
             )}
           </div>
 
-          <div className="flex items-center justify-end gap-2 border-t border-filio px-6 py-4">
+          <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
             <Button
               type="button"
               variant="ghost"

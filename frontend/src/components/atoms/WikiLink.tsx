@@ -74,7 +74,7 @@ export function WikiLink({ name, mundo }: WikiLinkProps) {
   // --- Resolving state ---
   if (alive === null) {
     return (
-      <span className="text-tinta-desvaida" title={`Resolviendo "${name}"…`}>
+      <span className="text-muted" title={`Resolviendo "${name}"…`}>
         {name}
       </span>
     );
@@ -86,8 +86,8 @@ export function WikiLink({ name, mundo }: WikiLinkProps) {
       <Link
         to={entityUrl}
         className={cn(
-          "text-llamita hover:text-llama-alta",
-          "underline underline-offset-2 decoration-llamita/40 hover:decoration-llama-alta",
+          "text-action hover:text-action-hover",
+          "underline underline-offset-2 decoration-action/40 hover:decoration-action-hover",
           "transition-colors",
         )}
       >
@@ -99,14 +99,14 @@ export function WikiLink({ name, mundo }: WikiLinkProps) {
   // --- Dead state ---
   return (
     <span className="inline-flex items-center gap-1">
-      <span className="text-sombra line-through">{name}</span>
+      <span className="text-muted line-through">{name}</span>
       <Link
         to={entityUrl}
         className={cn(
           "ml-1 inline-flex items-center gap-0.5",
-          "rounded bg-piedra px-1.5 py-0.5",
-          "text-xs text-llamita no-underline",
-          "hover:bg-filio transition-colors",
+          "rounded bg-surface-raised px-1.5 py-0.5",
+          "text-xs text-action no-underline",
+          "hover:bg-surface-hover transition-colors",
         )}
         title={`Crear entidad "${name}"`}
       >

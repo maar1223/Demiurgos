@@ -98,30 +98,30 @@ export function ExportPdfDialog({
   return (
     <>
       <div
-        className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
         onClick={(e) => {
           if (e.target === e.currentTarget) onClose();
         }}
       >
         <div
-          className="mx-4 w-full max-w-md rounded-xl border border-filio bg-madero shadow-2xl"
+          className="mx-4 w-full max-w-md rounded-xl border border-edge bg-surface-raised shadow-2xl"
           onClick={(e) => e.stopPropagation()}
           role="dialog"
           aria-modal="true"
           aria-labelledby="export-pdf-dialog-title"
         >
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-filio px-6 py-4">
+          <div className="flex items-center justify-between border-b border-edge px-6 py-4">
             <h2
               id="export-pdf-dialog-title"
-              className="font-heading text-h4 text-pergamino"
+              className="font-heading text-h4 text-primary"
             >
               Exportar Ficha a PDF
             </h2>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-md p-1 text-plata transition-colors hover:bg-piedra hover:text-pergamino"
+              className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
               aria-label="Cerrar"
             >
               <Icon name="close" size={20} />
@@ -130,9 +130,9 @@ export function ExportPdfDialog({
 
           {/* Body */}
           <div className="px-6 py-4">
-            <p className="text-body text-pergamino">
+            <p className="text-body text-primary">
               Se exportará la ficha{" "}
-              <span className="font-medium text-llamita">
+              <span className="font-medium text-action">
                 {fileNameWithoutExt}
               </span>{" "}
               a PDF desde el diálogo de impresión del navegador.
@@ -140,7 +140,7 @@ export function ExportPdfDialog({
           </div>
 
           {/* Footer */}
-          <div className="flex items-center justify-end gap-2 border-t border-filio px-6 py-4">
+          <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
             <Button variant="ghost" size="sm" onClick={onClose}>
               Cancelar
             </Button>

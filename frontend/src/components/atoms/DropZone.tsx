@@ -40,8 +40,8 @@ export function DropZone({ onFile }: DropZoneProps) {
       {...getRootProps()}
       className={`flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 text-center transition-colors ${
         isDragActive
-          ? "border-llamita bg-llamita/5"
-          : "border-filio bg-madero hover:border-llamita/50 hover:bg-piedra"
+          ? "border-action bg-action/5"
+          : "border-edge bg-surface-raised hover:border-action/50 hover:bg-surface-hover"
       }`}
       role="button"
       tabIndex={0}
@@ -51,11 +51,11 @@ export function DropZone({ onFile }: DropZoneProps) {
 
       {preview ? (
         <div className="flex flex-col items-center gap-2">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-musgo/20 text-musgo">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-status-success/20 text-status-success">
             <Icon name="check" size={24} />
           </div>
-          <p className="text-body text-pergamino">{preview}</p>
-          <p className="text-small text-tinta-desvaida">
+          <p className="text-body text-primary">{preview}</p>
+          <p className="text-small text-muted">
             Arrastrá otra imagen o hacé clic para cambiar
           </p>
         </div>
@@ -64,17 +64,17 @@ export function DropZone({ onFile }: DropZoneProps) {
           <div
             className={`flex h-14 w-14 items-center justify-center rounded-full transition-colors ${
               isDragActive
-                ? "bg-llamita/20 text-llamita"
-                : "bg-filio/50 text-plata"
+                ? "bg-action/20 text-action"
+                : "bg-surface-raised/50 text-icon-muted"
             }`}
           >
             <Icon name="upload" size={28} />
           </div>
           <div>
-            <p className="text-body text-pergamino">
+            <p className="text-body text-primary">
               Arrastrá una imagen o hacé clic para seleccionar
             </p>
-            <p className="mt-1 text-small text-tinta-desvaida">
+            <p className="mt-1 text-small text-muted">
               JPG, PNG, GIF, WebP — máximo 10 MB
             </p>
           </div>

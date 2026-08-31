@@ -63,12 +63,12 @@ export function EntityDetail({ mundo, entityName }: EntityDetailProps) {
 
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-16 text-center">
-        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-piedra text-plata/50">
+        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-raised text-icon-muted/50">
           <Icon name="search" size={32} />
         </div>
         <div>
-          <p className="text-body text-tinta-desvaida">Entidad no encontrada</p>
-          <p className="mt-1 text-small text-sombra">&ldquo;{entityName}&rdquo;</p>
+          <p className="text-body text-muted">Entidad no encontrada</p>
+          <p className="mt-1 text-small text-muted">&ldquo;{entityName}&rdquo;</p>
         </div>
         <Button
           variant="secondary"
@@ -93,16 +93,16 @@ export function EntityDetail({ mundo, entityName }: EntityDetailProps) {
         {/* Header: name + type badge */}
         <div className="mb-6">
           <div className="mb-1 flex flex-wrap items-baseline gap-3">
-            <h1 className="font-heading text-h2 text-pergamino">
+            <h1 className="font-heading text-h2 text-primary">
               {entity.name}
             </h1>
-            <span className="inline-flex items-center rounded-full bg-llamita/10 px-3 py-0.5 text-xs font-medium text-llamita">
+            <span className="inline-flex items-center rounded-full bg-action/10 px-3 py-0.5 text-xs font-medium text-action">
               {capitalize(entity.type)}
             </span>
           </div>
 
           {/* Metadata bar */}
-          <div className="flex flex-wrap gap-4 text-small text-tinta-desvaida">
+          <div className="flex flex-wrap gap-4 text-small text-muted">
             <span className="inline-flex items-center gap-1">
               <Icon name="file" size={14} />
               {capitalize(entity.type)}
@@ -127,7 +127,7 @@ export function EntityDetail({ mundo, entityName }: EntityDetailProps) {
         </div>
 
         {/* Divider */}
-        <hr className="mb-6 border-filio" />
+        <hr className="mb-6 border-edge" />
 
         {/* Entity body content */}
         <MarkdownViewer content={entity.content} mundo={mundo} />

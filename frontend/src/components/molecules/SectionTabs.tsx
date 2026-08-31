@@ -18,7 +18,7 @@ export function SectionTabs({ activeSection, onSelect }: SectionTabsProps) {
     <div
       role="tablist"
       aria-label="Secciones del mundo"
-      className="flex shrink-0 border-b border-filio"
+      className="flex shrink-0 border-b border-edge"
     >
       {VALID_SECTIONS.map((section) => (
         <button
@@ -29,10 +29,10 @@ export function SectionTabs({ activeSection, onSelect }: SectionTabsProps) {
           onClick={() => onSelect(section)}
           className={cn(
             "flex-1 px-3 py-2 text-small font-medium transition-colors",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50",
             activeSection === section
-              ? "border-b-2 border-llamita text-pergamino"
-              : "text-sombra hover:text-tinta-desvaida hover:bg-piedra/50",
+              ? "border-b-2 border-action text-primary"
+              : "text-muted hover:text-primary hover:bg-surface-hover/50",
           )}
         >
           {SECTION_LABELS[section]}

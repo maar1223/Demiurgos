@@ -45,34 +45,34 @@ export function SectionCard({
       type="button"
       onClick={onClick}
       className={cn(
-        "group flex w-full flex-col gap-3 rounded-xl border border-filio bg-madero p-5 text-left transition-all",
-        "hover:border-llamita/40 hover:bg-piedra",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
-        "focus-visible:ring-offset-2 focus-visible:ring-offset-cripta",
+        "group flex w-full flex-col gap-3 rounded-xl border border-edge bg-surface-raised p-5 text-left transition-all",
+        "hover:border-action/40 hover:bg-surface-hover",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
+        "focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
       )}
     >
       {/* Icon area */}
-      <div className="flex h-32 items-center justify-center rounded-lg bg-filio/50 text-llamita transition-colors group-hover:bg-filio">
+      <div className="flex h-32 items-center justify-center rounded-lg bg-surface-raised/50 text-action transition-colors group-hover:bg-surface-hover">
         <Icon name={meta.icon} size={48} />
       </div>
 
       {/* Label + chevron hint */}
       <div className="flex items-center justify-between">
-        <h3 className="font-heading text-h4 text-pergamino transition-colors group-hover:text-llamita">
+        <h3 className="font-heading text-h4 text-primary transition-colors group-hover:text-action">
           {label}
         </h3>
         <Icon
           name="chevron-right"
           size={16}
-          className="text-plata/50 transition-colors group-hover:text-llamita"
+          className="text-icon-muted/50 transition-colors group-hover:text-action"
         />
       </div>
 
       {/* Description */}
-      <p className="text-small text-tinta-desvaida">{meta.description}</p>
+      <p className="text-small text-muted">{meta.description}</p>
 
       {/* File count */}
-      <span className="text-xs text-tinta-desvaida">
+      <span className="text-xs text-muted">
         {fileCount > 0 ? `${fileCount} archivos` : "vacío"}
       </span>
     </button>

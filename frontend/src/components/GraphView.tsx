@@ -128,7 +128,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
           "rounded-lg border-2 px-3 py-2 text-xs font-medium",
           meta
             ? meta.chipClass
-            : "border-filio bg-madero text-tinta-desvaida",
+            : "border-edge bg-surface-raised text-muted",
         ),
       };
     });
@@ -163,7 +163,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
     <div className="flex flex-col gap-3">
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-4">
-        <label className="flex items-center gap-2 text-small text-tinta-desvaida">
+        <label className="flex items-center gap-2 text-small text-muted">
           <span>Estado</span>
           <select
             aria-label="Filtrar por estado"
@@ -171,7 +171,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
             onChange={(event) =>
               setStatus(event.target.value as GraphStatusFilter)
             }
-            className="rounded border border-filio bg-madero px-2 py-1 text-small text-pergamino"
+            className="rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary"
           >
             <option value="all">Todos los estados</option>
             <option value="draft">Borrador</option>
@@ -179,7 +179,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
           </select>
         </label>
 
-        <label className="flex items-center gap-2 text-small text-tinta-desvaida">
+        <label className="flex items-center gap-2 text-small text-muted">
           <input
             type="checkbox"
             checked={showOrphans}
@@ -190,7 +190,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
       </div>
 
       {/* Referencias-exclusion note (FR2.13) */}
-      <p className="text-xs text-tinta-desvaida">
+      <p className="text-xs text-muted">
         El grafo no incluye contenido de Referencias
       </p>
 
@@ -213,7 +213,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
 
       {!loading && !error && nodes.length > 0 && (
         <div
-          className="h-[480px] w-full rounded-xl border border-filio bg-cripta"
+          className="h-[480px] w-full rounded-xl border border-edge bg-surface"
           data-testid="graph-view"
         >
           <ReactFlow

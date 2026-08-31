@@ -232,7 +232,7 @@ export function SectionCards({
       {actionError && (
         <div
           role="alert"
-          className="mb-4 flex items-start gap-3 rounded-lg border border-sangre/30 bg-sangre/10 p-3 text-small text-sangre"
+          className="mb-4 flex items-start gap-3 rounded-lg border border-status-error/30 bg-status-error/10 p-3 text-small text-status-error"
         >
           <Icon name="error" size={16} className="mt-0.5 shrink-0" />
           <span>{actionError}</span>
@@ -245,10 +245,10 @@ export function SectionCards({
         onDragOver={handleBackgroundDragOver}
         onDrop={handleBackgroundDrop}
       >
-        {/* "Up one level" drop feedback — dashed llamita veil over the grid */}
+        {/* "Up one level" drop feedback — dashed action veil over the grid */}
         {backgroundIsTarget && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-llamita/60 bg-llamita/5">
-            <span className="rounded-md bg-cripta/80 px-3 py-1 text-small text-llamita">
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-action/60 bg-action/5">
+            <span className="rounded-md bg-surface/80 px-3 py-1 text-small text-action">
               Subir un nivel
             </span>
           </div>
@@ -462,7 +462,7 @@ function CardButton({
     if (!dnd?.drag) return;
     e.stopPropagation();
     // File cards are never valid targets — hovering them still reports an
-    // invalid target so the ghost shows the sangre tint.
+    // invalid target so the ghost shows the status-error tint.
     const valid = node.is_dir && isFolderDropValid(dnd.drag, node.path);
     dnd.onTargetEnter(node.path, valid);
   };
@@ -497,12 +497,12 @@ function CardButton({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
       className={cn(
-        "group relative flex h-44 w-full flex-col overflow-hidden rounded-xl border border-filio bg-madero text-left transition-all hover:border-llamita/40 hover:bg-piedra focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 focus-visible:ring-offset-2 focus-visible:ring-offset-cripta",
-        // Drag feedback: dimmed source, sangre tint on invalid hover,
-        // llamita ring + slight grow on a valid folder target.
+        "group relative flex h-44 w-full flex-col overflow-hidden rounded-xl border border-edge bg-surface-raised text-left transition-all hover:border-action/40 hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
+        // Drag feedback: dimmed source, status-error tint on invalid hover,
+        // action ring + slight grow on a valid folder target.
         isDragSource && "cursor-grabbing opacity-50 shadow-lg",
-        invalidHover && "ring-2 ring-sangre/50",
-        targetValid && "scale-[1.03] bg-piedra ring-2 ring-llamita",
+        invalidHover && "ring-2 ring-status-error/50",
+        targetValid && "scale-[1.03] bg-surface-raised ring-2 ring-action",
         isAbsorbing && "scale-75 opacity-0",
         movedPath === node.path && "fade-slide-in",
         isBusy && "opacity-60",
@@ -510,8 +510,8 @@ function CardButton({
     >
       {/* In-flight move feedback: dimmed card + small spinner overlay */}
       {isBusy && (
-        <span className="absolute inset-0 z-10 flex items-center justify-center bg-cripta/40">
-          <Icon name="spinner" size={24} className="animate-spin text-llamita" />
+        <span className="absolute inset-0 z-10 flex items-center justify-center bg-surface/40">
+          <Icon name="spinner" size={24} className="animate-spin text-action" />
         </span>
       )}
       {/* Full-width media area: resolved portada image, or the icon as a
@@ -528,23 +528,23 @@ function CardButton({
           <Icon
             name={isDir ? "folder" : fileIconName(node.name)}
             size={56}
-            className="text-llamita/30 transition-colors group-hover:text-llamita/45"
+            className="text-action/30 transition-colors group-hover:text-action/45"
           />
         </div>
       )}
 
       {/* Bottom gradient — same veil over image and icon backdrops; gives
           the name (and the ⋯ replacing the chevron) permanent contrast */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-cripta/95 via-cripta/40 to-transparent" />
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-gradient-to-t from-surface/95 via-surface/40 to-transparent" />
 
       {/* Name + optional badge — stacked so the name always gets full width
           (pr-7 reserves the title-line ⋯ spot, a sibling of the card) */}
       <div className="relative mt-auto flex flex-col gap-1 p-3">
-        <h3 className="min-w-0 truncate pr-7 font-heading text-body text-pergamino transition-colors group-hover:text-llamita">
+        <h3 className="min-w-0 truncate pr-7 font-heading text-body text-primary transition-colors group-hover:text-action">
           {node.name}
         </h3>
         {badge && (
-          <span className="self-start rounded-md bg-cripta/60 px-2 py-0.5 text-xs text-plata">
+          <span className="self-start rounded-md bg-surface/60 px-2 py-0.5 text-xs text-icon-muted">
             {badge}
           </span>
         )}
@@ -569,7 +569,7 @@ function CardButton({
           />
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute right-0 top-full z-20 mt-1.5 whitespace-nowrap rounded-md border border-filio bg-madero px-2 py-1 text-xs text-pergamino opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100"
+            className="pointer-events-none absolute right-0 top-full z-20 mt-1.5 whitespace-nowrap rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-primary opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100"
           >
             {statusMeta.label}
           </span>
@@ -604,12 +604,12 @@ function RenameCard({
   };
 
   return (
-    <div className="flex w-full flex-col gap-3 rounded-xl border border-llamita/50 bg-madero p-5">
-      <div className="flex h-32 items-center justify-center rounded-lg bg-filio/30">
+    <div className="flex w-full flex-col gap-3 rounded-xl border border-action/50 bg-surface-raised p-5">
+      <div className="flex h-32 items-center justify-center rounded-lg bg-surface-raised/30">
         <Icon
           name={node.is_dir ? "folder" : fileIconName(node.name)}
           size={40}
-          className="text-llamita/40"
+          className="text-action/40"
         />
       </div>
 
@@ -623,21 +623,21 @@ function RenameCard({
         aria-label="Nuevo nombre"
         aria-invalid={!!error}
         className={cn(
-          "w-full rounded-md border bg-piedra px-2 py-1.5 text-small text-pergamino",
+          "w-full rounded-md border bg-surface-raised px-2 py-1.5 text-small text-primary",
           "focus:outline-none focus:ring-1",
           error
-            ? "border-sangre/60 focus:border-sangre focus:ring-sangre/50"
-            : "border-filio focus:border-llamita focus:ring-llamita/50",
+            ? "border-status-error/60 focus:border-status-error focus:ring-status-error/50"
+            : "border-edge focus:border-action focus:ring-action/50",
         )}
       />
 
       {error && (
-        <p role="alert" className="text-small text-sangre">
+        <p role="alert" className="text-small text-status-error">
           {error}
         </p>
       )}
 
-      <div className="mt-auto flex items-center justify-end text-plata/50">
+      <div className="mt-auto flex items-center justify-end text-icon-muted/50">
         <Icon name="chevron-right" size={16} />
       </div>
     </div>
@@ -672,12 +672,12 @@ function CreateCard({
   };
 
   return (
-    <div className="flex w-full flex-col gap-3 rounded-xl border border-dashed border-llamita/40 bg-madero p-5">
-      <div className="flex h-32 items-center justify-center rounded-lg bg-filio/30">
+    <div className="flex w-full flex-col gap-3 rounded-xl border border-dashed border-action/40 bg-surface-raised p-5">
+      <div className="flex h-32 items-center justify-center rounded-lg bg-surface-raised/30">
         <Icon
           name={kind === "file" ? "file" : "folder"}
           size={40}
-          className="text-llamita/40"
+          className="text-action/40"
         />
       </div>
 
@@ -692,21 +692,21 @@ function CreateCard({
         aria-label={placeholder}
         aria-invalid={!!error}
         className={cn(
-          "w-full rounded-md border bg-piedra px-2 py-1.5 text-small text-pergamino",
+          "w-full rounded-md border bg-surface-raised px-2 py-1.5 text-small text-primary",
           "focus:outline-none focus:ring-1",
           error
-            ? "border-sangre/60 focus:border-sangre focus:ring-sangre/50"
-            : "border-filio focus:border-llamita focus:ring-llamita/50",
+            ? "border-status-error/60 focus:border-status-error focus:ring-status-error/50"
+            : "border-edge focus:border-action focus:ring-action/50",
         )}
       />
 
       {error && (
-        <p role="alert" className="text-small text-sangre">
+        <p role="alert" className="text-small text-status-error">
           {error}
         </p>
       )}
 
-      <div className="mt-auto flex items-center justify-end text-plata/50">
+      <div className="mt-auto flex items-center justify-end text-icon-muted/50">
         <Icon name="chevron-right" size={16} />
       </div>
     </div>

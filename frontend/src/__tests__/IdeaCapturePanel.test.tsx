@@ -244,8 +244,8 @@ describe("IdeaCapturePanel — Conectar bot (token)", () => {
     const tokenInput = await screen.findByLabelText("Token del bot");
     expect(tokenInput).toHaveAttribute("type", "password");
 
-    const reveal = screen.getByRole("button", { name: "Mostrar token" });
-    const copy = screen.getByRole("button", { name: "Copiar token" });
+    const reveal = screen.getByRole("button", { name: "Mostrar" });
+    const copy = screen.getByRole("button", { name: "Copiar" });
     // Nothing typed yet → not editing → reveal/copy disabled.
     expect(reveal).toBeDisabled();
     expect(copy).toBeDisabled();
@@ -255,7 +255,7 @@ describe("IdeaCapturePanel — Conectar bot (token)", () => {
 
     await user.click(reveal);
     expect(tokenInput).toHaveAttribute("type", "text");
-    await user.click(screen.getByRole("button", { name: "Ocultar token" }));
+    await user.click(screen.getByRole("button", { name: "Ocultar" }));
     expect(tokenInput).toHaveAttribute("type", "password");
   });
 
@@ -272,7 +272,7 @@ describe("IdeaCapturePanel — Conectar bot (token)", () => {
 
     const tokenInput = await screen.findByLabelText("Token del bot");
     await user.type(tokenInput, "987:BB");
-    await user.click(screen.getByRole("button", { name: "Copiar token" }));
+    await user.click(screen.getByRole("button", { name: "Copiar" }));
 
     expect(writeText).toHaveBeenCalledWith("987:BB");
     expect(await screen.findByText("Copiado")).toBeInTheDocument();

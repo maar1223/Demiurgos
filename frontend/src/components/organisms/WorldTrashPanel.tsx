@@ -108,18 +108,18 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
 
   return (
     <div>
-      <h4 className="flex items-center gap-2 font-heading text-body text-pergamino">
-        <Icon name="trash" size={18} className="text-plata" />
+      <h4 className="flex items-center gap-2 font-heading text-body text-primary">
+        <Icon name="trash" size={18} className="text-icon-muted" />
         Papelera de mundos
       </h4>
-      <p className="mt-1 text-small text-tinta-desvaida">
+      <p className="mt-1 text-small text-muted">
         Mundos eliminados: quedan 30 días para restaurarlos antes de que se purguen.
       </p>
 
       {error && (
         <div
           role="alert"
-          className="mt-3 rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-small text-sangre"
+          className="mt-3 rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-small text-status-error"
         >
           {getErrorMessage((error as ApiError).status, (error as ApiError).detail)}
         </div>
@@ -127,7 +127,7 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
       {actionError && !purgeTarget && (
         <div
           role="alert"
-          className="mt-3 rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-small text-sangre"
+          className="mt-3 rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-small text-status-error"
         >
           {actionError}
         </div>
@@ -138,9 +138,9 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
           <Spinner size="lg" />
         </div>
       ) : entries.length === 0 ? (
-        <div className="mt-3 flex flex-col items-center gap-2 rounded-lg border border-dashed border-filio py-8 text-center">
-          <Icon name="trash" size={32} className="text-sombra" />
-          <p className="text-body text-tinta-desvaida">La papelera está vacía</p>
+        <div className="mt-3 flex flex-col items-center gap-2 rounded-lg border border-dashed border-edge py-8 text-center">
+          <Icon name="trash" size={32} className="text-muted" />
+          <p className="text-body text-muted">La papelera está vacía</p>
         </div>
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
@@ -149,12 +149,12 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
             return (
               <li
                 key={entry.world_name}
-                className="flex items-center gap-3 rounded-lg border border-filio bg-cripta/50 px-3 py-2"
+                className="flex items-center gap-3 rounded-lg border border-edge bg-surface/50 px-3 py-2"
               >
-                <Icon name="world" size={18} className="shrink-0 text-plata" />
+                <Icon name="world" size={18} className="shrink-0 text-icon-muted" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-mono text-small text-pergamino">{entry.world_name}</p>
-                  <p className="text-xs text-tinta-desvaida">
+                  <p className="truncate font-mono text-small text-primary">{entry.world_name}</p>
+                  <p className="text-xs text-muted">
                     eliminado el {formatDeletedAt(entry.deleted_at)} · {formatBytes(entry.size_bytes)}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-1">

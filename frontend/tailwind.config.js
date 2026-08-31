@@ -1,23 +1,31 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
+  // Theme is driven by the `.dark` class on <html> (set by the anti-FOUC
+  // inline script in index.html and by hooks/useTheme).
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        cripta: "#0A0907",
-        madero: "#161310",
-        piedra: "#1F1B16",
-        lecho: "#211D17",
-        pergamino: "#DED5C7",
-        "tinta-desvaida": "#A6988A",
-        sombra: "#73685E",
-        filio: "#3A3229",
-        llamita: "#D4A853",
-        "llama-alta": "#F5C95A",
-        plata: "#8A9BA8",
-        "plata-tenue": "#6D7D88",
-        musgo: "#4A6B3E",
-        sangre: "#8B2D24",
+        // Brand role tokens (PR-1 theme infrastructure). Flat keys backed by
+        // CSS variables holding "R G B" channels; <alpha-value> makes the
+        // /opacity modifiers work. Light values live in :root, dark in
+        // :root.dark (see src/styles/globals.css).
+        surface: "rgb(var(--color-surface) / <alpha-value>)",
+        "surface-raised": "rgb(var(--color-surface-raised) / <alpha-value>)",
+        "surface-hover": "rgb(var(--color-surface-hover) / <alpha-value>)",
+        "surface-active": "rgb(var(--color-surface-active) / <alpha-value>)",
+        primary: "rgb(var(--color-primary) / <alpha-value>)",
+        detail: "rgb(var(--color-detail) / <alpha-value>)",
+        muted: "rgb(var(--color-muted) / <alpha-value>)",
+        edge: "rgb(var(--color-edge) / <alpha-value>)",
+        action: "rgb(var(--color-action) / <alpha-value>)",
+        "action-hover": "rgb(var(--color-action-hover) / <alpha-value>)",
+        "action-text": "rgb(var(--color-action-text) / <alpha-value>)",
+        "status-success": "rgb(var(--color-status-success) / <alpha-value>)",
+        "status-error": "rgb(var(--color-status-error) / <alpha-value>)",
+        "diff-gutter": "rgb(var(--color-diff-gutter) / <alpha-value>)",
+        "icon-muted": "rgb(var(--color-icon-muted) / <alpha-value>)",
       },
       fontFamily: {
         heading: ["Space Grotesk", "sans-serif"],

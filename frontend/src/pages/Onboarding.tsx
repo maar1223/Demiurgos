@@ -193,7 +193,7 @@ export default function Onboarding() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-cripta">
+      <div className="flex min-h-screen items-center justify-center bg-surface">
         <Spinner size="lg" />
       </div>
     );
@@ -202,10 +202,10 @@ export default function Onboarding() {
   const hint = authHint(error ?? writeError);
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-cripta px-4 py-12">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-4 py-12">
       <div className="w-full max-w-xl">
-        <h1 className="font-heading text-h3 text-pergamino">Bienvenida a Demiurgos</h1>
-        <p className="mt-2 text-body text-tinta-desvaida">
+        <h1 className="font-heading text-h3 text-primary">Bienvenida a Demiurgos</h1>
+        <p className="mt-2 text-body text-muted">
           Configuración inicial para dejar la instalación operativa. Podés
           retomar cada capacidad después desde el Centro de Configuración.
         </p>
@@ -296,23 +296,23 @@ function Step0Form(props: {
   reconfiguring?: boolean;
 }) {
   return (
-    <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-filio bg-madero p-6">
-      <h2 className="font-heading text-h4 text-pergamino">
+    <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-edge bg-surface-raised p-6">
+      <h2 className="font-heading text-h4 text-primary">
         {props.reconfiguring ? "Idioma, región y zona horaria" : "Paso 1: idioma, región y zona horaria"}
       </h2>
-      <p className="mt-1 text-small text-tinta-desvaida">
+      <p className="mt-1 text-small text-muted">
         Cada lenguaje se configura de forma independiente; la región solo
         sugiere valores y nunca se aplica en silencio.
       </p>
 
       <div className="mt-5 grid gap-4">
-        <label htmlFor="onboarding-ui-lang" className="flex flex-col gap-1 text-small text-pergamino">
+        <label htmlFor="onboarding-ui-lang" className="flex flex-col gap-1 text-small text-primary">
           Idioma de la interfaz
           <select
             id="onboarding-ui-lang"
             value={props.uiLang}
             onChange={(e) => props.onUiLang(e.target.value)}
-            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino"
+            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
           >
             {LANGUAGE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
@@ -320,13 +320,13 @@ function Step0Form(props: {
           </select>
         </label>
 
-        <label htmlFor="onboarding-conversation-lang" className="flex flex-col gap-1 text-small text-pergamino">
+        <label htmlFor="onboarding-conversation-lang" className="flex flex-col gap-1 text-small text-primary">
           Idioma de conversación (asistente)
           <select
             id="onboarding-conversation-lang"
             value={props.conversationLang}
             onChange={(e) => props.onConversationLang(e.target.value)}
-            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino"
+            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
           >
             {LANGUAGE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
@@ -334,13 +334,13 @@ function Step0Form(props: {
           </select>
         </label>
 
-        <label htmlFor="onboarding-content-lang" className="flex flex-col gap-1 text-small text-pergamino">
+        <label htmlFor="onboarding-content-lang" className="flex flex-col gap-1 text-small text-primary">
           Idioma de contenido (prosa del mundo)
           <select
             id="onboarding-content-lang"
             value={props.contentLang}
             onChange={(e) => props.onContentLang(e.target.value)}
-            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino"
+            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
           >
             {LANGUAGE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
@@ -348,18 +348,18 @@ function Step0Form(props: {
           </select>
         </label>
 
-        <label htmlFor="onboarding-region" className="flex flex-col gap-1 text-small text-pergamino">
+        <label htmlFor="onboarding-region" className="flex flex-col gap-1 text-small text-primary">
           Región (opcional; sugiere valores, nunca impone dialecto)
           <input
             id="onboarding-region"
             value={props.region}
             onChange={(e) => props.onRegion(e.target.value)}
-            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino"
+            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
             placeholder="AR, MX, US…"
           />
         </label>
 
-        <label className="flex items-center gap-2 text-small text-pergamino">
+        <label className="flex items-center gap-2 text-small text-primary">
           <input
             type="checkbox"
             checked={props.regionExplicit}
@@ -369,14 +369,14 @@ function Step0Form(props: {
           Confirmo la región de forma explícita (override)
         </label>
 
-        <label htmlFor="onboarding-timezone" className="flex flex-col gap-1 text-small text-pergamino">
+        <label htmlFor="onboarding-timezone" className="flex flex-col gap-1 text-small text-primary">
           Zona horaria (identificador IANA; los timestamps se guardan en UTC)
           <input
             id="onboarding-timezone"
             list="onboarding-timezones"
             value={props.timezone}
             onChange={(e) => props.onTimezone(e.target.value)}
-            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino"
+            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
           />
           <datalist id="onboarding-timezones">
             {COMMON_TIMEZONES.map((tz) => (
@@ -404,27 +404,27 @@ function WorldStep(props: {
   onSubmit: (e: FormEvent) => void;
 }) {
   return (
-    <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-filio bg-madero p-6">
-      <h2 className="font-heading text-h4 text-pergamino">Creá tu mundo</h2>
-      <p className="mt-1 text-small text-tinta-desvaida">
+    <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-edge bg-surface-raised p-6">
+      <h2 className="font-heading text-h4 text-primary">Creá tu mundo</h2>
+      <p className="mt-1 text-small text-muted">
         Se crea un árbol canónico en minúsculas (lore, personajes). El
         mundo es el último paso operativo para entrar al Taller de Mundo.
       </p>
 
       <div className="mt-5 grid gap-4">
-        <label htmlFor="onboarding-world-name" className="flex flex-col gap-1 text-small text-pergamino">
+        <label htmlFor="onboarding-world-name" className="flex flex-col gap-1 text-small text-primary">
           Nombre del mundo
           <input
             id="onboarding-world-name"
             value={props.worldName}
             onChange={(e) => props.onWorldName(e.target.value)}
             required
-            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino"
+            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
             placeholder="mi-mundo"
           />
         </label>
 
-        <label className="flex items-center gap-2 text-small text-pergamino">
+        <label className="flex items-center gap-2 text-small text-primary">
           <input
             type="checkbox"
             checked={props.loreSkeleton}
@@ -448,24 +448,24 @@ function PendingCards(props: { remotePending: string[]; worldDone: boolean }) {
   const items = props.remotePending.map((step) => REMOTE_PENDING[step]).filter(Boolean);
   return (
     <section aria-label="Capacidades pendientes" className="mt-8">
-      <h2 className="font-heading text-h4 text-pergamino">Lo que queda pendiente</h2>
+      <h2 className="font-heading text-h4 text-primary">Lo que queda pendiente</h2>
       <div aria-live="polite" className="mt-3 grid gap-3">
         {items.map((item) => (
           <div
             key={item.title}
-            className="flex items-start justify-between gap-3 rounded-lg border border-filio bg-madero p-4"
+            className="flex items-start justify-between gap-3 rounded-lg border border-edge bg-surface-raised p-4"
           >
             <div>
-              <p className="text-body text-pergamino">{item.title}</p>
-              <p className="mt-1 text-small text-tinta-desvaida">{item.description}</p>
+              <p className="text-body text-primary">{item.title}</p>
+              <p className="mt-1 text-small text-muted">{item.description}</p>
             </div>
-            <span className="inline-flex shrink-0 items-center rounded-full border border-filio bg-piedra px-2.5 py-0.5 text-xs font-medium text-pergamino">
+            <span className="inline-flex shrink-0 items-center rounded-full border border-edge bg-surface-raised px-2.5 py-0.5 text-xs font-medium text-primary">
               Pendiente
             </span>
           </div>
         ))}
         {props.worldDone && items.length === 0 && (
-          <p className="text-small text-tinta-desvaida">No hay capacidades pendientes.</p>
+          <p className="text-small text-muted">No hay capacidades pendientes.</p>
         )}
       </div>
     </section>
@@ -483,15 +483,15 @@ function AccountStep(props: {
 }) {
   const hint = authHint(props.error);
   return (
-    <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-filio bg-madero p-6">
-      <h2 className="font-heading text-h4 text-pergamino">Creá tu cuenta</h2>
-      <p className="mt-1 text-small text-tinta-desvaida">
+    <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-edge bg-surface-raised p-6">
+      <h2 className="font-heading text-h4 text-primary">Creá tu cuenta</h2>
+      <p className="mt-1 text-small text-muted">
         La cuenta protege tu instalación. La contraseña es opcional: sin ella
         alcanza con el botón Entrar para ingresar.
       </p>
 
       <div className="mt-5 grid gap-4">
-        <label htmlFor="onboarding-account-username" className="flex flex-col gap-1 text-small text-pergamino">
+        <label htmlFor="onboarding-account-username" className="flex flex-col gap-1 text-small text-primary">
           Usuario
           <input
             id="onboarding-account-username"
@@ -499,12 +499,12 @@ function AccountStep(props: {
             onChange={(e) => props.onUsername(e.target.value)}
             required
             autoComplete="username"
-            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino focus:border-plata focus:outline-none"
+            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary focus:border-icon-muted focus:outline-none"
             placeholder="tu-usuario"
           />
         </label>
 
-        <label htmlFor="onboarding-account-password" className="flex flex-col gap-1 text-small text-pergamino">
+        <label htmlFor="onboarding-account-password" className="flex flex-col gap-1 text-small text-primary">
           Contraseña (opcional)
           <input
             id="onboarding-account-password"
@@ -512,14 +512,14 @@ function AccountStep(props: {
             value={props.password}
             onChange={(e) => props.onPassword(e.target.value)}
             autoComplete="new-password"
-            className="rounded-lg border border-filio bg-cripta px-3 py-2 text-body text-pergamino focus:border-plata focus:outline-none"
+            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary focus:border-icon-muted focus:outline-none"
             placeholder="Dejalo vacío para entrar sin contraseña"
           />
         </label>
       </div>
 
-      <div className="mt-5 rounded-lg border border-llamita/40 bg-llamita/10 p-3">
-        <p className="text-small text-pergamino">
+      <div className="mt-5 rounded-lg border border-action/40 bg-action/10 p-3">
+        <p className="text-small text-primary">
           Al crear la cuenta se generan tus{" "}
           <span className="font-medium">palabras claves</span>: son tu única
           forma de recuperarla si olvidás la contraseña. Se muestran una sola
@@ -533,7 +533,7 @@ function AccountStep(props: {
         </div>
       )}
       {!!props.error && !hint && (
-        <p className="mt-4 text-small text-sangre" role="alert">
+        <p className="mt-4 text-small text-status-error" role="alert">
           {props.error instanceof Error
             ? props.error.message
             : "No se pudo crear la cuenta"}
@@ -554,15 +554,15 @@ function AccountStep(props: {
  *  password means the vault is permanently locked (R-NF-03). */
 function WordsCard({ words, onConfirm }: { words: string; onConfirm: () => void }) {
   return (
-    <div className="mt-8 rounded-lg border border-musgo/40 bg-madero p-6">
-      <h2 className="font-heading text-h4 text-pergamino">Tus palabras claves</h2>
-      <p className="mt-1 text-small text-tinta-desvaida">
+    <div className="mt-8 rounded-lg border border-status-success/40 bg-surface-raised p-6">
+      <h2 className="font-heading text-h4 text-primary">Tus palabras claves</h2>
+      <p className="mt-1 text-small text-muted">
         Guardalas en un lugar seguro, fuera del navegador. Solo se muestran una
         vez: si las perdés y olvidás la contraseña, la cuenta queda bloqueada
         para siempre.
       </p>
       <p
-        className="mt-4 break-words rounded-lg border border-filio bg-cripta p-4 font-mono text-body text-pergamino"
+        className="mt-4 break-words rounded-lg border border-edge bg-surface p-4 font-mono text-body text-primary"
         data-testid="onboarding-words"
       >
         {words}

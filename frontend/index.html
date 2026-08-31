@@ -2,9 +2,33 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/svg+xml" href="/favicon-light.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Demiurgos — Wiki</title>
+    <script>
+      // Anti-FOUC: resolve the theme (localStorage > prefers-color-scheme)
+      // and apply `.dark` on <html> before the first paint. Also swaps the
+      // favicon (gray "D" in light, golden "D" in dark) to match. Standalone
+      // by design — hooks/useTheme mirrors the same logic at runtime.
+      (function () {
+        try {
+          var stored = localStorage.getItem("demiurgos-theme");
+          var dark =
+            stored === "dark" ||
+            ((stored === null || stored === "system") &&
+              window.matchMedia &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+          var favicon = document.querySelector('link[rel="icon"]');
+          if (favicon) {
+            favicon.href = dark ? "/favicon-dark.svg" : "/favicon-light.svg";
+          }
+        } catch (e) {
+          // localStorage unavailable (blocked storage / file://) — the
+          // default light theme and favicon stay in place.
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -12,7 +36,7 @@
       rel="stylesheet"
     />
   </head>
-  <body class="bg-cripta text-pergamino font-body">
+  <body class="bg-surface text-primary font-body">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

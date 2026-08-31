@@ -56,7 +56,7 @@ export function EntitySearchPanel({
           <Icon
             name="search"
             size={14}
-            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-sombra"
+            className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted"
           />
           <input
             type="text"
@@ -64,10 +64,10 @@ export function EntitySearchPanel({
             onChange={handleInput}
             placeholder="Buscar entidad…"
             className={cn(
-              "w-full rounded-md border border-filio bg-piedra",
+              "w-full rounded-md border border-edge bg-surface-raised",
               "py-1.5 pl-8 pr-3",
-              "text-small text-pergamino placeholder:text-sombra",
-              "focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50",
+              "text-small text-primary placeholder:text-muted",
+              "focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50",
               "transition-colors",
             )}
             aria-label="Buscar entidad"
@@ -110,7 +110,7 @@ export function EntitySearchPanel({
 
         {/* No query — idle state */}
         {!hasQuery && !isLoading && !error && (
-          <div className="px-3 py-6 text-center text-small text-sombra">
+          <div className="px-3 py-6 text-center text-small text-muted">
             <p>Escribí para buscar entidades del mundo.</p>
             <p className="mt-1 text-xs">
               Hacé clic en un resultado para insertar un wikilink.
@@ -153,31 +153,31 @@ function SearchResultItem({ result, onClick }: SearchResultItemProps) {
       onClick={onClick}
       className={cn(
         "flex flex-col gap-0.5 px-3 py-2 text-left",
-        "border-b border-filio/50 last:border-b-0",
-        "hover:bg-piedra transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50",
+        "border-b border-edge/50 last:border-b-0",
+        "hover:bg-surface-hover transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50",
       )}
     >
       {/* Name row */}
       <div className="flex items-center gap-2">
-        <span className="text-small font-medium text-pergamino truncate">
+        <span className="text-small font-medium text-primary truncate">
           {result.name}
         </span>
         {result.type && (
-          <span className="shrink-0 rounded bg-piedra px-1.5 py-0.5 text-xs text-tinta-desvaida">
+          <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 text-xs text-muted">
             {result.type}
           </span>
         )}
       </div>
       {/* Description excerpt */}
       {result.description && (
-        <p className="text-xs text-sombra line-clamp-2">
+        <p className="text-xs text-muted line-clamp-2">
           {result.description}
         </p>
       )}
       {/* Link count hint */}
       {result.link_count > 0 && (
-        <span className="text-xs text-plata-tenue">
+        <span className="text-xs text-icon-muted">
           {result.link_count} {result.link_count === 1 ? "conexión" : "conexiones"}
         </span>
       )}

@@ -184,8 +184,8 @@ function EditableCell({
           onJoinLines(lineNumber);
         }
       }}
-      className={`min-h-[1.6rem] min-w-0 max-w-full box-border w-full resize-none overflow-hidden whitespace-pre-wrap overflow-wrap-anywhere border-l-2 border-t-0 border-r-0 border-b-0 px-3 py-0.5 font-mono text-small text-pergamino outline-none rounded-none focus:ring-1 focus:ring-llamita/50 ring-offset-0 ${
-        isAdded ? "border-musgo bg-musgo/30" : "border-transparent bg-transparent"
+      className={`min-h-[1.6rem] min-w-0 max-w-full box-border w-full resize-none overflow-hidden whitespace-pre-wrap overflow-wrap-anywhere border-l-2 border-t-0 border-r-0 border-b-0 px-3 py-0.5 font-mono text-small text-primary outline-none rounded-none focus:ring-1 focus:ring-action/50 ring-offset-0 ${
+        isAdded ? "border-status-success bg-status-success/30" : "border-transparent bg-transparent"
       }`}
     />
   );
@@ -310,7 +310,7 @@ export const LiveDiffEditor = forwardRef<LiveDiffEditorHandle, LiveDiffEditorPro
     return (
       <div
         data-testid="live-diff-editor"
-        className="mx-auto flex h-[70vh] w-full max-w-7xl flex-col overflow-hidden rounded-lg border border-filio bg-madero"
+        className="mx-auto flex h-[70vh] w-full max-w-7xl flex-col overflow-hidden rounded-lg border border-edge bg-surface-raised"
       >
         <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
           {/* Header row — same grid template as the diff rows, so titles sit
@@ -322,31 +322,31 @@ export const LiveDiffEditor = forwardRef<LiveDiffEditorHandle, LiveDiffEditorPro
             data-testid="diff-headers"
             className={`sticky top-0 z-10 grid text-xs ${GRID_TEMPLATE}`}
           >
-            <div aria-hidden="true" className="min-w-12 bg-lecho" />
+            <div aria-hidden="true" className="min-w-12 bg-diff-gutter" />
             <div
               data-testid="diff-header-a"
-              className="min-w-0 flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-b border-filio bg-piedra px-3 py-1.5 text-tinta-desvaida"
+              className="min-w-0 flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-b border-edge bg-surface-raised px-3 py-1.5 text-muted"
             >
               <LockIcon className="h-3.5 w-3.5 shrink-0" />
               <span className="min-w-0 overflow-hidden text-ellipsis">
                 Original · solo lectura
               </span>
             </div>
-            <div aria-hidden="true" className="bg-filio" />
+            <div aria-hidden="true" className="bg-edge" />
             <div
               data-testid="diff-header-b"
-              className="min-w-0 flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-b border-filio bg-lecho px-3 py-1.5 text-pergamino"
+              className="min-w-0 flex items-center gap-1.5 overflow-hidden whitespace-nowrap border-b border-edge bg-diff-gutter px-3 py-1.5 text-primary"
             >
-              <PencilIcon className="h-3.5 w-3.5 shrink-0 text-llamita" />
+              <PencilIcon className="h-3.5 w-3.5 shrink-0 text-action" />
               <span className="min-w-0 overflow-hidden text-ellipsis">
                 Editado · hacé clic y escribí
               </span>
             </div>
-            <div aria-hidden="true" className="min-w-12 bg-piedra" />
+            <div aria-hidden="true" className="min-w-12 bg-surface-raised" />
           </div>
 
           {rows.length === 0 ? (
-            <div className="px-4 py-8 text-center text-small text-tinta-desvaida">
+            <div className="px-4 py-8 text-center text-small text-muted">
               Sin diferencias
             </div>
           ) : (
@@ -356,23 +356,23 @@ export const LiveDiffEditor = forwardRef<LiveDiffEditorHandle, LiveDiffEditorPro
                 className={`grid font-mono text-small ${GRID_TEMPLATE}`}
               >
                 {/* Left gutter — line number only when the left side has a line */}
-                <div className="min-w-12 select-none bg-lecho px-2 py-0.5 text-right text-tinta-desvaida">
+                <div className="min-w-12 select-none bg-diff-gutter px-2 py-0.5 text-right text-muted">
                   {row.leftNumber ?? ""}
                 </div>
                 {/* Left content — read-only */}
                 <div
-                  className={`min-h-[1.6rem] min-w-0 whitespace-pre-wrap overflow-wrap-anywhere border-l-2 px-3 py-0.5 text-pergamino ${
+                  className={`min-h-[1.6rem] min-w-0 whitespace-pre-wrap overflow-wrap-anywhere border-l-2 px-3 py-0.5 text-primary ${
                     row.status === "removed" || row.status === "changed"
-                      ? "border-sangre bg-sangre/30"
+                      ? "border-status-error bg-status-error/30"
                       : row.status === "added"
-                        ? "border-musgo/10 bg-musgo/10"
+                        ? "border-status-success/10 bg-status-success/10"
                         : "border-transparent"
                   }`}
                 >
                   {row.left}
                 </div>
                 {/* Divider — dedicated 1px column, contiguous across header and rows */}
-                <div aria-hidden="true" className="bg-filio" />
+                <div aria-hidden="true" className="bg-edge" />
                 {/* Right content — editable textarea (the writing surface) */}
                 {row.right !== null && row.rightNumber !== null ? (
                   <EditableCell
@@ -389,15 +389,15 @@ export const LiveDiffEditor = forwardRef<LiveDiffEditorHandle, LiveDiffEditorPro
                   />
                 ) : (
                   <div
-                    className={`min-h-[1.6rem] whitespace-pre-wrap overflow-wrap-anywhere border-l-2 px-3 py-0.5 text-pergamino ${
+                    className={`min-h-[1.6rem] whitespace-pre-wrap overflow-wrap-anywhere border-l-2 px-3 py-0.5 text-primary ${
                       row.status === "removed"
-                        ? "border-sangre/10 bg-sangre/10"
+                        ? "border-status-error/10 bg-status-error/10"
                         : "border-transparent"
                     }`}
                   />
                 )}
                 {/* Right gutter — line number only when the right side has a line */}
-                <div className="min-w-12 select-none bg-piedra px-2 py-0.5 text-right text-tinta-desvaida">
+                <div className="min-w-12 select-none bg-surface-raised px-2 py-0.5 text-right text-muted">
                   {row.rightNumber ?? ""}
                 </div>
               </div>

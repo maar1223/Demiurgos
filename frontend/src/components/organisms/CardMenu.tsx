@@ -127,10 +127,10 @@ export function CardMenu({
         aria-expanded={open}
         onClick={handleTriggerClick}
         className={cn(
-          "flex h-6 w-6 items-center justify-center rounded-md bg-llamita text-cripta transition-colors",
-          "hover:bg-llama-alta focus-visible:outline-none",
-          "focus-visible:ring-2 focus-visible:ring-llamita/50",
-          open && "bg-llama-alta",
+          "flex h-6 w-6 items-center justify-center rounded-md bg-action text-action-text transition-colors",
+          "hover:bg-action-hover focus-visible:outline-none",
+          "focus-visible:ring-2 focus-visible:ring-action/50",
+          open && "bg-action-hover",
         )}
       >
         <Icon name="dots" size={12} />
@@ -142,13 +142,13 @@ export function CardMenu({
           aria-label={`Acciones de ${node.name}`}
           className={cn(
             "absolute bottom-9 right-0 z-20 min-w-48 overflow-hidden rounded-lg",
-            "border border-filio bg-madero shadow-xl",
+            "border border-edge bg-surface-raised shadow-xl",
           )}
         >
           {error && (
             <div
               role="alert"
-              className="border-b border-filio px-3 py-2 text-small text-sangre"
+              className="border-b border-edge px-3 py-2 text-small text-status-error"
             >
               {error}
             </div>
@@ -161,15 +161,15 @@ export function CardMenu({
               disabled={disabled}
               onClick={(e) => handleAction(e, action)}
               className={cn(
-                "block w-full px-3 py-2 text-left text-small text-pergamino transition-colors",
-                "hover:bg-piedra hover:text-llamita focus-visible:outline-none",
-                "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50",
+                "block w-full px-3 py-2 text-left text-small text-primary transition-colors",
+                "hover:bg-surface-hover hover:text-action focus-visible:outline-none",
+                "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50",
                 "disabled:cursor-not-allowed disabled:opacity-40",
               )}
             >
               <span className="flex items-center gap-2">
                 {icon && (
-                  <Icon name={icon} size={14} className="shrink-0 text-sombra" />
+                  <Icon name={icon} size={14} className="shrink-0 text-muted" />
                 )}
                 {label}
               </span>

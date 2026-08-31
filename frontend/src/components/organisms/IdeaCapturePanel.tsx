@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
+import { SecretInput } from "@/components/molecules/SecretInput";
 import {
   authorizeChat,
   clearIdeaCaptureToken,
@@ -50,11 +51,11 @@ const STEPS = [
 const LAST_STEP = STEPS.length - 1;
 
 const inputClass =
-  "w-full rounded-md border border-filio bg-piedra py-1.5 px-3 " +
-  "text-small text-pergamino placeholder:text-sombra " +
-  "focus:border-llamita focus:outline-none focus:ring-1 focus:ring-llamita/50 transition-colors";
+  "w-full rounded-md border border-edge bg-surface-raised py-1.5 px-3 " +
+  "text-small text-primary placeholder:text-muted " +
+  "focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50 transition-colors";
 
-const labelClass = "mb-1 block text-small text-tinta-desvaida";
+const labelClass = "mb-1 block text-small text-muted";
 
 /** Parse "1, 2, 3" / "1 2 3" into an int list; null when any token is not an
  *  integer (the backend mirrors this validation fail-closed). */
@@ -162,12 +163,10 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
   // ---------------------------------------------------------------- token
   const hasToken = status?.has_token ?? false;
   const [tokenDraft, setTokenDraft] = useState("");
-  const [tokenRevealed, setTokenRevealed] = useState(false);
   const [tokenBusy, setTokenBusy] = useState(false);
   const [tokenMessage, setTokenMessage] = useState<string | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
-  const [copied, setCopied] = useState(false);
 
   const handleTokenSave = async () => {
     const value = tokenDraft.trim();
@@ -178,24 +177,12 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
     try {
       await setIdeaCaptureToken(value);
       setTokenDraft("");
-      setTokenRevealed(false);
       setStatus((prev) => (prev ? { ...prev, has_token: true } : prev));
       setTokenMessage("Token guardado en .env — no se vuelve a mostrar.");
     } catch (cause) {
       setTokenError(errorText(cause, "No se pudo guardar el token"));
     } finally {
       setTokenBusy(false);
-    }
-  };
-
-  const handleCopyToken = async () => {
-    if (!tokenDraft) return;
-    try {
-      await navigator.clipboard.writeText(tokenDraft);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    } catch {
-      setTokenError("No se pudo copiar el token");
     }
   };
 
@@ -381,7 +368,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
   // through the existing error handlers.
   if (auth.isLoading) {
     return (
-      <div className="flex items-center gap-2 py-6 text-small text-tinta-desvaida">
+      <div className="flex items-center gap-2 py-6 text-small text-muted">
         <Spinner size="sm" /> Comprobando sesión…
       </div>
     );
@@ -389,13 +376,13 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
 
   if (auth.error) {
     return (
-      <div className="rounded-lg border border-filio bg-madero p-4">
-        <p className="text-small text-tinta-desvaida">
+      <div className="rounded-lg border border-edge bg-surface-raised p-4">
+        <p className="text-small text-muted">
           No se pudo comprobar la sesión. Verifica la conexión con el servidor
           e intenta de nuevo.
         </p>
         {auth.error.message && (
-          <p className="mt-2 text-small text-sangre">{auth.error.message}</p>
+          <p className="mt-2 text-small text-status-error">{auth.error.message}</p>
         )}
       </div>
     );
@@ -404,8 +391,8 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
   if (auth.status?.enabled && !authenticated) {
     if (auth.status.mode === "local-dev") {
       return (
-        <div className="rounded-lg border border-filio bg-madero p-4">
-          <p className="text-small text-tinta-desvaida">
+        <div className="rounded-lg border border-edge bg-surface-raised p-4">
+          <p className="text-small text-muted">
             Sesión local no iniciada. Inicia sesión para ver y editar la
             configuración de captura de ideas.
           </p>
@@ -422,8 +409,8 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
     // Credentials vault mode: the login surface is the app-level AuthGate, so
     // the panel only explains the expired session (no in-page login here).
     return (
-      <div className="rounded-lg border border-filio bg-madero p-4">
-        <p className="text-small text-tinta-desvaida">
+      <div className="rounded-lg border border-edge bg-surface-raised p-4">
+        <p className="text-small text-muted">
           Tu sesión venció. Inicia sesión de nuevo para ver y editar la
           configuración de captura de ideas.
         </p>
@@ -451,21 +438,21 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
   return (
     <div className="mx-auto w-full max-w-2xl space-y-5">
       {/* Operational distinction: discovery is migration-only; Hermes owns ingress. */}
-      <div className="rounded-lg border border-filio bg-madero p-3 text-small text-tinta-desvaida">
-        <span className="font-medium text-pergamino">Cómo funciona:</span>{" "}
+      <div className="rounded-lg border border-edge bg-surface-raised p-3 text-small text-muted">
+        <span className="font-medium text-primary">Cómo funciona:</span>{" "}
          configurá el bot y descubrí tu chat mientras Hermes está detenido. La{" "}
          <strong>captura de producción la inicia Hermes</strong> cuando ejecutes
          el comando — el panel nunca inicia Telegram automáticamente.
       </div>
 
       {loadError && (
-        <div className="rounded-lg border border-sangre/40 bg-sangre/10 p-3 text-small text-sangre">
+        <div className="rounded-lg border border-status-error/40 bg-status-error/10 p-3 text-small text-status-error">
           {loadError}
         </div>
       )}
 
       {loading && !status && (
-        <div className="flex items-center gap-2 py-4 text-small text-tinta-desvaida">
+        <div className="flex items-center gap-2 py-4 text-small text-muted">
           <Spinner size="sm" /> Cargando configuración…
         </div>
       )}
@@ -493,11 +480,11 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                       className={cn(
                         "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-medium",
                         state === "done" &&
-                          "border-musgo bg-musgo/15 text-musgo",
+                          "border-status-success bg-status-success/15 text-status-success",
                         state === "current" &&
-                          "border-llamita bg-llamita/15 text-llamita",
+                          "border-action bg-action/15 text-action",
                         state === "todo" &&
-                          "border-filio bg-piedra text-tinta-desvaida",
+                          "border-edge bg-surface-raised text-muted",
                       )}
                     >
                       {state === "done" ? <Icon name="check" size={14} /> : index + 1}
@@ -506,10 +493,10 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                       className={cn(
                         "text-xs leading-tight",
                         state === "current"
-                          ? "text-pergamino"
+                          ? "text-primary"
                           : state === "done"
-                            ? "text-musgo"
-                            : "text-tinta-desvaida",
+                            ? "text-status-success"
+                            : "text-muted",
                       )}
                     >
                       {entry.label}
@@ -520,7 +507,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                       aria-hidden="true"
                       className={cn(
                         "mb-5 h-px w-3 shrink-0",
-                        index < step ? "bg-musgo/50" : "bg-filio",
+                        index < step ? "bg-status-success/50" : "bg-surface-raised",
                       )}
                     />
                   )}
@@ -530,20 +517,20 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
           </nav>
 
           {/* -------------------------------------------------- step content */}
-          <div className="rounded-lg border border-filio bg-madero p-5">
+          <div className="rounded-lg border border-edge bg-surface-raised p-5">
             {step === 0 && (
               <section aria-label="Conectar bot">
-                <h3 className="font-heading text-body text-pergamino">
+                <h3 className="font-heading text-body text-primary">
                   Conectá tu bot de Telegram
                 </h3>
-                <p className="mt-1 text-small text-tinta-desvaida">
+                <p className="mt-1 text-small text-muted">
                   {hasToken
                     ? "Token configurado en .env. No se vuelve a mostrar: pegá un valor nuevo para reemplazarlo."
                     : "Pegá el token de BotFather. Se guarda solo en el .env del servidor y nunca se expone."}
                 </p>
-                <div className="mt-3 flex items-center gap-2">
-                  <input
-                    type={tokenRevealed ? "text" : "password"}
+                <div className="mt-3">
+                  <SecretInput
+                    copyable
                     value={tokenDraft}
                     onChange={(event) => {
                       setTokenDraft(event.target.value);
@@ -557,26 +544,10 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                     autoComplete="off"
                     spellCheck={false}
                     aria-label="Token del bot"
+                    disabled={tokenBusy}
+                    onCopyError={() => setTokenError("No se pudo copiar el token")}
                     className={inputClass}
                   />
-                  <button
-                    type="button"
-                    onClick={() => setTokenRevealed((prev) => !prev)}
-                    disabled={!tokenDraft || tokenBusy}
-                    aria-label={tokenRevealed ? "Ocultar token" : "Mostrar token"}
-                    className="shrink-0 rounded-md border border-filio bg-piedra px-2 py-1.5 text-small text-plata hover:text-pergamino disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {tokenRevealed ? "Ocultar" : "Mostrar"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleCopyToken()}
-                    disabled={!tokenDraft || tokenBusy}
-                    aria-label="Copiar token"
-                    className="shrink-0 rounded-md border border-filio bg-piedra px-2 py-1.5 text-small text-plata hover:text-pergamino disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {copied ? "Copiado" : "Copiar"}
-                  </button>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <Button
@@ -597,21 +568,21 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                   )}
                 </div>
                 {tokenMessage && (
-                  <p className="mt-3 text-small text-musgo">{tokenMessage}</p>
+                  <p className="mt-3 text-small text-status-success">{tokenMessage}</p>
                 )}
                 {tokenError && (
-                  <p className="mt-3 text-small text-sangre">{tokenError}</p>
+                  <p className="mt-3 text-small text-status-error">{tokenError}</p>
                 )}
               </section>
             )}
 
             {step === 1 && (
               <section aria-label="Detectar chat">
-                <h3 className="font-heading text-body text-pergamino">
+                <h3 className="font-heading text-body text-primary">
                   Detectá el chat que recibirá tus ideas
                 </h3>
-                <p className="mt-1 text-small text-tinta-desvaida">
-                  Enviá <code className="text-plata">/start</code> (o cualquier
+                <p className="mt-1 text-small text-muted">
+                  Enviá <code className="text-icon-muted">/start</code> (o cualquier
                   mensaje) a tu bot en Telegram y después tocá{" "}
                   <em>Ya lo envié — Detectar chat</em>. La detección es de solo
                   lectura: no confirma ni consume mensajes pendientes, y no
@@ -628,29 +599,29 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                   {discovering && <Spinner size="sm" />}
                 </div>
                 {discoverError && (
-                  <p className="mt-3 text-small text-sangre">{discoverError}</p>
+                  <p className="mt-3 text-small text-status-error">{discoverError}</p>
                 )}
                 {discoverRemediation && (
                   <div
                     role="alert"
-                    className="mt-3 rounded-lg border border-llamita/40 bg-llamita/10 p-3 text-small"
+                    className="mt-3 rounded-lg border border-action/40 bg-action/10 p-3 text-small"
                   >
-                    <p className="text-llama-alta">
+                    <p className="text-detail">
                       <strong>No se pudieron detectar los chats.</strong>
                     </p>
-                    <p className="mt-1 text-tinta-desvaida">
+                    <p className="mt-1 text-muted">
                       {discoverRemediation.message}
                     </p>
                     {discoverRemediation.code === "webhook_conflict" && (
                       <div className="mt-2">
-                        <p className="text-tinta-desvaida">
+                        <p className="text-muted">
                           <strong>Webhook activo:</strong> Telegram no permite
                           usar getUpdates mientras el bot tenga un webhook
                           configurado (suele quedar de una configuración
                           anterior). Para desbloquear la detección eliminá el
                           webhook manualmente:
                         </p>
-                        <ul className="mt-1 list-disc pl-5 text-tinta-desvaida">
+                        <ul className="mt-1 list-disc pl-5 text-muted">
                           <li>
                             En <strong>BotFather</strong>: <code>/deletewebhook</code>
                           </li>
@@ -659,7 +630,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                             API usando el token de este panel.
                           </li>
                         </ul>
-                        <p className="mt-2 text-tinta-desvaida">
+                        <p className="mt-2 text-muted">
                           Este panel nunca borra el webhook automáticamente: la
                           eliminación es una decisión tuya. Cuando lo hayas
                           eliminado, tocá <em>Ya lo envié — Detectar chat</em>{" "}
@@ -670,12 +641,12 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                   </div>
                 )}
                 {discoverNotice && (
-                  <p className="mt-3 text-small text-musgo">{discoverNotice}</p>
+                  <p className="mt-3 text-small text-status-success">{discoverNotice}</p>
                 )}
                 {discoverResult && (
                   <div className="mt-3">
                     {discoverResult.candidates.length === 0 ? (
-                      <div className="rounded-lg border border-filio bg-piedra p-3 text-small text-tinta-desvaida">
+                      <div className="rounded-lg border border-edge bg-surface-raised p-3 text-small text-muted">
                         {discoverResult.message}
                       </div>
                     ) : (
@@ -684,13 +655,13 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                           candidate.kind === "private" ? (
                             <li
                               key={candidate.id}
-                              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-filio bg-piedra p-3"
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-edge bg-surface-raised p-3"
                             >
                               <div className="min-w-0">
-                                <p className="truncate text-small text-pergamino">
+                                <p className="truncate text-small text-primary">
                                   {candidate.title || "Chat privado (sin nombre)"}
                                 </p>
-                                <p className="text-xs text-tinta-desvaida">
+                                <p className="text-xs text-muted">
                                   Chat privado — autorización de un clic
                                 </p>
                               </div>
@@ -707,12 +678,12 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                           ) : (
                             <li
                               key={candidate.id}
-                              className="rounded-md border border-filio bg-piedra p-3"
+                              className="rounded-md border border-edge bg-surface-raised p-3"
                             >
-                              <p className="truncate text-small text-pergamino">
+                              <p className="truncate text-small text-primary">
                                 {candidate.title || "Grupo (sin título)"}
                               </p>
-                              <p className="text-xs text-tinta-desvaida">
+                              <p className="text-xs text-muted">
                                 Grupo — la autorización es explícita (fail-closed)
                               </p>
                               <div className="mt-2 space-y-2">
@@ -733,7 +704,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                                   aria-label={`Remitentes del grupo ${candidate.id}`}
                                   className={inputClass}
                                 />
-                                <label className="flex items-center gap-2 text-small text-tinta-desvaida">
+                                <label className="flex items-center gap-2 text-small text-muted">
                                   <input
                                     type="checkbox"
                                     checked={groupDrafts[candidate.id]?.confirmed ?? false}
@@ -747,7 +718,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                                       }))
                                     }
                                     aria-label={`Confirmar autorización del grupo ${candidate.id}`}
-                                    className="accent-llamita"
+                                    className="accent-action"
                                   />
                                   Confirmo que autorizo solo a estos remitentes
                                 </label>
@@ -769,19 +740,19 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                   </div>
                 )}
                 {failClosed ? (
-                  <div className="mt-3 rounded-lg border border-llamita/40 bg-llamita/10 p-3 text-small text-llama-alta">
+                  <div className="mt-3 rounded-lg border border-action/40 bg-action/10 p-3 text-small text-detail">
                      <strong>Fail-closed:</strong> con listas de autorización
                      vacías se rechaza TODO el ingreso y Hermes no arranca la captura.
                     Autorizá explícitamente un chat privado o un grupo (o usá la
                     entrada manual en <em>Revisar → Configuración avanzada</em>).
                   </div>
                 ) : (
-                  <p className="mt-3 text-small text-musgo">
+                  <p className="mt-3 text-small text-status-success">
                     Autorización activa: {countAuthorized(privateText, groupRows)}{" "}
                     chat(s) autorizado(s).
                   </p>
                 )}
-                <p className="mt-3 text-small text-tinta-desvaida">
+                <p className="mt-3 text-small text-muted">
                   ¿Problemas o necesitás el ID numérico? Podés usar la entrada
                   manual avanzada en <em>Revisar → Configuración avanzada</em>.
                 </p>
@@ -790,43 +761,43 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
 
             {step === 2 && (
               <section aria-label="Revisar">
-                <h3 className="font-heading text-body text-pergamino">
+                <h3 className="font-heading text-body text-primary">
                   Revisá tu configuración
                 </h3>
                 <dl className="mt-3 space-y-2 text-small">
                   <div className="flex items-center justify-between gap-3">
-                    <dt className="text-tinta-desvaida">Bot de Telegram</dt>
-                    <dd className="text-pergamino">
+                    <dt className="text-muted">Bot de Telegram</dt>
+                    <dd className="text-primary">
                       {hasToken ? "Token configurado" : "Sin token"}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <dt className="text-tinta-desvaida">Chat autorizado</dt>
-                    <dd className="text-pergamino">
+                    <dt className="text-muted">Chat autorizado</dt>
+                    <dd className="text-primary">
                       {failClosed
                         ? "Ninguno (fail-closed)"
                         : `${countAuthorized(privateText, groupRows)} chat(s)`}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <dt className="text-tinta-desvaida">Destino</dt>
-                    <dd className="text-pergamino">Taller de Ideas</dd>
+                    <dt className="text-muted">Destino</dt>
+                    <dd className="text-primary">Taller de Ideas</dd>
                   </div>
                 </dl>
-                <p className="mt-3 text-small text-tinta-desvaida">
+                <p className="mt-3 text-small text-muted">
                   Las ideas capturadas van siempre al <strong>Taller de Ideas</strong>{" "}
                   global: no elegís mundo al capturar. El mundo se define recién
                   cuando materializás una idea desde el taller.
                 </p>
 
                 {failClosed && (
-                  <div className="mt-3 rounded-lg border border-llamita/40 bg-llamita/10 p-3 text-small text-llama-alta">
+                  <div className="mt-3 rounded-lg border border-action/40 bg-action/10 p-3 text-small text-detail">
                      <strong>Fail-closed:</strong> sin chats autorizados se
                      rechaza TODO el ingreso y Hermes no arranca la captura.
                   </div>
                 )}
                 {!status.validation.ok && (
-                  <div className="mt-3 rounded-lg border border-sangre/40 bg-sangre/10 p-3 text-small text-sangre">
+                  <div className="mt-3 rounded-lg border border-status-error/40 bg-status-error/10 p-3 text-small text-status-error">
                     <strong>Errores de validación:</strong>
                     <ul className="mt-1 list-disc pl-5">
                       {status.validation.errors.map((error) => (
@@ -837,13 +808,13 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                 )}
 
                 {/* ------------------------- advanced (collapsed by default) */}
-                <div className="mt-4 rounded-md border border-filio bg-piedra">
+                <div className="mt-4 rounded-md border border-edge bg-surface-raised">
                   <button
                     type="button"
                     onClick={() => setAdvancedOpen((open) => !open)}
                     aria-expanded={advancedOpen}
                     aria-controls="ic-advanced-panel"
-                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-small font-medium text-plata hover:text-pergamino"
+                    className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-small font-medium text-icon-muted hover:text-primary"
                   >
                     Configuración avanzada (opcional)
                     <Icon
@@ -854,7 +825,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                   {advancedOpen && (
                     <div
                       id="ic-advanced-panel"
-                      className="space-y-3 border-t border-filio p-3"
+                      className="space-y-3 border-t border-edge p-3"
                     >
                       <div>
                         <label htmlFor="ic-private-chats" className={labelClass}>
@@ -905,7 +876,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                                   setGroupRows(groupRows.filter((_, i) => i !== index))
                                 }
                                 aria-label={`Quitar grupo ${index + 1}`}
-                                className="shrink-0 rounded-md p-2 text-sangre hover:bg-piedra"
+                                className="shrink-0 rounded-md p-2 text-status-error hover:bg-surface-hover"
                               >
                                 <Icon name="trash" size={16} />
                               </button>
@@ -955,20 +926,20 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                 </div>
 
                 {formError && (
-                  <p className="mt-3 text-small text-sangre">{formError}</p>
+                  <p className="mt-3 text-small text-status-error">{formError}</p>
                 )}
                 {formNotice && (
-                  <p className="mt-3 text-small text-musgo">{formNotice}</p>
+                  <p className="mt-3 text-small text-status-success">{formNotice}</p>
                 )}
               </section>
             )}
 
             {step === 3 && (
               <section aria-label="Finalizar">
-                <h3 className="font-heading text-body text-pergamino">
+                <h3 className="font-heading text-body text-primary">
                   Finalizá y arrancá la captura
                 </h3>
-                <p className="mt-1 text-small text-tinta-desvaida">
+                <p className="mt-1 text-small text-muted">
                   Guardá la configuración y después ejecutá el comando del
                   gateway Hermes en tu terminal para empezar a capturar ideas.
                   Tus ideas se guardan en el <strong>Taller de Ideas</strong>{" "}
@@ -984,32 +955,32 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                   </Button>
                 </div>
                 {formError && (
-                  <p className="mt-3 text-small text-sangre">{formError}</p>
+                  <p className="mt-3 text-small text-status-error">{formError}</p>
                 )}
                 {formNotice && (
-                  <p className="mt-3 text-small text-musgo">{formNotice}</p>
+                  <p className="mt-3 text-small text-status-success">{formNotice}</p>
                 )}
                 {saved && status && (
                   <div className="mt-3 space-y-3">
-                    <div className="rounded-lg border border-musgo/40 bg-musgo/10 p-3 text-small text-musgo">
+                    <div className="rounded-lg border border-status-success/40 bg-status-success/10 p-3 text-small text-status-success">
                       <strong>Listo.</strong> La configuración quedó guardada.
                       Ahora arrancá la captura ejecutando el comando exacto:
                     </div>
-                    <pre className="overflow-x-auto rounded-md border border-filio bg-cripta p-3 text-small text-musgo">
+                    <pre className="overflow-x-auto rounded-md border border-edge bg-surface p-3 text-small text-status-success">
                       {status.serve.command}
                     </pre>
                     {status.serve.runnable ? (
-                      <p className="text-small text-musgo">
+                      <p className="text-small text-status-success">
                         Listo para ejecutar Hermes.
                       </p>
                     ) : (
-                      <ul className="list-disc pl-5 text-small text-sangre">
+                      <ul className="list-disc pl-5 text-small text-status-error">
                         {status.serve.blocked_reasons.map((reason) => (
                           <li key={reason}>{reason}</li>
                         ))}
                       </ul>
                     )}
-                    <p className="text-small text-tinta-desvaida">
+                    <p className="text-small text-muted">
                       <strong>Próximo paso:</strong> ejecutá el comando en tu
                       terminal. Hermes debe ser el único supervisor de Telegram;
                       no ejecutes el serve de compatibilidad en paralelo.
@@ -1017,11 +988,11 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                   </div>
                 )}
                 {status && (
-                  <div className="mt-4 rounded-md border border-filio bg-piedra p-3">
-                    <h4 className="font-heading text-small text-pergamino">
+                  <div className="mt-4 rounded-md border border-edge bg-surface-raised p-3">
+                    <h4 className="font-heading text-small text-primary">
                       Limitaciones actuales
                     </h4>
-                    <ul className="mt-2 list-disc pl-5 text-small text-tinta-desvaida">
+                    <ul className="mt-2 list-disc pl-5 text-small text-muted">
                       {status.limitations.map((limitation) => (
                         <li key={limitation} className="mt-1">
                           {limitation}
@@ -1053,7 +1024,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                   Continuar <Icon name="chevron-right" size={16} />
                 </Button>
                 {step === 0 && !hasToken && (
-                  <span className="text-xs text-tinta-desvaida">
+                  <span className="text-xs text-muted">
                     Guardá el token para continuar.
                   </span>
                 )}

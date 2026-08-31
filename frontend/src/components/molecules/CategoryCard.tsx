@@ -22,18 +22,18 @@ export function CategoryCard({ world, fileCount, onClick }: CategoryCardProps) {
     <button
       type="button"
       onClick={() => onClick(world)}
-      className="group flex w-full flex-col gap-3 rounded-xl border border-filio bg-madero p-5 text-left transition-all hover:border-llamita/40 hover:bg-piedra focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50 focus-visible:ring-offset-2 focus-visible:ring-offset-cripta"
+      className="group flex w-full flex-col gap-3 rounded-xl border border-edge bg-surface-raised p-5 text-left transition-all hover:border-action/40 hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
     >
       {/* Header: icon + file count */}
       <div className="flex items-center justify-between">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-filio/50 text-llamita transition-colors group-hover:bg-filio">
+        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-surface-raised/50 text-action transition-colors group-hover:bg-surface-hover">
           <Icon name="world" size={20} />
         </div>
         <Badge variant="info">{fileCount} archivos</Badge>
       </div>
 
       {/* World name */}
-      <h3 className="font-heading text-h4 text-pergamino transition-colors group-hover:text-llamita">
+      <h3 className="font-heading text-h4 text-primary transition-colors group-hover:text-action">
         {world.name}
       </h3>
 
@@ -43,7 +43,7 @@ export function CategoryCard({ world, fileCount, onClick }: CategoryCardProps) {
           {sectionLabels.map((label) => (
             <span
               key={label}
-              className="rounded-md bg-filio/30 px-2 py-0.5 text-xs text-tinta-desvaida"
+              className="rounded-md bg-surface-raised/30 px-2 py-0.5 text-xs text-muted"
             >
               {label}
             </span>
@@ -52,7 +52,7 @@ export function CategoryCard({ world, fileCount, onClick }: CategoryCardProps) {
       )}
 
       {/* Chevron hint */}
-      <div className="mt-auto flex items-center justify-end text-plata/50 transition-colors group-hover:text-llamita">
+      <div className="mt-auto flex items-center justify-end text-icon-muted/50 transition-colors group-hover:text-action">
         <Icon name="chevron-right" size={16} />
       </div>
     </button>

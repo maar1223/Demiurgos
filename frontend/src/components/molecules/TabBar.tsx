@@ -53,7 +53,7 @@ export function TabBar({
 
   return (
     <div
-      className="flex border-b border-filio"
+      className="flex border-b border-edge"
       role="tablist"
       aria-label="Panel lateral"
     >
@@ -66,10 +66,10 @@ export function TabBar({
           onClick={() => handleClick(tab.id)}
           className={cn(
             "flex-1 px-3 py-2 text-small font-medium transition-colors",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-llamita/50",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50",
             active === tab.id
-              ? "border-b-2 border-llamita text-pergamino"
-              : "text-sombra hover:text-tinta-desvaida hover:bg-piedra/50",
+              ? "border-b-2 border-action text-primary"
+              : "text-muted hover:text-primary hover:bg-surface-hover/50",
           )}
         >
           {tab.label}

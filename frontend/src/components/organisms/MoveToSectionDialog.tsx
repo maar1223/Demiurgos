@@ -52,30 +52,30 @@ export function MoveToSectionDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="mx-4 w-full max-w-md rounded-xl border border-filio bg-madero shadow-2xl"
+        className="mx-4 w-full max-w-md rounded-xl border border-edge bg-surface-raised shadow-2xl"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="move-section-dialog-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-filio px-6 py-4">
+        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
           <h2
             id="move-section-dialog-title"
-            className="font-heading text-h4 text-pergamino"
+            className="font-heading text-h4 text-primary"
           >
             Mover a sección
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md p-1 text-plata transition-colors hover:bg-piedra hover:text-pergamino"
+            className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
             aria-label="Cerrar"
           >
             <Icon name="close" size={20} />
@@ -84,15 +84,15 @@ export function MoveToSectionDialog({
 
         {/* Body */}
         <div className="px-6 py-4">
-          <p className="text-body text-pergamino">
-            <span className="font-medium text-llamita">{nodeName}</span> se
+          <p className="text-body text-primary">
+            <span className="font-medium text-action">{nodeName}</span> se
             moverá a otra sección del taller del mundo.
           </p>
 
           {/* Irreversibility warning — cross-section moves have no undo */}
           <div
             role="alert"
-            className="mt-3 flex items-start gap-2 rounded-lg border border-sangre/30 bg-sangre/10 p-3 text-small text-sangre"
+            className="mt-3 flex items-start gap-2 rounded-lg border border-status-error/30 bg-status-error/10 p-3 text-small text-status-error"
           >
             <Icon name="error" size={16} className="mt-0.5 shrink-0" />
             <span>
@@ -118,16 +118,16 @@ export function MoveToSectionDialog({
                   onClick={() => setSelected(sec)}
                   className={cn(
                     "flex items-center gap-2 rounded-lg border px-3 py-2.5 text-left text-body transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-llamita/50",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
                     isSelected
-                      ? "border-llamita bg-piedra text-pergamino"
-                      : "border-filio bg-cripta text-tinta-desvaida hover:border-llamita/40 hover:text-pergamino",
+                      ? "border-action bg-surface-raised text-primary"
+                      : "border-edge bg-surface text-muted hover:border-action/40 hover:text-primary",
                   )}
                 >
                   <Icon
                     name="folder"
                     size={16}
-                    className={isSelected ? "text-llamita" : "text-sombra"}
+                    className={isSelected ? "text-action" : "text-muted"}
                   />
                   <span>{MOVE_DESTINATION_LABELS[sec]}</span>
                 </button>
@@ -137,7 +137,7 @@ export function MoveToSectionDialog({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 border-t border-filio px-6 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
           <Button variant="ghost" size="sm" onClick={onClose}>
             Cancelar
           </Button>

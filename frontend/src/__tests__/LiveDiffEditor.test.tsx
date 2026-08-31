@@ -171,12 +171,12 @@ describe("LiveDiffEditor", () => {
       // The old text now shows as removed (left) and the new text as added
       // (right) on the SAME row — recomputed from the props, not a stale snapshot
       expect(screen.getByText("linea dos", { selector: "div" })).toHaveClass(
-        "border-sangre",
-        "bg-sangre/30",
+        "border-status-error",
+        "bg-status-error/30",
       );
       const edited = screen.getByLabelText("Editar línea 2") as HTMLTextAreaElement;
       expect(edited).toHaveValue("linea dos!");
-      expect(edited).toHaveClass("border-musgo", "bg-musgo/30");
+      expect(edited).toHaveClass("border-status-success", "bg-status-success/30");
     });
 
     it("insertText replaces the current selection of the focused line", () => {
@@ -256,7 +256,7 @@ describe("LiveDiffEditor", () => {
 
       // The added line is editable with the green highlight
       const textarea = screen.getByLabelText("Editar línea 4");
-      expect(textarea).toHaveClass("border-musgo", "bg-musgo/30");
+      expect(textarea).toHaveClass("border-status-success", "bg-status-success/30");
       // Right gutter shows the added line number
       expect(screen.getByText("4")).toBeInTheDocument();
     });
@@ -270,7 +270,7 @@ describe("LiveDiffEditor", () => {
       );
 
       const removed = screen.getByText("borrada");
-      expect(removed).toHaveClass("border-sangre", "bg-sangre/30");
+      expect(removed).toHaveClass("border-status-error", "bg-status-error/30");
       // Only the two surviving lines are editable
       expect(screen.queryAllByLabelText(/Editar línea/)).toHaveLength(2);
       // Left gutter keeps the removed line number; the right gutter of the
@@ -288,12 +288,12 @@ describe("LiveDiffEditor", () => {
       );
 
       expect(screen.getByText("vieja")).toHaveClass(
-        "border-sangre",
-        "bg-sangre/30",
+        "border-status-error",
+        "bg-status-error/30",
       );
       const textarea = screen.getByLabelText("Editar línea 2");
       expect(textarea).toHaveValue("nueva");
-      expect(textarea).toHaveClass("border-musgo", "bg-musgo/30");
+      expect(textarea).toHaveClass("border-status-success", "bg-status-success/30");
       // Both gutters are numbered 2 — old and new line share the grid row
       expect(screen.getAllByText("2")).toHaveLength(2);
     });

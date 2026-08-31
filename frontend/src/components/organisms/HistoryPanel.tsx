@@ -156,23 +156,23 @@ export function HistoryPanel({
 
   return (
     <div
-      className="fixed inset-0 z-40 flex items-center justify-center bg-cripta/80 backdrop-blur-sm"
+      className="fixed inset-0 z-40 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
       <div
-        className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-filio bg-madero shadow-2xl"
+        className="mx-4 flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-edge bg-surface-raised shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-labelledby="history-panel-title"
       >
-        <div className="flex items-center justify-between border-b border-filio px-6 py-4">
+        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
           <div className="min-w-0">
-            <h2 id="history-panel-title" className="font-heading text-h4 text-pergamino">
+            <h2 id="history-panel-title" className="font-heading text-h4 text-primary">
               File history
             </h2>
-            <p className="truncate text-small text-tinta-desvaida">{path}</p>
+            <p className="truncate text-small text-muted">{path}</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close history">
             <Icon name="close" size={20} />
@@ -181,7 +181,7 @@ export function HistoryPanel({
 
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-6">
           {(history.error || actionError || history.restoreError) && (
-            <div role="alert" className="rounded-lg border border-sangre/30 bg-sangre/10 px-3 py-2 text-small text-sangre">
+            <div role="alert" className="rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-small text-status-error">
               {actionError ?? history.restoreError?.message ?? history.error?.message}
             </div>
           )}
@@ -191,7 +191,7 @@ export function HistoryPanel({
               <Spinner size="lg" />
             </div>
           ) : entries.length === 0 ? (
-            <p className="py-16 text-center text-body text-tinta-desvaida">No history available.</p>
+            <p className="py-16 text-center text-body text-muted">No history available.</p>
           ) : (
             <ul className="flex flex-col gap-2">
               {entries.map((entry) => {
@@ -200,21 +200,21 @@ export function HistoryPanel({
                 return (
                   <li
                     key={entry.snapshot_id}
-                    className="flex items-center gap-3 rounded-lg border border-filio bg-cripta/50 px-3 py-3"
+                    className="flex items-center gap-3 rounded-lg border border-edge bg-surface/50 px-3 py-3"
                   >
-                    <Icon name="history" size={18} className="shrink-0 text-plata" />
+                    <Icon name="history" size={18} className="shrink-0 text-icon-muted" />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-small text-pergamino">
+                      <p className="truncate text-small text-primary">
                         Version saved on {formatDate(entry.created_at)}
                       </p>
-                      <p className="text-xs text-tinta-desvaida">
+                      <p className="text-xs text-muted">
                         {relative
                           ? `Saved ${relative} · ${entry.size} bytes`
                           : `${entry.size} bytes`}
                       </p>
                     </div>
                     {current ? (
-                      <span className="text-xs text-tinta-desvaida">Current version</span>
+                      <span className="text-xs text-muted">Current version</span>
                     ) : (
                       <Button
                         variant="secondary"
