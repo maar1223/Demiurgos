@@ -331,6 +331,16 @@ function Checklist({
   const consulting = stage.includes("Consultando asistente");
   const recovering = stage.includes("Recuperando fichas pendientes");
   const fichaMatch = stage.match(/ficha (\d+) de (\d+)/);
+  // Sub-step the assistant is on inside "Consultando asistente" (the server
+  // emits "resumiendo fichas" / "generando metadatos y relaciones").
+  const substep = stage.includes("generando metadatos")
+    ? "generando metadatos y relaciones"
+    : stage.includes("resumiendo") || (consulting && !fichaMatch)
+      ? "resumiendo fichas"
+      : undefined;
+  const consultDetail = [substep, fichaMatch ? `ficha ${fichaMatch[1]} de ${fichaMatch[2]} del documento` : undefined]
+    .filter(Boolean)
+    .join(" · ");
   const steps = [
     { id: "analyze", label: "Analizando contenido", done: true, current: false, detail: undefined as string | undefined },
     {
@@ -338,7 +348,7 @@ function Checklist({
       label: "Consultando asistente",
       done: recovering,
       current: consulting && !recovering,
-      detail: fichaMatch ? `ficha ${fichaMatch[1]} de ${fichaMatch[2]} del documento` : undefined,
+      detail: consultDetail || undefined,
     },
     {
       id: "recover",

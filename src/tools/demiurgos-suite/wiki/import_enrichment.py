@@ -1379,6 +1379,7 @@ def _enrich_funnel_chunk(
     catalog: list[Candidate],
     rel_vocab: Iterable[str] | None,
     prov: dict[str, str],
+    on_phase: Callable[[str], None] | None = None,
 ) -> list[Candidate]:
     """Run Steps 2-4 for ONE byte-bounded chunk (the unit of parallelism).
 
@@ -1394,11 +1395,18 @@ def _enrich_funnel_chunk(
     session_id makes the gateway serialize concurrent turns ("two routing keys
     mapped to one session_id"), which caps enrichment at 1x. A per-chunk
     session is the whole point of the parallelism.
+
+    ``on_phase`` (optional) emits the sub-step this chunk is entering
+    (``"resumiendo"`` / ``"generando_metadata"``) so the live UI can show what
+    is happening underneath "Consultando asistente" instead of a frozen label.
+    It may be called from worker threads; callers must make it thread-safe.
     """
     # Step 2 — per-ficha summaries from the full body (this chunk). Uses
     # fill-in: re-asks any candidate the model omitted in small groups, so a
     # single truncated response cannot drop a ficha (which would cascade into
     # loss of its relationships in Step 3, not just fallback).
+    if on_phase is not None:
+        on_phase("resumiendo")
     summaries: dict[str, str] = _fill_missing_summaries(
         chunk, hermes_runner, session_id)
 
@@ -1415,6 +1423,8 @@ def _enrich_funnel_chunk(
     # document. Merging the two former calls halves the LLM round-trips per
     # chunk. Each half validates independently (fail-open): a malformed
     # relationships side never discards a valid frontmatter side.
+    if on_phase is not None:
+        on_phase("generando_metadata")
     relationships: list[RelationshipSuggestion] = []
     frontmatter: dict[str, dict[str, Any]] = {}
     if summarized:
@@ -1626,7 +1636,8 @@ def analyze_ficha_funnel(
         chunk_session = f"{base_session_id}:chunk:{idx}"
         return idx, _enrich_funnel_chunk(
             chunk, hermes_runner, chunk_session,
-            catalog=catalog, rel_vocab=rel_vocab, prov=prov)
+            catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+            on_phase=on_phase)
 
     workers = max_workers if max_workers is not None else _default_funnel_max_workers()
     if workers <= 1 or len(chunks) <= 1:

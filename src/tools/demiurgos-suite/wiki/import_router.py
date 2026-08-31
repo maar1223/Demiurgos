@@ -579,21 +579,27 @@ def create_import_router(
             if enrich and enricher is not None and candidates:
                 _store.update_progress(job_id, "Consultando asistente", 80)
 
+                # Current sub-step label, shared between on_phase (worker
+                # threads) and the ficha-counter callback. A one-element list is
+                # mutated in place so the closure never needs nonlocal rebinding.
+                _substep_label: list[str] = ["resumiendo fichas"]
+
                 def _live_enrichment_progress(done: int, total: int) -> None:
                     """Persist a coarse "ficha X de Y" enrichment checkpoint.
 
                     Ranges pct from 80 (enrichment start) to 95 (enrichment
                     done) so the live bar moves during the slow Hermes phase
                     without implying the (still pending) tail completed. The
-                    stage string carries the count so the user reads real
-                    progress, not a frozen label.
+                    stage string carries the current sub-step (resumiendo /
+                    generando metadatos) and the live ficha count, so the user
+                    reads real progress instead of a frozen label.
                     """
                     if total <= 0:
                         return
                     pct = 80 + int(round(15 * done / total))
                     _store.update_progress(
                         job_id,
-                        f"Consultando asistente — ficha {done} de {total}",
+                        f"Consultando asistente — {_substep_label[0]} · ficha {done} de {total}",
                         min(pct, 95),
                     )
 
@@ -631,10 +637,16 @@ def create_import_router(
                     try:
 
                         def _on_phase(phase: str) -> None:
-                            """Distinct stage when the doc-wide last filter runs,
-                            so the live checklist shows the recovery as its own
-                            phase instead of freezing on "ficha 60 de 60"."""
-                            if phase == "last_filter":
+                            """Track the current sub-step of the enrichment so the
+                            live checklist shows real activity inside "Consultando
+                            asistente", and emit a distinct stage when the
+                            doc-wide last filter runs (so it does not freeze on
+                            "ficha 60 de 60")."""
+                            if phase == "resumiendo":
+                                _substep_label[0] = "resumiendo fichas"
+                            elif phase == "generando_metadata":
+                                _substep_label[0] = "generando metadatos y relaciones"
+                            elif phase == "last_filter":
                                 _store.update_progress(
                                     job_id, "Recuperando fichas pendientes", 96)
 
