@@ -5,7 +5,6 @@ import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { Navbar } from "@/components/organisms/Navbar";
 import {
   NAV_LINKS,
-  PLACEHOLDER_TOAST,
 } from "@/lib/constants";
 import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
 import type { WorldInfo } from "@/api/types";
@@ -73,13 +72,9 @@ function unnamedButtons() {
   return screen.getAllByRole("button");
 }
 
-// Core-only workshop contract: only Taller de Mundo / Taller de Herramientas
-// are available; everything else is a non-actionable "Próximamente" teaser.
+// Core-only workshop contract: only the available workshops are in the nav.
 const availableLinks = NAV_LINKS.filter(
   (link) => link.availability === "available",
-);
-const teaserLinks = NAV_LINKS.filter(
-  (link) => link.availability === "teaser",
 );
 
 describe("Navbar", () => {
@@ -140,29 +135,12 @@ describe("Navbar", () => {
     }
   });
 
-  it("keeps the generic teaser non-actionable: alert and no navigation", async () => {
-    const user = userEvent.setup();
+  it("shows no Próximamente teaser next to the Core workshops", () => {
     renderNavbar({ worlds });
 
-    expect(teaserLinks.length).toBe(1);
-    await user.click(screen.getByRole("button", { name: "Próximamente" }));
-
-    expect(window.alert).toHaveBeenCalledWith(PLACEHOLDER_TOAST);
-    expect(screen.getByTestId("path")).toHaveTextContent("/start");
-  });
-
-  it("shows exactly one non-actionable Próximamente teaser next to the Core workshops", () => {
-    renderNavbar({ worlds });
-
-    expect(
-      screen.getAllByRole("button", { name: "Próximamente" }),
-    ).toHaveLength(1);
-    expect(
-      screen.getByRole("button", { name: "Taller de Mundo" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Taller de Herramientas" }),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Próximamente" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Taller de Mundo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Taller de Herramientas" })).toBeInTheDocument();
   });
 
   it("places Taller de Ideas between Taller de Herramientas and Taller de Mundo", () => {
@@ -398,18 +376,13 @@ describe("Navbar", () => {
     ).toHaveLength(1);
   });
 
-  it("mobile teaser link alerts and keeps the menu open", async () => {
+  it("shows no Próximamente teaser in the mobile menu", async () => {
     const user = userEvent.setup();
     renderNavbar({ worlds });
 
     const buttons = unnamedButtons();
     await user.click(buttons[buttons.length - 1]);
-    await user.click(screen.getAllByRole("button", { name: "Próximamente" })[1]);
 
-    expect(window.alert).toHaveBeenCalledWith(PLACEHOLDER_TOAST);
-    // handleNavClick returns before closing the menu for teaser links
-    expect(
-      screen.getAllByRole("button", { name: "Próximamente" }),
-    ).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Próximamente" })).not.toBeInTheDocument();
   });
 });

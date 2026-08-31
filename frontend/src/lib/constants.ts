@@ -64,17 +64,17 @@ export const GENERIC_TEASER_LABEL = "Próximamente" as const;
  * anymore: it lives inside the Profile page ("Perfil" → "Centro de
  * Configuración" tab), with Telegram under "Integraciones" and the
  * legacy-folder migration under "Mundos"; there is no standalone
- * `/centro-configuracion` route. Every future/paid surface collapses into
- * ONE generic non-actionable "Próximamente" teaser — legacy narrative phases
- * (Personajes/Escritura/Planificar/Revisar) are never presented as Core
- * workshops. Taller de Publicación stays absent until it exists/becomes
- * available; when enabled it is marked `rightmost` and always renders last.
+ * `/centro-configuracion` route. There is NO generic "Próximamente" teaser in
+ * the Core navbar — a workshop only appears once it is a real, `available`
+ * link; legacy narrative phases (Personajes/Escritura/Planificar/Revisar) are
+ * never presented as Core workshops. Taller de Publicación stays absent until
+ * it exists/becomes available; when enabled it is marked `rightmost` and
+ * always renders last.
  */
 export const NAV_LINKS: readonly NavLink[] = [
   { label: "Taller de Herramientas", to: ROUTES.TALLER_HERRAMIENTAS, availability: "available" },
   { label: "Taller de Ideas", to: ROUTES.IDEAS, availability: "available" },
   { label: "Taller de Mundo", to: ROUTES.TALLER_MUNDO, availability: "available" },
-  { label: GENERIC_TEASER_LABEL, to: "#", availability: "teaser" },
 ];
 
 export const PLACEHOLDER_TOAST =
