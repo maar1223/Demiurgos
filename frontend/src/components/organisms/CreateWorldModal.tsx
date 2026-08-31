@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
 import { createWorld } from "@/api/onboarding";
@@ -138,7 +139,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
       onClick={handleOverlayClick}
@@ -226,6 +227,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

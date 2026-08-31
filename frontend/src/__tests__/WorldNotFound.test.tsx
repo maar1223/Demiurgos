@@ -71,4 +71,18 @@ describe("WorldNotFound", () => {
     expect(screen.getByRole("button", { name: /Nuevo mundo/ })).toBeInTheDocument();
     expect(screen.getByText(/No hay otros mundos creados todavía/)).toBeInTheDocument();
   });
+
+  it("opens the create-world dialog when 'Nuevo mundo' is clicked", async () => {
+    renderNotFound("Avalor");
+
+    fireEvent.click(screen.getByRole("button", { name: /Nuevo mundo/ }));
+
+    // The picker closes and the create dialog (same shell) opens with the name
+    // field — regression for the z-index/stacking bug that hid it.
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toBeInTheDocument(),
+    );
+    expect(screen.getByLabelText(/Nombre del mundo/)).toBeInTheDocument();
+    expect(screen.queryByText("Elegí un mundo")).not.toBeInTheDocument();
+  });
 });

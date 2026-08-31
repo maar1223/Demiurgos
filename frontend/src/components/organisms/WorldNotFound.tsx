@@ -58,7 +58,13 @@ export function WorldNotFound({ mundo }: WorldNotFoundProps) {
           missingWorld={mundo}
           available={available}
           onPick={pick}
-          onCreate={() => setCreateOpen(true)}
+          onCreate={() => {
+            // Close the picker so the create dialog is the only modal —
+            // otherwise both are z-50 and the (body-portaled) picker can sit
+            // above the inline create dialog in a page stacking context.
+            setOpen(false);
+            setCreateOpen(true);
+          }}
           onClose={() => setOpen(false)}
           footerAction={{ label: "Volver al inicio", onAction: goHome }}
         />

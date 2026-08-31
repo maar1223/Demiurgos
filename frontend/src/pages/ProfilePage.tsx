@@ -1391,7 +1391,13 @@ function WorldsSection() {
             setPickerOpen(false);
             navigate(`/wiki/${encodeURIComponent(name)}`);
           }}
-          onCreate={() => setCreateOpen(true)}
+          onCreate={() => {
+            // Close the picker so the create dialog is the only modal (both
+            // are z-50; the body-portaled picker could sit above the inline
+            // create dialog otherwise).
+            setPickerOpen(false);
+            setCreateOpen(true);
+          }}
           onClose={() => setPickerOpen(false)}
           footerAction={{ label: "Cancelar", onAction: () => setPickerOpen(false) }}
         />
