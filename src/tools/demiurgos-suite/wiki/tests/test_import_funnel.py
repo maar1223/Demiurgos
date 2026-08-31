@@ -859,6 +859,46 @@ class TestRecoverTypesDocumentWide:
         assert seen.get("context") == len(targets)
         assert seen.get("catalog") == len(targets)
 
+    def test_recovers_full_frontmatter_and_relationships(self):
+        """The last filter rebuilds type + description + relaciones + graph edges."""
+        fichas = self._given(3)
+        target = fichas[0]
+        # A ficha the combined pass dropped entirely (fallback, no metadata).
+        target = Candidate.model_validate({**target.model_dump(),
+            "frontmatter": {"title": target.display_title, "type": None,
+                            "description": "", "relaciones": [],
+                            "state": "fallback"}})
+
+        def runner(prompt, _session):
+            data = json.loads(prompt)
+            cands = data.get("candidates", [])
+            # Combined-style prompt (no body, has rel_vocab + entity_vocab).
+            if cands and "body" not in cands[0] and "rel_vocab" in data and "entity_vocab" in data:
+                return json.dumps({
+                    "frontmatter": [
+                        {"candidate_id": c["candidate_id"],
+                         "title": c["display_title"], "type": "evento",
+                         "description": "Desc recuperada", "relaciones": [fichas[1].canonical_id]}
+                        for c in cands],
+                    "relationships": [
+                        {"source_candidate_id": cands[0]["candidate_id"],
+                         "target_canonical_id": fichas[1].canonical_id or fichas[1].normalized_identity,
+                         "relationship_type": "ubicado-en",
+                         "confidence": 0.8, "evidence": "e"}],
+                })
+            return json.dumps({})
+
+        out = _recover_types_document_wide(fichas, runner, "sess", catalog=fichas)
+        by_id = {c.candidate_id: c for c in out}
+        t = by_id[target.candidate_id]
+        assert t.frontmatter.type == "evento"
+        assert t.frontmatter.description == "Desc recuperada"
+        assert t.frontmatter.relaciones == [fichas[1].canonical_id]
+        assert t.frontmatter.state == FrontmatterState.GENERATED
+        # The relationship became an enrichment_json edge (graph suggestion).
+        assert t.enrichment_json and t.enrichment_json[0]["__type__"] == "relationship"
+        assert t.enrichment_status == EnrichmentStatus.OK.value
+
     @staticmethod
     def _runner(types):
         def runner(prompt, _session):
