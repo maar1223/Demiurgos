@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useWorlds } from "@/hooks/useWorlds";
+import { WorldNotFound } from "@/components/organisms/WorldNotFound";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useImageUpload } from "@/hooks/useImages";
@@ -1061,21 +1062,7 @@ export default function WikiEditor() {
       <EditorLayout
         sidebar={null}
       >
-        <div className="flex flex-col items-center justify-center gap-4 py-24">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-raised text-status-error">
-            <Icon name="error" size={32} />
-          </div>
-          <h2 className="font-heading text-h3 text-primary">
-            Mundo no encontrado
-          </h2>
-          <p className="text-body text-muted">
-            No existe un mundo llamado "{mundo}".
-          </p>
-          <Button variant="secondary" onClick={() => navigate("/wiki")}>
-            <Icon name="chevron-left" size={16} />
-            Volver al inicio
-          </Button>
-        </div>
+        <WorldNotFound mundo={mundo} />
       </EditorLayout>
     );
   }
