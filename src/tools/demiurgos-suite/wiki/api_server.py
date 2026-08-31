@@ -97,7 +97,11 @@ from telegram_settings import (
     has_token as telegram_has_token,
     telegram_state,
 )
-from wiki.world_authority import WorldResultKind, create_world as _create_world
+from wiki.world_authority import (
+    WorldResultKind,
+    create_world as _create_world,
+    rename_world as _rename_world,
+)
 from wiki.world_authority import detect_legacy_layout
 from methodology_library import (
     AlreadyPublishedError,
@@ -252,6 +256,11 @@ def _resolve_mundo_dir(mundo: str) -> Path | None:
     """
     if not isinstance(mundo, str) or not mundo:
         return None
+    # Follow a rename alias: an old world name resolves to its canonical dir,
+    # so links/URLs to a renamed world keep working (no 404 on old names).
+    alias = resolve_world_alias(mundo)
+    if alias:
+        mundo = alias
     if Path(mundo).name != mundo:  # separators / absolute paths / dot segments
         return None
     if mundo.startswith((".", "_")) or mundo in _RESERVED_WORLD_NAMES:
@@ -300,6 +309,12 @@ def get_worlds():
     return worlds
 
 
+@app.get("/api/worlds/aliases")
+def get_world_aliases():
+    """Rename-alias map ``{old_name: new_name}`` (rename redirects)."""
+    return read_world_aliases()
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "worlds_available": bool(_list_worlds())}
@@ -336,6 +351,14 @@ class OnboardingStep0Request(BaseModel):
 class WorldCreateRequest(BaseModel):
     name: str
     lore_skeleton: bool = False
+
+
+class WorldRenameRequest(BaseModel):
+    new_name: str
+
+
+class WorldRestoreRequest(BaseModel):
+    new_name: str | None = None
 
 
 def _world_names() -> list[str]:
@@ -543,6 +566,53 @@ def _active_world() -> str:
         return ""
 
 
+_WORLD_ALIASES_PATH = PROJECT_ROOT / "data" / "world-aliases.json"
+
+
+def _set_active_world(world: str) -> None:
+    """Rewrite the idea-capture active world (no-op when unreadable)."""
+    try:
+        from idea_capture_ui import read_config, write_config
+        config, _ = read_config()
+        config["active_world"] = world
+        write_config(config)
+    except Exception:  # noqa: BLE001 — rename must never fail on config rewrite
+        logger.warning("could not set active_world to %s", world)
+
+
+def read_world_aliases() -> dict[str, str]:
+    """Return the rename-alias map ``{old_name: new_name}`` (may be empty)."""
+    try:
+        data = json.loads(_WORLD_ALIASES_PATH.read_text(encoding="utf-8"))
+        return {str(k): str(v) for k, v in data.items()}
+    except (OSError, ValueError):
+        return {}
+
+
+def add_world_alias(old_name: str, new_name: str) -> None:
+    """Record that *old_name* now resolves to *new_name* (rename redirect)."""
+    aliases = read_world_aliases()
+    aliases[old_name] = new_name
+    try:
+        _WORLD_ALIASES_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _WORLD_ALIASES_PATH.write_text(
+            json.dumps(aliases, indent=2), encoding="utf-8")
+    except OSError as exc:  # noqa: BLE001 — alias failure never breaks the rename
+        logger.warning("could not persist world alias %s->%s: %s",
+                       old_name, new_name, exc)
+
+
+def resolve_world_alias(name: str) -> str | None:
+    """Follow the alias chain for *name*; returns the latest canonical name."""
+    aliases = read_world_aliases()
+    seen: set[str] = set()
+    cur = name
+    while cur in aliases and cur not in seen:
+        seen.add(cur)
+        cur = aliases[cur]
+    return cur if cur != name else None
+
+
 def _hide_world_data(world_name: str) -> None:
     """Make a world's in-process associated data invisible (REQ-002).
 
@@ -648,12 +718,18 @@ def get_world_trash(request: Request):
 
 
 @app.post("/api/worlds/{name}/restore")
-def restore_world(name: str, request: Request):
-    """Restore the most recent trash entry for a world (REQ-005)."""
+def restore_world(name: str, request: Request, body: WorldRestoreRequest | None = None):
+    """Restore the most recent trash entry for a world (REQ-005).
+
+    ``body.new_name`` (optional) restores it under a DIFFERENT name — the
+    conflict-resolution path when an active world already owns ``name``.
+    """
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Autenticación requerida")
     try:
-        world_recycle_bin.restore_from_trash(name, trash_root=TRASH_ROOT, mundos_dir=MUNDOS_DIR)
+        world_recycle_bin.restore_from_trash(
+            name, new_name=(body.new_name if body else None),
+            trash_root=TRASH_ROOT, mundos_dir=MUNDOS_DIR)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Mundo no encontrado en la papelera") from exc
     except ValueError as exc:
@@ -663,6 +739,35 @@ def restore_world(name: str, request: Request):
         ) from exc
     logger.info("POST /api/worlds/%s/restore -> restored", name)
     return {"status": "restored", "world_name": name}
+
+
+@app.post("/api/worlds/{name}/rename")
+def rename_world(name: str, request: Request, body: WorldRenameRequest):
+    """Rename an active world: move ``mundos/{name}`` → ``mundos/{new_name}``.
+
+    Also rewrites the idea-capture ``active_world`` when it points at the old
+    name, and records a rename alias so old URLs redirect to the new name.
+    """
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    result = _rename_world(MUNDOS_DIR, name, body.new_name)
+    if result.kind == WorldResultKind.INVALID_NAME:
+        raise HTTPException(status_code=400, detail=result.message)
+    if result.kind == WorldResultKind.NOT_FOUND:
+        raise HTTPException(status_code=404, detail=result.message)
+    if result.kind == WorldResultKind.COLLISION:
+        raise HTTPException(status_code=409, detail=result.message)
+    if result.kind == WorldResultKind.IO_ERROR:
+        raise HTTPException(status_code=500, detail=result.message)
+    # Update the idea-capture active world reference if it pointed at the old name.
+    try:
+        if _active_world().lower() == name.lower():
+            _set_active_world(result.name)
+    except Exception:  # noqa: BLE001 — never block a successful rename on config
+        logger.warning("rename: could not update active_world for %s", name)
+    add_world_alias(name, result.name)
+    logger.info("POST /api/worlds/%s/rename -> %s", name, result.name)
+    return {"status": "renamed", "old_name": name, "new_name": result.name}
 
 
 @app.delete("/api/worlds/trash/{name}")

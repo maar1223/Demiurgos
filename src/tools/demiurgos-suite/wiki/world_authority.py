@@ -73,6 +73,7 @@ class WorldResultKind(Enum):
     INVALID_NAME = "invalid_name"
     COLLISION = "collision"  # existing Author-owned/imported tree — never mutated
     IO_ERROR = "io_error"
+    NOT_FOUND = "not_found"  # the source world does not exist (rename)
 
 
 @dataclass(frozen=True)
@@ -201,6 +202,62 @@ def create_world(
         normalized,
         path=target,
         message="Mundo creado.",
+    )
+
+
+def rename_world(
+    mundos_dir: Path,
+    old_name: str,
+    new_name: str,
+) -> WorldResult:
+    """Rename an existing canonical world tree.
+
+    ``old_name`` must be an existing visible world directory; ``new_name`` is
+    normalized with the same rules as :func:`create_world` and must not already
+    exist. The folder is moved in place (``Path.rename``), so the world keeps
+    its content under the new name. Callers update external references (the
+    idea-capture ``active_world`` and the rename-alias store) separately.
+    """
+    if normalize_world_name(old_name) is None:
+        return WorldResult(
+            WorldResultKind.INVALID_NAME, old_name,
+            message="El nombre del mundo a renombrar no es válido.",
+        )
+    new_normalized = normalize_world_name(new_name)
+    if new_normalized is None:
+        return WorldResult(
+            WorldResultKind.INVALID_NAME, new_name,
+            message="El nombre nuevo no es válido.",
+        )
+    root = Path(mundos_dir).resolve()
+    old_dir = (root / old_name).resolve()
+    if not old_dir.is_dir():
+        return WorldResult(
+            WorldResultKind.NOT_FOUND, old_name,
+            message="El mundo a renombrar no existe.",
+        )
+    new_path = (root / new_normalized).resolve()
+    if new_path.parent != root:
+        return WorldResult(
+            WorldResultKind.COLLISION, new_normalized,
+            message="Ruta del mundo fuera del árbol de mundos.",
+        )
+    if new_path.is_dir() or new_path.is_symlink() or new_path.exists():
+        return WorldResult(
+            WorldResultKind.COLLISION, new_normalized,
+            message="Ya existe un mundo con ese nombre.",
+        )
+    try:
+        # Same-directory rename (atomic on POSIX); a cross-device move is
+        # reported as IO_ERROR rather than silently copying partial content.
+        old_dir.rename(new_path)
+    except OSError as exc:
+        return WorldResult(
+            WorldResultKind.IO_ERROR, new_normalized, message=str(exc),
+        )
+    return WorldResult(
+        WorldResultKind.CREATED, new_normalized, path=new_path,
+        message="Mundo renombrado.",
     )
 
 

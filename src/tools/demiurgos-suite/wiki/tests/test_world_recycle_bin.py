@@ -20,6 +20,7 @@ for _p in (str(_WIKI), str(_SUITE)):
         sys.path.insert(0, _p)
 
 import world_recycle_bin as wrb  # noqa: E402
+from world_authority import rename_world  # noqa: E402
 from guided_character_protocol import GuidedSessionStore  # noqa: E402
 
 
@@ -135,6 +136,42 @@ class TestRestoreFromTrash:
         wrb.restore_from_trash("Kaelia", trash_root=env["trash"], mundos_dir=env["mundos"])
         assert (env["mundos"] / "Kaelia" / "lore").is_dir()
         assert old.exists()  # the older entry remains in trash
+
+    def test_restore_as_new_name_resolves_conflict(self, env):
+        wrb.move_to_trash("Avalor", trash_root=env["trash"], mundos_dir=env["mundos"])
+        # An active world now owns the original name -> restore is a conflict.
+        (env["mundos"] / "Avalor").mkdir()
+        with pytest.raises(ValueError):
+            wrb.restore_from_trash("Avalor", trash_root=env["trash"], mundos_dir=env["mundos"])
+        # Restore under a different name succeeds and keeps the content.
+        wrb.restore_from_trash(
+            "Avalor", new_name="Avalor2",
+            trash_root=env["trash"], mundos_dir=env["mundos"])
+        assert (env["mundos"] / "Avalor2" / "lore" / "a.md").is_file()
+        assert (env["mundos"] / "Avalor2" / "lore" / "b.md").is_file()
+        assert not (env["trash"] / "Avalor").exists()
+
+
+class TestRenameWorld:
+    def test_renames_and_preserves_content(self, env):
+        result = rename_world(env["mundos"], "Avalor", "Avalor2")
+        assert result.kind.value == "created"
+        assert not (env["mundos"] / "Avalor").exists()
+        assert (env["mundos"] / "Avalor2" / "lore" / "a.md").is_file()
+        assert (env["mundos"] / "Avalor2" / "personajes" / "p.md").is_file()
+
+    def test_collision_rejected(self, env):
+        (env["mundos"] / "Avalor2").mkdir()
+        result = rename_world(env["mundos"], "Avalor", "Avalor2")
+        assert result.kind.value == "collision"
+
+    def test_missing_source_rejected(self, env):
+        result = rename_world(env["mundos"], "NoExiste", "Nuevo")
+        assert result.kind.value == "not_found"
+
+    def test_invalid_new_name_rejected(self, env):
+        result = rename_world(env["mundos"], "Avalor", "../escape")
+        assert result.kind.value == "invalid_name"
 
 
 class TestListTrash:

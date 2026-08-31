@@ -166,13 +166,17 @@ def move_to_trash(
 def restore_from_trash(
     world_name: str,
     *,
+    new_name: str | None = None,
     trash_root: Path | None = None,
     mundos_dir: Path | None = None,
 ) -> None:
     """Move the most recent trash entry for *world_name* back to ``mundos_dir``.
 
-    Raises ``FileNotFoundError`` when the world is not in the trash and
-    ``ValueError`` when ``mundos_dir/{world_name}`` already exists.
+    ``new_name`` (optional) restores the world under a DIFFERENT name — the
+    conflict-resolution path when ``mundos_dir/{world_name}`` already exists as
+    an active world. Raises ``FileNotFoundError`` when the world is not in the
+    trash and ``ValueError`` when the destination ``mundos_dir/{name}`` already
+    exists.
     """
     _validate_world_name(world_name)
     root = Path(trash_root) if trash_root is not None else TRASH_ROOT
@@ -180,9 +184,11 @@ def restore_from_trash(
     entries = _world_entries(root, world_name)
     if not entries:
         raise FileNotFoundError(world_name)
-    target = mundos / world_name
+    dest_name = new_name if new_name else world_name
+    _validate_world_name(dest_name)
+    target = mundos / dest_name
     if target.exists():
-        raise ValueError(f"world already exists: {world_name}")
+        raise ValueError(f"world already exists: {dest_name}")
     shutil.move(str(entries[0]), str(target))
     _prune_empty_world_dir(root, world_name)
 
