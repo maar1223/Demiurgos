@@ -1348,7 +1348,7 @@ export default function WorldImporter() {
         </div>
 
         {/* Preservation-first messaging — shown from the start */}
-        <div className="mt-3 rounded-lg border border-status-success/40 bg-status-success/10 px-4 py-3 text-small text-primary">
+        <div className="mt-3 rounded-lg border border-action/40 bg-action/10 px-4 py-3 text-small text-primary">
           <span className="font-medium">Tu contenido actual nunca se reemplaza sin tu aprobación explícita.</span>{" "}
           Las fichas editadas se conservan; se agregan solo las imágenes y
           referencias faltantes. Los reemplazos autorizados guardan la versión
