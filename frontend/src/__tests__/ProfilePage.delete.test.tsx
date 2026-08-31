@@ -6,6 +6,7 @@ import { useWorlds } from "@/hooks/useWorlds";
 import { deleteWorld, listTrash, permanentDelete, restoreWorld } from "@/api/worlds";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { getReadiness } from "@/api/onboarding";
+import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
 import { ApiError, type IdeaCaptureStatus, type WorldInfo, type WorldTrashEntry } from "@/api/types";
 import type { Mock } from "vitest";
 
@@ -173,6 +174,34 @@ describe("ProfilePage — Mundos tab / 3-step delete flow (W-4)", () => {
     // Modal closes and the worlds list is refreshed.
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(mutateSpy).toHaveBeenCalled();
+  });
+
+  it("clears the active world from the selector when the deleted world was active", async () => {
+    // Regression: deleting the world the selector points at must not leave it
+    // showing a deleted world. localStorage holds the persisted active world.
+    window.localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Avalor");
+    renderProfile();
+    await openMundosTab();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Borrar" })[0]);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Entiendo, continuar" }));
+    const continueButton = within(dialog).getByRole("button", { name: "Continuar" });
+    within(dialog).getAllByRole("checkbox").forEach((cb) => fireEvent.click(cb));
+    await waitFor(() => expect(continueButton).toBeEnabled());
+    fireEvent.click(continueButton);
+    const input = within(dialog).getByLabelText("Nombre del mundo a eliminar");
+    fireEvent.change(input, { target: { value: "avalor" } });
+    const confirmButton = within(dialog).getByRole("button", { name: "Borrar definitivamente" });
+    await waitFor(() => expect(confirmButton).toBeEnabled());
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => expect(deleteWorldMock).toHaveBeenCalledWith("Avalor", "avalor"));
+    // The active world that no longer exists must be cleared so the selector
+    // no longer points at a deleted world.
+    await waitFor(() =>
+      expect(window.localStorage.getItem(ACTIVE_WORLD_STORAGE_KEY)).toBeNull(),
+    );
   });
 
   it("cancels at step 1 without deleting", async () => {

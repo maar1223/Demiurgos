@@ -8,6 +8,7 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
+import { clearCurrentWorld, getCurrentWorld } from "@/lib/currentWorld";
 import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
 import { SecretInput } from "@/components/molecules/SecretInput";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
@@ -1259,10 +1260,17 @@ function WorldsSection() {
   const onlyWorld = worlds.length <= 1;
 
   const handleDeleted = useCallback(() => {
+    // If the deleted world was the active working world (the one the world
+    // selector shows), clear it so the selector does not keep pointing at a
+    // world that no longer exists. `deleteTarget` is still set here (cleared
+    // below), so we can compare its name against the persisted active world.
+    if (deleteTarget?.name && deleteTarget.name === getCurrentWorld()) {
+      clearCurrentWorld();
+    }
     void mutate();
     setTrashRefresh((n) => n + 1);
     setDeleteTarget(null);
-  }, [mutate]);
+  }, [mutate, deleteTarget]);
 
   const handleTrashChanged = useCallback(() => {
     // A restore makes a world reappear; a purge only empties the trash.
