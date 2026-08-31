@@ -10,7 +10,9 @@ import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettings
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
 import { WorldPickerDialog } from "@/components/organisms/WorldPickerDialog";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
-import { clearCurrentWorld, getCurrentWorld } from "@/lib/currentWorld";
+import { WorldNameDialog } from "@/components/organisms/WorldNameDialog";
+import { renameWorld } from "@/api/worlds";
+import { clearCurrentWorld, getCurrentWorld, setCurrentWorld } from "@/lib/currentWorld";
 import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
 import { SecretInput } from "@/components/molecules/SecretInput";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
@@ -32,6 +34,7 @@ import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { reloadPage } from "@/lib/reloadPage";
 import type {
+  ApiError,
   AuthSessionStatus,
   ReadinessSnapshot,
   VaultConfig,
@@ -48,6 +51,7 @@ import {
   essentialBadgeFor,
 } from "@/pages/ConfigurationCenter";
 import { cn } from "@/lib/utils";
+import { getErrorMessage } from "@/lib/utils";
 
 type ProfileSection =
   | "sesion"
@@ -1237,6 +1241,10 @@ function WorldsSection() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerMundo, setPickerMundo] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  // Rename an active world (moves the world folder + updates references).
+  const [renameTarget, setRenameTarget] = useState<WorldInfo | null>(null);
+  const [renameBusy, setRenameBusy] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
 
   // The backend refuses to delete the active world; mirror that rule in the
   // UI with a disabled button + tooltip. Fail-open: if the idea-capture
@@ -1283,6 +1291,29 @@ function WorldsSection() {
     setTrashRefresh((n) => n + 1);
     setDeleteTarget(null);
   }, [mutate, deleteTarget]);
+
+  const handleRename = useCallback(
+    async (world: WorldInfo, newName: string) => {
+      setRenameBusy(true);
+      setRenameError(null);
+      try {
+        await renameWorld(world.name, newName);
+        // If the renamed world was the selector's active world, keep the
+        // persisted reference pointing at it under the new name.
+        if (getCurrentWorld() === world.name) {
+          setCurrentWorld(newName);
+        }
+        setRenameTarget(null);
+        await mutate();
+      } catch (err) {
+        const apiErr = err as ApiError;
+        setRenameError(getErrorMessage(apiErr.status, apiErr.detail));
+      } finally {
+        setRenameBusy(false);
+      }
+    },
+    [mutate],
+  );
 
   const handleTrashChanged = useCallback(() => {
     // A restore makes a world reappear; a purge only empties the trash.
@@ -1344,15 +1375,27 @@ function WorldsSection() {
                       <Badge>Personajes {world.character_count}</Badge>
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={disabledReason !== null}
-                    title={disabledReason ?? undefined}
-                    onClick={() => setDeleteTarget(world)}
-                  >
-                    Borrar
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setRenameError(null);
+                        setRenameTarget(world);
+                      }}
+                    >
+                      Renombrar
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={disabledReason !== null}
+                      title={disabledReason ?? undefined}
+                      onClick={() => setDeleteTarget(world)}
+                    >
+                      Borrar
+                    </Button>
+                  </div>
                 </li>
               );
             })}
@@ -1412,6 +1455,22 @@ function WorldsSection() {
           navigate(`/wiki/${encodeURIComponent(world.name)}`);
         }}
       />
+
+      {renameTarget && (
+        <WorldNameDialog
+          title="Renombrar mundo"
+          message={`El mundo «${renameTarget.name}» se moverá a un nuevo nombre. Los enlaces viejos siguen funcionando (se redirigen).`}
+          initialValue={renameTarget.name}
+          confirmLabel="Renombrar"
+          confirmBusy={renameBusy}
+          error={renameError}
+          onConfirm={(newName) => void handleRename(renameTarget, newName)}
+          onClose={() => {
+            setRenameTarget(null);
+            setRenameError(null);
+          }}
+        />
+      )}
     </div>
   );
 }

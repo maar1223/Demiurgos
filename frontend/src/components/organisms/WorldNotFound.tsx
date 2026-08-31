@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
 import { useWorlds } from "@/hooks/useWorlds";
+import { getWorldAliases } from "@/api/worlds";
 import { WorldPickerDialog } from "@/components/organisms/WorldPickerDialog";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import type { WorldInfo } from "@/api/types";
@@ -26,6 +27,23 @@ export function WorldNotFound({ mundo }: WorldNotFoundProps) {
   const [open, setOpen] = useState(true);
   const [createOpen, setCreateOpen] = useState(false);
   const available = worlds.filter((w) => w.name !== mundo);
+
+  // If the missing world is a rename alias, follow it so old URLs keep
+  // working (no "not found" for a world that was renamed).
+  useEffect(() => {
+    let active = true;
+    void getWorldAliases()
+      .then((aliases) => {
+        const canonical = aliases[mundo];
+        if (active && canonical && canonical !== mundo) {
+          navigate(`/wiki/${encodeURIComponent(canonical)}`, { replace: true });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [mundo, navigate]);
 
   const goHome = () => navigate("/wiki");
   const pick = (name: string) => navigate(`/wiki/${encodeURIComponent(name)}`);

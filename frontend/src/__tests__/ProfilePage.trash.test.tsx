@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import { SWRConfig } from "swr";
 import ProfilePage from "@/pages/ProfilePage";
 import { useWorlds } from "@/hooks/useWorlds";
@@ -85,9 +86,11 @@ let mutateSpy = vi.fn();
 
 function renderProfile() {
   return render(
-    <SWRConfig value={{ provider: () => new Map() }}>
-      <ProfilePage />
-    </SWRConfig>,
+    <MemoryRouter>
+      <SWRConfig value={{ provider: () => new Map() }}>
+        <ProfilePage />
+      </SWRConfig>
+    </MemoryRouter>,
   );
 }
 

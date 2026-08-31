@@ -43,11 +43,38 @@ export async function listTrash(): Promise<WorldTrashEntry[]> {
 /**
  * POST /api/worlds/{name}/restore — move the most recent trash entry for a
  * world back to `mundos/{name}/`, making the world and its associated data
- * valid again.
+ * valid again. `newName` (optional) restores it under a DIFFERENT name — the
+ * conflict-resolution path when an active world owns `name`.
  */
-export async function restoreWorld(name: string): Promise<void> {
+export async function restoreWorld(name: string, newName?: string): Promise<void> {
   await apiFetch(apiUrl(["api", "worlds", name, "restore"]), {
     method: "POST",
+    credentials: "same-origin",
+    body: JSON.stringify(
+      newName ? { new_name: newName } : {},
+    ),
+  });
+}
+
+/**
+ * POST /api/worlds/{name}/rename — rename an active world. Moves the world
+ * folder, rewrites the idea-capture active world, and records an alias so old
+ * URLs keep resolving.
+ */
+export async function renameWorld(name: string, newName: string): Promise<void> {
+  await apiFetch(apiUrl(["api", "worlds", name, "rename"]), {
+    method: "POST",
+    credentials: "same-origin",
+    body: JSON.stringify({ new_name: newName }),
+  });
+}
+
+/**
+ * GET /api/worlds/aliases — the rename-alias map `{old_name: new_name}`, so the
+ * UI can redirect a URL for a renamed world instead of showing "not found".
+ */
+export async function getWorldAliases(): Promise<Record<string, string>> {
+  return apiFetch<Record<string, string>>(apiUrl(["api", "worlds", "aliases"]), {
     credentials: "same-origin",
   });
 }
