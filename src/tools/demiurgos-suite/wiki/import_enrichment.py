@@ -1197,6 +1197,7 @@ def _recover_types_document_wide(
     *,
     catalog: list[Candidate],
     rel_vocab: Iterable[str] | None = None,
+    max_workers: int | None = None,
 ) -> list[Candidate]:
     """LAST-FILTER recovery: rebuild full frontmatter + relationships doc-wide.
 
@@ -1213,7 +1214,10 @@ def _recover_types_document_wide(
 
     This is the final safety net (the author's "último filtro"): it runs AFTER
     all chunks are assembled so every ficha's summary is available as context
-    (a chunk-scoped recovery could not see fichas outside the chunk).
+    (a chunk-scoped recovery could not see fichas outside the chunk). It is
+    PARALLELIZED with the same bounded pool as the chunks (each group is
+    independent over read-only shared context), so it does not serially add
+    minutes to the import.
     """
     vocab = set(entity_type_vocabulary())
     # Only fichas that actually GOT a summary are recoverable here: a ficha
@@ -1226,36 +1230,55 @@ def _recover_types_document_wide(
         return candidates
     context_all = [c for c in candidates if c.summary]
 
-    # Pass 1 — full frontmatter (type/description/relaciones) + relationships.
-    recovered_fm: dict[str, dict[str, Any]] = {}
-    recovered_rel: dict[str, list[dict[str, Any]]] = {}
+    # Parallelism: the doc-wide recovery is read-only over SHARED context (all
+    # summaries/catalog) and each group is independent, so it fans out over the
+    # SAME bounded pool used for the chunks (it must NOT be sequential — that is
+    # what serially added ~5-8 min before). Each group gets its OWN session so
+    # the gateway never serializes concurrent turns on a shared session.
+    groups = [
+        undetermined[i:i + _FUNNEL_TYPE_FILL_GROUP_SIZE]
+        for i in range(0, len(undetermined), _FUNNEL_TYPE_FILL_GROUP_SIZE)
+    ]
+    workers = min((max_workers or _default_funnel_max_workers()), len(groups))
+    workers = max(1, workers)
 
-    def _combined(group: list[Candidate]) -> None:
+    def _combined_group(group: list[Candidate], idx: int):
+        """One doc-wide combined group. Returns (cleaned_fm, [rel dicts])."""
         try:
             raw = hermes_runner(
                 json.dumps(build_frontmatter_and_relationships_prompt(
                     group, rel_vocab=rel_vocab, catalog=catalog),
                     ensure_ascii=False),
-                session_id,
+                f"{session_id}:type-recovery:{idx}",
             )
         except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
             logger.warning(
                 "funnel frontmatter last-pass ask failed: %s",
                 type(exc).__name__, exc_info=True)
-            return
+            return {}, []
         fm_out, rel_payload = parse_frontmatter_and_relationships_response(raw or "")
+        cleaned: dict[str, dict[str, Any]] = {}
         for cid, fm in fm_out.items():
             vt = fm.get("type")
             if vt is not None and vt not in vocab:
                 fm = {**fm, "type": None}   # not a real entity type -> undetermined
-            recovered_fm[cid] = fm
-        for rel in validate_relationship_batch(
-                rel_payload, group, rel_vocab=rel_vocab, catalog=catalog):
-            recovered_rel.setdefault(rel.source_candidate_id, []).append(
-                rel.model_dump() | {"__type__": "relationship"})
+            cleaned[cid] = fm
+        rels = validate_relationship_batch(
+            rel_payload, group, rel_vocab=rel_vocab, catalog=catalog)
+        return cleaned, [
+            rel.model_dump() | {"__type__": "relationship"} for rel in rels]
 
-    for start in range(0, len(undetermined), _FUNNEL_TYPE_FILL_GROUP_SIZE):
-        _combined(undetermined[start:start + _FUNNEL_TYPE_FILL_GROUP_SIZE])
+    recovered_fm: dict[str, dict[str, Any]] = {}
+    recovered_rel: dict[str, list[dict[str, Any]]] = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(_combined_group, g, i) for i, g in enumerate(groups)]
+        for fut in concurrent.futures.as_completed(futures):
+            fm, rels = fut.result()
+            recovered_fm.update(fm)
+            for rel in rels:
+                source = rel.get("source_candidate_id")
+                if source:
+                    recovered_rel.setdefault(source, []).append(rel)
 
     # Pass 2 — type-only re-ask for fichas Pass 1 could not type.
     still_typless = [
@@ -1264,27 +1287,35 @@ def _recover_types_document_wide(
                 or (c.frontmatter and c.frontmatter.type))
     ]
     type_recovered: dict[str, str] = {}
+    still_groups = [
+        still_typless[i:i + _FUNNEL_TYPE_FILL_GROUP_SIZE]
+        for i in range(0, len(still_typless), _FUNNEL_TYPE_FILL_GROUP_SIZE)
+    ]
 
-    def _ask_type(group: list[Candidate]) -> None:
+    def _ask_type_group(group: list[Candidate], idx: int) -> dict[str, str]:
         try:
             raw = hermes_runner(
                 json.dumps(build_type_disambiguation_prompt(
                     group, context=context_all, catalog=catalog),
                     ensure_ascii=False),
-                session_id,
+                f"{session_id}:type-recovery:{idx}",
             )
         except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
             logger.warning(
                 "funnel type disambiguation ask failed: %s",
                 type(exc).__name__, exc_info=True)
-            return
+            return {}
         result = parse_type_disambiguation_response(raw or "")
-        for cid, t in result.items():
-            if t and t in vocab:
-                type_recovered[cid] = t
+        return {k: v for k, v in result.items() if v and v in vocab}
 
-    for start in range(0, len(still_typless), _FUNNEL_TYPE_FILL_GROUP_SIZE):
-        _ask_type(still_typless[start:start + _FUNNEL_TYPE_FILL_GROUP_SIZE])
+    if still_groups:
+        type_workers = min(workers, len(still_groups))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=type_workers) as ex:
+            futures = [
+                ex.submit(_ask_type_group, g, i)
+                for i, g in enumerate(still_groups)]
+            for fut in concurrent.futures.as_completed(futures):
+                type_recovered.update(fut.result())
 
     out: list[Candidate] = []
     for c in candidates:
@@ -1615,7 +1646,7 @@ def analyze_ficha_funnel(
         # their chunk (the amplified pass now sees the WHOLE import's summaries).
         return _recover_types_document_wide(
             final_flat, hermes_runner, f"{base_session_id}:type-recovery",
-            catalog=catalog, rel_vocab=rel_vocab)
+            catalog=catalog, rel_vocab=rel_vocab, max_workers=workers)
 
     # Parallel path: a bounde ThreadPoolExecutor over independent chunks. Each
     # chunk uses its OWN session_id (unique per chunk, see ``_run_chunk``) so
@@ -1659,7 +1690,7 @@ def analyze_ficha_funnel(
     # chunk (the amplified pass now sees the WHOLE import's summaries).
     return _recover_types_document_wide(
         ordered, hermes_runner, f"{base_session_id}:type-recovery",
-        catalog=catalog, rel_vocab=rel_vocab)
+        catalog=catalog, rel_vocab=rel_vocab, max_workers=workers)
 
 
 # ---------------------------------------------------------------------------
