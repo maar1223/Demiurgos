@@ -1190,45 +1190,43 @@ def parse_type_disambiguation_response(raw: str) -> dict[str, str | None]:
     return out
 
 
-def _resolve_undetermined_types(
-    summarized: list[Candidate],
-    frontmatter: dict[str, dict[str, Any]],
+def _recover_types_document_wide(
+    candidates: list[Candidate],
     hermes_runner: Callable[[str, str], str],
     session_id: str,
     *,
     catalog: list[Candidate],
-) -> dict[str, dict[str, Any]]:
-    """Recover undetermined ``type`` for summarized fichas, then section-default.
+) -> list[Candidate]:
+    """Recover undetermined ``type`` with DOCUMENT-WIDE context, then section-default.
 
-    The combined Steps 3+4 pass classifies a ficha from its own summary alone.
-    Any ficha that came back with NO frontmatter entry or with ``type: None`` is
-    re-asked through an AMPLIFIED disambiguation pass (its own summary + the
-    neighbor summaries + the document catalog) — the user's chosen recovery for
-    fichas whose discriminating detail lives in the surrounding fichas. A ficha
-    still undetermined after that pass is section-defaulted (``personajes``
-    section -> ``personaje``, else ``concepto``), guaranteeing every enriched
-    ficha carries a non-empty ``type``. Bounded, fail-open, never raises.
+    The combined Steps 3+4 call classifies each ficha from ITS OWN chunk's
+    summaries only, so a ficha whose discriminating detail lives OUTSIDE its
+    chunk is left with no ``type``. This pass re-asks every such ficha with
+    AMPLIFIED document-wide context — the whole import's summaries
+    (``context``) plus the document catalog — because the answer often sits in
+    a neighboring/related ficha (the user-chosen recovery). A ficha still
+    undetermined after that is section-defaulted (``personajes`` section ->
+    ``personaje``, else ``concepto``), the user-approved terminal fallback.
+    Bounded, fail-open, never raises. Returns a NEW list; the input is never
+    mutated.
 
-    Returns a NEW frontmatter dict (``candidate_id -> fm dict``). Entries the
-    pass recovers from the model keep ``state: generated``; fresh entries it
-    builds purely by section-default keep ``state: fallback`` (heuristic, not
-    model-derived).
+    Unlike a per-chunk recovery, this runs AFTER all chunks are assembled so
+    every ficha's summary is available as context (not just the current chunk's
+    — which is why a chunk-scoped recovery left 16 fichas as ``concepto``
+    fallback while the model CAN classify them with the full document).
     """
     vocab = set(entity_type_vocabulary())
-    targets = [
-        c for c in summarized
-        if (not frontmatter.get(c.candidate_id))
-        or not (frontmatter[c.candidate_id].get("type"))
-    ]
+    targets = [c for c in candidates
+               if c.frontmatter is None or not (c.frontmatter.type)]
     if not targets:
-        return frontmatter
-    out = dict(frontmatter)
+        return candidates
+    context = [c for c in candidates if c.summary]
 
     def _ask(group: list[Candidate]) -> dict[str, str]:
         try:
             raw = hermes_runner(
                 json.dumps(build_type_disambiguation_prompt(
-                    group, context=summarized, catalog=catalog),
+                    group, context=context, catalog=catalog),
                     ensure_ascii=False),
                 session_id,
             )
@@ -1249,38 +1247,39 @@ def _resolve_undetermined_types(
             if t:
                 recovered[cid] = t
 
-    for c in targets:
-        cid = c.candidate_id
-        t = recovered.get(cid)
+    out: list[Candidate] = []
+    for c in candidates:
+        t = recovered.get(c.candidate_id)
         if t:
-            if out.get(cid):
-                out[cid]["type"] = t
-            else:
-                # Recovered full frontmatter for a ficha the combined pass
-                # dropped entirely: model-derived -> generated.
-                out[cid] = {
-                    "title": c.display_title or c.normalized_identity,
-                    "type": t,
-                    "description": "",
-                    "relaciones": [],
-                    "state": FrontmatterState.GENERATED.value,
-                }
-
-    for c in targets:
-        cid = c.candidate_id
-        entry = out.get(cid)
-        if not entry or not entry.get("type"):
-            t = _default_type_by_section(c)
-            if entry:
-                entry["type"] = t
-            else:
-                out[cid] = {
-                    "title": c.display_title or c.normalized_identity,
-                    "type": t,
-                    "description": "",
-                    "relaciones": [],
-                    "state": FrontmatterState.FALLBACK.value,
-                }
+            # The type came from the model (document-wide amplified pass), so
+            # the frontmatter is model-derived -> generated, even when the
+            # combined pass had dropped the ficha (fallback state before).
+            base = c.frontmatter
+            new_fm = FrontmatterCandidate(
+                title=base.title if base is not None
+                else (c.display_title or c.normalized_identity),
+                type=t,
+                description=base.description if base is not None else "",
+                relaciones=base.relaciones if base is not None else [],
+                state=FrontmatterState.GENERATED,
+            )
+            out.append(_copy_candidate(c, frontmatter=new_fm))
+        elif c.frontmatter is None or not (c.frontmatter.type):
+            # Residual: section-default (user-approved terminal fallback). The
+            # type was NOT model-determined, so it is a fallback (honest).
+            ft = _default_type_by_section(c)
+            base = c.frontmatter
+            new_fm = FrontmatterCandidate(
+                title=base.title if base is not None
+                else (c.display_title or c.normalized_identity),
+                type=ft,
+                description=base.description if base is not None else "",
+                relaciones=base.relaciones if base is not None else [],
+                state=FrontmatterState.FALLBACK,
+            )
+            out.append(_copy_candidate(c, frontmatter=new_fm))
+        else:
+            out.append(c)
     return out
 
 
@@ -1344,12 +1343,12 @@ def _enrich_funnel_chunk(
             frontmatter = fm_out
             relationships = validate_relationship_batch(
                 rel_payload, summarized, rel_vocab=rel_vocab, catalog=catalog)
-            # Recover undetermined ``type`` via the amplified disambiguation
-            # pass + section default (see ``_resolve_undetermined_types``): a
-            # ficha the combined call could not classify is re-asked with the
-            # neighbor summaries/catalog, and the residual is section-defaulted.
-            frontmatter = _resolve_undetermined_types(
-                summarized, frontmatter, hermes_runner, session_id, catalog=catalog)
+            # Undetermined ``type`` fichas (the model omitted a frontmatter
+            # entry, or returned ``type: None``) are left as-is here; they are
+            # recovered DOCUMENT-WIDE after all chunks are assembled (see
+            # ``_recover_types_document_wide``), where every ficha's summary is
+            # available as context — a chunk-scoped recovery could not see the
+            # discriminating detail in fichas outside the chunk.
         except Exception as exc:  # noqa: BLE001 — fail-open never breaks analyze
             logger.warning(
                 "funnel steps 3+4 (relationships/frontmatter) failed: %s",
@@ -1381,19 +1380,11 @@ def _enrich_funnel_chunk(
             # Enrichment was attempted but produced no generated frontmatter
             # for this candidate -> fallback, reviewable and importable.
             candidate_fm = _fallback_frontmatter(sc or c)
-        # Terminal section-default: guarantee every enriched ficha carries a
-        # non-empty ``type`` (the user-approved fallback), so a ficha that the
-        # model could not classify is never stuck in "requires your decision"
-        # solely for a missing type. Only the enrichment path applies this; the
-        # no-runner (manual) path keeps ``type=None`` for author decisions.
-        if candidate_fm.type is None:
-            candidate_fm = FrontmatterCandidate(
-                title=candidate_fm.title,
-                type=_default_type_by_section(sc or c),
-                description=candidate_fm.description,
-                relaciones=candidate_fm.relaciones,
-                state=candidate_fm.state,
-            )
+        # NOTE: fichas still without a ``type`` here (model omitted them or
+        # returned ``type: None``) are NOT section-defaulted at chunk scope —
+        # they are recovered DOCUMENT-WIDE after assembly (see
+        # ``_recover_types_document_wide``), which has every ficha's summary as
+        # context and only section-defaults the final residual.
         own = rel_by_candidate.get(c.candidate_id, [])
         out.append(_copy_candidate(
             sc or c,
@@ -1497,9 +1488,10 @@ def analyze_ficha_funnel(
       the import), so a real relationship crossing two chunks is preserved
       instead of rejected as ungrounded. Sources stay per-chunk (summarized).
     * A ficha whose ``type`` is undetermined after the combined Steps 3+4 call
-      is re-asked through an amplified disambiguation pass (neighbor summaries
-      + catalog), and the residual is section-defaulted — so every enriched
-      ficha carries a non-empty ``type``.
+      is re-asked DOCUMENT-WIDE through an amplified disambiguation pass (all
+      the import's summaries + catalog, so the answer outside the ficha's own
+      chunk is visible), and only the final residual is section-defaulted — so
+      every enriched ficha carries a meaningful non-empty ``type``.
     """
     if hermes_runner is None or not candidates:
         # Enrichment not requested: leave candidates reviewable with a manual
@@ -1562,7 +1554,11 @@ def analyze_ficha_funnel(
                 except Exception as _exc:  # noqa: BLE001 — progress is advisory
                     logger.warning("funnel progress_cb failed: %s",
                                    type(_exc).__name__, exc_info=True)
-        return final_flat
+        # Document-wide type recovery for fichas left without a ``type`` by
+        # their chunk (the amplified pass now sees the WHOLE import's summaries).
+        return _recover_types_document_wide(
+            final_flat, hermes_runner, f"{base_session_id}:type-recovery",
+            catalog=catalog)
 
     # Parallel path: a bounde ThreadPoolExecutor over independent chunks. Each
     # chunk uses its OWN session_id (unique per chunk, see ``_run_chunk``) so
@@ -1602,7 +1598,11 @@ def analyze_ficha_funnel(
             except Exception as _exc:  # noqa: BLE001 — progress is advisory
                 logger.warning("funnel progress_cb failed: %s",
                                type(_exc).__name__, exc_info=True)
-    return ordered
+    # Document-wide type recovery for fichas left without a ``type`` by their
+    # chunk (the amplified pass now sees the WHOLE import's summaries).
+    return _recover_types_document_wide(
+        ordered, hermes_runner, f"{base_session_id}:type-recovery",
+        catalog=catalog)
 
 
 # ---------------------------------------------------------------------------

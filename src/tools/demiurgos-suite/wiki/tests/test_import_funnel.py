@@ -49,6 +49,7 @@ from import_enrichment import (  # noqa: E402
     _FUNNEL_MAX_CHUNK_FICHAS,
     _default_type_by_section,
     _group_by_bytes,
+    _recover_types_document_wide,
     analyze_ficha_funnel,
     build_frontmatter_and_relationships_prompt,
     build_relationship_batch_prompt,
@@ -797,6 +798,77 @@ class TestTypeDisambiguationFunnel:
         assert len(out) == 12
         assert by_id[target.candidate_id].frontmatter.type == "concepto"
         assert by_id[target.candidate_id].frontmatter.state == FrontmatterState.GENERATED
+
+
+class TestRecoverTypesDocumentWide:
+    """Document-wide type recovery (the fix for chunk-scoped misclassification).
+
+    A ficha whose discriminating detail lives OUTSIDE its chunk is left without
+    a ``type`` by the combined Steps 3+4 pass. ``_recover_types_document_wide``
+    re-asks it with the WHOLE import's summaries as context, recovers the type,
+    and only section-defaults the genuine residual.
+    """
+
+    def _given(self, n=4):
+        fichas = [_ficha(f"F {i:02d}", preview="corto.") for i in range(n)]
+        # Give every one a summary so the doc-wide context is populated.
+        return [Candidate.model_validate({**c.model_dump(), "summary": f"s{i}"})
+                for i, c in enumerate(fichas)]
+
+    def test_recovers_type_from_document_context_and_marks_generated(self):
+        targets = self._given()
+        runner = self._runner(types={targets[0].candidate_id: "evento"})
+
+        out = _recover_types_document_wide(
+            targets, runner, "sess", catalog=targets)
+        by_id = {c.candidate_id: c for c in out}
+        assert by_id[targets[0].candidate_id].frontmatter.type == "evento"
+        assert by_id[targets[0].candidate_id].frontmatter.state == \
+            FrontmatterState.GENERATED
+
+    def test_section_defaults_the_genuine_residual(self):
+        a = _ficha("Héroe", section="personajes")
+        a = Candidate.model_validate({**a.model_dump(), "summary": "s"})
+        b = _ficha("Bosque", section="lugares")
+        b = Candidate.model_validate({**b.model_dump(), "summary": "t"})
+        # No type determined anywhere -> section-default, honest FALLBACK state.
+        runner = self._runner(types={})
+        out = _recover_types_document_wide([a, b], runner, "sess", catalog=[a, b])
+        by_id = {c.candidate_id: c for c in out}
+        assert by_id[a.candidate_id].frontmatter.type == "personaje"
+        assert by_id[b.candidate_id].frontmatter.type == "concepto"
+        assert all(c.frontmatter.state == FrontmatterState.FALLBACK for c in out)
+
+    def test_uses_the_whole_import_as_context_after_assembly(self):
+        targets = self._given(6)
+        seen = {}
+
+        def runner(prompt, _session):
+            data = json.loads(prompt)
+            if "targets" in data:
+                seen["context"] = len(data["context"])
+                seen["catalog"] = len(data["catalog"])
+                return json.dumps({"types": [
+                    {"candidate_id": t["candidate_id"], "type": "concepto"}
+                    for t in data["targets"]]})
+            return json.dumps({})
+
+        _recover_types_document_wide(targets, runner, "sess", catalog=targets)
+        # Context = every candidate with a summary (document-wide), not the
+        # ficha's own chunk.
+        assert seen.get("context") == len(targets)
+        assert seen.get("catalog") == len(targets)
+
+    @staticmethod
+    def _runner(types):
+        def runner(prompt, _session):
+            data = json.loads(prompt)
+            if "targets" in data:
+                return json.dumps({"types": [
+                    {"candidate_id": t["candidate_id"], "type": types.get(t["candidate_id"])}
+                    for t in data["targets"]]})
+            return json.dumps({})
+        return runner
 
 
 class TestFichaFunnelParallelism:
