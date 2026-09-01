@@ -13,9 +13,9 @@ const variantStyles: Record<Variant, string> = {
   primary:
     "bg-action text-action-text hover:bg-action-hover active:bg-action/90 focus-visible:ring-action/50",
   secondary:
-    "bg-surface-raised text-primary hover:bg-surface-hover active:bg-surface-raised/80 focus-visible:ring-edge/50",
+    "bg-surface-raised text-primary border border-edge hover:bg-surface-hover active:bg-surface-raised/80 focus-visible:ring-edge/50",
   ghost:
-    "bg-transparent text-primary hover:bg-surface-hover active:bg-surface-raised/30 focus-visible:ring-edge/50",
+    "bg-surface-raised/40 text-primary border border-edge/70 hover:bg-surface-hover active:bg-surface-raised/30 focus-visible:ring-edge/50",
 };
 
 const sizeStyles: Record<Size, string> = {
@@ -44,7 +44,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={disabled}
         className={cn(
-          "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors",
+          "inline-flex items-center justify-center gap-2 rounded-lg font-medium transition-colors shadow-sm",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
           "disabled:cursor-not-allowed disabled:opacity-50",
           variantStyles[variant],

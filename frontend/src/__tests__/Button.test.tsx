@@ -24,7 +24,17 @@ describe("Button", () => {
   it("applies ghost variant", () => {
     render(<Button variant="ghost">Ghost</Button>);
     const btn = screen.getByRole("button");
-    expect(btn.className).toContain("bg-transparent");
+    // Ghost is now an outlined soft button (surface + border) so it reads as a
+    // button, not plain screen text.
+    expect(btn.className).toContain("bg-surface-raised/40");
+    expect(btn.className).toContain("border-edge/70");
+  });
+
+  it("applies a shadow to every variant", () => {
+    const { rerender } = render(<Button variant="primary">P</Button>);
+    expect(screen.getByRole("button").className).toContain("shadow-sm");
+    rerender(<Button variant="ghost">G</Button>);
+    expect(screen.getByRole("button").className).toContain("shadow-sm");
   });
 
   it("handles click", async () => {
