@@ -34,6 +34,7 @@ export type IconName =
   | "dots"
   | "expand"
   | "minimize"
+  | "arrow-up"
   | "corner-up-right"
   | "refresh"
   | "power"
@@ -287,6 +288,12 @@ const ICONS: Record<IconName, React.ReactNode> = {
     <>
       <polyline points="15 14 20 9 15 4" />
       <path d="M4 20v-7a4 4 0 0 1 4-4h12" />
+    </>
+  ),
+  "arrow-up": (
+    <>
+      <line x1="12" y1="19" x2="12" y2="5" />
+      <polyline points="5 12 12 5 19 12" />
     </>
   ),
   refresh: (

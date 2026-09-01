@@ -7,7 +7,8 @@ import { Icon } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
 import {
   canDropToTreeBackground,
-  readDragPayload,
+  resolveDragPayload,
+  upLevelTarget,
   type DragPayload,
   type DragState,
   type DropDnd,
@@ -123,20 +124,19 @@ export function FileTree({
     [onMove],
   );
 
-  // Panel background = "move to section root" target. Only events that
-  // never hit a node reach these handlers (nodes stop propagation).
-  const handleBackgroundDragEnter = useCallback(
-    (e: React.DragEvent) => {
-      const dragged = readDragPayload(e.dataTransfer);
-      if (!dragged) return;
-      setDrag((prev) =>
-        prev
-          ? { ...prev, target: { path: "", valid: canDropToTreeBackground(dragged) } }
-          : prev,
-      );
-    },
-    [],
-  );
+  // Panel background = "move the node one level up" (out of its current
+  // parent folder). Only events that never hit a node reach these handlers
+  // (nodes stop propagation). The payload comes from React state, NOT from
+  // dataTransfer: dragenter/dragover run in the spec's "protected mode" where
+  // getData() returns "" (Chrome/Safari), so reading the payload there
+  // silently disabled the drop feedback in real browsers.
+  const handleBackgroundDragEnter = useCallback(() => {
+    setDrag((prev) =>
+      prev
+        ? { ...prev, target: { path: "", valid: canDropToTreeBackground(prev) } }
+        : prev,
+    );
+  }, []);
 
   const handleBackgroundDragOver = useCallback((e: React.DragEvent) => {
     if (drag) e.preventDefault();
@@ -144,12 +144,46 @@ export function FileTree({
 
   const handleBackgroundDrop = useCallback(
     (e: React.DragEvent) => {
-      const dragged = readDragPayload(e.dataTransfer);
+      const dragged = resolveDragPayload(e.dataTransfer, drag);
       if (!dragged || !canDropToTreeBackground(dragged)) return;
       e.preventDefault();
-      handleDropMove(dragged.path, dragged.path.split("/").pop() ?? "");
+      handleDropMove(dragged.path, upLevelTarget(dragged.path));
     },
-    [handleDropMove],
+    [drag, handleDropMove],
+  );
+
+  // ── "Subir un nivel" drop bar ──────────────────────────────────────────
+  // A first-class drop target pinned to the bottom of the panel (sticky), so
+  // the up gesture stays reachable even when the tree is packed and every
+  // node would otherwise swallow the background drop. Its handlers stop
+  // propagation so the bar always wins over the background beneath it.
+  const handleUpBarDragEnter = useCallback((e: React.DragEvent) => {
+    e.stopPropagation();
+    setDrag((prev) =>
+      prev
+        ? { ...prev, target: { path: "", valid: canDropToTreeBackground(prev) } }
+        : prev,
+    );
+  }, []);
+
+  const handleUpBarDragOver = useCallback(
+    (e: React.DragEvent) => {
+      if (!drag) return;
+      e.stopPropagation();
+      e.preventDefault();
+    },
+    [drag],
+  );
+
+  const handleUpBarDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const dragged = resolveDragPayload(e.dataTransfer, drag);
+      if (!dragged || !canDropToTreeBackground(dragged)) return;
+      handleDropMove(dragged.path, upLevelTarget(dragged.path));
+    },
+    [drag, handleDropMove],
   );
 
   const dnd: DropDnd = {
@@ -190,9 +224,22 @@ export function FileTree({
 
   const hasQuery = query.length > 0;
 
+  // A nested node (path has a parent) can be moved one level up. The drop bar
+  // renders as a first-class target while such a node is being dragged; it is
+  // pinned to the bottom of the panel so the gesture is always discoverable,
+  // even when the tree is packed and every node swallows the background drop.
+  const draggedCanGoUp = drag ? canDropToTreeBackground(drag) : false;
+  const backgroundIsTarget =
+    !!drag && drag.target?.path === "" && drag.target.valid;
+  const upTarget = drag ? upLevelTarget(drag.path) : "";
+
   return (
     <div
       data-testid="file-tree-drop-area"
+      // min-h-full + flex-col: the drop area covers the whole scrollable
+      // panel (not just the rendered rows), so "empty space" below a short
+      // tree is a valid up-level target too.
+      className="flex min-h-full flex-col"
       onDragEnter={handleBackgroundDragEnter}
       onDragOver={handleBackgroundDragOver}
       onDrop={handleBackgroundDrop}
@@ -254,6 +301,33 @@ export function FileTree({
             ))}
           </ul>
         </nav>
+      )}
+
+      {/* "Subir un nivel" drop target — visible only while dragging a nested
+          node. Pinned to the bottom of the panel (sticky + mt-auto) so it is
+          always on screen and reachable, and the label shows where the node
+          will land. Dropping here moves the node out of its current folder. */}
+      {draggedCanGoUp && (
+        <div
+          data-testid="file-tree-up-one-level"
+          onDragEnter={handleUpBarDragEnter}
+          onDragOver={handleUpBarDragOver}
+          onDrop={handleUpBarDrop}
+          className={cn(
+            "sticky bottom-2 z-10 mx-3 mt-auto flex select-none items-center justify-center gap-2 rounded-lg border-2 border-dashed px-3 py-2 text-small transition-colors",
+            backgroundIsTarget
+              ? "border-action/60 bg-action/10 text-action"
+              : "border-edge bg-surface text-muted",
+          )}
+        >
+          <Icon name="arrow-up" size={14} />
+          <span className="min-w-0 truncate">
+            Subir un nivel
+            {upTarget && (
+              <span className="ml-1 font-semibold">→ {upTarget}</span>
+            )}
+          </span>
+        </div>
       )}
     </div>
   );

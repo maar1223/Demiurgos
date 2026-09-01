@@ -10,6 +10,7 @@ import {
   joinPath,
   parentPath,
   readDragPayload,
+  resolveDragPayload,
   setDragPayload,
   type DragPayload,
   type DragState,
@@ -130,18 +131,23 @@ export function SectionCards({
 
   // Grid background = "move one level up" (into the parent of the browsed
   // directory). Only events that never hit a card reach these handlers
-  // (cards stop propagation).
-  const handleBackgroundDragEnter = useCallback(
-    (e: React.DragEvent) => {
-      const dragged = readDragPayload(e.dataTransfer);
-      if (!dragged) return;
-      const valid = canDropToGridBackground(dragged, browsingDirPath);
-      setDrag((prev) =>
-        prev ? { ...prev, target: { path: "", valid } } : prev,
-      );
-    },
-    [browsingDirPath],
-  );
+  // (cards stop propagation). The payload comes from React state, NOT from
+  // dataTransfer: dragenter/dragover run in the spec's "protected mode"
+  // where getData() returns "" (Chrome/Safari), so reading the payload there
+  // left the up-level overlay dead in real browsers.
+  const handleBackgroundDragEnter = useCallback(() => {
+    setDrag((prev) =>
+      prev
+        ? {
+            ...prev,
+            target: {
+              path: "",
+              valid: canDropToGridBackground(prev, browsingDirPath),
+            },
+          }
+        : prev,
+    );
+  }, [browsingDirPath]);
 
   const handleBackgroundDragOver = useCallback((e: React.DragEvent) => {
     if (drag) e.preventDefault();
@@ -149,7 +155,7 @@ export function SectionCards({
 
   const handleBackgroundDrop = useCallback(
     (e: React.DragEvent) => {
-      const dragged = readDragPayload(e.dataTransfer);
+      const dragged = resolveDragPayload(e.dataTransfer, drag);
       if (!dragged || !canDropToGridBackground(dragged, browsingDirPath)) {
         return;
       }
@@ -157,7 +163,7 @@ export function SectionCards({
       const name = dragged.path.split("/").pop() ?? "";
       handleDropMove(dragged.path, joinPath(parentPath(browsingDirPath), name));
     },
-    [browsingDirPath, handleDropMove],
+    [browsingDirPath, drag, handleDropMove],
   );
 
   const dnd: DropDnd = {

@@ -5,6 +5,7 @@ import {
   SectionCards,
   fileIconName,
 } from "@/components/organisms/SectionCards";
+import { DND_NODE_MIME } from "@/lib/dnd";
 import type { FichaStatus, FileNode } from "@/api/types";
 
 // SectionCards renders cover <img> via getMediaUrl when a node carries a
@@ -384,6 +385,23 @@ describe("SectionCards", () => {
     });
 
     expect(onMove).not.toHaveBeenCalled();
+  });
+
+  it("grid background drop falls back to drag state when dataTransfer data is unreadable", async () => {
+    // Chrome can return "" from getData() during drop under memory pressure;
+    // the overlay/validity must come from React state.
+    const { onMove } = renderCards({ browsingDirPath: "capitulos/viejos" });
+    startDrag(screen.getByRole("button", { name: /^notas\.md$/ }));
+
+    const corruptedDt = new DataTransfer();
+    corruptedDt.setData(DND_NODE_MIME, "");
+    fireEvent.drop(screen.getByTestId("section-cards-drop-area"), {
+      dataTransfer: corruptedDt,
+    });
+
+    await waitFor(() => {
+      expect(onMove).toHaveBeenCalledWith("notas.md", "capitulos/notas.md");
+    });
   });
 
   // ── Cover rendering ────────────────────────────────────────────────

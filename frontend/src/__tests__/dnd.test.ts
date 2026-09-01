@@ -3,11 +3,14 @@ import {
   DND_NODE_MIME,
   canDropToGridBackground,
   canDropToTreeBackground,
+  hasDragPayload,
   isFolderDropValid,
   joinPath,
   parentPath,
   readDragPayload,
+  resolveDragPayload,
   setDragPayload,
+  upLevelTarget,
   type DragPayload,
 } from "@/lib/dnd";
 
@@ -43,6 +46,53 @@ describe("setDragPayload / readDragPayload", () => {
   });
 });
 
+describe("hasDragPayload", () => {
+  it("is true only when the custom MIME is advertised", () => {
+    const ours = new DataTransfer();
+    setDragPayload(ours, file);
+    expect(hasDragPayload(ours)).toBe(true);
+
+    const foreign = new DataTransfer();
+    foreign.setData("text/plain", "whatever");
+    expect(hasDragPayload(foreign)).toBe(false);
+
+    expect(hasDragPayload(new DataTransfer())).toBe(false);
+    expect(hasDragPayload(null)).toBe(false);
+  });
+
+  it("still detects our drag when the payload data is unreadable", () => {
+    // Browsers run dragenter/dragover in protected mode (getData() === "")
+    // and Chrome can also return "" during drop under memory pressure —
+    // `types` stays enumerable, so the MIME is still visible.
+    const protectedDt = new DataTransfer();
+    protectedDt.setData(DND_NODE_MIME, "");
+    expect(hasDragPayload(protectedDt)).toBe(true);
+  });
+});
+
+describe("resolveDragPayload", () => {
+  const fallback: DragPayload = { path: "capitulos/cap1.md", is_dir: false };
+
+  it("prefers the dataTransfer payload when readable", () => {
+    const dt = new DataTransfer();
+    setDragPayload(dt, file);
+    expect(resolveDragPayload(dt, fallback)).toEqual(file);
+  });
+
+  it("falls back to the drag state when the MIME is present but data is empty", () => {
+    const protectedDt = new DataTransfer();
+    protectedDt.setData(DND_NODE_MIME, "");
+    expect(resolveDragPayload(protectedDt, fallback)).toEqual(fallback);
+  });
+
+  it("never applies the fallback to foreign drags", () => {
+    const foreign = new DataTransfer();
+    foreign.setData("text/plain", "external");
+    expect(resolveDragPayload(foreign, fallback)).toBeNull();
+    expect(resolveDragPayload(null, fallback)).toBeNull();
+  });
+});
+
 describe("isFolderDropValid", () => {
   it("rejects dropping onto the node itself", () => {
     expect(isFolderDropValid(file, "capitulos/notas.md")).toBe(false);
@@ -75,6 +125,24 @@ describe("canDropToTreeBackground", () => {
     expect(canDropToTreeBackground({ path: "notas.md", is_dir: false })).toBe(
       false,
     );
+  });
+});
+
+describe("upLevelTarget", () => {
+  it("moves a one-level-deep node to the section root", () => {
+    expect(upLevelTarget("capitulos/cap1.md")).toBe("cap1.md");
+  });
+
+  it("moves a deeper node one level up (not all the way to root)", () => {
+    expect(upLevelTarget("capitulos/viejos/cap0.md")).toBe("capitulos/cap0.md");
+  });
+
+  it("moves a folder one level up too", () => {
+    expect(upLevelTarget("capitulos/viejos")).toBe("viejos");
+  });
+
+  it("leaves a root-level node unchanged", () => {
+    expect(upLevelTarget("notas.md")).toBe("notas.md");
   });
 });
 

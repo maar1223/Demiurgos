@@ -64,6 +64,35 @@ export function readDragPayload(
   }
 }
 
+/**
+ * True when the dataTransfer advertises our node payload type.
+ *
+ * `types` is enumerable in EVERY drag event (including dragenter/dragover,
+ * which run in the spec's "protected mode" where `getData()` returns ""), so
+ * this is the reliable way to tell "our drag" from a foreign one.
+ */
+export function hasDragPayload(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false;
+  return Array.from(dataTransfer.types).includes(DND_NODE_MIME);
+}
+
+/**
+ * Payload for a drop: prefer the dataTransfer payload, else fall back to the
+ * React drag state. `getData()` is only readable during dragstart/drop, and
+ * Chrome has also been observed returning "" during drop under heavy memory
+ * pressure — the `hasDragPayload` guard above limits the fallback to OUR
+ * drags, so a stale drag state can never hijack a foreign drop.
+ */
+export function resolveDragPayload(
+  dataTransfer: DataTransfer | null,
+  fallback: DragPayload | null,
+): DragPayload | null {
+  const direct = readDragPayload(dataTransfer);
+  if (direct) return direct;
+  if (!hasDragPayload(dataTransfer)) return null;
+  return fallback;
+}
+
 /** Parent of a path ("" for a root-level node). */
 export function parentPath(path: string): string {
   const idx = path.lastIndexOf("/");
@@ -73,6 +102,18 @@ export function parentPath(path: string): string {
 /** Joins a directory path and an item name (name alone at the root). */
 export function joinPath(dir: string, name: string): string {
   return dir ? `${dir}/${name}` : name;
+}
+
+/**
+ * Destination path for a "move one level up": the node leaves its current
+ * parent folder and becomes a sibling of it. A root-level node has no parent
+ * to move up to, so callers must gate on `canDropToTreeBackground` first.
+ * (e.g. `capitulos/viejos/cap0.md` → `capitulos/cap0.md`; `capitulos/cap1.md`
+ * → `cap1.md`.)
+ */
+export function upLevelTarget(path: string): string {
+  const name = path.split("/").pop() ?? "";
+  return joinPath(parentPath(parentPath(path)), name);
 }
 
 /**
