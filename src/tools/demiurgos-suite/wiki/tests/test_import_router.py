@@ -180,12 +180,12 @@ class TestRouterVisionSeam:
         assert captured["media_entries"]
         me = captured["media_entries"][0]
         assert isinstance(me, VisionMediaEntry)
-        assert me.spool_relative_path == "media/Enciclopedia/portada.png"
+        assert me.spool_relative_path == "media/portada.png"
         assert me.image.image_bytes == b"PORTADA-BYTES"
         assert me.candidate_id == captured["candidates"][0].candidate_id
         # PR1 spool persistence is wired: bytes exist where execution reads
-        # them (spool_dir/job_id/media/<stem>/<filename>).
-        stored = spool / job["job_id"] / "media" / "Enciclopedia" / "portada.png"
+        # them (spool_dir/job_id/media/<filename> — flat layout).
+        stored = spool / job["job_id"] / "media" / "portada.png"
         assert stored.read_bytes() == b"PORTADA-BYTES"
 
     def test_vision_suggestions_persisted_and_visible_on_review(
@@ -202,11 +202,11 @@ class TestRouterVisionSeam:
                     "enrichment_json": [{
                         "__type__": "vision", "id": "vision:abc",
                         "candidate_id": c.candidate_id,
-                        "relative_media_path": "media/Enciclopedia/portada.png",
+                        "relative_media_path": "media/portada.png",
                         "description": "Retrato", "verdict": "confirma",
                         "analysis": "", "tags": [], "confidence": 0.0,
                         "provenance": {"provider": "vision"},
-                        "evidence": "image:media/Enciclopedia/portada.png",
+                        "evidence": "image:media/portada.png",
                         "review_state": "pending",
                     }],
                     "enrichment_status": "ok",
@@ -253,7 +253,7 @@ class TestRouterVisionSeam:
         families coexist in the persisted enrichment payload."""
         _docx_seams(monkeypatch, [_entry()])
 
-        def fake_enricher(candidates, progress_cb=None):
+        def fake_enricher(candidates, progress_cb=None, on_phase=None):
             return [c.model_copy(update={
                 "enrichment_json": [{
                     "__type__": "classification", "id": "cls:1",
@@ -271,7 +271,7 @@ class TestRouterVisionSeam:
                 payload = list(c.enrichment_json or []) + [{
                     "__type__": "vision", "id": "vision:abc",
                     "candidate_id": c.candidate_id,
-                    "relative_media_path": "media/Enciclopedia/portada.png",
+                    "relative_media_path": "media/portada.png",
                     "description": "Retrato", "verdict": "confirma",
                     "analysis": "", "tags": [], "confidence": 0.0,
                     "provenance": {"provider": "vision"},
@@ -349,7 +349,7 @@ class TestRouterVisionSeam:
                 "enrichment_json": [{
                     "__type__": "vision", "id": "vision:abc",
                     "candidate_id": c.candidate_id,
-                    "relative_media_path": "media/Enciclopedia/portada.png",
+                    "relative_media_path": "media/portada.png",
                     "description": "Retrato", "verdict": "confirma",
                     "analysis": "", "tags": [], "confidence": 0.0,
                     "provenance": {"provider": "vision"},
@@ -388,7 +388,7 @@ class TestRouterVisionSeam:
         _analyze(client, job["job_id"])
         cand = store.candidates_for(job["job_id"])[0]
         assert cand.provenance.source_path == "Lore/Enciclopedia.md"
-        assert any(p.relative_media_path == "media/Enciclopedia/portada.png"
+        assert any(p.relative_media_path == "media/portada.png"
                    for p in cand.images)
 
     def test_media_attributed_to_owning_ficha_with_position(
@@ -437,11 +437,11 @@ class TestRouterVisionSeam:
     def test_spool_collision_rename_keeps_media_on_owning_ficha(
             self, tmp_path, monkeypatch):
         """BUG 2 gap — when a spool collision renames the stored file
-        (``pic.png`` -> ``pic-1.png`` because a same-stem sibling source in
-        the same job already stored it under ``media/Enciclopedia/``), the
-        media must still be attributed to the ficha whose body references
-        the ORIGINAL name (never folded into the FIRST ficha), with the
-        DOCX position contract intact."""
+        (``pic.png`` -> ``pic-1.png`` because a sibling source in the same
+        job already stored it in the flat ``media/`` dir), the media must
+        still be attributed to the ficha whose body references the ORIGINAL
+        name (never folded into the FIRST ficha), with the DOCX position
+        contract intact."""
         monkeypatch.setattr(
             "sync_lore.utils.converter.convert_to_markdown",
             lambda _p: "# El Origen\n\nHistoria antigua.\n\n"
@@ -462,11 +462,11 @@ class TestRouterVisionSeam:
         client, store, spool, _ = _make_app(tmp_path)
         job = _create_job(client)
         _stream(client, job["job_id"], b"PK..fake")
-        # Same-stem sibling source in the same job already stored pic.png
-        # under media/Enciclopedia/ — the docx image then collides and is
-        # renamed on disk (the injected ref keeps the ORIGINAL name).
+        # Sibling source in the same job already stored pic.png in the flat
+        # media/ dir — the docx image then collides and is renamed on disk
+        # (the injected ref keeps the ORIGINAL name).
         # Binary bytes so the stale file is not picked up as a text source.
-        media_dir = spool / job["job_id"] / "media" / "Enciclopedia"
+        media_dir = spool / job["job_id"] / "media"
         media_dir.mkdir(parents=True)
         (media_dir / "pic.png").write_bytes(b"\x89PNG\r\n\x1a\nSTALE")
         _analyze(client, job["job_id"])
@@ -526,7 +526,7 @@ class TestRouterVisionSeam:
                 markdown=converted_markdown))
         _analyze(client, job["job_id"])
         cand = store.candidates_for(job["job_id"])[0]
-        assert any(p.relative_media_path == "media/Enciclopedia/portada.png"
+        assert any(p.relative_media_path == "media/portada.png"
                    for p in cand.images)
 
 
@@ -550,7 +550,7 @@ class TestApiVisionComposition:
             candidate_id="cand-1",
             image=ImageEntry(id="e1", source_file="Lore/Enciclopedia.docx",
                              filename="portada.png", image_bytes=b"BYTES"),
-            spool_relative_path="media/Enciclopedia/portada.png",
+            spool_relative_path="media/portada.png",
         )
 
     def test_text_only_assistant_yields_none(self, monkeypatch):
@@ -595,7 +595,7 @@ class TestApiVisionComposition:
         assert entry["__type__"] == "vision"
         assert entry["id"] == f"vision:{hashlib.sha256(b'BYTES').hexdigest()}"
         assert entry["candidate_id"] == "cand-1"
-        assert entry["relative_media_path"] == "media/Enciclopedia/portada.png"
+        assert entry["relative_media_path"] == "media/portada.png"
         assert entry["description"] == "Un retrato"
         assert entry["verdict"] == "confirma"
         assert entry["review_state"] == "pending"
@@ -902,11 +902,12 @@ class TestClassifierSections:
         assert cands[0].section == "personajes"
         # The chosen section roots the canonical target; BLOQUE 1 piece 2
         # (identity-path-mapping) makes the candidate's canonical_id drive
-        # the path: the H1 ficha "Protagonista" → personajes/protagonista.md
-        # (the source filename stem no longer wins when a valid
-        # canonical_id exists).
+        # the path: the H1 ficha "Protagonista" → personajes/protagonista/
+        # protagonista.md (folder-per-heading — its own folder + file; the
+        # source filename stem no longer wins when a valid canonical_id
+        # exists).
         assert cands[0].target_resolution["canonical_path"] == \
-            "personajes/protagonista.md"
+            "personajes/protagonista/protagonista.md"
 
     def test_candidate_without_map_entry_gets_empty_section(self, tmp_path):
         """Empty sections → candidate.section ``""`` → legacy branch derives
@@ -945,7 +946,7 @@ def _funnel_enricher(type_name: str = "lore"):
     """Funnel frontmatter enricher: upgrades every candidate's manual stub to
     ``generated`` so analyze materializes the rendered document (matching
     execute-time) — required for the reference check to see wikilinks."""
-    def enricher(candidates, progress_cb=None):
+    def enricher(candidates, progress_cb=None, on_phase=None):
         return [c.model_copy(update={
             "frontmatter": FrontmatterCandidate(
                 title=c.display_title or c.normalized_identity,
@@ -1041,7 +1042,7 @@ class TestCollisionDetection:
         graph resolver knows nothing and returns [] for every name)."""
         resolver = _outer_resolver(lambda name: [])  # graph knows nothing
 
-        def enricher(candidates, progress_cb=None):
+        def enricher(candidates, progress_cb=None, on_phase=None):
             out = []
             for c in candidates:
                 # The funnel emits BARE canonical ids (render_frontmatter_document
@@ -1107,11 +1108,12 @@ class TestCollisionDetection:
         assert cand.status == "conflict"
 
     def test_analyze_stamps_path_collision_existing_target(self, tmp_path):
-        """Target exists at mundos/world1/lore/dottua.md with different
-        content → plan_merge→review → path-collision + conflict."""
+        """Target exists at mundos/world1/lore/dottua/dottua.md with
+        different content → plan_merge→review → path-collision + conflict."""
         resolver = _outer_resolver(lambda name: [])
         client, store, _, mundos = _make_app(tmp_path, graph_resolver=resolver)
-        target = mundos / "world1" / "lore" / "dottua.md"
+        target = mundos / "world1" / "lore" / "dottua" / "dottua.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("Vieja prosa.", encoding="utf-8")
         job_id = _collision_job(
             client, {"Enciclopedia.md": "lore"},
@@ -1138,8 +1140,10 @@ class TestCollisionDetection:
         resolver = _outer_resolver(lambda name: [])
         client, store, _, mundos = _make_app(tmp_path, graph_resolver=resolver)
         # The ficha body (content_preview) INCLUDES the H1 heading line, so
-        # "identical content" is the rendered body (heading + prose).
-        (mundos / "world1" / "lore" / "dottua.md").write_text(
+        # "identical content" is the rendered body (heading + prose). The
+        # folder-per-heading target is lore/dottua/dottua.md.
+        (mundos / "world1" / "lore" / "dottua").mkdir(parents=True, exist_ok=True)
+        (mundos / "world1" / "lore" / "dottua" / "dottua.md").write_text(
             "# Dottua\n\nNueva prosa.", encoding="utf-8")
         job_id = _collision_job(
             client, {"Enciclopedia.md": "lore"},
@@ -1296,11 +1300,12 @@ class TestCollisionDetection:
         the world-scoped path → path-collision fires."""
         resolver = _outer_resolver(lambda name: [])
         client, store, _, mundos = _make_app(tmp_path, graph_resolver=resolver)
-        (mundos / "world1" / "lore" / "dottua.md").write_text(
+        (mundos / "world1" / "lore" / "dottua").mkdir(parents=True, exist_ok=True)
+        (mundos / "world1" / "lore" / "dottua" / "dottua.md").write_text(
             "Vieja prosa.", encoding="utf-8")
         # Guard: the mundo-less path must NOT exist, or this test cannot
         # distinguish the corrected behavior.
-        assert not (mundos / "lore" / "dottua.md").exists()
+        assert not (mundos / "lore" / "dottua" / "dottua.md").exists()
         job_id = _collision_job(
             client, {"Enciclopedia.md": "lore"},
             {"Enciclopedia.md": b"# Dottua\n\nNueva prosa."})
@@ -1349,24 +1354,34 @@ class TestNotionZipDispatch:
     def test_recognized_notion_zip_yields_markdown_and_csv_candidates(
             self, tmp_path):
         """A Notion Markdown & CSV export yields pages AND CSV fichas with
-        provenance through the shared candidate contract (task 3.1/3.3)."""
+        provenance through the shared candidate contract (task 3.1/3.3).
+
+        The journal page's childless ``## Expedition Notes`` is its OWN ficha
+        (folder-per-heading — every heading, any level, is a ficha), so the
+        journal contributes two candidates."""
         client, store, spool, mundos = _make_app(tmp_path)
         job = self._create_zip_job(client)
         self._stream_zip(client, job["job_id"], self._notion_zip(tmp_path))
 
         resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
         assert resp.status_code == 200, resp.text
-        assert resp.json()["candidates"] == 5
+        assert resp.json()["candidates"] == 6
         assert store.get_job(job["job_id"]).state == ImportJobState.REVIEW
 
         candidates = store.candidates_for(job["job_id"])
         # The UUID-named page was renamed from its first H1; the CSV rows
-        # became folder-scoped fichas; all carry ZIP provenance.
+        # became folder-scoped fichas; the journal's childless H2 became its
+        # own ficha (same source file, second candidate); all carry ZIP
+        # provenance.
+        assert len(candidates) == 6
         by_path = {c.provenance.source_path: c for c in candidates}
         assert sorted(by_path) == [
             "Database/dorin.md", "Database/elara.md", "Database/kael.md",
             "World Overview.md", "elara-s-journal.md",
         ]
+        journal = next(c for c in candidates
+                       if c.canonical_id == "Elara's Journal::Expedition Notes")
+        assert journal.provenance.source_path == "elara-s-journal.md"
         for candidate in candidates:
             assert candidate.provenance.source_kind == "zip"
             assert candidate.provenance.source_hash.startswith("sha256:")
@@ -1377,9 +1392,11 @@ class TestNotionZipDispatch:
         # (the per-ficha flow excludes the H1 from content_preview; a CSV ficha
         # has metadata-only body) and the page keeps its image.
         assert by_path["Database/elara.md"].display_title == "Elara"
+        journal_root = next(c for c in candidates
+                            if c.canonical_id == "Elara's Journal")
         assert any(
             p.relative_media_path == "assets/hero.png"
-            for p in by_path["elara-s-journal.md"].images)
+            for p in journal_root.images)
         # Read-only: no canon writes during analysis.
         assert list((mundos / "world1").rglob("*.md")) == []
 
@@ -1397,7 +1414,8 @@ class TestNotionZipDispatch:
 
         resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
         assert resp.status_code == 200, resp.text
-        assert resp.json()["candidates"] == 6
+        # 6 base candidates + the extra page's childless H2 ficha.
+        assert resp.json()["candidates"] == 7
         events = _events(store, job)
         assert "notion_diagnostics:1" in events
 

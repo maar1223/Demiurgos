@@ -1298,8 +1298,10 @@ _TWO_FICHA_DOC = (
 
 class TestFunnelRouterWiring:
     def test_one_candidate_per_ficha_with_source_ordering(self, tmp_path):
-        """Task 2.5 — a two-H1 document yields one candidate per ficha, in
-        source order, with canonical ids and folded childless prose."""
+        """Task 2.5 — every heading (any level) yields one candidate per
+        ficha, in source order, with canonical ids. The childless
+        ``## Descripción Física`` is its OWN ficha (folder-per-heading —
+        never folded into Ayagares)."""
         client, store, spool, _ = _funnel_app(tmp_path)
         resp = client.post(
             "/api/world1/imports",
@@ -1313,14 +1315,17 @@ class TestFunnelRouterWiring:
         analyze = client.post(
             f"/api/world1/imports/{job['job_id']}/analyze")
         assert analyze.status_code == 200, analyze.text
-        assert analyze.json()["candidates"] == 2
+        assert analyze.json()["candidates"] == 3
         cands = store.candidates_for(job["job_id"])
-        assert [c.canonical_id for c in cands] == ["Ayagares", "Palacios"]
-        assert [c.display_title for c in cands] == ["Ayagares", "Palacios"]
-        # Ficha bodies preserve the original text (heading folds for the
-        # childless H2; the ficha's own H1 becomes the title).
-        assert "Altas murallas de piedra blanca" in cands[0].content_preview
-        assert "Residencia del señor" in cands[1].content_preview
+        assert [c.canonical_id for c in cands] == [
+            "Ayagares", "Ayagares::Descripción Física", "Palacios"]
+        assert [c.display_title for c in cands] == [
+            "Ayagares", "Descripción Física", "Palacios"]
+        # Ficha bodies preserve the original text (the childless H2 keeps
+        # its own prose — nothing folds into the parent).
+        assert "Fundada en el 1200 AE" in cands[0].content_preview
+        assert "Altas murallas de piedra blanca" in cands[1].content_preview
+        assert "Residencia del señor" in cands[2].content_preview
 
     def test_review_payload_exposes_frontmatter_body_and_media_warnings(
             self, tmp_path):
@@ -1345,8 +1350,12 @@ class TestFunnelRouterWiring:
         assert cand["frontmatter"]["state"] == "manual"
         assert cand["frontmatter"]["title"] == "Ayagares"
         assert "Fundada en el 1200 AE" in cand["content_preview"]
-        # Media warning: the unresolved ![][imagen1] reference is surfaced.
-        warnings = cand["media_diagnostics"]
+        # The unresolved ![][imagen1] reference lives in the childless H2
+        # ficha (``Ayagares::Descripción Física`` — folder-per-heading), so
+        # the media warning surfaces on THAT candidate, not on Ayagares.
+        df = next(c for c in review["candidates"]
+                  if c["canonical_id"] == "Ayagares::Descripción Física")
+        warnings = df["media_diagnostics"]
         assert any(w["image_key"] == "imagen1"
                    and w["status"] == "unresolved" for w in warnings)
 
@@ -1378,10 +1387,10 @@ class TestFunnelRouterWiring:
         review = client.get(
             f"/api/world1/imports/{job['job_id']}/review").json()
         assert review["enrichment_status"] == "ok"
-        palacios = next(c for c in review["candidates"]
-                        if c["canonical_id"] == "Palacios")
         ayagares = next(c for c in review["candidates"]
                         if c["canonical_id"] == "Ayagares")
+        df = next(c for c in review["candidates"]
+                  if c["canonical_id"] == "Ayagares::Descripción Física")
         assert ayagares["summary"].startswith("Resumen denso de")
         assert ayagares["frontmatter"]["state"] == "generated"
         assert ayagares["frontmatter"]["type"] == "lugar"
@@ -1392,10 +1401,10 @@ class TestFunnelRouterWiring:
         assert stored_by_cid["Ayagares"].frontmatter is not None
         assert (stored_by_cid["Ayagares"].frontmatter.state
                 == FrontmatterState.GENERATED)
-        # Relationship anchored on the second ficha's canonical id.
+        # Relationship anchored on the second ficha of the source order
+        # (the childless H2 ficha — folder-per-heading) canonical id.
         rels = stored_by_cid["Ayagares"].enrichment_json or []
-        assert rels and rels[0]["target_candidate_id"] == palacios[
-            "candidate_id"]
+        assert rels and rels[0]["target_candidate_id"] == df["candidate_id"]
 
     def test_structure_inference_seam_wired_in_router(self, tmp_path):
         """Task 1.2 seam — when the deterministic scan finds no headings, the

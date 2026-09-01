@@ -347,9 +347,10 @@ class TestSlugSegment:
 
 
 class TestResolveTargetHierarchy:
-    """``resolve_target`` section branch — each ``::`` segment of a valid
-    canonical_id becomes a slugged path component (all but last are
-    subfolders, last is the filename stem); empty/invalid canonical_id or
+    """``resolve_target`` section branch — every ``::`` segment of a valid
+    canonical_id becomes a slugged FOLDER and the last segment is ALSO the
+    filename stem inside its own folder (folder-per-heading rule:
+    ``{section}/<h1>/.../<hn>/<hn>.md``); empty/invalid canonical_id or
     all-empty slugs fall back to the piece-1 ``{section}/{identity}.md``
     mapping; empty section falls through to the legacy branch."""
 
@@ -368,23 +369,25 @@ class TestResolveTargetHierarchy:
         )
 
     def test_multi_segment_canonical_id(self):
-        """3-segment canonical_id → subfolder chain under the section."""
+        """3-segment canonical_id → folder chain under the section, each
+        segment a folder and the last also the filename (folder-per-heading)."""
         cand = self._candidate(
             "Enciclopedia de los Vibrantes.md", section="lore",
             canonical_id="Áyagars::Impacto Social::Áyagar del 9no Stal")
         r = resolve_target("w1", cand)
         assert r.status == "resolved"
         assert r.canonical_path == \
-            "lore/ayagars/impacto-social/ayagar-del-9no-stal.md"
+            "lore/ayagars/impacto-social/ayagar-del-9no-stal/ayagar-del-9no-stal.md"
         assert r.alias_used == ""
 
     def test_single_segment_canonical_id(self):
-        """Single-segment canonical_id → file directly under the section."""
+        """Single-segment canonical_id (a lone H1 root) → its own folder
+        with the file INSIDE (``lore/<slug>/<slug>.md``) — never flat."""
         cand = self._candidate("Enciclopedia de los Vibrantes.md",
                                section="lore", canonical_id="Dottua")
         r = resolve_target("w1", cand)
         assert r.status == "resolved"
-        assert r.canonical_path == "lore/dottua.md"
+        assert r.canonical_path == "lore/dottua/dottua.md"
 
     def test_ordinal_suffix(self):
         """Ordinal ``#N`` participates as a ``-N`` suffix in the slug."""
@@ -393,16 +396,16 @@ class TestResolveTargetHierarchy:
                                canonical_id="Sistema Stal::1er Stal#2")
         r = resolve_target("w1", cand)
         assert r.status == "resolved"
-        assert r.canonical_path == "lore/sistema-stal/1er-stal-2.md"
+        assert r.canonical_path == "lore/sistema-stal/1er-stal-2/1er-stal-2.md"
 
     def test_deep_hierarchy(self):
-        """5 segments → 4 subfolders + filename stem."""
+        """5 segments → 5 folders, the last also the filename stem."""
         cand = self._candidate("Enciclopedia de los Vibrantes.md",
                                section="lore",
                                canonical_id="A::B::C::D::E")
         r = resolve_target("w1", cand)
         assert r.status == "resolved"
-        assert r.canonical_path == "lore/a/b/c/d/e.md"
+        assert r.canonical_path == "lore/a/b/c/d/e/e.md"
 
     def test_empty_canonical_id_fallback(self):
         """Empty canonical_id → piece-1 ``{section}/{identity}.md``."""
@@ -463,9 +466,9 @@ class TestResolveTargetHierarchy:
         assert first.status == "resolved"
         assert second.status == "resolved"
         assert first.canonical_path == \
-            "lore/politica-distribucion-y-territorios/dottua.md"
+            "lore/politica-distribucion-y-territorios/dottua/dottua.md"
         assert second.canonical_path == \
-            "lore/politica-distribucion-y-territorios/vex.md"
+            "lore/politica-distribucion-y-territorios/vex/vex.md"
         assert first.canonical_path != second.canonical_path
         assert first.canonical_path.startswith(
             "lore/politica-distribucion-y-territorios/")
@@ -551,13 +554,14 @@ class TestImageExtraction:
                                 spool_root=spool)
         analyzed = report.ordered_files()[0]
         assert len(analyzed.media) == 2
-        # Bytes persisted under <spool>/media/<stem>/<filename>.
-        stored = spool / "media" / "Enciclopedia" / "portada.png"
+        # Bytes persisted under <spool>/media/<filename> — the FLAT layout
+        # the injected markdown refs (``media/<filename>``) and the
+        # execution-time gallery lookup both resolve (BUG 2 fix).
+        stored = spool / "media" / "portada.png"
         assert stored.read_bytes() == b"PORTADA-BYTES"
-        assert (spool / "media" / "Enciclopedia" / "mapa.png").exists()
+        assert (spool / "media" / "mapa.png").exists()
         first = analyzed.media[0]
-        assert first.spool_relative_path == \
-            "media/Enciclopedia/portada.png"
+        assert first.spool_relative_path == "media/portada.png"
         assert first.image.filename == "portada.png"
         assert first.image.image_bytes == b"PORTADA-BYTES"
         # Metadata survives on the bundle: source, page, filename, bytes.
@@ -586,12 +590,10 @@ class TestImageExtraction:
         stored = store_media_in_spool(entries, "Lore/Enciclopedia.docx", spool)
         assert len(stored) == 2
         paths = [m.spool_relative_path for m in stored]
-        assert "media/Enciclopedia/pic.png" in paths
-        assert "media/Enciclopedia/pic-1.png" in paths
-        assert (spool / "media" / "Enciclopedia" / "pic.png").read_bytes() \
-            == b"FIRST"
-        assert (spool / "media" / "Enciclopedia" / "pic-1.png").read_bytes() \
-            == b"SECOND"
+        assert "media/pic.png" in paths
+        assert "media/pic-1.png" in paths
+        assert (spool / "media" / "pic.png").read_bytes() == b"FIRST"
+        assert (spool / "media" / "pic-1.png").read_bytes() == b"SECOND"
 
     def test_extraction_failure_does_not_block_analysis(
             self, monkeypatch, tmp_path):
@@ -722,20 +724,19 @@ class TestDocxStrategyIntegration:
         """BUG 2 gap — spool collision rename vs injected ref attribution.
 
         When ``store_media_in_spool`` renames a file on disk because the
-        target already exists (``pic.png`` -> ``pic-1.png`` — e.g. a
-        same-stem sibling source like ``Lore/Enciclopedia.md`` already
-        stored ``pic.png`` under ``media/Enciclopedia/`` in the same job),
-        the markdown ref injected by the DOCX strategy still points at the
-        ORIGINAL name (``media/pic.png``). ``_enrich_placements`` matches by
-        basename, so the ref must still resolve to the renamed media —
-        otherwise the DOCX position contract (``document_order`` /
+        target already exists (``pic.png`` -> ``pic-1.png`` — e.g. a sibling
+        source in the same job already stored ``pic.png`` in the flat
+        ``media/`` dir), the markdown ref injected by the DOCX strategy still
+        points at the ORIGINAL name (``media/pic.png``). ``_enrich_placements``
+        matches by basename, so the ref must still resolve to the renamed
+        media — otherwise the DOCX position contract (``document_order`` /
         ``paragraph_index``) is lost and the placement is silently
         unenriched.
         """
-        # Pre-existing spool file simulates a same-stem sibling source in
-        # the same job that already stored ``pic.png`` under this stem dir.
+        # Pre-existing spool file simulates a sibling source in the same job
+        # that already stored ``pic.png`` in the flat media dir.
         spool = tmp_path / "spool"
-        media_dir = spool / "media" / "Enciclopedia"
+        media_dir = spool / "media"
         media_dir.mkdir(parents=True)
         (media_dir / "pic.png").write_bytes(b"STALE-SIBLING-BYTES")
 
@@ -768,7 +769,7 @@ class TestDocxStrategyIntegration:
         # The collision really fired: the extracted bytes were stored under a
         # renamed path and the stale file was not overwritten.
         assert [m.spool_relative_path for m in analyzed.media] == \
-            ["media/Enciclopedia/pic-1.png"]
+            ["media/pic-1.png"]
         assert (media_dir / "pic.png").read_bytes() == b"STALE-SIBLING-BYTES"
         assert (media_dir / "pic-1.png").read_bytes() == b"PIC-BYTES"
         # The injected ref keeps pointing at the ORIGINAL name, and the DOCX
@@ -869,9 +870,8 @@ class TestDocxStrategyIntegration:
         analyzed = report.ordered_files()[0]
         assert "Body" in analyzed.content_preview()
         assert [m.image.filename for m in analyzed.media] == ["good.png"]
-        assert (spool / "media" / "Enciclopedia" / "good.png").read_bytes() \
-            == b"GOOD-BYTES"
-        assert not (spool / "media" / "Enciclopedia" / "bad.png").exists()
+        assert (spool / "media" / "good.png").read_bytes() == b"GOOD-BYTES"
+        assert not (spool / "media" / "bad.png").exists()
 
     def test_pdf_keeps_legacy_adapter(self, monkeypatch, tmp_path):
         """R2-S1 — PDF stays on the legacy extractor (no strategy): the

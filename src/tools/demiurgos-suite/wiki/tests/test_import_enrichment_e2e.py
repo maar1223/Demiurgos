@@ -150,7 +150,7 @@ def _classifying_enricher(
 
     from import_enrichment import enrich_candidates
 
-    def enricher(candidates, progress_cb=None):
+    def enricher(candidates, progress_cb=None, on_phase=None):
         if not candidates:
             return list(candidates)
         candidate_id = candidates[0].candidate_id
@@ -479,7 +479,7 @@ class TestEnrichmentCache:
         """
         call_count = {"n": 0}
 
-        def counting_enricher(candidates, progress_cb=None):
+        def counting_enricher(candidates, progress_cb=None, on_phase=None):
             call_count["n"] += 1
             return _classifying_enricher()(candidates)
 
@@ -531,7 +531,7 @@ class TestEnrichmentCache:
         """
         call_count = {"n": 0}
 
-        def counting_enricher(candidates, progress_cb=None):
+        def counting_enricher(candidates, progress_cb=None, on_phase=None):
             call_count["n"] += 1
             return _classifying_enricher()(candidates)
 

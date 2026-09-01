@@ -561,6 +561,28 @@ def _deepest_heading(heading_path: str) -> str:
     return heading_path
 
 
+def _markdown_heading_paths(
+    headings: list[tuple[int, int, str, int]],
+) -> list[str]:
+    """Ancestry-qualified normalized path per markdown heading span.
+
+    Each path is the ``" > "``-joined chain of ancestor heading texts (same
+    semantics as the DOCX parser's ``heading_stack``: a heading attaches
+    under the nearest preceding heading of strictly smaller level). Matching
+    an image against the FULL path — not only its deepest component — keeps
+    repeated child headings (``Forma Base`` under every Stal) landing in
+    THEIR OWN section instead of all resolving to the first match (BUG 2).
+    """
+    stack: list[tuple[int, str]] = []
+    paths: list[str] = []
+    for _line_idx, level, text, _end in headings:
+        while stack and stack[-1][0] >= level:
+            stack.pop()
+        stack.append((level, text))
+        paths.append(" > ".join(component for _lvl, component in stack))
+    return paths
+
+
 # Characters that break filenames on Windows / markdown image destinations /
 # URLs. They are dropped (not replaced) so readable names stay short.
 _RE_ILLEGAL_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|()\[\]{}\x00-\x1f]')
@@ -617,7 +639,13 @@ def _unique_filename(
 
 
 def _image_ref(img: ImageEntry) -> str:
-    """Markdown reference for a positioned image entry."""
+    """Markdown reference for a positioned image entry.
+
+    Flat convention ``media/<filename>``: matches the spool layout
+    (``<spool_dir>/media/<filename>``), the execution-time gallery lookup,
+    and the media endpoint's importer path (``media/x.png`` →
+    ``wiki/media/x.png``), so the written ficha renders without rewriting.
+    """
     stem = PurePosixPath(img.filename or "image").stem
     return f"![{stem}](media/{img.filename})"
 
@@ -628,8 +656,13 @@ def inject_image_refs(
     """Inject ``![alt](media/filename)`` references into converted Markdown.
 
     Deterministic, line-based strategy:
-    1. Each image is matched to the first Markdown heading whose normalized
-       text equals the deepest component of the image ``heading_path``.
+    1. Each image is matched to the first Markdown heading whose FULL
+       ancestry path (``parent > child``) equals the image ``heading_path``
+       — so an image under ``Áyagar del 1er Stal > Forma Base`` lands in
+       THAT Stal's section, never in the first ``Forma Base`` (BUG 2).
+       When no full-path match exists, the match falls back to the deepest
+       component alone (unique leaf headings — e.g. ``Dvex del Stal N`` —
+       still resolve when the converted ancestry differs from the DOCX).
     2. Within a section, refs are inserted after the section's paragraph lines
        in document order (one ref per paragraph). When the section runs out
        of paragraph lines, the remaining refs are appended at the section end
@@ -647,18 +680,31 @@ def inject_image_refs(
     diagnostics: list[str] = []
     lines = markdown.split("\n")
     headings = _markdown_heading_spans(lines)
+    full_paths = _markdown_heading_paths(headings)
 
     sections: list[list[ImageEntry]] = [[] for _ in headings]
     unmatched: list[ImageEntry] = []
     for img in images:
+        img_path = _normalize_heading(img.heading_path or "")
         section_idx = next(
             (
                 idx
-                for idx, (_i, _lvl, text, _end) in enumerate(headings)
-                if text == _normalize_heading(_deepest_heading(img.heading_path))
+                for idx, full in enumerate(full_paths)
+                if full == img_path
             ),
             None,
         )
+        if section_idx is None:
+            # Fallback: the deepest component alone (unique leaf headings).
+            deepest = _normalize_heading(_deepest_heading(img.heading_path))
+            section_idx = next(
+                (
+                    idx
+                    for idx, (_i, _lvl, text, _end) in enumerate(headings)
+                    if text == deepest
+                ),
+                None,
+            )
         if section_idx is not None:
             sections[section_idx].append(img)
         else:

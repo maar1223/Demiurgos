@@ -483,7 +483,7 @@ def _funnel_enricher():
     """Enricher that runs the real enrichment funnel (generated frontmatter)."""
     from import_enrichment import analyze_ficha_funnel
 
-    def enricher(candidates, progress_cb=None):
+    def enricher(candidates, progress_cb=None, on_phase=None):
         return analyze_ficha_funnel(
             candidates, hermes_runner=_scripted_funnel_runner(),
             progress_cb=progress_cb)

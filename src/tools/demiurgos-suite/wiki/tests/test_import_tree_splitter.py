@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """World importer — Phase 1 (importador-auto-frontmatter) tests for the
 deterministic H1-H5 tree splitter: H1-H5 nesting, canonical parent-qualified
-identities, empty-scaffold preservation, childless prose folding, repeated-
-title ordinals, the Hermes structure-inference fallback seam, and
-reference-image diagnostics.
+identities, empty-scaffold preservation, folder-per-heading materialization
+(every heading — any level, with or without children — is a ficha that owns
+its own folder + file), repeated-title ordinals, the Hermes
+structure-inference fallback seam, and reference-image diagnostics.
 """
 
 from __future__ import annotations
@@ -34,7 +35,10 @@ from import_analysis import (  # noqa: E402
 
 class TestHeadingTreeSplitter:
     def test_h1_h5_nesting_builds_hierarchy(self):
-        """Nested H1-H5 produce parent-qualified ficha ids in source order."""
+        """Nested H1-H5 produce parent-qualified ficha ids in source order;
+        EVERY heading — including the leaf H5 ``Manos`` — is its own ficha
+        (folder-per-heading rule: each heading owns a folder with its own
+        file, so nothing folds into a parent)."""
         text = (
             "# Ayagares\n\n"
             "## Descripción Física\n\n"
@@ -51,18 +55,20 @@ class TestHeadingTreeSplitter:
             "Ayagares::Descripción Física",
             "Ayagares::Descripción Física::Forma Base",
             "Ayagares::Descripción Física::Forma Base::Extremidades",
+            "Ayagares::Descripción Física::Forma Base::Extremidades::Manos",
         ]
-        # H5 ``Manos`` cannot have children (levels cap at 5) so it folds
-        # verbatim into its H4 parent ficha instead of becoming a node.
         root = tree.fichas[0]
         assert root.level == 1 and root.source_order == 0
         assert root.children[0].title == "Descripción Física"
-        extremidades = tree.fichas[-1]
-        assert extremidades.level == 4
+        manos = tree.fichas[-1]
+        assert manos.level == 5
         # The ficha's own heading opens its body (self-descriptive ficha).
-        assert extremidades.body == (
-            "#### Extremidades\n\n##### Manos\n\nCinco dedos.")
-        assert extremidades.children == []
+        assert manos.body == "##### Manos\n\nCinco dedos."
+        assert manos.children == []
+        # The leaf's parent keeps ONLY its own prose — nothing folded.
+        extremidades = tree.fichas[-2]
+        assert extremidades.body == "#### Extremidades"
+        assert [c.title for c in extremidades.children] == ["Manos"]
 
     def test_empty_h1_scaffold_is_preserved(self):
         """An empty H1 remains a valid root/index ficha, never dropped. Its
@@ -74,9 +80,10 @@ class TestHeadingTreeSplitter:
         assert vacia.level == 1 and vacia.is_ficha
         assert llena.body == "# Llena\n\nContenido."
 
-    def test_childless_prose_folds_into_parent_ficha(self):
-        """Childless headings fold (verbatim, heading included) into the
-        parent ficha instead of being discarded or emitted empty."""
+    def test_childless_heading_is_own_ficha_not_folded(self):
+        """Folder-per-heading rule: a childless heading (``Sociedad`` H2,
+        ``Forma Base`` H3) is its OWN ficha — never folded into the parent —
+        and keeps its own prose in its body."""
         text = (
             "# Ayagares\n\n"
             "Intro del mundo.\n\n"
@@ -88,18 +95,24 @@ class TestHeadingTreeSplitter:
             "Sin hijos.\n"
         )
         tree = split_heading_tree(text)
-        # Sociedad (childless H2) folds into Ayagares; Forma Base (childless
-        # H3) folds into Descripción Física. Neither is emitted as a ficha.
+        # Every heading becomes a ficha: childless Sociedad and Forma Base
+        # are emitted (each will own its folder + file at execution).
         assert [f.canonical_id for f in tree.fichas] == [
-            "Ayagares", "Ayagares::Descripción Física",
+            "Ayagares",
+            "Ayagares::Descripción Física",
+            "Ayagares::Descripción Física::Forma Base",
+            "Ayagares::Sociedad",
         ]
-        ayagares, df = tree.fichas
+        ayagares, df, fb, sociedad = tree.fichas
+        # Nothing folds: each ficha carries only its own prose.
         assert "Intro del mundo." in ayagares.body
-        assert "## Sociedad" in ayagares.body
-        assert "Sin hijos." in ayagares.body
+        assert "## Sociedad" not in ayagares.body
+        assert "Sin hijos." not in ayagares.body
         assert "Prosa directa." in df.body
-        assert "### Forma Base" in df.body
-        assert "Cuerpo y extremidades." in df.body
+        assert "### Forma Base" not in df.body
+        assert "Cuerpo y extremidades." in fb.body
+        assert "Sin hijos." in sociedad.body
+        assert sociedad.level == 2 and sociedad.children == []
 
     def test_preamble_folds_into_first_root(self):
         """Lines before the first heading are preserved in the first root."""
@@ -155,12 +168,16 @@ class TestCanonicalIdentities:
             "Cuerpo B.\n"
         )
         tree = split_heading_tree(text)
+        # Every level is a ficha now: the leaf H4s (``Detalles``/``Otros``)
+        # are emitted too, and duplicate siblings keep their ordinals.
         assert [f.canonical_id for f in tree.fichas] == [
             "Ayagares",
             "Ayagares::Descripción Física",
             "Ayagares::Descripción Física::Forma Base",
+            "Ayagares::Descripción Física::Forma Base::Detalles",
             "Ayagares::Descripción Física#2",
             "Ayagares::Descripción Física#2::Forma Base",
+            "Ayagares::Descripción Física#2::Forma Base::Otros",
         ]
 
     def test_repeated_titles_across_branches_are_parent_qualified(self):
@@ -254,16 +271,23 @@ class TestReferenceImageDiagnostics:
             "Otra ![portada][image2].\n"
         )
         tree = split_heading_tree(text)
-        # ``## Sociedad`` is childless, so both spans live in Ayagares' body.
-        diagnostics = tree.fichas[0].media_diagnostics
-        assert len(diagnostics) == 2
-        by_key = {d.image_key: d for d in diagnostics}
-        assert by_key["image1"].reference == "![][image1]"
-        assert by_key["image1"].status == "unresolved"
-        assert by_key["image1"].target_ficha == "Ayagares"
-        assert "no definition" in by_key["image1"].message
-        assert by_key["image2"].alt_text == "portada"
-        assert by_key["image2"].status == "unresolved"
+        # ``## Sociedad`` is its OWN ficha (folder-per-heading), so its
+        # diagnostic span lives in Sociedad's ficha, not Ayagares'.
+        by_ficha = {f.canonical_id: f for f in tree.fichas}
+        ayagares = by_ficha["Ayagares"]
+        sociedad = by_ficha["Ayagares::Sociedad"]
+        diags = ayagares.media_diagnostics
+        assert len(diags) == 1
+        assert diags[0].image_key == "image1"
+        assert diags[0].reference == "![][image1]"
+        assert diags[0].status == "unresolved"
+        assert diags[0].target_ficha == "Ayagares"
+        assert "no definition" in diags[0].message
+        diag2 = sociedad.media_diagnostics[0]
+        assert diag2.image_key == "image2"
+        assert diag2.alt_text == "portada"
+        assert diag2.status == "unresolved"
+        assert diag2.target_ficha == "Ayagares::Sociedad"
 
     def test_resolved_reference_with_definition(self):
         text = (

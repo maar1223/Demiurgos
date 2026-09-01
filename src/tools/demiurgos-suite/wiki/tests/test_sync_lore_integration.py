@@ -329,11 +329,13 @@ def _events(store, job_id: str) -> list[str]:
 def _docx_seams(monkeypatch, entries, md_text):
     """Mock the lazy conversion + extraction seams for a .docx source.
 
-    The converted markdown references the extracted images at their PR1 spool
-    paths (``media/<stem>/<file>``) so placements and vision suggestions
-    resolve to the same path the executor reads. The strategy seam returns
-    the mock entries and passes the converted markdown through unchanged
-    (PR2 dispatch through ``extract_by_extension``).
+    The converted markdown references the extracted images at their FLAT
+    spool paths (``media/<file>`` — the DOCX parser's ``_image_ref`` form,
+    without any source-stem prefix) so placements, vision suggestions, and
+    the executor's gallery lookup all resolve to the same path (BUG 2a
+    coverage WITHOUT the stem prefix). The strategy seam returns the mock
+    entries and passes the converted markdown through unchanged (PR2
+    dispatch through ``extract_by_extension``).
     """
     monkeypatch.setattr(
         "sync_lore.utils.converter.convert_to_markdown",
@@ -350,7 +352,7 @@ _DOCX_MD = (
     "---\ntype: personaje\nname: A\n---\n"
     "# Origen\n"
     "Body with context\n\n"
-    "![retrato](media/Enciclopedia/portada.png)"
+    "![retrato](media/portada.png)"
 )
 
 
@@ -401,7 +403,7 @@ class TestFullDocxVisionFlow:
         vid = vision[0]["id"]
         assert vision[0]["verdict"] == "confirma"
         assert vision[0]["relative_media_path"] == (
-            "media/Enciclopedia/portada.png")
+            "media/portada.png")
         assert vision[0]["review_state"] == "pending"
 
         # Approve the image suggestion and execute with the bound token.
@@ -415,9 +417,9 @@ class TestFullDocxVisionFlow:
         # Gallery: the ORIGINAL spool bytes were registered (not the thumb).
         assert len(registered) == 1
         _, src, rel, original_bytes = registered[0]
-        assert rel == "media/Enciclopedia/portada.png"
+        assert rel == "media/portada.png"
         assert src == str(
-            spool / job["job_id"] / "media" / "Enciclopedia" / "portada.png")
+            spool / job["job_id"] / "media" / "portada.png")
         # The bytes are captured at registration time (during execute, before
         # the spool is reclaimed on the terminal COMPLETED transition) —
         # mirroring production's `_register_import_gallery` copy.
@@ -427,8 +429,8 @@ class TestFullDocxVisionFlow:
         fichas = list((mundos / "world1").rglob("*.md"))
         assert fichas
         ficha_text = "".join(f.read_text(encoding="utf-8") for f in fichas)
-        assert "![Retrato sombrío en claroscuro](media/Enciclopedia/portada.png)" in ficha_text
-        assert "![retrato](media/Enciclopedia/portada.png)" not in ficha_text
+        assert "![Retrato sombrío en claroscuro](media/portada.png)" in ficha_text
+        assert "![retrato](media/portada.png)" not in ficha_text
 
         # The provider saw the 300px thumbnail, never the original bytes.
         assert _provider_calls(_CountingVisionProvider) == 1
@@ -480,7 +482,7 @@ class TestFullDocxVisionFlow:
         # Gallery boundary: the registered file is the ORIGINAL spool bytes,
         # captured at registration time (during execute, before the spool is
         # reclaimed on the terminal COMPLETED transition).
-        assert registered == [("media/Enciclopedia/portada.png", b"ORIGINAL-BYTES")]
+        assert registered == [("media/portada.png", b"ORIGINAL-BYTES")]
 
     def test_rejected_image_not_registered_import_continues(
             self, tmp_path, monkeypatch):
@@ -491,8 +493,8 @@ class TestFullDocxVisionFlow:
         thumb = _ThumbRecorder()
         md = (
             "---\ntype: personaje\nname: A\n---\n# Origen\nBody\n\n"
-            "![retrato](media/Enciclopedia/portada.png)\n\n"
-            "![mapa](media/Enciclopedia/mapa.png)"
+            "![retrato](media/portada.png)\n\n"
+            "![mapa](media/mapa.png)"
         )
         _docx_seams(monkeypatch, [
             _entry(filename="portada.png", data=b"PORTADA-BYTES"),
@@ -519,8 +521,8 @@ class TestFullDocxVisionFlow:
         vision = _vision_entries(review["candidates"][0])
         assert len(vision) == 2
         by_path = {v["relative_media_path"]: v["id"] for v in vision}
-        vid_portada = by_path["media/Enciclopedia/portada.png"]
-        vid_mapa = by_path["media/Enciclopedia/mapa.png"]
+        vid_portada = by_path["media/portada.png"]
+        vid_mapa = by_path["media/mapa.png"]
 
         # Independent decisions: approve the portrait, reject the map.
         _decide(client, job["job_id"], vid_portada, "approve")
@@ -532,7 +534,7 @@ class TestFullDocxVisionFlow:
         assert any(o["written"] for o in executed["outcomes"])
 
         # Only the approved image is registered.
-        assert registered == ["media/Enciclopedia/portada.png"]
+        assert registered == ["media/portada.png"]
 
         # The approved image's description overlays its alt-text exactly once;
         # the rejected image keeps its original markdown ref and its vision
@@ -540,9 +542,9 @@ class TestFullDocxVisionFlow:
         fichas = list((mundos / "world1").rglob("*.md"))
         ficha_text = "".join(f.read_text(encoding="utf-8") for f in fichas)
         assert ficha_text.count(
-            "![Retrato sombrío en claroscuro](media/Enciclopedia/portada.png)") == 1
-        assert "![mapa](media/Enciclopedia/mapa.png)" in ficha_text
-        assert "![Retrato sombrío en claroscuro](media/Enciclopedia/mapa.png)" not in ficha_text
+            "![Retrato sombrío en claroscuro](media/portada.png)") == 1
+        assert "![mapa](media/mapa.png)" in ficha_text
+        assert "![Retrato sombrío en claroscuro](media/mapa.png)" not in ficha_text
 
 
 class TestVisionSkipAndFailure:
@@ -578,7 +580,7 @@ class TestVisionSkipAndFailure:
         assert executed["job"]["state"] == "completed"
         fichas = list((mundos / "world1").rglob("*.md"))
         ficha_text = "".join(f.read_text(encoding="utf-8") for f in fichas)
-        assert "![retrato](media/Enciclopedia/portada.png)" in ficha_text
+        assert "![retrato](media/portada.png)" in ficha_text
 
     def test_vision_failure_fails_open_import_continues(
             self, tmp_path, monkeypatch):
@@ -764,7 +766,7 @@ class TestPdfFlow:
         "---\ntype: lugar\nname: Manual\n---\n"
         "# Manual\n"
         "Body of the manual\n\n"
-        "![diagrama](media/Manual/diagrama.png)"
+        "![diagrama](media/diagrama.png)"
     )
 
     def test_pdf_review_to_execute_digest_unchanged(self, tmp_path, monkeypatch):
@@ -811,10 +813,10 @@ class TestPdfFlow:
         assert approval["digest"] == digest
         executed = _execute(client, job["job_id"], digest, approval["token"], [vid])
         assert executed["job"]["state"] == "completed"
-        assert registered == ["media/Manual/diagrama.png"]
+        assert registered == ["media/diagrama.png"]
         fichas = list((mundos / "world1").rglob("*.md"))
         ficha_text = "".join(f.read_text(encoding="utf-8") for f in fichas)
-        assert "![Retrato sombrío en claroscuro](media/Manual/diagrama.png)" in ficha_text
+        assert "![Retrato sombrío en claroscuro](media/diagrama.png)" in ficha_text
 
 
 class TestDocxPositionPropagation:
@@ -826,7 +828,7 @@ class TestDocxPositionPropagation:
         "---\ntype: personaje\nname: A\n---\n"
         "# Origen\n"
         "Body with context\n\n"
-        "![retrato](media/Enciclopedia/portada.png)"
+        "![retrato](media/portada.png)"
     )
 
     def test_review_payload_carries_position_fields(
@@ -863,7 +865,7 @@ class TestDocxPositionPropagation:
         assert len(placements) == 1
         placement = placements[0]
         assert placement["relative_media_path"] == (
-            "media/Enciclopedia/portada.png")
+            "media/portada.png")
         # The position contract survives persistence + review serialization.
         assert placement["document_order"] == 1
         assert placement["paragraph_index"] == 1

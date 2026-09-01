@@ -1400,14 +1400,14 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
         # PR3 — attach extracted media to the owning ficha and preserve the
         # media bundle tied to the candidate that owns each image. Ownership
         # follows the SAME canonical attribution as the inline placements
-        # above: the body references media by filename (``media/x.png`` for
-        # DOCX-injected refs, the raw source ref for markdown), while the
-        # spool path carries a ``media/<stem>/`` prefix — matching on the
-        # full spool path never matches the body and silently folds every
-        # image into the FIRST ficha (Bug 2). Match by basename instead,
-        # enrich the existing placement with the DOCX position contract, and
-        # only create a placement (with full position metadata) when no
-        # inline placement referenced the media.
+        # above: the body references media by the flat ref (``media/x.png``
+        # for DOCX-injected refs, the raw source ref for markdown), and the
+        # spool stores under the same flat ``media/<filename>`` layout —
+        # matching on the basename keeps both spellings resolving to the
+        # same entry (collision-renamed names included). Enrich the existing
+        # placement with the DOCX position contract, and only create a
+        # placement (with full position metadata) when no inline placement
+        # referenced the media.
         placement_by_name: dict[str, ImagePlacement] = {}
         for c in ficha_candidates:
             for p in c.images:

@@ -20,8 +20,10 @@ importador-auto-frontmatter (Phase 1) adds the deterministic H1-H5 tree
 splitter: ``detect_heading_structure`` (Step 0, with a Hermes structure-
 inference fallback seam) and ``split_heading_tree`` (Step 1), which produce
 complete-ficha candidates with parent-qualified canonical identities,
-empty-scaffold preservation, childless prose folding, and reference-image
-diagnostics. This is additive — the legacy chunk flow stays untouched.
+empty-scaffold preservation, folder-per-heading materialization (every
+heading owns a folder containing its own file — no childless folding), and
+reference-image diagnostics. This is additive — the legacy chunk flow stays
+untouched.
 """
 
 from __future__ import annotations
@@ -325,7 +327,8 @@ def analyze_source(
     Markdown sources keep their identity and chunk flow unchanged; media
     extraction for disk image references is additive metadata only.
     ``spool_root`` is the job spool root under which media is stored as
-    ``media/<source-stem>/<filename>``; it defaults to each source file's
+    ``media/<filename>`` (flat — matching the injected markdown refs and the
+    execution-time gallery lookup); it defaults to each source file's
     parent directory when omitted. When ``file_path`` is omitted (legacy
     callers), binary sources yield an empty candidate exactly as before and
     the markdown flow is untouched.
@@ -540,14 +543,20 @@ def store_media_in_spool(images: list[ImageEntry], source_rel: str,
                          spool_dir: Path) -> list[ExtractedMedia]:
     """Persist extracted image bytes under the job spool with metadata.
 
-    Bytes land in ``<spool_dir>/media/<source-stem>/<filename>`` so review
-    and execution can feed the original bytes to ``plan_placements`` without
-    re-opening the source archive. Collisions are avoided by suffixing a
-    counter when the target already exists. The DOCX position contract is
-    mirrored onto each ``ExtractedMedia`` from its ``ImageEntry`` (PR2).
+    Bytes land in ``<spool_dir>/media/<filename>`` — the SAME flat layout
+    the DOCX parser injects into markdown refs (``![..](media/<filename>)``)
+    and ``_register_placements`` reads at execution
+    (``spool_dir/{job_id}/media/<filename>``), so gallery registration
+    resolves the spooled bytes without rewriting the ref. ``source_rel`` is
+    accepted for signature compatibility (the legacy per-source ``<stem>/``
+    subfolder was dropped because it broke the ref→spool→gallery chain).
+    Collisions are avoided by suffixing a counter when the target already
+    exists. The DOCX position contract is mirrored onto each
+    ``ExtractedMedia`` from its ``ImageEntry`` (PR2).
     """
+    del source_rel  # flat layout; kept for caller compatibility
     stored: list[ExtractedMedia] = []
-    base = spool_dir / "media" / Path(source_rel).stem
+    base = spool_dir / "media"
     base.mkdir(parents=True, exist_ok=True)
     for image in images:
         name = image.filename or f"{image.id}.img"
@@ -655,8 +664,11 @@ def resolve_target(world: str, candidate,
     branch with the ``canonical_id`` hierarchy: when ``canonical_id`` is
     non-empty AND a valid canonical id (``okf_contract.is_canonical_id``),
     each ``::``-separated segment is slugged via ``slug_segment`` and becomes
-    a path component — all but the last are subfolders, the last is the
-    filename stem (``{section}/{slug0}/.../{slugN}.md``). Empty or invalid
+    a FOLDER; the last segment is BOTH the final folder and the filename
+    stem, so every heading level owns its own folder containing its own
+    file (``{section}/{slug0}/.../{slugN}/{slugN}.md``). A single-segment
+    canonical id (a lone H1 root) therefore maps to
+    ``{section}/{slug}/{slug}.md`` — never a flat file. Empty or invalid
     ``canonical_id``, or one whose segments all collapse to empty slugs,
     falls back to the piece-1 mapping ``{section}/{identity}.md`` where
     ``identity`` is the source filename stem. Empty ``section`` falls
@@ -709,11 +721,14 @@ def resolve_target(world: str, candidate,
     # no map entry) falls through to the legacy branch unchanged.
     #
     # identity-path-mapping (BLOQUE 1 piece 2): when the section is set AND
-    # the candidate carries a valid hierarchical canonical_id, each ``::``
-    # segment becomes a slugged path component — all but the last are
-    # subfolders, the last is the filename stem. Empty or invalid
-    # canonical_id (or one whose segments all collapse to empty slugs) falls
-    # back to the piece-1 ``{section}/{identity}.md`` mapping (byte-identical).
+    # the candidate carries a valid hierarchical canonical_id, every ``::``
+    # segment becomes a slugged FOLDER and the last segment is also the
+    # filename stem inside its own folder — a heading of level N always
+    # materializes as ``{section}/<h1>/.../<hn>/<hn>.md`` (import folder
+    # rule), so a lone H1 root gets ``{section}/<slug>/<slug>.md`` instead
+    # of a flat file. Empty or invalid canonical_id (or one whose segments
+    # all collapse to empty slugs) falls back to the piece-1
+    # ``{section}/{identity}.md`` mapping (byte-identical).
     section_choice = getattr(candidate, "section", "") or ""
     if section_choice:
         canonical_id = getattr(candidate, "canonical_id", "") or ""
@@ -721,12 +736,9 @@ def resolve_target(world: str, candidate,
             raw_segments = canonical_id.split(CANONICAL_ID_SEPARATOR)
             slugs = [s for s in (slug_segment(seg) for seg in raw_segments) if s]
             if slugs:
-                folders = "/".join(slugs[:-1])
+                folders = "/".join(slugs)
                 stem = slugs[-1]
-                canonical = (
-                    f"{section_choice}/{folders}/{stem}.md"
-                    if folders else f"{section_choice}/{stem}.md"
-                )
+                canonical = f"{section_choice}/{folders}/{stem}.md"
                 return TargetResolution(
                     canonical_path=canonical, normalized_source=canonical,
                     status="resolved", alias_used="",
@@ -849,10 +861,12 @@ class StructureNode:
 
     ``canonical_id`` is the parent-qualified identity (``::``-joined
     normalized heading segments, ``#N`` ordinals for duplicate same-title
-    siblings). ``body`` is the ficha's own prose plus every childless
-    descendant folded in verbatim (heading line included); ``children`` are
-    the ficha children in source order. ``media_diagnostics`` carries the
-    reference-image placements found in the ficha body.
+    siblings). ``body`` is the ficha's own prose (heading line included);
+    ``children`` are the ficha children in source order. EVERY heading —
+    any level, with or without children — is a ficha (folder-per-heading
+    rule), so a childless heading keeps its own body instead of folding
+    into its parent. ``media_diagnostics`` carries the reference-image
+    placements found in the ficha body.
     """
 
     level: int
@@ -952,13 +966,15 @@ def split_heading_tree(
 ) -> HeadingTree:
     """Step 1 — deterministic H1-H5 split into complete-ficha candidates.
 
-    Rules (design, Step 1): every H1 is a valid root/index ficha — including
-    an empty scaffold, which is review-visible and never dropped; a sibling
-    with children becomes a ficha; childless prose folds verbatim into the
-    parent ficha (its heading line included, so nothing is lost); a source
-    with no usable headings yields one implicit ficha holding the whole text
-    (legacy single-candidate path). Each ficha carries the parent-qualified
-    canonical identity, source order, and reference-image diagnostics.
+    Rules (design, Step 1): every heading — H1 through H5, with or without
+    children — is a valid ficha; an empty scaffold is review-visible and
+    never dropped. Each ficha owns a folder that contains its own file plus
+    its children (folder-per-heading rule: ``<h1>/<h2>/<hn>/<hn>.md``), so
+    no childless heading folds into a parent and every level preserves its
+    "mother" context. A source with no usable headings yields one implicit
+    ficha holding the whole text (legacy single-candidate path). Each ficha
+    carries the parent-qualified canonical identity, source order, and
+    reference-image diagnostics.
 
     ``structure`` short-circuits Step 0 (callers that already detected can
     pass the result); otherwise detection runs with the
@@ -1055,8 +1071,10 @@ def _assign_tree(raw: _RawNode) -> None:
 
     Duplicate same-title siblings receive ``#2``, ``#3`` ordinals in source
     order (design identity decision); the first occurrence keeps the plain
-    segment. A child is a ficha when it is an H1 or has children of its own;
-    childless prose folds into the parent ficha.
+    segment. EVERY heading — any level, with or without children — is its
+    own ficha (import folder rule): each heading owns a folder that
+    contains its own file plus its children, so no childless heading folds
+    into a parent and no heading is flattened into the section root.
     """
     counts: dict[str, int] = {}
     for child in raw.children:
@@ -1064,7 +1082,7 @@ def _assign_tree(raw: _RawNode) -> None:
         counts[segment] = counts.get(segment, 0) + 1
         child.canonical_segment = (
             segment if counts[segment] == 1 else f"{segment}#{counts[segment]}")
-        child.is_ficha = child.level == 1 or bool(child.children)
+        child.is_ficha = True
         _assign_tree(child)
 
 
@@ -1074,11 +1092,12 @@ def _ficha_from(
     order: Iterator[int],
     fichas: list[StructureNode],
 ) -> StructureNode:
-    """Emit the ficha node for ``raw`` (must already be flagged a ficha).
+    """Emit the ficha node for ``raw`` (every heading is a ficha).
 
-    The node is appended to ``fichas`` (pre-order = source order); childless
-    descendants fold into this ficha's body verbatim (heading line included);
-    ficha children recurse and are attached in source order.
+    The node is appended to ``fichas`` (pre-order = source order); ficha
+    children recurse and are attached in source order. Every heading keeps
+    its own body (heading line + its prose); childless headings carry their
+    own prose instead of folding into the parent.
     """
     segments = [*parent_segments, raw.canonical_segment]
     node = StructureNode(
@@ -1101,12 +1120,7 @@ def _ficha_from(
     if raw.heading_text:
         body_lines.insert(0, raw.heading_text)
     for child in raw.children:
-        if child.is_ficha:
-            node.children.append(_ficha_from(
-                child, segments, order, fichas))
-        else:
-            body_lines.append(child.heading_text)
-            body_lines.extend(child.body_lines)
+        node.children.append(_ficha_from(child, segments, order, fichas))
     # Body stays VERBATIM markdown: emphasis markers are the document's real
     # formatting (bold/italic/code from the original Word source) and the
     # viewer renders them. Only derived metadata (title/identity) is cleaned.

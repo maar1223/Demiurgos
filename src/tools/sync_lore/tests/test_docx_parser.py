@@ -617,6 +617,53 @@ class TestMarkdownInjection:
         ref_idx = lines.index("![image1](media/image1.png)")
         assert lines[ref_idx - 1] == "Body."  # injected inside the matching section
 
+    def test_matches_full_heading_path_not_first_deepest_match(self):
+        """BUG 2b — an image under a repeated child heading (``Forma Base``
+        under every Stal) must land in ITS OWN section: matching uses the
+        FULL heading path (``Stal N > Forma Base``), never just the deepest
+        component, so the FIRST ``Forma Base`` section cannot capture the
+        other Stals' images."""
+        markdown = (
+            "# Sistema Stal\n\n"
+            "## Áyagar del 1er Stal\n\n"
+            "### Forma Base\n\n"
+            "Cuerpo del 1er Stal.\n\n"
+            "## Áyagar del 2do Stal\n\n"
+            "### Forma Base\n\n"
+            "Cuerpo del 2do Stal.\n"
+        )
+        images = [
+            _positioned_image(
+                "forma-base-1.png", document_order=1,
+                heading_path="Sistema Stal > Áyagar del 1er Stal > Forma Base"),
+            _positioned_image(
+                "forma-base-2.png", document_order=2,
+                heading_path="Sistema Stal > Áyagar del 2do Stal > Forma Base"),
+        ]
+        md, diags = inject_image_refs(markdown, images)
+        assert diags == []
+        lines = md.split("\n")
+        body1 = lines.index("Cuerpo del 1er Stal.")
+        body2 = lines.index("Cuerpo del 2do Stal.")
+        idx1 = lines.index("![forma-base-1](media/forma-base-1.png)")
+        idx2 = lines.index("![forma-base-2](media/forma-base-2.png)")
+        # Each image is injected inside ITS OWN Stal's section, in order.
+        assert body1 < idx1 < body2 < idx2
+
+    def test_deepest_component_fallback_when_ancestry_differs(self):
+        """Unique leaf headings still match when the converted markdown
+        ancestry differs from the DOCX path (e.g. markitdown drops an
+        intermediate heading): the deepest-component fallback resolves them
+        exactly as the legacy matching did."""
+        markdown = "# Capítulo\n\n## Dvex del Stal 1\n\nCuerpo.\n"
+        images = [_positioned_image(
+            "dvex.png",
+            heading_path="Capítulo > Intermedio Descartado > Dvex del Stal 1")]
+        md, diags = inject_image_refs(markdown, images)
+        assert diags == []
+        lines = md.split("\n")
+        assert lines.index("![dvex](media/dvex.png)") > lines.index("Cuerpo.")
+
     def test_overflow_refs_appended_at_section_end_with_diagnostic(self):
         markdown = "# Chapter One\n\nP1.\n\n# Next\n\nMore.\n"
         images = [

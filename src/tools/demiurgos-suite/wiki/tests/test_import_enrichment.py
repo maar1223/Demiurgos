@@ -588,7 +588,7 @@ def _full_app(tmp_path, *, enricher=None):
 
 class TestAnalyzeEnrichFlow:
     def test_analyze_with_enrich_true_attaches_suggestions(self, tmp_path):
-        def enricher(candidates, progress_cb=None):
+        def enricher(candidates, progress_cb=None, on_phase=None):
             from import_models import EnrichmentStatus
             payload = [{
                 "id": "cls-1",
@@ -629,7 +629,7 @@ class TestAnalyzeEnrichFlow:
     def test_analyze_without_enrich_does_not_call_enricher(self, tmp_path):
         calls: list[int] = []
 
-        def enricher(candidates, progress_cb=None):
+        def enricher(candidates, progress_cb=None, on_phase=None):
             calls.append(len(candidates))
             return candidates
 
@@ -666,7 +666,7 @@ class TestAnalyzeEnrichFlow:
         """Explicit ``enrich=false`` preserves the legacy deterministic path."""
         calls: list[int] = []
 
-        def enricher(candidates, progress_cb=None):
+        def enricher(candidates, progress_cb=None, on_phase=None):
             calls.append(len(candidates))
             return candidates
 
@@ -708,7 +708,7 @@ class TestAnalyzeEnrichFlow:
             assert suggestions == []
 
     def test_decisions_endpoint_toggles_review_state(self, tmp_path):
-        def enricher(candidates, progress_cb=None):
+        def enricher(candidates, progress_cb=None, on_phase=None):
             from import_models import EnrichmentStatus, Candidate
             data = candidates[0].model_dump()
             data["enrichment_json"] = [{

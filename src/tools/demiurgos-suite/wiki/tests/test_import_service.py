@@ -199,7 +199,7 @@ class TestContextualPlacement:
         """PR2 (task 2.5/2.10) — the DOCX position contract passes through
         planning untouched on every outcome (approved/skip/ambiguous)."""
         proposed = [{
-            "relative_media_path": "media/Enciclopedia/portada.png",
+            "relative_media_path": "media/portada.png",
             "target_ficha": "Origen",
             "alt_text": "retrato",
             "document_order": 1,
@@ -221,7 +221,7 @@ class TestContextualPlacement:
         assert approved["warnings"] == ["media part missing; skipped"]
         # Skip outcome preserves the metadata too.
         skipped = plan_placements(
-            ["media/Enciclopedia/portada.png"], proposed)[0]
+            ["media/portada.png"], proposed)[0]
         assert skipped["placement_status"] == "skip"
         assert skipped["anchor_type"] == "inline"
 
@@ -702,8 +702,8 @@ class TestResolveTarget:
         assert r.canonical_path == "lore/Dottua.md"
 
     # BLOQUE 1 piece 2 — canonical_id hierarchy (identity-path-mapping):
-    # section + valid canonical_id → slugged subfolder chain + filename;
-    # empty/invalid canonical_id → piece-1 fallback.
+    # section + valid canonical_id → slugged FOLDER chain + filename inside
+    # its own folder; empty/invalid canonical_id → piece-1 fallback.
 
     def test_section_with_canonical_id_multi_segment(self, tmp_path):
         cand = self._candidate(
@@ -713,7 +713,7 @@ class TestResolveTarget:
         r = resolve_target("world1", cand, mundos_dir=tmp_path)
         assert r.status == "resolved"
         assert r.canonical_path == \
-            "lore/ayagars/impacto-social/ayagar-del-9no-stal.md"
+            "lore/ayagars/impacto-social/ayagar-del-9no-stal/ayagar-del-9no-stal.md"
         assert r.normalized_source == r.canonical_path
         assert r.alias_used == ""
 
@@ -742,7 +742,7 @@ class TestResolveTarget:
             canonical_id="Sistema Stal::1er Stal#2")
         r = resolve_target("world1", cand, mundos_dir=tmp_path)
         assert r.status == "resolved"
-        assert r.canonical_path == "lore/sistema-stal/1er-stal-2.md"
+        assert r.canonical_path == "lore/sistema-stal/1er-stal-2/1er-stal-2.md"
 
     def test_section_with_accent(self, tmp_path):
         cand = self._candidate(
@@ -752,7 +752,7 @@ class TestResolveTarget:
         r = resolve_target("world1", cand, mundos_dir=tmp_path)
         assert r.status == "resolved"
         assert r.canonical_path == \
-            "lore/politica-distribucion-y-territorios/dottua.md"
+            "lore/politica-distribucion-y-territorios/dottua/dottua.md"
 
 
 # ---------------------------------------------------------------------------
@@ -766,13 +766,13 @@ class TestVisionExecution:
     eligible; images without vision results stay reviewable (fallback)."""
 
     _CONTENT = ("---\ntype: personaje\nname: A\n---\n# Origen\n"
-                "body\n\n![retrato](media/A/retrato.png)")
+                "body\n\n![retrato](media/retrato.png)")
 
     def _cand(self, images, enrichment):
         from import_models import ImagePlacement
         cand = _candidate(content=self._CONTENT, images=images or [
             ImagePlacement(gallery_asset_id="",
-                           relative_media_path="media/A/retrato.png",
+                           relative_media_path="media/retrato.png",
                            alt_text="", target_ficha="Origen",
                            confidence=1.0, placement_status="proposed"),
         ])
@@ -782,7 +782,7 @@ class TestVisionExecution:
 
     def _vision_entry(self, vid="vision:abc", review_state="pending",
                       desc="Retrato de A",
-                      path="media/A/retrato.png"):
+                      path="media/retrato.png"):
         return {
             "__type__": "vision", "id": vid, "candidate_id": "cand-A",
             "relative_media_path": path, "description": desc,
@@ -794,8 +794,8 @@ class TestVisionExecution:
 
     def _svc(self, store, tmp_path, registered):
         spool = tmp_path / "spool"
-        (spool / "job1" / "media" / "A").mkdir(parents=True, exist_ok=True)
-        (spool / "job1" / "media" / "A" / "retrato.png").write_bytes(b"img")
+        (spool / "job1" / "media").mkdir(parents=True, exist_ok=True)
+        (spool / "job1" / "media" / "retrato.png").write_bytes(b"img")
         (tmp_path / "world1" / "lore").mkdir(parents=True, exist_ok=True)
         return ImportService(
             store=store, mundos_dir=tmp_path, spool_dir=spool,
@@ -822,13 +822,13 @@ class TestVisionExecution:
         assert outcomes[0].written
         assert registered, "approved image must be registered in the gallery"
         _, src, rel = registered[0]
-        assert rel == "media/A/retrato.png"
-        assert src == str(tmp_path / "spool" / "job1" / "media" / "A"
+        assert rel == "media/retrato.png"
+        assert src == str(tmp_path / "spool" / "job1" / "media"
                           / "retrato.png")
         ficha = (tmp_path / "world1" / "lore" / "A.md").read_text(
             encoding="utf-8")
-        assert "![Retrato de A](media/A/retrato.png)" in ficha
-        assert "![retrato](media/A/retrato.png)" not in ficha
+        assert "![Retrato de A](media/retrato.png)" in ficha
+        assert "![retrato](media/retrato.png)" not in ficha
 
     @pytest.mark.parametrize("state", ["pending", "rejected"])
     def test_non_approved_vision_suggestion_not_eligible(
@@ -872,7 +872,7 @@ class TestVisionExecution:
         assert registered, "image without vision result must still be placed"
         ficha = (tmp_path / "world1" / "lore" / "A.md").read_text(
             encoding="utf-8")
-        assert "![retrato](media/A/retrato.png)" in ficha  # unchanged
+        assert "![retrato](media/retrato.png)" in ficha  # unchanged
 
     def test_legacy_approval_without_ids_preserves_placement_flow(
             self, store, tmp_path):
@@ -901,15 +901,15 @@ class TestVisionExecution:
         from import_models import ImagePlacement
         cand = _candidate(
             content=("---\ntype: personaje\nname: A\n---\n# Origen\nbody\n\n"
-                     "![retrato](media/A/retrato.png)\n\n"
-                     "![mapa](media/A/mapa.png)"),
+                     "![retrato](media/retrato.png)\n\n"
+                     "![mapa](media/mapa.png)"),
             images=[
                 ImagePlacement(gallery_asset_id="",
-                               relative_media_path="media/A/retrato.png",
+                               relative_media_path="media/retrato.png",
                                alt_text="", target_ficha="Origen",
                                confidence=1.0, placement_status="proposed"),
                 ImagePlacement(gallery_asset_id="",
-                               relative_media_path="media/A/mapa.png",
+                               relative_media_path="media/mapa.png",
                                alt_text="", target_ficha="Origen",
                                confidence=1.0, placement_status="proposed"),
             ],
@@ -918,17 +918,17 @@ class TestVisionExecution:
             self._vision_entry(vid="vision:abc",
                                review_state="approved",
                                desc="Retrato de A",
-                               path="media/A/retrato.png"),
+                               path="media/retrato.png"),
             self._vision_entry(vid="vision:def",
                                review_state="rejected",
                                desc="Mapa del mundo",
-                               path="media/A/mapa.png"),
+                               path="media/mapa.png"),
         ]
         cand.enrichment_status = "ok"
         spool = tmp_path / "spool"
-        (spool / "job1" / "media" / "A").mkdir(parents=True, exist_ok=True)
-        (spool / "job1" / "media" / "A" / "retrato.png").write_bytes(b"r")
-        (spool / "job1" / "media" / "A" / "mapa.png").write_bytes(b"m")
+        (spool / "job1" / "media").mkdir(parents=True, exist_ok=True)
+        (spool / "job1" / "media" / "retrato.png").write_bytes(b"r")
+        (spool / "job1" / "media" / "mapa.png").write_bytes(b"m")
         (tmp_path / "world1" / "lore").mkdir(parents=True, exist_ok=True)
         registered = []
         svc = ImportService(
@@ -942,12 +942,12 @@ class TestVisionExecution:
         outcomes = svc.execute(job, "tester", approval.digest, approval.token,
                                suggestion_ids=["vision:abc"])
         assert outcomes[0].written
-        assert "media/A/retrato.png" in registered
-        assert "media/A/mapa.png" not in registered
+        assert "media/retrato.png" in registered
+        assert "media/mapa.png" not in registered
         ficha = (tmp_path / "world1" / "lore" / "A.md").read_text(
             encoding="utf-8")
-        assert "![Retrato de A](media/A/retrato.png)" in ficha
-        assert "![Mapa del mundo](media/A/mapa.png)" not in ficha
+        assert "![Retrato de A](media/retrato.png)" in ficha
+        assert "![Mapa del mundo](media/mapa.png)" not in ficha
 
 
 # ---------------------------------------------------------------------------
