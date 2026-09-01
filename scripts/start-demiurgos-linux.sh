@@ -162,7 +162,11 @@ _validate_cmdline_for_name() {
     [ -r "/proc/$pid/cmdline" ] || return 1
     cmdline="$(tr '\0' ' ' < "/proc/$pid/cmdline")"
     case "$name" in
-        api) [[ "$cmdline" == *"$API_DIR"* && "$cmdline" == *"uvicorn"* ]] || return 1 ;;
+        # The API is launched as `python -m uvicorn api_server:app` from a cd'd
+        # API_DIR, so the cmdline never contains $API_DIR — only the venv python
+        # path plus the uvicorn module. Gate on those (project-scoped venv ⇒
+        # never adopt/kill an arbitrary `uvicorn` from another project).
+        api) [[ ( "$cmdline" == *"$PROJECT_ROOT/.venv/bin/python"* && "$cmdline" == *"uvicorn api_server:app"* ) || "$cmdline" == *"$API_DIR"* ]] || return 1 ;;
         frontend) [[ ( "$cmdline" == *"$FRONTEND_DIR"* && "$cmdline" == *"vite"* ) || "$cmdline" == *"npm run dev"* ]] || return 1 ;;
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] || return 1 ;;
         *) return 1 ;;
