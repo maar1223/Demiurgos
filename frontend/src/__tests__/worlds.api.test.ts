@@ -94,7 +94,10 @@ describe("worlds API client", () => {
       .mockResolvedValue(jsonResponse({ status: "restored", world_name: "Avalor" }));
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
 
-    await expect(restoreWorld("Avalor")).resolves.toBeUndefined();
+    await expect(restoreWorld("Avalor")).resolves.toEqual({
+      status: "restored",
+      world_name: "Avalor",
+    });
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/worlds/Avalor/restore",

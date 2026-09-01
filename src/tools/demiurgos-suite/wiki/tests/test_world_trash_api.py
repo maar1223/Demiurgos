@@ -238,10 +238,23 @@ class TestRestore:
         response = authed.post("/api/worlds/Fantasia/restore")
         assert response.status_code == 404
 
-    def test_name_conflict_returns_409(self, authed: TestClient):
+    def test_name_conflict_auto_renames(self, authed: TestClient):
         assert _delete_json(authed, "/api/worlds/Avalor", {"confirm_name": "Avalor"}).status_code == 200
         (api_server.MUNDOS_DIR / "Avalor").mkdir()  # manual re-creation
         response = authed.post("/api/worlds/Avalor/restore")
+        assert response.status_code == 200
+        assert response.json()["status"] == "restored"
+        assert response.json()["world_name"] == "Avalor (restaurado)"
+        assert (api_server.MUNDOS_DIR / "Avalor (restaurado)" / "lore" / "inicio.md").is_file()
+        assert (api_server.MUNDOS_DIR / "Avalor").is_dir()  # the active world is untouched
+
+    def test_explicit_new_name_conflict_returns_409(self, authed: TestClient):
+        assert _delete_json(authed, "/api/worlds/Avalor", {"confirm_name": "Avalor"}).status_code == 200
+        (api_server.MUNDOS_DIR / "Avalor").mkdir()  # manual re-creation
+        (api_server.MUNDOS_DIR / "Avalor2").mkdir()
+        response = authed.post(
+            "/api/worlds/Avalor/restore",
+            json={"new_name": "Avalor2"})
         assert response.status_code == 409
         assert response.json()["detail"]["code"] == "world_exists"
 

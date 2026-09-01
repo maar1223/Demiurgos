@@ -119,7 +119,7 @@ beforeEach(() => {
     legacy: [],
   });
   listTrashMock.mockResolvedValue([trashEntry]);
-  restoreWorldMock.mockResolvedValue(undefined);
+  restoreWorldMock.mockResolvedValue({ status: "restored", world_name: "Avalor" });
   permanentDeleteMock.mockResolvedValue(undefined);
 });
 

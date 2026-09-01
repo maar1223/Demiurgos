@@ -163,20 +163,35 @@ def move_to_trash(
     )
 
 
+def _unique_restore_name(mundos: Path, base: str) -> str:
+    """Return a name derived from *base* that does not exist under *mundos*.
+
+    Auto-naming (conflict resolution): ``<base> (restaurado)``, then
+    ``<base> (restaurado) 2``, ``3``, ... until a free name is found.
+    """
+    candidate = f"{base} (restaurado)"
+    n = 2
+    while (mundos / candidate).exists():
+        candidate = f"{base} (restaurado) {n}"
+        n += 1
+    return candidate
+
+
 def restore_from_trash(
     world_name: str,
     *,
     new_name: str | None = None,
     trash_root: Path | None = None,
     mundos_dir: Path | None = None,
-) -> None:
+) -> str:
     """Move the most recent trash entry for *world_name* back to ``mundos_dir``.
 
-    ``new_name`` (optional) restores the world under a DIFFERENT name — the
-    conflict-resolution path when ``mundos_dir/{world_name}`` already exists as
-    an active world. Raises ``FileNotFoundError`` when the world is not in the
-    trash and ``ValueError`` when the destination ``mundos_dir/{name}`` already
-    exists.
+    Returns the name it was restored under. ``new_name`` (optional) restores
+    under a DIFFERENT name. When the destination name already exists AND no
+    explicit ``new_name`` is given, an AUTO-NAME is generated so a conflict with
+    an active world never blocks the restore. Raises ``FileNotFoundError`` when
+    the world is not in the trash, and ``ValueError`` when an explicit
+    ``new_name`` collides (the caller asked for an exact name).
     """
     _validate_world_name(world_name)
     root = Path(trash_root) if trash_root is not None else TRASH_ROOT
@@ -188,9 +203,13 @@ def restore_from_trash(
     _validate_world_name(dest_name)
     target = mundos / dest_name
     if target.exists():
-        raise ValueError(f"world already exists: {dest_name}")
+        if new_name:
+            raise ValueError(f"world already exists: {dest_name}")
+        dest_name = _unique_restore_name(mundos, world_name)
+        target = mundos / dest_name
     shutil.move(str(entries[0]), str(target))
     _prune_empty_world_dir(root, world_name)
+    return dest_name
 
 
 def list_trash(*, trash_root: Path | None = None) -> list[TrashEntry]:

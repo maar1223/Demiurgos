@@ -119,11 +119,14 @@ class TestRestoreFromTrash:
         with pytest.raises(FileNotFoundError):
             wrb.restore_from_trash("Fantasia", trash_root=env["trash"], mundos_dir=env["mundos"])
 
-    def test_name_conflict_raises(self, env):
+    def test_name_conflict_auto_renames(self, env):
         wrb.move_to_trash("Avalor", trash_root=env["trash"], mundos_dir=env["mundos"])
+        # An active world (recreated) owns the name -> restore auto-names.
         (env["mundos"] / "Avalor").mkdir()
-        with pytest.raises(ValueError):
-            wrb.restore_from_trash("Avalor", trash_root=env["trash"], mundos_dir=env["mundos"])
+        restored = wrb.restore_from_trash("Avalor", trash_root=env["trash"], mundos_dir=env["mundos"])
+        assert restored == "Avalor (restaurado)"
+        assert (env["mundos"] / "Avalor (restaurado)" / "lore" / "a.md").is_file()
+        assert not (env["trash"] / "Avalor").exists()
 
     def test_restores_most_recent_entry(self, env):
         old = _write_old_entry(
@@ -137,19 +140,23 @@ class TestRestoreFromTrash:
         assert (env["mundos"] / "Kaelia" / "lore").is_dir()
         assert old.exists()  # the older entry remains in trash
 
-    def test_restore_as_new_name_resolves_conflict(self, env):
+    def test_restore_as_explicit_new_name(self, env):
         wrb.move_to_trash("Avalor", trash_root=env["trash"], mundos_dir=env["mundos"])
-        # An active world now owns the original name -> restore is a conflict.
         (env["mundos"] / "Avalor").mkdir()
-        with pytest.raises(ValueError):
-            wrb.restore_from_trash("Avalor", trash_root=env["trash"], mundos_dir=env["mundos"])
-        # Restore under a different name succeeds and keeps the content.
-        wrb.restore_from_trash(
+        restored = wrb.restore_from_trash(
             "Avalor", new_name="Avalor2",
             trash_root=env["trash"], mundos_dir=env["mundos"])
+        assert restored == "Avalor2"
         assert (env["mundos"] / "Avalor2" / "lore" / "a.md").is_file()
-        assert (env["mundos"] / "Avalor2" / "lore" / "b.md").is_file()
-        assert not (env["trash"] / "Avalor").exists()
+
+    def test_explicit_new_name_conflict_raises(self, env):
+        wrb.move_to_trash("Avalor", trash_root=env["trash"], mundos_dir=env["mundos"])
+        (env["mundos"] / "Avalor").mkdir()
+        (env["mundos"] / "Avalor2").mkdir()
+        with pytest.raises(ValueError):
+            wrb.restore_from_trash(
+                "Avalor", new_name="Avalor2",
+                trash_root=env["trash"], mundos_dir=env["mundos"])
 
 
 class TestRenameWorld:

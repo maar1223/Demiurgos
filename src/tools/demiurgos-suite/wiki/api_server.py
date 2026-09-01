@@ -727,7 +727,7 @@ def restore_world(name: str, request: Request, body: WorldRestoreRequest | None 
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Autenticación requerida")
     try:
-        world_recycle_bin.restore_from_trash(
+        restored_name = world_recycle_bin.restore_from_trash(
             name, new_name=(body.new_name if body else None),
             trash_root=TRASH_ROOT, mundos_dir=MUNDOS_DIR)
     except FileNotFoundError as exc:
@@ -737,8 +737,8 @@ def restore_world(name: str, request: Request, body: WorldRestoreRequest | None 
             status_code=409,
             detail={"code": "world_exists", "message": "El mundo ya existe en mundos/"},
         ) from exc
-    logger.info("POST /api/worlds/%s/restore -> restored", name)
-    return {"status": "restored", "world_name": name}
+    logger.info("POST /api/worlds/%s/restore -> restored as %s", name, restored_name)
+    return {"status": "restored", "world_name": restored_name}
 
 
 @app.post("/api/worlds/{name}/rename")

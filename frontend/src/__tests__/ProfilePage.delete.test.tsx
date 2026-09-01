@@ -118,7 +118,7 @@ beforeEach(() => {
   });
   deleteWorldMock.mockResolvedValue(trashEntry);
   listTrashMock.mockResolvedValue([]);
-  restoreWorldMock.mockResolvedValue(undefined);
+  restoreWorldMock.mockResolvedValue({ status: "restored", world_name: "Avalor" });
   permanentDeleteMock.mockResolvedValue(undefined);
 });
 

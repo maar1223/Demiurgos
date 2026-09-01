@@ -5,7 +5,6 @@ import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
-import { WorldNameDialog } from "@/components/organisms/WorldNameDialog";
 // World-level recycle bin API — deliberately imported from @/api/worlds and
 // NOT from @/api/wiki, which exports a DIFFERENT `listTrash(mundo)` for the
 // per-ficha papelera (requires a mundo argument).
@@ -69,35 +68,23 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
 
   const [busyName, setBusyName] = useState<string | null>(null);
   const [purgeTarget, setPurgeTarget] = useState<WorldTrashEntry | null>(null);
-  const [restoreAsTarget, setRestoreAsTarget] = useState<WorldTrashEntry | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [restoreAsBusy, setRestoreAsBusy] = useState(false);
-
-  const handleRestoreAs = useCallback(
-    async (entry: WorldTrashEntry, newName: string) => {
-      setRestoreAsBusy(true);
-      setActionError(null);
-      try {
-        await restoreWorld(entry.world_name, newName);
-        setRestoreAsTarget(null);
-        await mutate();
-        onChanged();
-      } catch (err) {
-        const apiErr = err as ApiError;
-        setActionError(getErrorMessage(apiErr.status, apiErr.detail));
-      } finally {
-        setRestoreAsBusy(false);
-      }
-    },
-    [mutate, onChanged],
-  );
+  const [restoreNotice, setRestoreNotice] = useState<string | null>(null);
 
   const handleRestore = useCallback(
     async (entry: WorldTrashEntry) => {
       setBusyName(entry.world_name);
       setActionError(null);
+      setRestoreNotice(null);
       try {
-        await restoreWorld(entry.world_name);
+        // The server auto-names the restore when the original name is taken by
+        // an active world, so a conflict never blocks the user.
+        const result = await restoreWorld(entry.world_name);
+        if (result.world_name !== entry.world_name) {
+          setRestoreNotice(
+            `El mundo ya existía con ese nombre; se restauró como «${result.world_name}».`,
+          );
+        }
         await mutate();
         onChanged();
       } catch (err) {
@@ -154,6 +141,14 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
           {actionError}
         </div>
       )}
+      {restoreNotice && (
+        <div
+          role="status"
+          className="mt-3 rounded-lg border border-action/30 bg-action/10 px-3 py-2 text-small text-primary"
+        >
+          {restoreNotice}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex items-center justify-center py-10">
@@ -197,20 +192,9 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
                   <Button
                     variant="ghost"
                     size="sm"
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
-                      setRestoreAsTarget(entry);
-                    }}
-                  >
-                    Restaurar como…
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={busy}
-                    onClick={() => {
-                      setActionError(null);
+                     disabled={busy}
+                     onClick={() => {
+                       setActionError(null);
                       setPurgeTarget(entry);
                     }}
                   >
@@ -235,21 +219,6 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
           onConfirm={() => void handlePurgeConfirm()}
           onClose={() => {
             setPurgeTarget(null);
-            setActionError(null);
-          }}
-        />
-      )}
-
-      {restoreAsTarget && (
-        <WorldNameDialog
-          title="Restaurar con otro nombre"
-          message={`El mundo «${restoreAsTarget.world_name}» se restaurará con un nombre distinto (por si ya existe uno activo con el original).`}
-          confirmLabel="Restaurar"
-          confirmBusy={restoreAsBusy}
-          error={actionError}
-          onConfirm={(newName) => void handleRestoreAs(restoreAsTarget, newName)}
-          onClose={() => {
-            setRestoreAsTarget(null);
             setActionError(null);
           }}
         />

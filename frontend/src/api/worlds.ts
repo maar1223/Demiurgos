@@ -43,17 +43,22 @@ export async function listTrash(): Promise<WorldTrashEntry[]> {
 /**
  * POST /api/worlds/{name}/restore — move the most recent trash entry for a
  * world back to `mundos/{name}/`, making the world and its associated data
- * valid again. `newName` (optional) restores it under a DIFFERENT name — the
- * conflict-resolution path when an active world owns `name`.
+ * valid again. A conflict with an active world auto-names the restore (the
+ * server returns the actual name it was restored under). `newName` (optional)
+ * forces a specific name; a conflict under an explicit name is rejected 409.
  */
-export async function restoreWorld(name: string, newName?: string): Promise<void> {
-  await apiFetch(apiUrl(["api", "worlds", name, "restore"]), {
-    method: "POST",
-    credentials: "same-origin",
-    body: JSON.stringify(
-      newName ? { new_name: newName } : {},
-    ),
-  });
+export async function restoreWorld(
+  name: string,
+  newName?: string,
+): Promise<{ status: string; world_name: string }> {
+  return apiFetch<{ status: string; world_name: string }>(
+    apiUrl(["api", "worlds", name, "restore"]),
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify(newName ? { new_name: newName } : {}),
+    },
+  );
 }
 
 /**
