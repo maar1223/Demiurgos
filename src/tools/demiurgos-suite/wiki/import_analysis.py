@@ -22,8 +22,10 @@ inference fallback seam) and ``split_heading_tree`` (Step 1), which produce
 complete-ficha candidates with parent-qualified canonical identities,
 empty-scaffold preservation, tree-aware materialization (a heading is a
 ficha only when it is a root or has at least one child; a childless
-non-root heading folds into its parent ficha as an ``##`` item, and every
-emitted ficha owns a folder materialized as ``<slug>/<slug>.md``), and
+non-root heading folds into its parent ficha as an ``##`` item; a ROOT or a
+heading with a child that has children owns a folder (``<slug>/<slug>.md``),
+while a heading that only groups leaf items lands as a loose file in the
+parent folder), and
 reference-image diagnostics. This is additive — the legacy chunk flow stays
 untouched.
 """
@@ -891,10 +893,11 @@ class StructureNode:
     of its childless descendants. ``children`` are the ficha's sub-ficha
     children in source order — childless headings are folded into ``body``,
     never emitted as nodes. A heading is a ficha ONLY when it is a ROOT (no
-    parent heading) or has at least one child; every emitted ficha owns a
-    folder, so ``materialized_path`` (relative to the section) is always
-    ``<own>/<own>.md`` — the loose-file case (childless heading at level > 1)
-    disappears because those headings fold into their parent ficha. Identity
+    parent heading) or has at least one child. A ficha owns a folder only when
+    it is a ROOT or has a child that itself has children (2+ levels of
+    nesting); otherwise its ``materialized_path`` (relative to the section) is
+    a LOOSE ``<parent>/<slug>.md`` in the parent folder — a heading that only
+    groups leaf items never becomes a single-file folder. Identity
     (``canonical_id``) is independent of materialization.
     ``media_diagnostics`` carries the reference-image placements found in the
     ficha body (folded items included).
@@ -1002,8 +1005,9 @@ def split_heading_tree(
     parent heading) or has at least one child; an empty scaffold is
     review-visible and never dropped. A childless non-root heading
     ("último orden") is NOT a ficha — it folds into its parent ficha's body
-    as an ``##`` item — so every emitted ficha owns a folder and
-    materializes as ``<own>/<own>.md``. Each ficha
+    as an ``##`` item — a ROOT heading or one with a child that has children
+    owns a folder (``<own>/<own>.md``), while a heading that only groups leaf
+    items materializes as a loose ``<parent>/<slug>.md``. Each ficha
     carries the parent-qualified canonical identity, the materialized
     target path (``materialized_path``), source order, and reference-image
     diagnostics (folded items included). A source with no usable headings
@@ -1149,14 +1153,17 @@ def _ficha_from(
     to ``fichas``, and the parent folds it into its own body as an ``##``
     item (its prose is preserved; it never becomes a node, folder, or file).
 
-    Every emitted ficha is root-or-with-children, so it ALWAYS owns a
-    folder: its file lands inside it as ``<parent>/<slug>/<slug>.md`` and
-    ``parent_path`` for its children becomes ``<parent>/<slug>``. The body
-    opens with the ficha's own heading re-anchored to ``#`` (H1), followed
-    by its prose and, interleaved in source order, the folded ``##`` items
-    of its childless children and the ficha children produced by recursion
-    (attached to ``children``). The result is stored on
-    ``materialized_path`` (relative path incl. filename); the
+    Folder rule: every emitted ficha is root-or-with-children. A ROOT always
+    owns a folder (``<slug>/<slug>.md``); a non-root heading owns a folder only
+    when it has a child that itself has children (2+ levels of nesting), so a
+    heading that only groups leaf items ("último orden") lands as a LOOSE file
+    directly in the parent folder (``<parent>/<slug>.md``) — never a
+    single-file folder. ``parent_path`` for the children of a folder-owning
+    ficha becomes ``<own_dir>``. The body opens with the ficha's own heading
+    re-anchored to ``#`` (H1), followed by its prose and, interleaved in source
+    order, the folded ``##`` items of its childless children and the ficha
+    children produced by recursion (attached to ``children``). The result is
+    stored on ``materialized_path`` (relative path incl. filename); the
     ``canonical_id`` identity is unchanged.
     """
     if parent_segments and not raw.children:
@@ -1164,9 +1171,16 @@ def _ficha_from(
 
     segments = [*parent_segments, raw.canonical_segment]
     slug = slug_segment(raw.canonical_segment)
-    # Every emitted ficha owns a folder (it is a root or has children), so
-    # its own file always lands inside ``own_dir``.
-    own_dir = f"{parent_path}/{slug}" if parent_path else slug
+    # Folder rule: a root always owns a folder; a non-root heading owns a
+    # folder only when it has a child that itself has children (2+ levels of
+    # nesting). Otherwise (it only groups leaves) it is a loose file in the
+    # parent folder, so we never create a folder that holds just one file.
+    is_root = not parent_path
+    has_deep_subtree = any(child.children for child in raw.children)
+    if (is_root or has_deep_subtree) and slug:
+        own_dir = f"{parent_path}/{slug}" if parent_path else slug
+    else:
+        own_dir = parent_path
     node = StructureNode(
         level=raw.level,
         title=raw.title,

@@ -433,9 +433,10 @@ class TestMaterializedPaths:
         assert ayagares.body == "# Ayagares\n\n## Sociedad\n\nSin hijos."
         assert ayagares.children == []
 
-    def test_h2_with_children_creates_folder(self):
-        """H2 child of H1 WITH children → ficha with its own folder
-        ``<h1>/<h2>/<h2>.md``; the childless H3 folds into it."""
+    def test_h2_with_only_leaf_children_is_loose_file(self):
+        """H2 child of H1 that only groups leaf items (no child with children)
+        → NOT a folder: its ficha is a LOOSE ``<h1>/<h2>.md`` in the parent
+        folder; the childless H3 folds into it."""
         tree = split_heading_tree(
             "# Ayagares\n\n"
             "## Descripción Física\n\n"
@@ -444,15 +445,16 @@ class TestMaterializedPaths:
         )
         by_id = {f.canonical_id: f for f in tree.fichas}
         assert by_id["Ayagares::Descripción Física"].materialized_path == \
-            "ayagares/descripcion-fisica/descripcion-fisica.md"
+            "ayagares/descripcion-fisica.md"
         assert by_id["Ayagares::Descripción Física"].body == \
             "# Descripción Física\n\n## Forma Base\n\nCuerpo."
-        # H3 childless under the H2-with-children → folded item, not a ficha.
+        # H3 childless under the leaf-grouping H2 → folded item, not a ficha.
         assert "Ayagares::Descripción Física::Forma Base" not in by_id
 
-    def test_h3_with_children_creates_folder(self):
-        """H3 child of H2 WITH children → ficha ``<h1>/<h2>/<h3>/<h3>.md``;
-        the childless H4 folds into it."""
+    def test_h3_with_leaf_child_folds_into_h2_folder(self):
+        """H2 (its child H3 has children) owns the folder; the H3 that only
+        groups leaf items is a LOOSE ``<h1>/<h2>/<h3>.md`` file inside it;
+        the childless H4 folds into the H3."""
         tree = split_heading_tree(
             "# Ayagares\n\n"
             "## Descripción Física\n\n"
@@ -463,7 +465,7 @@ class TestMaterializedPaths:
         by_id = {f.canonical_id: f for f in tree.fichas}
         assert by_id[
             "Ayagares::Descripción Física::Forma Base"].materialized_path == \
-            "ayagares/descripcion-fisica/forma-base/forma-base.md"
+            "ayagares/descripcion-fisica/forma-base.md"
         assert by_id[
             "Ayagares::Descripción Física::Forma Base"].body == \
             "# Forma Base\n\n## Detalles\n\nCuerpo."
@@ -471,8 +473,10 @@ class TestMaterializedPaths:
 
     def test_deep_childless_leaf_folds_into_ancestor_chain(self):
         """A childless leaf at any depth is NOT a ficha: it folds as an
-        ``##`` item into its parent ficha; every ancestor heading WITH
-        children keeps its folder chain."""
+        ``##`` item into its parent ficha. A heading owns a folder only when
+        one of its children also has children — the H2/H3 chains keep theirs,
+        but the H4 ``Extremidades`` (its only child is the H5 leaf) is a
+        LOOSE file inside the H3 folder."""
         text = (
             "# Ayagares\n\n"
             "## Descripción Física\n\n"
@@ -483,11 +487,12 @@ class TestMaterializedPaths:
         )
         tree = split_heading_tree(text)
         by_id = {f.canonical_id: f for f in tree.fichas}
-        # H4 has a child (Manos) → folder; the H5 leaf folds into it.
+        # H4 has a child (Manos, a leaf) → NO deep subtree → loose file in H3's
+        # folder; the H5 leaf folds into it.
         assert by_id[
             "Ayagares::Descripción Física::Forma Base::Extremidades"
         ].materialized_path == \
-            "ayagares/descripcion-fisica/forma-base/extremidades/extremidades.md"
+            "ayagares/descripcion-fisica/forma-base/extremidades.md"
         assert by_id[
             "Ayagares::Descripción Física::Forma Base::Extremidades"
         ].body == "# Extremidades\n\n## Manos\n\nCinco dedos."
@@ -506,8 +511,8 @@ class TestMaterializedPaths:
     def test_ordinal_slug_participates_in_path(self):
         """Duplicate same-title siblings keep ``#N`` ordinals in the identity
         AND in the materialized path (``#2`` → ``-2`` slug suffix); both
-        siblings have children here so both are fichas (their childless H3
-        children fold into each as ``##`` items)."""
+        siblings only group leaf items here, so they are LOOSE files
+        (``<h1>/<h2>.md`` / ``-2.md``) with their childless H3 folded in."""
         text = (
             "# Ayagares\n\n"
             "## Descripción Física\n\n"
@@ -520,9 +525,9 @@ class TestMaterializedPaths:
         tree = split_heading_tree(text)
         by_id = {f.canonical_id: f for f in tree.fichas}
         assert by_id["Ayagares::Descripción Física"].materialized_path == \
-            "ayagares/descripcion-fisica/descripcion-fisica.md"
+            "ayagares/descripcion-fisica.md"
         assert by_id["Ayagares::Descripción Física#2"].materialized_path == \
-            "ayagares/descripcion-fisica-2/descripcion-fisica-2.md"
+            "ayagares/descripcion-fisica-2.md"
         assert by_id["Ayagares::Descripción Física"].body == \
             "# Descripción Física\n\n## Forma Base\n\nCuerpo A."
         assert by_id["Ayagares::Descripción Física#2"].body == \
