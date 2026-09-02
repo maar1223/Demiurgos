@@ -355,7 +355,8 @@ class TestResolveTargetHierarchy:
     mapping; empty section falls through to the legacy branch."""
 
     def _candidate(self, source_path: str, section: str = "",
-                   canonical_id: str = "") -> Candidate:
+                   canonical_id: str = "", materialized_path: str = ""
+                   ) -> Candidate:
         return Candidate(
             candidate_id="c1", job_id="j1", world="w1",
             normalized_identity="Enciclopedia",
@@ -366,7 +367,66 @@ class TestResolveTargetHierarchy:
             content_preview="x",
             section=section,
             canonical_id=canonical_id,
+            materialized_path=materialized_path,
         )
+
+    def test_materialized_path_wins_over_per_segment_derivation(self):
+        """Tree-aware materialization: when the candidate carries a
+        ``materialized_path`` (computed at analysis from the heading tree),
+        resolve_target uses it VERBATIM under the section — a childless H2
+        lands as a loose file in the H1's folder (no own folder), unlike the
+        folder-per-heading fallback."""
+        # Childless H2 under H1 → loose file in the H1 folder.
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Ayagares::Sociedad",
+            materialized_path="ayagares/sociedad.md")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/ayagares/sociedad.md"
+        # H2 WITH children → own folder (path from the tree, not canonical_id).
+        cand2 = self._candidate(
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Ayagares::Descripción Física",
+            materialized_path="ayagares/descripcion-fisica/descripcion-fisica.md")
+        r2 = resolve_target("w1", cand2)
+        assert r2.status == "resolved"
+        assert r2.canonical_path == \
+            "lore/ayagares/descripcion-fisica/descripcion-fisica.md"
+        assert r.canonical_path != r2.canonical_path
+
+    def test_materialized_path_requires_valid_canonical_id(self):
+        """An empty/invalid canonical_id ignores the materialized path and
+        falls back to the piece-1 ``{section}/{identity}.md`` mapping."""
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="", materialized_path="ayagares/sociedad.md")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/Enciclopedia de los Vibrantes.md"
+
+    def test_unsafe_materialized_path_falls_back(self):
+        """A materialized path with traversal/absolute components is never
+        used verbatim — resolve_target falls back to the per-segment
+        derivation (defensive; analysis-produced paths are safe by
+        construction)."""
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Ayagares::Sociedad",
+            materialized_path="../escape/sociedad.md")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/ayagares/sociedad/sociedad.md"
+
+    def test_without_materialized_path_falls_back_folder_per_heading(self):
+        """Legacy candidates (no materialized_path) keep the folder-per-
+        heading per-segment derivation byte-identical."""
+        cand = self._candidate(
+            "Enciclopedia de los Vibrantes.md", section="lore",
+            canonical_id="Ayagares::Sociedad")
+        r = resolve_target("w1", cand)
+        assert r.status == "resolved"
+        assert r.canonical_path == "lore/ayagares/sociedad/sociedad.md"
 
     def test_multi_segment_canonical_id(self):
         """3-segment canonical_id → folder chain under the section, each

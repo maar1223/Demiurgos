@@ -764,7 +764,7 @@ class TestSpoolCleanup:
     def test_analyze_malformed_enricher_removes_spool(self, tmp_path):
         from import_intake import MalformedProviderError
 
-        def bad_enricher(candidates, progress_cb=None, on_phase=None):
+        def bad_enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
             raise MalformedProviderError("garbage")
 
         client, _, spool, _ = self._app(tmp_path, enricher=bad_enricher,

@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """World importer — Phase 1 (importador-auto-frontmatter) tests for the
 deterministic H1-H5 tree splitter: H1-H5 nesting, canonical parent-qualified
-identities, empty-scaffold preservation, folder-per-heading materialization
-(every heading — any level, with or without children — is a ficha that owns
-its own folder + file), repeated-title ordinals, the Hermes
+identities, empty-scaffold preservation, tree-aware materialization (every
+heading is a ficha; a folder is created only when the heading has children
+or is H1 — a childless heading at level > 1 lands as a loose file in the
+nearest ancestor's folder), repeated-title ordinals, the Hermes
 structure-inference fallback seam, and reference-image diagnostics.
 """
 
@@ -37,8 +38,7 @@ class TestHeadingTreeSplitter:
     def test_h1_h5_nesting_builds_hierarchy(self):
         """Nested H1-H5 produce parent-qualified ficha ids in source order;
         EVERY heading — including the leaf H5 ``Manos`` — is its own ficha
-        (folder-per-heading rule: each heading owns a folder with its own
-        file, so nothing folds into a parent)."""
+        (no heading folds into a parent)."""
         text = (
             "# Ayagares\n\n"
             "## Descripción Física\n\n"
@@ -81,9 +81,11 @@ class TestHeadingTreeSplitter:
         assert llena.body == "# Llena\n\nContenido."
 
     def test_childless_heading_is_own_ficha_not_folded(self):
-        """Folder-per-heading rule: a childless heading (``Sociedad`` H2,
-        ``Forma Base`` H3) is its OWN ficha — never folded into the parent —
-        and keeps its own prose in its body."""
+        """A childless heading (``Sociedad`` H2, ``Forma Base`` H3) is its
+        OWN ficha — never folded into the parent — and keeps its own prose
+        in its body. Materialization is tree-aware: the childless headings
+        land as loose files in the nearest ancestor's folder (see
+        ``TestMaterializedPaths``)."""
         text = (
             "# Ayagares\n\n"
             "Intro del mundo.\n\n"
@@ -96,7 +98,8 @@ class TestHeadingTreeSplitter:
         )
         tree = split_heading_tree(text)
         # Every heading becomes a ficha: childless Sociedad and Forma Base
-        # are emitted (each will own its folder + file at execution).
+        # are emitted (at execution they land as loose files in the nearest
+        # ancestor's folder, per the tree-aware folder rule).
         assert [f.canonical_id for f in tree.fichas] == [
             "Ayagares",
             "Ayagares::Descripción Física",
@@ -271,8 +274,8 @@ class TestReferenceImageDiagnostics:
             "Otra ![portada][image2].\n"
         )
         tree = split_heading_tree(text)
-        # ``## Sociedad`` is its OWN ficha (folder-per-heading), so its
-        # diagnostic span lives in Sociedad's ficha, not Ayagares'.
+        # ``## Sociedad`` is its OWN ficha (every heading is a ficha), so
+        # its diagnostic span lives in Sociedad's ficha, not Ayagares'.
         by_ficha = {f.canonical_id: f for f in tree.fichas}
         ayagares = by_ficha["Ayagares"]
         sociedad = by_ficha["Ayagares::Sociedad"]
@@ -363,3 +366,143 @@ class TestMarkdownCleaning:
         assert normalize_identity_segment(
             "![logo](data:image/png;base64,xxx) Sección") == "logo Sección"
         assert normalize_identity_segment("![]() Sección") == "Sección"
+
+
+class TestMaterializedPaths:
+    """Tree-aware materialization (import folder rule): a heading creates a
+    FOLDER only when it has children OR is a ROOT (the top title of the tree
+    — no parent heading, whatever its level). A non-root childless heading
+    does NOT create a folder: its ficha lands as a loose file in the folder
+    of the nearest ancestor that owns one. The ``materialized_path`` is
+    relative to the section (``lore``/...); the ``canonical_id`` identity is
+    unchanged."""
+
+    def test_h1_alone_always_creates_folder(self):
+        """A lone H1 (no children) is ALWAYS a folder with its file inside
+        (``lore/<h1>/<h1>.md``) — never a flat file."""
+        tree = split_heading_tree("# Dottua\n\nTexto.\n")
+        ficha = tree.fichas[0]
+        assert ficha.canonical_id == "Dottua"
+        assert ficha.materialized_path == "dottua/dottua.md"
+
+    def test_root_not_h1_always_creates_folder(self):
+        """A document whose top title is NOT an H1 (here it starts at H2)
+        still makes that ROOT a folder (``lore/<h2>/<h2>.md``) — so the root
+        scope always owns a folder regardless of the author's heading levels.
+        """
+        tree = split_heading_tree("## Dottua\n\nTexto.\n")
+        ficha = tree.fichas[0]
+        assert ficha.level == 2
+        assert ficha.children == []
+        assert ficha.materialized_path == "dottua/dottua.md"
+
+    def test_h1_with_children_creates_folder(self):
+        """An H1 with children keeps its own folder + file; children land
+        inside it."""
+        tree = split_heading_tree(
+            "# Ayagares\n\n"
+            "## Descripción Física\n\n"
+            "Prosa.\n"
+        )
+        by_id = {f.canonical_id: f for f in tree.fichas}
+        assert by_id["Ayagares"].materialized_path == "ayagares/ayagares.md"
+        # H2 childless → loose file in the H1's folder (no H2 folder).
+        assert by_id["Ayagares::Descripción Física"].materialized_path == \
+            "ayagares/descripcion-fisica.md"
+
+    def test_childless_h2_lands_in_parent_folder(self):
+        """H2 child of H1 without children → ``lore/<h1>/<h2>.md`` (no H2
+        folder)."""
+        tree = split_heading_tree(
+            "# Ayagares\n\n"
+            "## Sociedad\n\n"
+            "Sin hijos.\n"
+        )
+        sociedad = tree.fichas[1]
+        assert sociedad.level == 2 and sociedad.children == []
+        assert sociedad.materialized_path == "ayagares/sociedad.md"
+
+    def test_h2_with_children_creates_folder(self):
+        """H2 child of H1 WITH children → ``lore/<h1>/<h2>/<h2>.md`` + its
+        children inside."""
+        tree = split_heading_tree(
+            "# Ayagares\n\n"
+            "## Descripción Física\n\n"
+            "### Forma Base\n\n"
+            "Cuerpo.\n"
+        )
+        by_id = {f.canonical_id: f for f in tree.fichas}
+        assert by_id["Ayagares::Descripción Física"].materialized_path == \
+            "ayagares/descripcion-fisica/descripcion-fisica.md"
+        # H3 childless under the H2-with-children → loose file in H2's folder.
+        assert by_id[
+            "Ayagares::Descripción Física::Forma Base"].materialized_path == \
+            "ayagares/descripcion-fisica/forma-base.md"
+
+    def test_h3_with_children_creates_folder(self):
+        """H3 child of H2 WITH children → ``lore/<h1>/<h2>/<h3>/<h3>.md``."""
+        tree = split_heading_tree(
+            "# Ayagares\n\n"
+            "## Descripción Física\n\n"
+            "### Forma Base\n\n"
+            "#### Detalles\n\n"
+            "Cuerpo.\n"
+        )
+        by_id = {f.canonical_id: f for f in tree.fichas}
+        assert by_id[
+            "Ayagares::Descripción Física::Forma Base"].materialized_path == \
+            "ayagares/descripcion-fisica/forma-base/forma-base.md"
+        # H4 childless → loose file in the H3's folder.
+        assert by_id[
+            "Ayagares::Descripción Física::Forma Base::Detalles"
+        ].materialized_path == \
+            "ayagares/descripcion-fisica/forma-base/detalles.md"
+
+    def test_deep_childless_leaf_keeps_ancestor_chain(self):
+        """A childless leaf at any depth keeps ONLY the folder chain of its
+        ancestors that own folders; the leaf itself never creates one."""
+        text = (
+            "# Ayagares\n\n"
+            "## Descripción Física\n\n"
+            "### Forma Base\n\n"
+            "#### Extremidades\n\n"
+            "##### Manos\n\n"
+            "Cinco dedos.\n"
+        )
+        tree = split_heading_tree(text)
+        by_id = {f.canonical_id: f for f in tree.fichas}
+        # H4 has a child (Manos) → folder; H5 childless → loose file inside.
+        assert by_id[
+            "Ayagares::Descripción Física::Forma Base::Extremidades"
+        ].materialized_path == \
+            "ayagares/descripcion-fisica/forma-base/extremidades/extremidades.md"
+        assert by_id[
+            "Ayagares::Descripción Física::Forma Base::Extremidades::Manos"
+        ].materialized_path == \
+            "ayagares/descripcion-fisica/forma-base/extremidades/manos.md"
+
+    def test_implicit_ficha_has_no_materialized_path(self):
+        """A source without headings yields the implicit ficha with an empty
+        materialized path — resolve_target falls back to the legacy
+        ``{section}/{identity}.md`` mapping."""
+        tree = split_heading_tree("Texto suelto sin encabezados.\n")
+        ficha = tree.fichas[0]
+        assert ficha.is_implicit is True
+        assert ficha.materialized_path == ""
+
+    def test_ordinal_slug_participates_in_path(self):
+        """Duplicate same-title siblings keep ``#N`` ordinals in the identity
+        AND in the materialized path (``#2`` → ``-2`` slug suffix)."""
+        text = (
+            "# Ayagares\n\n"
+            "## Descripción Física\n\n"
+            "Cuerpo A.\n\n"
+            "## Descripción Física\n\n"
+            "Cuerpo B.\n"
+        )
+        tree = split_heading_tree(text)
+        by_id = {f.canonical_id: f for f in tree.fichas}
+        assert by_id["Ayagares::Descripción Física"].materialized_path == \
+            "ayagares/descripcion-fisica.md"
+        assert by_id["Ayagares::Descripción Física#2"].materialized_path == \
+            "ayagares/descripcion-fisica-2.md"

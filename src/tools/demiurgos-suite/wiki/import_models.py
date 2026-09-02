@@ -418,6 +418,12 @@ class Candidate(BaseModel):
     # job's ``sections`` map. Empty for legacy jobs or files without a map
     # entry — ``resolve_target`` then falls through to the source-path branch.
     section: str = ""
+    # Tree-aware materialized path (import folder rule): the exact relative
+    # target computed at analysis from the heading tree (folder only when the
+    # heading has children or is H1; a childless heading at level > 1 lands
+    # as a loose file in the nearest ancestor's folder). Empty → resolve_target
+    # falls back to the folder-per-heading per-segment derivation.
+    materialized_path: str = ""
 
 
 class ItemOutcome(BaseModel):

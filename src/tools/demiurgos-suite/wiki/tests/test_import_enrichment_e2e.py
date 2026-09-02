@@ -150,7 +150,7 @@ def _classifying_enricher(
 
     from import_enrichment import enrich_candidates
 
-    def enricher(candidates, progress_cb=None, on_phase=None):
+    def enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
         if not candidates:
             return list(candidates)
         candidate_id = candidates[0].candidate_id
@@ -479,7 +479,7 @@ class TestEnrichmentCache:
         """
         call_count = {"n": 0}
 
-        def counting_enricher(candidates, progress_cb=None, on_phase=None):
+        def counting_enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
             call_count["n"] += 1
             return _classifying_enricher()(candidates)
 
@@ -531,7 +531,7 @@ class TestEnrichmentCache:
         """
         call_count = {"n": 0}
 
-        def counting_enricher(candidates, progress_cb=None, on_phase=None):
+        def counting_enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
             call_count["n"] += 1
             return _classifying_enricher()(candidates)
 
@@ -679,7 +679,7 @@ class TestSyncHermesBridge:
 
         monkeypatch.setattr(import_enrichment, "DEFAULT_TIMEOUT_SECONDS", 0.05)
 
-        def slow(_prompt: str, _session: str) -> str:
+        def slow(_prompt: str, _session: str, client=None) -> str:
             time.sleep(0.5)
             return "late content"
 
@@ -708,3 +708,51 @@ class TestSyncHermesBridge:
         )
         with pytest.raises(_json.JSONDecodeError):
             _json.loads(out)  # non-JSON → funnel fail-open
+
+    def test_sync_bridge_timeout_aborts_in_flight_client(self, monkeypatch):
+        """A budget timeout must ABORT the in-flight gateway call instead of
+        leaving it billing in the background (double-spend): the bridge closes
+        the shared ``httpx.Client`` — which tears down the in-flight request —
+        returns ``""`` (fail-open), and the worker thread exits in seconds."""
+        import threading
+        import time
+
+        import api_server
+        import import_enrichment
+
+        monkeypatch.setattr(import_enrichment, "DEFAULT_TIMEOUT_SECONDS", 0.05)
+        received: list = []
+        worker_exited = threading.Event()
+
+        def hang_until_client_closed(_prompt: str, _session: str,
+                                     client=None) -> str:
+            assert client is not None, (
+                "the bridge must pass its httpx.Client through to the runner"
+            )
+            received.append(client)
+            # Simulate an in-flight gateway request: block until the bridge
+            # closes the client (the abort), then exit — mirroring how the
+            # real httpx call raises when its client is closed mid-request.
+            deadline = time.monotonic() + 2.0
+            while not client.is_closed and time.monotonic() < deadline:
+                time.sleep(0.005)
+            worker_exited.set()
+            return "late content"
+
+        monkeypatch.setattr(api_server, "_run_hermes_sync",
+                            hang_until_client_closed)
+        out = api_server._sync_hermes_enricher("prompt", "sess-1")
+        assert out == "", (
+            "budget timeout must fail open with '' (no suggestions)"
+        )
+        assert len(received) == 1, (
+            "the bridge must pass its client to the runner"
+        )
+        assert received[0].is_closed, (
+            "on timeout the bridge must close the client — the in-flight "
+            "gateway request is aborted instead of billing in the background"
+        )
+        assert worker_exited.wait(timeout=2.0), (
+            "the worker thread must exit once the client is closed — it "
+            "cannot keep running (and billing) after the budget expires"
+        )

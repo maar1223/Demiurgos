@@ -1129,6 +1129,195 @@ class TestFichaFunnelParallelism:
         assert all(c.frontmatter.state == FrontmatterState.GENERATED for c in out)
 
 
+class TestFunnelCooperativeCancel:
+    """Cooperative cancellation (BUG A): ``should_cancel`` stops NEW Hermes
+    work between chunks and degrades the not-yet-processed chunks fail-open;
+    progress is reported LIVE during the parallel run (BUG B)."""
+
+    def test_should_cancel_stops_between_chunks_and_fails_open(self):
+        """A cancel requested while the funnel runs stops it at a chunk
+        boundary: no exception escapes, chunks enriched before the cancel keep
+        their generated metadata, and the not-yet-processed chunk degrades
+        fail-open to fallback (the runner is never invoked again)."""
+        fichas = [_ficha(f"F {i:02d}", preview="#x" * 2500) for i in range(12)]
+        calls = {"n": 0}
+
+        def counting_runner(prompt: str, _session: str) -> str:
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            calls["n"] += 1
+            if cands and "body" in cands[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            payload: dict = {}
+            if "rel_vocab" in data:
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"],
+                     "title": c["display_title"], "type": "lugar",
+                     "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
+
+        # Sequential path (max_workers=1): chunks run in order, so flipping the
+        # cancel flag after the 4th runner call is deterministic. 12 fichas at
+        # a 20000-char budget split into 3 chunks of 4.
+        out = analyze_ficha_funnel(
+            fichas, counting_runner, max_workers=1, chunk_budget=20000,
+            should_cancel=lambda: calls["n"] >= 4)
+        # Fail-open: no exception escaped and every candidate survived.
+        assert len(out) == len(fichas)
+        generated = [c for c in out
+                     if c.frontmatter.state == FrontmatterState.GENERATED]
+        fallback = [c for c in out
+                    if c.frontmatter.state == FrontmatterState.FALLBACK]
+        assert len(generated) == 8, (
+            "chunks enriched before the cancel must keep generated metadata")
+        assert len(fallback) == 4, (
+            "the cancelled chunk must degrade fail-open to fallback")
+        # New work stopped: the cancelled chunk never invoked the runner.
+        assert calls["n"] == 4, (
+            f"no NEW Hermes work after cancel; got {calls['n']} calls")
+
+    def test_parallel_should_cancel_between_chunks_fails_open(self):
+        """Parallel path: a cancel requested while chunk 1 is in flight stops
+        the funnel — chunk 0 keeps its metadata, later chunks degrade
+        fail-open, and nothing raises."""
+        import threading as _threading
+
+        fichas = [_ficha(f"F {i:02d}", preview="#x" * 2500) for i in range(12)]
+        state = {"cancelled": False}
+        chunk1_entered = _threading.Event()
+        chunk0_done = _threading.Event()
+        chunk0_calls = {"n": 0}
+        gate = _threading.Event()
+
+        def gated_runner(prompt: str, session: str) -> str:
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            if session.endswith(":chunk:0"):
+                chunk0_calls["n"] += 1
+                if chunk0_calls["n"] >= 2:
+                    # Chunk 0 finished BOTH runner calls (summary + combined).
+                    chunk0_done.set()
+            else:
+                if cands and "body" in cands[0]:
+                    # Block the first summary call of any non-zero chunk until
+                    # the test raises the cancel signal, so the funnel is
+                    # deterministically mid-flight when the cancel lands.
+                    chunk1_entered.set()
+                    gate.wait(timeout=10)
+            if cands and "body" in cands[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            payload: dict = {}
+            if "rel_vocab" in data:
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"],
+                     "title": c["display_title"], "type": "lugar",
+                     "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
+
+        result: dict = {}
+
+        def _run():
+            result["out"] = analyze_ficha_funnel(
+                fichas, gated_runner, max_workers=4, chunk_budget=20000,
+                should_cancel=lambda: state["cancelled"])
+
+        t = _threading.Thread(target=_run)
+        t.start()
+        assert chunk1_entered.wait(timeout=10), "chunk 1 must start"
+        # Wait for chunk 0 to finish enriching BEFORE raising the signal, so
+        # the funnel deterministically has completed work to preserve.
+        assert chunk0_done.wait(timeout=10), "chunk 0 must finish first"
+        state["cancelled"] = True
+        gate.set()
+        t.join(timeout=10)
+        out = result.get("out")
+        assert out is not None, "the funnel must return (fail-open, no raise)"
+        assert len(out) == len(fichas)
+        generated = [c for c in out
+                     if c.frontmatter.state == FrontmatterState.GENERATED]
+        fallback = [c for c in out
+                    if c.frontmatter.state == FrontmatterState.FALLBACK]
+        assert len(generated) >= 4, (
+            "chunk 0 enriched before the cancel must keep its metadata")
+        assert len(fallback) >= 4, (
+            "chunks after the cancel must degrade fail-open")
+
+    def test_parallel_progress_reports_live_while_chunks_in_flight(self):
+        """BUG B regression: ``progress_cb`` fires DURING the parallel run —
+        inside the executor block as each chunk lands — not only after every
+        chunk finished. The report stays monotonic and ends at done == total."""
+        import threading as _threading
+        import time as _time
+
+        fichas = [_ficha(f"F {i:02d}", preview="#x" * 2500) for i in range(10)]
+        in_flight = {"n": 0}
+        lock = _threading.Lock()
+        reported_while_in_flight = {"n": 0}
+        reports: list[tuple[int, int]] = []
+
+        def slow_runner(prompt: str, session: str) -> str:
+            data = json.loads(prompt)
+            cands = data["candidates"]
+            if not session.endswith(":chunk:0"):
+                # Later chunks sleep so chunk 0's progress fires while they are
+                # still in flight (deterministic: only chunk 0 is fast).
+                with lock:
+                    in_flight["n"] += 1
+                try:
+                    _time.sleep(0.4)
+                finally:
+                    with lock:
+                        in_flight["n"] -= 1
+            if cands and "body" in cands[0]:
+                return json.dumps({"summaries": [
+                    {"candidate_id": c["candidate_id"],
+                     "summary": f"Resumen de {c['display_title']}."}
+                    for c in cands]})
+            payload: dict = {}
+            if "rel_vocab" in data:
+                payload["relationships"] = []
+            if "entity_vocab" in data:
+                payload["frontmatter"] = [
+                    {"candidate_id": c["candidate_id"],
+                     "title": c["display_title"], "type": "lugar",
+                     "description": "d", "relaciones": []}
+                    for c in cands]
+            return json.dumps(payload)
+
+        def progress(done: int, total: int) -> None:
+            reports.append((done, total))
+            with lock:
+                if in_flight["n"] > 0:
+                    reported_while_in_flight["n"] += 1
+
+        out = analyze_ficha_funnel(
+            fichas, slow_runner, max_workers=4, chunk_budget=20000,
+            progress_cb=progress)
+        assert len(out) == len(fichas)
+        assert reported_while_in_flight["n"] > 0, (
+            "progress_cb must fire while later chunks are still running "
+            "(live progress), not only after the pool exits")
+        # The progress contract still holds: monotonic done, done <= total,
+        # done == total at the end.
+        assert reports and reports[-1] == (len(fichas), len(fichas))
+        assert all(total == len(fichas) for _, total in reports)
+        dones = [done for done, _ in reports]
+        assert dones == sorted(dones), "done must be monotonic"
+        assert all(0 < d <= len(fichas) for d in dones)
+
+
 # ---------------------------------------------------------------------------
 # Store — idempotent bootstrap + metadata round trip (task 2.6)
 # ---------------------------------------------------------------------------
@@ -1365,7 +1554,7 @@ class TestFunnelRouterWiring:
         summary + frontmatter persisted on the candidate rows."""
         from import_enrichment import analyze_ficha_funnel
 
-        def enricher(candidates, progress_cb=None, on_phase=None):
+        def enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
             return analyze_ficha_funnel(
                 candidates, hermes_runner=_scripted_funnel_runner(),
                 progress_cb=progress_cb, on_phase=on_phase)

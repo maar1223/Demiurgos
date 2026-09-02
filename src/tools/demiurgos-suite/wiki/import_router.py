@@ -63,6 +63,11 @@ from import_service import (
 )
 import okf_contract
 import import_notion
+from import_registry import (
+    _clear_cancel,
+    _is_cancel_requested,
+    _request_cancel,
+)
 
 logger = logging.getLogger("demiurgos-import-router")
 
@@ -370,6 +375,15 @@ def create_import_router(
         try:
             spool = spool_for(job_id, mundo)
 
+            # Cooperative cancellation: each analyze starts with a clean slate,
+            # and the closure is passed into the enrichment funnel so a cancel
+            # requested while the long synchronous work runs stops NEW Hermes
+            # work immediately (and the final persistence is skipped below).
+            _clear_cancel(job_id)
+
+            def should_cancel() -> bool:
+                return _is_cancel_requested(job_id)
+
             # The job is now actively processing: surface the true state so a
             # live client polling GET sees ``analyzing`` (not a misleading
             # ``pending``) while the long synchronous work runs below.
@@ -654,6 +668,7 @@ def create_import_router(
                             list(cache_misses),
                             progress_cb=_live_enrichment_progress,
                             on_phase=_on_phase,
+                            should_cancel=should_cancel,
                         )
                         if not isinstance(enriched_misses, list):
                             raise MalformedProviderError(
@@ -878,6 +893,24 @@ def create_import_router(
                 candidate.okf_issues = kept + [
                     i.to_dict() for i in validation.issues]
 
+            # Cooperative cancellation: if a cancel was requested while the
+            # slow enrichment ran, stop here — do NOT persist REVIEW (or any
+            # candidates) for a job the user cancelled. Respond with a clean
+            # cancellation result, never a 500.
+            def _cancelled_analyze_result() -> dict:
+                job_row = _store.get_job(job_id)
+                return {
+                    "job": (job_row.model_dump_redacted()
+                            if job_row is not None else None),
+                    "candidates": 0,
+                    "enrichment_status": "cancelled",
+                    "enriched_from_cache": 0,
+                    "cancelled": True,
+                }
+
+            if should_cancel():
+                return _cancelled_analyze_result()
+
             added = 0
             for candidate in candidates:
                 existing = _store.find_candidate(
@@ -969,6 +1002,12 @@ def create_import_router(
                             existing.candidate_id, candidate.images)
                     added += 1
             current = _store.get_job(job_id)
+            if current is None:
+                # The cancel endpoint (service branch) reaps the DB row; if it
+                # deleted it while this synchronous analyze was still running,
+                # respond with a clean cancellation result instead of tripping
+                # on ``current.revision`` (latent AttributeError/500).
+                return _cancelled_analyze_result()
             _store.update_job(job_id, expected_revision=current.revision,
                               state=ImportJobState.REVIEW, file_count=added)
             _store.add_event(
@@ -1133,6 +1172,13 @@ def create_import_router(
             raise HTTPException(status_code=404, detail="Import job not found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
             raise HTTPException(status_code=403, detail="Not the job owner")
+        # Cooperative cancel: raise the in-process signal BEFORE transitioning/
+        # deleting so a long-running synchronous analyze observes it and stops
+        # launching NEW Hermes work + skips persistence (instead of racing the
+        # row delete and 500ing on a reaped row). The signal is cleared at the
+        # start of the next analyze for this job, so a non-cancellable job is
+        # unaffected.
+        _request_cancel(job_id)
         if _service is not None:
             job = _service.cancel(job, str(getattr(principal, "id", str(principal))))
             return {"job": job.model_dump_redacted()}
@@ -1357,6 +1403,7 @@ def _analyze_via_service(job: ImportJob, files: list[dict],
                 title=display_title, type=None, description="", relaciones=[],
                 state=FrontmatterState.MANUAL),
             section=section_lookup.get(relative, ""),
+            materialized_path=ficha.materialized_path or "",
         )
 
     if report is None:

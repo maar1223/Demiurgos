@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS candidates (
     target_resolution_json TEXT,
     enrichment_json TEXT,
     enrichment_status TEXT NOT NULL DEFAULT 'disabled',
+    section TEXT NOT NULL DEFAULT '',
+    materialized_path TEXT NOT NULL DEFAULT '',
     UNIQUE (world, source_hash, normalized_identity));
 CREATE TABLE IF NOT EXISTS items (
     item_id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL,
@@ -103,6 +105,10 @@ _BOOTSTRAP_COLUMNS = (
     # candidate. Legacy rows default to ``""`` → resolve_target falls through
     # to the legacy source-path branch (zero behavior change).
     ("section", "TEXT NOT NULL DEFAULT ''"),
+    # Tree-aware materialized path (import folder rule): the exact target
+    # computed at analysis. Legacy rows default to ``""`` → resolve_target
+    # falls back to the folder-per-heading per-segment derivation.
+    ("materialized_path", "TEXT NOT NULL DEFAULT ''"),
 )
 
 # Analysis-progress columns added idempotently to the ``jobs`` table for
@@ -477,8 +483,8 @@ class ImportJobStore:
                 " display_title, summary, frontmatter_json, media_diagnostics_json,"
                 " status, okf_issues_json, size_bytes, images_json, merge_json,"
                 " replacement_json, target_resolution_json,"
-                " enrichment_json, enrichment_status, section)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " enrichment_json, enrichment_status, section, materialized_path)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (candidate.candidate_id, candidate.job_id, candidate.world,
                  candidate.normalized_identity, candidate.canonical_id,
                  candidate.source_hash,
@@ -497,7 +503,8 @@ class ImportJobStore:
                  _json(candidate.enrichment_json)
                  if candidate.enrichment_json is not None else None,
                  candidate.enrichment_status,
-                 candidate.section),
+                 candidate.section,
+                 candidate.materialized_path),
             )
             self._conn.commit()
         return (self.find_candidate(candidate.world, candidate.source_hash,
@@ -557,16 +564,20 @@ class ImportJobStore:
         the other ``update_candidate_*`` methods deliberately leave ``section``
         and ``target_resolution_json`` untouched, so without this write the
         stale (pre-fix) ``section=''`` row survives and every ficha falls into
-        "requires your decision" (unknown section). Only the advisory fields
-        are written; identity/digest/body are untouched. Idempotent.
+        "requires your decision" (unknown section). The tree-aware
+        ``materialized_path`` is persisted alongside so execute-time
+        re-resolution (``resolve_target`` on the store row) materializes the
+        SAME path review showed. Only the advisory fields are written;
+        identity/digest/body are untouched. Idempotent.
         """
         with self._lock:
             self._conn.execute(
-                "UPDATE candidates SET section=?, target_resolution_json=?"
-                " WHERE candidate_id=?",
+                "UPDATE candidates SET section=?, target_resolution_json=?,"
+                " materialized_path=? WHERE candidate_id=?",
                 (candidate.section,
                  _json(candidate.target_resolution)
                  if candidate.target_resolution else None,
+                 candidate.materialized_path,
                  candidate_id),
             )
             self._conn.commit()
@@ -718,6 +729,13 @@ class ImportJobStore:
             section = row["section"]
         except (IndexError, KeyError):
             section = ""
+        # Tree-aware materialized path (import folder rule): added via
+        # idempotent bootstrap; legacy rows default to ``""`` (→ the
+        # folder-per-heading resolve_target fallback).
+        try:
+            materialized_path = row["materialized_path"]
+        except (IndexError, KeyError):
+            materialized_path = ""
         frontmatter = None
         if fm_raw:
             from import_models import FrontmatterCandidate
@@ -746,7 +764,8 @@ class ImportJobStore:
             target_resolution=target_resolution,
             enrichment_json=enrichment_json,
             enrichment_status=es_raw or "disabled",
-            section=section)
+            section=section,
+            materialized_path=materialized_path)
 
     # -- items / events ----------------------------------------------------
 

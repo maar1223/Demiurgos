@@ -590,7 +590,10 @@ class TestMarkdownInjection:
         assert "![image1](media/image1.png)" in md
         lines = md.split("\n")
         ref_idx = lines.index("![image1](media/image1.png)")
-        assert lines[ref_idx - 1] == "Intro text here."  # after the paragraph
+        # Isolated block: blank line before and after the ref.
+        assert lines[ref_idx - 1] == ""
+        assert lines[ref_idx - 2] == "Intro text here."  # after the paragraph
+        assert lines[ref_idx + 1] == ""
 
     def test_section_document_order_kept(self):
         markdown = "# Chapter One\n\nP1.\n\nP2.\n\n# Next\n\nMore.\n"
@@ -615,7 +618,10 @@ class TestMarkdownInjection:
         assert diags == []
         lines = md.split("\n")
         ref_idx = lines.index("![image1](media/image1.png)")
-        assert lines[ref_idx - 1] == "Body."  # injected inside the matching section
+        # Isolated block: the ref sits between blanks, right after Body.
+        assert lines[ref_idx - 1] == ""
+        assert lines[ref_idx - 2] == "Body."  # injected inside the matching section
+        assert lines[ref_idx + 1] == ""
 
     def test_matches_full_heading_path_not_first_deepest_match(self):
         """BUG 2b — an image under a repeated child heading (``Forma Base``
@@ -700,7 +706,73 @@ class TestMarkdownInjection:
         result = STRATEGY.extract(doc, converted_markdown=markdown)
         lines = result.markdown.split("\n")
         ref_idx = lines.index("![Chapter-One](media/Chapter-One.png)")
-        assert lines[ref_idx - 1] == "Intro text."  # after the paragraph line
+        # Isolated block: the ref sits between blanks, right after Intro text.
+        assert lines[ref_idx - 1] == ""
+        assert lines[ref_idx - 2] == "Intro text."  # after the paragraph line
+        assert lines[ref_idx + 1] == ""
+
+    def test_image_isolated_with_blank_before_and_after(self):
+        """REQUIREMENT — every injected image ref stays ALONE on its own
+        line with a blank line BEFORE and AFTER (isolated block):
+        ``text <blank> ![alt](media/file) <blank> text``."""
+        markdown = "# A\n\nP1.\n\n## B\n\nP2.\n"
+        images = [_positioned_image("img.png", heading_path="A")]
+        md, diags = inject_image_refs(markdown, images)
+        assert diags == []
+        lines = md.split("\n")
+        ref_idx = lines.index("![img](media/img.png)")
+        assert lines[ref_idx - 1] == ""     # blank BEFORE
+        assert lines[ref_idx + 1] == ""     # blank AFTER
+        # The ref line contains ONLY the image reference.
+        assert lines[ref_idx].strip() == "![img](media/img.png)"
+
+    def test_consecutive_images_each_isolated_no_double_blanks(self):
+        """Two image refs landing adjacently (second overflows the section's
+        single paragraph) each form their own isolated block: exactly one
+        blank line between them (never two)."""
+        markdown = "# A\n\nP1.\n"
+        images = [
+            _positioned_image("img1.png", document_order=1,
+                              heading_path="A"),
+            _positioned_image("img2.png", document_order=2,
+                              heading_path="A"),
+        ]
+        md, diags = inject_image_refs(markdown, images)
+        assert any("no exact paragraph position" in d for d in diags)
+        lines = md.split("\n")
+        i1 = lines.index("![img1](media/img1.png)")
+        i2 = lines.index("![img2](media/img2.png)")
+        # Each ref isolated: blank before + after each.
+        assert lines[i1 - 1] == "" and lines[i1 + 1] == ""
+        assert lines[i2 - 1] == "" and lines[i2 + 1] == ""
+        # Exactly one blank line separates the two refs (never two).
+        assert i2 - i1 == 2 and lines[i1 + 1] == ""
+
+    def test_existing_blank_lines_are_not_duplicated(self):
+        """A ref inserted next to an already-blank line reuses it: the
+        isolation pass never introduces double blanks."""
+        markdown = "# A\n\nP1.\n\nP2.\n"
+        images = [_positioned_image("img.png", heading_path="A")]
+        md, diags = inject_image_refs(markdown, images)
+        assert diags == []
+        # No run of two consecutive blank lines anywhere.
+        lines = md.split("\n")
+        assert not any(
+            lines[i] == "" and lines[i + 1] == ""
+            for i in range(len(lines) - 1)
+        )
+
+    def test_image_at_document_end_gets_trailing_blank(self):
+        """A ref appended at the document end still carries the blank line
+        AFTER it (isolated block edge)."""
+        markdown = "# A\n\nP1.\n"
+        images = [_positioned_image("img.png", heading_path="A")]
+        md, diags = inject_image_refs(markdown, images)
+        lines = md.split("\n")
+        ref_idx = lines.index("![img](media/img.png)")
+        assert lines[ref_idx - 1] == ""     # blank BEFORE
+        assert lines[ref_idx + 1] == ""     # blank AFTER (trailing edge)
+        assert md.rstrip().endswith("![img](media/img.png)")
 
 
 if __name__ == "__main__":

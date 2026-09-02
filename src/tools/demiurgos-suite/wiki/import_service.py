@@ -37,6 +37,7 @@ from import_models import (
 from import_analysis import resolve_target
 from import_intake import BoundedSpool
 from import_store import ImportJobStore
+from import_registry import _request_cancel
 
 if TYPE_CHECKING:
     # Only needed for the type annotation; graph_indexer uses package-relative
@@ -927,6 +928,10 @@ class ImportService:
         if job.state in (ImportJobState.COMPLETED, ImportJobState.ROLLED_BACK,
                          ImportJobState.CANCELLED):
             return job
+        # Cooperative cancel: raise the in-process signal so a long-running
+        # synchronous analyze (which polls it between funnel chunks) stops
+        # launching new Hermes work and skips persistence.
+        _request_cancel(job.job_id)
         self.store.add_event(job.job_id, "cancelled")
         updated = self.store.update_job(job.job_id, expected_revision=job.revision,
                                         state=ImportJobState.CANCELLED)

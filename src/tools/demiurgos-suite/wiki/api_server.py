@@ -5216,7 +5216,8 @@ async def _run_hermes(prompt: str, session_id: str = "") -> str:
         return unavailable_copy()
 
 
-def _run_hermes_sync(prompt: str, session_id: str = "") -> str:
+def _run_hermes_sync(prompt: str, session_id: str = "",
+                     client: httpx.Client | None = None) -> str:
     """Synchronous mirror of ``_run_hermes`` for the importer's sync bridge.
 
     Uses a FRESH ``httpx.Client`` per call — never the module-level async
@@ -5226,29 +5227,45 @@ def _run_hermes_sync(prompt: str, session_id: str = "") -> str:
     Payload, ``X-Hermes-Session-Id`` header, timeout, logging, and failure
     handling mirror ``_run_hermes`` exactly; failures return the localized
     unavailable copy, never raw provider text.
+
+    An optional ``client`` may be injected (same timeout/headers contract);
+    the caller owns its lifecycle — this function never closes it. This lets
+    ``_sync_hermes_enricher`` abort an in-flight gateway call on budget
+    timeout by closing the shared client from the main thread: the request
+    tears down, raises, and falls into the generic except branch below, so the
+    worker thread exits in seconds instead of billing in the background.
     """
     import time
     t0 = time.monotonic()
     logger.info("Hermes GW START len=%d session=%s preview=%r", len(prompt), session_id or "-", prompt[:120].replace("\n", " "))
+    owns_client = client is None
+    if owns_client:
+        client = httpx.Client(
+            headers={
+                "Authorization": f"Bearer {_GATEWAY_KEY}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(_GATEWAY_TIMEOUT, connect=10.0),
+        )
     try:
         payload = {
             # Hermes resolves the active profile's model.default on the next
             # request. Do not pass a browser-controlled model override here.
             "model": "hermes-agent",
+            # Importer enrichment is a text->JSON task over the ficha bodies +
+            # the document catalog it is handed; it must NOT roam with tools
+            # (search / graph read) or it loops and bills far more than the
+            # task needs. The gateway honors "tool_choice": "none" for THIS
+            # request only — the general Demiurgos assistant never sends it,
+            # so it keeps its full toolset. Scoped to the sync import bridge.
+            "tool_choice": "none",
             "messages": [{"role": "user", "content": prompt}],
         }
         headers = {}
         if session_id:
             # Opt-in session continuity: gateway keeps the conversation state.
             headers["X-Hermes-Session-Id"] = session_id
-        with httpx.Client(
-            headers={
-                "Authorization": f"Bearer {_GATEWAY_KEY}",
-                "Content-Type": "application/json",
-            },
-            timeout=httpx.Timeout(_GATEWAY_TIMEOUT, connect=10.0),
-        ) as client:
-            resp = client.post(_GATEWAY_URL, json=payload, headers=headers)
+        resp = client.post(_GATEWAY_URL, json=payload, headers=headers)
         elapsed = time.monotonic() - t0
         if resp.status_code != 200:
             logger.error("Hermes GW HTTP %d %.1fs: %s", resp.status_code, elapsed, resp.text[:500])
@@ -5266,6 +5283,9 @@ def _run_hermes_sync(prompt: str, session_id: str = "") -> str:
     except Exception as exc:
         logger.exception("Hermes GW CRASH: %s", exc)
         return unavailable_copy()
+    finally:
+        if owns_client:
+            client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -5629,18 +5649,36 @@ def _sync_hermes_enricher(prompt: str, session_id: str) -> str:
     returns ``""`` (the importer treats it as "no suggestions"), and gateway
     failures surface as the localized unavailable copy. The bridge never
     raises and never touches the async client singleton.
+
+    The gateway call is ABORTED, not abandoned, on budget timeout: the shared
+    ``httpx.Client`` is closed from this thread (closing a client tears down
+    its in-flight requests), so the worker thread exits in seconds instead of
+    billing Hermes in the background until the gateway's own timeout — that
+    background billing was the double-spend: the funnel fail-opened and
+    re-asked while the original call was still running. ``future.cancel()`` is
+    best-effort; the client close is what actually stops the call.
     """
     import concurrent.futures
     from import_enrichment import DEFAULT_TIMEOUT_SECONDS
+    client = httpx.Client(
+        headers={
+            "Authorization": f"Bearer {_GATEWAY_KEY}",
+            "Content-Type": "application/json",
+        },
+        timeout=httpx.Timeout(_GATEWAY_TIMEOUT, connect=10.0),
+    )
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     try:
-        future = pool.submit(_run_hermes_sync, prompt, session_id)
+        future = pool.submit(_run_hermes_sync, prompt, session_id, client=client)
         return future.result(timeout=DEFAULT_TIMEOUT_SECONDS)
     except TimeoutError:
-        logger.warning("hermes enricher timed out after %.1fs",
+        logger.warning("hermes enricher timed out after %.1fs; aborting in-flight gateway call",
                        DEFAULT_TIMEOUT_SECONDS)
+        client.close()  # aborts the in-flight request; the worker thread dies in seconds
+        future.cancel()  # best-effort — the task is usually already running
         return ""
     finally:
+        client.close()  # idempotent; also covers the success/unreachable paths
         pool.shutdown(wait=False)
 
 
@@ -5657,9 +5695,10 @@ def _make_import_enricher():
     """
     from import_enrichment import analyze_ficha_funnel as _funnel
 
-    def enricher(candidates, progress_cb=None, on_phase=None):
+    def enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
         return _funnel(candidates, hermes_runner=_sync_hermes_enricher,
-                       progress_cb=progress_cb, on_phase=on_phase)
+                       progress_cb=progress_cb, on_phase=on_phase,
+                       should_cancel=should_cancel)
 
     return enricher
 

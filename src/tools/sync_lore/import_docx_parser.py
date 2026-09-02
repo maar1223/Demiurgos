@@ -650,6 +650,37 @@ def _image_ref(img: ImageEntry) -> str:
     return f"![{stem}](media/{img.filename})"
 
 
+# A line that is EXACTLY one inline image reference (``![alt](dest)``) —
+# used to isolate injected image refs on their own line (block isolation).
+_RE_IMAGE_REF_LINE = re.compile(r"^!\[[^\]]*\]\([^)]*\)$")
+
+
+def _isolate_image_ref_lines(lines: list[str]) -> list[str]:
+    """Ensure every image reference line (``![alt](media/file)``) sits ALONE
+    with a blank line BEFORE and AFTER (isolated block).
+
+    Existing blank lines are reused — never duplicated: a reference that
+    already sits next to a blank line keeps it. Two consecutive references
+    receive exactly one blank line between them; a reference at the document
+    start gets no leading blank (nothing to separate from) and a trailing
+    reference gets a trailing blank (consistent "after" edge). Lines that
+    embed an image inside prose (``text ![x](y) more``) are untouched.
+    """
+    out: list[str] = []
+    n = len(lines)
+    for i, line in enumerate(lines):
+        if _RE_IMAGE_REF_LINE.match(line.strip()) is None:
+            out.append(line)
+            continue
+        if out and out[-1].strip():
+            out.append("")  # blank BEFORE (never duplicated)
+        out.append(line)
+        nxt = lines[i + 1].strip() if i + 1 < n else None
+        if nxt is None or nxt:
+            out.append("")  # blank AFTER (never duplicated)
+    return out
+
+
 def inject_image_refs(
     markdown: str, images: list[ImageEntry]
 ) -> tuple[str, list[str]]:
@@ -669,6 +700,9 @@ def inject_image_refs(
        with a diagnostic.
     3. Images without a heading match are appended at the end of the document
        in document order, with a diagnostic naming the missing heading.
+    4. Every injected reference is isolated on its OWN line: a blank line
+       before and after (existing blanks are reused, never duplicated), so
+       each image renders as a standalone block in the ficha.
 
     Returns ``(updated_markdown, diagnostics)``.
     """
@@ -741,6 +775,10 @@ def inject_image_refs(
     # Insert from the end backwards so earlier line indices stay valid.
     for line_idx, ref in sorted(insertions, key=lambda x: x[0], reverse=True):
         lines.insert(line_idx + 1, ref)
+
+    # Isolate every injected image reference on its own line: a blank line
+    # before and after (block isolation; existing blanks are never duplicated).
+    lines = _isolate_image_ref_lines(lines)
 
     return "\n".join(lines), diagnostics
 

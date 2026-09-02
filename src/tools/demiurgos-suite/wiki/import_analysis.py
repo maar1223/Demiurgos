@@ -20,8 +20,9 @@ importador-auto-frontmatter (Phase 1) adds the deterministic H1-H5 tree
 splitter: ``detect_heading_structure`` (Step 0, with a Hermes structure-
 inference fallback seam) and ``split_heading_tree`` (Step 1), which produce
 complete-ficha candidates with parent-qualified canonical identities,
-empty-scaffold preservation, folder-per-heading materialization (every
-heading owns a folder containing its own file — no childless folding), and
+empty-scaffold preservation, tree-aware materialization (a heading creates
+a folder only when it has children or is H1; a childless heading at level
+> 1 lands as a loose file in the nearest ancestor's folder), and
 reference-image diagnostics. This is additive — the legacy chunk flow stays
 untouched.
 """
@@ -668,10 +669,22 @@ def resolve_target(world: str, candidate,
     stem, so every heading level owns its own folder containing its own
     file (``{section}/{slug0}/.../{slugN}/{slugN}.md``). A single-segment
     canonical id (a lone H1 root) therefore maps to
-    ``{section}/{slug}/{slug}.md`` — never a flat file. Empty or invalid
-    ``canonical_id``, or one whose segments all collapse to empty slugs,
-    falls back to the piece-1 mapping ``{section}/{identity}.md`` where
-    ``identity`` is the source filename stem. Empty ``section`` falls
+    ``{section}/{slug}/{slug}.md`` — never a flat file.
+
+    Tree-aware materialization (import folder rule): the analysis phase
+    computes the EXACT materialized path for every ficha
+    (``candidate.materialized_path``) from the heading tree — a heading
+    creates a folder only when it has children or is H1; a childless heading
+    at level > 1 lands as a loose file in the nearest ancestor's folder.
+    When the candidate carries that path (and a valid ``canonical_id``), it
+    wins over the per-segment derivation above; otherwise the folder-per-
+    heading fallback applies unchanged (legacy candidates, resumed jobs
+    predating the field, or empty materialized paths). The ``canonical_id``
+    identity is never altered — only WHERE the file is materialized differs.
+
+    Empty or invalid ``canonical_id``, or one whose segments all collapse to
+    empty slugs, falls back to the piece-1 mapping ``{section}/{identity}.md``
+    where ``identity`` is the source filename stem. Empty ``section`` falls
     through to the legacy source-path branch below, unchanged.
 
     The ``world`` parameter is accepted to mirror the design contract; it is
@@ -726,13 +739,24 @@ def resolve_target(world: str, candidate,
     # filename stem inside its own folder — a heading of level N always
     # materializes as ``{section}/<h1>/.../<hn>/<hn>.md`` (import folder
     # rule), so a lone H1 root gets ``{section}/<slug>/<slug>.md`` instead
-    # of a flat file. Empty or invalid canonical_id (or one whose segments
-    # all collapse to empty slugs) falls back to the piece-1
-    # ``{section}/{identity}.md`` mapping (byte-identical).
+    # of a flat file. Tree-aware materialization overrides that derivation:
+    # the analysis phase computed ``candidate.materialized_path`` from the
+    # heading tree (folder only when the heading has children or is H1), and
+    # when present it is used VERBATIM under the section. Empty or invalid
+    # canonical_id (or one whose segments all collapse to empty slugs) falls
+    # back to the piece-1 ``{section}/{identity}.md`` mapping (byte-identical).
     section_choice = getattr(candidate, "section", "") or ""
     if section_choice:
         canonical_id = getattr(candidate, "canonical_id", "") or ""
         if canonical_id and is_canonical_id(canonical_id):
+            materialized = getattr(candidate, "materialized_path", "") or ""
+            if materialized and not materialized.startswith("/") \
+                    and ".." not in materialized.split("/"):
+                canonical = f"{section_choice}/{materialized}"
+                return TargetResolution(
+                    canonical_path=canonical, normalized_source=canonical,
+                    status="resolved", alias_used="",
+                )
             raw_segments = canonical_id.split(CANONICAL_ID_SEPARATOR)
             slugs = [s for s in (slug_segment(seg) for seg in raw_segments) if s]
             if slugs:
@@ -862,10 +886,15 @@ class StructureNode:
     ``canonical_id`` is the parent-qualified identity (``::``-joined
     normalized heading segments, ``#N`` ordinals for duplicate same-title
     siblings). ``body`` is the ficha's own prose (heading line included);
-    ``children`` are the ficha children in source order. EVERY heading —
-    any level, with or without children — is a ficha (folder-per-heading
-    rule), so a childless heading keeps its own body instead of folding
-    into its parent. ``media_diagnostics`` carries the reference-image
+    ``children`` are the ficha children in source order. EVERY heading — any
+    level, with or without children — is a ficha; where the file is
+    MATERIALIZED follows the tree-aware folder rule:
+    ``materialized_path`` (relative to the section) gives the exact
+    target — a heading creates a folder only when it has children or is H1
+    (level 1), so a childless heading at level > 1 lands as a loose file in
+    the nearest ancestor's folder (``<h1>/<h2>.md`` instead of
+    ``<h1>/<h2>/<h2>.md``). Identity (``canonical_id``) is independent of
+    materialization. ``media_diagnostics`` carries the reference-image
     placements found in the ficha body.
     """
 
@@ -875,6 +904,7 @@ class StructureNode:
     source_line: int            # 0-based line index of the heading
     canonical_segment: str = ""
     canonical_id: str = ""
+    materialized_path: str = ""  # tree-aware target (rel. to section); "" = fallback
     body: str = ""
     children: list["StructureNode"] = field(default_factory=list)
     is_ficha: bool = False
@@ -968,13 +998,15 @@ def split_heading_tree(
 
     Rules (design, Step 1): every heading — H1 through H5, with or without
     children — is a valid ficha; an empty scaffold is review-visible and
-    never dropped. Each ficha owns a folder that contains its own file plus
-    its children (folder-per-heading rule: ``<h1>/<h2>/<hn>/<hn>.md``), so
-    no childless heading folds into a parent and every level preserves its
-    "mother" context. A source with no usable headings yields one implicit
-    ficha holding the whole text (legacy single-candidate path). Each ficha
-    carries the parent-qualified canonical identity, source order, and
-    reference-image diagnostics.
+    never dropped. Materialization follows the tree-aware folder rule: a
+    heading creates a folder only when it has children OR is H1 (level 1);
+    a childless heading at level > 1 lands as a loose file in the nearest
+    ancestor's folder (``<h1>/<h2>.md``), so shallow section scaffolds stay
+    compact while deep, populated branches keep their hierarchy. Each ficha
+    carries the parent-qualified canonical identity, the materialized
+    target path (``materialized_path``), source order, and reference-image
+    diagnostics. A source with no usable headings yields one implicit ficha
+    holding the whole text (legacy single-candidate path).
 
     ``structure`` short-circuits Step 0 (callers that already detected can
     pass the result); otherwise detection runs with the
@@ -991,7 +1023,10 @@ def split_heading_tree(
     )
 
 
-def _split_into_fichas(text: str, spans: list[HeadingSpan]) -> list[StructureNode]:
+def _split_into_fichas(
+    text: str,
+    spans: list[HeadingSpan],
+) -> list[StructureNode]:
     """Build the ficha list from heading spans (pure, deterministic)."""
     if not spans:
         body = text.strip()
@@ -1011,7 +1046,8 @@ def _split_into_fichas(text: str, spans: list[HeadingSpan]) -> list[StructureNod
         root.canonical_segment = (
             segment if counts[segment] == 1 else f"{segment}#{counts[segment]}")
         # Every root is a scope: an H1 always, or the first heading of a
-        # document that lacks H1s (no parent exists to fold into).
+        # document that lacks H1s (no parent exists to fold into). Roots are
+        # always fichas.
         root.is_ficha = True
         _assign_tree(root)
     if preamble:
@@ -1072,9 +1108,10 @@ def _assign_tree(raw: _RawNode) -> None:
     Duplicate same-title siblings receive ``#2``, ``#3`` ordinals in source
     order (design identity decision); the first occurrence keeps the plain
     segment. EVERY heading — any level, with or without children — is its
-    own ficha (import folder rule): each heading owns a folder that
-    contains its own file plus its children, so no childless heading folds
-    into a parent and no heading is flattened into the section root.
+    own ficha; where the ficha file is MATERIALIZED follows the tree-aware
+    folder rule (``_ficha_from``): a folder only when the heading has
+    children or is H1, so a childless heading at level > 1 lands as a loose
+    file in the nearest ancestor's folder.
     """
     counts: dict[str, int] = {}
     for child in raw.children:
@@ -1091,6 +1128,7 @@ def _ficha_from(
     parent_segments: list[str],
     order: Iterator[int],
     fichas: list[StructureNode],
+    parent_path: str = "",
 ) -> StructureNode:
     """Emit the ficha node for ``raw`` (every heading is a ficha).
 
@@ -1098,8 +1136,26 @@ def _ficha_from(
     children recurse and are attached in source order. Every heading keeps
     its own body (heading line + its prose); childless headings carry their
     own prose instead of folding into the parent.
+
+    Tree-aware materialization: ``parent_path`` is the materialized folder
+    (relative to the section) of the nearest ancestor that OWNS a folder,
+    and is empty for a ROOT heading (the top title of the tree — it has no
+    parent heading, whatever its level). A heading creates a folder only
+    when it has children or is a ROOT: then its own file lands inside that
+    new folder (``<parent>/<slug>/<slug>.md``) and ``parent_path`` for its
+    children becomes ``<parent>/<slug>``. A non-root childless heading
+    creates NO folder — its file lands directly in ``parent_path`` as a
+    loose file (``<parent>/<slug>.md``). The result is stored on
+    ``materialized_path`` (relative path incl. filename); the
+    ``canonical_id`` identity is unchanged.
     """
     segments = [*parent_segments, raw.canonical_segment]
+    slug = slug_segment(raw.canonical_segment)
+    has_folder = not parent_path or bool(raw.children)
+    if has_folder and slug:
+        own_dir = f"{parent_path}/{slug}" if parent_path else slug
+    else:
+        own_dir = parent_path
     node = StructureNode(
         level=raw.level,
         title=raw.title,
@@ -1107,6 +1163,7 @@ def _ficha_from(
         source_line=raw.source_line,
         canonical_segment=raw.canonical_segment,
         canonical_id=canonical_identity_from_segments(segments),
+        materialized_path=f"{own_dir}/{slug}.md" if slug else "",
         is_ficha=True,
         source_order=next(order),
     )
@@ -1120,7 +1177,8 @@ def _ficha_from(
     if raw.heading_text:
         body_lines.insert(0, raw.heading_text)
     for child in raw.children:
-        node.children.append(_ficha_from(child, segments, order, fichas))
+        node.children.append(
+            _ficha_from(child, segments, order, fichas, parent_path=own_dir))
     # Body stays VERBATIM markdown: emphasis markers are the document's real
     # formatting (bold/italic/code from the original Word source) and the
     # viewer renders them. Only derived metadata (title/identity) is cleaned.

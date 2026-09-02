@@ -1029,6 +1029,7 @@ def _fill_missing_summaries(
     *,
     fill_group_size: int | None = None,
     max_rounds: int = 5,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> dict[str, str]:
     """Run Step 2 (summaries) and re-ask any candidate the model omitted.
 
@@ -1039,11 +1040,17 @@ def _fill_missing_summaries(
     ``max_rounds`` of fill-in rounds run; a candidate the model genuinely
     cannot summarize stays missing (it falls back, but does not drag down the
     rest — see relationship-reach tests). Never raises.
+
+    ``should_cancel`` (optional) is polled before each ``_ask`` and in the
+    fill-in loop condition: when it returns True, re-asking stops and the
+    summaries accumulated so far are returned (fail-open — nothing raises).
     """
     size = fill_group_size if fill_group_size is not None else _FUNNEL_FILL_GROUP_SIZE
     summaries: dict[str, str] = {}
 
     def _ask(group: list[Candidate]) -> dict[str, str]:
+        if should_cancel is not None and should_cancel():
+            return {}
         try:
             raw = hermes_runner(
                 json.dumps(build_summary_prompt(group), ensure_ascii=False),
@@ -1058,7 +1065,8 @@ def _fill_missing_summaries(
     summaries.update(_ask(candidates))
     missing = [c for c in candidates if not summaries.get(c.candidate_id)]
     rounds = 0
-    while missing and rounds < max_rounds:
+    while (missing and rounds < max_rounds
+           and not (should_cancel is not None and should_cancel())):
         rounds += 1
         before = len(summaries)
         for start in range(0, len(missing), size):
@@ -1198,6 +1206,7 @@ def _recover_types_document_wide(
     catalog: list[Candidate],
     rel_vocab: Iterable[str] | None = None,
     max_workers: int | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> list[Candidate]:
     """LAST-FILTER recovery: rebuild full frontmatter + relationships doc-wide.
 
@@ -1218,7 +1227,14 @@ def _recover_types_document_wide(
     PARALLELIZED with the same bounded pool as the chunks (each group is
     independent over read-only shared context), so it does not serially add
     minutes to the import.
+
+    ``should_cancel`` (optional) is polled before submissions, inside the
+    result loop, and before Pass 2: when it returns True, recovery stops and
+    the candidates accumulated so far are returned unchanged (fail-open —
+    nothing raises, and no NEW Hermes work starts).
     """
+    if should_cancel is not None and should_cancel():
+        return candidates
     vocab = set(entity_type_vocabulary())
     # Only fichas that actually GOT a summary are recoverable here: a ficha
     # whose chunk raised (no summary) has no reliable info to classify from, so
@@ -1271,8 +1287,14 @@ def _recover_types_document_wide(
     recovered_fm: dict[str, dict[str, Any]] = {}
     recovered_rel: dict[str, list[dict[str, Any]]] = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = [ex.submit(_combined_group, g, i) for i, g in enumerate(groups)]
+        futures: list[concurrent.futures.Future] = []
+        for i, g in enumerate(groups):
+            if should_cancel is not None and should_cancel():
+                break
+            futures.append(ex.submit(_combined_group, g, i))
         for fut in concurrent.futures.as_completed(futures):
+            if should_cancel is not None and should_cancel():
+                break
             fm, rels = fut.result()
             recovered_fm.update(fm)
             for rel in rels:
@@ -1308,13 +1330,15 @@ def _recover_types_document_wide(
         result = parse_type_disambiguation_response(raw or "")
         return {k: v for k, v in result.items() if v and v in vocab}
 
-    if still_groups:
+    if still_groups and not (should_cancel is not None and should_cancel()):
         type_workers = min(workers, len(still_groups))
         with concurrent.futures.ThreadPoolExecutor(max_workers=type_workers) as ex:
             futures = [
                 ex.submit(_ask_type_group, g, i)
                 for i, g in enumerate(still_groups)]
             for fut in concurrent.futures.as_completed(futures):
+                if should_cancel is not None and should_cancel():
+                    break
                 type_recovered.update(fut.result())
 
     out: list[Candidate] = []
@@ -1380,6 +1404,7 @@ def _enrich_funnel_chunk(
     rel_vocab: Iterable[str] | None,
     prov: dict[str, str],
     on_phase: Callable[[str], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> list[Candidate]:
     """Run Steps 2-4 for ONE byte-bounded chunk (the unit of parallelism).
 
@@ -1400,6 +1425,11 @@ def _enrich_funnel_chunk(
     (``"resumiendo"`` / ``"generando_metadata"``) so the live UI can show what
     is happening underneath "Consultando asistente" instead of a frozen label.
     It may be called from worker threads; callers must make it thread-safe.
+
+    ``should_cancel`` (optional) is polled before Step 2 and before Steps 3+4:
+    when it returns True the chunk stops launching NEW Hermes work and returns
+    what it has produced so far fail-open (candidates fall back to reviewable
+    fallback frontmatter). Nothing raises.
     """
     # Step 2 — per-ficha summaries from the full body (this chunk). Uses
     # fill-in: re-asks any candidate the model omitted in small groups, so a
@@ -1407,8 +1437,10 @@ def _enrich_funnel_chunk(
     # loss of its relationships in Step 3, not just fallback).
     if on_phase is not None:
         on_phase("resumiendo")
-    summaries: dict[str, str] = _fill_missing_summaries(
-        chunk, hermes_runner, session_id)
+    summaries: dict[str, str] = {}
+    if not (should_cancel is not None and should_cancel()):
+        summaries = _fill_missing_summaries(
+            chunk, hermes_runner, session_id, should_cancel=should_cancel)
 
     summarized: list[Candidate] = []
     for c in chunk:
@@ -1427,7 +1459,7 @@ def _enrich_funnel_chunk(
         on_phase("generando_metadata")
     relationships: list[RelationshipSuggestion] = []
     frontmatter: dict[str, dict[str, Any]] = {}
-    if summarized:
+    if summarized and not (should_cancel is not None and should_cancel()):
         try:
             raw = hermes_runner(
                 json.dumps(
@@ -1543,6 +1575,7 @@ def analyze_ficha_funnel(
     on_phase: Callable[[str], None] | None = None,
     max_workers: int | None = None,
     chunk_budget: int | None = None,
+    should_cancel: Callable[[], bool] | None = None,
 ) -> list[Candidate]:
     """Run Steps 2-4 of the enrichment funnel over complete-ficha candidates.
 
@@ -1574,6 +1607,15 @@ def analyze_ficha_funnel(
     fichas fully enriched so far and ``total`` is ``len(candidates)``. It is a
     liveness hook — the caller may surface a coarse "ficha X de Y" progress bar
     during the slow Hermes phase. Never raised and never blocks enrichment.
+    In the parallel path it fires INSIDE the executor block, as each chunk
+    lands (not after the pool exits), so the UI sees a moving bar live.
+
+    ``should_cancel`` (optional) is polled between chunks (before submissions
+    and before each result wait) and at the start of each worker: when it
+    returns True, no NEW Hermes work is launched and every not-yet-processed
+    chunk degrades fail-open to fallback candidates. Whatever completed before
+    the cancel is preserved; nothing raises. The ``enricher`` seam in the
+    import router passes the in-process cancel signal here.
 
     importador-auto-frontmatter (global relationship reach):
     * Chunks are bounded by BOTH body bytes AND candidate count
@@ -1634,10 +1676,17 @@ def analyze_ficha_funnel(
     def _run_chunk(idx: int) -> tuple[int, list[Candidate]]:
         chunk = chunks[idx]
         chunk_session = f"{base_session_id}:chunk:{idx}"
+        if should_cancel is not None and should_cancel():
+            # Cooperative cancel: do not start (or re-run) Hermes work for this
+            # chunk; degrade it fail-open to reviewable fallback candidates.
+            return idx, _enrich_funnel_chunk(
+                chunk, _fail_open_runner(hermes_runner), chunk_session,
+                catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                should_cancel=should_cancel)
         return idx, _enrich_funnel_chunk(
             chunk, hermes_runner, chunk_session,
             catalog=catalog, rel_vocab=rel_vocab, prov=prov,
-            on_phase=on_phase)
+            on_phase=on_phase, should_cancel=should_cancel)
 
     workers = max_workers if max_workers is not None else _default_funnel_max_workers()
     if workers <= 1 or len(chunks) <= 1:
@@ -1645,6 +1694,16 @@ def analyze_ficha_funnel(
         final_flat: list[Candidate] = []
         _done = 0
         for idx in range(len(chunks)):
+            if should_cancel is not None and should_cancel():
+                # Cooperative cancel: stop launching chunks; degrade the rest
+                # fail-open (no NEW Hermes work, nothing raises).
+                for j in range(idx, len(chunks)):
+                    final_flat.extend(_enrich_funnel_chunk(
+                        chunks[j], _fail_open_runner(hermes_runner),
+                        f"{base_session_id}:chunk:{j}",
+                        catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                        should_cancel=should_cancel))
+                break
             _i, enriched = _run_chunk(idx)
             final_flat.extend(enriched)
             _done += len(chunks[idx])
@@ -1660,7 +1719,8 @@ def analyze_ficha_funnel(
             on_phase("last_filter")
         return _recover_types_document_wide(
             final_flat, hermes_runner, f"{base_session_id}:type-recovery",
-            catalog=catalog, rel_vocab=rel_vocab, max_workers=workers)
+            catalog=catalog, rel_vocab=rel_vocab, max_workers=workers,
+            should_cancel=should_cancel)
 
     # Parallel path: a bounde ThreadPoolExecutor over independent chunks. Each
     # chunk uses its OWN session_id (unique per chunk, see ``_run_chunk``) so
@@ -1669,44 +1729,90 @@ def analyze_ficha_funnel(
     # order-independent (read-only catalog + independent candidates), so we
     # simply re-assemble the results in the original chunk order below.
     final: list[list[Candidate]] = [None] * len(chunks)  # type: ignore[list-item]
+    _done = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as ex:
         future_by_idx: dict[int, concurrent.futures.Future] = {}
         for idx in range(len(chunks)):
+            if should_cancel is not None and should_cancel():
+                # Cooperative cancel: stop submitting chunks; the not-yet-
+                # submitted ones degrade fail-open below.
+                break
             future_by_idx[idx] = ex.submit(_run_chunk, idx)
-        # Re-assemble in input order regardless of completion order.
+        # Re-assemble in input order regardless of completion order. Progress
+        # is reported LIVE here, as each chunk lands — INSIDE the executor
+        # block, not after the pool exits — so the UI sees a moving bar during
+        # the slow Hermes phase.
         for idx in range(len(chunks)):
-            try:
-                _i, enriched = future_by_idx[idx].result()
-                final[idx] = enriched
-            except Exception:
-                # Degraded chunk (a raising/timing-out worker): fail-open to a
-                # non-raising fallback runner so the import never blocks and no
-                # chunk ever escapes an exception. Only its own chunk degrades.
+            if should_cancel is not None and should_cancel():
+                # Cancelled: do NOT wait for pending futures, but preserve any
+                # chunk that ALREADY completed (its future is done — collecting
+                # it is free and honors "completed work is kept"). Everything
+                # still pending degrades fail-open (no NEW Hermes work).
+                for j in range(idx, len(chunks)):
+                    if final[j] is not None:
+                        continue
+                    fut_j = future_by_idx.get(j)
+                    if fut_j is not None and fut_j.done():
+                        try:
+                            _j, enriched = fut_j.result()
+                            final[j] = enriched
+                        except Exception:
+                            final[j] = _enrich_funnel_chunk(
+                                chunks[j], _fail_open_runner(hermes_runner),
+                                f"{base_session_id}:chunk:{j}",
+                                catalog=catalog, rel_vocab=rel_vocab,
+                                prov=prov, should_cancel=should_cancel)
+                    else:
+                        final[j] = _enrich_funnel_chunk(
+                            chunks[j], _fail_open_runner(hermes_runner),
+                            f"{base_session_id}:chunk:{j}",
+                            catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                            should_cancel=should_cancel)
+                break
+            fut = future_by_idx.get(idx)
+            if fut is None:
+                # Chunk never submitted (cancel arrived mid-submit): degrade.
                 final[idx] = _enrich_funnel_chunk(
                     chunks[idx], _fail_open_runner(hermes_runner),
                     f"{base_session_id}:chunk:{idx}",
-                    catalog=catalog, rel_vocab=rel_vocab, prov=prov)
+                    catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                    should_cancel=should_cancel)
+            else:
+                try:
+                    _i, enriched = fut.result()
+                    final[idx] = enriched
+                except Exception:
+                    # Degraded chunk (a raising/timing-out worker): fail-open to a
+                    # non-raising fallback runner so the import never blocks and no
+                    # chunk ever escapes an exception. Only its own chunk degrades.
+                    final[idx] = _enrich_funnel_chunk(
+                        chunks[idx], _fail_open_runner(hermes_runner),
+                        f"{base_session_id}:chunk:{idx}",
+                        catalog=catalog, rel_vocab=rel_vocab, prov=prov,
+                        should_cancel=should_cancel)
+            if final[idx] is None:
+                continue
+            _done += len(chunks[idx])
+            if progress_cb is not None:
+                try:
+                    progress_cb(_done, len(candidates))
+                except Exception as _exc:  # noqa: BLE001 — progress is advisory
+                    logger.warning("funnel progress_cb failed: %s",
+                                   type(_exc).__name__, exc_info=True)
 
     ordered: list[Candidate] = []
-    _done = 0
     for idx, enriched in enumerate(final):
         if enriched is None:
             continue
         ordered.extend(enriched)
-        _done += len(chunks[idx])
-        if progress_cb is not None:
-            try:
-                progress_cb(_done, len(candidates))
-            except Exception as _exc:  # noqa: BLE001 — progress is advisory
-                logger.warning("funnel progress_cb failed: %s",
-                               type(_exc).__name__, exc_info=True)
     # Document-wide type recovery for fichas left without a ``type`` by their
     # chunk (the amplified pass now sees the WHOLE import's summaries).
     if on_phase is not None:
         on_phase("last_filter")
     return _recover_types_document_wide(
         ordered, hermes_runner, f"{base_session_id}:type-recovery",
-        catalog=catalog, rel_vocab=rel_vocab, max_workers=workers)
+        catalog=catalog, rel_vocab=rel_vocab, max_workers=workers,
+        should_cancel=should_cancel)
 
 
 # ---------------------------------------------------------------------------

@@ -253,7 +253,7 @@ class TestRouterVisionSeam:
         families coexist in the persisted enrichment payload."""
         _docx_seams(monkeypatch, [_entry()])
 
-        def fake_enricher(candidates, progress_cb=None, on_phase=None):
+        def fake_enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
             return [c.model_copy(update={
                 "enrichment_json": [{
                     "__type__": "classification", "id": "cls:1",
@@ -946,7 +946,7 @@ def _funnel_enricher(type_name: str = "lore"):
     """Funnel frontmatter enricher: upgrades every candidate's manual stub to
     ``generated`` so analyze materializes the rendered document (matching
     execute-time) — required for the reference check to see wikilinks."""
-    def enricher(candidates, progress_cb=None, on_phase=None):
+    def enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
         return [c.model_copy(update={
             "frontmatter": FrontmatterCandidate(
                 title=c.display_title or c.normalized_identity,
@@ -1042,7 +1042,7 @@ class TestCollisionDetection:
         graph resolver knows nothing and returns [] for every name)."""
         resolver = _outer_resolver(lambda name: [])  # graph knows nothing
 
-        def enricher(candidates, progress_cb=None, on_phase=None):
+        def enricher(candidates, progress_cb=None, on_phase=None, should_cancel=None):
             out = []
             for c in candidates:
                 # The funnel emits BARE canonical ids (render_frontmatter_document
@@ -1465,3 +1465,62 @@ class TestNotionZipDispatch:
         assert "failed:notion_analysis" not in events
         # Generic extraction still lands the entries on disk.
         assert (spool / job["job_id"] / "extracted" / "notes.txt").exists()
+
+
+class TestCancelDuringAnalyze:
+    """BUG A — cooperative cancellation of a long synchronous analyze.
+
+    The ``POST /{job_id}/cancel`` endpoint raises an in-process cancel signal
+    that a running ``analyze`` observes at its persistence point: the response
+    is a clean cancellation result (never a 500), no REVIEW transition and no
+    candidate rows are persisted for the cancelled job.
+    """
+
+    def test_cancel_during_analyze_returns_cleanly_without_persisting(
+            self, tmp_path):
+        """Analyze is blocked inside the (slow) enricher; cancel lands; the
+        analyze thread then returns a cancellation result: 200 (no 500), no
+        REVIEW, no candidates persisted, and the job row is reaped."""
+        import threading as _threading
+
+        release = _threading.Event()
+        entered = _threading.Event()
+
+        def blocking_enricher(candidates, progress_cb=None, on_phase=None,
+                              should_cancel=None):
+            entered.set()
+            release.wait(timeout=10)
+            return candidates
+
+        client, store, spool, _ = _make_app(
+            tmp_path, enricher=blocking_enricher)
+        job = _create_job(client)
+        _stream(client, job["job_id"], b"# Ayagares\n\nCuerpo de la ficha.")
+
+        result: dict = {}
+
+        def _run():
+            result["resp"] = client.post(
+                f"/api/world1/imports/{job['job_id']}/analyze",
+                json={"enrich": True})
+
+        t = _threading.Thread(target=_run)
+        t.start()
+        assert entered.wait(timeout=10), "analyze must reach the enricher"
+        cancel = client.post(f"/api/world1/imports/{job['job_id']}/cancel")
+        assert cancel.status_code == 200, cancel.text
+        assert cancel.json()["job"]["state"] == "cancelled"
+        release.set()
+        t.join(timeout=10)
+        resp = result.get("resp")
+        assert resp is not None, "analyze must return (fail-open, no 500)"
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body.get("cancelled") is True, (
+            f"analyze must report a cancellation result, got {body}")
+        assert body.get("enrichment_status") == "cancelled"
+        # The cancelled job left no REVIEW transition and no candidate rows.
+        assert store.get_job(job["job_id"]) is None, (
+            "cancel (Opción A) reaps the DB row")
+        assert store.candidates_for(job["job_id"]) == [], (
+            "no candidates may be persisted for a cancelled analyze")
