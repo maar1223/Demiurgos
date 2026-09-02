@@ -38,6 +38,7 @@ from import_analysis import resolve_target
 from import_intake import BoundedSpool
 from import_store import ImportJobStore
 from import_registry import _request_cancel
+from order_manifest import append_order, replace_prefix_order
 
 if TYPE_CHECKING:
     # Only needed for the type annotation; graph_indexer uses package-relative
@@ -671,6 +672,14 @@ class ImportService:
             BoundedSpool(self.spool_dir, job.job_id, job.world).cleanup()
             raise ValueError(
                 f"execution failed closed: {type(exc).__name__}") from exc
+        # Per-section import-order manifests (_order.json): after every
+        # candidate executed successfully, record the written fichas in import
+        # order. First/append imports append to the manifest; a reimport
+        # (``job.reimport``) replaces only the reimported document's subtrees
+        # (prefix-based) so disjoint documents sharing the section keep their
+        # entries (model 2a). The manifest is a derived index — a failure is
+        # logged + emitted as an observability event and never fails the job.
+        self._update_order_manifests(job, outcomes)
         # Bulk graph reconciliation (slice 3, IM-3.1): after preservation-first
         # writes complete, reconcile all written canonical fichas through the
         # bounded bulk boundary once. Graph state is secondary to canon writes:
@@ -682,6 +691,77 @@ class ImportService:
                               state=ImportJobState.COMPLETED)
         BoundedSpool(self.spool_dir, job.job_id, job.world).cleanup()
         return outcomes
+
+    def _update_order_manifests(self, job: ImportJob,
+                                outcomes: list[ExecutionOutcome]) -> None:
+        """Write/update the per-section ``_order.json`` manifests.
+
+        Collects the written ficha paths (section-relative, POSIX-separated —
+        the same derivation ``_reconcile_after_execution`` uses) and groups
+        them by section, because a single job may write into several sections
+        and each section owns its manifest. First/append imports call
+        ``append_order``; a reimport (``job.reimport``) replaces only the
+        reimported document's subtrees via ``replace_prefix_order``, so
+        disjoint documents in the same section keep their entries.
+
+        Failures are logged and surfaced as observability events: canon writes
+        are authoritative and the manifest is a derived index, so a manifest
+        problem never fails the job.
+        """
+        by_section: dict[Path, list[str]] = {}
+        for o in outcomes:
+            if not (o.written and o.target):
+                continue
+            try:
+                rel = Path(o.target).relative_to(self.mundos_dir)
+            except ValueError:
+                continue
+            parts = rel.parts
+            if len(parts) < 3:
+                # Not a ficha under ``{world}/{section}/`` — nothing to order.
+                continue
+            section_dir = self.mundos_dir / parts[0] / parts[1]
+            section_rel = "/".join(parts[2:])
+            by_section.setdefault(section_dir, []).append(section_rel)
+        if not by_section:
+            return
+        for section_dir, new_paths in by_section.items():
+            try:
+                if job.reimport:
+                    self._replace_document_roots(section_dir, new_paths)
+                else:
+                    append_order(section_dir, new_paths)
+            except OSError as exc:
+                logger.warning(
+                    "order manifest update failed for %s (%s): %s",
+                    section_dir, type(exc).__name__, exc,
+                )
+                self.store.add_event(job.job_id, "order_manifest_failed")
+
+    def _replace_document_roots(self, section_dir: Path,
+                                new_paths: list[str]) -> None:
+        """Replace the reimported document's subtrees in the section manifest.
+
+        The document's written paths are grouped by their first path segment
+        and each group is replaced independently with
+        ``replace_prefix_order``. In the normal case (one document → one
+        subtree, e.g. ``reptiles/``) that is a single group whose prefix is
+        the document's root folder — the design's common-prefix result. When
+        the document's paths span several roots (e.g. a job that also imports
+        a second document into the same section), each root is replaced
+        separately; files at the section root use their exact path as the
+        prefix, so a root-level reimport never triggers a whole-section
+        replacement that would drop disjoint documents. A document that
+        genuinely fills the section still degenerates to full replacement
+        (REQ-3 S6): every entry it owns is covered by one of its prefixes.
+        """
+        groups: dict[str, list[str]] = {}
+        for path in new_paths:
+            head, _, rest = path.partition("/")
+            key = path if not rest else head
+            groups.setdefault(key, []).append(path)
+        for prefix, group in groups.items():
+            replace_prefix_order(section_dir, prefix, group)
 
     def _reconcile_after_execution(
         self, job: ImportJob, outcomes: list[ExecutionOutcome]

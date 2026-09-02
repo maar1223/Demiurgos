@@ -1107,3 +1107,176 @@ class TestCollisionSharedHelper:
         assert outcomes[0].action == "review"
         assert not outcomes[0].written
         assert target.read_text(encoding="utf-8") == prior  # no canon write
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (PR 2) — import pipeline writes/updates _order.json manifests
+# ---------------------------------------------------------------------------
+
+
+class TestOrderManifestGeneration:
+    """The import pipeline records written fichas in each section's
+    ``_order.json`` (world-importer-doc-order, tasks 3.1-3.4).
+
+    Spec contract: first import creates the manifest; a new document in an
+    existing section appends; a reimport replaces only the reimported
+    document's subtree (model 2a — disjoint documents sharing the section
+    keep their entries); a document that fills the whole section degenerates
+    to full replacement (REQ-3 S6); entries are section-relative,
+    POSIX-separated.
+    """
+
+    def _manifest_job(self, job_id="job1", world="world1"):
+        job = _job(world=world)
+        return job.model_copy(update={"job_id": job_id})
+
+    def _cand(self, job, section_rel, *, content=None):
+        """Candidate whose classifier resolution lands at ``{section_rel}``.
+
+        ``section_rel`` is ``{section}/{nested/.../file.md}`` (e.g.
+        ``lore/reptiles/snake.md``). The classifier branch of
+        ``resolve_target`` (section + valid ``canonical_id`` +
+        ``materialized_path``) maps it verbatim — the legacy source-path
+        branch rejects unknown subfolders under ``lore``, so nested targets
+        must go through the same branch production analysis uses.
+        """
+        section, _, rest = section_rel.partition("/")
+        ident = Path(rest).stem
+        body = content or (f"---\ntype: personaje\nname: {ident}\n---\n"
+                           f"{ident} body")
+        return Candidate(
+            candidate_id=f"cand-{job.job_id}-{section_rel.replace('/', '-')}",
+            job_id=job.job_id, world=job.world,
+            normalized_identity=ident,
+            source_hash=f"sha256:{job.job_id}:{section_rel}",
+            provenance=Provenance(
+                source_path=section_rel, source_kind="loose",
+                source_hash=f"sha256:{job.job_id}:{section_rel}"),
+            content_preview=body, images=[], replacement=None,
+            section=section,
+            canonical_id=f"{ident.capitalize()}::Source",
+            materialized_path=rest,
+        )
+
+    def _run(self, store, service, job, candidates):
+        store.create_job(job)
+        for cand in candidates:
+            store.add_candidate(cand)
+        approval = service.issue_approval(job, "tester", [])
+        return service.execute(job, "tester", approval.digest, approval.token)
+
+    def _manifest(self, tmp_path, world="world1", section="lore"):
+        import json
+        manifest = tmp_path / world / section / "_order.json"
+        if not manifest.exists():
+            return []
+        return json.loads(manifest.read_text(encoding="utf-8"))
+
+    def test_import_creates_manifest(self, store, service, tmp_path):
+        job = self._manifest_job()
+        outcomes = self._run(store, service, job, [
+            self._cand(job, "lore/reptiles/snake.md"),
+            self._cand(job, "lore/reptiles/lizard.md"),
+        ])
+        assert all(o.written for o in outcomes)
+        assert (tmp_path / "world1" / "lore" / "_order.json").exists()
+        assert self._manifest(tmp_path) == [
+            "reptiles/snake.md", "reptiles/lizard.md"]
+
+    def test_import_appends_to_manifest(self, store, service, tmp_path):
+        job_a = self._manifest_job("job-a")
+        self._run(store, service, job_a, [
+            self._cand(job_a, "lore/reptiles/snake.md"),
+            self._cand(job_a, "lore/reptiles/lizard.md"),
+        ])
+        job_b = self._manifest_job("job-b")
+        outcomes_b = self._run(store, service, job_b, [
+            self._cand(job_b, "lore/dvin/b1.md"),
+        ])
+        assert outcomes_b[0].written
+        assert self._manifest(tmp_path) == [
+            "reptiles/snake.md", "reptiles/lizard.md", "dvin/b1.md"]
+
+    def test_reimport_uses_prefix_replacement(self, store, service, tmp_path):
+        job_a = self._manifest_job("job-a")
+        self._run(store, service, job_a, [
+            self._cand(job_a, "lore/reptiles/snake.md"),
+            self._cand(job_a, "lore/reptiles/lizard.md"),
+        ])
+        job_b = self._manifest_job("job-b")
+        self._run(store, service, job_b, [
+            self._cand(job_b, "lore/dvin/b1.md"),
+        ])
+        # Out-of-band removal leaves a stale manifest entry; the reimport must
+        # regenerate only the document's subtree (``reptiles/``), never
+        # touching doc B's entries (``dvin/``).
+        (tmp_path / "world1" / "lore" / "reptiles" / "snake.md").unlink()
+        job_re = self._manifest_job("job-re")
+        job_re.reimport = True
+        outcomes = self._run(store, service, job_re, [
+            self._cand(job_re, "lore/reptiles/snake.md"),
+        ])
+        assert outcomes[0].written
+        assert self._manifest(tmp_path) == ["dvin/b1.md", "reptiles/snake.md"]
+
+    def test_reimport_full_section(self, store, service, tmp_path):
+        # A document that fills the whole section (files at the section root)
+        # degenerates to full replacement on reimport (REQ-3 S6): the
+        # regenerated manifest has exactly the new fichas, no stale entries.
+        job_a = self._manifest_job("job-a")
+        self._run(store, service, job_a, [
+            self._cand(job_a, "lore/intro.md"),
+            self._cand(job_a, "lore/chapter-2.md"),
+        ])
+        assert self._manifest(tmp_path) == ["intro.md", "chapter-2.md"]
+        # Simulate doc removal so the reimport rewrites both fichas.
+        (tmp_path / "world1" / "lore" / "intro.md").unlink()
+        (tmp_path / "world1" / "lore" / "chapter-2.md").unlink()
+        job_re = self._manifest_job("job-re")
+        job_re.reimport = True
+        outcomes = self._run(store, service, job_re, [
+            self._cand(job_re, "lore/intro.md"),
+            self._cand(job_re, "lore/chapter-2.md"),
+        ])
+        assert all(o.written for o in outcomes)
+        assert self._manifest(tmp_path) == ["intro.md", "chapter-2.md"]
+
+    def test_multi_document_coexistence(self, store, service, tmp_path):
+        # Model 2a: doc A populates ``reptiles/``, doc B populates ``dvin/``.
+        # Reimporting A (restructured layout) must preserve B's entries and
+        # replace only A's subtree — reimporting A never drops B.
+        job_a = self._manifest_job("job-a")
+        self._run(store, service, job_a, [
+            self._cand(job_a, "lore/reptiles/snake.md"),
+            self._cand(job_a, "lore/reptiles/lizard.md"),
+        ])
+        job_b = self._manifest_job("job-b")
+        self._run(store, service, job_b, [
+            self._cand(job_b, "lore/dvin/b1.md"),
+        ])
+        assert self._manifest(tmp_path) == [
+            "reptiles/snake.md", "reptiles/lizard.md", "dvin/b1.md"]
+        job_re = self._manifest_job("job-re")
+        job_re.reimport = True
+        outcomes = self._run(store, service, job_re, [
+            self._cand(job_re, "lore/reptiles/snake_v2.md"),
+        ])
+        assert outcomes[0].written
+        assert self._manifest(tmp_path) == ["dvin/b1.md", "reptiles/snake_v2.md"]
+
+    def test_manifest_paths_section_relative(self, store, service, tmp_path):
+        # A single job may write several sections; each section owns its
+        # manifest and entries are section-relative POSIX paths (no
+        # world/section prefix, no backslashes).
+        job = self._manifest_job()
+        outcomes = self._run(store, service, job, [
+            self._cand(job, "lore/reptiles/snake.md"),
+            self._cand(job, "personajes/rey.md"),
+        ])
+        assert all(o.written for o in outcomes)
+        assert self._manifest(tmp_path, section="lore") == ["reptiles/snake.md"]
+        assert self._manifest(tmp_path, section="personajes") == ["rey.md"]
+        for entry in (self._manifest(tmp_path, section="lore")
+                      + self._manifest(tmp_path, section="personajes")):
+            assert not entry.startswith("world1/")
+            assert "\\" not in entry
