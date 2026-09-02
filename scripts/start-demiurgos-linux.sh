@@ -69,10 +69,21 @@ remove_pid_file() {
 }
 
 # Send TERM, wait up to ~6s (30 x 0.2s), escalate to KILL — the standard
-# shutdown sequence for launcher-managed processes.
+# shutdown sequence for launcher-managed processes. Children are killed
+# BEFORE their parent so a dev-server wrapper (``npm run dev`` → ``vite``)
+# cannot leave its server child orphaned (reparented to init) when the
+# wrapper dies first — which kept the frontend alive after "Apagar Demiurgos".
+_kill_descendants() {
+    local parent="$1" child
+    for child in $(pgrep -P "$parent" 2>/dev/null || true); do
+        _kill_descendants "$child"
+    done
+    kill -TERM "$parent" 2>/dev/null || true
+}
+
 _kill_process() {
-    local pid="$1"
-    kill -TERM "$pid" 2>/dev/null || true
+    local pid="$1" child
+    _kill_descendants "$pid"
     for _ in {1..30}; do
         kill -0 "$pid" 2>/dev/null || return 0
         sleep 0.2
@@ -80,6 +91,10 @@ _kill_process() {
     if kill -0 "$pid" 2>/dev/null; then
         kill -KILL "$pid" 2>/dev/null || true
     fi
+    # Clean up any descendant that survived the TERM phase.
+    for child in $(pgrep -P "$pid" 2>/dev/null || true); do
+        kill -KILL "$child" 2>/dev/null || true
+    done
 }
 
 stop_component() {
