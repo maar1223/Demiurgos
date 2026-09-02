@@ -488,3 +488,74 @@ class TestSpoolCleanup:
             spool.cleanup()  # must not raise
         assert "spool cleanup failed" in caplog.text
         assert job_dir.exists()  # untouched after the failure
+
+
+# ---------------------------------------------------------------------------
+# Phase 3 (PR 2) — reimport detection during analysis (order manifest)
+# ---------------------------------------------------------------------------
+
+
+def _reimport_provider(job, files):
+    """Stub provider: one candidate with a stable identity + source hash, so
+    a second analyze of the same content matches the first job's row."""
+    return [_candidate(job.job_id, ident="A",
+                       data=b"---\ntype: personaje\nname: A\n---\nA body")]
+
+
+class TestReimportDetection:
+    """Task 3.2 — ``job.reimport`` is set during analysis (not at job
+    creation, which predates the source hashes) by matching each candidate
+    against existing rows with the same ``source_hash`` + ``normalized_identity``
+    BEFORE the current job's own rows are persisted (no self-match)."""
+
+    def _analyze(self, client, job):
+        resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
+        assert resp.status_code == 200, resp.text
+        return resp.json()["job"]
+
+    def test_first_import_is_not_reimport(self, tmp_path):
+        app, store, _ = _app(tmp_path, provider=_reimport_provider)
+        client = TestClient(app)
+        job = _create_job(client)
+        self._analyze(client, job)
+        stored = store.get_job(job["job_id"])
+        assert stored.state == ImportJobState.REVIEW
+        assert stored.reimport is False
+
+    def test_matching_existing_candidate_marks_reimport(self, tmp_path):
+        app, store, _ = _app(tmp_path, provider=_reimport_provider)
+        client = TestClient(app)
+        first = _create_job(client)
+        self._analyze(client, first)
+        assert store.get_job(first["job_id"]).reimport is False
+        # Same source content again: the candidate matches the first job's
+        # persisted row → the new job is a reimport.
+        second = _create_job(client)
+        job2 = self._analyze(client, second)
+        assert job2["state"] == "review"
+        assert store.get_job(second["job_id"]).reimport is True
+        # The first job's flag is untouched (per-job flag).
+        assert store.get_job(first["job_id"]).reimport is False
+
+    def test_new_document_in_existing_section_is_not_reimport(self, tmp_path):
+        # A DIFFERENT document (new identity + hash) in the same world is not
+        # a reimport even though the world already has import history — the
+        # flag is per-document (source_hash + normalized_identity), never a
+        # manifest/section existence check.
+        state = {"i": 0}
+
+        def _alternating(job, files):
+            ident = ("A", "B")[state["i"] % 2]
+            state["i"] += 1
+            return [_candidate(
+                job.job_id, ident=ident,
+                data=f"---\ntype: personaje\nname: {ident}\n---\n{ident}".encode())]
+
+        app, store, _ = _app(tmp_path, provider=_alternating)
+        client = TestClient(app)
+        first = _create_job(client)
+        self._analyze(client, first)
+        assert store.get_job(first["job_id"]).reimport is False
+        second = _create_job(client)
+        self._analyze(client, second)
+        assert store.get_job(second["job_id"]).reimport is False

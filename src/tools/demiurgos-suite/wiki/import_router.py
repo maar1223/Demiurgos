@@ -911,6 +911,26 @@ def create_import_router(
             if should_cancel():
                 return _cancelled_analyze_result()
 
+            # Reimport detection (order manifest): a job is a REIMPORT when
+            # any of its candidates matches a candidate row already persisted
+            # in this world's import history (same ``source_hash`` +
+            # ``normalized_identity``). It runs AFTER analysis (the source
+            # hashes only exist once intake hashed the spool) and BEFORE the
+            # persistence loop, so this job's own fresh rows can never
+            # self-match. The flag is per-document-semantics on a per-job
+            # carrier: execute uses it to replace only the reimported
+            # document's manifest subtree instead of appending. It is NEVER
+            # derived from ``_order.json`` existence (invalid when multiple
+            # documents share a section) nor from ``job.revision`` (a
+            # job-level optimistic-lock counter, not a document revision).
+            is_reimport = False
+            for candidate in candidates:
+                if _store.find_candidate(
+                        candidate.world, candidate.source_hash,
+                        candidate.normalized_identity) is not None:
+                    is_reimport = True
+                    break
+
             added = 0
             for candidate in candidates:
                 existing = _store.find_candidate(
@@ -1009,7 +1029,8 @@ def create_import_router(
                 # on ``current.revision`` (latent AttributeError/500).
                 return _cancelled_analyze_result()
             _store.update_job(job_id, expected_revision=current.revision,
-                              state=ImportJobState.REVIEW, file_count=added)
+                              state=ImportJobState.REVIEW, file_count=added,
+                              reimport=is_reimport)
             _store.add_event(
                 job_id,
                 f"analysis_complete:{enrichment_status}:cached={enriched_from_cache}"
