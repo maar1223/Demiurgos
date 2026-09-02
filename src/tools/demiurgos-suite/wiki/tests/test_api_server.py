@@ -319,6 +319,19 @@ class TestTreeManifestOrdering:
         # Historical behavior preserved: dirs first, files alphabetical.
         assert names == ["subdir", "00_inicio.md", "alpha.md", "Beta.md"]
 
+    def test_delete_removes_from_manifest(self, client: TestClient):
+        base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        for name in ("intro.md", "chapter-1.md", "chapter-2.md"):
+            (base / name).write_text(f"# {name}\n", encoding="utf-8")
+        (base / "_order.json").write_text(
+            json.dumps(["intro.md", "chapter-1.md", "chapter-2.md"]), encoding="utf-8"
+        )
+        resp = client.delete("/api/test_mundo/lore/file?path=chapter-1.md")
+        assert resp.status_code == 200
+        manifest = json.loads((base / "_order.json").read_text(encoding="utf-8"))
+        # Deleted path removed, remaining entries keep their relative order.
+        assert manifest == ["intro.md", "chapter-2.md"]
+
 
 class TestSaveEndpoint:
     def test_save_writes_content(self, client: TestClient, monkeypatch):

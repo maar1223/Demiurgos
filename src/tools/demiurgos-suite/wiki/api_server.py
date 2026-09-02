@@ -3201,6 +3201,9 @@ def delete_file(mundo: str, section: str, path: str):
             "deleted_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
             "size": size,
         })
+        # Keep the import-order manifest consistent with the deletion
+        # (no-op when the path is not listed or no manifest exists).
+        remove_from_order(mundo_dir / section, path.replace("\\", "/"))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error al mover a la papelera: {e}")
     _graph_indices.pop(mundo, None)
