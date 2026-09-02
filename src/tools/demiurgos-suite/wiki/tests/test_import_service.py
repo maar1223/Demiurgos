@@ -1280,3 +1280,33 @@ class TestOrderManifestGeneration:
                       + self._manifest(tmp_path, section="personajes")):
             assert not entry.startswith("world1/")
             assert "\\" not in entry
+
+    def test_manifest_never_an_import_candidate(self, store, service, tmp_path):
+        """REQ-5 S11: _order.json is never treated as an importable ficha.
+
+        Import candidates derive from the uploaded spool, never from scanning
+        the section directory. With a manifest already on disk, a subsequent
+        job's written outcomes cover only its uploaded candidates — the
+        manifest is updated by the manifest logic (append), never consumed
+        as a ficha candidate.
+        """
+        job_a = self._manifest_job("job-a")
+        self._run(store, service, job_a, [
+            self._cand(job_a, "lore/intro.md"),
+        ])
+        manifest_path = tmp_path / "world1" / "lore" / "_order.json"
+        assert manifest_path.exists()
+        assert self._manifest(tmp_path) == ["intro.md"]
+
+        job_b = self._manifest_job("job-b")
+        outcomes_b = self._run(store, service, job_b, [
+            self._cand(job_b, "lore/chapter-1.md"),
+        ])
+        # Only the uploaded ficha was written; no outcome targets the manifest.
+        written_targets = [o.target for o in outcomes_b if o.written]
+        assert written_targets == [
+            str(tmp_path / "world1" / "lore" / "chapter-1.md")]
+        assert "_order.json" not in "|".join(o.target for o in outcomes_b)
+        # The manifest file was rewritten by the manifest logic, not by ficha
+        # materialization: still a valid JSON array of section-relative paths.
+        assert self._manifest(tmp_path) == ["intro.md", "chapter-1.md"]

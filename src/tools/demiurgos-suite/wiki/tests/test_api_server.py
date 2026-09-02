@@ -332,6 +332,31 @@ class TestTreeManifestOrdering:
         # Deleted path removed, remaining entries keep their relative order.
         assert manifest == ["intro.md", "chapter-2.md"]
 
+    def test_tree_hides_order_manifest(self, client: TestClient):
+        """REQ-5 S9: _order.json never appears as a node in /tree.
+
+        The existing ``_``-prefix filter in ``_build_tree`` already excludes
+        the manifest from sibling iteration; this test pins that behavior so
+        the manifest stays invisible to the tree contract.
+        """
+        base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        (base / "intro.md").write_text("# Intro\n", encoding="utf-8")
+        (base / "_order.json").write_text(
+            json.dumps(["intro.md"]), encoding="utf-8"
+        )
+        tree = client.get("/api/test_mundo/lore/tree").json()
+
+        def _walk_names(nodes: list[dict]) -> list[str]:
+            out: list[str] = []
+            for node in nodes:
+                out.append(node["name"])
+                out.extend(_walk_names(node.get("children", [])))
+            return out
+
+        all_names = _walk_names(tree)
+        assert "intro.md" in all_names
+        assert "_order.json" not in all_names
+
 
 class TestSaveEndpoint:
     def test_save_writes_content(self, client: TestClient, monkeypatch):
