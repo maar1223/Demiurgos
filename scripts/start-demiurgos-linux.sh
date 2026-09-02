@@ -73,9 +73,19 @@ remove_pid_file() {
 # BEFORE their parent so a dev-server wrapper (``npm run dev`` → ``vite``)
 # cannot leave its server child orphaned (reparented to init) when the
 # wrapper dies first — which kept the frontend alive after "Apagar Demiurgos".
+#
+# Self-kill guard: the launcher must never TERM its own PID. When the API
+# dispatches this script (``/api/system`` restart/shutdown), the launcher is
+# spawned as a CHILD of the API process, so ``pgrep -P <api_pid>`` lists the
+# launcher itself. Without this guard the launcher TERMs itself before it
+# reaches ``kill -TERM <api_pid>`` — the API survives (stale process running
+# old code), which is why "Reiniciar"/"Apagar Demiurgos" from the web UI
+# never actually restarted the backend. Skip ``$$`` (and its subtree) so the
+# kill reaches the API and the launcher keeps running to finish the sequence.
 _kill_descendants() {
     local parent="$1" child
     for child in $(pgrep -P "$parent" 2>/dev/null || true); do
+        [ "$child" = "$$" ] && continue
         _kill_descendants "$child"
     done
     kill -TERM "$parent" 2>/dev/null || true
