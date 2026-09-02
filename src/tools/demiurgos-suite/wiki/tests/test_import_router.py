@@ -1356,32 +1356,39 @@ class TestNotionZipDispatch:
         """A Notion Markdown & CSV export yields pages AND CSV fichas with
         provenance through the shared candidate contract (task 3.1/3.3).
 
-        The journal page's childless ``## Expedition Notes`` is its OWN ficha
-        (folder-per-heading — every heading, any level, is a ficha), so the
-        journal contributes two candidates."""
+        The journal page's childless ``## Expedition Notes`` is NOT a ficha
+        (no root, no children): it folds into the ``Elara's Journal`` ficha
+        as an ``##`` item, so the journal contributes one candidate."""
         client, store, spool, mundos = _make_app(tmp_path)
         job = self._create_zip_job(client)
         self._stream_zip(client, job["job_id"], self._notion_zip(tmp_path))
 
         resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
         assert resp.status_code == 200, resp.text
-        assert resp.json()["candidates"] == 6
+        assert resp.json()["candidates"] == 5
         assert store.get_job(job["job_id"]).state == ImportJobState.REVIEW
 
         candidates = store.candidates_for(job["job_id"])
         # The UUID-named page was renamed from its first H1; the CSV rows
-        # became folder-scoped fichas; the journal's childless H2 became its
-        # own ficha (same source file, second candidate); all carry ZIP
-        # provenance.
-        assert len(candidates) == 6
+        # became folder-scoped fichas; the journal's childless H2 folded
+        # into the journal root ficha (same source file, one candidate);
+        # all carry ZIP provenance.
+        assert len(candidates) == 5
         by_path = {c.provenance.source_path: c for c in candidates}
         assert sorted(by_path) == [
             "Database/dorin.md", "Database/elara.md", "Database/kael.md",
             "World Overview.md", "elara-s-journal.md",
         ]
         journal = next(c for c in candidates
-                       if c.canonical_id == "Elara's Journal::Expedition Notes")
+                       if c.canonical_id == "Elara's Journal")
         assert journal.provenance.source_path == "elara-s-journal.md"
+        # The folded leaf keeps its content inside the journal ficha: the
+        # childless H2 is re-anchored to ``##`` in the body and never emits
+        # its own candidate.
+        assert "## Expedition Notes" in journal.content_preview
+        assert "First crossing: spring thaw" in journal.content_preview
+        assert not any(c.canonical_id == "Elara's Journal::Expedition Notes"
+                       for c in candidates)
         for candidate in candidates:
             assert candidate.provenance.source_kind == "zip"
             assert candidate.provenance.source_hash.startswith("sha256:")
@@ -1414,8 +1421,8 @@ class TestNotionZipDispatch:
 
         resp = client.post(f"/api/world1/imports/{job['job_id']}/analyze")
         assert resp.status_code == 200, resp.text
-        # 6 base candidates + the extra page's childless H2 ficha.
-        assert resp.json()["candidates"] == 7
+        # 5 base candidates + the extra page (its lone H1 root is a ficha).
+        assert resp.json()["candidates"] == 6
         events = _events(store, job)
         assert "notion_diagnostics:1" in events
 

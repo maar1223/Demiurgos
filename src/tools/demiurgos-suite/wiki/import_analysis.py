@@ -20,9 +20,10 @@ importador-auto-frontmatter (Phase 1) adds the deterministic H1-H5 tree
 splitter: ``detect_heading_structure`` (Step 0, with a Hermes structure-
 inference fallback seam) and ``split_heading_tree`` (Step 1), which produce
 complete-ficha candidates with parent-qualified canonical identities,
-empty-scaffold preservation, tree-aware materialization (a heading creates
-a folder only when it has children or is H1; a childless heading at level
-> 1 lands as a loose file in the nearest ancestor's folder), and
+empty-scaffold preservation, tree-aware materialization (a heading is a
+ficha only when it is a root or has at least one child; a childless
+non-root heading folds into its parent ficha as an ``##`` item, and every
+emitted ficha owns a folder materialized as ``<slug>/<slug>.md``), and
 reference-image diagnostics. This is additive — the legacy chunk flow stays
 untouched.
 """
@@ -885,17 +886,18 @@ class StructureNode:
 
     ``canonical_id`` is the parent-qualified identity (``::``-joined
     normalized heading segments, ``#N`` ordinals for duplicate same-title
-    siblings). ``body`` is the ficha's own prose (heading line included);
-    ``children`` are the ficha children in source order. EVERY heading — any
-    level, with or without children — is a ficha; where the file is
-    MATERIALIZED follows the tree-aware folder rule:
-    ``materialized_path`` (relative to the section) gives the exact
-    target — a heading creates a folder only when it has children or is H1
-    (level 1), so a childless heading at level > 1 lands as a loose file in
-    the nearest ancestor's folder (``<h1>/<h2>.md`` instead of
-    ``<h1>/<h2>/<h2>.md``). Identity (``canonical_id``) is independent of
-    materialization. ``media_diagnostics`` carries the reference-image
-    placements found in the ficha body.
+    siblings). ``body`` is the ficha's own prose: its own heading re-anchored
+    to ``#`` (H1) plus, interleaved in source order, the folded ``##`` items
+    of its childless descendants. ``children`` are the ficha's sub-ficha
+    children in source order — childless headings are folded into ``body``,
+    never emitted as nodes. A heading is a ficha ONLY when it is a ROOT (no
+    parent heading) or has at least one child; every emitted ficha owns a
+    folder, so ``materialized_path`` (relative to the section) is always
+    ``<own>/<own>.md`` — the loose-file case (childless heading at level > 1)
+    disappears because those headings fold into their parent ficha. Identity
+    (``canonical_id``) is independent of materialization.
+    ``media_diagnostics`` carries the reference-image placements found in the
+    ficha body (folded items included).
     """
 
     level: int
@@ -996,17 +998,17 @@ def split_heading_tree(
 ) -> HeadingTree:
     """Step 1 — deterministic H1-H5 split into complete-ficha candidates.
 
-    Rules (design, Step 1): every heading — H1 through H5, with or without
-    children — is a valid ficha; an empty scaffold is review-visible and
-    never dropped. Materialization follows the tree-aware folder rule: a
-    heading creates a folder only when it has children OR is H1 (level 1);
-    a childless heading at level > 1 lands as a loose file in the nearest
-    ancestor's folder (``<h1>/<h2>.md``), so shallow section scaffolds stay
-    compact while deep, populated branches keep their hierarchy. Each ficha
+    Rules (design, Step 1): a heading is a ficha only when it is a ROOT (no
+    parent heading) or has at least one child; an empty scaffold is
+    review-visible and never dropped. A childless non-root heading
+    ("último orden") is NOT a ficha — it folds into its parent ficha's body
+    as an ``##`` item — so every emitted ficha owns a folder and
+    materializes as ``<own>/<own>.md``. Each ficha
     carries the parent-qualified canonical identity, the materialized
     target path (``materialized_path``), source order, and reference-image
-    diagnostics. A source with no usable headings yields one implicit ficha
-    holding the whole text (legacy single-candidate path).
+    diagnostics (folded items included). A source with no usable headings
+    yields one implicit ficha holding the whole text (legacy single-candidate
+    path).
 
     ``structure`` short-circuits Step 0 (callers that already detected can
     pass the result); otherwise detection runs with the
@@ -1052,10 +1054,12 @@ def _split_into_fichas(
         _assign_tree(root)
     if preamble:
         # Preamble lines precede the first heading in the source; splice the
-        # heading line between preamble and body so source order is preserved
-        # when ``_ficha_from`` opens the body with the heading.
+        # heading line (re-anchored to H1) between preamble and body so
+        # source order is preserved when ``_ficha_from`` opens the body.
         roots[0].body_lines = [
-            *preamble, roots[0].heading_text, *roots[0].body_lines,
+            *preamble,
+            _reanchor_heading(roots[0].heading_text, 1),
+            *roots[0].body_lines,
         ]
         roots[0].heading_text = ""  # consumed; ``_ficha_from`` must not re-add
 
@@ -1107,11 +1111,9 @@ def _assign_tree(raw: _RawNode) -> None:
 
     Duplicate same-title siblings receive ``#2``, ``#3`` ordinals in source
     order (design identity decision); the first occurrence keeps the plain
-    segment. EVERY heading — any level, with or without children — is its
-    own ficha; where the ficha file is MATERIALIZED follows the tree-aware
-    folder rule (``_ficha_from``): a folder only when the heading has
-    children or is H1, so a childless heading at level > 1 lands as a loose
-    file in the nearest ancestor's folder.
+    segment. A heading is a ficha only when it is a root or has at least one
+    child — childless non-root headings fold into their parent
+    (``_ficha_from``); the flag is advisory (``_ficha_from`` recomputes it).
     """
     counts: dict[str, int] = {}
     for child in raw.children:
@@ -1119,8 +1121,17 @@ def _assign_tree(raw: _RawNode) -> None:
         counts[segment] = counts.get(segment, 0) + 1
         child.canonical_segment = (
             segment if counts[segment] == 1 else f"{segment}#{counts[segment]}")
-        child.is_ficha = True
+        child.is_ficha = bool(child.children)
         _assign_tree(child)
+
+
+def _reanchor_heading(source_text: str, level: int) -> str:
+    """Re-escribe el prefijo ``#{1,5}`` de un encabezado al nivel pedido."""
+    text = source_text.strip()
+    m = re.match(r"^#{1,5}\s+(.*)$", text)
+    if not m:
+        return text
+    return f"{'#' * level} {m.group(1).strip()}"
 
 
 def _ficha_from(
@@ -1129,33 +1140,33 @@ def _ficha_from(
     order: Iterator[int],
     fichas: list[StructureNode],
     parent_path: str = "",
-) -> StructureNode:
-    """Emit the ficha node for ``raw`` (every heading is a ficha).
+) -> StructureNode | None:
+    """Emit the ficha node for ``raw`` (roots and headings with children).
 
-    The node is appended to ``fichas`` (pre-order = source order); ficha
-    children recurse and are attached in source order. Every heading keeps
-    its own body (heading line + its prose); childless headings carry their
-    own prose instead of folding into the parent.
+    New ficha rule: a heading is a ficha ONLY when it is a ROOT (no parent
+    heading) or has at least one child. A childless non-root heading
+    ("último orden") is NOT a ficha: ``None`` is returned, nothing is added
+    to ``fichas``, and the parent folds it into its own body as an ``##``
+    item (its prose is preserved; it never becomes a node, folder, or file).
 
-    Tree-aware materialization: ``parent_path`` is the materialized folder
-    (relative to the section) of the nearest ancestor that OWNS a folder,
-    and is empty for a ROOT heading (the top title of the tree — it has no
-    parent heading, whatever its level). A heading creates a folder only
-    when it has children or is a ROOT: then its own file lands inside that
-    new folder (``<parent>/<slug>/<slug>.md``) and ``parent_path`` for its
-    children becomes ``<parent>/<slug>``. A non-root childless heading
-    creates NO folder — its file lands directly in ``parent_path`` as a
-    loose file (``<parent>/<slug>.md``). The result is stored on
+    Every emitted ficha is root-or-with-children, so it ALWAYS owns a
+    folder: its file lands inside it as ``<parent>/<slug>/<slug>.md`` and
+    ``parent_path`` for its children becomes ``<parent>/<slug>``. The body
+    opens with the ficha's own heading re-anchored to ``#`` (H1), followed
+    by its prose and, interleaved in source order, the folded ``##`` items
+    of its childless children and the ficha children produced by recursion
+    (attached to ``children``). The result is stored on
     ``materialized_path`` (relative path incl. filename); the
     ``canonical_id`` identity is unchanged.
     """
+    if parent_segments and not raw.children:
+        return None
+
     segments = [*parent_segments, raw.canonical_segment]
     slug = slug_segment(raw.canonical_segment)
-    has_folder = not parent_path or bool(raw.children)
-    if has_folder and slug:
-        own_dir = f"{parent_path}/{slug}" if parent_path else slug
-    else:
-        own_dir = parent_path
+    # Every emitted ficha owns a folder (it is a root or has children), so
+    # its own file always lands inside ``own_dir``.
+    own_dir = f"{parent_path}/{slug}" if parent_path else slug
     node = StructureNode(
         level=raw.level,
         title=raw.title,
@@ -1169,16 +1180,27 @@ def _ficha_from(
     )
     fichas.append(node)
     body_lines = list(raw.body_lines)
-    # The ficha's own heading line opens its body so the ficha is
-    # self-descriptive when opened (the heading previously lived only in
-    # metadata). Verbatim markdown — a ``|``-containing title stays a real
-    # heading. ``_split_into_fichas`` already consumed the heading into
-    # ``body_lines`` for the preamble case, so it is never duplicated.
+    # The ficha's own heading opens its body re-anchored to H1 so the ficha
+    # is self-descriptive (``# <título>`` first line). Verbatim markdown — a
+    # ``|``-containing title stays a real heading. ``_split_into_fichas``
+    # already spliced the heading into ``body_lines`` for the preamble case
+    # and cleared ``heading_text``, so it is never duplicated.
     if raw.heading_text:
-        body_lines.insert(0, raw.heading_text)
+        body_lines.insert(0, _reanchor_heading(raw.heading_text, 1))
     for child in raw.children:
-        node.children.append(
-            _ficha_from(child, segments, order, fichas, parent_path=own_dir))
+        if child.children:
+            # Non-leaf child: its own ficha node (recursion, pre-order).
+            child_node = _ficha_from(
+                child, segments, order, fichas, parent_path=own_dir)
+            if child_node is not None:
+                node.children.append(child_node)
+        else:
+            # Leaf child ("último orden"): NOT a ficha — fold it into this
+            # ficha as an ``##`` item (heading re-anchored to H2, then the
+            # leaf's own prose), interleaved in source order. Empty heading
+            # text still extends the body with the leaf's prose.
+            body_lines.extend(
+                [_reanchor_heading(child.heading_text, 2), *child.body_lines])
     # Body stays VERBATIM markdown: emphasis markers are the document's real
     # formatting (bold/italic/code from the original Word source) and the
     # viewer renders them. Only derived metadata (title/identity) is cleaned.
