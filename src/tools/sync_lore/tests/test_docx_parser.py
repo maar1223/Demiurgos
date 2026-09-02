@@ -80,6 +80,15 @@ def _heading_para(text: str, style: str = "Heading1") -> str:
     )
 
 
+def _heading_para_with_image(text: str, rid: str, style: str = "Heading2") -> str:
+    """A HEADING paragraph that embeds a drawing after its text run."""
+    return (
+        f"<w:p><w:pPr><w:pStyle w:val=\"{style}\"/></w:pPr>"
+        f"<w:r><w:t>{text}</w:t></w:r>"
+        f"<w:r>{_drawing(rid)}</w:r></w:p>"
+    )
+
+
 def _text_para(text: str) -> str:
     return f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>"
 
@@ -266,6 +275,42 @@ class TestStreamingExtraction:
         result = STRATEGY.extract(doc)
         assert result.images[0].heading_path == "Part I > Chapter A"
         assert result.images[1].heading_path == "Part I > Chapter B"
+
+    def test_image_inside_heading_paragraph_gets_that_heading(self, tmp_path):
+        """BUG 4 — a drawing embedded in a HEADING paragraph belongs to THAT
+        heading, not the previous one: the heading text is only pushed onto
+        the stack when the paragraph ends, after its drawings resolve, so the
+        effective stack must be computed at drawing time."""
+        doc = _write_docx(
+            tmp_path,
+            _docx_bytes(
+                _heading_para("Chapter One", style="Heading1"),
+                _heading_para_with_image("The Forest", "rId5", style="Heading2"),
+                media=DEFAULT_MEDIA,
+            ),
+        )
+        result = STRATEGY.extract(doc)
+        assert len(result.images) == 1
+        img = result.images[0]
+        assert img.heading_path == "Chapter One > The Forest"
+        assert img.section_context == "The Forest"
+
+    def test_image_inside_heading_paragraph_keeps_ancestors(self, tmp_path):
+        """The effective stack keeps the heading's level semantics: a drawing
+        in a Heading3 paragraph under Heading1 > Heading2 is attributed to
+        ``H1 > H2 > H3`` — never losing the ancestors."""
+        doc = _write_docx(
+            tmp_path,
+            _docx_bytes(
+                _heading_para("Part I", style="Heading1"),
+                _heading_para("Chapter A", style="Heading2"),
+                _heading_para_with_image("The Forest", "rId5", style="Heading3"),
+                media=DEFAULT_MEDIA,
+            ),
+        )
+        result = STRATEGY.extract(doc)
+        assert len(result.images) == 1
+        assert result.images[0].heading_path == "Part I > Chapter A > The Forest"
 
     def test_run_offsets_and_structural_path(self, tmp_path):
         # prefix text lives in its own run → the drawing run has offset 0
@@ -659,7 +704,7 @@ class TestMarkdownInjection:
     def test_deepest_component_fallback_when_ancestry_differs(self):
         """Unique leaf headings still match when the converted markdown
         ancestry differs from the DOCX path (e.g. markitdown drops an
-        intermediate heading): the deepest-component fallback resolves them
+        intermediate heading): the tolerant ancestry match resolves them
         exactly as the legacy matching did."""
         markdown = "# Capítulo\n\n## Dvex del Stal 1\n\nCuerpo.\n"
         images = [_positioned_image(
@@ -669,6 +714,110 @@ class TestMarkdownInjection:
         assert diags == []
         lines = md.split("\n")
         assert lines.index("![dvex](media/dvex.png)") > lines.index("Cuerpo.")
+
+    def test_heading_with_inline_data_uri_image_still_matches(self):
+        """markitdown glues an inline image to a heading line
+        (``# **Áyagars | Reptiles Vibrantes**![](data:image/png;base64...)``);
+        the image ref must be stripped from the heading text so the ancestry
+        match survives instead of dumping every image at the document end."""
+        markdown = (
+            "# **Áyagars | Reptiles Vibrantes**![](data:image/png;base64...)\n\n"
+            "Intro.\n\n"
+            "## **Áyagar del 1er Stal – Director**\n\n"
+            "Cuerpo 1.\n\n"
+            "#### **Forma Base**\n\n"
+            "Desc 1.\n"
+        )
+        images = [_positioned_image(
+            "forma-base-1.png",
+            heading_path="Áyagars | Reptiles Vibrantes > "
+                         "Áyagar del 1er Stal – Director > Forma Base")]
+        md, diags = inject_image_refs(markdown, images)
+        assert diags == []
+        lines = md.split("\n")
+        idx = lines.index("![forma-base-1](media/forma-base-1.png)")
+        # injected inside the matching section, after its paragraph
+        assert lines[idx - 2] == "Desc 1."
+
+    def test_repeated_forma_headings_each_stal_gets_own_image(self):
+        """REAL DOCX SCENARIO — markitdown glues data-URIs onto heading lines
+        and flattens docx heading levels (``Forma Base > Forma Descentrada``
+        in the DOCX becomes two sibling ``####`` headings). Repeated ``Forma
+        Base``/``Forma Descentrada`` under two Stals must each receive THEIR
+        OWN image, never the first occurrence's."""
+        markdown = (
+            "# **Áyagars | Reptiles Vibrantes**![](data:image/png;base64...)\n\n"
+            "## **Áyagar del 1er Stal – Director**\n\n"
+            "Intro 1.\n\n"
+            "#### **Forma Base**\n\n"
+            "Desc 1.\n\n"
+            "#### **Forma Descentrada** ![](data:image/png;base64...)\n\n"
+            "Desc Des 1.\n\n"
+            "## **Áyagar del 2do Stal – Conector**\n\n"
+            "Intro 2.\n\n"
+            "#### **Forma Base**\n\n"
+            "Desc 2.\n\n"
+            "#### **Forma Descentrada** ![](data:image/png;base64...)\n\n"
+            "Desc Des 2.\n"
+        )
+        images = [
+            # DOCX heading paths: polluted top ancestor, extra ``Forma Base``
+            # level that markitdown flattened, repeated leaf headings.
+            _positioned_image(
+                "forma-base-1.png", document_order=1,
+                heading_path="Áyagars | Reptiles Vibrantes > "
+                             "Áyagar del 1er Stal – Director > Forma Base"),
+            _positioned_image(
+                "forma-base-2.png", document_order=2,
+                heading_path="Áyagars | Reptiles Vibrantes > "
+                             "Áyagar del 2do Stal – Conector > Forma Base"),
+            _positioned_image(
+                "forma-descentrada-1.png", document_order=3,
+                heading_path="Áyagars | Reptiles Vibrantes > "
+                             "Áyagar del 1er Stal – Director > Forma Base "
+                             "> Forma Descentrada"),
+            _positioned_image(
+                "forma-descentrada-2.png", document_order=4,
+                heading_path="Áyagars | Reptiles Vibrantes > "
+                             "Áyagar del 2do Stal – Conector > Forma Base "
+                             "> Forma Descentrada"),
+        ]
+        md, diags = inject_image_refs(markdown, images)
+        assert diags == []
+        lines = md.split("\n")
+        d1 = lines.index("Desc 1.")
+        dd1 = lines.index("Desc Des 1.")
+        d2 = lines.index("Desc 2.")
+        dd2 = lines.index("Desc Des 2.")
+        i1 = lines.index("![forma-base-1](media/forma-base-1.png)")
+        i2 = lines.index("![forma-base-2](media/forma-base-2.png)")
+        id1 = lines.index("![forma-descentrada-1](media/forma-descentrada-1.png)")
+        id2 = lines.index("![forma-descentrada-2](media/forma-descentrada-2.png)")
+        # Each image is injected inside ITS OWN Stal's section, in order —
+        # never into the first occurrence of the repeated leaf heading.
+        assert d1 < i1 < dd1 < id1 < d2 < i2 < dd2 < id2
+
+    def test_extract_heading_embedded_image_injects_into_that_section(self, tmp_path):
+        """End to end: a drawing embedded in a Heading2 paragraph is named and
+        injected under THAT heading's section in the converted markdown."""
+        markdown = "# Chapter One\n\nIntro.\n\n## The Forest\n\nBody.\n"
+        doc = _write_docx(
+            tmp_path,
+            _docx_bytes(
+                _heading_para("Chapter One", style="Heading1"),
+                _heading_para_with_image("The Forest", "rId5", style="Heading2"),
+                media=DEFAULT_MEDIA,
+            ),
+        )
+        result = STRATEGY.extract(doc, converted_markdown=markdown)
+        lines = result.markdown.split("\n")
+        ref_idx = lines.index(
+            "![The-Forest_Chapter-One](media/The-Forest_Chapter-One.png)"
+        )
+        # Isolated block inside the matching section, right after Body.
+        assert lines[ref_idx - 1] == ""
+        assert lines[ref_idx - 2] == "Body."
+        assert lines[ref_idx + 1] == ""
 
     def test_overflow_refs_appended_at_section_end_with_diagnostic(self):
         markdown = "# Chapter One\n\nP1.\n\n# Next\n\nMore.\n"

@@ -352,6 +352,22 @@ class DocxImageExtractionStrategy:
                             heading_stack = heading_stack[: level - 1] + [text]
                     elif tag in (_WP + "inline", _WP + "anchor"):
                         if pending_drawing is not None:
+                            # A drawing INSIDE a heading paragraph belongs to
+                            # THAT heading: the heading text is only pushed
+                            # onto ``heading_stack`` when the paragraph ENDS,
+                            # which fires after its drawings resolve — so
+                            # compute the effective stack now (previous
+                            # headings + this paragraph's own text at its
+                            # heading level) instead of attributing the image
+                            # to the PREVIOUS heading.
+                            drawing_stack = heading_stack
+                            if paragraph_style and _is_heading_style(paragraph_style):
+                                level = max(1, _heading_level(paragraph_style))
+                                heading_text = "".join(paragraph_parts).strip()
+                                if heading_text:
+                                    drawing_stack = (
+                                        heading_stack[: level - 1] + [heading_text]
+                                    )
                             self._resolve_drawing(
                                 zf=zf,
                                 anchor_type=str(pending_drawing["anchor_type"]),
@@ -360,7 +376,7 @@ class DocxImageExtractionStrategy:
                                 run_index=run_index,
                                 run_offset=run_char_count,
                                 drawing_index=drawing_index - 1,
-                                heading_stack=heading_stack,
+                                heading_stack=drawing_stack,
                                 paragraph_parts=paragraph_parts,
                                 source_name=source_name,
                                 members=members,
@@ -514,16 +530,20 @@ class DocxImageExtractionStrategy:
 
 
 def _normalize_heading(text: str) -> str:
-    """Normalized heading text for matching: lowercased, collapsed spaces,
-    and markdown emphasis/inline markers stripped.
+    """Normalized heading text for matching: markdown image refs dropped,
+    lowercased, collapsed spaces, and emphasis/inline markers stripped.
 
-    markitdown wraps docx headings in bold (``## **Sold (Nivel 1)**``); those
-    ``*``/``_``/inline markers must be stripped so the converted heading matches
-    the docx-parser ``heading_path`` component (``Sold (Nivel 1)``) instead of
-    every image falling through to "no markdown heading match" and being dumped
-    at the end of the document.
+    markitdown wraps docx headings in bold (``## **Sold (Nivel 1)**``) and —
+    when the docx heading paragraph embeds an image — glues its reference to
+    the heading line (``# **Áyagars | Reptiles Vibrantes**![](data:...)``).
+    Both the ``*``/``_``/inline markers AND the ``![alt](dest)`` image ref
+    must be stripped so the converted heading matches the docx-parser
+    ``heading_path`` component (``Áyagars | Reptiles Vibrantes``) instead of
+    every image falling through to "no markdown heading match" and being
+    dumped at the end of the document.
     """
-    cleaned = re.sub(r"[*_`~]", "", text)
+    cleaned = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)
+    cleaned = re.sub(r"[*_`~]", "", cleaned)
     return " ".join(cleaned.strip().lower().split())
 
 
@@ -554,13 +574,6 @@ def _markdown_heading_spans(lines: list[str]) -> list[tuple[int, int, str, int]]
     return spans
 
 
-def _deepest_heading(heading_path: str) -> str:
-    """Last component of a ``a > b > c`` heading path."""
-    if " > " in heading_path:
-        return heading_path.rsplit(" > ", 1)[-1]
-    return heading_path
-
-
 def _markdown_heading_paths(
     headings: list[tuple[int, int, str, int]],
 ) -> list[str]:
@@ -581,6 +594,61 @@ def _markdown_heading_paths(
         stack.append((level, text))
         paths.append(" > ".join(component for _lvl, component in stack))
     return paths
+
+
+def _lcs_len(a: list[str], b: list[str]) -> int:
+    """Length of the longest common subsequence of two component chains.
+
+    Components are compared after ``_normalize_heading``, so both chains are
+    already lowercase and marker-free. Used to rank candidate headings for an
+    image: markitdown can flatten a docx heading level (``Forma Base >
+    Forma Descentrada`` in the DOCX becomes two sibling ``####`` headings in
+    the markdown) or insert intermediate levels, so exact chain equality is
+    too strict — the ranking tolerates dropped/extra components on either
+    side while still preferring the chain that shares the MOST ancestors.
+    """
+    m, n = len(a), len(b)
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if a[i - 1] == b[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1] + 1
+            else:
+                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+    return dp[m][n]
+
+
+def _match_heading_section(
+    img_path: str,
+    headings: list[tuple[int, int, str, int]],
+    full_paths: list[str],
+) -> int | None:
+    """Best markdown heading index for an image's NORMALIZED heading path.
+
+    Tolerant ancestry match: the image's deepest component must equal the
+    heading's own normalized text, and candidate headings are ranked by how
+    many of the image's components appear in the same order inside the
+    heading's full ancestry path (``_lcs_len``). This keeps repeated child
+    headings (``Forma Base`` under every Stal) landing in THEIR OWN section
+    — the candidate whose ancestry contains the image's own ancestors wins —
+    tolerates markitdown flattening or inserting intermediate levels, and
+    still resolves unique leaf headings whose converted ancestry differs
+    (only candidate). First occurrence wins ties (document order).
+    """
+    img_comps = [c for c in img_path.split(" > ") if c.strip()]
+    if not img_comps:
+        return None
+    deepest = img_comps[-1]
+    best_idx: int | None = None
+    best_score = -1
+    for idx, (full, (_i, _lvl, text, _end)) in enumerate(zip(full_paths, headings)):
+        if text != deepest:
+            continue
+        md_comps = [c for c in full.split(" > ") if c.strip()]
+        score = _lcs_len(img_comps, md_comps)
+        if score > best_score:
+            best_score, best_idx = score, idx
+    return best_idx
 
 
 # Characters that break filenames on Windows / markdown image destinations /
@@ -687,13 +755,15 @@ def inject_image_refs(
     """Inject ``![alt](media/filename)`` references into converted Markdown.
 
     Deterministic, line-based strategy:
-    1. Each image is matched to the first Markdown heading whose FULL
-       ancestry path (``parent > child``) equals the image ``heading_path``
-       — so an image under ``Áyagar del 1er Stal > Forma Base`` lands in
-       THAT Stal's section, never in the first ``Forma Base`` (BUG 2).
-       When no full-path match exists, the match falls back to the deepest
-       component alone (unique leaf headings — e.g. ``Dvex del Stal N`` —
-       still resolve when the converted ancestry differs from the DOCX).
+    1. Each image is matched to the markdown heading whose ancestry path
+       (``parent > child``) best matches the image ``heading_path`` —
+       ``_match_heading_section`` requires the DEEPEST component to be equal
+       and ranks candidates by how many of the image's ancestors appear in
+       the same order in the heading's full path. Repeated child headings
+       (``Forma Base`` under every Stal) therefore land in THEIR OWN Stal's
+       section (never the first occurrence, BUG 2), while markitdown
+       flattening/insertion of intermediate levels and unique leaf headings
+       whose converted ancestry differs (``Dvex del Stal N``) still resolve.
     2. Within a section, refs are inserted after the section's paragraph lines
        in document order (one ref per paragraph). When the section runs out
        of paragraph lines, the remaining refs are appended at the section end
@@ -720,25 +790,7 @@ def inject_image_refs(
     unmatched: list[ImageEntry] = []
     for img in images:
         img_path = _normalize_heading(img.heading_path or "")
-        section_idx = next(
-            (
-                idx
-                for idx, full in enumerate(full_paths)
-                if full == img_path
-            ),
-            None,
-        )
-        if section_idx is None:
-            # Fallback: the deepest component alone (unique leaf headings).
-            deepest = _normalize_heading(_deepest_heading(img.heading_path))
-            section_idx = next(
-                (
-                    idx
-                    for idx, (_i, _lvl, text, _end) in enumerate(headings)
-                    if text == deepest
-                ),
-                None,
-            )
+        section_idx = _match_heading_section(img_path, headings, full_paths)
         if section_idx is not None:
             sections[section_idx].append(img)
         else:
