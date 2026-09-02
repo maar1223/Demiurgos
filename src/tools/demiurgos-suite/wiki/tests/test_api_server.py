@@ -270,6 +270,56 @@ class TestTreeOrdering:
         assert "vacio" in names
 
 
+class TestTreeManifestOrdering:
+    """PR 1: /tree honors the section's _order.json manifest (import order).
+
+    Listed nodes keep their manifest index; unlisted nodes sort after them,
+    folders before files within an index group, then alphabetically.
+    """
+
+    def test_tree_orders_by_manifest(self, client: TestClient):
+        base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        for name in ("intro.md", "chapter-2.md", "chapter-1.md"):
+            (base / name).write_text(f"# {name}\n", encoding="utf-8")
+        (base / "_order.json").write_text(
+            json.dumps(["intro.md", "chapter-1.md", "chapter-2.md"]), encoding="utf-8"
+        )
+        names = [node["name"] for node in client.get("/api/test_mundo/lore/tree").json()]
+        # Manifest order beats alphabetical; unlisted 00_inicio.md lands last.
+        assert names == ["subdir", "intro.md", "chapter-1.md", "chapter-2.md", "00_inicio.md"]
+
+    def test_tree_fallback_alphabetical(self, client: TestClient):
+        base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        (base / "intro.md").write_text("# I\n", encoding="utf-8")
+        (base / "beta.md").write_text("# B\n", encoding="utf-8")
+        (base / "alpha.md").write_text("# A\n", encoding="utf-8")
+        (base / "_order.json").write_text(json.dumps(["intro.md"]), encoding="utf-8")
+        names = [node["name"] for node in client.get("/api/test_mundo/lore/tree").json()]
+        # intro.md is listed (index 0); unlisted files fall back to
+        # case-insensitive alphabetical order after it.
+        assert names == ["subdir", "intro.md", "00_inicio.md", "alpha.md", "beta.md"]
+
+    def test_tree_folders_before_files(self, client: TestClient):
+        base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        (base / "chapter-1").mkdir()
+        (base / "chapter-1" / "a.md").write_text("# A\n", encoding="utf-8")
+        (base / "chapter-1.md").write_text("# C\n", encoding="utf-8")
+        (base / "_order.json").write_text(
+            json.dumps(["chapter-1", "chapter-1.md"]), encoding="utf-8"
+        )
+        names = [node["name"] for node in client.get("/api/test_mundo/lore/tree").json()]
+        # Same-index group: the folder (is_file=0) sorts before the file (1).
+        assert names.index("chapter-1") < names.index("chapter-1.md")
+
+    def test_tree_no_manifest(self, client: TestClient):
+        base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        (base / "Beta.md").write_text("# B\n", encoding="utf-8")
+        (base / "alpha.md").write_text("# A\n", encoding="utf-8")
+        names = [node["name"] for node in client.get("/api/test_mundo/lore/tree").json()]
+        # Historical behavior preserved: dirs first, files alphabetical.
+        assert names == ["subdir", "00_inicio.md", "alpha.md", "Beta.md"]
+
+
 class TestSaveEndpoint:
     def test_save_writes_content(self, client: TestClient, monkeypatch):
         _principal(monkeypatch)

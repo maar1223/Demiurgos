@@ -122,6 +122,7 @@ from semantic_intent import (
 from conversation_memory_store import ConversationMemoryStore, Turn
 from skill_router import SkillRouter, SkillRouteResult
 from contract_projection import project_contract_markdown
+from order_manifest import read_order, remove_from_order
 
 import world_recycle_bin  # flat sibling module (world-level recycle bin)
 
@@ -2532,18 +2533,32 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
     section_dir = mundo_dir / section
     if not section_dir.is_dir():
         return []
-    
+
+    # Read the section's import-order manifest once per request. With no
+    # manifest every node is unlisted and the sort degenerates to the
+    # historical dirs-first, case-insensitive alphabetical order.
+    order = read_order(section_dir)
+    order_index = {path: i for i, path in enumerate(order)}
+
     def _build_tree(dir_path: Path, base: Path) -> list[dict]:
         items = []
         try:
-            # Directories first, then files; each group sorted
-            # alphabetically, case-insensitively (e.g. "alpha" before "Zeta").
+            # Siblings sort by (manifest index, is_file, name.lower()):
+            # listed nodes keep their import order, unlisted ones sort after
+            # them (index = len(order)), folders before files within the same
+            # index group, then case-insensitive alphabetical fallback.
             entries = sorted(
                 (
                     e for e in dir_path.iterdir()
                     if not e.name.startswith(".") and not e.name.startswith("_")
                 ),
-                key=lambda e: e.name.lower(),
+                key=lambda e: (
+                    order_index.get(
+                        str(e.relative_to(base)).replace("\\", "/"), len(order)
+                    ),
+                    0 if e.is_dir() else 1,
+                    e.name.lower(),
+                ),
             )
             for entry in entries:
                 if not entry.is_dir():
