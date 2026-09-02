@@ -680,10 +680,24 @@ export async function deleteImage(
 /**
  * Returns the full URL to serve an image.
  * Used directly in <img> tags and for thumbnails.
+ *
+ * ``path`` may arrive already percent-encoded: react-markdown percent-encodes
+ * the non-ASCII characters of an image destination (``media/Áyagar-….png`` ->
+ * ``media/%C3%81yagar-….png``) but leaves ``/`` raw. ``encodeURIComponent``
+ * would then re-encode the ``%`` as ``%25`` (double encoding), producing a
+ * ``path=media%2F...%C3%25B3n...`` that the media endpoint decodes to a
+ * filename containing a literal ``%`` -> 404. Decode first so we always
+ * single-encode the raw path.
  */
 export function getMediaUrl(mundo: string, path: string): string {
+  let normalized = path;
+  try {
+    normalized = decodeURIComponent(path);
+  } catch {
+    // Malformed %-sequence — treat as-is; encodeURIComponent still escapes it.
+  }
   const encodedMundo = encodeURIComponent(mundo);
-  const encodedPath = encodeURIComponent(path);
+  const encodedPath = encodeURIComponent(normalized);
   return `${API_BASE_URL}/api/${encodedMundo}/media?path=${encodedPath}`;
 }
 
