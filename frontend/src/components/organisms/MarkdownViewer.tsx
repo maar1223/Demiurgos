@@ -188,6 +188,11 @@ interface MarkdownImageProps {
  */
 function MarkdownImage({ src, alt, mundo = "", imageFit }: MarkdownImageProps) {
   const [hasError, setHasError] = useState(false);
+  // Bump to force a fresh <img> load after a transient error — the browser can
+  // abort a deferred/lazy request mid-flight even though the server served the
+  // image, and without a reset a single onError permanently showed "imagen no
+  // disponible" (sticky state that scrolling could never clear).
+  const [attempt, setAttempt] = useState(0);
 
   // Extract alignment and size suffix (#left, #left-sm, #right-lg, #sm, etc.)
   const suffixMatch = src?.match(/#(left|right|center|sm|lg)(?:-(sm|lg))?$/i);
@@ -252,17 +257,30 @@ function MarkdownImage({ src, alt, mundo = "", imageFit }: MarkdownImageProps) {
       <span className="inline-flex items-center gap-2 rounded-lg border border-edge bg-surface-raised px-4 py-3 text-small text-muted">
         <Icon name="image" size={16} />
         {alt ? `«${alt}» — imagen no disponible` : "Imagen no disponible"}
+        {resolvedSrc && (
+          <button
+            type="button"
+            className="text-action underline-offset-2 hover:underline"
+            onClick={() => {
+              setHasError(false);
+              setAttempt((a) => a + 1);
+            }}
+          >
+            Reintentar
+          </button>
+        )}
       </span>
     );
   }
 
   return (
     <img
+      key={attempt}
       src={resolvedSrc}
       alt={alt ?? ""}
       onError={() => setHasError(true)}
+      onLoad={() => setHasError(false)}
       className={imgClassName}
-      loading="lazy"
     />
   );
 }
