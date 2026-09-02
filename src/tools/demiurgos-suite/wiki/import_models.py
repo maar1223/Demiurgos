@@ -500,6 +500,14 @@ class ImportJob(BaseModel):
     # resumed job re-stamps its candidates with the same sections. Empty for
     # legacy jobs.
     sections: dict[str, str] = {}
+    # Reimport marker (order manifest): set during analysis when any candidate
+    # matches an existing row with the same ``source_hash`` +
+    # ``normalized_identity`` in this world's import history. The import
+    # pipeline uses it to replace only the reimported document's manifest
+    # subtree (prefix-based replacement) instead of appending, preserving
+    # disjoint documents that share the section. Never derived from manifest
+    # existence or the job ``revision`` counter (a job-level optimistic lock).
+    reimport: bool = False
 
     def model_dump_redacted(self) -> dict[str, Any]:
         """Public view: never leaks the opaque observability token."""

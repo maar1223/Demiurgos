@@ -120,6 +120,10 @@ _JOB_BOOTSTRAP_COLUMNS = (
     # persisted as JSON. Legacy rows default to ``{}`` (empty map → every
     # candidate falls through to the legacy resolve_target branch).
     ("sections_json", "TEXT NOT NULL DEFAULT '{}'"),
+    # Order manifest (world-importer-doc-order): reimport marker set during
+    # analysis when a candidate matches an existing (source_hash,
+    # normalized_identity) row. Legacy rows default to 0 (not a reimport).
+    ("reimport", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 
@@ -242,13 +246,14 @@ class ImportJobStore:
                 "INSERT INTO jobs (job_id, world, owner_principal, state, source_kind,"
                 " aggregate_uncompressed_bytes, aggregate_compressed_bytes, file_count,"
                 " revision, error, opaque_token, lease_owner, created_at, updated_at,"
-                " progress_stage, progress_pct, sections_json)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " progress_stage, progress_pct, sections_json, reimport)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (job.job_id, job.world, job.owner_principal, job.state.value,
                  job.source_kind, job.aggregate_uncompressed_bytes,
                  job.aggregate_compressed_bytes, job.file_count, job.revision,
                  job.error, job.opaque_token, lease_owner, job.created_at, job.updated_at,
-                 job.progress_stage, job.progress_pct, _json(job.sections)),
+                 job.progress_stage, job.progress_pct, _json(job.sections),
+                 1 if job.reimport else 0),
             )
             self._conn.commit()
             return self.get_job(job.job_id)
@@ -276,6 +281,12 @@ class ImportJobStore:
         sections = _unjson(sections_raw)
         if not isinstance(sections, dict):
             sections = {}
+        # Order manifest (world-importer-doc-order): ``reimport`` was added
+        # via idempotent bootstrap; legacy rows predate it and default to 0.
+        try:
+            reimport = bool(row["reimport"])
+        except (IndexError, KeyError):
+            reimport = False
         return ImportJob(
             job_id=row["job_id"], world=row["world"],
             owner_principal=row["owner_principal"],
@@ -286,7 +297,7 @@ class ImportJobStore:
             error=row["error"], opaque_token=row["opaque_token"],
             created_at=row["created_at"], updated_at=row["updated_at"],
             progress_stage=progress_stage, progress_pct=progress_pct,
-            sections=sections,
+            sections=sections, reimport=reimport,
         )
 
     def update_job(self, job_id: str, *, expected_revision: int | None,
@@ -295,7 +306,7 @@ class ImportJobStore:
         _ALLOWED = {"state", "source_kind", "aggregate_uncompressed_bytes",
                     "aggregate_compressed_bytes", "file_count", "error",
                     "opaque_token", "lease_owner", "progress_stage",
-                    "progress_pct"}
+                    "progress_pct", "reimport"}
         with self._lock:
             row = self._conn.execute(
                 "SELECT revision FROM jobs WHERE job_id=?", (job_id,)
