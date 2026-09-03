@@ -113,6 +113,25 @@ def _clean_media_path(ref: str) -> str:
 # Preservation-first merge (2.2)
 # ---------------------------------------------------------------------------
 
+def _strip_frontmatter(content: str) -> str:
+    """Strip a YAML frontmatter block; return the body only.
+
+    Lenient: content without a ``---`` opener on the first line (or without
+    a closing ``---``) is not frontmatter-managed and is returned as-is.
+    Delimiters are matched by exact line (``line.rstrip() == "---"``), so a
+    ``---`` embedded in prose (e.g. ``text---more``) is never treated as a
+    delimiter. Merge decisions compare the author's body only — the YAML
+    block is system-managed metadata and must not trigger conflicts.
+    """
+    lines = content.split("\n")
+    if not lines or lines[0].rstrip() != "---":
+        return content
+    for i in range(1, len(lines)):
+        if lines[i].rstrip() == "---":
+            return "\n".join(lines[i + 1:]).lstrip("\n")
+    return content  # no closing --- -> not a valid frontmatter block
+
+
 def plan_merge(current_content: str, incoming_content: str) -> MergeDecision:
     """Decide a merge for one ficha without overwriting edited text.
 
@@ -953,7 +972,31 @@ class ImportService:
                 papelera_entry=replacement.papelera_entry,
                 media_warnings=media_warnings)
 
-        decision = plan_merge(current, document)
+        # Self-transformation recognition (REQ-B): an explicit reimport of
+        # the SAME source document (a prior materialized candidate matches
+        # ``source_hash`` + ``normalized_identity`` in this world) means any
+        # body difference is Demiurgos' own transformation, not the author.
+        # Compare body-only (frontmatter is system-managed metadata): equal
+        # -> keep; different -> write the updated body without ``review``.
+        prior = None
+        if job.reimport:
+            prior = self.store.find_candidate(
+                job.world, candidate.source_hash, candidate.normalized_identity)
+        if prior is not None:
+            if _strip_frontmatter(current) == _strip_frontmatter(document):
+                return ExecutionOutcome(
+                    candidate_id=candidate.candidate_id, target=str(target),
+                    action="keep", written=False, detail="ficha unchanged",
+                    media_warnings=media_warnings)
+            return self._write_ficha(
+                target, document, job, candidate.candidate_id,
+                placements, media_warnings, action="add",
+            )
+
+        # Layer C — standard merge: body-only comparison (REQ-A). Frontmatter
+        # is system-managed and never triggers conflict detection.
+        decision = plan_merge(
+            _strip_frontmatter(current), _strip_frontmatter(document))
         if decision.action == "keep":
             return ExecutionOutcome(
                 candidate_id=candidate.candidate_id, target=str(target),
@@ -966,19 +1009,9 @@ class ImportService:
                 detail="incoming modifies existing content; requires review",
                 media_warnings=media_warnings)
 
-        target.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write(target, document)
-        self._register_placements(job.world, job.job_id, placements)
-        if self._graph_reconcile_many is None and self._graph_reconcile is not None:
-            rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
-            self._graph_reconcile(rel, job.world)
-        return ExecutionOutcome(
-            candidate_id=candidate.candidate_id, target=str(target),
-            action=decision.action,
-            placement_status="inserted" if placements else "approved",
-            written=True,
-            detail="", papelera_entry="",
-            media_warnings=media_warnings,
+        return self._write_ficha(
+            target, document, job, candidate.candidate_id,
+            placements, media_warnings, action=decision.action,
         )
 
     def _register_placements(self, world: str, job_id: str,
@@ -1006,6 +1039,34 @@ class ImportService:
             src = self.spool_dir / job_id / clean
             if src.is_file():
                 self._register_gallery(world, src, clean)
+
+    def _write_ficha(self, target: Path, document: str, job: ImportJob,
+                     candidate_id: str, placements: list[dict],
+                     media_warnings: list[str], action: str) -> ExecutionOutcome:
+        """Write one ficha through the canonical write pipeline.
+
+        Shared by the normal ``add`` path and the self-transformation
+        recognition branch: same-directory atomic write, gallery placement
+        registration, and the legacy per-file graph reconcile (when the bulk
+        boundary is unavailable). Returns a ``written=True`` outcome with the
+        caller-chosen ``action`` (the merge decision for the ``add`` path,
+        ``"add"`` for a recognition write — same action the repo uses for a
+        canonical write).
+        """
+        target.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write(target, document)
+        self._register_placements(job.world, job.job_id, placements)
+        if self._graph_reconcile_many is None and self._graph_reconcile is not None:
+            rel = str(target.relative_to(self.mundos_dir)).replace("\\", "/")
+            self._graph_reconcile(rel, job.world)
+        return ExecutionOutcome(
+            candidate_id=candidate_id, target=str(target),
+            action=action,
+            placement_status="inserted" if placements else "approved",
+            written=True,
+            detail="", papelera_entry="",
+            media_warnings=media_warnings,
+        )
 
     # -- idempotent cancel / resume / rollback (2.5) -----------------------
 

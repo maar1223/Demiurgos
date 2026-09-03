@@ -4,6 +4,7 @@ contextual image placement, replacement snapshots, idempotent lifecycle)."""
 
 import sys
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
@@ -25,6 +26,7 @@ from import_models import (  # noqa: E402
 from import_store import ImportJobStore  # noqa: E402
 from import_service import (  # noqa: E402
     ImportService,
+    _strip_frontmatter,
     atomic_write,
     digest_of,
     plan_merge,
@@ -56,6 +58,39 @@ def _candidate(job_id: str = "job1", ident: str = "A",
                               source_kind="loose", source_hash=f"sha256:{ident}"),
         content_preview=content, images=images or [], replacement=replacement,
     )
+
+
+class TestStripFrontmatter:
+    """Unit tests for the lenient YAML frontmatter strip (REQ-A)."""
+
+    def test_valid_frontmatter_returns_body_only(self):
+        content = "---\ntype: personaje\nname: A\n---\nA body"
+        assert _strip_frontmatter(content) == "A body"
+
+    def test_no_opener_returns_content_as_is(self):
+        content = "A body without frontmatter"
+        assert _strip_frontmatter(content) == content
+
+    def test_opener_without_closing_returns_content_as_is(self):
+        content = "---\ntype: personaje\nname: A\nA body"
+        assert _strip_frontmatter(content) == content
+
+    def test_empty_string_returns_empty_string(self):
+        assert _strip_frontmatter("") == ""
+
+    def test_substring_delimiter_not_treated_as_frontmatter(self):
+        # ``---`` embedded in prose is not a delimiter: neither as the first
+        # line (no opener) nor as a later line (no closer match).
+        assert _strip_frontmatter("text---more") == "text---more"
+        assert _strip_frontmatter("---\nstill text---more\n---\nbody") == "body"
+
+    def test_blank_lines_between_closer_and_body_are_skipped(self):
+        content = "---\ntype: personaje\nname: A\n---\n\n\nA body"
+        assert _strip_frontmatter(content) == "A body"
+
+    def test_closing_delimiter_with_trailing_whitespace_matches(self):
+        content = "---\ntype: personaje\nname: A\n---   \nA body"
+        assert _strip_frontmatter(content) == "A body"
 
 
 @pytest.fixture
@@ -1339,3 +1374,223 @@ class TestOrderManifestGeneration:
         # The manifest file was rewritten by the manifest logic, not by ficha
         # materialization: still a valid JSON array of section-relative paths.
         assert self._manifest(tmp_path) == ["intro.md", "chapter-1.md"]
+
+    def test_reimport_recognition_keep_records_manifest(
+            self, store, service, tmp_path):
+        # REQ-B keep outcome (written=False) flows through the reimport
+        # manifest gate (bac1daf): an unchanged reimported document still
+        # (re)creates its _order.json subtree.
+        job_a = self._manifest_job("job-a")
+        self._run(store, service, job_a, [
+            self._cand(job_a, "lore/reptiles/snake.md"),
+        ])
+        assert self._manifest(tmp_path) == ["reptiles/snake.md"]
+
+        # Reimport the same source document: recognition applies (prior
+        # candidate found) and the identical rendered body -> keep.
+        job_re = self._manifest_job("job-re")
+        job_re.reimport = True
+        re_cand = self._cand(job_re, "lore/reptiles/snake.md")
+        service.store.find_candidate = Mock(
+            return_value=self._cand(job_a, "lore/reptiles/snake.md"))
+        outcomes = self._run(store, service, job_re, [re_cand])
+        assert len(outcomes) == 1
+        assert outcomes[0].action == "keep"
+        assert outcomes[0].written is False
+        assert self._manifest(tmp_path) == ["reptiles/snake.md"]
+
+    def test_reimport_recognition_written_updates_manifest(
+            self, store, service, tmp_path):
+        # REQ-B written outcome (written=True) flows through the manifest:
+        # the reimported document keeps its subtree entry and the ficha is
+        # rewritten with the transformed body.
+        job_a = self._manifest_job("job-a")
+        self._run(store, service, job_a, [
+            self._cand(job_a, "lore/reptiles/snake.md"),
+        ])
+        assert self._manifest(tmp_path) == ["reptiles/snake.md"]
+
+        job_re = self._manifest_job("job-re")
+        job_re.reimport = True
+        re_cand = self._cand(job_re, "lore/reptiles/snake.md")
+        re_cand = re_cand.model_copy(update={
+            "content_preview": "---\ntype: personaje\nname: snake\n---\n"
+                               "snake body v2",
+        })
+        service.store.find_candidate = Mock(
+            return_value=self._cand(job_a, "lore/reptiles/snake.md"))
+        outcomes = self._run(store, service, job_re, [re_cand])
+        assert len(outcomes) == 1
+        assert outcomes[0].written is True
+        assert outcomes[0].action == "add"
+        assert self._manifest(tmp_path) == ["reptiles/snake.md"]
+        disk = tmp_path / "world1" / "lore" / "reptiles" / "snake.md"
+        assert "snake body v2" in disk.read_text(encoding="utf-8")
+
+
+class TestSelfTransformationRecognition:
+    """Recognition branch scenarios (REQ-A / REQ-B) inside ``_execute_candidate``.
+
+    The recognition branch sits between the ``is_replace`` path and Layer C
+    ``plan_merge``: an explicit reimport of the same source document (a prior
+    candidate matches ``source_hash`` + ``normalized_identity`` in the world)
+    treats any body difference as Demiurgos' own transformation and writes it
+    without ``review``. All other paths keep the body-only ``plan_merge``.
+    """
+
+    def _write_on_disk(self, tmp_path, content, rel="lore/A.md"):
+        p = tmp_path / "world1" / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return p
+
+    def _read_on_disk(self, tmp_path, rel="lore/A.md"):
+        return (tmp_path / "world1" / rel).read_text(encoding="utf-8")
+
+    def _prior(self, source_hash="sha256:A", ident="A") -> Candidate:
+        return _candidate(ident=ident).model_copy(
+            update={"source_hash": source_hash})
+
+    def _recognition_candidate(self, content, source_hash="sha256:A",
+                               ident="A") -> Candidate:
+        return _candidate(ident=ident, content=content).model_copy(
+            update={"source_hash": source_hash})
+
+    def _mock_find_candidate(self, service, prior_map):
+        """Emulate the store lookup keyed on (world, source_hash, identity)."""
+        service.store.find_candidate = Mock(
+            side_effect=lambda world, sh, ni: prior_map.get((world, sh, ni)))
+
+    def test_a1_identical_body_different_frontmatter_keep(
+            self, store, service, tmp_path):
+        # REQ-A: frontmatter is system-managed metadata. Identical body with
+        # different frontmatter produces ``keep``, never ``review`` — even
+        # with a prior candidate present, recognition is gated off
+        # (reimport=False), so Layer C's body-only comparison decides.
+        self._write_on_disk(tmp_path, "---\nstatus: stable\n---\nA body")
+        job = _job()  # reimport=False -> recognition does not apply
+        candidate = self._recognition_candidate(
+            "---\ndefault: draft\n---\nA body")
+        self._mock_find_candidate(
+            service, {("world1", "sha256:A", "A"): self._prior()})
+        outcome = service._execute_candidate(job, candidate)
+        assert outcome.action == "keep"
+        assert outcome.written is False
+
+    def test_a3_author_changed_body_review(self, store, service, tmp_path):
+        # REQ-A S3: the author changed the body -> review. No prior candidate
+        # with a matching source_hash, so recognition does not apply and
+        # Layer C compares the stripped bodies.
+        self._write_on_disk(tmp_path, "---\nstatus: stable\n---\nOLD PROSE")
+        job = _job()
+        candidate = self._recognition_candidate(
+            "---\ndefault: draft\n---\nNEW PROSE")
+        self._mock_find_candidate(service, {})
+        outcome = service._execute_candidate(job, candidate)
+        assert outcome.action == "review"
+        assert outcome.written is False
+
+    def test_b1_reimport_same_hash_identical_body_keep(
+            self, store, service, tmp_path):
+        # REQ-B S1: same source_hash + reimport + identical BODY (different
+        # system-managed frontmatter) -> keep. The recognition branch must
+        # strip frontmatter before comparing; a raw comparison would write.
+        self._write_on_disk(tmp_path, "---\nstatus: stable\n---\nA body")
+        job = _job()
+        job.reimport = True
+        candidate = self._recognition_candidate(
+            "---\ndefault: draft\n---\nA body")
+        self._mock_find_candidate(
+            service, {("world1", "sha256:A", "A"): self._prior()})
+        outcome = service._execute_candidate(job, candidate)
+        assert outcome.action == "keep"
+        assert outcome.written is False
+
+    def test_b2_reimport_same_hash_changed_body_written(
+            self, store, service, tmp_path):
+        # REQ-B S2: same source document, the transformation rule changed the
+        # rendered body -> write the updated body without review.
+        self._write_on_disk(tmp_path, "---\ntype: personaje\nname: A\n---\nOLD body")
+        job = _job()
+        job.reimport = True
+        candidate = self._recognition_candidate(
+            "---\ntype: personaje\nname: A\n---\nNEW body")
+        self._mock_find_candidate(
+            service, {("world1", "sha256:A", "A"): self._prior()})
+        outcome = service._execute_candidate(job, candidate)
+        assert outcome.written is True
+        assert outcome.action == "add"
+        assert self._read_on_disk(tmp_path) == (
+            "---\ntype: personaje\nname: A\n---\nNEW body")
+
+    def test_b3_first_import_no_prior_uses_body_only_merge(
+            self, store, service, tmp_path):
+        # REQ-B S3: first import — find_candidate returns None, so recognition
+        # does NOT apply; Layer C's body-only plan_merge decides (missing
+        # target -> add) and the ficha is materialized.
+        job = _job()
+        job.reimport = True
+        candidate = self._recognition_candidate(
+            "---\ntype: personaje\nname: A\n---\nA body")
+        self._mock_find_candidate(service, {})
+        outcome = service._execute_candidate(job, candidate)
+        assert outcome.written is True
+        assert outcome.action == "add"
+        assert self._read_on_disk(tmp_path) == (
+            "---\ntype: personaje\nname: A\n---\nA body")
+
+    def test_c1_different_source_hash_body_change_review(
+            self, store, service, tmp_path):
+        # REQ-C: a different source document (different source_hash) means the
+        # change is the author's, not a transformation. Recognition does not
+        # apply and the body change is flagged for review.
+        self._write_on_disk(tmp_path, "---\ntype: personaje\nname: A\n---\nOLD body")
+        job = _job()
+        job.reimport = True
+        candidate = self._recognition_candidate(
+            "---\ntype: personaje\nname: A\n---\nNEW body",
+            source_hash="sha256:xyz789")
+        self._mock_find_candidate(
+            service, {("world1", "sha256:abc123", "A"): self._prior(
+                source_hash="sha256:abc123")})
+        outcome = service._execute_candidate(job, candidate)
+        assert outcome.action == "review"
+        assert outcome.written is False
+        assert self._read_on_disk(tmp_path) == (
+            "---\ntype: personaje\nname: A\n---\nOLD body")
+
+    def test_c2_non_reimport_same_hash_body_change_review(
+            self, store, service, tmp_path):
+        # REQ-C: recognition is gated on job.reimport — a normal import with
+        # the same source_hash must still flag body changes for review, so
+        # the author's manual edits are preserved.
+        self._write_on_disk(tmp_path, "---\ntype: personaje\nname: A\n---\nOLD body")
+        job = _job()  # reimport=False -> recognition does not apply
+        candidate = self._recognition_candidate(
+            "---\ntype: personaje\nname: A\n---\nNEW body")
+        self._mock_find_candidate(
+            service, {("world1", "sha256:A", "A"): self._prior()})
+        outcome = service._execute_candidate(job, candidate)
+        assert outcome.action == "review"
+        assert outcome.written is False
+        assert self._read_on_disk(tmp_path) == (
+            "---\ntype: personaje\nname: A\n---\nOLD body")
+
+    def test_b4_reimport_overwrites_manual_edit_by_design(
+            self, store, service, tmp_path):
+        # REQ-B S4: the author manually edited the ficha on disk, then
+        # explicitly reimported the SAME source document. Recognition applies
+        # and the manual edit is overwritten by design (an explicit reimport
+        # signals intent to re-process the source).
+        self._write_on_disk(tmp_path, "Author's manual edit to the ficha")
+        job = _job()
+        job.reimport = True
+        candidate = self._recognition_candidate(
+            "---\ntype: personaje\nname: A\n---\nA body")
+        self._mock_find_candidate(
+            service, {("world1", "sha256:A", "A"): self._prior()})
+        outcome = service._execute_candidate(job, candidate)
+        assert outcome.written is True
+        assert outcome.action == "add"
+        assert self._read_on_disk(tmp_path) == (
+            "---\ntype: personaje\nname: A\n---\nA body")
