@@ -5,8 +5,10 @@ import { TallerSelector } from "@/components/molecules/TallerSelector";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
+import { GlobalMethodologyLibrary } from "@/components/organisms/GlobalMethodologyLibrary";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
+import { cn } from "@/lib/utils";
 import {
   getCurrentTaller,
   setCurrentTaller,
@@ -55,6 +57,10 @@ export default function ToolWorkshop() {
   const activeTaller = useActiveTaller();
   const [creatingWorld, setCreatingWorld] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
+  /** Local view toggle (REQ-LIB-1): "taller" = Fase 2 operational tree
+   *  (default), "biblioteca" = read-only global inventory. Switching tabs
+   *  NEVER touches `activeTaller`, `world`, or persisted state. */
+  const [view, setView] = useState<"taller" | "biblioteca">("taller");
 
   const handleWorldCreated = (created: string) => {
     setCreatingWorld(false);
@@ -82,38 +88,71 @@ export default function ToolWorkshop() {
           </p>
         </header>
 
-        {isLoading ? (
-          <div className="flex justify-center py-16">
-            <Spinner size="lg" />
-          </div>
-        ) : error ? (
-          <ErrorBanner
-            message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
-            onRetry={() => mutate()}
-          />
-        ) : (
-          <>
-            <div className="mb-6 flex flex-wrap items-center gap-3">
-              <TallerSelector
-                activeTaller={activeTaller}
-                onTallerChange={setCurrentTaller}
-              />
-              <WorldSelector
-                worlds={worlds}
-                currentWorld={world}
-                onWorldChange={setWorld}
-                onRequestCreate={() => setCreatingWorld(true)}
-              />
-              <p className="text-small text-muted">
-                {world
-                  ? `Las activaciones se aplican a «${world}».`
-                  : worlds.length > 0
-                    ? "Elegí un mundo para poder activar versiones."
-                    : "No hay mundos disponibles; podés ver publicaciones pero no activar."}
-              </p>
+        <div
+          role="tablist"
+          aria-label="Vistas del taller de herramientas"
+          className="mb-6 inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
+        >
+          {(
+            [
+              { key: "taller", label: "Taller activo" },
+              { key: "biblioteca", label: "Biblioteca global" },
+            ] as const
+          ).map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={view === tab.key}
+              onClick={() => setView(tab.key)}
+              className={cn(
+                "rounded-md px-4 py-1.5 text-small transition-colors",
+                view === tab.key
+                  ? "bg-action text-action-text"
+                  : "text-muted hover:bg-surface-hover hover:text-primary",
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {view === "taller" ? (
+          isLoading ? (
+            <div className="flex justify-center py-16">
+              <Spinner size="lg" />
             </div>
-            <MethodologyLibrary world={world} activeTaller={activeTaller} />
-          </>
+          ) : error ? (
+            <ErrorBanner
+              message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
+              onRetry={() => mutate()}
+            />
+          ) : (
+            <>
+              <div className="mb-6 flex flex-wrap items-center gap-3">
+                <TallerSelector
+                  activeTaller={activeTaller}
+                  onTallerChange={setCurrentTaller}
+                />
+                <WorldSelector
+                  worlds={worlds}
+                  currentWorld={world}
+                  onWorldChange={setWorld}
+                  onRequestCreate={() => setCreatingWorld(true)}
+                />
+                <p className="text-small text-muted">
+                  {world
+                    ? `Las activaciones se aplican a «${world}».`
+                    : worlds.length > 0
+                      ? "Elegí un mundo para poder activar versiones."
+                      : "No hay mundos disponibles; podés ver publicaciones pero no activar."}
+                </p>
+              </div>
+              <MethodologyLibrary world={world} activeTaller={activeTaller} />
+            </>
+          )
+        ) : (
+          <GlobalMethodologyLibrary />
         )}
       </main>
 
