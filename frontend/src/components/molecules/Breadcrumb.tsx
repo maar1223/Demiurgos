@@ -126,7 +126,7 @@ export function Breadcrumb({ segments, onSegmentClick }: BreadcrumbProps) {
         ref={navRef}
         data-testid="breadcrumb-nav"
         aria-label="Breadcrumb"
-        className="flex flex-wrap items-center justify-center gap-1.5"
+        className="flex min-w-0 flex-wrap items-center justify-start gap-1.5 overflow-hidden"
       >
         {visibleSegments.map(({ segment, index }) => {
           const isEllipsis = index === "ellipsis" || index === "collapse";
@@ -138,7 +138,7 @@ export function Breadcrumb({ segments, onSegmentClick }: BreadcrumbProps) {
           return (
             <span
               key={isEllipsis ? index : `${index}-${segment}`}
-              className="flex min-w-0 items-center gap-1.5"
+              className="flex min-w-0 max-w-full items-center gap-1.5"
             >
               {showSeparator && (
                 <Icon

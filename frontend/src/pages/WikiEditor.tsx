@@ -1114,14 +1114,14 @@ export default function WikiEditor() {
           file name + badges (left), breadcrumb chips (middle), actions (right) */}
       <div className="sticky top-0 z-10 mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-edge bg-surface-raised px-4 py-2">
         {pendingNewFile ? (
-          <span className="min-w-0 truncate text-small text-muted">
+          <span className="min-w-0 max-w-[16rem] shrink-0 truncate text-small text-muted">
             {pendingNewFile.path}
             <span className="ml-2 rounded bg-action/10 px-2 py-0.5 text-xs text-action">
               New file review
             </span>
           </span>
         ) : filePath && file ? (
-          <span className="min-w-0 truncate text-small text-muted">
+          <span className="min-w-0 max-w-[16rem] shrink-0 truncate text-small text-muted">
             {file.name}
             {isEditing && (
               <span className="ml-2 rounded bg-action/10 px-2 py-0.5 text-xs text-action">
@@ -1136,8 +1136,9 @@ export default function WikiEditor() {
           </span>
         ) : null}
 
-        {/* Breadcrumb chips — left-aligned in the bar */}
-        <div className="flex min-w-0 items-center">
+        {/* Breadcrumb chips — flexible middle: takes the leftover width so its
+            internal collapse measurement gets a real constrained width */}
+        <div className="flex min-w-0 flex-1 items-center">
           <Breadcrumb
             segments={breadcrumbSegments}
             onSegmentClick={handleBreadcrumbClick}
@@ -1145,7 +1146,7 @@ export default function WikiEditor() {
         </div>
 
         {/* Actions — creation buttons (browsing only) + focus toggle, rest only with a file selected */}
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {/* Creation lives in the file bar, NOT in the card ⋯ menu: a card
               menu suggests "create inside this card", which is not how the
               directory scope works. Visible only while browsing (no open
