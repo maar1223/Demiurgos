@@ -710,7 +710,15 @@ class ImportService:
         """
         by_section: dict[Path, list[str]] = {}
         for o in outcomes:
-            if not (o.written and o.target):
+            # A reimport records the document's full subtree in the manifest,
+            # even when a ficha is byte-identical to disk and the preservation
+            # merge keeps it (written=False, action="keep"). Without this the
+            # manifest would only reflect whatever changed, so reimporting an
+            # unchanged document would never (re)create its _order.json. A
+            # first/append import still records only written fichas.
+            if not o.target:
+                continue
+            if not (o.written or (job.reimport and o.action == "keep")):
                 continue
             try:
                 rel = Path(o.target).relative_to(self.mundos_dir)

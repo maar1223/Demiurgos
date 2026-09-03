@@ -1121,9 +1121,10 @@ class TestOrderManifestGeneration:
     Spec contract: first import creates the manifest; a new document in an
     existing section appends; a reimport replaces only the reimported
     document's subtree (model 2a — disjoint documents sharing the section
-    keep their entries); a document that fills the whole section degenerates
-    to full replacement (REQ-3 S6); entries are section-relative,
-    POSIX-separated.
+    keep their entries); a reimport of an UNCHANGED document (every ficha
+    ``keep``) still (re)creates its manifest; a document that fills the
+    whole section degenerates to full replacement (REQ-3 S6); entries are
+    section-relative, POSIX-separated.
     """
 
     def _manifest_job(self, job_id="job1", world="world1"):
@@ -1240,6 +1241,34 @@ class TestOrderManifestGeneration:
         ])
         assert all(o.written for o in outcomes)
         assert self._manifest(tmp_path) == ["intro.md", "chapter-2.md"]
+
+    def test_reimport_unchanged_document_creates_manifest(
+            self, store, service, tmp_path):
+        # The preservation-first merge keeps a ficha byte-identical to disk as
+        # ``written=False, action="keep"``. A reimport still records the whole
+        # document's subtree in the manifest — otherwise reimporting an
+        # unchanged document would never (re)create its ``_order.json``.
+        job_a = self._manifest_job("job-a")
+        outcomes_a = self._run(store, service, job_a, [
+            self._cand(job_a, "lore/reptiles/snake.md"),
+            self._cand(job_a, "lore/reptiles/lizard.md"),
+        ])
+        assert all(o.written for o in outcomes_a)
+        assert self._manifest(tmp_path) == ["reptiles/snake.md", "reptiles/lizard.md"]
+
+        # Same world, same content, nothing removed: the merge produces
+        # ``keep`` outcomes (written=False) for every ficha.
+        job_re = self._manifest_job("job-re")
+        job_re.reimport = True
+        outcomes = self._run(store, service, job_re, [
+            self._cand(job_re, "lore/reptiles/snake.md"),
+            self._cand(job_re, "lore/reptiles/lizard.md"),
+        ])
+        assert not any(o.written for o in outcomes)
+        assert all(o.action == "keep" for o in outcomes)
+        # The manifest is regenerated from the reimported subtree, not left
+        # stale or dropped.
+        assert self._manifest(tmp_path) == ["reptiles/snake.md", "reptiles/lizard.md"]
 
     def test_multi_document_coexistence(self, store, service, tmp_path):
         # Model 2a: doc A populates ``reptiles/``, doc B populates ``dvin/``.
