@@ -491,6 +491,99 @@ class TestDeleteJob:
 
 
 # ---------------------------------------------------------------------------
+# created_by_job — source_hash cache ownership survives reassignment/delete
+# ---------------------------------------------------------------------------
+
+
+class TestCreatedByJobCacheOwnership:
+    """``created_by_job`` pins a candidate row to the job that INSERTED it.
+
+    The candidates table doubles as the world's ``source_hash`` enrichment
+    cache. ``reassign_candidate_to_job`` moves the review surface (``job_id``)
+    on a cache-hit re-import but must never touch the origin; ``delete_job``
+    then reaps only rows the deleted job created (``job_id=? AND
+    created_by_job=?``), preserving adopted cache rows so a later import of
+    the same docx does not re-run Hermes.
+    """
+
+    @staticmethod
+    def _candidate(candidate_id: str, job_id: str,
+                   identity: str, source_hash: str) -> Candidate:
+        return Candidate(
+            candidate_id=candidate_id, job_id=job_id, world="demo",
+            normalized_identity=identity, source_hash=source_hash,
+            provenance=Provenance(
+                source_path=f"lore/{identity}.md", source_kind="loose",
+                source_hash=source_hash),
+            content_preview="body")
+
+    @staticmethod
+    def _created_by(store: ImportJobStore, candidate_id: str) -> str:
+        return store._conn.execute(
+            "SELECT created_by_job FROM candidates WHERE candidate_id=?",
+            (candidate_id,)).fetchone()[0]
+
+    def test_add_candidate_records_creating_job(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="job-a", state=ImportJobState.COMPLETED))
+        store.add_candidate(self._candidate(
+            "cand1", "job-a", "Enciclopedia", "sha256:enc"))
+
+        assert self._created_by(store, "cand1") == "job-a"
+
+    def test_reassign_keeps_created_by_job(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="job-a", state=ImportJobState.COMPLETED))
+        store.create_job(_job(job_id="job-b", state=ImportJobState.REVIEW))
+        store.add_candidate(self._candidate(
+            "cand1", "job-a", "Enciclopedia", "sha256:enc"))
+
+        store.reassign_candidate_to_job("cand1", "job-b")
+
+        # Origin pinned to the creating job; review surface moved.
+        assert self._created_by(store, "cand1") == "job-a"
+        row = store.find_candidate("demo", "sha256:enc", "Enciclopedia")
+        assert row is not None
+        assert row.job_id == "job-b"
+
+    def test_delete_job_preserves_adopted_cache_row(self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="job-a", state=ImportJobState.COMPLETED))
+        store.create_job(_job(job_id="job-b", state=ImportJobState.REVIEW))
+        store.add_candidate(self._candidate(
+            "cand1", "job-a", "Enciclopedia", "sha256:enc"))
+        store.reassign_candidate_to_job("cand1", "job-b")
+
+        # Re-import job reaped: the adopted cache row must survive.
+        store.delete_job("job-b")
+        row = store.find_candidate("demo", "sha256:enc", "Enciclopedia")
+        assert row is not None
+        assert self._created_by(store, "cand1") == "job-a"
+
+        # Deleting the creator job does NOT reap it either: the row's job_id
+        # now points at the deleted re-import job, so the ``job_id=? AND
+        # created_by_job=?`` predicate matches nothing. The row stays as the
+        # world's cache (find_candidate keys on world+source_hash+identity,
+        # not job_id) until the world itself is deleted.
+        store.delete_job("job-a")
+        assert store.find_candidate(
+            "demo", "sha256:enc", "Enciclopedia") is not None
+
+    def test_delete_jobs_for_world_still_removes_every_candidate(
+            self, store: ImportJobStore) -> None:
+        store.create_job(_job(job_id="job-a", state=ImportJobState.COMPLETED))
+        store.create_job(_job(job_id="job-b", state=ImportJobState.REVIEW))
+        store.add_candidate(self._candidate(
+            "cand1", "job-a", "Enciclopedia", "sha256:enc"))
+        store.reassign_candidate_to_job("cand1", "job-b")
+        store.add_candidate(self._candidate(
+            "cand2", "job-b", "Origen", "sha256:origen"))
+
+        removed = store.delete_jobs_for_world("demo")
+
+        assert removed == 2
+        assert store.find_candidate("demo", "sha256:enc", "Enciclopedia") is None
+        assert store.find_candidate("demo", "sha256:origen", "Origen") is None
+
+
+# ---------------------------------------------------------------------------
 # update_candidate_images — media backfill on re-import
 # ---------------------------------------------------------------------------
 
