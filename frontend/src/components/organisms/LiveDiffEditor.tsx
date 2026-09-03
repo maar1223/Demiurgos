@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { diffLines, splitLines, mergeChangedRows } from "@/lib/diff";
+import { diffLines, splitLines, mergeChangedRows, type DiffRow } from "@/lib/diff";
 
 /**
  * Single grid template shared by the header row and every diff row, so the
@@ -19,6 +19,15 @@ import { diffLines, splitLines, mergeChangedRows } from "@/lib/diff";
  * without forcing a horizontal scrollbar.
  */
 const GRID_TEMPLATE = "grid-cols-[auto_minmax(0,1fr)_1px_minmax(0,1fr)_auto]";
+
+/**
+ * Runs of consecutive unchanged lines shorter than this stay fully expanded
+ * (rendered line by line, exactly like a plain diff). Only runs of at least
+ * this many unchanged lines collapse into the "N líneas sin cambios" band.
+ * Kept small so tiny documents — and the "everything unchanged" case — keep
+ * the full writing surface visible without any clicking.
+ */
+const COLLAPSE_THRESHOLD = 4;
 
 /**
  * Lock icon (lucide "lock" path) — used in the read-only header.
@@ -91,6 +100,11 @@ interface PendingCaret {
   /** Character offset inside that line. */
   col: number;
 }
+
+/** One thing rendered in the row grid: a diff row or a collapsed band. */
+type VisibleItem =
+  | { kind: "row"; row: DiffRow; index: number }
+  | { kind: "band"; start: number; length: number };
 
 interface EditableCellProps {
   /** Line text. */
@@ -220,6 +234,45 @@ export const LiveDiffEditor = forwardRef<LiveDiffEditorHandle, LiveDiffEditorPro
       [original, value],
     );
 
+    // True when the document differs from the original at all. A fully
+    // unchanged document keeps every line expanded — the diff pane IS the
+    // writing surface there, and collapsing the whole doc into one band
+    // would leave nothing to edit.
+    const hasChanges = useMemo(
+      () => rows.some((row) => row.status !== "same"),
+      [rows],
+    );
+
+    // Unchanged runs the user has expanded (keyed by run start index). Runs
+    // below COLLAPSE_THRESHOLD are never collapsible and never stored here.
+    const [expandedRuns, setExpandedRuns] = useState<Set<number>>(() => new Set());
+
+    // Flat render list: changed rows always render; unchanged runs render as
+    // individual rows when small/expanded, or as one band when collapsed.
+    const visibleItems = useMemo<VisibleItem[]>(() => {
+      const items: VisibleItem[] = [];
+      let i = 0;
+      while (i < rows.length) {
+        if (rows[i].status !== "same") {
+          items.push({ kind: "row", row: rows[i], index: i });
+          i++;
+          continue;
+        }
+        const start = i;
+        while (i < rows.length && rows[i].status === "same") i++;
+        const length = i - start;
+        const collapsed = length >= COLLAPSE_THRESHOLD && hasChanges && !expandedRuns.has(start);
+        if (collapsed) {
+          items.push({ kind: "band", start, length });
+        } else {
+          for (let k = start; k < start + length; k++) {
+            items.push({ kind: "row", row: rows[k], index: k });
+          }
+        }
+      }
+      return items;
+    }, [rows, hasChanges, expandedRuns]);
+
     // Side-B textareas keyed by 1-based line number.
     const textareaRefs = useRef(new Map<number, HTMLTextAreaElement>());
 
@@ -243,6 +296,18 @@ export const LiveDiffEditor = forwardRef<LiveDiffEditorHandle, LiveDiffEditorPro
     }, []);
 
     const clearPendingCaret = useCallback(() => setPendingCaret(null), []);
+
+    // Expand an unchanged run: the band button is only rendered while the
+    // run is collapsed, so clicking it always expands. Expanded runs render
+    // as plain rows (the full writing surface), so no collapse affordance
+    // is needed.
+    const expandRun = useCallback((start: number) => {
+      setExpandedRuns((prev) => {
+        const next = new Set(prev);
+        next.add(start);
+        return next;
+      });
+    }, []);
 
     // Replace one document line, preserving the exact byte layout (plain
     // split/join, NOT splitLines — that strips a trailing newline).
@@ -310,7 +375,7 @@ export const LiveDiffEditor = forwardRef<LiveDiffEditorHandle, LiveDiffEditorPro
     return (
       <div
         data-testid="live-diff-editor"
-        className="mx-auto flex h-[70vh] w-full max-w-7xl flex-col overflow-hidden rounded-lg border border-edge bg-surface-raised"
+        className="mx-auto flex min-h-[24vh] max-h-[70vh] w-full max-w-7xl flex-col overflow-hidden rounded-lg border border-edge bg-surface-raised"
       >
         <div className="scrollbar-thin min-h-0 flex-1 overflow-y-auto">
           {/* Header row — same grid template as the diff rows, so titles sit
@@ -350,58 +415,82 @@ export const LiveDiffEditor = forwardRef<LiveDiffEditorHandle, LiveDiffEditorPro
               Sin diferencias
             </div>
           ) : (
-            rows.map((row, index) => (
-              <div
-                key={index}
-                className={`grid font-mono text-small ${GRID_TEMPLATE}`}
-              >
-                {/* Left gutter — line number only when the left side has a line */}
-                <div className="min-w-12 select-none bg-diff-gutter px-2 py-0.5 text-right text-muted">
-                  {row.leftNumber ?? ""}
-                </div>
-                {/* Left content — read-only */}
-                <div
-                  className={`min-h-[1.6rem] min-w-0 whitespace-pre-wrap overflow-wrap-anywhere border-l-2 px-3 py-0.5 text-primary ${
-                    row.status === "removed" || row.status === "changed"
-                      ? "border-status-error bg-status-error/30"
-                      : row.status === "added"
-                        ? "border-status-success/10 bg-status-success/10"
-                        : "border-transparent"
-                  }`}
+            visibleItems.map((item) =>
+              item.kind === "band" ? (
+                /* Collapsed unchanged run — one discreet band spanning both
+                   panes. Clicking it expands the run back into individual
+                   (editable) rows. */
+                <button
+                  type="button"
+                  key={`same-run-${item.start}`}
+                  onClick={() => expandRun(item.start)}
+                  aria-expanded={false}
+                  aria-label={`Mostrar ${item.length} líneas sin cambios`}
+                  className={`grid w-full cursor-pointer font-mono text-small text-left ${GRID_TEMPLATE} transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50`}
                 >
-                  {row.left}
-                </div>
-                {/* Divider — dedicated 1px column, contiguous across header and rows */}
-                <div aria-hidden="true" className="bg-edge" />
-                {/* Right content — editable textarea (the writing surface) */}
-                {row.right !== null && row.rightNumber !== null ? (
-                  <EditableCell
-                    text={row.right}
-                    lineNumber={row.rightNumber}
-                    isAdded={row.status === "added" || row.status === "changed"}
-                    pendingCaret={pendingCaret}
-                    onClearPendingCaret={clearPendingCaret}
-                    register={registerTextarea}
-                    onCellFocus={handleCellFocus}
-                    onLineChange={handleLineChange}
-                    onSplitLine={handleSplitLine}
-                    onJoinLines={handleJoinLines}
-                  />
-                ) : (
+                  <div className="min-w-12 select-none bg-diff-gutter px-2 py-0.5 text-right text-muted" />
+                  <div className="min-w-0 whitespace-pre-wrap overflow-wrap-anywhere border-l-2 border-transparent px-3 py-1 text-muted">
+                    ··· {item.length} líneas sin cambios ···
+                  </div>
+                  <div aria-hidden="true" className="bg-edge" />
+                  <div className="min-w-0 whitespace-pre-wrap overflow-wrap-anywhere border-l-2 border-transparent px-3 py-1 text-muted">
+                    ··· {item.length} líneas sin cambios ···
+                  </div>
+                  <div className="min-w-12 select-none bg-surface-raised px-2 py-0.5 text-right text-muted" />
+                </button>
+              ) : (
+                <div
+                  key={item.index}
+                  className={`grid font-mono text-small ${GRID_TEMPLATE}`}
+                >
+                  {/* Left gutter — line number only when the left side has a line */}
+                  <div className="min-w-12 select-none bg-diff-gutter px-2 py-0.5 text-right text-muted">
+                    {item.row.leftNumber ?? ""}
+                  </div>
+                  {/* Left content — read-only */}
                   <div
-                    className={`min-h-[1.6rem] whitespace-pre-wrap overflow-wrap-anywhere border-l-2 px-3 py-0.5 text-primary ${
-                      row.status === "removed"
-                        ? "border-status-error/10 bg-status-error/10"
-                        : "border-transparent"
+                    className={`min-h-[1.6rem] min-w-0 whitespace-pre-wrap overflow-wrap-anywhere border-l-2 px-3 py-0.5 text-primary ${
+                      item.row.status === "removed" || item.row.status === "changed"
+                        ? "border-status-error bg-status-error/30"
+                        : item.row.status === "added"
+                          ? "border-status-success/10 bg-status-success/10"
+                          : "border-transparent"
                     }`}
-                  />
-                )}
-                {/* Right gutter — line number only when the right side has a line */}
-                <div className="min-w-12 select-none bg-surface-raised px-2 py-0.5 text-right text-muted">
-                  {row.rightNumber ?? ""}
+                  >
+                    {item.row.left}
+                  </div>
+                  {/* Divider — dedicated 1px column, contiguous across header and rows */}
+                  <div aria-hidden="true" className="bg-edge" />
+                  {/* Right content — editable textarea (the writing surface) */}
+                  {item.row.right !== null && item.row.rightNumber !== null ? (
+                    <EditableCell
+                      text={item.row.right}
+                      lineNumber={item.row.rightNumber}
+                      isAdded={item.row.status === "added" || item.row.status === "changed"}
+                      pendingCaret={pendingCaret}
+                      onClearPendingCaret={clearPendingCaret}
+                      register={registerTextarea}
+                      onCellFocus={handleCellFocus}
+                      onLineChange={handleLineChange}
+                      onSplitLine={handleSplitLine}
+                      onJoinLines={handleJoinLines}
+                    />
+                  ) : (
+                    <div
+                      className={`min-h-[1.6rem] whitespace-pre-wrap overflow-wrap-anywhere border-l-2 px-3 py-0.5 text-primary ${
+                        item.row.status === "removed"
+                          ? "border-status-error/10 bg-status-error/10"
+                          : "border-transparent"
+                      }`}
+                    />
+                  )}
+                  {/* Right gutter — line number only when the right side has a line */}
+                  <div className="min-w-12 select-none bg-surface-raised px-2 py-0.5 text-right text-muted">
+                    {item.row.rightNumber ?? ""}
+                  </div>
                 </div>
-              </div>
-            ))
+              ),
+            )
           )}
         </div>
       </div>

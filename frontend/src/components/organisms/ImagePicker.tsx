@@ -190,7 +190,7 @@ export function ImagePicker({
           </button>
         </div>
 
-        {/* Content */}
+        {/* Content — scrollable region: image grid + hint text only */}
         <div className="min-h-0 flex-1 overflow-y-auto p-6">
           {isLoading && (
             <div className="flex items-center justify-center py-16">
@@ -275,67 +275,67 @@ export function ImagePicker({
                   ? "Selecciona la imagen que será la portada."
                   : "Selecciona una imagen y configura su posición."}
               </p>
-
-              {/* Footer: alignment/size dropdowns + actions */}
-              <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-edge pt-4">
-                {!rawMode && (
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="flex items-center gap-2 text-small text-muted">
-                      Alineación:
-                      <select
-                        value={selectedAlign ?? ""}
-                        onChange={(e) =>
-                          setSelectedAlign(
-                            e.target.value === ""
-                              ? null
-                              : (e.target.value as "left" | "right" | "center"),
-                          )
-                        }
-                        className={selectClasses}
-                      >
-                        <option value="">Automática</option>
-                        <option value="left">← Izquierda</option>
-                        <option value="right">→ Derecha</option>
-                        <option value="center">↔ Centro</option>
-                      </select>
-                    </label>
-                    <label className="flex items-center gap-2 text-small text-muted">
-                      Tamaño:
-                      <select
-                        value={selectedSize ?? ""}
-                        onChange={(e) =>
-                          setSelectedSize(
-                            e.target.value === ""
-                              ? null
-                              : (e.target.value as "sm" | "lg"),
-                          )
-                        }
-                        className={selectClasses}
-                      >
-                        <option value="">Mediana</option>
-                        <option value="sm">Chica</option>
-                        <option value="lg">Grande</option>
-                      </select>
-                    </label>
-                  </div>
-                )}
-
-                <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" onClick={onClose}>
-                    Cancelar
-                  </Button>
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    disabled={!selectedPath}
-                    onClick={handleAccept}
-                  >
-                    Aceptar
-                  </Button>
-                </div>
-              </div>
             </div>
           )}
+        </div>
+
+        {/* Footer — fixed bar below the scroll region, always visible */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-edge px-6 py-4">
+          {!rawMode && (
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex items-center gap-2 text-small text-muted">
+                Alineación:
+                <select
+                  value={selectedAlign ?? ""}
+                  onChange={(e) =>
+                    setSelectedAlign(
+                      e.target.value === ""
+                        ? null
+                        : (e.target.value as "left" | "right" | "center"),
+                    )
+                  }
+                  className={selectClasses}
+                >
+                  <option value="">Automática</option>
+                  <option value="left">← Izquierda</option>
+                  <option value="right">→ Derecha</option>
+                  <option value="center">↔ Centro</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-small text-muted">
+                Tamaño:
+                <select
+                  value={selectedSize ?? ""}
+                  onChange={(e) =>
+                    setSelectedSize(
+                      e.target.value === ""
+                        ? null
+                        : (e.target.value as "sm" | "lg"),
+                    )
+                  }
+                  className={selectClasses}
+                >
+                  <option value="">Mediana</option>
+                  <option value="sm">Chica</option>
+                  <option value="lg">Grande</option>
+                </select>
+              </label>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!selectedPath}
+              onClick={handleAccept}
+            >
+              Aceptar
+            </Button>
+          </div>
         </div>
       </div>
     </div>
