@@ -77,6 +77,31 @@ export const NAV_LINKS: readonly NavLink[] = [
   { label: "Taller de Mundo", to: ROUTES.TALLER_MUNDO, availability: "available" },
 ];
 
+/**
+ * Curated Core Talleres (taller-selector-tree-states spec REQ-TRE-1): the
+ * selector exposes exactly these; skills with `taller` null or not in this
+ * list land in the "Sin taller" bucket.
+ */
+export const CORE_TALLERES = ["Herramientas", "Mundo", "Ideas"] as const;
+export type CoreTaller = (typeof CORE_TALLERES)[number];
+
+/** localStorage key persisting the active Taller (REQ-TRE-2). */
+export const ACTIVE_TALLER_STORAGE_KEY = "demiurgos-active-taller";
+
+/**
+ * Default active Taller shown before any explicit selection (REQ-TRE-1).
+ * Value is a `CORE_TALLERES` short key (matching the `taller` field a skill
+ * carries), NOT a display label — the label is derived at render time.
+ */
+export const DEFAULT_TALLER: CoreTaller = "Herramientas";
+
+/** Human-readable label for a Core Taller key (display-only). */
+export const CORE_TALLER_LABELS: Record<CoreTaller, string> = {
+  Herramientas: "Taller de Herramientas",
+  Mundo: "Taller de Mundo",
+  Ideas: "Taller de Ideas",
+};
+
 export const PLACEHOLDER_TOAST =
   "Módulo en desarrollo — próximamente" as const;
 export const AI_PLACEHOLDER_TOAST =
