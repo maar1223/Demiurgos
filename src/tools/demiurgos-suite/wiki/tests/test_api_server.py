@@ -36,6 +36,7 @@ import guided_session_store  # noqa: E402
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore  # noqa: E402
 from guided_session_store import SESSION_TTL  # noqa: E402
 import idea_capture_ui  # noqa: E402
+from methodology_library import MethodologyLibrary  # noqa: E402
 import telegram_settings  # noqa: E402
 from wiki import migration as migration_module  # noqa: E402
 from wiki.graph_indexer import EntityGraphIndex  # noqa: E402
@@ -2138,6 +2139,126 @@ class TestMethodologyApi:
     def test_mutations_require_authentication(self, client: TestClient):
         unauthenticated = client.post("/api/methodologies/drafts", json=self._draft_payload())
         assert unauthenticated.status_code == 401
+
+    # ------------------------------------------------------------------ #
+    # Taller de Herramientas Fase 1: inventory endpoint (TW7) + status
+    # payload extension. The store is seeded directly (the draft POST body
+    # does not expose inventory fields in Fase 1).
+    # ------------------------------------------------------------------ #
+
+    def _seed_inventory_library(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> MethodologyLibrary:
+        library = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
+        oficial = library.create_draft(
+            skill_id="guided-character-v1", version="1.2.0",
+            name="Guided character methodology",
+            source="## Construcción segura\n\nHaz preguntas de a una.\n",
+            taller="Creación",
+            talleres_compatibles=("Investigación", "Diseño"),
+            categoria_funcional="Análisis",
+            etiquetas=("lore", "npc"),
+            clasificacion="Oficiales",
+            trust_attributes=("verified",),
+        )
+        library.publish(oficial)
+        community = library.create_draft(
+            skill_id="community-skill", version="0.1.0",
+            name="Community skill", source="## Comunitario\n\nTexto.\n",
+            taller="Investigación",
+            categoria_funcional="Investigación",
+            etiquetas=("lore",),
+            clasificacion="Comunitarias",
+            trust_attributes=(),
+        )
+        library.publish(community)
+        monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+        return library
+
+    def test_inventory_lists_all_published_activated_or_not(self, client, monkeypatch, tmp_path):
+        library = self._seed_inventory_library(monkeypatch, tmp_path)
+        library.activate("test_mundo", "guided-character-v1", "1.2.0")
+        response = client.get("/api/methodologies/inventory")
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert {item["skill_id"] for item in items} == {
+            "guided-character-v1", "community-skill",
+        }
+
+    def test_inventory_filters_by_clasificacion(self, client, monkeypatch, tmp_path):
+        self._seed_inventory_library(monkeypatch, tmp_path)
+        response = client.get(
+            "/api/methodologies/inventory", params={"clasificacion": "Oficiales"},
+        )
+        assert response.status_code == 200
+        assert [item["skill_id"] for item in response.json()["items"]] == [
+            "guided-character-v1",
+        ]
+
+    def test_inventory_filters_by_categoria_funcional(self, client, monkeypatch, tmp_path):
+        self._seed_inventory_library(monkeypatch, tmp_path)
+        response = client.get(
+            "/api/methodologies/inventory",
+            params={"categoria_funcional": "Investigación"},
+        )
+        assert response.status_code == 200
+        assert [item["skill_id"] for item in response.json()["items"]] == [
+            "community-skill",
+        ]
+
+    def test_inventory_filters_taller_and_etiquetas_conjunctively(self, client, monkeypatch, tmp_path):
+        self._seed_inventory_library(monkeypatch, tmp_path)
+        response = client.get(
+            "/api/methodologies/inventory",
+            params={"taller": "Creación", "etiquetas": "lore"},
+        )
+        assert response.status_code == 200
+        assert [item["skill_id"] for item in response.json()["items"]] == [
+            "guided-character-v1",
+        ]
+        # Etiquetas are AND-matching: a tag absent everywhere yields no items.
+        response = client.get(
+            "/api/methodologies/inventory",
+            params={"taller": "Creación", "etiquetas": "lore,extra"},
+        )
+        assert response.status_code == 200
+        assert response.json()["items"] == []
+
+    def test_inventory_no_matches_returns_empty_list(self, client, monkeypatch, tmp_path):
+        self._seed_inventory_library(monkeypatch, tmp_path)
+        response = client.get(
+            "/api/methodologies/inventory", params={"clasificacion": "Personalizadas"},
+        )
+        assert response.status_code == 200
+        assert response.json() == {"items": []}
+
+    def test_inventory_get_has_no_side_effects(self, client, monkeypatch, tmp_path):
+        self._seed_inventory_library(monkeypatch, tmp_path)
+        _principal(monkeypatch, "author-1")
+        before = client.get("/api/methodologies/status").json()
+        response = client.get("/api/methodologies/inventory")
+        assert response.status_code == 200
+        assert client.get("/api/methodologies/status").json() == before
+
+    def test_inventory_unauthenticated_get_returns_200(self, client, monkeypatch, tmp_path):
+        """Read-only catalog: no auth gate (public-read policy)."""
+        self._seed_inventory_library(monkeypatch, tmp_path)
+        response = client.get("/api/methodologies/inventory")
+        assert response.status_code == 200
+        assert response.json()["items"]
+
+    def test_status_payload_includes_inventory_fields(self, client, monkeypatch, tmp_path):
+        self._seed_inventory_library(monkeypatch, tmp_path)
+        _principal(monkeypatch, "author-1")
+        status = client.get("/api/methodologies/status")
+        assert status.status_code == 200
+        entry = status.json()["published"][0]
+        assert entry["taller"] == "Creación"
+        assert entry["talleres_compatibles"] == ["Investigación", "Diseño"]
+        assert entry["categoria_funcional"] == "Análisis"
+        assert entry["etiquetas"] == ["lore", "npc"]
+        assert entry["clasificacion"] == "Oficiales"
+        assert entry["trust_attributes"] == ["verified"]
 
 
 def _delta_guided_provider():

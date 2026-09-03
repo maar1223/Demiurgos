@@ -63,6 +63,10 @@ class QuarantineRecord:
     package_id: str
     verdict: PackageVerdict
     trusted: bool = False
+    # System-derived inventory metadata (Taller de Herramientas, Fase 1):
+    # computed server-side, never author-claimed.
+    clasificacion: str | None = None
+    trust_attributes: tuple[str, ...] = ()
 
 
 def _utcnow() -> str:
@@ -71,6 +75,44 @@ def _utcnow() -> str:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+# ---------------------------------------------------------------------------
+# System-derived classification + trust attributes (TW5)
+#
+# ``clasificacion`` and trust attributes are ALWAYS computed server-side from
+# signature + origin; a manifest can never claim them (the compiler rejects
+# ``clasificacion`` as unknown and ``trust`` as kernel-owned).
+# ---------------------------------------------------------------------------
+
+
+def _derive_clasificacion(verdict: PackageVerdict, origin: str) -> str:
+    """Derive the classification from signature validity + import origin.
+
+    - Valid official Demiurgos signature → ``Oficiales``.
+    - Author-created draft (no signature, local author) → ``Personalizadas``.
+    - Community import without an official signature → ``Comunitarias``.
+    """
+    if verdict.signature_valid:
+        return "Oficiales"
+    if origin == "local_author":
+        return "Personalizadas"
+    return "Comunitarias"
+
+
+def _derive_trust_attributes(verdict: PackageVerdict, trusted: bool) -> tuple[str, ...]:
+    """Derive trust attributes from package state.
+
+    ``verified`` tracks an official signature; ``quarantined`` tracks the
+    mandatory pre-trust state. ``fundamental``/``derived``/``co-created`` are
+    reserved for later phases.
+    """
+    attributes: list[str] = []
+    if verdict.signature_valid:
+        attributes.append("verified")
+    if not trusted:
+        attributes.append("quarantined")
+    return tuple(attributes)
 
 
 # ---------------------------------------------------------------------------
@@ -242,29 +284,48 @@ class QuarantineStore:
     def __init__(self, root: str | Path) -> None:
         self._root = Path(root)
 
-    def quarantine(self, data: bytes, library=None, name: str = "") -> QuarantineRecord:
+    def quarantine(
+        self,
+        data: bytes,
+        library=None,
+        name: str = "",
+        origin: str = "community",
+        verifier: Callable[[str, str], bool] | None = None,
+    ) -> QuarantineRecord:
         """Quarantine an imported package.
 
         ``library`` is accepted for future validation hooks but is NEVER
-        mutated by importing. Failed packages stay quarantined with zero side
-        effects.
+        mutated by importing. ``origin`` (``community`` default |
+        ``local_author``) and ``verifier`` feed the system-derived
+        classification + trust attributes. Failed packages stay quarantined
+        with zero side effects.
         """
         del library  # imports never mutate the library
-        verdict = inspect_package(data)
+        verdict = inspect_package(data, verifier=verifier)
         package_id = uuid.uuid4().hex[:12]
+        clasificacion = _derive_clasificacion(verdict, origin)
+        trust_attributes = _derive_trust_attributes(verdict, trusted=False)
         self._root.mkdir(parents=True, exist_ok=True)
         (self._root / f"{package_id}.zip").write_bytes(data)
         (self._root / f"{package_id}.json").write_text(json.dumps({
             "package_id": package_id,
             "name": name,
+            "origin": origin,
             "imported_at": _utcnow(),
             "ok": verdict.ok,
             "checksum_valid": verdict.checksum_valid,
             "signature_present": verdict.signature_present,
             "signature_valid": verdict.signature_valid,
             "issues": list(verdict.issues),
+            "clasificacion": clasificacion,
+            "trust_attributes": list(trust_attributes),
         }, ensure_ascii=False), encoding="utf-8")
-        return QuarantineRecord(package_id=package_id, verdict=verdict)
+        return QuarantineRecord(
+            package_id=package_id,
+            verdict=verdict,
+            clasificacion=clasificacion,
+            trust_attributes=trust_attributes,
+        )
 
     def get(self, package_id: str) -> QuarantineRecord | None:
         record_path = self._root / f"{package_id}.json"
@@ -280,6 +341,8 @@ class QuarantineStore:
             package_id=package_id,
             verdict=inspect_package(data),
             trusted=bool(meta.get("trusted")),
+            clasificacion=meta.get("clasificacion"),
+            trust_attributes=tuple(meta.get("trust_attributes") or ()),
         )
 
     def trust(self, package_id: str, library=None, verifier: Callable[[str, str], bool] | None = None):
@@ -298,6 +361,10 @@ class QuarantineStore:
         verdict = inspect_package(data, verifier=verifier)
         if not verdict.ok or verdict.compiled is None:
             return None
+        meta = json.loads(record_path.read_text(encoding="utf-8"))
+        origin = meta.get("origin", "community")
+        clasificacion = _derive_clasificacion(verdict, origin)
+        trust_attributes = _derive_trust_attributes(verdict, trusted=True)
         draft_id = None
         if library is not None:
             compiled = verdict.compiled
@@ -309,10 +376,23 @@ class QuarantineStore:
                 description=compiled.description,
                 phases=tuple(compiled.phases),
                 language=compiled.language,
+                taller=compiled.taller,
+                talleres_compatibles=tuple(compiled.talleres_compatibles),
+                categoria_funcional=compiled.categoria_funcional,
+                etiquetas=tuple(compiled.etiquetas),
+                clasificacion=clasificacion,
+                trust_attributes=trust_attributes,
             )
-        meta = json.loads(record_path.read_text(encoding="utf-8"))
         meta["trusted"] = True
         meta["draft_id"] = draft_id
+        meta["clasificacion"] = clasificacion
+        meta["trust_attributes"] = list(trust_attributes)
         with open(record_path, "w", encoding="utf-8") as handle:
             json.dump(meta, handle, ensure_ascii=False)
-        return QuarantineRecord(package_id=package_id, verdict=verdict, trusted=True)
+        return QuarantineRecord(
+            package_id=package_id,
+            verdict=verdict,
+            trusted=True,
+            clasificacion=clasificacion,
+            trust_attributes=trust_attributes,
+        )

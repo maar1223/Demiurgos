@@ -42,9 +42,24 @@ MAX_PHASE_LEN = 64
 MAX_LANGUAGE_LEN = 16
 MAX_SOURCE_CHARS = 200_000
 
+# Inventory metadata (Taller de Herramientas, Fase 1): optional, bounded,
+# and explicitly EXCLUDED from the digest canonical (metadata, not identity).
+MAX_TALLER_LEN = 64
+MAX_TALLERES_COMPATIBLES = 16
+MAX_ETIQUETAS = 32
+MAX_ETIQUETA_LEN = 64
+
+# The single functional category a skill may claim (TW6). System-derived
+# classification (Oficiales/Personalizadas/Comunitarias) is NOT claimable:
+# ``clasificacion`` stays an unknown field and is rejected.
+CATEGORIA_FUNCIONAL_ALLOWED = frozenset({
+    "Creación", "Investigación", "Diseño", "Análisis", "Organización", "Visualización",
+})
+
 # The bounded manifest contract: only these keys may appear.
 ALLOWED_MANIFEST_FIELDS = frozenset({
     "skill_id", "version", "name", "description", "phases", "language",
+    "taller", "talleres_compatibles", "categoria_funcional", "etiquetas",
 })
 
 # Kernel-owned fields a methodology must NEVER claim. Present in the manifest
@@ -110,6 +125,12 @@ class CompiledMethodology:
     language: str | None
     source: str
     digest: str
+    # Inventory metadata (Taller de Herramientas, Fase 1) — optional, and
+    # deliberately excluded from the digest canonical: metadata, not identity.
+    taller: str | None = None
+    talleres_compatibles: tuple[str, ...] = ()
+    categoria_funcional: str | None = None
+    etiquetas: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -121,6 +142,10 @@ class CompiledMethodology:
             "language": self.language,
             "source": self.source,
             "digest": self.digest,
+            "taller": self.taller,
+            "talleres_compatibles": list(self.talleres_compatibles),
+            "categoria_funcional": self.categoria_funcional,
+            "etiquetas": list(self.etiquetas),
         }
 
 
@@ -185,6 +210,22 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
     language_raw = manifest.get("language")
     language = str(language_raw).strip() if language_raw is not None else None
 
+    # Inventory metadata (optional; validation happened in the issue pass).
+    taller_raw = manifest.get("taller")
+    taller = str(taller_raw).strip() if taller_raw is not None else None
+    talleres_compatibles = tuple(
+        str(t).strip() for t in (manifest.get("talleres_compatibles") or [])
+    )
+    categoria_raw = manifest.get("categoria_funcional")
+    categoria_funcional = (
+        str(categoria_raw).strip() if categoria_raw is not None else None
+    )
+    etiquetas = tuple(
+        str(e).strip() for e in (manifest.get("etiquetas") or [])
+    )
+
+    # Digest canonical: STABLE. Inventory fields are metadata, not content
+    # identity, so they must never change a digest.
     canonical = {
         "skill_id": skill_id,
         "version": version,
@@ -207,6 +248,10 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
         language=language,
         source=source,
         digest=digest,
+        taller=taller,
+        talleres_compatibles=talleres_compatibles,
+        categoria_funcional=categoria_funcional,
+        etiquetas=etiquetas,
     )
     return CompileResult(True, (), compiled)
 
@@ -279,6 +324,82 @@ def _collect_manifest_issues(manifest: Mapping, issues: list[MethodologyIssue]) 
                 "invalid-value",
                 f"phases exceeds {MAX_PHASES} entries or a phase exceeds {MAX_PHASE_LEN} characters.",
                 "phases",
+            ))
+
+    # --- Inventory metadata (Taller de Herramientas, Fase 1) -------------
+    taller = manifest.get("taller")
+    if taller is not None and not isinstance(taller, str):
+        issues.append(MethodologyIssue(
+            "invalid-value", "taller must be a short text tag.", "taller",
+        ))
+    elif taller is not None and len(taller.strip()) > MAX_TALLER_LEN:
+        issues.append(MethodologyIssue(
+            "oversized", f"taller exceeds {MAX_TALLER_LEN} characters.", "taller",
+        ))
+
+    _collect_string_list_issues(
+        manifest.get("talleres_compatibles"), "talleres_compatibles",
+        MAX_TALLERES_COMPATIBLES, MAX_TALLER_LEN, issues,
+    )
+
+    categoria_funcional = manifest.get("categoria_funcional")
+    if categoria_funcional is not None:
+        if not isinstance(categoria_funcional, str):
+            issues.append(MethodologyIssue(
+                "invalid-value",
+                "categoria_funcional must be one of "
+                f"{sorted(CATEGORIA_FUNCIONAL_ALLOWED)}.",
+                "categoria_funcional",
+            ))
+        elif categoria_funcional.strip() not in CATEGORIA_FUNCIONAL_ALLOWED:
+            issues.append(MethodologyIssue(
+                "invalid-value",
+                "categoria_funcional must be one of "
+                f"{sorted(CATEGORIA_FUNCIONAL_ALLOWED)}.",
+                "categoria_funcional",
+            ))
+
+    _collect_string_list_issues(
+        manifest.get("etiquetas"), "etiquetas",
+        MAX_ETIQUETAS, MAX_ETIQUETA_LEN, issues,
+    )
+
+
+def _collect_string_list_issues(
+    value: object,
+    field: str,
+    max_items: int,
+    max_item_len: int,
+    issues: list[MethodologyIssue],
+) -> None:
+    """Validate an optional string-list manifest field (inventory metadata).
+
+    Missing/None is valid (defaults to empty). Otherwise the value must be a
+    list of non-empty strings within bounds; each stored item is stripped.
+    """
+    if value is None:
+        return
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        issues.append(MethodologyIssue(
+            "invalid-value", f"{field} must be a list of strings.", field,
+        ))
+        return
+    if len(value) > max_items:
+        issues.append(MethodologyIssue(
+            "invalid-value", f"{field} exceeds {max_items} items.", field,
+        ))
+        return
+    for item in value:
+        stripped = item.strip()
+        if not stripped:
+            issues.append(MethodologyIssue(
+                "invalid-value", f"{field} items must not be empty.", field,
+            ))
+        elif len(stripped) > max_item_len:
+            issues.append(MethodologyIssue(
+                "oversized",
+                f"An item in {field} exceeds {max_item_len} characters.",
+                field,
             ))
 
 

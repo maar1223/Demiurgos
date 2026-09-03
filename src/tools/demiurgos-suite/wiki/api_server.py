@@ -5999,6 +5999,12 @@ def methodologies_status(request: Request):
             "description": item.description,
             "digest": item.digest,
             "published_at": item.published_at,
+            "taller": item.taller,
+            "talleres_compatibles": list(item.talleres_compatibles),
+            "categoria_funcional": item.categoria_funcional,
+            "etiquetas": list(item.etiquetas),
+            "clasificacion": item.clasificacion,
+            "trust_attributes": list(item.trust_attributes),
         }
         for item in library.list_published()
     ]
@@ -6026,6 +6032,51 @@ def methodologies_status(request: Request):
         for draft in library.list_drafts()
     ]
     return {"published": published, "activations": activations, "drafts": drafts}
+
+
+@app.get("/api/methodologies/inventory")
+def methodologies_inventory(
+    clasificacion: str | None = None,
+    categoria_funcional: str | None = None,
+    taller: str | None = None,
+    etiquetas: str | None = None,
+):
+    """Read-only inventory of ALL loaded skills (activated or not).
+
+    Taller de Herramientas TW7 catalog surface. Filters are conjunctive (AND):
+    ``clasificacion``, ``categoria_funcional`` and ``taller`` match exactly;
+    ``etiquetas`` is comma-separated and ALL tags must be present. No auth
+    required (public read, consistent with the read-only catalog policy) and
+    the GET never mutates state.
+    """
+    library = _methodology_library()
+    items = []
+    for published in library.list_published():
+        if clasificacion and published.clasificacion != clasificacion:
+            continue
+        if categoria_funcional and published.categoria_funcional != categoria_funcional:
+            continue
+        if taller and published.taller != taller:
+            continue
+        if etiquetas:
+            required = {tag.strip() for tag in etiquetas.split(",") if tag.strip()}
+            if not required.issubset(set(published.etiquetas)):
+                continue
+        items.append({
+            "skill_id": published.skill_id,
+            "version": published.version,
+            "name": published.name,
+            "description": published.description,
+            "digest": published.digest,
+            "published_at": published.published_at,
+            "taller": published.taller,
+            "talleres_compatibles": list(published.talleres_compatibles),
+            "categoria_funcional": published.categoria_funcional,
+            "etiquetas": list(published.etiquetas),
+            "clasificacion": published.clasificacion,
+            "trust_attributes": list(published.trust_attributes),
+        })
+    return {"items": items}
 
 
 def _known_worlds() -> list[str]:

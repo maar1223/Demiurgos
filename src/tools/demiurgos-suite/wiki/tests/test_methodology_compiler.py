@@ -175,3 +175,162 @@ class TestNoSideEffect:
         assert not result.ok
         assert result.compiled is None
         assert all(issue.code in {"authority-claim", "unknown-field"} for issue in result.issues)
+
+
+class TestInventoryFields:
+    """Taller de Herramientas Fase 1: optional inventory metadata.
+
+    Inventory fields are validated, stored on the compiled contract, and
+    explicitly EXCLUDED from the digest canonical (metadata, not identity).
+    """
+
+    def test_valid_taller_is_stored(self) -> None:
+        manifest = dict(_valid_manifest(), taller="Creación")
+        result = _compile(manifest, _valid_source())
+        assert result.ok, result.issues
+        assert result.compiled is not None
+        assert result.compiled.taller == "Creación"
+
+    def test_missing_taller_defaults_to_none(self) -> None:
+        result = _compile(_valid_manifest(), _valid_source())
+        assert result.ok
+        assert result.compiled is not None
+        assert result.compiled.taller is None
+
+    def test_oversized_taller_is_rejected(self) -> None:
+        manifest = dict(
+            _valid_manifest(), taller="x" * (methodology_compiler.MAX_TALLER_LEN + 1),
+        )
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.code == "oversized" and issue.field == "taller"
+                   for issue in result.issues)
+
+    def test_non_string_taller_is_rejected(self) -> None:
+        manifest = dict(_valid_manifest(), taller=123)
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "taller"
+                   for issue in result.issues)
+
+    def test_valid_talleres_compatibles_are_stored(self) -> None:
+        manifest = dict(_valid_manifest(), talleres_compatibles=["Investigación", "Diseño"])
+        result = _compile(manifest, _valid_source())
+        assert result.ok, result.issues
+        assert result.compiled is not None
+        assert result.compiled.talleres_compatibles == ("Investigación", "Diseño")
+
+    def test_too_many_talleres_compatibles_are_rejected(self) -> None:
+        many = [f"t{i}" for i in range(methodology_compiler.MAX_TALLERES_COMPATIBLES + 1)]
+        result = _compile(dict(_valid_manifest(), talleres_compatibles=many), _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "talleres_compatibles"
+                   for issue in result.issues)
+
+    def test_oversized_taller_item_is_rejected(self) -> None:
+        manifest = dict(
+            _valid_manifest(),
+            talleres_compatibles=["x" * (methodology_compiler.MAX_TALLER_LEN + 1)],
+        )
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.code == "oversized" and issue.field == "talleres_compatibles"
+                   for issue in result.issues)
+
+    def test_empty_taller_item_is_rejected(self) -> None:
+        manifest = dict(_valid_manifest(), talleres_compatibles=["Investigación", ""])
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "talleres_compatibles"
+                   for issue in result.issues)
+
+    def test_non_list_talleres_compatibles_are_rejected(self) -> None:
+        """A bare string must not be iterated as characters."""
+        manifest = dict(_valid_manifest(), talleres_compatibles="Investigación")
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "talleres_compatibles"
+                   for issue in result.issues)
+
+    def test_valid_categoria_funcional_is_stored(self) -> None:
+        manifest = dict(_valid_manifest(), categoria_funcional="Investigación")
+        result = _compile(manifest, _valid_source())
+        assert result.ok, result.issues
+        assert result.compiled is not None
+        assert result.compiled.categoria_funcional == "Investigación"
+
+    def test_invalid_categoria_funcional_is_rejected(self) -> None:
+        manifest = dict(_valid_manifest(), categoria_funcional="Random")
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "categoria_funcional"
+                   for issue in result.issues)
+
+    def test_valid_etiquetas_are_stored(self) -> None:
+        manifest = dict(_valid_manifest(), etiquetas=["lore", "npc"])
+        result = _compile(manifest, _valid_source())
+        assert result.ok, result.issues
+        assert result.compiled is not None
+        assert result.compiled.etiquetas == ("lore", "npc")
+
+    def test_too_many_etiquetas_are_rejected(self) -> None:
+        many = [f"e{i}" for i in range(methodology_compiler.MAX_ETIQUETAS + 1)]
+        result = _compile(dict(_valid_manifest(), etiquetas=many), _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "etiquetas"
+                   for issue in result.issues)
+
+    def test_oversized_etiqueta_is_rejected(self) -> None:
+        manifest = dict(
+            _valid_manifest(),
+            etiquetas=["x" * (methodology_compiler.MAX_ETIQUETA_LEN + 1)],
+        )
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.code == "oversized" and issue.field == "etiquetas"
+                   for issue in result.issues)
+
+    def test_empty_etiqueta_is_rejected(self) -> None:
+        manifest = dict(_valid_manifest(), etiquetas=["lore", ""])
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "etiquetas"
+                   for issue in result.issues)
+
+    def test_digest_is_stable_across_inventory_fields(self) -> None:
+        """Inventory metadata must never change the canonical digest."""
+        base = _compile(_valid_manifest(), _valid_source())
+        with_inventory = _compile(dict(
+            _valid_manifest(),
+            taller="Creación",
+            talleres_compatibles=["Investigación"],
+            categoria_funcional="Análisis",
+            etiquetas=["lore", "npc"],
+        ), _valid_source())
+        assert base.compiled is not None and with_inventory.compiled is not None
+        assert base.compiled.digest == with_inventory.compiled.digest
+
+    def test_as_dict_exposes_inventory_fields(self) -> None:
+        manifest = dict(
+            _valid_manifest(),
+            taller="Creación",
+            talleres_compatibles=["Investigación"],
+            categoria_funcional="Análisis",
+            etiquetas=["lore"],
+        )
+        result = _compile(manifest, _valid_source())
+        assert result.ok
+        assert result.compiled is not None
+        data = result.compiled.as_dict()
+        assert data["taller"] == "Creación"
+        assert data["talleres_compatibles"] == ["Investigación"]
+        assert data["categoria_funcional"] == "Análisis"
+        assert data["etiquetas"] == ["lore"]
+
+    def test_clasificacion_in_manifest_is_rejected(self) -> None:
+        """System-derived classification is not author-claimable."""
+        manifest = dict(_valid_manifest(), clasificacion="Oficiales")
+        result = _compile(manifest, _valid_source())
+        assert not result.ok
+        assert any(issue.code == "unknown-field" and issue.field == "clasificacion"
+                   for issue in result.issues)

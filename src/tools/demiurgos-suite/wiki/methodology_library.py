@@ -65,6 +65,14 @@ class Draft:
     language: str | None = None
     created_at: str = ""
     updated_at: str = ""
+    # Inventory metadata (Taller de Herramientas, Fase 1). Optional with
+    # defaults so old records deserialize safely.
+    taller: str | None = None
+    talleres_compatibles: tuple[str, ...] = ()
+    categoria_funcional: str | None = None
+    etiquetas: tuple[str, ...] = ()
+    clasificacion: str | None = None
+    trust_attributes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -80,6 +88,15 @@ class PublishedVersion:
     source: str
     digest: str
     published_at: str
+    # Inventory metadata + system-derived classification/trust attributes
+    # (Taller de Herramientas, Fase 1). Optional with defaults for
+    # backward-compatible deserialization of old records.
+    taller: str | None = None
+    talleres_compatibles: tuple[str, ...] = ()
+    categoria_funcional: str | None = None
+    etiquetas: tuple[str, ...] = ()
+    clasificacion: str | None = None
+    trust_attributes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -126,6 +143,12 @@ class MethodologyLibrary:
         description: str = "",
         phases: tuple[str, ...] = (),
         language: str | None = None,
+        taller: str | None = None,
+        talleres_compatibles: tuple[str, ...] = (),
+        categoria_funcional: str | None = None,
+        etiquetas: tuple[str, ...] = (),
+        clasificacion: str | None = None,
+        trust_attributes: tuple[str, ...] = (),
     ) -> str:
         draft_id = uuid.uuid4().hex[:12]
         now = _utcnow()
@@ -139,6 +162,12 @@ class MethodologyLibrary:
                 "description": description,
                 "phases": list(phases),
                 "language": language,
+                "taller": taller,
+                "talleres_compatibles": list(talleres_compatibles),
+                "categoria_funcional": categoria_funcional,
+                "etiquetas": list(etiquetas),
+                "clasificacion": clasificacion,
+                "trust_attributes": list(trust_attributes),
                 "created_at": now,
                 "updated_at": now,
             }
@@ -195,6 +224,10 @@ class MethodologyLibrary:
             "description": draft.description,
             "phases": list(draft.phases),
             "language": draft.language,
+            "taller": draft.taller,
+            "talleres_compatibles": list(draft.talleres_compatibles),
+            "categoria_funcional": draft.categoria_funcional,
+            "etiquetas": list(draft.etiquetas),
         }
         return compile_methodology(manifest, draft.source)
 
@@ -207,6 +240,10 @@ class MethodologyLibrary:
             "description": draft.description,
             "phases": list(draft.phases),
             "language": draft.language,
+            "taller": draft.taller,
+            "talleres_compatibles": list(draft.talleres_compatibles),
+            "categoria_funcional": draft.categoria_funcional,
+            "etiquetas": list(draft.etiquetas),
         }
 
     # ------------------------------------------------------------------ #
@@ -232,6 +269,7 @@ class MethodologyLibrary:
                     f"{compiled.skill_id}@{compiled.version} is already published "
                     "with different content; published versions are immutable."
                 )
+            draft_record = self._drafts.get(draft_id) or {}
             record = {
                 "skill_id": compiled.skill_id,
                 "version": compiled.version,
@@ -243,6 +281,12 @@ class MethodologyLibrary:
                 "digest": compiled.digest,
                 "published_at": now,
                 "deleted_at": None,
+                "taller": compiled.taller,
+                "talleres_compatibles": list(compiled.talleres_compatibles),
+                "categoria_funcional": compiled.categoria_funcional,
+                "etiquetas": list(compiled.etiquetas),
+                "clasificacion": draft_record.get("clasificacion"),
+                "trust_attributes": list(draft_record.get("trust_attributes") or ()),
             }
             self._published[key] = record
             self._save_locked()
@@ -382,6 +426,12 @@ class MethodologyLibrary:
             language=record.get("language"),
             created_at=record.get("created_at", ""),
             updated_at=record.get("updated_at", ""),
+            taller=record.get("taller"),
+            talleres_compatibles=tuple(record.get("talleres_compatibles") or ()),
+            categoria_funcional=record.get("categoria_funcional"),
+            etiquetas=tuple(record.get("etiquetas") or ()),
+            clasificacion=record.get("clasificacion"),
+            trust_attributes=tuple(record.get("trust_attributes") or ()),
         )
 
     @staticmethod
@@ -396,6 +446,12 @@ class MethodologyLibrary:
             source=record["source"],
             digest=record["digest"],
             published_at=record.get("published_at", ""),
+            taller=record.get("taller"),
+            talleres_compatibles=tuple(record.get("talleres_compatibles") or ()),
+            categoria_funcional=record.get("categoria_funcional"),
+            etiquetas=tuple(record.get("etiquetas") or ()),
+            clasificacion=record.get("clasificacion"),
+            trust_attributes=tuple(record.get("trust_attributes") or ()),
         )
 
     @staticmethod

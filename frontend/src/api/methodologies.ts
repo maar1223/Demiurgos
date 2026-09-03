@@ -3,6 +3,7 @@ import type {
   MethodologyActivation,
   MethodologyDraft,
   MethodologyDraftInput,
+  MethodologyInventoryItem,
   MethodologyStatus,
   PublishedMethodology,
 } from "@/api/types";
@@ -18,6 +19,32 @@ export function getMethodologyStatus(): Promise<MethodologyStatus> {
   return apiFetch<MethodologyStatus>(url("/status"), {
     timeout: METHODOLOGIES_TIMEOUT_MS,
   });
+}
+
+/** Conjunctive filters for GET /api/methodologies/inventory (TW7). */
+export interface InventoryFilters {
+  clasificacion?: string;
+  categoria_funcional?: string;
+  taller?: string;
+  /** Comma-separated tags; all of them must match. */
+  etiquetas?: string;
+}
+
+/** GET /api/methodologies/inventory — read-only catalog of all loaded skills
+ *  (activated or not), filtered conjunctively when filters are provided. */
+export function getMethodologyInventory(
+  filters?: InventoryFilters,
+): Promise<{ items: MethodologyInventoryItem[] }> {
+  const params = new URLSearchParams();
+  if (filters?.clasificacion) params.set("clasificacion", filters.clasificacion);
+  if (filters?.categoria_funcional) params.set("categoria_funcional", filters.categoria_funcional);
+  if (filters?.taller) params.set("taller", filters.taller);
+  if (filters?.etiquetas) params.set("etiquetas", filters.etiquetas);
+  const query = params.toString();
+  return apiFetch<{ items: MethodologyInventoryItem[] }>(
+    url(`/inventory${query ? `?${query}` : ""}`),
+    { timeout: METHODOLOGIES_TIMEOUT_MS },
+  );
 }
 
 /** POST /api/methodologies/drafts — create an editable methodology draft. */

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activateMethodology,
   createMethodologyDraft,
+  getMethodologyInventory,
   getMethodologyStatus,
   publishMethodologyDraft,
   rollbackMethodology,
@@ -82,5 +83,43 @@ describe("methodologies API contract", () => {
     await expect(publishMethodologyDraft("draft-1")).rejects.toMatchObject({
       status: 422, code: "validation_error",
     });
+  });
+
+  it("GET /api/methodologies/inventory fetches the read-only catalog", async () => {
+    mockApiFetch.mockResolvedValue({ items: [] });
+    await getMethodologyInventory();
+    expect(mockApiFetch).toHaveBeenCalledWith("/api/methodologies/inventory", {
+      timeout: 15_000,
+    });
+  });
+
+  it("GET inventory appends ?clasificacion=Oficiales when filtered", async () => {
+    mockApiFetch.mockResolvedValue({ items: [] });
+    await getMethodologyInventory({ clasificacion: "Oficiales" });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/methodologies/inventory?clasificacion=Oficiales",
+      { timeout: 15_000 },
+    );
+  });
+
+  it("GET inventory appends comma-separated ?etiquetas=lore,npc", async () => {
+    mockApiFetch.mockResolvedValue({ items: [] });
+    await getMethodologyInventory({ etiquetas: "lore,npc" });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/methodologies/inventory?etiquetas=lore%2Cnpc",
+      { timeout: 15_000 },
+    );
+  });
+
+  it("GET inventory combines filters conjunctively", async () => {
+    mockApiFetch.mockResolvedValue({ items: [] });
+    await getMethodologyInventory({
+      clasificacion: "Comunitarias",
+      taller: "Investigación",
+    });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/methodologies/inventory?clasificacion=Comunitarias&taller=Investigaci%C3%B3n",
+      { timeout: 15_000 },
+    );
   });
 });

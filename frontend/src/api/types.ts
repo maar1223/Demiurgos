@@ -1250,6 +1250,13 @@ export interface PublishedMethodology {
   description: string;
   digest: string;
   published_at: string;
+  /** Taller de Herramientas inventory metadata (Fase 1). */
+  taller?: string | null;
+  talleres_compatibles?: string[];
+  categoria_funcional?: string | null;
+  etiquetas?: string[];
+  clasificacion?: string | null;
+  trust_attributes?: string[];
 }
 
 /** The compiled methodology/version pinned to one world. */
@@ -1270,6 +1277,11 @@ export interface MethodologyDraft {
   source: string;
   description: string;
   updated_at: string;
+  /** Taller de Herramientas inventory metadata (Fase 1). */
+  taller?: string | null;
+  talleres_compatibles?: string[];
+  categoria_funcional?: string | null;
+  etiquetas?: string[];
 }
 
 /** Library status from GET /api/methodologies/status. */
@@ -1279,6 +1291,22 @@ export interface MethodologyStatus {
   drafts: MethodologyDraft[];
 }
 
+/** One catalog entry from GET /api/methodologies/inventory (TW7). */
+export interface MethodologyInventoryItem {
+  skill_id: string;
+  version: string;
+  name: string;
+  description: string;
+  digest: string;
+  published_at: string;
+  taller?: string | null;
+  talleres_compatibles?: string[];
+  categoria_funcional?: string | null;
+  etiquetas?: string[];
+  clasificacion?: string | null;
+  trust_attributes?: string[];
+}
+
 /** Input for creating a methodology draft. */
 export interface MethodologyDraftInput {
   skill_id: string;
@@ -1286,6 +1314,8 @@ export interface MethodologyDraftInput {
   name: string;
   source: string;
   description?: string;
+  phases?: string[];
+  language?: string;
 }
 
 /** Structured API error. `code` (when present) is a stable machine-readable

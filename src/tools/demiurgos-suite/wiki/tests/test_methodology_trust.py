@@ -141,3 +141,85 @@ class TestOfficialSignature:
         verdict = inspect_package(_package())
         assert verdict.ok
         assert verdict.signature_present is False
+
+
+class TestInventoryClassification:
+    """Taller de Herramientas Fase 1: system-derived classification + trust
+    attributes computed at quarantine/trust and threaded into drafts."""
+
+    def test_signed_package_is_classified_oficiales(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        package = build_package(_valid_manifest(), _valid_source(), signer=_signer)
+        record = store.quarantine(package, verifier=_verifier)
+        assert record.clasificacion == "Oficiales"
+        assert record.trust_attributes == ("verified", "quarantined")
+
+    def test_unsigned_local_author_is_personalizadas(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        record = store.quarantine(_package(), origin="local_author")
+        assert record.clasificacion == "Personalizadas"
+        assert record.trust_attributes == ("quarantined",)
+
+    def test_unsigned_community_is_comunitarias(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        record = store.quarantine(_package(), origin="community")
+        assert record.clasificacion == "Comunitarias"
+        assert record.trust_attributes == ("quarantined",)
+
+    def test_classification_survives_get_from_disk(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        record = store.quarantine(_package(), origin="local_author")
+        loaded = store.get(record.package_id)
+        assert loaded is not None
+        assert loaded.clasificacion == "Personalizadas"
+        assert loaded.trust_attributes == ("quarantined",)
+
+    def test_trust_removes_quarantined_and_threads_to_draft(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        library = _library(tmp_path)
+        record = store.quarantine(_package(), library=library, origin="community")
+        trusted = store.trust(record.package_id, library=library)
+        assert trusted is not None
+        assert trusted.trusted is True
+        assert trusted.clasificacion == "Comunitarias"
+        assert trusted.trust_attributes == ()  # trusted + unsigned: no markers
+        drafts = library.list_drafts()
+        assert len(drafts) == 1
+        assert drafts[0].clasificacion == "Comunitarias"
+        assert drafts[0].trust_attributes == ()
+        assert drafts[0].taller is None  # manifest carried no inventory fields
+
+    def test_trust_signed_package_keeps_verified(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        library = _library(tmp_path)
+        package = build_package(_valid_manifest(), _valid_source(), signer=_signer)
+        record = store.quarantine(package, library=library, verifier=_verifier)
+        trusted = store.trust(record.package_id, library=library, verifier=_verifier)
+        assert trusted is not None
+        assert trusted.clasificacion == "Oficiales"
+        assert trusted.trust_attributes == ("verified",)
+        drafts = library.list_drafts()
+        assert len(drafts) == 1
+        assert drafts[0].clasificacion == "Oficiales"
+        assert drafts[0].trust_attributes == ("verified",)
+
+    def test_trust_threads_inventory_fields_into_draft(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        library = _library(tmp_path)
+        manifest = dict(
+            _valid_manifest(),
+            taller="Creación",
+            talleres_compatibles=["Investigación"],
+            categoria_funcional="Análisis",
+            etiquetas=["lore", "npc"],
+        )
+        package = build_package(manifest, _valid_source())
+        record = store.quarantine(package, library=library)
+        trusted = store.trust(record.package_id, library=library)
+        assert trusted is not None
+        assert trusted.clasificacion == "Comunitarias"
+        draft = library.list_drafts()[0]
+        assert draft.taller == "Creación"
+        assert draft.talleres_compatibles == ("Investigación",)
+        assert draft.categoria_funcional == "Análisis"
+        assert draft.etiquetas == ("lore", "npc")
