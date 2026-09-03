@@ -52,7 +52,7 @@ _EXCLUDE_DIRS: set[str] = {
 
 _SKIP_PREFIXES: tuple[str, ...] = ("_",)
 
-_SCAN_SECTIONS: tuple[str, ...] = ("lore", "personajes")
+_SCAN_SECTIONS: tuple[str, ...] = ("lore", "personajes", "referencias")
 
 # Wikilink regex: [[Name]]
 _RE_WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
@@ -261,7 +261,7 @@ class EntityGraphIndex:
         return entity
 
     def _scan_mundo(self, mundo: str) -> list[dict[str, Any]]:
-        """Walk lore/, personajes/ and parse all OKF .md files.
+        """Walk lore/, personajes/, referencias/ and parse all OKF .md files.
 
         Returns list of entity dicts. Skips non-OKF, _-prefixed, excluded dirs.
 

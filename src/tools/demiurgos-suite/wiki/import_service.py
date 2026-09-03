@@ -424,6 +424,7 @@ class ImportService:
                  graph_reconcile: Callable[[str, str], None] | None = None,
                  graph_reconcile_many: Callable[[list[str], str], GraphReconcileResult] | None = None,
                  register_gallery: Callable[[str, Path, str], str] | None = None,
+                 inter_doc_post_process: Callable[[str], None] | None = None,
                  now: Callable[[], datetime] | None = None) -> None:
         self.store = store
         self.mundos_dir = Path(mundos_dir)
@@ -432,6 +433,14 @@ class ImportService:
         self._graph_reconcile = graph_reconcile
         self._graph_reconcile_many = graph_reconcile_many
         self._register_gallery = register_gallery
+        # Inter-document relationship post-process (inter-doc relationships):
+        # an injected ``Callable[[mundo], None]`` that runs AFTER graph
+        # reconciliation completes. ``execute()`` has no ``EntityGraphIndex``
+        # or Hermes runner in scope; the composition layer (api_server) builds
+        # both and wires them here, so the service stays gateway-independent.
+        # The callable must be fail-open itself — a post-process failure never
+        # fails the import job (canon writes are authoritative).
+        self._inter_doc_post_process = inter_doc_post_process
         self._now = now or _utcnow
 
     def _mundo_dir(self, world: str) -> Path:
@@ -705,6 +714,22 @@ class ImportService:
         # a bulk failure falls back to per-file reconcile and never fails the
         # job (unresolved items are surfaced as observability events).
         self._reconcile_after_execution(job, outcomes)
+        # Inter-document relationship post-process (auto trigger): after graph
+        # reconciliation completes, run the additive post-process so fichas in
+        # DIFFERENT documents can link to each other (id/name/tags candidates
+        # + compact LLM prompts). Fail-open: the hook is an injected callable
+        # the composition layer wires with its own graph + Hermes runner; a
+        # failure is logged + emitted as an observability event and NEVER
+        # fails the import job (canon writes are authoritative).
+        if self._inter_doc_post_process is not None:
+            try:
+                self._inter_doc_post_process(job.world)
+            except Exception as exc:  # noqa: BLE001 — post-process is additive
+                logger.warning(
+                    "inter_doc_post_process failed for job %s: %s",
+                    job.job_id, type(exc).__name__, exc_info=True,
+                )
+                self.store.add_event(job.job_id, "inter_doc_post_process_failed")
         self.store.add_event(job.job_id, "execution_complete")
         self.store.update_job(job.job_id, expected_revision=job.revision + 1,
                               state=ImportJobState.COMPLETED)

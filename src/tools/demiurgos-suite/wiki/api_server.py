@@ -3540,6 +3540,31 @@ def _get_graph(mundo: str) -> "EntityGraphIndex | None":
     return _graph_indices[mundo]
 
 
+@app.post("/api/worlds/{world_id}/relationships/reconcile")
+def relationships_reconcile(world_id: str):
+    """Manually run the inter-document relationship post-process for a world.
+
+    Uses the world's cached graph index (lazy-built on first request) and the
+    synchronous Hermes bridge. The post-process is additive and idempotent:
+    re-running skips existing relationships, so ``relationships_written`` is 0
+    on a no-op re-call. ``run_post_process`` is fail-open (never raises);
+    a missing world returns 404.
+    """
+    if _resolve_mundo_dir(world_id) is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    idx = _get_graph(world_id)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    from wiki.inter_doc_relationships import run_post_process  # type: ignore[import-untyped]
+
+    result = run_post_process(world_id, idx, _sync_hermes_enricher)
+    return {
+        "status": "ok",
+        "pairs_evaluated": result.pairs_evaluated,
+        "relationships_written": result.relationships_written,
+    }
+
+
 class _GuidedGraphReader:
     """Expose the canonical graph index through the diskless guided seam."""
 
@@ -3693,7 +3718,8 @@ def graph_entities(
     ``status`` filter: "all" (default) returns every entity; "draft"|"stable"
     filter on ``entity.status``. Invalid status -> 422. Unknown mundo ->
     ``{ entities: [], links: [] }`` (same soft-empty contract as
-    /graph/search). Referencias excluded (not indexed by _SCAN_SECTIONS).
+    /graph/search). Referencias fichas ARE indexed (importer-inter-document-relationships
+    added "referencias" to _SCAN_SECTIONS).
     """
     if status not in {"all", "draft", "stable"}:
         raise HTTPException(
@@ -5582,6 +5608,30 @@ def _reconcile_import_graph_many(
     return idx.update_many(full_paths, mundo)
 
 
+def _run_inter_doc_post_process(mundo: str) -> None:
+    """Run the inter-document relationship post-process for a world (fail-open).
+
+    Composes the world's cached ``EntityGraphIndex`` with the synchronous
+    Hermes bridge and feeds both to ``inter_doc_relationships.run_post_process``
+    (which is itself fail-open). Wired as ``ImportService.inter_doc_post_process``
+    (auto trigger after import reconciliation) and reused by the manual
+    reconcile endpoint. Never raises — a post-process failure is logged and
+    the import job completes normally.
+    """
+    try:
+        from wiki.inter_doc_relationships import run_post_process  # type: ignore[import-untyped]
+
+        idx = _get_graph(mundo)
+        if idx is None:
+            return
+        run_post_process(mundo, idx, _sync_hermes_enricher)
+    except Exception as exc:  # noqa: BLE001 — post-process is additive
+        logger.warning(
+            "inter_doc post-process failed for %s: %s",
+            mundo, type(exc).__name__, exc_info=True,
+        )
+
+
 def _register_import_gallery(world: str, src: Path, rel: str) -> None:
     """Register a spooled image into the world gallery (existing media base).
 
@@ -5918,6 +5968,7 @@ app.include_router(
             graph_reconcile=lambda rel, mundo: _reconcile_import_graph(rel, mundo),
             graph_reconcile_many=_reconcile_import_graph_many,
             register_gallery=_register_import_gallery,
+            inter_doc_post_process=_run_inter_doc_post_process,
         ),
     ),
 )
