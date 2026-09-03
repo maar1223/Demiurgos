@@ -278,12 +278,12 @@ class TestWorldNameValidation(unittest.TestCase):
 
     def test_valid_names_normalize(self) -> None:
         self.assertEqual(normalize_world_name("  mi-mundo  "), "mi-mundo")
-        self.assertEqual(normalize_world_name("Mi Mundo"), "Mi Mundo")
         self.assertEqual(normalize_world_name("a1_b2"), "a1_b2")
 
     def test_unsafe_names_are_rejected(self) -> None:
         for raw in ["", "  ", "..", ".", "...", "a/b", "a\\b", "a b/c",
-                    "/abs", "sub/../../x", ".hidden", "_privado", "Ideas"]:
+                    "/abs", "sub/../../x", ".hidden", "_privado", "Ideas",
+                    "Mi Mundo", "Mi\tMundo", "Café"]:
             self.assertIsNone(normalize_world_name(raw), raw)
 
     def test_non_string_name_is_rejected(self) -> None:

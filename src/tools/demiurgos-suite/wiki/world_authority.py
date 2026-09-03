@@ -21,6 +21,7 @@ This module is pure and filesystem-scoped: it writes ONLY under the given
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -51,6 +52,13 @@ TRANSVERSAL_DIRS = frozenset({"relaciones", "canon", "conflictos", "propuestas"}
 
 # Names reserved at the worlds root.
 RESERVED_NAMES = frozenset({"Ideas"})
+
+# Single safe-name alphabet for world directories. MUST stay in sync with the
+# idea-capture runtime picker (``idea_capture/runtime.py`` ``_SAFE_WORLD``):
+# a world that can be created but cannot be selected/linked in the capture
+# flow is a bug. Rejects spaces, tabs, and any other character outside
+# ``[A-Za-z0-9_-]``.
+_SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 # Legacy (uppercase) top-level layout folders — never the canonical tree (OC7).
 # Their presence marks a world as using the legacy layout, which runtime
@@ -91,8 +99,11 @@ def normalize_world_name(raw: str | None) -> str | None:
 
     Rules mirror the runtime resolver's visibility rules (``_resolve_mundo_dir``):
     a single safe path segment, not hidden/``_``-prefixed, not the shared
-    ``Ideas`` bucket, no path separators/absolute/dot segments. The name is
-    trimmed; the canonical tree folders are lowercase regardless.
+    ``Ideas`` bucket, no path separators/absolute/dot segments, and only the
+    safe alphabet ``[A-Za-z0-9_-]`` (spaces, tabs, and any other character
+    are rejected — this is the ONE rule shared with the idea-capture runtime
+    picker ``_SAFE_WORLD``; keep both in sync). The name is trimmed; the
+    canonical tree folders are lowercase regardless.
     """
     if not isinstance(raw, str):
         return None
@@ -104,6 +115,8 @@ def normalize_world_name(raw: str | None) -> str | None:
     if Path(name).name != name:  # separators / absolute paths / dot segments
         return None
     if "\\" in name:  # defensive: backslash is a separator on other platforms
+        return None
+    if _SAFE_NAME_RE.fullmatch(name) is None:  # spaces/tabs/unsafe chars
         return None
     if name.startswith((".", "_")):
         return None

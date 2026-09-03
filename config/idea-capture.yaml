@@ -38,3 +38,6 @@ limits:
 # value falls back to "ai" with a warning. Resolved by
 # src/tools/idea_capture/config.py (resolve_capture_mode).
 capture_mode: ai
+# Canonical world for world-scoped captures (SAVE/CHANGE_WORLD). Read by
+# src/tools/idea_capture/config.py (load_active_world) and the Hermes handler.
+active_world: Vibrantes

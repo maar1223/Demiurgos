@@ -60,6 +60,10 @@ _CALLBACK_PICKER_RE = re.compile(
     rf"^{_CALLBACK_PREFIX}({_CAPTURE_ID_PATTERN}):world$")
 _CALLBACK_WORLD_RE = re.compile(
     rf"^{_CALLBACK_PREFIX}({_CAPTURE_ID_PATTERN}):world:([A-Za-z0-9_-]+)$")
+# Safe-world alphabet for the world picker and callback encoding. MUST stay in
+# sync with ``demiurgos-suite/wiki/world_authority.py``
+# ``normalize_world_name`` (``_SAFE_NAME_RE``): a world that can be created
+# but cannot be selected/linked in the capture flow is a bug.
 _SAFE_WORLD = re.compile(r"^[A-Za-z0-9_-]+$")
 
 

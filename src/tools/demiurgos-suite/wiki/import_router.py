@@ -63,6 +63,7 @@ from import_service import (
 )
 import okf_contract
 import import_notion
+from world_authority import normalize_world_name
 from import_registry import (
     _clear_cancel,
     _is_cancel_requested,
@@ -260,7 +261,10 @@ def create_import_router(
         resolved = world_dir.resolve()
         if not resolved.is_dir() or resolved.parent != mundos_dir().resolve():
             raise HTTPException(status_code=404, detail="Mundo no encontrado")
-        if Path(mundo).name != mundo or mundo.startswith((".", "_")):
+        if normalize_world_name(mundo) is None:
+            # Same safe-name authority as create_world: reject spaces / unsafe
+            # names so the import route never accepts a world the world-authority
+            # would refuse to create (world-authority / _SAFE_WORLD consistency).
             raise HTTPException(status_code=404, detail="Mundo no encontrado")
         return resolved
 
