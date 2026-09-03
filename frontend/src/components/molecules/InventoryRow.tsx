@@ -1,0 +1,101 @@
+import type { MethodologyInventoryItem } from "@/api/types";
+import { Badge } from "@/components/atoms/Badge";
+import { cn } from "@/lib/utils";
+
+/** Badge variant union — mirrors the internal type in Badge.tsx. */
+type BadgeVariant = "default" | "success" | "error" | "warning" | "info";
+
+/** clasificacion value → Badge variant (REQ-LIB-5 / TW5). */
+export const CLASIFICACION_VARIANT: Record<string, BadgeVariant> = {
+  Oficiales: "success",
+  Personalizadas: "warning",
+  Comunitarias: "info",
+};
+
+/** trust_attributes value → Badge variant (REQ-LIB-5 / TW5). */
+export const TRUST_VARIANT: Record<string, BadgeVariant> = {
+  fundamental: "success",
+  verified: "success",
+  derived: "info",
+  "co-created": "warning",
+  quarantined: "error",
+};
+
+interface InventoryRowProps {
+  item: MethodologyInventoryItem;
+  /** Opens the detail panel for this item. */
+  onSelect?: (item: MethodologyInventoryItem) => void;
+  /** Toggles this item in the compare selection (max 2). */
+  onToggleCompare?: (item: MethodologyInventoryItem) => void;
+  /** Marks the row as part of the compare selection. */
+  selected?: boolean;
+}
+
+/**
+ * Single inventory row: name, version, taller, clasificacion badge and
+ * trust-attribute chips. Presentational — the parent owns all selection
+ * state. Missing or unknown `clasificacion` renders a neutral
+ * "Sin clasificación" badge and never hides the row (REQ-LIB-5).
+ */
+export function InventoryRow({
+  item,
+  onSelect,
+  onToggleCompare,
+  selected = false,
+}: InventoryRowProps) {
+  const clasificacion = item.clasificacion ?? null;
+  const clasificacionVariant = clasificacion
+    ? (CLASIFICACION_VARIANT[clasificacion] ?? "default")
+    : "default";
+  const trust = item.trust_attributes ?? [];
+
+  return (
+    <div
+      className={cn(
+        "rounded-lg border border-edge bg-surface-raised p-3 transition-colors",
+        selected && "border-action/50",
+      )}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => onSelect?.(item)}
+          className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
+        >
+          <span className="block truncate text-small font-medium text-primary">
+            {item.name}
+          </span>
+          <span className="block truncate text-xs text-muted">
+            v{item.version} · {item.taller ?? "Sin taller"} · {item.skill_id}
+          </span>
+        </button>
+        {onToggleCompare && (
+          <button
+            type="button"
+            aria-pressed={selected}
+            onClick={() => onToggleCompare(item)}
+            className={cn(
+              "shrink-0 rounded-md border px-2.5 py-1 text-xs transition-colors",
+              selected
+                ? "border-action/40 bg-surface-hover text-action"
+                : "border-edge text-muted hover:border-action/40 hover:text-primary",
+            )}
+          >
+            {selected ? "Quitar" : "Comparar"}
+          </button>
+        )}
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <Badge variant={clasificacionVariant}>
+          {clasificacion ?? "Sin clasificación"}
+        </Badge>
+        {trust.map((attr) => (
+          <Badge key={attr} variant={TRUST_VARIANT[attr] ?? "default"}>
+            {attr}
+          </Badge>
+        ))}
+      </div>
+    </div>
+  );
+}
