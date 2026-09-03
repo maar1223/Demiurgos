@@ -2539,6 +2539,16 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
     # historical dirs-first, case-insensitive alphabetical order.
     order = read_order(section_dir)
     order_index = {path: i for i, path in enumerate(order)}
+    # The manifest lists FILE paths only (e.g. "a/b.md"), never bare folders.
+    # Give every directory the manifest index of its FIRST listed descendant
+    # so a folder sorts at the position of the document that created it
+    # instead of dropping into the unlisted (alphabetical) bucket. Empty or
+    # unlisted folders have no entry here and keep the len(order) fallback.
+    dir_index: dict[str, int] = {}
+    for path, i in order_index.items():
+        parts = path.split("/")
+        for depth in range(1, len(parts)):
+            dir_index.setdefault("/".join(parts[:depth]), i)
 
     def _build_tree(dir_path: Path, base: Path) -> list[dict]:
         items = []
@@ -2547,15 +2557,19 @@ def get_tree(mundo: str, section: str, covers: bool = Query(False)):
             # listed nodes keep their import order, unlisted ones sort after
             # them (index = len(order)), folders before files within the same
             # index group, then case-insensitive alphabetical fallback.
+            # Files use their own manifest entry; directories use the index
+            # of their first listed descendant (dir_index).
+            def _index_of(entry: Path) -> int:
+                rel = str(entry.relative_to(base)).replace("\\", "/")
+                return order_index.get(rel, dir_index.get(rel, len(order)))
+
             entries = sorted(
                 (
                     e for e in dir_path.iterdir()
                     if not e.name.startswith(".") and not e.name.startswith("_")
                 ),
                 key=lambda e: (
-                    order_index.get(
-                        str(e.relative_to(base)).replace("\\", "/"), len(order)
-                    ),
+                    _index_of(e),
                     0 if e.is_dir() else 1,
                     e.name.lower(),
                 ),

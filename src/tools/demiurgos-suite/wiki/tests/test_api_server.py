@@ -357,6 +357,92 @@ class TestTreeManifestOrdering:
         assert "intro.md" in all_names
         assert "_order.json" not in all_names
 
+    def test_tree_orders_folders_by_manifest(self, client: TestClient):
+        """Folders sort at the manifest index of their first listed child.
+
+        The manifest stores FILE paths (``a/b.md``), never bare folders; a
+        folder must inherit the position of the document that created it
+        instead of falling into the unlisted alphabetical bucket.
+        """
+        base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        for folder in (
+            "el-origen-breve-historia",
+            "ayagars-reptiles-vibrantes",
+            "sistema-stal-poderes-vibrantes",
+        ):
+            (base / folder).mkdir()
+            (base / folder / f"{folder}.md").write_text(f"# {folder}\n", encoding="utf-8")
+        (base / "_order.json").write_text(
+            json.dumps([
+                "el-origen-breve-historia/el-origen-breve-historia.md",
+                "ayagars-reptiles-vibrantes/ayagars-reptiles-vibrantes.md",
+                "sistema-stal-poderes-vibrantes/sistema-stal-poderes-vibrantes.md",
+            ]),
+            encoding="utf-8",
+        )
+        names = [node["name"] for node in client.get("/api/test_mundo/lore/tree").json()]
+        # Manifest order, not alphabetical (ayagars < el-origen < sistema-stal).
+        assert names == [
+            "el-origen-breve-historia",
+            "ayagars-reptiles-vibrantes",
+            "sistema-stal-poderes-vibrantes",
+            "subdir",
+            "00_inicio.md",
+        ]
+
+    def test_tree_folders_fallback_when_unlisted(self, client: TestClient):
+        """Folders with no manifest entry (nor listed descendants) fall back
+        to the alphabetical bucket, after every listed folder."""
+        base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        for folder in ("b-folder", "a-folder", "zeta-unlisted", "alpha-unlisted"):
+            (base / folder).mkdir()
+            (base / folder / f"{folder}.md").write_text("# F\n", encoding="utf-8")
+        (base / "_order.json").write_text(
+            json.dumps([
+                "b-folder/b-folder.md",
+                "a-folder/a-folder.md",
+            ]),
+            encoding="utf-8",
+        )
+        names = [node["name"] for node in client.get("/api/test_mundo/lore/tree").json()]
+        # Listed folders keep manifest order; unlisted ones sort alphabetically
+        # after them (len(order) fallback).
+        assert names == [
+            "b-folder",
+            "a-folder",
+            "alpha-unlisted",
+            "subdir",
+            "zeta-unlisted",
+            "00_inicio.md",
+        ]
+
+    def test_tree_mixed_folders_and_plain_files(self, client: TestClient):
+        """Root-level plain files keep their direct manifest index while
+        folders interleave via their first listed child."""
+        base = api_server.MUNDOS_DIR / "test_mundo" / "lore"
+        (base / "z-folder").mkdir()
+        (base / "z-folder" / "z-file.md").write_text("# Z\n", encoding="utf-8")
+        (base / "chapter-1.md").write_text("# C1\n", encoding="utf-8")
+        (base / "intro.md").write_text("# Intro\n", encoding="utf-8")
+        (base / "_order.json").write_text(
+            json.dumps([
+                "intro.md",
+                "z-folder/z-file.md",
+                "chapter-1.md",
+            ]),
+            encoding="utf-8",
+        )
+        names = [node["name"] for node in client.get("/api/test_mundo/lore/tree").json()]
+        # intro.md (index 0) keeps its direct entry ahead of chapter-1.md
+        # (index 2) — not alphabetical; z-folder sorts via its child (index 1).
+        assert names == [
+            "z-folder",
+            "subdir",
+            "intro.md",
+            "chapter-1.md",
+            "00_inicio.md",
+        ]
+
 
 class TestSaveEndpoint:
     def test_save_writes_content(self, client: TestClient, monkeypatch):
