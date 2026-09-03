@@ -59,6 +59,7 @@ function renderToolWorkshop() {
 
 describe("ToolWorkshop", () => {
   beforeEach(() => {
+    window.localStorage.clear();
     (useWorlds as Mock).mockReturnValue({
       worlds,
       isLoading: false,
@@ -165,6 +166,69 @@ describe("ToolWorkshop", () => {
     expect(screen.getByRole("button", { name: "Sin mundo" })).toBeDisabled();
     expect(
       screen.getByText(/No hay mundos disponibles/),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the taller selector with the default Taller de Herramientas", () => {
+    renderToolWorkshop();
+
+    // Default active taller (REQ-TRE-1 S1) displayed via CORE_TALLER_LABELS.
+    expect(
+      screen.getByRole("button", { name: "Taller de Herramientas" }),
+    ).toBeInTheDocument();
+  });
+
+  it("recomputes the tree when the taller selector changes", async () => {
+    const user = userEvent.setup();
+    const multiTallerStatus = {
+      published: [
+        {
+          skill_id: "herramientas-core",
+          version: "1.0.0",
+          name: "Herramientas core skill",
+          description: "",
+          digest: "h",
+          published_at: "2026-01-01",
+          taller: "Herramientas",
+          talleres_compatibles: [],
+        },
+        {
+          skill_id: "mundo-core",
+          version: "1.0.0",
+          name: "Mundo core skill",
+          description: "",
+          digest: "m",
+          published_at: "2026-01-01",
+          taller: "Mundo",
+          talleres_compatibles: [],
+        },
+      ],
+      activations: {},
+      drafts: [],
+    };
+    (getMethodologyStatus as Mock).mockResolvedValue(multiTallerStatus);
+
+    renderToolWorkshop();
+
+    // Default active taller is Herramientas → only the Herramientas skill is
+    // part of its context; the Mundo skill is not a transversal → hidden.
+    await waitFor(() => {
+      expect(screen.getByText("Herramientas core skill")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Mundo core skill")).not.toBeInTheDocument();
+
+    // Switch to Taller de Mundo → the contextual tree recomputes.
+    await user.click(
+      screen.getByRole("button", { name: "Taller de Herramientas" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Taller de Mundo" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Mundo core skill")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Herramientas core skill")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Taller de Mundo" }),
     ).toBeInTheDocument();
   });
 });

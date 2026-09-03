@@ -1,11 +1,32 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useWorlds } from "@/hooks/useWorlds";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
+import { TallerSelector } from "@/components/molecules/TallerSelector";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
+import {
+  getCurrentTaller,
+  setCurrentTaller,
+  subscribeCurrentTaller,
+} from "@/lib/currentTaller";
+
+/** Active-Taller hook (spec REQ-TRE-2): subscribes to the custom event +
+ *  cross-tab `storage` listener and re-renders on change. */
+function useActiveTaller(): string {
+  const [activeTaller, setActiveTaller] = useState<string>(() =>
+    getCurrentTaller(),
+  );
+
+  useEffect(
+    () => subscribeCurrentTaller(() => setActiveTaller(getCurrentTaller())),
+    [],
+  );
+
+  return activeTaller;
+}
 
 /**
  * Taller de Herramientas shell (`/taller-herramientas`).
@@ -31,6 +52,7 @@ import { Spinner } from "@/components/atoms/Spinner";
 export default function ToolWorkshop() {
   const { worlds, isLoading, error, mutate } = useWorlds();
   const [world, setWorld] = useState<string>();
+  const activeTaller = useActiveTaller();
   const [creatingWorld, setCreatingWorld] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
 
@@ -72,6 +94,10 @@ export default function ToolWorkshop() {
         ) : (
           <>
             <div className="mb-6 flex flex-wrap items-center gap-3">
+              <TallerSelector
+                activeTaller={activeTaller}
+                onTallerChange={setCurrentTaller}
+              />
               <WorldSelector
                 worlds={worlds}
                 currentWorld={world}
@@ -86,7 +112,7 @@ export default function ToolWorkshop() {
                     : "No hay mundos disponibles; podés ver publicaciones pero no activar."}
               </p>
             </div>
-            <MethodologyLibrary world={world} />
+            <MethodologyLibrary world={world} activeTaller={activeTaller} />
           </>
         )}
       </main>

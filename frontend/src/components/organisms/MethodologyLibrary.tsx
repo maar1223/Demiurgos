@@ -10,10 +10,15 @@ import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { TallerTree } from "@/components/organisms/TallerTree";
+import { groupSkillsByState } from "@/lib/tallerStates";
 
 interface MethodologyLibraryProps {
   /** World to activate versions for (the selected Taller de Mundo world). */
   world?: string;
+  /** Active Taller SHORT KEY (Herramientas | Mundo | Ideas) — drives the
+   *  contextual tree via `groupSkillsByState` (spec REQ-TRE-3/5). */
+  activeTaller: string;
 }
 
 /**
@@ -24,7 +29,10 @@ interface MethodologyLibraryProps {
  * is world-scoped: it governs NEW guided sessions in that world only; already
  * running sessions fail closed (server-enforced).
  */
-export function MethodologyLibrary({ world }: MethodologyLibraryProps) {
+export function MethodologyLibrary({
+  world,
+  activeTaller,
+}: MethodologyLibraryProps) {
   const [status, setStatus] = useState<MethodologyStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +111,12 @@ export function MethodologyLibrary({ world }: MethodologyLibraryProps) {
 
   const published = status?.published ?? [];
   const active = world && status ? status.activations[world] : undefined;
+  const groups = groupSkillsByState(
+    published,
+    activeTaller,
+    world,
+    status?.activations ?? {},
+  );
 
   return (
     <section className="space-y-6">
@@ -129,43 +143,14 @@ export function MethodologyLibrary({ world }: MethodologyLibraryProps) {
           message="Todavía no hay metodologías publicadas. Escribí un borrador y publicalo para activarlo por mundo."
         />
       ) : (
-        <ul className="space-y-3">
-          {published.map((methodology) => {
-            const isActive =
-              active?.skill_id === methodology.skill_id &&
-              active?.version === methodology.version;
-            return (
-              <li
-                key={`${methodology.skill_id}@${methodology.version}`}
-                className="flex items-center justify-between gap-4 rounded-lg border border-edge/20 bg-surface-raised/40 p-4"
-              >
-                <div>
-                  <p className="font-medium text-primary">
-                    {methodology.name}
-                  </p>
-                  <p className="text-small text-muted">
-                    {methodology.skill_id}@{methodology.version}
-                    {isActive && (
-                      <span className="ml-2 text-action">
-                        • Activa en {world}
-                      </span>
-                    )}
-                  </p>
-                </div>
-                <Button
-                  variant={isActive ? "secondary" : "primary"}
-                  size="sm"
-                  disabled={!world || isActive || busy}
-                  onClick={() =>
-                    handleActivate(methodology.skill_id, methodology.version)
-                  }
-                >
-                  {isActive ? "Activada" : world ? "Activar" : "Sin mundo"}
-                </Button>
-              </li>
-            );
-          })}
-        </ul>
+        <TallerTree
+          groups={groups}
+          world={world}
+          activeTaller={activeTaller}
+          active={active}
+          onActivate={handleActivate}
+          busy={busy}
+        />
       )}
 
       <div className="rounded-lg border border-edge/20 bg-surface-raised/40 p-4">
