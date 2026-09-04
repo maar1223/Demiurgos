@@ -71,6 +71,18 @@ from guided_character_domain import (
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
+from co_creation_protocol import (
+    Capabilities as CoCreationCapabilities,
+    ErrorCode as CoCreationErrorCode,
+    PROTOCOL_VERSION as CO_CREATION_PROTOCOL_VERSION,
+    CoCreationRequest,
+    CoCreationSessionState,
+    StructuredError as CoCreationStructuredError,
+    continue_co_creation_session,
+)
+from co_creation_session_store import CoCreationSessionStore
+from co_creation_materializer import CoCreationMaterializer
+from hermes_co_creation_provider import HermesCoCreationProvider, co_creation_capabilities
 from demiurgos_language import (
     LocaleSettings,
     normalize_locale,
@@ -1705,6 +1717,15 @@ class MethodologyDraftRequest(BaseModel):
     description: str = ""
     phases: list[str] = []
     language: str | None = None
+    # Inventory metadata (REQ-CC-9): optional and backward-compatible — a POST
+    # with only the original fields creates a draft with null/empty extended
+    # fields. ``create_draft`` already persists every field; the response
+    # echoes all of them.
+    taller: str | None = None
+    categoria_funcional: str | None = None
+    etiquetas: list[str] = []
+    clasificacion: str | None = None
+    trust_attributes: list[str] = []
 
 
 class MethodologyActivateRequest(BaseModel):
@@ -2263,6 +2284,527 @@ def retry_guided_character_index(mundo: str, body: GuidedIndexRetryRequest, requ
     payload = _guided_public_state(state)
     payload.update({"index_status": result.index_status, "retryable": result.retryable, "message": result.message})
     return payload
+
+
+# ---------------------------------------------------------------------------
+# Co-creation route contracts (Fase 4 — Skill Madre co-creation)
+#
+# Hermes boundary (REQ-CC-7) at the API layer: every route validates the
+# session envelope, rejects authority-key content (flat+nested, depth <= 4 —
+# enforced by the protocol/provider layers), fails closed on malformed or
+# unavailable Hermes output with zero mutations, and NEVER mutates canonical
+# methodology state without explicit Author approval. ``materialize`` only
+# creates a library DRAFT; ``publish`` and ``activate`` are the ONLY routes
+# that mutate canonical methodology state, and the POST itself is the
+# Author's explicit approval signal — no other route ever auto-publishes.
+# ---------------------------------------------------------------------------
+
+class CoCreationStartRequest(BaseModel):
+    author_input: str
+    world: str | None = None
+
+
+class CoCreationTurnRequest(BaseModel):
+    base_revision: int
+    author_input: str
+
+
+class CoCreationPublishRequest(BaseModel):
+    base_revision: int
+
+
+class CoCreationMaterializeRequest(BaseModel):
+    base_revision: int
+    skill_id: str | None = None
+    version: str | None = None
+    name: str | None = None
+    description: str | None = None
+    taller: str | None = None
+    categoria_funcional: str | None = None
+    etiquetas: list[str] = []
+    language: str | None = None
+
+
+class CoCreationActivateRequest(BaseModel):
+    base_revision: int
+    world: str
+
+
+# Durable session store + Skill Madre provider seams (mirror the
+# _GUIDED_SESSIONS / _GUIDED_PROVIDER pattern). Tests replace these module
+# seams after import; the default store path is the gitignored repo-local
+# ``data/`` directory (``DEMIURGOS_CO_CREATION_SESSIONS_DB`` overrides it).
+_CO_CREATION_SESSIONS_DB = os.environ.get("DEMIURGOS_CO_CREATION_SESSIONS_DB")
+_CO_CREATION_SESSIONS = CoCreationSessionStore(db_path=_CO_CREATION_SESSIONS_DB)
+_CO_CREATION_PROVIDER: HermesCoCreationProvider | None = None
+_CO_CREATION_CAPABILITIES: CoCreationCapabilities | None = None
+_CO_CREATION_PROBE_LOCK = asyncio.Lock()
+_CO_CREATION_MATERIALIZER: CoCreationMaterializer | None = None
+# In-process hint mapping session_id -> creating principal. The durable store
+# remains the authoritative session state; this map only lets the API
+# distinguish a KNOWN session under a foreign principal (403) from an
+# unknown/expired session (404) — both satisfy REQ-CC-10's 403/404 binding
+# contract. A restart clears it, and foreign access after a restart degrades
+# to 404 (still within the contract).
+_CO_CREATION_SESSION_PRINCIPALS: dict[str, str] = {}
+
+_CO_CREATION_ERROR_STATUS = {
+    CoCreationErrorCode.INVALID_INPUT: 422,
+    CoCreationErrorCode.UNAUTHORIZED: 403,
+    CoCreationErrorCode.REVISION_CONFLICT: 409,
+    CoCreationErrorCode.CEILING_REACHED: 422,
+    CoCreationErrorCode.CAPABILITY_UNAVAILABLE: 503,
+    CoCreationErrorCode.PROVIDER_UNAVAILABLE: 503,
+    CoCreationErrorCode.TIMEOUT: 504,
+    CoCreationErrorCode.CANCELLED: 499,
+    CoCreationErrorCode.MALFORMED_OUTPUT: 502,
+    CoCreationErrorCode.INVALID_ENVELOPE: 422,
+    CoCreationErrorCode.INTERNAL: 500,
+}
+
+
+def _co_creation_error_response(error: CoCreationStructuredError) -> JSONResponse:
+    return JSONResponse(
+        status_code=_CO_CREATION_ERROR_STATUS.get(error.code, 500),
+        content={"detail": error.message, **error.as_dict()},
+    )
+
+
+def _co_creation_missing_session_response() -> JSONResponse:
+    """404 for unknown/expired sessions (REQ-CC-10 TTL contract)."""
+    return JSONResponse(status_code=404, content={
+        "detail": "The co-creation session is unavailable.",
+        "code": "unauthorized",
+        "message": "The co-creation session is unavailable.",
+        "retryable": False,
+    })
+
+
+def _co_creation_principal(request: Request) -> tuple[EditPrincipal | None, JSONResponse | None]:
+    principal = _resolve_principal(request)
+    if principal is None:
+        # 401 for a missing trusted principal (mirrors every other gated
+        # route); 403 is reserved for a KNOWN session under a foreign
+        # principal (see _co_creation_session_or_error).
+        return None, JSONResponse(status_code=401, content={
+            "detail": "Authentication required.",
+            "code": "unauthorized",
+            "message": "Authentication required.",
+            "retryable": False,
+        })
+    return principal, None
+
+
+def _co_creation_session_or_error(
+    session_id: str, principal: EditPrincipal,
+) -> tuple[CoCreationSessionState | None, JSONResponse | None]:
+    """Recover a principal-bound session; 403 for foreign principals, 404 otherwise."""
+    state = _CO_CREATION_SESSIONS.recover(session_id, principal.id)
+    if state is not None:
+        return state, None
+    creator = _CO_CREATION_SESSION_PRINCIPALS.get(session_id)
+    if creator is not None and creator != principal.id:
+        return None, _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.UNAUTHORIZED, "The co-creation session is unavailable.", False,
+        ))
+    return None, _co_creation_missing_session_response()
+
+
+def _co_creation_public_state(state: CoCreationSessionState) -> dict:
+    """Serialize only the frontend-compatible, non-provenance session view."""
+    return {
+        "protocol_version": CO_CREATION_PROTOCOL_VERSION,
+        "session_id": state.session_id,
+        "principal_id": state.principal_id,
+        "world": state.world,
+        "revision": state.revision,
+        "milestone": state.milestone,
+        "progress": [
+            {"name": item.name, "state": item.state} for item in state.milestone_states
+        ],
+        "question_count": state.question_count,
+        "pending_question": state.pending_question,
+        "pending_options": list(state.pending_options),
+        "messages": [
+            {"role": item.role, "content": item.content} for item in state.messages
+        ],
+        "phase": state.phase,
+        "draft_id": state.draft_id,
+        "compile_issues": None,
+    }
+
+
+def _co_creation_result(
+    response, state: CoCreationSessionState | None,
+):
+    if response.error:
+        return _co_creation_error_response(response.error)
+    if state is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    return _co_creation_public_state(state)
+
+
+async def _probe_co_creation_capabilities() -> CoCreationCapabilities | None:
+    """Probe Hermes once; concurrent requests share the fail-closed result."""
+    global _CO_CREATION_CAPABILITIES
+    if _CO_CREATION_CAPABILITIES is not None:
+        return _CO_CREATION_CAPABILITIES
+    async with _CO_CREATION_PROBE_LOCK:
+        if _CO_CREATION_CAPABILITIES is not None:
+            return _CO_CREATION_CAPABILITIES
+        provider = _CO_CREATION_PROVIDER
+        probe = getattr(provider, "probe", None)
+        if not callable(probe):
+            return None
+        try:
+            assessment = await probe()
+            _CO_CREATION_CAPABILITIES = co_creation_capabilities(assessment)
+        except Exception:
+            logger.warning("co-creation capability probe failed", exc_info=True)
+            _CO_CREATION_CAPABILITIES = None
+        return _CO_CREATION_CAPABILITIES
+
+
+async def _co_creation_continue(
+    session_id: str, base_revision: int, author_input: str,
+    principal: EditPrincipal, world: str | None = None, milestone: str | None = None,
+):
+    """One bounded Hermes turn through the protocol seam (fail-closed).
+
+    The protocol re-checks the session, the revision, the question ceiling
+    (BEFORE any Hermes call), and the envelope boundary; every violation
+    fails closed with zero session mutation.
+    """
+    if _CO_CREATION_PROVIDER is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.CAPABILITY_UNAVAILABLE,
+            "Skill co-creation is unavailable.", True,
+        ))
+    capabilities = await _probe_co_creation_capabilities()
+    if capabilities is None or not capabilities.admitted():
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.CAPABILITY_UNAVAILABLE,
+            "Skill co-creation is unavailable.", True,
+        ))
+    request = CoCreationRequest(
+        CO_CREATION_PROTOCOL_VERSION,
+        f"co-creation-{uuid.uuid4().hex}",
+        session_id,
+        principal.id,
+        base_revision,
+        principal.id,
+        author_input,
+        world=world,
+        milestone=milestone,
+    )
+    response, state = await continue_co_creation_session(
+        _CO_CREATION_SESSIONS, _CO_CREATION_PROVIDER, request, capabilities,
+    )
+    return _co_creation_result(response, state)
+
+
+@app.post("/api/co-creation/sessions")
+async def start_co_creation(body: CoCreationStartRequest, request: Request):
+    """Start a principal-bound Skill Madre co-creation session.
+
+    Mirrors the guided start route: capability-admitted Hermes first, then the
+    session is created and the FIRST turn runs immediately (the Author's input
+    seeds the Skill Madre). A world-scoped session binds to that world; a
+    transversal session (world omitted) binds to none. Only the session store
+    is touched here — no canonical methodology mutation.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    if body.world is not None and _resolve_mundo_dir(body.world) is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT, "The world is unavailable.", False,
+        ))
+    if _CO_CREATION_PROVIDER is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.CAPABILITY_UNAVAILABLE,
+            "Skill co-creation is unavailable.", True,
+        ))
+    capabilities = await _probe_co_creation_capabilities()
+    if capabilities is None or not capabilities.admitted():
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.CAPABILITY_UNAVAILABLE,
+            "Skill co-creation is unavailable.", True,
+        ))
+    session_id = f"co-creation-{uuid.uuid4().hex}"
+    _CO_CREATION_SESSIONS.create(
+        session_id, principal.id, principal.id,
+        world=body.world, author_input=body.author_input,
+    )
+    _CO_CREATION_SESSION_PRINCIPALS[session_id] = principal.id
+    return await _co_creation_continue(
+        session_id, 0, body.author_input, principal,
+        world=body.world, milestone="proposito",
+    )
+
+
+@app.post("/api/co-creation/sessions/{session_id}/turn")
+async def continue_co_creation(session_id: str, body: CoCreationTurnRequest, request: Request):
+    """One Author answer -> one Skill Madre question (REQ-CC-3)."""
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    if state.revision != body.base_revision:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    return await _co_creation_continue(
+        session_id, body.base_revision, body.author_input, principal,
+        world=state.world, milestone=state.milestone,
+    )
+
+
+@app.get("/api/co-creation/sessions/{session_id}")
+def recover_co_creation(session_id: str, request: Request):
+    """Recover a principal-bound session (REQ-CC-10)."""
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    return _co_creation_public_state(state)
+
+
+@app.get("/api/co-creation/sessions/{session_id}/progress")
+def co_creation_progress(session_id: str, request: Request):
+    """Milestone progress projection (REQ-CC-3)."""
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    return {
+        "session_id": state.session_id,
+        "world": state.world,
+        "milestone": state.milestone,
+        "progress": [
+            {"name": item.name, "state": item.state} for item in state.milestone_states
+        ],
+        "phase": state.phase,
+        "question_count": state.question_count,
+        "draft_id": state.draft_id,
+    }
+
+
+@app.post("/api/co-creation/sessions/{session_id}/materialize")
+def materialize_co_creation(session_id: str, body: CoCreationMaterializeRequest, request: Request):
+    """Author confirms ``borrador_listo`` -> deterministic draft materialization.
+
+    REQ-CC-5 / REQ-CC-7: reads the accumulated structured answers from the
+    session's ``draft_payload_json``, folds the Author-confirmed metadata in
+    via ``merge_draft_payload``, then calls ``CoCreationMaterializer.materialize``
+    (create_draft + compile_draft). Compiler issues surface in the response and
+    the session STAYS at ``borrador_listo`` for correction. Success records the
+    draft id (``record_draft``) and advances the phase to ``review``
+    (``set_phase``). This route NEVER publishes.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    if state.revision != body.base_revision:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    if state.phase == "complete":
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT, "The co-creation session is complete.", False,
+        ))
+    if state.milestone != "borrador_listo":
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT,
+            "Materialization requires the borrador listo milestone.", False,
+        ))
+    materializer = _CO_CREATION_MATERIALIZER
+    if materializer is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.CAPABILITY_UNAVAILABLE,
+            "Skill draft materialization is unavailable.", True,
+        ))
+    payload = dict(state.draft_payload)
+    # Fold the Author-confirmed metadata into the session payload (revision-
+    # guarded) so the review view renders exactly what was materialized.
+    confirmed = {
+        key: value
+        for key, value in {
+            "name": body.name, "description": body.description,
+            "taller": body.taller, "categoria_funcional": body.categoria_funcional,
+            "etiquetas": body.etiquetas, "language": body.language,
+            "skill_id": body.skill_id, "version": body.version,
+        }.items()
+        if value not in (None, [], "")
+    }
+    if confirmed:
+        merged = _CO_CREATION_SESSIONS.merge_draft_payload(
+            session_id, principal.id, body.base_revision, confirmed,
+        )
+        if merged is None:
+            return _co_creation_error_response(CoCreationStructuredError(
+                CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+            ))
+        payload.update(confirmed)
+        base_revision = merged.revision
+    else:
+        base_revision = body.base_revision
+    result = materializer.materialize(
+        payload,
+        skill_id=body.skill_id or f"co-created-{session_id.removeprefix('co-creation-')[:10]}",
+        version=body.version or "0.1.0",
+        name=body.name or payload.get("name") or "Co-created skill",
+        description=body.description or payload.get("description") or "",
+        taller=body.taller or payload.get("taller"),
+        etiquetas=tuple(body.etiquetas or payload.get("etiquetas") or ()),
+        categoria_funcional=body.categoria_funcional or payload.get("categoria_funcional"),
+        language=body.language or payload.get("language"),
+    )
+    issues = [issue.to_dict() for issue in result.issues]
+    if not result.ok:
+        # REQ-CC-5: issues surface in the validation panel; the session stays
+        # at ``borrador_listo`` so the Author can correct before retrying.
+        return {
+            "draft_id": result.draft_id,
+            "ok": False,
+            "issues": issues,
+            "compile_issues": issues,
+            "phase": state.phase,
+            "milestone": state.milestone,
+            "revision": base_revision,
+        }
+    recorded = _CO_CREATION_SESSIONS.record_draft(
+        session_id, principal.id, base_revision, result.draft_id,
+    )
+    if recorded is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    reviewed = _CO_CREATION_SESSIONS.set_phase(
+        session_id, principal.id, recorded.revision, "review",
+    )
+    if reviewed is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    payload = _co_creation_public_state(reviewed)
+    payload.update({"ok": True, "issues": [], "compile_issues": []})
+    return payload
+
+
+@app.post("/api/co-creation/sessions/{session_id}/publish")
+def publish_co_creation(session_id: str, body: CoCreationPublishRequest, request: Request):
+    """Author approval -> publish the materialized draft (REQ-CC-6).
+
+    The POST itself IS the Author's explicit approval signal; nothing else in
+    the subsystem calls ``publish``. Reuses ``MethodologyLibrary.publish`` so
+    publishing is immutable: re-publishing changed content raises
+    ``AlreadyPublishedError`` -> 409. On success the session completes.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    if state.revision != body.base_revision:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    if state.draft_id is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT,
+            "The session has no materialized draft to publish.", False,
+        ))
+    library = _methodology_library()
+    try:
+        published = library.publish(state.draft_id)
+    except ValidationError as exc:
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "validation_error",
+        })
+    except AlreadyPublishedError as exc:
+        return JSONResponse(status_code=409, content={
+            "detail": str(exc), "code": "already_published",
+        })
+    completed = _CO_CREATION_SESSIONS.set_phase(
+        session_id, principal.id, body.base_revision, "complete",
+    )
+    return {
+        "session_id": session_id,
+        "phase": completed.phase if completed is not None else state.phase,
+        "revision": completed.revision if completed is not None else state.revision,
+        "published": {
+            "skill_id": published.skill_id,
+            "version": published.version,
+            "name": published.name,
+            "description": published.description,
+            "digest": published.digest,
+            "published_at": published.published_at,
+        },
+    }
+
+
+@app.post("/api/co-creation/sessions/{session_id}/activate")
+def activate_co_creation(session_id: str, body: CoCreationActivateRequest, request: Request):
+    """Author approval -> activate the published version for a world (REQ-CC-6).
+
+    Reuses ``MethodologyLibrary.activate`` (one active version per world; a
+    new activation deactivates the previous). Activation requires a PUBLISHED
+    version — the Author must publish first; this route never auto-publishes.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    if state.revision != body.base_revision:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    if _resolve_mundo_dir(body.world) is None:
+        return JSONResponse(status_code=404, content={"detail": "Mundo no encontrado"})
+    if state.draft_id is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT,
+            "The session has no materialized draft to activate.", False,
+        ))
+    library = _methodology_library()
+    draft = library.get_draft(state.draft_id)
+    if draft is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT, "The session draft is unavailable.", False,
+        ))
+    try:
+        activation = library.activate(body.world, draft.skill_id, draft.version)
+    except NotPublishedError as exc:
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "not_published",
+        })
+    return {
+        "session_id": session_id,
+        "phase": state.phase,
+        "revision": state.revision,
+        "activation": {
+            "world": activation.world,
+            "skill_id": activation.skill_id,
+            "version": activation.version,
+            "digest": activation.digest,
+            "activated_at": activation.activated_at,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -4196,6 +4738,9 @@ ACTIVITY_ADAPTER = HermesRunsActivityAdapter(
     client_provider=_get_hermes_client,
 )
 _GUIDED_PROVIDER = HermesGuidedProvider(ACTIVITY_ADAPTER)
+# Skill Madre provider (kernel-owned, co-creation-v1 envelope). Same adapter
+# seam as the guided provider; tests replace it after import.
+_CO_CREATION_PROVIDER = HermesCoCreationProvider(ACTIVITY_ADAPTER)
 # Mandatory semantic gate: Hermes-first interpretation over the runs adapter.
 # Unavailable/invalid/exhausted Hermes results fail closed as ``blocked`` with
 # localized safe copy and NO lexical/plain-chat fallback. Entry-handler
@@ -4314,6 +4859,47 @@ async def _maybe_refresh_distilled(session_id: str, mundo: str) -> None:
         logger.warning("distilled refresh failed safely", exc_info=True)
 
 
+_SKILL_CREATION_MARKERS = (
+    "crear una skill",
+    "crear la skill",
+    "crear skill",
+    "crear una herramienta",
+    "crear la herramienta",
+    "crear herramienta",
+    "crear una metodología",
+    "crear la metodología",
+    "crear metodología",
+    "hacer una skill",
+    "hacer una herramienta",
+    "hacer una metodología",
+    "nueva skill",
+    "nueva herramienta",
+    "nueva metodología",
+)
+
+
+def _skill_creation_redirect(prompt: str) -> dict | None:
+    """Chat-level redirection recommendation (REQ-CC-2 / TW9 refined).
+
+    When the Author asks to CREATE a skill from a non-Taller-de-Herramientas
+    context, the assistant response gains a ``redirect`` field pointing at the
+    Taller de Herramientas. This is a bounded chat-level hint ONLY: no
+    semantic-gate state change, no auto-detected co-creation session, no
+    auto-navigation, and no handoff — the frontend renders the message and the
+    user decides (the assistant never creates the session on the Author's
+    behalf).
+    """
+    text = (prompt or "").strip().lower()
+    if not text:
+        return None
+    if any(marker in text for marker in _SKILL_CREATION_MARKERS):
+        return {
+            "target": "taller-herramientas",
+            "message": "Para crear una skill, te recomiendo ir al Taller de Herramientas.",
+        }
+    return None
+
+
 @app.post("/api/{mundo}/ai/ask")
 async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
     """Endpoint for the AI Assistant sidebar (Hermes-first).
@@ -4414,7 +5000,13 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
                 _persist_memory_turn(body.session_id, mundo, "user", body.prompt, skill_id)
                 _persist_memory_turn(body.session_id, mundo, "assistant", result.response)
                 await _maybe_refresh_distilled(body.session_id, mundo)
-        return result.as_dict()
+        payload = result.as_dict()
+        redirect = _skill_creation_redirect(body.prompt)
+        if redirect is not None:
+            # REQ-CC-2: chat-level recommendation only — no semantic-gate
+            # state change, no auto-navigation, no handoff.
+            payload["redirect"] = redirect
+        return payload
     # 3. require_confirmation/proposal_ready route through the guarded
     #    single-run machinery (the same run supplied the continuation).
     return await _semantic_guided_continuation(
@@ -6099,6 +6691,11 @@ def methodologies_create_draft(body: MethodologyDraftRequest, request: Request):
         description=body.description,
         phases=tuple(body.phases or []),
         language=body.language,
+        taller=body.taller,
+        categoria_funcional=body.categoria_funcional,
+        etiquetas=tuple(body.etiquetas or []),
+        clasificacion=body.clasificacion,
+        trust_attributes=tuple(body.trust_attributes or []),
     )
     draft = library.get_draft(draft_id)
     assert draft is not None
@@ -6110,6 +6707,11 @@ def methodologies_create_draft(body: MethodologyDraftRequest, request: Request):
         "source": draft.source,
         "description": draft.description,
         "updated_at": draft.updated_at,
+        "taller": draft.taller,
+        "categoria_funcional": draft.categoria_funcional,
+        "etiquetas": list(draft.etiquetas),
+        "clasificacion": draft.clasificacion,
+        "trust_attributes": list(draft.trust_attributes),
     }
 
 
