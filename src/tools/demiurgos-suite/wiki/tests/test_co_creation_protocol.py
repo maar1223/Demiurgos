@@ -18,6 +18,9 @@ if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
 from co_creation_protocol import (  # noqa: E402
+    AUTHORITY_KEYS,
+    CANVAS_PAYLOAD_KEYS,
+    CANVAS_SYNC_ENVELOPE_KEYS,
     CancellationToken,
     Capabilities,
     CoCreationOutcome,
@@ -27,8 +30,10 @@ from co_creation_protocol import (  # noqa: E402
     MAX_DEADLINE_MS,
     PROTOCOL_VERSION,
     QUESTION_CEILING,
+    canvas_payload_issues,
     continue_co_creation_session,
     invoke_bounded_co_creation,
+    reject_authority_keys,
 )
 from co_creation_session_store import CoCreationSessionStore  # noqa: E402
 
@@ -265,3 +270,52 @@ def test_unadmitted_capabilities_return_unavailable() -> None:
         assert store.recover("session-1", "author-1").revision == 0  # type: ignore[union-attr]
 
     asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# TW12 canvas contract — envelope safety (REQ-CC-23) + payload validation
+# ---------------------------------------------------------------------------
+
+def test_canvas_envelope_keys_stay_outside_authority_keys() -> None:
+    """REQ-CC-23: canvas-sync envelope extension keys never collide with the
+    8-key AUTHORITY_KEYS set, so REQ-CC-7 validation passes by construction."""
+    assert AUTHORITY_KEYS.isdisjoint(CANVAS_SYNC_ENVELOPE_KEYS)
+    assert CANVAS_SYNC_ENVELOPE_KEYS == {"base_revision", "payload"}
+    envelope = {"base_revision": 0, "payload": {"purpose": "x"}}
+    assert reject_authority_keys(envelope) is False
+
+
+def test_canvas_payload_typed_keys_are_editable_sections() -> None:
+    assert CANVAS_PAYLOAD_KEYS == {
+        "name", "description", "purpose", "scope", "main_flow",
+        "branches", "rules", "pending_questions", "world",
+    }
+    assert CANVAS_PAYLOAD_KEYS.isdisjoint(AUTHORITY_KEYS)
+
+
+def test_canvas_payload_issues_accepts_typed_payload() -> None:
+    payload = {
+        "name": "Skill",
+        "description": "d",
+        "purpose": "p",
+        "scope": "s",
+        "main_flow": "f",
+        "branches": ["a", "b"],
+        "rules": ["r"],
+        "pending_questions": [{"text": "q", "state": "pendiente"}],
+        "world": "nec",
+    }
+    assert canvas_payload_issues(payload) == []
+
+
+def test_canvas_payload_issues_rejects_authority_keys_flat_and_nested() -> None:
+    assert canvas_payload_issues({"acceptance": "approved"}) != []
+    assert canvas_payload_issues({"purpose": {"nested": {"authorization": "granted"}}}) != []
+
+
+def test_canvas_payload_issues_rejects_unknown_and_mistyped_keys() -> None:
+    assert canvas_payload_issues({"hacked": 1}) != []
+    assert canvas_payload_issues({"branches": "not-a-list"}) != []
+    assert canvas_payload_issues({"rules": [1, 2]}) != []
+    assert canvas_payload_issues({"branches": ["a", 2]}) != []
+    assert canvas_payload_issues({"purpose": 42}) != []

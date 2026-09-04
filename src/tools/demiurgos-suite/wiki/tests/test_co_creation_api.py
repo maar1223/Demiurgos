@@ -45,6 +45,12 @@ ROUTES = {
     ("POST", "/api/co-creation/sessions/{session_id}/materialize"),
     ("POST", "/api/co-creation/sessions/{session_id}/publish"),
     ("POST", "/api/co-creation/sessions/{session_id}/activate"),
+    ("PUT", "/api/co-creation/sessions/{session_id}/canvas"),
+    ("POST", "/api/co-creation/sessions/{session_id}/validate"),
+    ("GET", "/api/co-creation/sessions/{session_id}/history"),
+    ("POST", "/api/co-creation/sessions/{session_id}/history/restore"),
+    ("POST", "/api/co-creation/sessions/{session_id}/warnings/{idx}/status"),
+    ("POST", "/api/co-creation/sessions/{session_id}/pending-questions/{idx}/status"),
 }
 
 
@@ -178,6 +184,12 @@ def test_routes_fail_closed_with_stable_auth_error(client: TestClient) -> None:
         ("post", "/api/co-creation/sessions/s-1/materialize", {"base_revision": 0}),
         ("post", "/api/co-creation/sessions/s-1/publish", {"base_revision": 0}),
         ("post", "/api/co-creation/sessions/s-1/activate", {"base_revision": 0, "world": "vibrantes"}),
+        ("put", "/api/co-creation/sessions/s-1/canvas", {"base_revision": 0, "payload": {}}),
+        ("post", "/api/co-creation/sessions/s-1/validate", {"payload": {}}),
+        ("get", "/api/co-creation/sessions/s-1/history", None),
+        ("post", "/api/co-creation/sessions/s-1/history/restore", {"base_revision": 0, "revision": 1}),
+        ("post", "/api/co-creation/sessions/s-1/warnings/0/status", {"base_revision": 0, "state": "resuelta"}),
+        ("post", "/api/co-creation/sessions/s-1/pending-questions/0/status", {"base_revision": 0, "state": "resuelta"}),
     ]
     for method, path, body in calls:
         response = getattr(client, method)(path, json=body) if body else getattr(client, method)(path)
@@ -429,6 +441,187 @@ def test_turns_never_create_library_drafts(client: TestClient, monkeypatch) -> N
         "base_revision": 1, "author_input": "narrar batallas",
     })
     assert api_server._methodology_library().list_drafts() == []
+
+
+# ---------------------------------------------------------------------------
+# TW12 canvas data layer (Phase 1 / PR 1) — canvas, validate, history, restore
+# ---------------------------------------------------------------------------
+
+def test_canvas_put_merges_payload_and_snapshots_history(client: TestClient, monkeypatch) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    canvas = client.put(f"/api/co-creation/sessions/{session_id}/canvas", json={
+        "base_revision": 1,
+        "payload": {"purpose": "automatizar importes", "branches": ["rama A", "rama B"]},
+    })
+    assert canvas.status_code == 200, canvas.text
+    body = canvas.json()
+    assert body["revision"] == 2
+    assert body["ok"] is True
+    assert body["issues"] == []
+    assert body["warnings"] == []
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}")
+    assert recovered.status_code == 200
+    state = recovered.json()
+    assert state["draft_payload"]["purpose"] == "automatizar importes"
+    assert state["draft_payload"]["branches"] == ["rama A", "rama B"]
+    assert state["history_count"] == 1
+    assert state["derived_from"] is None
+    # REQ-CC-12: a canvas edit must never create a library draft.
+    assert api_server._methodology_library().list_drafts() == []
+
+
+def test_canvas_put_rejects_authority_keys_without_state_change(client: TestClient, monkeypatch) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    rejected = client.put(f"/api/co-creation/sessions/{session_id}/canvas", json={
+        "base_revision": 1,
+        "payload": {"purpose": "x", "acceptance": "approved"},
+    })
+    assert rejected.status_code == 422
+    assert rejected.json()["code"] == "invalid_envelope"
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}")
+    assert recovered.json()["revision"] == 1
+    # No state change: the canvas edit never merged (only the chat-appended
+    # pending_questions from the create turn is present).
+    assert "purpose" not in recovered.json()["draft_payload"]
+    assert "acceptance" not in recovered.json()["draft_payload"]
+    assert recovered.json()["history_count"] == 0
+
+
+def test_canvas_put_rejects_unknown_keys_and_stale_revision(client: TestClient, monkeypatch) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    unknown = client.put(f"/api/co-creation/sessions/{session_id}/canvas", json={
+        "base_revision": 1, "payload": {"hacked": 1},
+    })
+    assert unknown.status_code == 422
+    assert unknown.json()["code"] == "invalid_input"
+    stale = client.put(f"/api/co-creation/sessions/{session_id}/canvas", json={
+        "base_revision": 0, "payload": {"purpose": "x"},
+    })
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "revision_conflict"
+
+
+def test_validate_route_is_pure_and_returns_source_preview(client: TestClient, monkeypatch) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    preview = client.post(f"/api/co-creation/sessions/{session_id}/validate", json={
+        "payload": {"purpose": "Esto requiere authorization: granted", "name": "Skill inválida"},
+    })
+    assert preview.status_code == 200, preview.text
+    body = preview.json()
+    assert body["ok"] is False
+    assert any(issue["code"] == "authority-claim" for issue in body["issues"])
+    assert body["warnings"][0]["state"] == "pendiente"
+    assert "## Propósito" in body["source_preview"]
+    # Pure: no state mutation, no history snapshot, no library draft.
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}")
+    assert recovered.json()["revision"] == 1
+    assert recovered.json()["history_count"] == 0
+    assert api_server._methodology_library().list_drafts() == []
+
+
+def test_history_and_restore_roundtrip(client: TestClient, monkeypatch) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    first = client.put(f"/api/co-creation/sessions/{session_id}/canvas", json={
+        "base_revision": 1, "payload": {"purpose": "v1"},
+    })
+    assert first.status_code == 200
+    second = client.put(f"/api/co-creation/sessions/{session_id}/canvas", json={
+        "base_revision": 2, "payload": {"purpose": "v2", "scope": "s2"},
+    })
+    assert second.status_code == 200
+    history = client.get(f"/api/co-creation/sessions/{session_id}/history")
+    assert history.status_code == 200
+    entries = history.json()["entries"]
+    assert [entry["revision"] for entry in entries] == [2, 3]
+    assert all(entry["source"] == "autosave" for entry in entries)
+    assert "payload" not in entries[0]
+    # A stale base revision fails closed (REQ-CC-15 revision guard).
+    stale = client.post(f"/api/co-creation/sessions/{session_id}/history/restore", json={
+        "base_revision": 2, "revision": 2,
+    })
+    assert stale.status_code == 409
+    restored = client.post(f"/api/co-creation/sessions/{session_id}/history/restore", json={
+        "base_revision": 3, "revision": 2,
+    })
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["revision"] == 4
+    # The restored payload is the full snapshot: the chat-appended
+    # pending_questions survive alongside the restored purpose.
+    assert restored.json()["payload"]["purpose"] == "v1"
+    assert "scope" not in restored.json()["payload"]
+    # An unknown target snapshot fails closed.
+    ghost = client.post(f"/api/co-creation/sessions/{session_id}/history/restore", json={
+        "base_revision": 4, "revision": 99,
+    })
+    assert ghost.status_code == 422
+    assert ghost.json()["code"] == "invalid_input"
+
+
+def test_warning_status_route_transitions_and_persists(client: TestClient, monkeypatch) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    # A canvas edit whose CONTENT triggers a compiler authority-claim marker
+    # seeds a Pendiente warning (content marker, not an envelope key).
+    canvas = client.put(f"/api/co-creation/sessions/{session_id}/canvas", json={
+        "base_revision": 1,
+        "payload": {"purpose": "Esto requiere authorization: granted"},
+    })
+    assert canvas.status_code == 200, canvas.text
+    body = canvas.json()
+    assert body["ok"] is False
+    assert len(body["warnings"]) == 1
+    assert body["warnings"][0]["state"] == "pendiente"
+    assert body["warnings"][0]["code"] == "authority-claim"
+    # The Author transitions Pendiente -> Resuelta.
+    resolved = client.post(f"/api/co-creation/sessions/{session_id}/warnings/0/status", json={
+        "base_revision": 2, "state": "resuelta",
+    })
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["warnings"][0]["state"] == "resuelta"
+    # Invalid transitions fail closed (no re-open).
+    invalid = client.post(f"/api/co-creation/sessions/{session_id}/warnings/0/status", json={
+        "base_revision": 3, "state": "pendiente",
+    })
+    assert invalid.status_code == 422
+    assert invalid.json()["code"] == "invalid_input"
+    # The Author decision persists across reloads (no auto-clear, REQ-CC-13).
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}")
+    assert recovered.json()["warnings"][0]["state"] == "resuelta"
+
+
+def test_pending_question_status_route_is_author_only(client: TestClient, monkeypatch) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    # The chat's question is chat-appended to pending_questions (REQ-CC-14).
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}")
+    questions = recovered.json()["draft_payload"]["pending_questions"]
+    assert len(questions) == 1
+    assert questions[0]["state"] == "pendiente"
+    accepted = client.post(
+        f"/api/co-creation/sessions/{session_id}/pending-questions/0/status",
+        json={"base_revision": 1, "state": "aceptada_por_autor"},
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["pending_questions"][0]["state"] == "aceptada_por_autor"
+    # Accepted entries are never re-opened.
+    reopened = client.post(
+        f"/api/co-creation/sessions/{session_id}/pending-questions/0/status",
+        json={"base_revision": 2, "state": "pendiente"},
+    )
+    assert reopened.status_code == 422
+    assert reopened.json()["code"] == "invalid_input"
 
 
 # ---------------------------------------------------------------------------

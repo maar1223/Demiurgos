@@ -19,6 +19,7 @@ from co_creation_materializer import (  # noqa: E402
     DEFAULT_SOURCE_TEMPLATE,
     CoCreationMaterializer,
     MaterializationResult,
+    ValidateResult,
 )
 
 
@@ -154,3 +155,70 @@ def test_default_template_is_the_deterministic_kernel_template() -> None:
     assert "## Flujo principal" in DEFAULT_SOURCE_TEMPLATE
     assert "## Ramas y reglas" in DEFAULT_SOURCE_TEMPLATE
     assert "{world_binding}" in DEFAULT_SOURCE_TEMPLATE
+
+
+# ---------------------------------------------------------------------------
+# TW12 canvas validation — render + compile WITHOUT creating a draft
+# ---------------------------------------------------------------------------
+
+def test_validate_payload_renders_and_compiles_without_draft(tmp_path: Path) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    payload = {
+        "name": "Mi skill de importación",
+        "description": "Automatiza la importación de lore.",
+        "purpose": "Reducir el trabajo manual al importar mundos.",
+        "scope": "Importación de archivos OKF.",
+        "main_flow": "1. Subir archivo 2. Validar 3. Importar.",
+        "branches": ["Si el archivo es inválido, mostrar errores."],
+        "rules": ["No sobrescribir lore existente sin confirmación."],
+        "world": "nec",
+    }
+    result = materializer.validate_payload(payload)
+    assert isinstance(result, ValidateResult)
+    assert result.ok is True
+    assert result.issues == ()
+    assert result.compile_issues == result.issues
+    assert "## Propósito" in result.source
+    assert "- Si el archivo es inválido, mostrar errores." in result.source
+    assert "(mundo: nec)" in result.source
+    # REQ-CC-12: validation NEVER creates a library draft and never publishes.
+    assert library.list_drafts() == []
+    assert library.list_published() == []
+
+
+def test_validate_payload_surfaces_compile_issues_without_draft(tmp_path: Path) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    result = materializer.validate_payload(
+        _payload(purpose="Esto requiere authorization: granted"),
+    )
+    assert isinstance(result, ValidateResult)
+    assert result.ok is False
+    assert result.compile_issues == result.issues
+    assert any(issue.code == "authority-claim" for issue in result.issues)
+    assert library.list_drafts() == []
+    assert library.list_published() == []
+
+
+def test_render_source_joins_branch_and_rule_lists_deterministically(tmp_path: Path) -> None:
+    materializer = CoCreationMaterializer(_library(tmp_path))
+    payload = {
+        "name": "Skill de ramas",
+        "branches": ["rama A", "rama B", "rama C"],
+        "rules": ["regla 1", "regla 2"],
+    }
+    first = materializer.render_source(payload)
+    second = materializer.render_source(payload)
+    assert first == second
+    assert "- rama A\n- rama B\n- rama C" in first
+    assert "- regla 1\n- regla 2" in first
+    assert "['rama A'" not in first  # never the raw list repr
+
+
+def test_render_source_keeps_string_lists_backward_compatible(tmp_path: Path) -> None:
+    materializer = CoCreationMaterializer(_library(tmp_path))
+    source = materializer.render_source(_payload())
+    assert "Si el archivo es inválido, mostrar errores." in source
+    assert "No sobrescribir lore existente sin confirmación." in source
+    assert "- Si el archivo" not in source

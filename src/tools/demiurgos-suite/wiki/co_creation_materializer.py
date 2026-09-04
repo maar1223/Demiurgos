@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from methodology_compiler import MethodologyIssue
+from methodology_compiler import MethodologyIssue, compile_methodology
 from methodology_library import MethodologyLibrary
 
 
@@ -47,6 +47,18 @@ _TEMPLATE_KEYS = (
 )
 
 
+def _render_value(value: object) -> str:
+    """Render one template value deterministically.
+
+    Lists (``branches``/``rules`` in the TW12 canvas shape) render as a
+    Markdown bullet join — deterministic by construction. Plain strings render
+    verbatim (Fase 4 backward compatibility); ``None`` renders empty.
+    """
+    if isinstance(value, list):
+        return "\n".join(f"- {item}" for item in value)
+    return str(value) if value is not None else ""
+
+
 @dataclass(frozen=True)
 class MaterializationResult:
     draft_id: str
@@ -56,6 +68,20 @@ class MaterializationResult:
     @property
     def compile_issues(self) -> tuple[MethodologyIssue, ...]:
         """Alias used by the validation panel (REQ-CC-5)."""
+        return self.issues
+
+
+@dataclass(frozen=True)
+class ValidateResult:
+    """Pre-materialization validation: render + compile, NO draft created."""
+
+    source: str
+    issues: tuple[MethodologyIssue, ...]
+    ok: bool
+
+    @property
+    def compile_issues(self) -> tuple[MethodologyIssue, ...]:
+        """Alias used by the validation panel (REQ-CC-13)."""
         return self.issues
 
 
@@ -75,15 +101,45 @@ class CoCreationMaterializer:
 
         Uses sequential plain-string substitution (never ``str.format``) so
         arbitrary author content containing braces or ``$`` cannot break or
-        alter the template. Missing fields render as empty sections.
+        alter the template. Missing fields render as empty sections; list
+        fields (``branches``/``rules``) render as a deterministic bullet join.
         """
-        values = {key: str(payload.get(key, "") or "") for key in _TEMPLATE_KEYS}
+        values = {key: _render_value(payload.get(key)) for key in _TEMPLATE_KEYS}
         world = payload.get("world")
         values["world_binding"] = f"(mundo: {world})" if world else "(transversal)"
         source = self._template
         for key in _TEMPLATE_KEYS:
             source = source.replace("{" + key + "}", values[key])
         return source.strip() + "\n"
+
+    def validate_payload(self, payload: Mapping[str, Any]) -> ValidateResult:
+        """Render + compile a payload WITHOUT creating a library draft.
+
+        REQ-CC-5 / REQ-CC-7 / REQ-CC-12: canvas edits run through the SAME
+        deterministic template and compiler as materialization, so validation
+        and materialization can never disagree. The manifest is synthesized
+        from the payload with the same defaults the materialize route applies;
+        nothing is created and nothing is published here.
+        """
+        source = self.render_source(payload)
+        manifest = {
+            "skill_id": payload.get("skill_id") or "co-created-skill",
+            "version": payload.get("version") or "0.1.0",
+            "name": payload.get("name") or "Co-created skill",
+            "description": payload.get("description") or "",
+            "phases": list(payload.get("phases") or ()),
+            "language": payload.get("language"),
+            "taller": payload.get("taller"),
+            "talleres_compatibles": list(payload.get("talleres_compatibles") or ()),
+            "categoria_funcional": payload.get("categoria_funcional"),
+            "etiquetas": list(payload.get("etiquetas") or ()),
+        }
+        compiled = compile_methodology(manifest, source)
+        return ValidateResult(
+            source=source,
+            issues=tuple(compiled.issues),
+            ok=compiled.ok,
+        )
 
     def materialize(
         self,

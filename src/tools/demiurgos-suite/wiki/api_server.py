@@ -18,6 +18,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -78,6 +79,7 @@ from co_creation_protocol import (
     CoCreationRequest,
     CoCreationSessionState,
     StructuredError as CoCreationStructuredError,
+    canvas_payload_issues,
     continue_co_creation_session,
 )
 from co_creation_session_store import CoCreationSessionStore
@@ -2330,6 +2332,44 @@ class CoCreationActivateRequest(BaseModel):
     world: str
 
 
+class CoCreationCanvasRequest(BaseModel):
+    """TW12 canvas autosave: revision-guarded typed payload merge.
+
+    The two envelope keys (``base_revision``/``payload``) are the ONLY canvas
+    extension and stay OUTSIDE the 8-key AUTHORITY_KEYS set (REQ-CC-23).
+    """
+
+    base_revision: int
+    payload: dict[str, Any]
+
+
+class CoCreationValidateRequest(BaseModel):
+    """TW12 pure validation preview: render + compile, NO state mutation."""
+
+    payload: dict[str, Any]
+
+
+class CoCreationHistoryRestoreRequest(BaseModel):
+    """TW12 revision-guarded snapshot restore (REQ-CC-15)."""
+
+    base_revision: int
+    revision: int
+
+
+class CoCreationWarningStatusRequest(BaseModel):
+    """TW12 Author-only warning transition (REQ-CC-13)."""
+
+    base_revision: int
+    state: str
+
+
+class CoCreationPendingQuestionStatusRequest(BaseModel):
+    """TW12 Author-only pending-question transition (REQ-CC-14)."""
+
+    base_revision: int
+    state: str
+
+
 # Durable session store + Skill Madre provider seams (mirror the
 # _GUIDED_SESSIONS / _GUIDED_PROVIDER pattern). Tests replace these module
 # seams after import; the default store path is the gitignored repo-local
@@ -2411,7 +2451,12 @@ def _co_creation_session_or_error(
 
 
 def _co_creation_public_state(state: CoCreationSessionState) -> dict:
-    """Serialize only the frontend-compatible, non-provenance session view."""
+    """Serialize the frontend-compatible session view (TW12 canvas included).
+
+    Exposes the editable draft payload, the 3-state warnings list, the
+    autosave history count, and the server-injected provenance (``None`` until
+    a derived draft exists — Phase 2).
+    """
     return {
         "protocol_version": CO_CREATION_PROTOCOL_VERSION,
         "session_id": state.session_id,
@@ -2431,6 +2476,13 @@ def _co_creation_public_state(state: CoCreationSessionState) -> dict:
         "phase": state.phase,
         "draft_id": state.draft_id,
         "compile_issues": None,
+        "draft_payload": state.draft_payload,
+        "warnings": [warning.as_dict() for warning in state.warnings],
+        "history_count": len(state.draft_history),
+        "derived_from": (
+            {"skill_id": state.derived_from.skill_id, "version": state.derived_from.version}
+            if state.derived_from is not None else None
+        ),
     }
 
 
@@ -2805,6 +2857,247 @@ def activate_co_creation(session_id: str, body: CoCreationActivateRequest, reque
             "activated_at": activation.activated_at,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# TW12 canvas data layer routes (Phase 1 / PR 1) — editable structured draft
+#
+# REQ-CC-7 boundary preserved: canvas edits are Author-originated content that
+# flow through the SAME deterministic template + compiler used at
+# materialization (``validate_payload`` = render + compile, NO draft created).
+# Publish/activate remain the ONLY canonical-mutation routes; the canvas PUT
+# only mutates the session's draft payload under the revision guard. The
+# envelope extension keys (``base_revision``/``payload``) stay OUTSIDE the
+# 8-key AUTHORITY_KEYS set (REQ-CC-23).
+# ---------------------------------------------------------------------------
+
+
+def _co_creation_payload_error_response(payload_issues: list[str]) -> JSONResponse:
+    """Map canvas payload shape violations to typed API errors (REQ-CC-11).
+
+    Authority keys (flat or nested) are an envelope violation and fail closed
+    with ``INVALID_ENVELOPE`` and zero state changes; any other shape violation
+    is an ``INVALID_INPUT``.
+    """
+    if any("authority" in issue for issue in payload_issues):
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_ENVELOPE,
+            "Authority keys are not allowed in a canvas payload.", False,
+        ))
+    return _co_creation_error_response(CoCreationStructuredError(
+        CoCreationErrorCode.INVALID_INPUT,
+        "; ".join(payload_issues), False,
+    ))
+
+
+@app.put("/api/co-creation/sessions/{session_id}/canvas")
+def update_co_creation_canvas(session_id: str, body: CoCreationCanvasRequest, request: Request):
+    """Debounced Author canvas autosave (TW12 / REQ-CC-11).
+
+    Merges the typed canvas payload under the session's current revision — the
+    same guarded merge path chat turns use (bidirectional sync, one authority
+    boundary) — then validates the rendered source through the compiler
+    WITHOUT creating a library draft. Warnings reconcile keep-or-append:
+    pending warnings never auto-clear (REQ-CC-13).
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    if state.revision != body.base_revision:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    payload_issues = canvas_payload_issues(body.payload)
+    if payload_issues:
+        return _co_creation_payload_error_response(payload_issues)
+    materializer = _CO_CREATION_MATERIALIZER
+    if materializer is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.CAPABILITY_UNAVAILABLE,
+            "Skill draft validation is unavailable.", True,
+        ))
+    validated = materializer.validate_payload(body.payload)
+    merged = _CO_CREATION_SESSIONS.autosave_payload(
+        session_id, principal.id, body.base_revision, body.payload,
+        source="autosave", issues=validated.issues,
+    )
+    if merged is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    return {
+        "revision": merged.revision,
+        "issues": [issue.to_dict() for issue in validated.issues],
+        "warnings": [warning.as_dict() for warning in merged.warnings],
+        "ok": validated.ok,
+    }
+
+
+@app.post("/api/co-creation/sessions/{session_id}/validate")
+def validate_co_creation(session_id: str, body: CoCreationValidateRequest, request: Request):
+    """Pure validation preview (TW12): render + compile, NO state mutation.
+
+    Returns the compiler issues, a fresh Pendiente warning projection, and the
+    rendered source preview. The session revision, payload, and history are
+    untouched — nothing is created or published.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    payload_issues = canvas_payload_issues(body.payload)
+    if payload_issues:
+        return _co_creation_payload_error_response(payload_issues)
+    materializer = _CO_CREATION_MATERIALIZER
+    if materializer is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.CAPABILITY_UNAVAILABLE,
+            "Skill draft validation is unavailable.", True,
+        ))
+    validated = materializer.validate_payload(body.payload)
+    return {
+        "issues": [issue.to_dict() for issue in validated.issues],
+        "warnings": [
+            {
+                "code": issue.code, "message": issue.message,
+                "field": issue.field, "state": "pendiente",
+            }
+            for issue in validated.issues
+        ],
+        "source_preview": validated.source,
+        "ok": validated.ok,
+    }
+
+
+@app.get("/api/co-creation/sessions/{session_id}/history")
+def co_creation_history(session_id: str, request: Request):
+    """Immutable autosave snapshot list (REQ-CC-15).
+
+    Payloads are excluded from the list view; the restore route returns the
+    chosen snapshot's payload.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    entries = _CO_CREATION_SESSIONS.list_history(session_id, principal.id)
+    if entries is None:
+        return _co_creation_missing_session_response()
+    return {"entries": [
+        {"revision": entry.revision, "source": entry.source, "ts": entry.ts}
+        for entry in entries
+    ]}
+
+
+@app.post("/api/co-creation/sessions/{session_id}/history/restore")
+def restore_co_creation(session_id: str, body: CoCreationHistoryRestoreRequest, request: Request):
+    """Revision-guarded snapshot restore (REQ-CC-15).
+
+    The session's current revision must match ``base_revision`` and the target
+    snapshot must exist; otherwise the restore fails closed with zero
+    mutations.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    if state.revision != body.base_revision:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    restored = _CO_CREATION_SESSIONS.restore_payload(
+        session_id, principal.id, body.base_revision, body.revision,
+    )
+    if restored is None:
+        current = _CO_CREATION_SESSIONS.recover(session_id, principal.id)
+        if current is None or current.revision != body.base_revision:
+            return _co_creation_error_response(CoCreationStructuredError(
+                CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+            ))
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT,
+            "The requested history snapshot is unavailable.", False,
+        ))
+    return {"revision": restored.revision, "payload": restored.draft_payload}
+
+
+@app.post("/api/co-creation/sessions/{session_id}/warnings/{idx}/status")
+def co_creation_warning_status(
+    session_id: str, idx: int, body: CoCreationWarningStatusRequest, request: Request,
+):
+    """Author-only warning transition (REQ-CC-13).
+
+    Only ``Pendiente -> Resuelta | Aceptada_por_Autor`` is allowed; pending
+    warnings never auto-correct and validation never touches a warning's state.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    if state.revision != body.base_revision:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    updated = _CO_CREATION_SESSIONS.set_warning_status(
+        session_id, principal.id, body.base_revision, idx, body.state,
+    )
+    if updated is None:
+        current = _CO_CREATION_SESSIONS.recover(session_id, principal.id)
+        if current is None or current.revision != body.base_revision:
+            return _co_creation_error_response(CoCreationStructuredError(
+                CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+            ))
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT,
+            "The warning transition is not allowed.", False,
+        ))
+    return {"warnings": [warning.as_dict() for warning in updated.warnings]}
+
+
+@app.post("/api/co-creation/sessions/{session_id}/pending-questions/{idx}/status")
+def co_creation_pending_question_status(
+    session_id: str, idx: int, body: CoCreationPendingQuestionStatusRequest, request: Request,
+):
+    """Author-only pending-question transition (REQ-CC-14).
+
+    Entries are chat-appended and read-only on the canvas; the Author may only
+    transition ``Pendiente -> Resuelta | Aceptada_por_Autor``.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    if state.revision != body.base_revision:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    updated = _CO_CREATION_SESSIONS.set_pending_question_status(
+        session_id, principal.id, body.base_revision, idx, body.state,
+    )
+    if updated is None:
+        current = _CO_CREATION_SESSIONS.recover(session_id, principal.id)
+        if current is None or current.revision != body.base_revision:
+            return _co_creation_error_response(CoCreationStructuredError(
+                CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+            ))
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT,
+            "The pending-question transition is not allowed.", False,
+        ))
+    return {"pending_questions": updated.draft_payload.get("pending_questions", [])}
 
 
 # ---------------------------------------------------------------------------

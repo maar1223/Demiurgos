@@ -8,6 +8,7 @@ the question ceiling, and ``draft_payload`` accumulation. Mirrors the
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
@@ -27,10 +28,12 @@ from co_creation_protocol import (  # noqa: E402
 )
 import co_creation_session_store  # noqa: E402
 from co_creation_session_store import (  # noqa: E402
+    HISTORY_CAP,
     CoCreationSessionStore,
     SESSION_TTL,
     default_db_path,
 )
+from methodology_compiler import MethodologyIssue  # noqa: E402
 
 
 def _request(
@@ -259,4 +262,267 @@ def test_unknown_session_fails_closed(tmp_path: Path) -> None:
     store = CoCreationSessionStore(db)
     assert store.recover("legacy-session-1", "author-1") is None
     assert store.at_ceiling("legacy-session-1", "author-1") is False
+    store.close()
+
+
+# ---------------------------------------------------------------------------
+# TW12 canvas data layer — autosave / history / warnings / pending questions
+# ---------------------------------------------------------------------------
+
+def test_autosave_payload_merges_and_snapshots_history(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1")
+    saved = store.autosave_payload("s-1", "author-1", 0, {"purpose": "automatizar importes"})
+    assert saved is not None
+    assert saved.revision == 1
+    assert saved.draft_payload["purpose"] == "automatizar importes"
+    assert len(saved.draft_history) == 1
+    entry = saved.draft_history[0]
+    assert entry.revision == 1
+    assert entry.source == "autosave"
+    assert entry.payload == {"purpose": "automatizar importes"}
+    assert entry.ts
+    recovered = store.recover("s-1", "author-1")
+    assert recovered is not None
+    assert len(recovered.draft_history) == 1
+    assert recovered.draft_history[0].payload == {"purpose": "automatizar importes"}
+    store.close()
+
+
+def test_autosave_payload_caps_history_at_50_evicting_oldest(tmp_path: Path) -> None:
+    assert HISTORY_CAP == 50
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1")
+    state = None
+    for revision in range(51):
+        state = store.autosave_payload(
+            "s-1", "author-1", revision, {"purpose": f"edicion-{revision}"},
+        )
+        assert state is not None
+    assert state is not None
+    assert len(state.draft_history) == HISTORY_CAP
+    # The oldest snapshot (revision 1) is evicted; the newest is present.
+    revisions = [entry.revision for entry in state.draft_history]
+    assert revisions[0] == 2
+    assert revisions[-1] == 51
+    assert state.draft_payload["purpose"] == "edicion-50"
+    store.close()
+
+
+def test_autosave_payload_is_revision_guarded_and_principal_bound(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1")
+    assert store.autosave_payload("s-1", "author-1", 0, {"purpose": "x"}) is not None
+    # A stale base revision fails closed.
+    assert store.autosave_payload("s-1", "author-1", 0, {"scope": "stale"}) is None
+    # A foreign principal fails closed.
+    assert store.autosave_payload("s-1", "other", 1, {"scope": "x"}) is None
+    recovered = store.recover("s-1", "author-1")
+    assert recovered is not None
+    assert recovered.draft_payload == {"purpose": "x"}
+    assert len(recovered.draft_history) == 1
+    store.close()
+
+
+def test_autosave_payload_never_merges_chat_owned_pending_questions(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1")
+    store.append_pending_question("s-1", "author-1", 0, "¿Cuál es el propósito?")
+    # A canvas autosave carrying pending_questions must NOT overwrite the
+    # chat-appended entry (REQ-CC-14: the chat owns the list).
+    saved = store.autosave_payload("s-1", "author-1", 1, {
+        "purpose": "automatizar",
+        "pending_questions": [{"text": "forjada", "state": "resuelta"}],
+    })
+    assert saved is not None
+    assert saved.draft_payload["pending_questions"] == [
+        {"text": "¿Cuál es el propósito?", "state": "pendiente"},
+    ]
+    assert saved.draft_payload["purpose"] == "automatizar"
+    store.close()
+
+
+def test_list_history_returns_immutable_snapshots(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1")
+    store.autosave_payload("s-1", "author-1", 0, {"purpose": "a"})
+    store.autosave_payload("s-1", "author-1", 1, {"purpose": "b"})
+    entries = store.list_history("s-1", "author-1")
+    assert entries is not None
+    assert [entry.revision for entry in entries] == [1, 2]
+    assert [entry.source for entry in entries] == ["autosave", "autosave"]
+    # Mutating the returned list never touches the store.
+    entries.pop()
+    recovered = store.recover("s-1", "author-1")
+    assert recovered is not None and len(recovered.draft_history) == 2
+    # An unknown session fails closed.
+    assert store.list_history("ghost", "author-1") is None
+    store.close()
+
+
+def test_restore_payload_is_revision_guarded_and_restores_snapshot(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1")
+    store.autosave_payload("s-1", "author-1", 0, {"purpose": "v1"})
+    store.autosave_payload("s-1", "author-1", 1, {"purpose": "v2", "scope": "s2"})
+    # A stale base revision fails closed (REQ-CC-15 revision guard).
+    assert store.restore_payload("s-1", "author-1", 1, 1) is None
+    restored = store.restore_payload("s-1", "author-1", 2, 1)
+    assert restored is not None
+    assert restored.revision == 3
+    assert restored.draft_payload == {"purpose": "v1"}
+    # The restore itself is recorded as an author-originated snapshot.
+    assert restored.draft_history[-1].source == "author"
+    assert restored.draft_history[-1].payload == {"purpose": "v1"}
+    # An unknown target snapshot fails closed.
+    assert store.restore_payload("s-1", "author-1", 3, 99) is None
+    # A foreign principal fails closed.
+    assert store.restore_payload("s-1", "other", 3, 1) is None
+    store.close()
+
+
+def test_set_warning_status_transitions_and_never_auto_clears(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1")
+    issue = MethodologyIssue("authority-claim", "Source contains an authority marker.", "source")
+    saved = store.autosave_payload("s-1", "author-1", 0, {"purpose": "x"}, issues=[issue])
+    assert saved is not None
+    assert len(saved.warnings) == 1
+    assert saved.warnings[0].state == "pendiente"
+    # The Author transitions Pendiente -> Resuelta.
+    resolved = store.set_warning_status("s-1", "author-1", 1, 0, "resuelta")
+    assert resolved is not None
+    assert resolved.warnings[0].state == "resuelta"
+    # REQ-CC-13: pending warnings NEVER auto-clear and Author decisions are
+    # never undone — even when validation reports ZERO issues afterwards.
+    after = store.autosave_payload("s-1", "author-1", 2, {"purpose": "limpio"}, issues=[])
+    assert after is not None
+    assert after.warnings[0].state == "resuelta"
+    # Invalid transitions fail closed: no re-open, no invalid state, bad idx,
+    # stale revision.
+    assert store.set_warning_status("s-1", "author-1", 3, 0, "pendiente") is None
+    assert store.set_warning_status("s-1", "author-1", 3, 0, "nonsense") is None
+    assert store.set_warning_status("s-1", "author-1", 3, 9, "resuelta") is None
+    assert store.set_warning_status("s-1", "author-1", 1, 0, "resuelta") is None
+    store.close()
+
+
+def test_append_pending_question_appends_pendiente_and_dedups_consecutive(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1")
+    first = store.append_pending_question("s-1", "author-1", 0, "¿Cuál es el propósito?")
+    assert first is not None
+    assert first.revision == 1
+    assert first.draft_payload["pending_questions"] == [
+        {"text": "¿Cuál es el propósito?", "state": "pendiente"},
+    ]
+    # A consecutive duplicate is not re-appended.
+    again = store.append_pending_question("s-1", "author-1", 1, "¿Cuál es el propósito?")
+    assert again is not None
+    assert len(again.draft_payload["pending_questions"]) == 1
+    second = store.append_pending_question("s-1", "author-1", 2, "¿Qué alcance tiene?")
+    assert second is not None
+    assert len(second.draft_payload["pending_questions"]) == 2
+    assert second.draft_payload["pending_questions"][1]["state"] == "pendiente"
+    # Invalid inputs fail closed.
+    assert store.append_pending_question("s-1", "author-1", 3, "  ") is None
+    assert store.append_pending_question("s-1", "other", 3, "x") is None
+    store.close()
+
+
+def test_set_pending_question_status_author_only_transitions(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    store = CoCreationSessionStore(db)
+    store.create("s-1", "author-1", "author-1")
+    store.append_pending_question("s-1", "author-1", 0, "¿Cuál es el propósito?")
+    # Pendiente -> Aceptada_por_Autor is allowed (never re-asked, REQ-CC-14).
+    accepted = store.set_pending_question_status("s-1", "author-1", 1, 0, "aceptada_por_autor")
+    assert accepted is not None
+    assert accepted.draft_payload["pending_questions"][0]["state"] == "aceptada_por_autor"
+    # A second entry can still go Pendiente -> Resuelta.
+    store.append_pending_question("s-1", "author-1", 2, "¿Qué alcance tiene?")
+    resolved = store.set_pending_question_status("s-1", "author-1", 3, 1, "resuelta")
+    assert resolved is not None
+    assert resolved.draft_payload["pending_questions"][1]["state"] == "resuelta"
+    # Non-Pendiente entries cannot be re-opened; bad idx/state/stale fail closed.
+    assert store.set_pending_question_status("s-1", "author-1", 4, 0, "pendiente") is None
+    assert store.set_pending_question_status("s-1", "author-1", 4, 9, "resuelta") is None
+    assert store.set_pending_question_status("s-1", "author-1", 4, 0, "nonsense") is None
+    assert store.set_pending_question_status("s-1", "author-1", 1, 0, "resuelta") is None
+    store.close()
+
+
+def test_canvas_state_survives_restart(tmp_path: Path) -> None:
+    db = tmp_path / "sessions.sqlite3"
+    first = CoCreationSessionStore(db)
+    first.create("s-1", "author-1", "author-1")
+    first.autosave_payload("s-1", "author-1", 0, {"purpose": "sobrevive"})
+    first.close()
+
+    restarted = CoCreationSessionStore(db)
+    recovered = restarted.recover("s-1", "author-1")
+    assert recovered is not None
+    assert len(recovered.draft_history) == 1
+    assert recovered.draft_history[0].payload == {"purpose": "sobrevive"}
+    assert recovered.warnings == []
+    assert recovered.derived_from is None
+    restarted.close()
+
+
+def test_additive_columns_migrate_existing_database(tmp_path: Path) -> None:
+    """A Fase 4 database without the TW12 columns opens and keeps working."""
+    db = tmp_path / "sessions.sqlite3"
+    legacy = sqlite3.connect(str(db))
+    legacy.execute("""
+        CREATE TABLE co_creation_sessions (
+            session_id TEXT PRIMARY KEY,
+            principal_id TEXT NOT NULL,
+            world TEXT,
+            revision INTEGER NOT NULL DEFAULT 0,
+            authorization_binding TEXT NOT NULL,
+            milestone TEXT NOT NULL DEFAULT 'proposito',
+            milestone_states_json TEXT NOT NULL,
+            question_count INTEGER NOT NULL DEFAULT 0,
+            draft_payload_json TEXT NOT NULL DEFAULT '{}',
+            messages_json TEXT NOT NULL DEFAULT '[]',
+            pending_question TEXT,
+            pending_options_json TEXT NOT NULL DEFAULT '[]',
+            draft_id TEXT,
+            phase TEXT NOT NULL DEFAULT 'conversation',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            revalidation_required INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    now = datetime.now(timezone.utc).isoformat()
+    legacy.execute(
+        "INSERT INTO co_creation_sessions ("
+        " session_id, principal_id, world, revision, authorization_binding,"
+        " milestone, milestone_states_json, question_count, draft_payload_json,"
+        " messages_json, created_at, updated_at)"
+        " VALUES (?, ?, NULL, 0, ?, 'proposito', '[]', 0, ?, '[]', ?, ?)",
+        ("legacy-1", "author-1", "author-1", '{"purpose": "viejo"}', now, now),
+    )
+    legacy.commit()
+    legacy.close()
+
+    store = CoCreationSessionStore(db)
+    recovered = store.recover("legacy-1", "author-1")
+    assert recovered is not None
+    assert recovered.draft_payload == {"purpose": "viejo"}
+    assert recovered.draft_history == []
+    assert recovered.warnings == []
+    assert recovered.derived_from is None
+    # The migrated row accepts TW12 mutations (new columns are writable).
+    saved = store.autosave_payload("legacy-1", "author-1", 0, {"purpose": "nuevo"})
+    assert saved is not None
+    assert len(saved.draft_history) == 1
     store.close()

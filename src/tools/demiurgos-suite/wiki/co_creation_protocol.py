@@ -47,6 +47,77 @@ AUTHORITY_KEYS = frozenset({
 
 _MILESTONE_STATES = frozenset({"completado", "actual", "pendiente"})
 
+# Canvas-sync envelope extension keys (REQ-CC-23). The canvas PUT request body
+# adds exactly these two keys at the envelope level; both stay OUTSIDE the
+# 8-key AUTHORITY_KEYS set so REQ-CC-7 envelope validation passes by
+# construction. Never add an authority-key-adjacent name here.
+CANVAS_SYNC_ENVELOPE_KEYS = frozenset({"base_revision", "payload"})
+
+# The typed, Author-editable structured draft sections exposed by the canvas
+# (REQ-CC-11). ``branches``/``rules``/``pending_questions`` are lists; the rest
+# are plain strings. ``pending_questions`` is chat-owned (REQ-CC-14): the
+# canvas may display it but never authors it.
+CANVAS_PAYLOAD_KEYS = frozenset({
+    "name",
+    "description",
+    "purpose",
+    "scope",
+    "main_flow",
+    "branches",
+    "rules",
+    "pending_questions",
+    "world",
+})
+
+
+class WarningState(StrEnum):
+    """Three-state draft-review warning lifecycle (REQ-CC-13).
+
+    Pending warnings NEVER auto-correct; only the Author transitions out of
+    ``PENDIENTE`` (``RESUELTA`` or ``ACEPTADA_POR_AUTOR``).
+    """
+
+    PENDIENTE = "pendiente"
+    RESUELTA = "resuelta"
+    ACEPTADA_POR_AUTOR = "aceptada_por_autor"
+
+
+class HistorySource(StrEnum):
+    """Origin of an immutable draft-history snapshot (REQ-CC-15)."""
+
+    AUTHOR = "author"
+    CHAT = "chat"
+    AUTOSAVE = "autosave"
+
+
+def canvas_payload_issues(payload: Mapping[str, Any]) -> list[str]:
+    """Validate a canvas payload against the typed editable-key contract.
+
+    Returns a list of human-readable issue strings; an empty list means the
+    payload is admissible. Authority keys (flat or nested, depth <= 4) are an
+    envelope violation (REQ-CC-7 / REQ-CC-23); unknown keys and non-list
+    ``branches``/``rules`` are shape violations (REQ-CC-11).
+    ``pending_questions`` entries may be plain strings or ``{text, state}``
+    objects (the chat-appended wire shape) — the canvas never authors them.
+    """
+    issues: list[str] = []
+    if reject_authority_keys(payload):
+        issues.append("authority keys are not allowed in a canvas payload")
+    for key in payload:
+        if key not in CANVAS_PAYLOAD_KEYS:
+            issues.append(f"unknown canvas payload key {key!r}")
+    for key in ("branches", "rules"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            issues.append(f"{key} must be a list of strings")
+    for key in CANVAS_PAYLOAD_KEYS - {"branches", "rules", "pending_questions"}:
+        value = payload.get(key)
+        if value is not None and not isinstance(value, str):
+            issues.append(f"{key} must be a string")
+    return issues
+
 
 def reject_authority_keys(value: object, depth: int = 0) -> bool:
     """Return True when any authority key is found (flat or nested).
@@ -343,6 +414,50 @@ class CoCreationMessage:
     revision: int
 
 
+@dataclass(frozen=True)
+class DerivedFrom:
+    """Server-injected parent identity for a derived draft (TW14).
+
+    Read from the PUBLISHED record by the server; the client never supplies
+    it. Phase 2 populates it — Phase 1 stores and exposes the (None) field.
+    """
+
+    skill_id: str
+    version: str
+
+
+@dataclass
+class DraftHistoryEntry:
+    """One immutable autosave snapshot (REQ-CC-15).
+
+    ``payload`` is the full draft payload AT the snapshot's revision; the list
+    is append-only and capped (~50 per session, oldest evicted).
+    """
+
+    revision: int
+    payload: dict[str, Any]
+    source: Literal["author", "chat", "autosave"]
+    ts: str  # ISO 8601
+
+
+@dataclass
+class DraftWarning:
+    """A validation-panel warning with a 3-state lifecycle (REQ-CC-13)."""
+
+    code: str
+    message: str
+    field: str | None
+    state: Literal["pendiente", "resuelta", "aceptada_por_autor"]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "message": self.message,
+            "field": self.field,
+            "state": self.state,
+        }
+
+
 @dataclass
 class CoCreationSessionState:
     session_id: str
@@ -359,6 +474,11 @@ class CoCreationSessionState:
     pending_options: tuple[str, ...] = ()
     draft_id: str | None = None
     phase: str = "conversation"
+    # TW12 canvas data layer (Phase 1): immutable autosave history, 3-state
+    # warnings, and the (server-injected, Phase 2) provenance field.
+    draft_history: list[DraftHistoryEntry] = field(default_factory=list)
+    warnings: list[DraftWarning] = field(default_factory=list)
+    derived_from: DerivedFrom | None = None
 
 
 class Provider(Protocol):

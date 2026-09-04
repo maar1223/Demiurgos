@@ -16,21 +16,37 @@ import threading
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from co_creation_protocol import (
     CoCreationMessage,
     CoCreationRequest,
     CoCreationResponse,
     CoCreationSessionState,
+    DerivedFrom,
+    DraftHistoryEntry,
+    DraftWarning,
     MilestoneState,
     QUESTION_CEILING,
+    HistorySource,
     initial_milestone_states,
     states_for_milestone,
 )
+from methodology_compiler import MethodologyIssue
 
 
 SESSION_TTL = timedelta(days=30)
+
+# Immutable autosave snapshot cap per session (REQ-CC-15: ~50, oldest evicted).
+HISTORY_CAP = 50
+
+# Author-only warning/pending-question transitions (REQ-CC-13 / REQ-CC-14):
+# Pendiente -> Resuelta | Aceptada_por_Autor. Nothing else is allowed; pending
+# warnings never auto-correct and only the Author moves them out of Pendiente.
+_AUTHOR_TRANSITIONS = frozenset({
+    ("pendiente", "resuelta"),
+    ("pendiente", "aceptada_por_autor"),
+})
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS co_creation_sessions (
@@ -50,15 +66,62 @@ CREATE TABLE IF NOT EXISTS co_creation_sessions (
     phase TEXT NOT NULL DEFAULT 'conversation',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    revalidation_required INTEGER NOT NULL DEFAULT 0
+    revalidation_required INTEGER NOT NULL DEFAULT 0,
+    draft_history_json TEXT NOT NULL DEFAULT '[]',
+    warnings_json TEXT NOT NULL DEFAULT '[]',
+    derived_from_json TEXT
 )
 """
+
+# Additive TW12 columns (design: no data migration; nullable/empty default).
+_ADDITIVE_COLUMNS = (
+    ("draft_history_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("warnings_json", "TEXT NOT NULL DEFAULT '[]'"),
+    ("derived_from_json", "TEXT"),
+)
 
 _PHASES = frozenset({"conversation", "materialized", "review", "complete"})
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _append_pending_question(draft_payload: dict[str, Any], text: str) -> None:
+    """Chat-owned pending-question append (REQ-CC-14).
+
+    The question enters with state ``pendiente``; consecutive duplicates are
+    not re-appended. Entries may already exist as legacy plain strings.
+    """
+    questions = draft_payload.setdefault("pending_questions", [])
+    if questions:
+        last = questions[-1]
+        if (isinstance(last, Mapping) and last.get("text") == text) or last == text:
+            return
+    questions.append({"text": text, "state": "pendiente"})
+
+
+def _reconcile_warnings(
+    warnings: list[DraftWarning],
+    issues: Sequence[MethodologyIssue],
+) -> None:
+    """Keep-or-append warning reconciliation (REQ-CC-13).
+
+    A warning is identified by ``(code, field)``. Existing warnings keep their
+    state — pending warnings NEVER auto-correct and Author decisions are never
+    undone — while issues without a matching warning append a new Pendiente
+    entry. Stale warnings (issue no longer present) remain untouched.
+    """
+    known = {(warning.code, warning.field) for warning in warnings}
+    for issue in issues:
+        key = (issue.code, issue.field)
+        if key in known:
+            continue
+        warnings.append(DraftWarning(
+            code=issue.code, message=issue.message, field=issue.field,
+            state="pendiente",
+        ))
+        known.add(key)
 
 
 def default_db_path() -> Path:
@@ -88,10 +151,29 @@ class CoCreationSessionStore:
             self._db_path, check_same_thread=False,
         )
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute(_SCHEMA)
-        self._conn.commit()
+        self._ensure_schema()
         self._in_process: set[str] = set()
         self.discard_expired()
+
+    def _ensure_schema(self) -> None:
+        """Create the table and apply additive TW12 columns idempotently.
+
+        ``CREATE TABLE IF NOT EXISTS`` never alters an existing table, so a
+        Fase 4 database file gets the new columns via guarded ``ALTER TABLE``
+        (additive, nullable/empty default — design: no data migration).
+        """
+        self._conn.execute(_SCHEMA)
+        existing = {
+            row[1] for row in self._conn.execute(
+                "PRAGMA table_info(co_creation_sessions)"
+            )
+        }
+        for name, ddl in _ADDITIVE_COLUMNS:
+            if name not in existing:
+                self._conn.execute(
+                    f"ALTER TABLE co_creation_sessions ADD COLUMN {name} {ddl}"
+                )
+        self._conn.commit()
 
     # -- public lifecycle ---------------------------------------------------
 
@@ -165,6 +247,10 @@ class CoCreationSessionStore:
             next_state.pending_question = response.question
             next_state.pending_options = response.options
             next_state.question_count += 1
+            if response.question:
+                # REQ-CC-14: the chat owns ``pending_questions`` — every asked
+                # question lands on the canvas read-only list (state Pendiente).
+                _append_pending_question(next_state.draft_payload, response.question)
             if response.milestone:
                 next_state.milestone = response.milestone
                 next_state.milestone_states = states_for_milestone(response.milestone)
@@ -191,6 +277,222 @@ class CoCreationSessionStore:
             next_state = deepcopy(state)
             next_state.revision += 1
             next_state.draft_payload.update(dict(payload))
+            self._write_state(next_state)
+            self._in_process.add(session_id)
+            return deepcopy(next_state)
+
+    # -- TW12 canvas data layer --------------------------------------------
+
+    def autosave_payload(
+        self,
+        session_id: str,
+        authorization_binding: str,
+        base_revision: int,
+        payload: Mapping[str, Any],
+        source: str = "autosave",
+        issues: Sequence[MethodologyIssue] | None = None,
+    ) -> CoCreationSessionState | None:
+        """Debounced canvas autosave: revision-guarded merge + snapshot.
+
+        REQ-CC-11/REQ-CC-15: merges the Author's canvas edit under the
+        session's current revision (the same guarded path chat turns use —
+        bidirectional sync, one authority boundary), then appends an immutable
+        ``{revision, payload, source, ts}`` snapshot to ``draft_history``
+        (cap ``HISTORY_CAP``, oldest evicted). ``pending_questions`` is
+        chat-owned (REQ-CC-14) and is never merged here. When ``issues`` is
+        provided (the post-merge validation projection), warnings reconcile
+        keep-or-append: pending warnings never auto-correct (REQ-CC-13).
+        """
+        if source not in ("author", "chat", "autosave"):
+            return None
+        with self._lock:
+            row = self._read_row(session_id, authorization_binding)
+            if row is None:
+                return None
+            state = self._deserialize_row(row)
+            if state.revision != base_revision:
+                return None
+            next_state = deepcopy(state)
+            next_state.revision += 1
+            merged = {
+                key: deepcopy(value)
+                for key, value in payload.items()
+                if key != "pending_questions"
+            }
+            next_state.draft_payload.update(merged)
+            if issues is not None:
+                _reconcile_warnings(next_state.warnings, issues)
+            next_state.draft_history.append(DraftHistoryEntry(
+                revision=next_state.revision,
+                payload=deepcopy(next_state.draft_payload),
+                source=source,  # type: ignore[arg-type]
+                ts=_utcnow().isoformat(),
+            ))
+            if len(next_state.draft_history) > HISTORY_CAP:
+                del next_state.draft_history[: len(next_state.draft_history) - HISTORY_CAP]
+            self._write_state(next_state)
+            self._in_process.add(session_id)
+            return deepcopy(next_state)
+
+    def list_history(
+        self,
+        session_id: str,
+        authorization_binding: str,
+    ) -> list[DraftHistoryEntry] | None:
+        """Immutable autosave snapshot list (REQ-CC-15)."""
+        with self._lock:
+            row = self._read_row(session_id, authorization_binding)
+            if row is None:
+                return None
+            return deepcopy(self._deserialize_row(row).draft_history)
+
+    def restore_payload(
+        self,
+        session_id: str,
+        authorization_binding: str,
+        base_revision: int,
+        target_revision: int,
+    ) -> CoCreationSessionState | None:
+        """Restore a persisted snapshot, revision-guarded (REQ-CC-15).
+
+        The session's current revision must equal ``base_revision`` and the
+        target snapshot must exist in ``draft_history``; otherwise ``None``
+        (fail closed, zero mutations). On success the payload is replaced and
+        a new author-originated snapshot records the restore.
+        """
+        with self._lock:
+            row = self._read_row(session_id, authorization_binding)
+            if row is None:
+                return None
+            state = self._deserialize_row(row)
+            if state.revision != base_revision:
+                return None
+            snapshot = next(
+                (entry for entry in state.draft_history
+                 if entry.revision == target_revision),
+                None,
+            )
+            if snapshot is None:
+                return None
+            next_state = deepcopy(state)
+            next_state.revision += 1
+            next_state.draft_payload = deepcopy(snapshot.payload)
+            next_state.draft_history.append(DraftHistoryEntry(
+                revision=next_state.revision,
+                payload=deepcopy(next_state.draft_payload),
+                source=HistorySource.AUTHOR.value,
+                ts=_utcnow().isoformat(),
+            ))
+            if len(next_state.draft_history) > HISTORY_CAP:
+                del next_state.draft_history[: len(next_state.draft_history) - HISTORY_CAP]
+            self._write_state(next_state)
+            self._in_process.add(session_id)
+            return deepcopy(next_state)
+
+    def set_warning_status(
+        self,
+        session_id: str,
+        authorization_binding: str,
+        base_revision: int,
+        idx: int,
+        state: str,
+    ) -> CoCreationSessionState | None:
+        """Author-only warning transition (REQ-CC-13).
+
+        Only ``Pendiente -> Resuelta | Aceptada_por_Autor`` is allowed. Any
+        other transition, a stale revision, an out-of-range index, or an
+        invalid state fails closed with zero mutations. Warnings never
+        auto-clear: validation reconciles issues keep-or-append and never
+        touches an existing warning's state.
+        """
+        with self._lock:
+            row = self._read_row(session_id, authorization_binding)
+            if row is None:
+                return None
+            state_obj = self._deserialize_row(row)
+            if state_obj.revision != base_revision:
+                return None
+            if state not in ("pendiente", "resuelta", "aceptada_por_autor"):
+                return None
+            if idx < 0 or idx >= len(state_obj.warnings):
+                return None
+            current = state_obj.warnings[idx].state
+            if (current, state) not in _AUTHOR_TRANSITIONS:
+                return None
+            next_state = deepcopy(state_obj)
+            next_state.revision += 1
+            next_state.warnings[idx].state = state
+            self._write_state(next_state)
+            self._in_process.add(session_id)
+            return deepcopy(next_state)
+
+    def append_pending_question(
+        self,
+        session_id: str,
+        authorization_binding: str,
+        base_revision: int,
+        text: str,
+    ) -> CoCreationSessionState | None:
+        """Chat-only append to ``pending_questions`` (REQ-CC-14).
+
+        The question enters with state ``pendiente``; consecutive duplicate
+        texts are not re-appended. The Author never edits or deletes entries
+        directly — they only transition state via
+        ``set_pending_question_status``.
+        """
+        if not isinstance(text, str) or not text.strip():
+            return None
+        with self._lock:
+            row = self._read_row(session_id, authorization_binding)
+            if row is None:
+                return None
+            state = self._deserialize_row(row)
+            if state.revision != base_revision:
+                return None
+            next_state = deepcopy(state)
+            next_state.revision += 1
+            _append_pending_question(next_state.draft_payload, text)
+            self._write_state(next_state)
+            self._in_process.add(session_id)
+            return deepcopy(next_state)
+
+    def set_pending_question_status(
+        self,
+        session_id: str,
+        authorization_binding: str,
+        base_revision: int,
+        idx: int,
+        state: str,
+    ) -> CoCreationSessionState | None:
+        """Author-only pending-question transition (REQ-CC-14).
+
+        Only ``Pendiente -> Resuelta | Aceptada_por_Autor`` is allowed; the
+        chat never changes state. A stale revision, an out-of-range index, an
+        invalid state, or a non-Pendiente entry fails closed.
+        """
+        with self._lock:
+            row = self._read_row(session_id, authorization_binding)
+            if row is None:
+                return None
+            state_obj = self._deserialize_row(row)
+            if state_obj.revision != base_revision:
+                return None
+            if state not in ("pendiente", "resuelta", "aceptada_por_autor"):
+                return None
+            questions = state_obj.draft_payload.get("pending_questions")
+            if not isinstance(questions, list):
+                return None
+            if idx < 0 or idx >= len(questions):
+                return None
+            entry = questions[idx]
+            if not isinstance(entry, Mapping) or entry.get("state") != "pendiente":
+                return None
+            if (entry["state"], state) not in _AUTHOR_TRANSITIONS:
+                return None
+            next_state = deepcopy(state_obj)
+            next_state.revision += 1
+            next_questions = next_state.draft_payload.get("pending_questions")
+            next_questions[idx] = {**next_questions[idx], "state": state}
             self._write_state(next_state)
             self._in_process.add(session_id)
             return deepcopy(next_state)
@@ -294,6 +596,40 @@ class CoCreationSessionStore:
         pending_options_json = json.dumps(
             list(state.pending_options), ensure_ascii=False, separators=(",", ":"),
         )
+        draft_history_json = json.dumps(
+            [
+                {
+                    "revision": entry.revision,
+                    "payload": entry.payload,
+                    "source": entry.source,
+                    "ts": entry.ts,
+                }
+                for entry in state.draft_history
+            ],
+            ensure_ascii=False, separators=(",", ":"),
+        )
+        warnings_json = json.dumps(
+            [
+                {
+                    "code": warning.code,
+                    "message": warning.message,
+                    "field": warning.field,
+                    "state": warning.state,
+                }
+                for warning in state.warnings
+            ],
+            ensure_ascii=False, separators=(",", ":"),
+        )
+        derived_from_json = (
+            json.dumps(
+                {
+                    "skill_id": state.derived_from.skill_id,
+                    "version": state.derived_from.version,
+                },
+                ensure_ascii=False, separators=(",", ":"),
+            )
+            if state.derived_from is not None else None
+        )
         if revalidation_required is None:
             current = self._conn.execute(
                 "SELECT revalidation_required FROM co_creation_sessions WHERE session_id = ?",
@@ -308,8 +644,9 @@ class CoCreationSessionStore:
                 session_id, principal_id, world, revision, authorization_binding,
                 milestone, milestone_states_json, question_count, draft_payload_json,
                 messages_json, pending_question, pending_options_json, draft_id,
-                phase, created_at, updated_at, revalidation_required
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                phase, created_at, updated_at, revalidation_required,
+                draft_history_json, warnings_json, derived_from_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(session_id) DO UPDATE SET
                 principal_id = excluded.principal_id,
                 world = excluded.world,
@@ -325,7 +662,10 @@ class CoCreationSessionStore:
                 draft_id = excluded.draft_id,
                 phase = excluded.phase,
                 updated_at = excluded.updated_at,
-                revalidation_required = excluded.revalidation_required
+                revalidation_required = excluded.revalidation_required,
+                draft_history_json = excluded.draft_history_json,
+                warnings_json = excluded.warnings_json,
+                derived_from_json = excluded.derived_from_json
             """,
             (
                 state.session_id, state.principal_id, state.world, state.revision,
@@ -333,6 +673,7 @@ class CoCreationSessionStore:
                 state.question_count, draft_payload_json, messages_json,
                 state.pending_question, pending_options_json, state.draft_id,
                 state.phase, now, now, flag,
+                draft_history_json, warnings_json, derived_from_json,
             ),
         )
         self._conn.commit()
@@ -346,6 +687,29 @@ class CoCreationSessionStore:
             MilestoneState(item["name"], item["state"])
             for item in json.loads(row["milestone_states_json"])
         )
+        draft_history = [
+            DraftHistoryEntry(
+                revision=item["revision"],
+                payload=dict(item["payload"]),
+                source=item["source"],  # type: ignore[arg-type]
+                ts=item["ts"],
+            )
+            for item in json.loads(row["draft_history_json"] or "[]")
+        ]
+        warnings = [
+            DraftWarning(
+                code=item["code"],
+                message=item["message"],
+                field=item.get("field"),
+                state=item["state"],  # type: ignore[arg-type]
+            )
+            for item in json.loads(row["warnings_json"] or "[]")
+        ]
+        derived_from: DerivedFrom | None = None
+        if row["derived_from_json"]:
+            raw = json.loads(row["derived_from_json"])
+            if isinstance(raw, dict) and raw.get("skill_id") and raw.get("version"):
+                derived_from = DerivedFrom(skill_id=raw["skill_id"], version=raw["version"])
         return CoCreationSessionState(
             session_id=row["session_id"],
             principal_id=row["principal_id"],
@@ -361,4 +725,7 @@ class CoCreationSessionStore:
             pending_options=tuple(json.loads(row["pending_options_json"])),
             draft_id=row["draft_id"],
             phase=row["phase"],
+            draft_history=draft_history,
+            warnings=warnings,
+            derived_from=derived_from,
         )
