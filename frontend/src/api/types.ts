@@ -1582,6 +1582,43 @@ export interface MethodologyInventoryItem {
   parent_version?: string | null;
 }
 
+/** Integrity verdict of a `.zip` methodology package (REQ-IMP-3): the server
+ *  re-inspects each quarantined package (checksum + official signature +
+ *  compiler) and ships the verdict on every quarantine record. */
+export interface PackageVerdict {
+  ok: boolean;
+  checksum_valid: boolean;
+  signature_present: boolean;
+  signature_valid: boolean | null;
+  issues: string[];
+}
+
+/** One quarantined import (GET /api/methodologies/quarantine, REQ-IMP-3).
+ *  `draft_id` is null until the Author trusts the package (REQ-IMP-4). */
+export interface QuarantineRecord {
+  package_id: string;
+  verdict: PackageVerdict;
+  trusted: boolean;
+  clasificacion: string | null;
+  trust_attributes: string[];
+  draft_id: string | null;
+}
+
+/** Response of POST /api/methodologies/import — the package lands in
+ *  quarantine with its integrity verdict; the library is never mutated by
+ *  import (REQ-IMP-2). */
+export interface ImportResult extends QuarantineRecord {}
+
+/** Response of POST /api/methodologies/quarantine/{package_id}/trust — the
+ *  promoted draft id when the Author trusts a package (REQ-IMP-4). */
+export interface TrustQuarantineResult {
+  package_id: string;
+  trusted: boolean;
+  draft_id: string | null;
+  clasificacion: string | null;
+  trust_attributes: string[];
+}
+
 /** Input for creating a methodology draft. */
 export interface MethodologyDraftInput {
   skill_id: string;

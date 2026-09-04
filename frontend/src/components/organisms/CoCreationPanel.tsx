@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { UseCoCreationReturn } from "@/hooks/useCoCreation";
 import type {
   CoCreationMilestone,
+  DraftPayload,
   PendingQuestion,
   PublishedMethodologyDetail,
   WarningState,
@@ -77,6 +78,57 @@ function phaseLabel(phase: string): string {
 
 function shortId(id: string): string {
   return id.length > 14 ? `${id.slice(0, 14)}…` : id;
+}
+
+/** TW16 review projection (REQ-TW16-1): the review block renders ONLY from
+ *  `session.draft_payload` (server-authoritative, refresh-safe) — never from
+ *  local component state. The typed `DraftPayload` is a projection of the
+ *  wire dict: at materialization the server folds the Author-confirmed
+ *  metadata (`taller`/`etiquetas`/`skill_id`/`version`) and the manifest
+ *  compatibility list (`talleres_compatibles`) into the payload, so those
+ *  keys are read defensively here. Render-only — no new envelope keys, no
+ *  authority-adjacent writes (REQ-CC-7/22 safe). */
+type ReviewPayload = DraftPayload & {
+  taller?: string | null;
+  etiquetas?: string[] | null;
+  talleres_compatibles?: string[] | null;
+  skill_id?: string | null;
+  version?: string | null;
+};
+
+/** TW16 attribution (REQ-TW16-3): the review projection lists the coarse
+ *  `DraftPayload` section keys. A section the Author touched in the canvas
+ *  reads "decidido"; untouched sections read "propuesto". Kernel invariants
+ *  (permisos/dependencias) always read "exigido". */
+const REVIEW_SECTIONS: { key: keyof ReviewPayload; label: string }[] = [
+  { key: "name", label: "Nombre" },
+  { key: "description", label: "Descripción" },
+  { key: "purpose", label: "Propósito" },
+  { key: "scope", label: "Alcance" },
+  { key: "main_flow", label: "Flujo principal" },
+  { key: "branches", label: "Ramas" },
+  { key: "rules", label: "Reglas" },
+  { key: "taller", label: "Taller" },
+  { key: "etiquetas", label: "Etiquetas" },
+];
+
+/** Full legend phrases (canonical copy — the per-row badges show the short
+ *  "Decidido"/"Propuesto"/"Exigido" forms). */
+const ATTRIBUTION_LABELS = {
+  decidido: "decidido por el Autor",
+  propuesto: "propuesto por el Asistente",
+  exigido: "exigido por Demiurgos",
+} as const;
+
+/** Render one review value: lists join compactly, blanks read "—". */
+function renderReviewValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.join(", ") : "—";
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+  return "—";
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +271,18 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
   const inReview = session?.phase === "review";
   const complete = session?.phase === "complete";
   const canvasDisabled = inReview || complete;
+
+  /** TW16 review projection source (REQ-TW16-1): the server-authoritative
+   *  `draft_payload` — never the local materialize-form state (refresh-lossy). */
+  const reviewPayload = (session?.draft_payload ?? {}) as ReviewPayload;
+  const touched = state.touchedSections;
+  const compatibles = reviewPayload.talleres_compatibles ?? [];
+  const dependencies = [
+    ...(compatibles.length > 0 ? [compatibles.join(", ")] : []),
+    ...(session?.world ? [`Mundo: ${session.world}`] : []),
+  ];
+  const dependenciesText =
+    dependencies.length > 0 ? dependencies.join(" · ") : "ninguna";
 
   const submit = () => {
     if (!input.trim() || isLoading) return;
@@ -513,38 +577,87 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                     </h3>
                     <ProvenanceBadge derivedFrom={session?.derived_from} />
                   </div>
+                  <p className="mt-1 text-xs text-muted">
+                    Revisá el borrador tal como quedó: esto es exactamente lo
+                    que se publica al aprobar.
+                  </p>
+                  {/* TW16 attribution legend (REQ-TW16-3): decidido = the
+                      Author edited the section in the canvas; propuesto =
+                      untouched; exigido = kernel invariants Demiurgos
+                      enforces. */}
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                    <Badge variant="success">{ATTRIBUTION_LABELS.decidido}</Badge>
+                    <Badge variant="default">{ATTRIBUTION_LABELS.propuesto}</Badge>
+                    <Badge variant="info">{ATTRIBUTION_LABELS.exigido}</Badge>
+                  </div>
                   <dl className="mt-3 space-y-2 text-sm">
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-muted">Nombre</dt>
+                    {REVIEW_SECTIONS.map(({ key, label }) => {
+                      const decided = touched.has(key);
+                      return (
+                        <div
+                          key={key}
+                          className="flex items-center justify-between gap-3"
+                        >
+                          <dt className="text-muted">{label}</dt>
+                          <dd className="flex min-w-0 items-center gap-2 text-right">
+                            <span className="truncate text-primary">
+                              {renderReviewValue(reviewPayload[key])}
+                            </span>
+                            <Badge variant={decided ? "success" : "default"}>
+                              {decided ? "Decidido" : "Propuesto"}
+                            </Badge>
+                          </dd>
+                        </div>
+                      );
+                    })}
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted">Permisos</dt>
+                      <dd className="flex items-center gap-2 text-right text-primary">
+                        No puede declarar permisos: el sistema lo impide
+                        <Badge variant="info">Exigido</Badge>
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <dt className="text-muted">Dependencias</dt>
                       <dd className="text-right text-primary">
-                        {name.trim() || "Co-created skill"}
+                        {dependenciesText}
                       </dd>
                     </div>
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-muted">Descripción</dt>
-                      <dd className="text-right text-primary">
-                        {description.trim() || "—"}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-muted">Taller</dt>
-                      <dd className="text-primary">{taller || "—"}</dd>
-                    </div>
-                    <div className="flex justify-between gap-3">
-                      <dt className="text-muted">Etiquetas</dt>
-                      <dd className="text-primary">
-                        {etiquetas.trim() || "—"}
-                      </dd>
-                    </div>
-                    {session.draft_id && (
-                      <div className="flex justify-between gap-3">
-                        <dt className="text-muted">Borrador</dt>
-                        <dd className="font-mono text-xs text-primary">
-                          {shortId(session.draft_id)}
-                        </dd>
-                      </div>
-                    )}
                   </dl>
+                  {/* TW16 hide internals (REQ-TW16-6): draft/manifest identity
+                      stays out of the default view, under "Detalles
+                      avanzados". */}
+                  <details className="mt-3 rounded-md border border-edge bg-surface-raised px-3 py-2">
+                    <summary className="cursor-pointer text-xs font-medium text-muted">
+                      Detalles avanzados
+                    </summary>
+                    <dl className="mt-2 space-y-1.5 text-xs">
+                      {session.draft_id && (
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted">Borrador</dt>
+                          <dd className="font-mono text-primary">
+                            {shortId(session.draft_id)}
+                          </dd>
+                        </div>
+                      )}
+                      {reviewPayload.skill_id && (
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted">Identificador</dt>
+                          <dd className="font-mono text-primary">
+                            {reviewPayload.skill_id}
+                          </dd>
+                        </div>
+                      )}
+                      {reviewPayload.version && (
+                        <div className="flex items-center justify-between gap-3">
+                          <dt className="text-muted">Versión</dt>
+                          <dd className="font-mono text-primary">
+                            {reviewPayload.version}
+                          </dd>
+                        </div>
+                      )}
+                    </dl>
+                  </details>
                   {state.published && (
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-status-success/30 bg-status-success/10 px-3 py-2 text-xs text-status-success">
                       <span>
@@ -771,98 +884,112 @@ export function CoCreationContextPanel({
         )}
       </div>
 
-      {session?.draft_id && (
-        <div className="rounded-lg border border-edge bg-surface px-3 py-3">
-          <h3 className="text-xs font-medium text-muted">Borrador</h3>
-          <p className="mt-2 font-mono text-xs text-primary">
-            {session.draft_id}
-          </p>
-          <p className="mt-1 text-xs text-muted">
-            Materializado por la Skill Madre desde las respuestas estructuradas.
-          </p>
-        </div>
-      )}
-
-      <div
-        className={cn(
-          "rounded-lg border px-3 py-3",
-          issues.length > 0
-            ? "border-status-error/30 bg-status-error/10"
-            : "border-edge bg-surface",
-        )}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <h3 className="text-xs font-medium text-muted">Validación</h3>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={() => void state.validateCanvas()}
-            disabled={!session?.draft_payload || state.isValidating}
-            title="Renderizar y compilar el lienzo (no crea ni publica nada)"
-          >
-            {state.isValidating ? <Spinner size="sm" /> : "Validar"}
-          </Button>
-        </div>
-        {session?.compile_issues === null && !state.validation && (
-          <p className="mt-2 text-xs text-muted">
-            Todavía no se compiló ningún borrador.
-          </p>
-        )}
-        {issues.length > 0 && (
-          <>
-            <p className="mt-2 text-xs text-status-error">
-              El borrador tiene errores de compilación. Corregí la conversación
-              y volvé a generar el borrador.
-            </p>
-            <ul className="mt-2 space-y-2">
-              {issues.map((issue, index) => (
-                <li
-                  key={`${issue.code}-${index}`}
-                  className="rounded-md border border-status-error/30 bg-surface px-2.5 py-2 text-xs"
-                >
-                  <p className="font-medium text-status-error">{issue.code}</p>
-                  <p className="mt-0.5 text-primary">{issue.message}</p>
-                  {issue.field && (
-                    <p className="mt-0.5 font-mono text-muted">{issue.field}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-        {issues.length === 0 &&
-          session?.compile_issues !== null &&
-          !state.validation && (
-            <p className="mt-2 text-xs text-status-success">
-              El borrador compila correctamente.
-            </p>
-          )}
-        {state.validation && (
-          <div className="mt-2 space-y-2">
-            {state.validation.issues.length > 0 ? (
-              <p className="text-xs text-status-error">
-                El lienzo tiene {state.validation.issues.length} problema(s) de
-                compilación.
+      {/* TW16 hide internals (REQ-TW16-6): the draft identity + compiler
+          codes + compiled contract collapse under "Detalles avanzados"; the
+          Author-relevant panels (world context, warnings, pending questions)
+          stay visible. */}
+      <details className="rounded-lg border border-edge bg-surface px-3 py-2">
+        <summary className="cursor-pointer text-xs font-medium text-muted">
+          Detalles avanzados
+        </summary>
+        <div className="mt-3 space-y-3">
+          {session?.draft_id && (
+            <div className="rounded-lg border border-edge bg-surface px-3 py-3">
+              <h3 className="text-xs font-medium text-muted">Borrador</h3>
+              <p className="mt-2 font-mono text-xs text-primary">
+                {session.draft_id}
               </p>
-            ) : (
-              <p className="text-xs text-status-success">
-                El lienzo compila correctamente.
+              <p className="mt-1 text-xs text-muted">
+                Materializado por la Skill Madre desde las respuestas
+                estructuradas.
+              </p>
+            </div>
+          )}
+
+          <div
+            className={cn(
+              "rounded-lg border px-3 py-3",
+              issues.length > 0
+                ? "border-status-error/30 bg-status-error/10"
+                : "border-edge bg-surface",
+            )}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-xs font-medium text-muted">Validación</h3>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => void state.validateCanvas()}
+                disabled={!session?.draft_payload || state.isValidating}
+                title="Renderizar y compilar el lienzo (no crea ni publica nada)"
+              >
+                {state.isValidating ? <Spinner size="sm" /> : "Validar"}
+              </Button>
+            </div>
+            {session?.compile_issues === null && !state.validation && (
+              <p className="mt-2 text-xs text-muted">
+                Todavía no se compiló ningún borrador.
               </p>
             )}
-            {/* Compiled contract preview: the deterministic render of the
-                payload (server-returned; validation never mutates state). */}
-            <details className="rounded-md border border-edge bg-surface px-2.5 py-2">
-              <summary className="cursor-pointer text-xs font-medium text-muted">
-                Contrato compilado
-              </summary>
-              <div className="mt-2 max-h-64 overflow-y-auto rounded-md border border-edge/60 bg-surface-raised px-2 py-1">
-                <MarkdownViewer content={state.validation.source_preview} />
+            {issues.length > 0 && (
+              <>
+                <p className="mt-2 text-xs text-status-error">
+                  El borrador tiene errores de compilación. Corregí la
+                  conversación y volvé a generar el borrador.
+                </p>
+                <ul className="mt-2 space-y-2">
+                  {issues.map((issue, index) => (
+                    <li
+                      key={`${issue.code}-${index}`}
+                      className="rounded-md border border-status-error/30 bg-surface px-2.5 py-2 text-xs"
+                    >
+                      <p className="font-medium text-status-error">{issue.code}</p>
+                      <p className="mt-0.5 text-primary">{issue.message}</p>
+                      {issue.field && (
+                        <p className="mt-0.5 font-mono text-muted">
+                          {issue.field}
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {issues.length === 0 &&
+              session?.compile_issues !== null &&
+              !state.validation && (
+                <p className="mt-2 text-xs text-status-success">
+                  El borrador compila correctamente.
+                </p>
+              )}
+            {state.validation && (
+              <div className="mt-2 space-y-2">
+                {state.validation.issues.length > 0 ? (
+                  <p className="text-xs text-status-error">
+                    El lienzo tiene {state.validation.issues.length} problema(s)
+                    de compilación.
+                  </p>
+                ) : (
+                  <p className="text-xs text-status-success">
+                    El lienzo compila correctamente.
+                  </p>
+                )}
+                {/* Compiled contract preview: the deterministic render of the
+                    payload (server-returned; validation never mutates state). */}
+                <details className="rounded-md border border-edge bg-surface px-2.5 py-2">
+                  <summary className="cursor-pointer text-xs font-medium text-muted">
+                    Contrato compilado
+                  </summary>
+                  <div className="mt-2 max-h-64 overflow-y-auto rounded-md border border-edge/60 bg-surface-raised px-2 py-1">
+                    <MarkdownViewer content={state.validation.source_preview} />
+                  </div>
+                </details>
               </div>
-            </details>
+            )}
           </div>
-        )}
-      </div>
+        </div>
+      </details>
 
       {/* TW12 3-state warnings (REQ-CC-13). */}
       <div className="rounded-lg border border-edge bg-surface px-3 py-3">

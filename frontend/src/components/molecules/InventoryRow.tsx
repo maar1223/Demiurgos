@@ -35,6 +35,10 @@ interface InventoryRowProps {
    *  so the entry is offered on every published row; the title hints at the
    *  required case. */
   onAdaptar?: (item: MethodologyInventoryItem) => void;
+  /** REQ-IMP-1: export this published version as a `.zip` methodology
+   *  package. Offered on every published row (the inventory only lists
+   *  published skills); the parent owns the download. */
+  onExport?: (item: MethodologyInventoryItem) => void;
 }
 
 /**
@@ -49,6 +53,7 @@ export function InventoryRow({
   onToggleCompare,
   selected = false,
   onAdaptar,
+  onExport,
 }: InventoryRowProps) {
   const clasificacion = item.clasificacion ?? null;
   const clasificacionVariant = clasificacion
@@ -78,6 +83,16 @@ export function InventoryRow({
           </span>
         </button>
         <div className="flex shrink-0 items-center gap-2">
+          {onExport && (
+            <button
+              type="button"
+              onClick={() => onExport(item)}
+              title="Descargar esta versión publicada como paquete .zip"
+              className="rounded-md border border-edge px-2.5 py-1 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary"
+            >
+              Exportar
+            </button>
+          )}
           {onAdaptar && (
             <button
               type="button"

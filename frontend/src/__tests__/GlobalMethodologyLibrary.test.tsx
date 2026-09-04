@@ -442,6 +442,83 @@ describe("ToolWorkshop — tab toggle preserves operational context (REQ-LIB-1)"
   });
 });
 
+describe("GlobalMethodologyLibrary — export action (REQ-IMP-1)", () => {
+  /** jsdom lacks URL.createObjectURL; define it for the download path. */
+  function stubObjectUrl() {
+    const createObjectURL = vi.fn(() => "blob:mock");
+    const revokeObjectURL = vi.fn();
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: createObjectURL,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      configurable: true,
+      value: revokeObjectURL,
+    });
+    return { createObjectURL, revokeObjectURL };
+  }
+
+  function unstubObjectUrl() {
+    const urlApi = URL as unknown as {
+      createObjectURL?: unknown;
+      revokeObjectURL?: unknown;
+    };
+    delete urlApi.createObjectURL;
+    delete urlApi.revokeObjectURL;
+  }
+
+  it("downloads the published version as a zip when Exportar is clicked", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(new Blob(["zip-bytes"], { type: "application/zip" }), {
+        status: 200,
+        headers: { "Content-Type": "application/zip" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const { createObjectURL, revokeObjectURL } = stubObjectUrl();
+
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByRole("button", { name: "Exportar" })[0]);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/methodologies/published/narrative-proposer/1.2.0/export",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock");
+
+    unstubObjectUrl();
+    vi.unstubAllGlobals();
+  });
+
+  it("shows an inline error when the export fails", async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: "boom" }), { status: 500 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByRole("button", { name: "Exportar" })[0]);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo exportar la metodología.",
+    );
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("REQ-LIB-8 — read-only invariant", () => {
   const FORBIDDEN_VALUES = [
     "activateMethodology",

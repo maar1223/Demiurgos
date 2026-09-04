@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -224,12 +224,155 @@ describe("CoCreationPanel", () => {
   });
 });
 
+describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const reviewPayload = {
+    name: "Skill de eneagrama",
+    description: "Perfil de los nueve eneatipos.",
+    purpose: "Modelar personalidades en el mundo.",
+    scope: "Mundo específico",
+    main_flow: "Elegir tipo → responder → obtener perfil",
+    branches: ["ramificacion-1", "ramificacion-2"],
+    rules: ["regla-1"],
+    pending_questions: [],
+    world: "Vibrantes",
+    // Manifest metadata the server folds into the payload at materialization.
+    taller: "Herramientas",
+    etiquetas: ["eneagrama", "personajes"],
+    skill_id: "co-created-eneagrama",
+    version: "0.1.0",
+  };
+
+  const reviewState = (
+    overrides: Partial<UseCoCreationReturn> = {},
+  ): UseCoCreationReturn => ({
+    ...baseState(),
+    session: sessionFixture({
+      phase: "review",
+      milestone: "revision_publicacion",
+      draft_id: "draft-review-abc123",
+      world: "Vibrantes",
+      compile_issues: [],
+      pending_question: null,
+      pending_options: [],
+      draft_payload: reviewPayload,
+    }),
+    ...overrides,
+  });
+
+  it("renders the summary from session.draft_payload (not local state)", () => {
+    render(<CoCreationPanel state={reviewState()} worlds={["Vibrantes"]} />);
+
+    expect(screen.getByText("Skill de eneagrama")).toBeInTheDocument();
+    expect(
+      screen.getByText("Perfil de los nueve eneatipos."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Modelar personalidades en el mundo."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Elegir tipo → responder → obtener perfil"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("ramificacion-1, ramificacion-2")).toBeInTheDocument();
+    expect(screen.getByText("regla-1")).toBeInTheDocument();
+    expect(screen.getByText("Herramientas")).toBeInTheDocument();
+    expect(screen.getByText("eneagrama, personajes")).toBeInTheDocument();
+  });
+
+  it("shows the attribution legend and per-section badges from touchedSections", () => {
+    render(
+      <CoCreationPanel
+        state={reviewState({ touchedSections: new Set(["purpose"]) })}
+        worlds={["Vibrantes"]}
+      />,
+    );
+
+    // Canonical legend phrases (REQ-TW16-3).
+    expect(screen.getByText("decidido por el Autor")).toBeInTheDocument();
+    expect(screen.getByText("propuesto por el Asistente")).toBeInTheDocument();
+    expect(screen.getByText("exigido por Demiurgos")).toBeInTheDocument();
+
+    // Purpose was touched in the canvas → Decidido; name untouched → Propuesto.
+    const purposeRow = screen.getByText("Propósito").closest("div") as HTMLElement;
+    expect(within(purposeRow).getByText("Decidido")).toBeInTheDocument();
+    const nameRow = screen.getByText("Nombre").closest("div") as HTMLElement;
+    expect(within(nameRow).getByText("Propuesto")).toBeInTheDocument();
+  });
+
+  it("renders permissions as an exigido invariant and dependencies from the world", () => {
+    render(<CoCreationPanel state={reviewState()} worlds={["Vibrantes"]} />);
+
+    expect(
+      screen.getByText("No puede declarar permisos: el sistema lo impide"),
+    ).toBeInTheDocument();
+    const permissionsRow = screen
+      .getByText("Permisos")
+      .closest("div") as HTMLElement;
+    expect(within(permissionsRow).getByText("Exigido")).toBeInTheDocument();
+    expect(screen.getByText("Mundo: Vibrantes")).toBeInTheDocument();
+  });
+
+  it("renders dependencies as 'ninguna' without compatibles or a world", () => {
+    const state = {
+      ...baseState(),
+      session: sessionFixture({
+        phase: "review",
+        milestone: "revision_publicacion",
+        draft_id: "draft-review-abc123",
+        compile_issues: [],
+        pending_question: null,
+        pending_options: [],
+        world: null,
+        draft_payload: { ...reviewPayload, world: null },
+      }),
+    };
+    render(<CoCreationPanel state={state} worlds={[]} />);
+
+    expect(screen.getByText("ninguna")).toBeInTheDocument();
+  });
+
+  it("hides internals by default and reveals them on expand (REQ-TW16-6)", async () => {
+    const user = userEvent.setup();
+    render(<CoCreationPanel state={reviewState()} worlds={["Vibrantes"]} />);
+
+    // The internals (draft/manifest identity) live inside the COLLAPSED
+    // "Detalles avanzados" <details> — closed by default, so they are not
+    // part of the visible review.
+    const details = screen
+      .getByText("Detalles avanzados")
+      .closest("details") as HTMLElement;
+    expect(details).not.toHaveAttribute("open");
+    const internalPanel = within(details);
+    expect(internalPanel.getByText(/draft-review/)).toBeInTheDocument();
+    expect(internalPanel.getByText("co-created-eneagrama")).toBeInTheDocument();
+    expect(internalPanel.getByText("0.1.0")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Detalles avanzados"));
+    expect(details).toHaveAttribute("open");
+  });
+
+  it("keeps the publish button approving the reviewed candidate (REQ-TW16-7)", async () => {
+    const user = userEvent.setup();
+    const state = reviewState();
+    render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
+
+    expect(screen.getByRole("button", { name: "Publicar" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Publicar" }));
+
+    expect(state.publish).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("CoCreationContextPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("shows compiler issues with code, message and field", () => {
+  it("hides compiler issues by default and shows them on expand (REQ-TW16-6)", async () => {
+    const user = userEvent.setup();
     const state = {
       ...baseState(),
       session: sessionFixture({
@@ -243,13 +386,23 @@ describe("CoCreationContextPanel", () => {
     };
     render(<CoCreationContextPanel state={state} />);
 
-    expect(screen.getByText("AUTH_CLAIM")).toBeInTheDocument();
-    expect(screen.getByText("Autoridad no permitida")).toBeInTheDocument();
-    expect(screen.getByText("delta")).toBeInTheDocument();
-    expect(screen.getByText(/errores de compilación/)).toBeInTheDocument();
+    // Compiler codes + fields collapse under the closed "Detalles avanzados".
+    const details = screen
+      .getByText("Detalles avanzados")
+      .closest("details") as HTMLElement;
+    expect(details).not.toHaveAttribute("open");
+    const internalPanel = within(details);
+    expect(internalPanel.getByText("AUTH_CLAIM")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Detalles avanzados"));
+    expect(details).toHaveAttribute("open");
+    expect(internalPanel.getByText("Autoridad no permitida")).toBeInTheDocument();
+    expect(internalPanel.getByText("delta")).toBeInTheDocument();
+    expect(internalPanel.getByText(/errores de compilación/)).toBeInTheDocument();
   });
 
-  it("reports a clean compile when there are no issues", () => {
+  it("reports a clean compile when there are no issues (under Detalles avanzados)", async () => {
+    const user = userEvent.setup();
     const state = {
       ...baseState(),
       session: sessionFixture({
@@ -262,6 +415,8 @@ describe("CoCreationContextPanel", () => {
       }),
     };
     render(<CoCreationContextPanel state={state} />);
+
+    await user.click(screen.getByText("Detalles avanzados"));
 
     expect(screen.getByText(/compila correctamente/)).toBeInTheDocument();
   });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  exportPublished,
   getMethodologyInventory,
   type InventoryFilters,
 } from "@/api/methodologies";
@@ -17,6 +18,7 @@ const EMPTY_INVENTORY_MESSAGE = "No hay metodologías publicadas";
 const NO_RESULTS_MESSAGE = "Sin resultados";
 const LOAD_ERROR_MESSAGE =
   "No se pudo cargar el inventario global de metodologías.";
+const EXPORT_ERROR_MESSAGE = "No se pudo exportar la metodología.";
 
 /** Two catalog entries are the same published version. */
 function sameVersion(
@@ -48,6 +50,7 @@ export function GlobalMethodologyLibrary({
   const [items, setItems] = useState<MethodologyInventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<InventoryFilters>({});
   const [detail, setDetail] = useState<MethodologyInventoryItem | null>(null);
@@ -103,6 +106,26 @@ export function GlobalMethodologyLibrary({
 
   const clearCompare = () => setCompareSelection([]);
 
+  /** REQ-IMP-1: export a published version as a `.zip` package and trigger the
+   *  browser download. Read-only — the catalog is never mutated; the Author
+   *  keeps the artifact. */
+  const handleExport = async (item: MethodologyInventoryItem) => {
+    setExportError(null);
+    try {
+      const blob = await exportPublished(item.skill_id, item.version);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `${item.skill_id}-${item.version}.zip`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch {
+      setExportError(EXPORT_ERROR_MESSAGE);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-16">
@@ -144,6 +167,15 @@ export function GlobalMethodologyLibrary({
 
       <InventoryFilterBar filters={filters} onChange={setFilters} />
 
+      {exportError && (
+        <p
+          role="alert"
+          className="rounded-md border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error"
+        >
+          {exportError}
+        </p>
+      )}
+
       <label className="flex flex-col gap-1 text-small text-muted">
         Buscar
         <input
@@ -168,6 +200,7 @@ export function GlobalMethodologyLibrary({
                 onSelect={setDetail}
                 onToggleCompare={toggleCompare}
                 onAdaptar={onAdaptar}
+                onExport={handleExport}
                 selected={compareSelection.some((candidate) =>
                   sameVersion(candidate, item),
                 )}
