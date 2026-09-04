@@ -149,15 +149,10 @@ export function GlobalMethodologyLibrary({
       className="space-y-6"
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="font-heading text-h4 text-primary">
-            Biblioteca global
-          </h2>
-          <p className="mt-1 text-small text-muted">
-            Inventario completo de metodologías publicadas, activadas o no.
-            Vista de solo lectura: no modifica el taller activo ni los mundos.
-          </p>
-        </div>
+        <p className="text-small text-muted">
+          Inventario completo de metodologías publicadas, activadas o no.
+          Vista de solo lectura: no modifica el taller activo ni los mundos.
+        </p>
         {compareSelection.length > 0 && (
           <Button variant="ghost" size="sm" onClick={clearCompare}>
             Limpiar

@@ -151,8 +151,10 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
 
     renderToolWorkshop();
 
-    // Switch to the read-only inventory tab where the published rows live.
-    await user.click(screen.getByRole("tab", { name: "Biblioteca global" }));
+    // Switch the internal lens of the "Taller" tab to the read-only global
+    // inventory where the published rows live (REQ-LEN-1 — lens toggle, not
+    // a top-level tab).
+    await user.click(screen.getByRole("tab", { name: "Catálogo total" }));
     await waitFor(() => {
       expect(screen.getByText("Eneagrama oficial")).toBeInTheDocument();
     });
@@ -166,11 +168,18 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
 
     // The page switches to the "Crear skill" tab bound to the derived session
     // (REQ-CC-17: adaptation = unified chat + canvas on the derived draft).
+    // The shared ToolWorkshopHeader now carries the tabs — assert the active
+    // top-level tab plus its subtitle (the h2 was removed in task 2.2/PR 2).
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: "Co-crear una skill" }),
-      ).toBeInTheDocument();
+        screen.getByRole("tab", { name: "Crear skill" }),
+      ).toHaveAttribute("aria-selected", "true");
     });
+    expect(
+      screen.getByText(
+        "Co-creá una skill conversando con la Skill Madre, una pregunta por vez.",
+      ),
+    ).toBeInTheDocument();
     expect(recoverCoCreationSession).toHaveBeenCalledWith("adaptation-session");
   });
 
@@ -180,7 +189,7 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
 
     renderToolWorkshop();
 
-    await user.click(screen.getByRole("tab", { name: "Biblioteca global" }));
+    await user.click(screen.getByRole("tab", { name: "Catálogo total" }));
     await waitFor(() => {
       expect(screen.getByText("Eneagrama oficial")).toBeInTheDocument();
     });
@@ -190,8 +199,10 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
     await waitFor(() => {
       expect(deriveDraft).toHaveBeenCalled();
     });
-    expect(
-      screen.queryByRole("heading", { name: "Co-crear una skill" }),
-    ).not.toBeInTheDocument();
+    // Still on the "Taller" tab — the failed derive must not switch views.
+    expect(screen.getByRole("tab", { name: "Taller" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });

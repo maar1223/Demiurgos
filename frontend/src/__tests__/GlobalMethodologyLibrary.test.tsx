@@ -1,17 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GlobalMethodologyLibrary } from "@/components/organisms/GlobalMethodologyLibrary";
-import ToolWorkshop from "@/pages/ToolWorkshop";
 import type { MethodologyInventoryItem } from "@/api/types";
-import type { Mock } from "vitest";
 // Raw source of the organism under test — used by the REQ-LIB-8 import
 // boundary test (no node:fs dependency needed).
 import globalLibrarySource from "@/components/organisms/GlobalMethodologyLibrary.tsx?raw";
 
 const getInventoryMock = vi.hoisted(() => vi.fn());
-const setCurrentTallerMock = vi.hoisted(() => vi.fn());
 
 // Keep the REAL module (so any accidental mutation call would hit the real
 // apiFetch → observable fetch) but make `getMethodologyInventory` a
@@ -20,19 +16,6 @@ vi.mock("@/api/methodologies", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/methodologies")>();
   return { ...actual, getMethodologyInventory: getInventoryMock };
 });
-
-vi.mock("@/hooks/useWorlds", () => ({
-  useWorlds: vi.fn(),
-}));
-
-// Keep the real readers/subscriber; spy on the writer so the tab-toggle test
-// can prove switching never persists a taller change.
-vi.mock("@/lib/currentTaller", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/currentTaller")>();
-  return { ...actual, setCurrentTaller: setCurrentTallerMock };
-});
-
-import { useWorlds } from "@/hooks/useWorlds";
 
 const narrative: MethodologyInventoryItem = {
   skill_id: "narrative-proposer",
@@ -78,7 +61,6 @@ const brainstorming: MethodologyInventoryItem = {
 beforeEach(() => {
   getInventoryMock.mockReset();
   getInventoryMock.mockResolvedValue({ items: [narrative, worldbuilding] });
-  setCurrentTallerMock.mockClear();
 });
 
 describe("GlobalMethodologyLibrary — list render (REQ-LIB-2)", () => {
@@ -350,95 +332,6 @@ describe("GlobalMethodologyLibrary — compare selection (REQ-LIB-7)", () => {
     await user.click(screen.getByRole("button", { name: "Limpiar" }));
     expect(screen.queryByText("Comparación")).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Comparar" })).toHaveLength(3);
-  });
-});
-
-describe("ToolWorkshop — tab toggle preserves operational context (REQ-LIB-1)", () => {
-  it("defaults to 'Taller activo' and never mutates activeTaller/world on switch", async () => {
-    (useWorlds as Mock).mockReturnValue({
-      worlds: [
-        {
-          name: "Vibrantes",
-          path: "/vibrantes",
-          lore_count: 1,
-          character_count: 0,
-          reference_count: 0,
-        },
-      ],
-      isLoading: false,
-      error: null,
-      mutate: vi.fn(),
-    });
-    // Real getMethodologyStatus runs through apiFetch → observable fetch.
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        published: [
-          {
-            skill_id: "guided-character-v1",
-            version: "1.2.0",
-            name: "Guided character methodology",
-            description: "",
-            digest: "abc",
-            published_at: "2026-01-01",
-            taller: "Herramientas",
-          },
-        ],
-        activations: {},
-        drafts: [],
-      }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const tallerBefore = window.localStorage.getItem("demiurgos-active-taller");
-    const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={["/taller-herramientas"]}>
-        <Routes>
-          <Route path="/taller-herramientas" element={<ToolWorkshop />} />
-        </Routes>
-      </MemoryRouter>,
-    );
-
-    // Default tab is the Fase 2 operational tree (REQ-LIB-1 S1).
-    expect(
-      screen.getByRole("tab", { name: "Taller activo" }),
-    ).toHaveAttribute("aria-selected", "true");
-    await waitFor(() => {
-      expect(
-        screen.getByText("Guided character methodology"),
-      ).toBeInTheDocument();
-    });
-    expect(
-      screen.getByRole("button", { name: "Taller de Herramientas" }),
-    ).toBeInTheDocument();
-
-    // Switch to the global library: renders without touching taller/world.
-    await user.click(screen.getByRole("tab", { name: "Biblioteca global" }));
-    await screen.findByRole("searchbox", { name: /buscar/i });
-    expect(setCurrentTallerMock).not.toHaveBeenCalled();
-    expect(window.localStorage.getItem("demiurgos-active-taller")).toBe(
-      tallerBefore,
-    );
-
-    // Switching back restores the operational tree, untouched.
-    await user.click(screen.getByRole("tab", { name: "Taller activo" }));
-    await waitFor(() => {
-      expect(
-        screen.getByText("Guided character methodology"),
-      ).toBeInTheDocument();
-    });
-    expect(
-      screen.getByRole("button", { name: "Taller de Herramientas" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mundos" })).toBeInTheDocument();
-    expect(setCurrentTallerMock).not.toHaveBeenCalled();
-    expect(window.localStorage.getItem("demiurgos-active-taller")).toBe(
-      tallerBefore,
-    );
-
-    vi.unstubAllGlobals();
   });
 });
 

@@ -7,6 +7,8 @@ import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
 import { GlobalMethodologyLibrary } from "@/components/organisms/GlobalMethodologyLibrary";
+import { ToolWorkshopHeader } from "@/components/organisms/ToolWorkshopHeader";
+import { LensToggle, type Lens } from "@/components/organisms/LensToggle";
 import {
   CoCreationMilestoneSidebar,
   CoCreationPanel,
@@ -65,13 +67,15 @@ export default function ToolWorkshop() {
   const activeTaller = useActiveTaller();
   const [creatingWorld, setCreatingWorld] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
-  /** Local view toggle (REQ-LIB-1): "taller" = Fase 2 operational tree
-   *  (default), "biblioteca" = read-only global inventory, "co-crear" = Skill
-   *  Madre co-creation (Opción A — third EditorLayout section). Switching tabs
+  /** Local view toggle (REQ-TAB-1): "taller" = operational tree + lens
+   *  toggle (default), "co-crear" = Skill Madre co-creation. Switching tabs
    *  NEVER touches `activeTaller`, `world`, or persisted state. */
-  const [view, setView] = useState<"taller" | "biblioteca" | "co-crear">(
-    "taller",
-  );
+  const [view, setView] = useState<"taller" | "co-crear">("taller");
+  /** Internal lens toggle inside the "Taller" tab (REQ-LEN-1): "mi-mundo" =
+   *  operational MethodologyLibrary (default), "catalogo-total" = read-only
+   *  global inventory. Page-level state so it survives tab switches
+   *  (SC-LEN-1.3); never mutated by lens changes (SC-LEN-1.4). */
+  const [lens, setLens] = useState<Lens>("mi-mundo");
   /** Single shared co-creation hook instance distributed across the three
    *  EditorLayout panes (backend authoritative; localStorage only a hint). */
   const coCreation = useCoCreation();
@@ -100,8 +104,7 @@ export default function ToolWorkshop() {
   };
 
   const tabs = [
-    { key: "taller", label: "Taller activo" },
-    { key: "biblioteca", label: "Biblioteca global" },
+    { key: "taller", label: "Taller" },
     { key: "co-crear", label: "Crear skill" },
   ] as const;
 
@@ -144,20 +147,10 @@ export default function ToolWorkshop() {
         {view === "co-crear" ? (
           <EditorLayout
             header={
-              <div className="border-b border-edge px-4 py-3">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h1 className="font-heading text-h3 text-primary">
-                      Taller de Herramientas
-                    </h1>
-                    <p className="mt-1 text-body text-muted">
-                      Co-creá una skill conversando con la Skill Madre, una
-                      pregunta por vez.
-                    </p>
-                  </div>
-                  {tablist}
-                </div>
-              </div>
+              <ToolWorkshopHeader
+                subtitle="Co-creá una skill conversando con la Skill Madre, una pregunta por vez."
+                tablist={tablist}
+              />
             }
             sidebar={<CoCreationMilestoneSidebar state={coCreation} />}
             rightPanel={<CoCreationContextPanel state={coCreation} />}
@@ -169,19 +162,16 @@ export default function ToolWorkshop() {
           </EditorLayout>
         ) : (
           <>
-            <header className="mb-8">
-              <h1 className="font-heading text-h3 text-primary">
-                Taller de Herramientas
-              </h1>
-              <p className="mt-2 text-body text-muted">
-                Metodologías de construcción seguras: editar, compilar,
-                publicar versiones inmutables y activarlas por mundo.
-              </p>
-            </header>
+            <ToolWorkshopHeader
+              subtitle="Metodologías de construcción seguras: editar, compilar, publicar versiones inmutables y activarlas por mundo."
+              tablist={tablist}
+            />
 
-            <div className="mb-6">{tablist}</div>
+            <div className="flex items-center py-3">
+              <LensToggle lens={lens} onChange={setLens} />
+            </div>
 
-            {view === "taller" ? (
+            {lens === "mi-mundo" ? (
               isLoading ? (
                 <div className="flex justify-center py-16">
                   <Spinner size="lg" />

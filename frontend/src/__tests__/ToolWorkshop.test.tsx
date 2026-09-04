@@ -80,12 +80,26 @@ describe("ToolWorkshop", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the workshop heading and the methodology library", async () => {
+  it("renders the shared header, exactly two tabs, and the methodology library", async () => {
     renderToolWorkshop();
 
+    // REQ-TAB-1 (SC-TAB-1.1): exactly 2 top-level tabs; the previous
+    // "Biblioteca global" tab no longer exists (it became the lens toggle).
+    expect(screen.getByRole("tab", { name: "Taller" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tab", { name: "Crear skill" })).toBeInTheDocument();
     expect(
-      screen.getByRole("heading", { name: "Taller de Herramientas" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("tab", { name: "Biblioteca global" }),
+    ).not.toBeInTheDocument();
+
+    // REQ-TAB-2 (SC-TAB-2.1): the page header has no <h1> — the subtitle
+    // and the tablist live in the shared ToolWorkshopHeader.
+    expect(
+      screen.queryByRole("heading", { name: "Taller de Herramientas" }),
+    ).not.toBeInTheDocument();
+
     await waitFor(() => {
       expect(
         screen.getByText("Guided character methodology"),
