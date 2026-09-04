@@ -430,6 +430,33 @@ describe("MethodologyLibrary — skill import (REQ-IMP-2..6)", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows the outside-workshop integrity note in advanced details of a trusted import (REQ-IMP-5 scenario 2)", async () => {
+    mockListQuarantine.mockResolvedValue({
+      entries: [
+        quarantineRecord({
+          trusted: true,
+          draft_id: "draft-imported-1",
+        }),
+      ],
+    });
+    const user = userEvent.setup();
+    renderLibrary("nec");
+
+    // The trusted record renders its promoted-draft note; the integrity note
+    // lives inside the closed "Detalles avanzados" (REQ-IMP-5 scenario 2).
+    expect(await screen.findByText(/borrador draft-imported/)).toBeInTheDocument();
+
+    const details = screen
+      .getByText("Detalles avanzados")
+      .closest("details") as HTMLElement;
+    expect(details).not.toHaveAttribute("open");
+    const advanced = within(details);
+    expect(advanced.getByText(/fuera del Taller/)).toBeInTheDocument();
+
+    await user.click(screen.getByText("Detalles avanzados"));
+    expect(details).toHaveAttribute("open");
+  });
+
   it("shows the reserved-id rejection copy on 409 (REQ-IMP-6)", async () => {
     mockListQuarantine.mockResolvedValue({ entries: [quarantineRecord()] });
     mockTrustQuarantine.mockRejectedValue(

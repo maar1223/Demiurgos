@@ -17,6 +17,10 @@ import type {
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Badge } from "@/components/atoms/Badge";
+import {
+  CLASIFICACION_VARIANT,
+  TRUST_VARIANT,
+} from "@/components/molecules/InventoryRow";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { TallerTree } from "@/components/organisms/TallerTree";
@@ -391,11 +395,48 @@ export function MethodologyLibrary({
                     )}
                   </div>
                   {record.trusted ? (
-                    <p className="text-xs text-status-success">
-                      {record.draft_id
-                        ? `Confiable — borrador ${shortId(record.draft_id)}`
-                        : "Confiable"}
-                    </p>
+                    <div className="flex flex-col items-end gap-2">
+                      <p className="text-xs text-status-success">
+                        {record.draft_id
+                          ? `Confiable — borrador ${shortId(record.draft_id)}`
+                          : "Confiable"}
+                      </p>
+                      {/* REQ-IMP-5 (scenario 2): the outside-workshop note also
+                          appears in the advanced details of a trusted import,
+                          framed as integrity — the Taller only executes the
+                          compiled, validated version the Author trusted. */}
+                      <details className="rounded-md border border-edge bg-surface-raised px-3 py-2">
+                        <summary className="cursor-pointer text-xs font-medium text-muted">
+                          Detalles avanzados
+                        </summary>
+                        <div className="mt-2 space-y-1.5 text-xs">
+                          <p className="text-muted">
+                            La Skill creada fuera del Taller no se ejecuta como
+                            válida: el Taller solo ejecuta la versión compilada
+                            y validada que confiaste.
+                          </p>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <Badge
+                              variant={
+                                CLASIFICACION_VARIANT[
+                                  record.clasificacion ?? ""
+                                ] ?? "default"
+                              }
+                            >
+                              {record.clasificacion ?? "Sin clasificación"}
+                            </Badge>
+                            {record.trust_attributes.map((attr) => (
+                              <Badge
+                                key={attr}
+                                variant={TRUST_VARIANT[attr] ?? "default"}
+                              >
+                                {attr}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      </details>
+                    </div>
                   ) : (
                     <Button
                       type="button"
