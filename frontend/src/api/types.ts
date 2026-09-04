@@ -542,6 +542,131 @@ export interface GuidedCharacterSession {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Co-creation (Skill Madre — tool-workshop-skill-co-creation)
+// ---------------------------------------------------------------------------
+
+/** Server-owned milestone state (REQ-CC-3): the Skill Madre reports exactly
+ *  one `actual` milestone per session; the rest are `completado` or
+ *  `pendiente`. The client maps exactly these states and never infers them. */
+export type CoCreationMilestoneState = "completado" | "actual" | "pendiente";
+
+/** Session lifecycle phase — the backend is the authority. */
+export type CoCreationPhase =
+  | "conversation"
+  | "materialized"
+  | "review"
+  | "complete";
+
+/** One of the six milestone steps (Propósito → Revisión y publicación). */
+export interface CoCreationMilestone {
+  name: string;
+  state: CoCreationMilestoneState;
+}
+
+/** A chat message in the co-creation transcript. */
+export interface CoCreationMessage {
+  role: "author" | "assistant";
+  content: string;
+}
+
+/** One compiler finding surfaced by draft materialization (REQ-CC-5). The
+ *  validation panel renders code + message (+ field when present). */
+export interface CompileIssue {
+  code: string;
+  message: string;
+  field: string | null;
+}
+
+/** Public principal-bound co-creation session (GET /api/co-creation/sessions/{id}).
+ *  Provider provenance and authority keys are NEVER typed here (REQ-CC-7). */
+export interface CoCreationSession {
+  protocol_version: string;
+  session_id: string;
+  principal_id: string;
+  world: string | null;
+  revision: number;
+  milestone: string;
+  progress: CoCreationMilestone[];
+  question_count: number;
+  pending_question: string | null;
+  pending_options: string[];
+  messages: CoCreationMessage[];
+  phase: CoCreationPhase;
+  draft_id: string | null;
+  compile_issues: CompileIssue[] | null;
+}
+
+/** Milestone progress projection (GET .../sessions/{id}/progress). */
+export interface CoCreationProgress {
+  session_id: string;
+  world: string | null;
+  milestone: string;
+  progress: CoCreationMilestone[];
+  phase: CoCreationPhase;
+  question_count: number;
+  draft_id: string | null;
+}
+
+/** Author-confirmed metadata folded into the draft at materialization
+ *  (all fields optional — the backend falls back to session payload values). */
+export interface CoCreationMaterializeMetadata {
+  skill_id?: string;
+  version?: string;
+  name?: string;
+  description?: string;
+  taller?: string;
+  categoria_funcional?: string;
+  etiquetas?: string[];
+  language?: string;
+}
+
+/** Result of POST .../sessions/{id}/materialize. On success the full session
+ *  public state is returned with `ok: true` and empty issues; on compile
+ *  failure only the issue summary is returned and the session STAYS at
+ *  `borrador_listo` so the Author can correct before retrying (REQ-CC-5). */
+export interface CoCreationMaterializeResult {
+  session_id?: string;
+  draft_id: string | null;
+  ok: boolean;
+  issues: CompileIssue[];
+  compile_issues: CompileIssue[] | null;
+  phase: CoCreationPhase;
+  milestone: string;
+  revision: number;
+}
+
+/** Result of POST .../sessions/{id}/publish — the POST itself IS the Author's
+ *  explicit approval signal (REQ-CC-6); publishing is immutable. */
+export interface CoCreationPublishResult {
+  session_id: string;
+  phase: CoCreationPhase;
+  revision: number;
+  published: {
+    skill_id: string;
+    version: string;
+    name: string;
+    description: string;
+    digest: string;
+    published_at: string;
+  };
+}
+
+/** Result of POST .../sessions/{id}/activate — pins one version per world
+ *  (a new activation deactivates the previous). */
+export interface CoCreationActivateResult {
+  session_id: string;
+  phase: CoCreationPhase;
+  revision: number;
+  activation: {
+    world: string;
+    skill_id: string;
+    version: string;
+    digest: string;
+    activated_at: string;
+  };
+}
+
 /** OKF ficha status — UI maps Borrador → draft, Canon → stable. */
 export type FichaStatus = "draft" | "stable";
 

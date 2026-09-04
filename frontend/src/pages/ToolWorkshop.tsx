@@ -1,11 +1,18 @@
 import { useEffect, useState } from "react";
 import { useWorlds } from "@/hooks/useWorlds";
+import { useCoCreation } from "@/hooks/useCoCreation";
 import { WorldSelector } from "@/components/molecules/WorldSelector";
 import { TallerSelector } from "@/components/molecules/TallerSelector";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
 import { GlobalMethodologyLibrary } from "@/components/organisms/GlobalMethodologyLibrary";
+import {
+  CoCreationMilestoneSidebar,
+  CoCreationPanel,
+  CoCreationContextPanel,
+} from "@/components/organisms/CoCreationPanel";
+import { EditorLayout } from "@/components/templates/EditorLayout";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { cn } from "@/lib/utils";
@@ -58,9 +65,15 @@ export default function ToolWorkshop() {
   const [creatingWorld, setCreatingWorld] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
   /** Local view toggle (REQ-LIB-1): "taller" = Fase 2 operational tree
-   *  (default), "biblioteca" = read-only global inventory. Switching tabs
+   *  (default), "biblioteca" = read-only global inventory, "co-crear" = Skill
+   *  Madre co-creation (Opción A — third EditorLayout section). Switching tabs
    *  NEVER touches `activeTaller`, `world`, or persisted state. */
-  const [view, setView] = useState<"taller" | "biblioteca">("taller");
+  const [view, setView] = useState<"taller" | "biblioteca" | "co-crear">(
+    "taller",
+  );
+  /** Single shared co-creation hook instance distributed across the three
+   *  EditorLayout panes (backend authoritative; localStorage only a hint). */
+  const coCreation = useCoCreation();
 
   const handleWorldCreated = (created: string) => {
     setCreatingWorld(false);
@@ -75,84 +88,129 @@ export default function ToolWorkshop() {
     setPendingSwitch(null);
   };
 
+  const tabs = [
+    { key: "taller", label: "Taller activo" },
+    { key: "biblioteca", label: "Biblioteca global" },
+    { key: "co-crear", label: "Crear skill" },
+  ] as const;
+
+  const tablist = (
+    <div
+      role="tablist"
+      aria-label="Vistas del taller de herramientas"
+      className="inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
+    >
+      {tabs.map((tab) => (
+        <button
+          key={tab.key}
+          type="button"
+          role="tab"
+          aria-selected={view === tab.key}
+          onClick={() => setView(tab.key)}
+          className={cn(
+            "rounded-md px-4 py-1.5 text-small transition-colors",
+            view === tab.key
+              ? "bg-action text-action-text"
+              : "text-muted hover:bg-surface-hover hover:text-primary",
+          )}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+
   return (
     <div className="flex min-h-screen flex-col bg-surface">
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8">
-        <header className="mb-8">
-          <h1 className="font-heading text-h3 text-primary">
-            Taller de Herramientas
-          </h1>
-          <p className="mt-2 text-body text-muted">
-            Metodologías de construcción seguras: editar, compilar, publicar
-            versiones inmutables y activarlas por mundo.
-          </p>
-        </header>
-
-        <div
-          role="tablist"
-          aria-label="Vistas del taller de herramientas"
-          className="mb-6 inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
-        >
-          {(
-            [
-              { key: "taller", label: "Taller activo" },
-              { key: "biblioteca", label: "Biblioteca global" },
-            ] as const
-          ).map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              role="tab"
-              aria-selected={view === tab.key}
-              onClick={() => setView(tab.key)}
-              className={cn(
-                "rounded-md px-4 py-1.5 text-small transition-colors",
-                view === tab.key
-                  ? "bg-action text-action-text"
-                  : "text-muted hover:bg-surface-hover hover:text-primary",
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {view === "taller" ? (
-          isLoading ? (
-            <div className="flex justify-center py-16">
-              <Spinner size="lg" />
-            </div>
-          ) : error ? (
-            <ErrorBanner
-              message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
-              onRetry={() => mutate()}
-            />
-          ) : (
-            <>
-              <div className="mb-6 flex flex-wrap items-center gap-3">
-                <TallerSelector
-                  activeTaller={activeTaller}
-                  onTallerChange={setCurrentTaller}
-                />
-                <WorldSelector
-                  worlds={worlds}
-                  currentWorld={world}
-                  onWorldChange={setWorld}
-                  onRequestCreate={() => setCreatingWorld(true)}
-                />
-                <p className="text-small text-muted">
-                  {world
-                    ? `Las activaciones se aplican a «${world}».`
-                    : worlds.length > 0
-                      ? "Elegí un mundo para poder activar versiones."
-                      : "No hay mundos disponibles; podés ver publicaciones pero no activar."}
-                </p>
+      <main
+        className={cn(
+          "mx-auto w-full flex-1",
+          // The co-creation editor spans the full width and fixes its own
+          // height; the other views keep the constrained flowing layout.
+          view === "co-crear" ? "" : "max-w-7xl px-4 py-8",
+        )}
+      >
+        {view === "co-crear" ? (
+          <EditorLayout
+            header={
+              <div className="border-b border-edge px-4 py-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h1 className="font-heading text-h3 text-primary">
+                      Taller de Herramientas
+                    </h1>
+                    <p className="mt-1 text-body text-muted">
+                      Co-creá una skill conversando con la Skill Madre, una
+                      pregunta por vez.
+                    </p>
+                  </div>
+                  {tablist}
+                </div>
               </div>
-              <MethodologyLibrary world={world} activeTaller={activeTaller} />
-            </>
-          )
+            }
+            sidebar={<CoCreationMilestoneSidebar state={coCreation} />}
+            rightPanel={<CoCreationContextPanel state={coCreation} />}
+          >
+            <CoCreationPanel
+              state={coCreation}
+              worlds={worlds.map((item) => item.name)}
+            />
+          </EditorLayout>
         ) : (
-          <GlobalMethodologyLibrary />
+          <>
+            <header className="mb-8">
+              <h1 className="font-heading text-h3 text-primary">
+                Taller de Herramientas
+              </h1>
+              <p className="mt-2 text-body text-muted">
+                Metodologías de construcción seguras: editar, compilar,
+                publicar versiones inmutables y activarlas por mundo.
+              </p>
+            </header>
+
+            <div className="mb-6">{tablist}</div>
+
+            {view === "taller" ? (
+              isLoading ? (
+                <div className="flex justify-center py-16">
+                  <Spinner size="lg" />
+                </div>
+              ) : error ? (
+                <ErrorBanner
+                  message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
+                  onRetry={() => mutate()}
+                />
+              ) : (
+                <>
+                  <div className="mb-6 flex flex-wrap items-center gap-3">
+                    <TallerSelector
+                      activeTaller={activeTaller}
+                      onTallerChange={setCurrentTaller}
+                    />
+                    <WorldSelector
+                      worlds={worlds}
+                      currentWorld={world}
+                      onWorldChange={setWorld}
+                      onRequestCreate={() => setCreatingWorld(true)}
+                    />
+                    <p className="text-small text-muted">
+                      {world
+                        ? `Las activaciones se aplican a «${world}».`
+                        : worlds.length > 0
+                          ? "Elegí un mundo para poder activar versiones."
+                          : "No hay mundos disponibles; podés ver publicaciones pero no activar."}
+                    </p>
+                  </div>
+                  <MethodologyLibrary
+                    world={world}
+                    activeTaller={activeTaller}
+                  />
+                </>
+              )
+            ) : (
+              <GlobalMethodologyLibrary />
+            )}
+          </>
         )}
       </main>
 
