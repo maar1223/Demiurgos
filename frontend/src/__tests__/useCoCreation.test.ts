@@ -632,4 +632,159 @@ describe("useCoCreation", () => {
     expect(result.current.derivedFrom).toEqual(derivedFrom);
     expect(result.current.draftPayload).toEqual(canvasPayload);
   });
+
+  // -- TW16 attribution + review projection source (Fase 5b, PR 1) ----------
+
+  it("tracks exactly the canvas-edited sections and leaves untouched sections absent (REQ-TW16-3)", async () => {
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({ revision: 5, draft_payload: canvasPayload }),
+    );
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+    expect(result.current.touchedSections.size).toBe(0);
+
+    act(() => result.current.editCanvas({ purpose: "Nuevo propósito" }));
+    act(() => result.current.editCanvas({ scope: "Nuevo alcance" }));
+    act(() => result.current.editCanvas({ branches: ["Rama A", "Rama B"] }));
+
+    expect([...result.current.touchedSections].sort()).toEqual([
+      "branches",
+      "purpose",
+      "scope",
+    ]);
+    // Untouched sections stay absent (they would read "propuesto por el
+    // Asistente" in the review projection).
+    expect(result.current.touchedSections.has("main_flow")).toBe(false);
+    expect(result.current.touchedSections.has("rules")).toBe(false);
+    expect(result.current.touchedSections.has("name")).toBe(false);
+    expect(result.current.touchedSections.has("description")).toBe(false);
+    expect(result.current.touchedSections.has("world")).toBe(false);
+  });
+
+  it("never attributes chat-owned pending_questions as an Author touch (REQ-CC-14)", async () => {
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({ revision: 5, draft_payload: canvasPayload }),
+    );
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+
+    act(() =>
+      result.current.editCanvas({
+        purpose: "Nuevo propósito",
+        pending_questions: [{ text: "¿Aplica?", state: "pendiente" }],
+      }),
+    );
+
+    expect([...result.current.touchedSections]).toEqual(["purpose"]);
+  });
+
+  it("keeps touches within the session and resets them on session change or reset (session-scoped)", async () => {
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({ revision: 5, draft_payload: canvasPayload }),
+    );
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+
+    act(() => result.current.editCanvas({ purpose: "A" }));
+    expect([...result.current.touchedSections]).toEqual(["purpose"]);
+
+    // A server-driven resync WITHIN the same session (chat merge, REQ-CC-12)
+    // preserves the touches: the Author still decided the purpose section.
+    const chatMerged = { ...canvasPayload, purpose: "Propósito desde el chat" };
+    vi.mocked(turnCoCreationSession).mockResolvedValue(
+      sessionFixture({ revision: 6, draft_payload: chatMerged }),
+    );
+    await act(async () => {
+      await result.current.send("Aclaración del propósito");
+    });
+    expect(result.current.draftPayload?.purpose).toBe("Propósito desde el chat");
+    expect([...result.current.touchedSections]).toEqual(["purpose"]);
+
+    // A different session (derive seed) starts a fresh touch set.
+    const derivedFrom = { skill_id: "eneagrama", version: "1.2.0" };
+    vi.mocked(deriveDraft).mockResolvedValue({
+      session_id: "adaptation-session",
+      draft_id: "draft-derivado",
+      derived_from: derivedFrom,
+    });
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({
+        session_id: "adaptation-session",
+        draft_id: "draft-derivado",
+        draft_payload: canvasPayload,
+        derived_from: derivedFrom,
+      }),
+    );
+    await act(async () => {
+      await result.current.derive("eneagrama", "1.2.0", null);
+    });
+    expect(result.current.session?.session_id).toBe("adaptation-session");
+    expect(result.current.touchedSections.size).toBe(0);
+
+    // Editing the new session accumulates again, and reset() clears the set.
+    act(() => result.current.editCanvas({ rules: ["Regla nueva"] }));
+    expect([...result.current.touchedSections]).toEqual(["rules"]);
+    act(() => result.current.reset());
+    expect(result.current.touchedSections.size).toBe(0);
+  });
+
+  it("exposes the server-authoritative draft_payload as the review source (REQ-TW16-1/7)", async () => {
+    // Review-phase session whose payload is server-authoritative and distinct
+    // from any local component state (the Fase 5a bug source).
+    const reviewed = sessionFixture({
+      phase: "review",
+      milestone: "revision_publicacion",
+      draft_id: "draft-1",
+      compile_issues: [],
+      pending_question: null,
+      pending_options: [],
+      draft_payload: {
+        ...canvasPayload,
+        purpose: "Propósito desde el servidor",
+        scope: "Alcance desde el servidor",
+      },
+    });
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(reviewed);
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+
+    // The review view reads session.draft_payload verbatim (identity — no
+    // transform, no re-serialization).
+    expect(result.current.session?.phase).toBe("review");
+    expect(result.current.session?.draft_payload).toEqual(reviewed.draft_payload);
+    // The local canvas copy is DERIVED from the session (REQ-CC-12), so local
+    // component state can never be the projection source.
+    expect(result.current.draftPayload).toEqual(reviewed.draft_payload);
+
+    // Refresh preserves the summary: re-recovery yields the identical payload
+    // (REQ-TW16-1 scenario 2 — no drift).
+    vi.mocked(recoverCoCreationSession).mockResolvedValue({
+      ...reviewed,
+      revision: reviewed.revision + 1,
+    });
+    await act(async () => {
+      await result.current.recover();
+    });
+    expect(result.current.session?.draft_payload).toEqual(reviewed.draft_payload);
+  });
 });

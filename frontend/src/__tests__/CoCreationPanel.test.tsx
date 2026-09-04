@@ -58,6 +58,7 @@ const baseState = (): UseCoCreationReturn => ({
   reset: vi.fn(),
   // TW12 canvas
   draftPayload: null,
+  touchedSections: new Set<string>(),
   canvasError: null,
   editCanvas: vi.fn(),
   undo: vi.fn(),

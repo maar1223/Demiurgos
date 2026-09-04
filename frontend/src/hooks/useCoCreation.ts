@@ -106,6 +106,10 @@ export interface UseCoCreationReturn {
    *  backend is authoritative: server-driven changes (chat merges, restores,
    *  derive seeds) resync this value. */
   draftPayload: DraftPayload | null;
+  /** TW16 attribution (REQ-TW16-3): coarse `DraftPayload` section keys the
+   *  Author touched in the canvas during this session; empty set means nothing
+   *  was touched (all sections read "propuesto por el Asistente"). */
+  touchedSections: Set<string>;
   /** Autosave/validation error surfaced in the canvas toolbar. */
   canvasError: string | null;
   /** Apply an Author section edit locally, push the previous payload onto the
@@ -184,6 +188,12 @@ export function useCoCreation(
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  /** TW16 attribution (REQ-TW16-3): coarse `DraftPayload` section keys the
+   *  Author touched in the canvas during THIS session. Session-scoped — a
+   *  different session or a reset starts a fresh set. */
+  const [touchedSections, setTouchedSections] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // Refs mirroring mutable canvas state so async callbacks (debounce timers,
   // in-flight autosaves) always read the latest values without stale closures.
@@ -255,6 +265,14 @@ export function useCoCreation(
       pendingRevisionRef.current = undefined;
     }
   }, [session, resetStacks]);
+
+  /** TW16 attribution is session-scoped (design D2): the touch set starts
+   *  fresh whenever the session identity changes (create, derive seed,
+   *  recovery of a different session). Server resyncs WITHIN a session keep
+   *  the touches — the Author still decided those sections. */
+  useEffect(() => {
+    setTouchedSections(new Set());
+  }, [session?.session_id]);
 
   /** Shared success/error path for session-returning calls (create/send). */
   const apply = useCallback((request: () => Promise<CoCreationSession>) => {
@@ -362,6 +380,20 @@ export function useCoCreation(
       setFuture([]);
       payloadRef.current = next;
       setDraftPayload(next);
+      // TW16 attribution (REQ-TW16-3): derive the coarse section keys the
+      // Author actually edited from the patch. `pending_questions` is
+      // chat-owned (REQ-CC-14) — the canvas never authors it, so a stray
+      // patch key for it must not count as an Author decision.
+      const touched = Object.keys(patch).filter(
+        (key) => key !== "pending_questions",
+      );
+      if (touched.length > 0) {
+        setTouchedSections((prev) => {
+          const nextTouched = new Set(prev);
+          for (const key of touched) nextTouched.add(key);
+          return nextTouched;
+        });
+      }
       scheduleAutosave();
     },
     [scheduleAutosave],
@@ -759,6 +791,7 @@ export function useCoCreation(
     setValidation(null);
     setHistoryEntries([]);
     setRestoreError(null);
+    setTouchedSections(new Set());
   }, [resetStacks]);
 
   return {
@@ -777,6 +810,7 @@ export function useCoCreation(
 
     // TW12 canvas
     draftPayload,
+    touchedSections,
     canvasError,
     editCanvas,
     undo,
