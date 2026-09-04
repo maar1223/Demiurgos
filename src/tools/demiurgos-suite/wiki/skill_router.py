@@ -21,9 +21,10 @@ from typing import Any, Mapping
 
 from assistant_activity import HermesActivityRequest
 from guided_character_domain import route_new_character_intent
+from methodology_library import SKILL_MADRE_ID
 
 TRANSVERSAL_SKILLS: frozenset[str] = frozenset({
-    "narrative-character-creation",
+    SKILL_MADRE_ID,
     "narrative-world-spec",
     "narrative-idea",
     "narrative-outline",
@@ -107,7 +108,7 @@ class SkillRouter:
             turn = None
         if turn is not None and getattr(turn, "is_new_character", False):
             return SkillRouteResult(
-                "narrative-character-creation", _KEYWORD_CONFIDENCE, "keyword", True,
+                SKILL_MADRE_ID, _KEYWORD_CONFIDENCE, "keyword", True,
             )
         lowered = prompt.casefold()
         for skill_id, keywords in _KEYWORD_SKILLS:

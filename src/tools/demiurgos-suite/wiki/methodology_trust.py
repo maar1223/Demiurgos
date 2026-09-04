@@ -67,6 +67,8 @@ class QuarantineRecord:
     # computed server-side, never author-claimed.
     clasificacion: str | None = None
     trust_attributes: tuple[str, ...] = ()
+    # Draft promoted by ``trust`` (REQ-IMP-4); None while still quarantined.
+    draft_id: str | None = None
 
 
 def _utcnow() -> str:
@@ -343,7 +345,39 @@ class QuarantineStore:
             trusted=bool(meta.get("trusted")),
             clasificacion=meta.get("clasificacion"),
             trust_attributes=tuple(meta.get("trust_attributes") or ()),
+            draft_id=meta.get("draft_id"),
         )
+
+    def list(self) -> list[QuarantineRecord]:
+        """Return all quarantine records with fresh re-inspected verdicts.
+
+        Mirrors ``get()``: every stored record is re-validated at read time so
+        a package tampered on disk is surfaced as failed (fails closed). The
+        store root is created lazily by ``quarantine``; an absent root lists
+        empty.
+        """
+        if not self._root.is_dir():
+            return []
+        records: list[QuarantineRecord] = []
+        for meta_path in sorted(self._root.glob("*.json")):
+            package_id = meta_path.stem
+            try:
+                with open(meta_path, encoding="utf-8") as handle:
+                    meta = json.load(handle)
+            except (json.JSONDecodeError, OSError):
+                continue
+            package_path = self._root / f"{package_id}.zip"
+            if not package_path.is_file():
+                continue
+            records.append(QuarantineRecord(
+                package_id=package_id,
+                verdict=inspect_package(package_path.read_bytes()),
+                trusted=bool(meta.get("trusted")),
+                clasificacion=meta.get("clasificacion"),
+                trust_attributes=tuple(meta.get("trust_attributes") or ()),
+                draft_id=meta.get("draft_id"),
+            ))
+        return records
 
     def trust(self, package_id: str, library=None, verifier: Callable[[str, str], bool] | None = None):
         """Manually trust a quarantined package.
@@ -395,4 +429,5 @@ class QuarantineStore:
             trusted=True,
             clasificacion=clasificacion,
             trust_attributes=trust_attributes,
+            draft_id=draft_id,
         )

@@ -124,6 +124,50 @@ class TestQuarantine:
         assert library.list_drafts() == []
 
 
+class TestQuarantineList:
+    """Fase 5b (REQ-IMP-3): list all quarantine records with fresh verdicts."""
+
+    def test_list_returns_all_records_with_fresh_verdicts(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        assert store.list() == []
+        first = store.quarantine(_package())
+        second = store.quarantine(_package(), origin="local_author")
+        records = store.list()
+        assert {record.package_id for record in records} == {
+            first.package_id, second.package_id,
+        }
+        by_id = {record.package_id: record for record in records}
+        assert by_id[first.package_id].verdict.ok
+        assert by_id[first.package_id].clasificacion == "Comunitarias"
+        assert by_id[first.package_id].trusted is False
+        assert by_id[second.package_id].clasificacion == "Personalizadas"
+
+    def test_list_reinspects_tampered_package_on_disk(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        record = store.quarantine(_package())
+        # Tamper the stored .zip on disk: list() must re-inspect and fail
+        # closed (the quarantine review is never a stale cached verdict).
+        package_path = tmp_path / "quarantine" / f"{record.package_id}.zip"
+        raw = bytearray(package_path.read_bytes())
+        raw[-20] ^= 0xFF
+        package_path.write_bytes(bytes(raw))
+        loaded = store.list()[0]
+        assert loaded.package_id == record.package_id
+        assert loaded.verdict.ok is False
+        assert loaded.verdict.checksum_valid is False
+
+    def test_list_exposes_trusted_draft_id(self, tmp_path: Path) -> None:
+        store = QuarantineStore(tmp_path / "quarantine")
+        library = _library(tmp_path)
+        record = store.quarantine(_package(), library=library)
+        trusted = store.trust(record.package_id, library=library)
+        assert trusted is not None
+        assert trusted.draft_id is not None
+        loaded = store.list()[0]
+        assert loaded.trusted is True
+        assert loaded.draft_id == trusted.draft_id
+
+
 class TestOfficialSignature:
     def test_signature_is_additive_layer(self) -> None:
         package = build_package(_valid_manifest(), _valid_source(), signer=_signer)

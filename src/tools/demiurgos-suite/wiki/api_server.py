@@ -32,7 +32,7 @@ if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Query, Request, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
@@ -120,10 +120,12 @@ from wiki.world_authority import detect_legacy_layout
 from methodology_library import (
     AlreadyPublishedError,
     MethodologyLibrary,
+    MethodologyLibraryError,
     NotPublishedError,
+    SKILL_MADRE_ID,
     ValidationError,
 )
-from methodology_trust import QuarantineStore
+from methodology_trust import QuarantineRecord, QuarantineStore, build_package
 from semantic_intent import (
     CONTINUATION_STATES,
     SELF_CONTAINED_SEMANTIC_STATES,
@@ -7204,6 +7206,12 @@ def methodologies_publish(draft_id: str, request: Request):
         return JSONResponse(status_code=409, content={
             "detail": str(exc), "code": "already_published",
         })
+    except MethodologyLibraryError as exc:
+        # REQ-IMP-6: the Skill Madre id is reserved — an import-derived draft
+        # can never be published. All other library errors are caught above.
+        return JSONResponse(status_code=409, content={
+            "detail": str(exc), "code": "reserved_skill_id",
+        })
     return {
         "skill_id": published.skill_id,
         "version": published.version,
@@ -7254,6 +7262,141 @@ def methodologies_rollback(body: MethodologyRollbackRequest, request: Request):
         "version": activation.version,
         "digest": activation.digest,
         "activated_at": activation.activated_at,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Skill transfer (Fase 5b, REQ-IMP-1..6): export published versions as `.zip`
+# packages and import them through mandatory quarantine → manual trust →
+# editable draft. The Skill Madre id is reserved: it can never be trusted or
+# published from an import.
+# ---------------------------------------------------------------------------
+
+
+def _quarantine_record_payload(record: QuarantineRecord) -> dict[str, Any]:
+    """Wire shape of a quarantine record (verdict without the compiled body)."""
+    verdict = record.verdict
+    return {
+        "package_id": record.package_id,
+        "verdict": {
+            "ok": verdict.ok,
+            "checksum_valid": verdict.checksum_valid,
+            "signature_present": verdict.signature_present,
+            "signature_valid": verdict.signature_valid,
+            "issues": list(verdict.issues),
+        },
+        "trusted": record.trusted,
+        "draft_id": record.draft_id,
+        "clasificacion": record.clasificacion,
+        "trust_attributes": list(record.trust_attributes),
+    }
+
+
+@app.post("/api/methodologies/published/{skill_id}/{version}/export")
+def methodologies_export(skill_id: str, version: str, request: Request):
+    """Export a published version as a `.zip` methodology package (REQ-IMP-1).
+
+    The package contains the bounded manifest, the author source, the integrity
+    checksum manifest, and the official signature when one was recorded.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    library = _methodology_library()
+    published = library.get_published(skill_id, version)
+    if published is None:
+        return JSONResponse(status_code=404, content={"detail": "Metodología no encontrada"})
+    manifest = {
+        "skill_id": published.skill_id,
+        "version": published.version,
+        "name": published.name,
+        "description": published.description,
+        "phases": list(published.phases),
+        "language": published.language,
+        "taller": published.taller,
+        "talleres_compatibles": list(published.talleres_compatibles),
+        "categoria_funcional": published.categoria_funcional,
+        "etiquetas": list(published.etiquetas),
+    }
+    package = build_package(manifest, published.source)
+    return Response(
+        content=package,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{skill_id}-{version}.zip"'},
+    )
+
+
+@app.post("/api/methodologies/import")
+async def methodologies_import(
+    request: Request,
+    file: UploadFile = File(...),
+    origin: str = Form("community"),
+):
+    """Import a `.zip` methodology package into mandatory quarantine (REQ-IMP-2).
+
+    The package is isolated with its integrity verdict; the library is never
+    mutated by import. The Author must explicitly trust it (REQ-IMP-4) before
+    it becomes an editable draft.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    data = await file.read()
+    if not data:
+        return JSONResponse(status_code=400, content={"detail": "El archivo está vacío."})
+    record = _methodology_quarantine().quarantine(
+        data,
+        library=_methodology_library(),
+        name=file.filename or "",
+        origin=origin,
+    )
+    return _quarantine_record_payload(record)
+
+
+@app.get("/api/methodologies/quarantine")
+def methodologies_quarantine_list(request: Request):
+    """List quarantined imports with fresh re-inspected verdicts (REQ-IMP-3)."""
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    entries = [
+        _quarantine_record_payload(record)
+        for record in _methodology_quarantine().list()
+    ]
+    return {"entries": entries}
+
+
+@app.post("/api/methodologies/quarantine/{package_id}/trust")
+def methodologies_quarantine_trust(package_id: str, request: Request):
+    """Manually trust a quarantined package, promoting it to a draft (REQ-IMP-4).
+
+    Rejects the reserved Skill Madre id with 409 (REQ-IMP-6) and fails closed
+    (422) when the package no longer re-validates.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    store = _methodology_quarantine()
+    record = store.get(package_id)
+    if record is None:
+        return JSONResponse(status_code=404, content={"detail": "Metodología no encontrada"})
+    compiled = record.verdict.compiled
+    if compiled is not None and compiled.skill_id == SKILL_MADRE_ID:
+        return JSONResponse(status_code=409, content={
+            "detail": "reserved_skill_id", "code": "reserved_skill_id",
+        })
+    trusted = store.trust(package_id, library=_methodology_library())
+    if trusted is None:
+        return JSONResponse(status_code=422, content={
+            "detail": "La metodología no pasó la validación de integridad.",
+            "code": "trust_rejected",
+        })
+    return {
+        "package_id": trusted.package_id,
+        "trusted": trusted.trusted,
+        "draft_id": trusted.draft_id,
+        "clasificacion": trusted.clasificacion,
+        "trust_attributes": list(trusted.trust_attributes),
     }
 
 

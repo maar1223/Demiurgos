@@ -36,6 +36,12 @@ from methodology_compiler import (
 )
 
 
+# The reserved Skill Madre id (REQ-IMP-6): this skill is authored by Demiurgos
+# itself and must never be published from an import-derived draft. Single
+# source of truth shared with the skill router and the API trust boundary.
+SKILL_MADRE_ID = "narrative-character-creation"
+
+
 class MethodologyLibraryError(Exception):
     """Base error for the methodology library."""
 
@@ -435,6 +441,15 @@ class MethodologyLibrary:
         now = _utcnow()
         with self._lock:
             draft_record = self._drafts.get(draft_id) or {}
+            # REQ-IMP-6: the Skill Madre must never be published from an
+            # import-derived draft. Import-derived drafts carry server-injected
+            # ``parent_skill_id`` (provenance); the Skill Madre itself stays
+            # publishable when authored directly in the workshop.
+            if (
+                compiled.skill_id == SKILL_MADRE_ID
+                and draft_record.get("parent_skill_id")
+            ):
+                raise MethodologyLibraryError("reserved_skill_id")
             parent_version = draft_record.get("parent_version")
             if parent_version is not None:
                 # REQ-CC-19: a derived draft publishes as parent_version+1.

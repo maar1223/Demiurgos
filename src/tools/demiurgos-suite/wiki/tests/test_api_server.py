@@ -8,6 +8,7 @@ coverage, which is how the is_dir contract regression survived unnoticed.
 import base64
 import asyncio
 import hashlib
+import io
 import json
 import logging
 import os
@@ -15,6 +16,7 @@ import re
 import sys
 import tempfile
 import threading
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -37,6 +39,7 @@ from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
 from guided_session_store import SESSION_TTL  # noqa: E402
 import idea_capture_ui  # noqa: E402
 from methodology_library import MethodologyLibrary  # noqa: E402
+from methodology_trust import build_package, inspect_package  # noqa: E402
 import telegram_settings  # noqa: E402
 from wiki import migration as migration_module  # noqa: E402
 from wiki.graph_indexer import EntityGraphIndex  # noqa: E402
@@ -2259,6 +2262,174 @@ class TestMethodologyApi:
         assert entry["etiquetas"] == ["lore", "npc"]
         assert entry["clasificacion"] == "Oficiales"
         assert entry["trust_attributes"] == ["verified"]
+
+    # ------------------------------------------------------------------ #
+    # Fase 5b (PR 2): skill import/export/quarantine/trust + reserved-id
+    # guard (REQ-IMP-1..6).
+    # ------------------------------------------------------------------ #
+
+    def _import_package(self, manifest=None) -> bytes:
+        return build_package(
+            manifest or {
+                "skill_id": "guided-character-v1",
+                "version": "1.2.0",
+                "name": "Guided character methodology",
+                "description": "A safe construction methodology.",
+                "phases": ["conversation", "review", "complete"],
+                "language": "es",
+            },
+            "## Construcción segura\n\nHaz preguntas de a una.\n",
+        )
+
+    def _upload(self, client: TestClient, package: bytes, filename: str = "skill.zip"):
+        return client.post(
+            "/api/methodologies/import",
+            files={"file": (filename, package, "application/zip")},
+        )
+
+    def test_export_builds_valid_zip(self, client: TestClient, monkeypatch):
+        """REQ-IMP-1: the exported .zip contains manifest, source and the
+        integrity checksum, and re-inspects clean (round-trip safe)."""
+        _principal(monkeypatch, "author-1")
+        draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
+        assert draft.status_code == 200, draft.text
+        draft_id = draft.json()["draft_id"]
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 200, published.text
+        exported = client.post("/api/methodologies/published/guided-character-v1/1.2.0/export")
+        assert exported.status_code == 200, exported.text
+        assert exported.headers["content-type"] == "application/zip"
+        archive = zipfile.ZipFile(io.BytesIO(exported.content))
+        assert set(archive.namelist()) == {"manifest.yaml", "source.md", "checksums.json"}
+        verdict = inspect_package(exported.content)
+        assert verdict.ok, verdict.issues
+
+    def test_export_requires_auth_and_known_version(self, client: TestClient, monkeypatch):
+        unauthenticated = client.post("/api/methodologies/published/x/1.0.0/export")
+        assert unauthenticated.status_code == 401
+        _principal(monkeypatch, "author-1")
+        missing = client.post("/api/methodologies/published/ghost/9.9.9/export")
+        assert missing.status_code == 404
+
+    def test_import_quarantines_and_does_not_mutate_library(self, client: TestClient, monkeypatch):
+        """REQ-IMP-2/3: import isolates the package; the library stays intact."""
+        _principal(monkeypatch, "author-1")
+        imported = self._upload(client, self._import_package())
+        assert imported.status_code == 200, imported.text
+        record = imported.json()
+        assert record["package_id"]
+        assert record["verdict"]["ok"] is True
+        assert record["verdict"]["issues"] == []
+        assert record["verdict"]["checksum_valid"] is True
+        assert record["clasificacion"] == "Comunitarias"
+        assert record["trusted"] is False
+        entries = client.get("/api/methodologies/quarantine").json()["entries"]
+        assert [entry["package_id"] for entry in entries] == [record["package_id"]]
+        status = client.get("/api/methodologies/status").json()
+        assert status["drafts"] == []
+        assert status["published"] == []
+
+    def test_import_malformed_zip_quarantines_failed_verdict(self, client: TestClient, monkeypatch):
+        """REQ-IMP-3: malformed packages fail closed but stay quarantined."""
+        _principal(monkeypatch, "author-1")
+        imported = self._upload(client, b"not-a-zip", filename="broken.zip")
+        assert imported.status_code == 200
+        record = imported.json()
+        assert record["verdict"]["ok"] is False
+        assert record["verdict"]["checksum_valid"] is False
+        assert record["verdict"]["issues"]
+
+    def test_import_quarantine_trust_round_trip_creates_draft(self, client: TestClient, monkeypatch):
+        """REQ-IMP-4: trust promotes a quarantined package to an editable
+        draft with system-derived clasificacion/trust_attributes."""
+        _principal(monkeypatch, "author-1")
+        imported = self._upload(client, self._import_package()).json()
+        trusted = client.post(f"/api/methodologies/quarantine/{imported['package_id']}/trust")
+        assert trusted.status_code == 200, trusted.text
+        payload = trusted.json()
+        assert payload["package_id"] == imported["package_id"]
+        assert payload["trusted"] is True
+        assert payload["draft_id"]
+        assert payload["clasificacion"] == "Comunitarias"
+        assert payload["trust_attributes"] == []
+        status = client.get("/api/methodologies/status").json()
+        assert [draft["skill_id"] for draft in status["drafts"]] == ["guided-character-v1"]
+        entries = client.get("/api/methodologies/quarantine").json()["entries"]
+        trusted_entry = next(
+            entry for entry in entries
+            if entry["package_id"] == imported["package_id"]
+        )
+        assert trusted_entry["trusted"] is True
+        assert trusted_entry["draft_id"] == payload["draft_id"]
+
+    def test_trust_fails_closed_for_failed_verdict(self, client: TestClient, monkeypatch):
+        """REQ-IMP-4: trust is blocked when the package does not re-validate."""
+        _principal(monkeypatch, "author-1")
+        imported = self._upload(client, b"not-a-zip", filename="broken.zip").json()
+        trusted = client.post(f"/api/methodologies/quarantine/{imported['package_id']}/trust")
+        assert trusted.status_code == 422
+        assert trusted.json()["code"] == "trust_rejected"
+        assert client.get("/api/methodologies/status").json()["drafts"] == []
+
+    def test_trust_unknown_package_is_404(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch, "author-1")
+        response = client.post("/api/methodologies/quarantine/ghost/trust")
+        assert response.status_code == 404
+
+    def test_reserved_skill_id_rejected_at_trust(self, client: TestClient, monkeypatch):
+        """REQ-IMP-6 scenario: trusting a package with the Skill Madre id is
+        rejected with 409 and no draft is created."""
+        _principal(monkeypatch, "author-1")
+        madre = build_package({
+            "skill_id": "narrative-character-creation",
+            "version": "1.0.0",
+            "name": "Skill Madre",
+            "description": "La skill madre del taller.",
+            "phases": ["conversation", "review", "complete"],
+            "language": "es",
+        }, "## Skill Madre\n\nTexto.\n")
+        imported = self._upload(client, madre, filename="madre.zip").json()
+        assert imported["verdict"]["ok"] is True
+        trusted = client.post(f"/api/methodologies/quarantine/{imported['package_id']}/trust")
+        assert trusted.status_code == 409
+        assert trusted.json()["code"] == "reserved_skill_id"
+        assert client.get("/api/methodologies/status").json()["drafts"] == []
+
+    def test_reserved_skill_id_rejected_at_publish(self, client: TestClient, monkeypatch):
+        """REQ-IMP-6 scenario: an import-derived Skill Madre draft can never
+        be published (409 reserved_skill_id)."""
+        _principal(monkeypatch, "author-1")
+        draft = client.post("/api/methodologies/drafts", json={
+            "skill_id": "narrative-character-creation",
+            "version": "1.0.0",
+            "name": "Skill Madre",
+            "source": "## Skill Madre\n\nTexto.\n",
+        })
+        assert draft.status_code == 200, draft.text
+        draft_id = draft.json()["draft_id"]
+        # Import-derived drafts carry server-injected parent_skill_id; simulate
+        # that state (white-box) and assert publish fails closed.
+        library = api_server._methodology_library()
+        with library._lock:
+            library._drafts[draft_id]["parent_skill_id"] = "narrative-character-creation"
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 409
+        assert published.json()["code"] == "reserved_skill_id"
+
+    def test_reserved_skill_madre_author_publish_is_allowed(self, client: TestClient, monkeypatch):
+        """The guard only blocks import-derived publishes: the Skill Madre
+        authored directly in the workshop still publishes normally."""
+        _principal(monkeypatch, "author-1")
+        draft = client.post("/api/methodologies/drafts", json={
+            "skill_id": "narrative-character-creation",
+            "version": "1.0.0",
+            "name": "Skill Madre",
+            "source": "## Skill Madre\n\nTexto.\n",
+        })
+        assert draft.status_code == 200, draft.text
+        published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
+        assert published.status_code == 200, published.text
+        assert published.json()["skill_id"] == "narrative-character-creation"
 
 
 def _delta_guided_provider():
