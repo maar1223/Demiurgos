@@ -7061,6 +7061,10 @@ def methodologies_status(request: Request):
             "etiquetas": list(item.etiquetas),
             "clasificacion": item.clasificacion,
             "trust_attributes": list(item.trust_attributes),
+            # TW14: server-injected provenance on list surfaces (REQ-CC-21) —
+            # read from the stored published record, never from client input.
+            "parent_skill_id": item.parent_skill_id,
+            "parent_version": item.parent_version,
         }
         for item in library.list_published()
     ]
@@ -7131,6 +7135,10 @@ def methodologies_inventory(
             "etiquetas": list(published.etiquetas),
             "clasificacion": published.clasificacion,
             "trust_attributes": list(published.trust_attributes),
+            # TW14: server-injected provenance on list surfaces (REQ-CC-21) —
+            # read from the stored published record, never from client input.
+            "parent_skill_id": published.parent_skill_id,
+            "parent_version": published.parent_version,
         })
     return {"items": items}
 

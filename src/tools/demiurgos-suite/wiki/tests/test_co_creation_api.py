@@ -926,6 +926,51 @@ def test_published_detail_route_returns_source_and_provenance(
     assert missing.status_code == 404
 
 
+def test_list_routes_expose_derived_provenance(
+    client: TestClient, monkeypatch,
+) -> None:
+    """REQ-CC-21: when the inventory/status list a derived published version,
+    the list items include the server-injected provenance (read from the
+    stored published record, never from client input)."""
+    _bind_principal(monkeypatch)
+    _publish_skill(source=_template_source("Skill Oficial"))
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial", "version": "1.0.0",
+    })
+    assert derived.status_code == 200, derived.text
+    session_id = derived.json()["session_id"]
+    published = client.post(f"/api/co-creation/sessions/{session_id}/publish", json={
+        "base_revision": 0,
+    })
+    assert published.status_code == 200, published.text
+    assert published.json()["published"]["version"] == "1.0.1"
+    # Inventory (public list) exposes provenance on the derived item.
+    inventory = client.get("/api/methodologies/inventory")
+    assert inventory.status_code == 200, inventory.text
+    items = {
+        item["skill_id"] + "@" + item["version"]: item
+        for item in inventory.json()["items"]
+    }
+    derived_item = items["skill-oficial@1.0.1"]
+    assert derived_item["parent_skill_id"] == "skill-oficial"
+    assert derived_item["parent_version"] == "1.0.0"
+    # The original (never-derived) item carries explicit null provenance.
+    assert items["skill-oficial@1.0.0"]["parent_skill_id"] is None
+    assert items["skill-oficial@1.0.0"]["parent_version"] is None
+    # Status (auth-required) exposes the same provenance on its list.
+    status = client.get("/api/methodologies/status")
+    assert status.status_code == 200, status.text
+    status_items = {
+        item["skill_id"] + "@" + item["version"]: item
+        for item in status.json()["published"]
+    }
+    derived_entry = status_items["skill-oficial@1.0.1"]
+    assert derived_entry["parent_skill_id"] == "skill-oficial"
+    assert derived_entry["parent_version"] == "1.0.0"
+    assert status_items["skill-oficial@1.0.0"]["parent_skill_id"] is None
+    assert status_items["skill-oficial@1.0.0"]["parent_version"] is None
+
+
 def test_published_detail_route_fails_closed_without_auth(client: TestClient) -> None:
     response = client.get("/api/methodologies/published/skill-oficial/1.0.0")
     assert response.status_code == 401
