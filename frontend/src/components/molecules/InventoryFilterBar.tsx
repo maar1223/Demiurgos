@@ -23,10 +23,10 @@ export function InventoryFilterBar({
     onChange({ ...filters, ...patch });
 
   const inputClass =
-    "rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50";
+    "w-full rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50";
 
   return (
-    <div className="flex flex-wrap items-end gap-3">
+    <div className="flex flex-col gap-3">
       <label className="flex flex-col gap-1 text-small text-muted">
         Clasificación
         <select
@@ -58,11 +58,12 @@ export function InventoryFilterBar({
         />
       </label>
 
-      <div className="flex flex-col gap-1 text-small text-muted">
+      <div className="flex w-full flex-col gap-1 text-small text-muted">
         Taller
         <TallerSelector
           activeTaller={filters.taller ?? ""}
           onTallerChange={(taller) => update({ taller })}
+          fullWidth
         />
       </div>
 

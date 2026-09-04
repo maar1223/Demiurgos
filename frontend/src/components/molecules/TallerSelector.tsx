@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Icon } from "@/components/atoms/Icon";
+import { cn } from "@/lib/utils";
 import {
   CORE_TALLERES,
   CORE_TALLER_LABELS,
@@ -12,6 +13,10 @@ interface TallerSelectorProps {
   /** Called with the selected Taller SHORT KEY — display labels live in
    *  CORE_TALLER_LABELS (taller-selector-tree-states spec REQ-TRE-1). */
   onTallerChange: (taller: string) => void;
+  /** Stretch the trigger and dropdown to the full width of their container.
+   *  Used inside the narrow sidebar filter bar (REQ-LIB-4) where a compact
+   *  inline button would let the dropdown overflow and clip. */
+  fullWidth?: boolean;
 }
 
 function isCoreTaller(taller: string): taller is CoreTaller {
@@ -30,6 +35,7 @@ function isCoreTaller(taller: string): taller is CoreTaller {
 export function TallerSelector({
   activeTaller,
   onTallerChange,
+  fullWidth = false,
 }: TallerSelectorProps) {
   const [open, setOpen] = useState(false);
 
@@ -48,11 +54,16 @@ export function TallerSelector({
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        className="flex items-center gap-1.5 rounded-lg border border-edge bg-surface-raised px-3 py-1.5 text-small text-primary transition-colors hover:bg-surface-hover"
+        className={cn(
+          "flex items-center gap-1.5 rounded-lg border border-edge bg-surface-raised px-3 py-1.5 text-small text-primary transition-colors hover:bg-surface-hover",
+          fullWidth && "w-full justify-between",
+        )}
         aria-expanded={open}
         aria-haspopup="listbox"
       >
-        <span className="max-w-[180px] truncate">{triggerLabel}</span>
+        <span className={cn("truncate", !fullWidth && "max-w-[180px]")}>
+          {triggerLabel}
+        </span>
         <Icon
           name="chevron-down"
           size={12}
@@ -63,7 +74,12 @@ export function TallerSelector({
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-edge bg-surface-raised py-1 shadow-xl">
+          <div
+            className={cn(
+              "absolute z-20 mt-1 rounded-lg border border-edge bg-surface-raised py-1 shadow-xl",
+              fullWidth ? "left-0 right-0" : "right-0 w-48",
+            )}
+          >
             {CORE_TALLERES.map((taller) => (
               <button
                 key={taller}
