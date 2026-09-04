@@ -13,6 +13,8 @@ import { Badge } from "@/components/atoms/Badge";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
+import { ManualSkillCreator } from "@/components/organisms/ManualSkillCreator";
+import { SkillImportPanel } from "@/components/organisms/SkillImportPanel";
 import { CoCreationCanvas } from "@/components/organisms/CoCreation/CoCreationCanvas";
 import {
   normalizePendingQuestion,
@@ -258,6 +260,13 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
   const [etiquetas, setEtiquetas] = useState("");
   /** TW12 center-pane surface: chat (intention) or canvas (structure). */
   const [centerView, setCenterView] = useState<"chat" | "canvas">("chat");
+  /** Authoring sub-mode (REQ-CC-1): guided chat+canvas (default), manual
+   *  markdown draft form, or .zip import/quarantine. Orthogonal to centerView:
+   *  the chat/canvas toggle only applies when authoringMode === "guided"
+   *  (SC-CC-1.4). */
+  const [authoringMode, setAuthoringMode] = useState<
+    "guided" | "manual" | "import"
+  >("guided");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
   const [originalDetail, setOriginalDetail] =
@@ -359,14 +368,11 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="border-b border-edge px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-body font-medium text-primary">Co-crear una skill</h2>
-            <p className="mt-1 text-xs text-muted">
-              Una pregunta por vez, guiada por la Skill Madre. Vos aprobás cada
-              paso.
-            </p>
-          </div>
-          {session && (
+          <p className="text-xs text-muted">
+            Una pregunta por vez, guiada por la Skill Madre. Vos aprobás cada
+            paso.
+          </p>
+          {session && authoringMode === "guided" && (
             <div
               role="tablist"
               aria-label="Superficie de co-creación"
@@ -403,9 +409,61 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
             </div>
           )}
         </div>
+        {/* Authoring sub-mode toggle (REQ-CC-1): guided chat+canvas (default),
+            manual markdown draft form, or .zip import/quarantine. The
+            chat/canvas toggle above only applies in guided mode (SC-CC-1.4). */}
+        <div
+          role="tablist"
+          aria-label="Modo de creación"
+          className="mt-3 inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={authoringMode === "guided"}
+            onClick={() => setAuthoringMode("guided")}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-small transition-colors",
+              authoringMode === "guided"
+                ? "bg-action text-action-text"
+                : "text-muted hover:bg-surface-hover hover:text-primary",
+            )}
+          >
+            Guiada
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={authoringMode === "manual"}
+            onClick={() => setAuthoringMode("manual")}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-small transition-colors",
+              authoringMode === "manual"
+                ? "bg-action text-action-text"
+                : "text-muted hover:bg-surface-hover hover:text-primary",
+            )}
+          >
+            Manual
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={authoringMode === "import"}
+            onClick={() => setAuthoringMode("import")}
+            className={cn(
+              "rounded-md px-3 py-1.5 text-small transition-colors",
+              authoringMode === "import"
+                ? "bg-action text-action-text"
+                : "text-muted hover:bg-surface-hover hover:text-primary",
+            )}
+          >
+            Importar
+          </button>
+        </div>
       </div>
 
-      {session && centerView === "canvas" ? (
+      {authoringMode === "guided" ? (
+        session && centerView === "canvas" ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-edge px-4 py-2">
             <ProvenanceBadge derivedFrom={session.derived_from} />
@@ -436,7 +494,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">{canvas}</div>
         </>
-      ) : (
+        ) : (
         <>
           <div className="flex-1 overflow-y-auto px-4 py-3">
             {!session ? (
@@ -805,6 +863,15 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
             )}
           </div>
         </>
+        )
+      ) : authoringMode === "manual" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          <ManualSkillCreator />
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          <SkillImportPanel />
+        </div>
       )}
 
       {historyOpen && session && (

@@ -9,6 +9,23 @@ import {
 import type { UseCoCreationReturn } from "@/hooks/useCoCreation";
 import type { CoCreationSession } from "@/api/types";
 
+const mockCreateDraft = vi.hoisted(() => vi.fn());
+const mockPublish = vi.hoisted(() => vi.fn());
+const mockImportPackage = vi.hoisted(() => vi.fn());
+const mockListQuarantine = vi.hoisted(() => vi.fn());
+const mockTrustQuarantine = vi.hoisted(() => vi.fn());
+
+// CoCreationPanel mounts ManualSkillCreator / SkillImportPanel in the
+// "manual"/"import" sub-modes (REQ-CC-1), which call the methodologies API on
+// mount/submit — mock the module so those sub-modes never hit the network.
+vi.mock("@/api/methodologies", () => ({
+  createMethodologyDraft: mockCreateDraft,
+  publishMethodologyDraft: mockPublish,
+  importPackage: mockImportPackage,
+  listQuarantine: mockListQuarantine,
+  trustQuarantine: mockTrustQuarantine,
+}));
+
 const sessionFixture = (
   overrides: Partial<CoCreationSession> = {},
 ): CoCreationSession => ({
@@ -363,6 +380,111 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     await user.click(screen.getByRole("button", { name: "Publicar" }));
 
     expect(state.publish).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockListQuarantine.mockResolvedValue({ entries: [] });
+  });
+
+  it("defaults to guided mode with the chat surface visible (SC-CC-1.1)", () => {
+    render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
+
+    expect(
+      screen.getByRole("textbox", { name: "Idea de skill" }),
+    ).toBeInTheDocument();
+
+    const toggle = screen.getByRole("tablist", { name: "Modo de creación" });
+    expect(within(toggle).getByRole("tab", { name: "Guiada" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(within(toggle).getByRole("tab", { name: "Manual" })).toHaveAttribute(
+      "aria-selected",
+      "false",
+    );
+    expect(
+      within(toggle).getByRole("tab", { name: "Importar" }),
+    ).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("renders the manual markdown draft form in manual mode (SC-CC-1.2)", async () => {
+    const user = userEvent.setup();
+    render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
+
+    await user.click(screen.getByRole("tab", { name: "Manual" }));
+
+    expect(screen.getByText("Publicar un borrador")).toBeInTheDocument();
+    expect(screen.getByLabelText("Skill ID")).toBeInTheDocument();
+    expect(screen.getByLabelText("Versión")).toBeInTheDocument();
+    expect(screen.getByLabelText("Nombre")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Fuente/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Publicar borrador" }),
+    ).toBeInTheDocument();
+    // The guided chat surface is not mounted in manual mode.
+    expect(
+      screen.queryByRole("textbox", { name: "Idea de skill" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the .zip import/quarantine block in import mode (SC-CC-1.3)", async () => {
+    const user = userEvent.setup();
+    render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
+
+    await user.click(screen.getByRole("tab", { name: "Importar" }));
+
+    expect(await screen.findByText("Importar una skill")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Paquete/)).toBeInTheDocument();
+  });
+
+  it("preserves the guided chat input across guided→manual→guided (SC-CC-1.4)", async () => {
+    const user = userEvent.setup();
+    render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
+
+    await user.type(
+      screen.getByRole("textbox", { name: "Idea de skill" }),
+      "Quiero una skill de eneagrama",
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Manual" }));
+    expect(screen.getByText("Publicar un borrador")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Guiada" }));
+
+    expect(
+      screen.getByRole("textbox", { name: "Idea de skill" }),
+    ).toHaveValue("Quiero una skill de eneagrama");
+  });
+
+  it("preserves the guided canvas view across guided→manual→guided (SC-CC-1.4)", async () => {
+    const user = userEvent.setup();
+    const state = { ...baseState(), session: sessionFixture() };
+    render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
+
+    // Switch the guided surface to the canvas (TW12).
+    await user.click(screen.getByRole("tab", { name: "Lienzo" }));
+    expect(screen.getByRole("tab", { name: "Lienzo" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Historial" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Manual" }));
+    expect(screen.getByText("Publicar un borrador")).toBeInTheDocument();
+    // The chat/canvas toggle is a guided-only surface.
+    expect(
+      screen.queryByRole("tablist", { name: "Superficie de co-creación" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Guiada" }));
+    expect(screen.getByRole("tab", { name: "Lienzo" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("button", { name: "Historial" })).toBeInTheDocument();
   });
 });
 
