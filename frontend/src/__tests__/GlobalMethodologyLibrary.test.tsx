@@ -412,6 +412,25 @@ describe("GlobalMethodologyLibrary — export action (REQ-IMP-1)", () => {
   });
 });
 
+describe("GlobalMethodologyLibrary — page-level selection (SC-SB-2.2)", () => {
+  it("reports the clicked row to onSelect alongside the internal detail panel", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<GlobalMethodologyLibrary onSelect={onSelect} />);
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Narrative Proposer"));
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skill_id: "narrative-proposer",
+        version: "1.2.0",
+      }),
+    );
+  });
+});
+
 describe("REQ-LIB-8 — read-only invariant", () => {
   const FORBIDDEN_VALUES = [
     "activateMethodology",

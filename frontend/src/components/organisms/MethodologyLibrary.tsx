@@ -1,15 +1,16 @@
-import { useCallback, useEffect, useState } from "react";
-import {
-  activateMethodology,
-  getMethodologyStatus,
-} from "@/api/methodologies";
-import type { MethodologyStatus } from "@/api/types";
-import { Button } from "@/components/atoms/Button";
+import { useEffect, useMemo, useState } from "react";
+import type { MethodologyStatus, PublishedMethodology } from "@/api/types";
 import { Spinner } from "@/components/atoms/Spinner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { TallerTree } from "@/components/organisms/TallerTree";
 import { groupSkillsByState } from "@/lib/tallerStates";
+
+/** Page-level methodology selection (REQ-SB-5). Structural type. */
+interface MethodologySelection {
+  skill_id: string;
+  version: string;
+}
 
 interface MethodologyLibraryProps {
   /** World to activate versions for (the selected Taller de Mundo world). */
@@ -17,59 +18,110 @@ interface MethodologyLibraryProps {
   /** Active Taller SHORT KEY (Herramientas | Mundo | Ideas) — drives the
    *  contextual tree via `groupSkillsByState` (spec REQ-TRE-3/5). */
   activeTaller: string;
+  /** Page-lifted library status (task 2.3): `null` while the first fetch is
+   *  in flight (spinner). The component no longer fetches — the page owns
+   *  `getMethodologyStatus` and shares the result with the right panel. */
+  status: MethodologyStatus | null;
+  /** Page-level selection: highlighted row + filter contract (SC-SB-2.3). */
+  selected: MethodologySelection | null;
+  /** Selection setter; the filter contract calls it with `null` when the
+   *  query filters the selected row out. */
+  onSelect: (sel: MethodologySelection | null) => void;
+  /** World-scoped activation, owned by the page (it refetches status). */
+  onActivate: (skillId: string, version: string) => void;
+  busy: boolean;
+  /** Fetch/activation error surfaced by the page; retry re-runs the page
+   *  fetch. */
+  error?: string | null;
+  onRetry?: () => void;
 }
 
 /**
  * Taller de Herramientas — methodology library (operational view).
  *
- * Lists published methodology versions for the selected world and lets the
- * Author activate a published version. Activation is world-scoped: it governs
- * NEW guided sessions in that world only; already running sessions fail closed
- * (server-enforced). Draft authoring (manual form + zip import) lives in
- * `ManualSkillCreator` / `SkillImportPanel`.
+ * Slimmed to the mi-mundo explorer content (task 2.3): the heading now lives
+ * in the EditorLayout sidebar shell, and `getMethodologyStatus` is lifted to
+ * the page (shared with `MethodologyStatePanel`). This component lists
+ * published methodology versions for the selected world, exposes a
+ * client-side filter (SC-SB-1.1) and lets the Author activate a published
+ * version. Activation is world-scoped: it governs NEW guided sessions in that
+ * world only; already running sessions fail closed (server-enforced).
  */
 export function MethodologyLibrary({
   world,
   activeTaller,
+  status,
+  selected,
+  onSelect,
+  onActivate,
+  busy,
+  error,
+  onRetry,
 }: MethodologyLibraryProps) {
-  const [status, setStatus] = useState<MethodologyStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  /** Client-side filter over the grouped tree (SC-SB-1.1 "filters"). */
+  const [query, setQuery] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setStatus(await getMethodologyStatus());
-    } catch {
-      setError("No se pudo cargar la biblioteca de metodologías.");
-    } finally {
-      setLoading(false);
+  const groups = useMemo(() => {
+    if (!status) return null;
+    return groupSkillsByState(
+      status.published,
+      activeTaller,
+      world,
+      status.activations ?? {},
+    );
+  }, [status, activeTaller, world]);
+
+  /** The filter-selection contract (SC-SB-2.3) needs the VISIBLE row set
+   *  after the query: derived here and consumed by the effect below. */
+  const filteredGroups = useMemo(() => {
+    if (!groups) return null;
+    const q = query.trim().toLowerCase();
+    if (!q) return groups;
+    const match = (skills: PublishedMethodology[]) =>
+      skills.filter(
+        (skill) =>
+          skill.name.toLowerCase().includes(q) ||
+          skill.skill_id.toLowerCase().includes(q),
+      );
+    return {
+      activas: match(groups.activas),
+      transversalesActivas: match(groups.transversalesActivas),
+      inactivas: match(groups.inactivas),
+      transversalesInactivas: match(groups.transversalesInactivas),
+      bloqueadas: match(groups.bloqueadas),
+      sinTaller: match(groups.sinTaller),
+    };
+  }, [groups, query]);
+
+  const visibleKeys = useMemo(() => {
+    if (!filteredGroups) return new Set<string>();
+    const keys = new Set<string>();
+    for (const group of Object.values(filteredGroups)) {
+      for (const skill of group) {
+        keys.add(`${skill.skill_id}@${skill.version}`);
+      }
     }
-  }, []);
+    return keys;
+  }, [filteredGroups]);
 
+  /** Filter-selection contract (SC-SB-2.3): applying a filter preserves
+   *  `selected` while the row stays visible; when the selected row is
+   *  filtered out, the selection is cleared. The sidebar must NOT reset
+   *  selection on filter changes where the row is still present. */
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  const handleActivate = async (skill: string, ver: string) => {
-    if (!world) {
-      return;
+    if (!selected) return;
+    if (!visibleKeys.has(`${selected.skill_id}@${selected.version}`)) {
+      onSelect(null);
     }
-    setBusy(true);
-    setError(null);
-    try {
-      await activateMethodology(world, skill, ver);
-      await load();
-    } catch {
-      setError("No se pudo activar la versión para este mundo.");
-    } finally {
-      setBusy(false);
-    }
-  };
+  }, [visibleKeys, selected, onSelect]);
 
-  if (loading) {
+  // Fetch errors take precedence over the loading spinner so a failed first
+  // load surfaces the retry surface instead of spinning forever.
+  if (error) {
+    return <ErrorBanner message={error} onRetry={onRetry} />;
+  }
+
+  if (!status) {
     return (
       <div className="flex justify-center py-16">
         <Spinner size="lg" />
@@ -77,47 +129,43 @@ export function MethodologyLibrary({
     );
   }
 
-  const published = status?.published ?? [];
-  const active = world && status ? status.activations[world] : undefined;
-  const groups = groupSkillsByState(
-    published,
-    activeTaller,
-    world,
-    status?.activations ?? {},
-  );
+  const published = status.published ?? [];
+  const active = world ? status.activations[world] : undefined;
+  const isEmpty = published.length === 0;
+  const noResults =
+    !isEmpty &&
+    Object.values(filteredGroups ?? {}).every((group) => group.length === 0);
 
   return (
-    <section className="space-y-6">
-      <div className="flex items-baseline justify-between gap-4">
-        <div>
-          <h2 className="font-heading text-h4 text-primary">
-            Bibliotecas de metodologías
-          </h2>
-          <p className="mt-1 text-small text-muted">
-            Publicá borradores validados y activá una versión inmutable por
-            mundo. La activación solo afecta sesiones nuevas.
-          </p>
-        </div>
-        <Button variant="ghost" size="sm" onClick={load}>
-          Actualizar
-        </Button>
-      </div>
+    <section aria-label="Metodologías de mi mundo" className="space-y-4">
+      <label className="flex flex-col gap-1 text-small text-muted">
+        Buscar
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Buscar por nombre o skill_id"
+          className="rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
+        />
+      </label>
 
-      {error && <ErrorBanner message={error} onRetry={load} />}
-
-      {published.length === 0 ? (
+      {isEmpty ? (
         <EmptyState
           icon="empty"
           message="Todavía no hay metodologías publicadas. Escribí un borrador y publicalo para activarlo por mundo."
         />
+      ) : noResults ? (
+        <EmptyState icon="search" message="Sin resultados" />
       ) : (
         <TallerTree
-          groups={groups}
+          groups={filteredGroups ?? groups!}
           world={world}
           activeTaller={activeTaller}
           active={active}
-          onActivate={handleActivate}
+          onActivate={onActivate}
           busy={busy}
+          onSelect={(skillId, version) => onSelect({ skill_id: skillId, version })}
+          selected={selected}
         />
       )}
     </section>

@@ -28,24 +28,58 @@ function sameVersion(
   return a.skill_id === b.skill_id && a.version === b.version;
 }
 
-/**
- * Read-only query view over the complete published-skills inventory,
- * activated or not (REQ-LIB-2…7 / TW7).
- *
- * The only stateful prop is `onAdaptar` (TW13): when the parent wires it, each
- * published row offers "Adaptar" — derive an editable draft from that version
- * (the `clasificacion="Oficiales"` gate is enforced server-side; published
- * versions are immutable, REQ-CC-16). The organism itself stays read-only:
- * it renders list payloads and forwards the Author action upward.
- */
+/** Compare-selection reducer shared with the page (the right panel's
+ *  "Comparar" action toggles the same catalog selection). Dedupes by version;
+ *  a third selection replaces the oldest one (REQ-LIB-7). */
+export function toggleCompareSelection(
+  prev: MethodologyInventoryItem[],
+  item: MethodologyInventoryItem,
+): MethodologyInventoryItem[] {
+  const existing = prev.findIndex((candidate) => sameVersion(candidate, item));
+  if (existing >= 0) {
+    return prev.filter((_, index) => index !== existing);
+  }
+  // Third selection replaces the oldest one (REQ-LIB-7).
+  if (prev.length >= 2) {
+    return [prev[1], item];
+  }
+  return [...prev, item];
+}
+
 interface GlobalMethodologyLibraryProps {
   /** TW13 adaptation entry on published rows. When omitted, rows render
    *  without "Adaptar" (keeps the view read-only by default). */
   onAdaptar?: (item: MethodologyInventoryItem) => void;
+  /** SC-SB-2.2: page-level selection — fired on row click alongside the
+   *  internal detail panel. */
+  onSelect?: (item: MethodologyInventoryItem) => void;
+  /** Controlled compare selection shared with the right state panel's
+   *  "Comparar" action. When omitted, the organism owns its selection
+   *  (backward compatible with standalone usage). */
+  compareSelection?: MethodologyInventoryItem[];
+  onCompareToggle?: (item: MethodologyInventoryItem) => void;
+  onCompareClear?: () => void;
 }
 
+/**
+ * Read-only query view over the complete published-skills inventory,
+ * activated or not (REQ-LIB-2…7 / TW7). Re-slotted into the "Taller" sidebar
+ * as the catalogo explorer (task 2.4): the internal heading was removed and
+ * rows report page-level selection via `onSelect` (SC-SB-2.2).
+ *
+ * The only stateful props are `onAdaptar` (TW13) and `onSelect` (SC-SB-2.2):
+ * when the parent wires them, each published row offers "Adaptar" — derive an
+ * editable draft from that version (the `clasificacion="Oficiales"` gate is
+ * enforced server-side; published versions are immutable, REQ-CC-16) — and
+ * reports clicks upward. The organism itself stays read-only: it renders list
+ * payloads and forwards the Author action upward.
+ */
 export function GlobalMethodologyLibrary({
   onAdaptar,
+  onSelect,
+  compareSelection: controlledCompare,
+  onCompareToggle,
+  onCompareClear,
 }: GlobalMethodologyLibraryProps) {
   const [items, setItems] = useState<MethodologyInventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,9 +88,25 @@ export function GlobalMethodologyLibrary({
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<InventoryFilters>({});
   const [detail, setDetail] = useState<MethodologyInventoryItem | null>(null);
-  const [compareSelection, setCompareSelection] = useState<
+  const [internalCompare, setInternalCompare] = useState<
     MethodologyInventoryItem[]
   >([]);
+
+  const compareSelection = controlledCompare ?? internalCompare;
+  const toggleCompare = (item: MethodologyInventoryItem) => {
+    if (onCompareToggle) {
+      onCompareToggle(item);
+      return;
+    }
+    setInternalCompare((prev) => toggleCompareSelection(prev, item));
+  };
+  const clearCompare = () => {
+    if (onCompareClear) {
+      onCompareClear();
+      return;
+    }
+    setInternalCompare([]);
+  };
 
   const load = useCallback(async (activeFilters: InventoryFilters) => {
     setLoading(true);
@@ -89,22 +139,6 @@ export function GlobalMethodologyLibrary({
         item.skill_id.toLowerCase().includes(query),
     );
   }, [items, query]);
-
-  const toggleCompare = (item: MethodologyInventoryItem) => {
-    setCompareSelection((prev) => {
-      const existing = prev.findIndex((candidate) => sameVersion(candidate, item));
-      if (existing >= 0) {
-        return prev.filter((_, index) => index !== existing);
-      }
-      // Third selection replaces the oldest one (REQ-LIB-7).
-      if (prev.length >= 2) {
-        return [prev[1], item];
-      }
-      return [...prev, item];
-    });
-  };
-
-  const clearCompare = () => setCompareSelection([]);
 
   /** REQ-IMP-1: export a published version as a `.zip` package and trigger the
    *  browser download. Read-only — the catalog is never mutated; the Author
@@ -146,19 +180,15 @@ export function GlobalMethodologyLibrary({
   return (
     <section
       aria-label="Biblioteca global de metodologías"
-      className="space-y-6"
+      className="space-y-4"
     >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-small text-muted">
-          Inventario completo de metodologías publicadas, activadas o no.
-          Vista de solo lectura: no modifica el taller activo ni los mundos.
-        </p>
-        {compareSelection.length > 0 && (
+      {compareSelection.length > 0 && (
+        <div className="flex justify-end">
           <Button variant="ghost" size="sm" onClick={clearCompare}>
             Limpiar
           </Button>
-        )}
-      </div>
+        </div>
+      )}
 
       <InventoryFilterBar filters={filters} onChange={setFilters} />
 
@@ -192,7 +222,10 @@ export function GlobalMethodologyLibrary({
             <li key={`${item.skill_id}@${item.version}`}>
               <InventoryRow
                 item={item}
-                onSelect={setDetail}
+                onSelect={(clicked) => {
+                  setDetail(clicked);
+                  onSelect?.(clicked);
+                }}
                 onToggleCompare={toggleCompare}
                 onAdaptar={onAdaptar}
                 onExport={handleExport}

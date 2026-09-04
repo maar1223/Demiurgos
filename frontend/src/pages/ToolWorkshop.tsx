@@ -1,14 +1,13 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useCoCreation } from "@/hooks/useCoCreation";
-import { WorldSelector } from "@/components/molecules/WorldSelector";
-import { TallerSelector } from "@/components/molecules/TallerSelector";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
-import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
-import { GlobalMethodologyLibrary } from "@/components/organisms/GlobalMethodologyLibrary";
 import { ToolWorkshopHeader } from "@/components/organisms/ToolWorkshopHeader";
-import { LensToggle, type Lens } from "@/components/organisms/LensToggle";
+import { TallerExplorerSidebar } from "@/components/organisms/TallerExplorerSidebar";
+import { MethodologyDetailView } from "@/components/organisms/MethodologyDetailView";
+import { MethodologyStatePanel } from "@/components/organisms/MethodologyStatePanel";
+import { toggleCompareSelection } from "@/components/organisms/GlobalMethodologyLibrary";
 import {
   CoCreationMilestoneSidebar,
   CoCreationPanel,
@@ -17,8 +16,13 @@ import {
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
-import { cn } from "@/lib/utils";
-import type { MethodologyInventoryItem } from "@/api/types";
+import {
+  activateMethodology,
+  exportPublished,
+  getMethodologyStatus,
+} from "@/api/methodologies";
+import type { Lens } from "@/components/organisms/LensToggle";
+import type { MethodologyInventoryItem, MethodologyStatus } from "@/api/types";
 import {
   getCurrentTaller,
   setCurrentTaller,
@@ -52,23 +56,24 @@ function useActiveTaller(): string {
 /**
  * Taller de Herramientas shell (`/taller-herramientas`).
  *
- * The free Core's methodology-workshop landing. Renders the methodology
- * library (view published → publish a validated draft → activate an immutable
- * version by world) and lets the Author pick which world receives the
- * activation via the shared world selector.
+ * BOTH tabs render inside the shared `EditorLayout` 3-pane shell (SC-SB-1):
+ * the "Taller" tab gets the methodology explorer sidebar, the read-only
+ * `MethodologyDetailView` body and the `MethodologyStatePanel` right pane; the
+ * "Crear skill" tab keeps the co-creation panes. The previous flowing
+ * `max-w-7xl` wrapper is gone.
  *
- * World creation: this page owns the page-body `WorldSelector` (the global
- * Navbar selector is hoisted to the AppLayout). It wires the `+ Nuevo mundo`
- * entry, the `CreateWorldModal`, and the post-creation switch confirmation.
- * Local `world` is only updated when the user confirms the switch — declined
- * creation does not change the activation target.
+ * World creation: this page owns the `WorldSelector` inside the sidebar
+ * header (the global Navbar selector is hoisted to the AppLayout). It wires
+ * the `+ Nuevo mundo` entry, the `CreateWorldModal`, and the post-creation
+ * switch confirmation. Local `world` is only updated when the user confirms
+ * the switch — declined creation does not change the activation target.
  *
  * States:
- * - 🟡 Loading: spinner centered on page
- * - 🔴 Error: ErrorBanner with retry
- * - 🟢 No world selected (or no worlds at all): the library still shows
+ * - 🟡 Loading (worlds): spinner centered in the EditorLayout body
+ * - 🔴 Error (worlds): ErrorBanner with retry in the body
+ * - 🟢 No world selected (or no worlds at all): the tree still shows
  *   publications, but activation stays disabled ("Sin mundo")
- * - 🟢 Data: world selector + MethodologyLibrary
+ * - 🟢 Data: sidebar explorer + detail body + state/actions panel
  */
 export default function ToolWorkshop() {
   const { worlds, isLoading, error, mutate } = useWorlds();
@@ -85,15 +90,84 @@ export default function ToolWorkshop() {
    *  global inventory. Page-level state so it survives tab switches
    *  (SC-LEN-1.3); never mutated by lens changes (SC-LEN-1.4). */
   const [lens, setLens] = useState<Lens>("mi-mundo");
-  /** Methodology selected in the "Taller" explorer (REQ-SB-5). Both names are
-   *  underscore-prefixed in this PR because no consumer exists yet — the
-   *  EditorLayout wiring (TallerExplorerSidebar + detail/state panels) lands
-   *  in the PR 2 integration slice, which renames them to `selected` /
-   *  `setSelected` (keeps tsc noUnusedLocals green on the foundation slice). */
-  const [_selected, _setSelected] = useState<MethodologySelection | null>(null);
+  /** Methodology selected in the "Taller" explorer (REQ-SB-5). Page-level so
+   *  it survives lens + tab switches (SC-SB-5.1/5.2). */
+  const [selected, setSelected] = useState<MethodologySelection | null>(null);
+  /** Page-lifted library status (task 2.3): fetched on mount and refetched
+   *  after activations; shared by the sidebar tree and the right state panel
+   *  (no per-skill endpoint exists — filtering is client-side). */
+  const [status, setStatus] = useState<MethodologyStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  /** Compare selection shared by the catalog explorer rows and the right
+   *  panel's "Comparar" action (SC-SB-4.2). */
+  const [compareSelection, setCompareSelection] = useState<
+    MethodologyInventoryItem[]
+  >([]);
   /** Single shared co-creation hook instance distributed across the three
    *  EditorLayout panes (backend authoritative; localStorage only a hint). */
   const coCreation = useCoCreation();
+
+  const loadStatus = useCallback(async () => {
+    setStatusError(null);
+    try {
+      setStatus(await getMethodologyStatus());
+    } catch {
+      setStatusError("No se pudo cargar la biblioteca de metodologías.");
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStatus();
+  }, [loadStatus]);
+
+  /** World-scoped activation (moved up from MethodologyLibrary, task 2.3):
+   *  the page owns it so a successful activation can refetch the shared
+   *  status for both the tree and the right panel. */
+  const handleActivate = useCallback(
+    async (skillId: string, version: string) => {
+      if (!world) {
+        return;
+      }
+      setBusy(true);
+      setStatusError(null);
+      try {
+        await activateMethodology(world, skillId, version);
+        await loadStatus();
+      } catch {
+        setStatusError("No se pudo activar la versión para este mundo.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [world, loadStatus],
+  );
+
+  /** Catalogo "Comparar" (SC-SB-4.2): toggles the selected item in the
+   *  compare selection shared with the catalog sidebar (REQ-LIB-7 caps at
+   *  two, replacing the oldest on a third selection). */
+  const handleComparar = useCallback((item: MethodologyInventoryItem) => {
+    setCompareSelection((prev) => toggleCompareSelection(prev, item));
+  }, []);
+
+  /** Catalogo "Exportar" (SC-SB-4.2): downloads the published version as a
+   *  `.zip` package. Failures stay silent here — the catalog rows already
+   *  surface inline export errors (REQ-IMP-1). */
+  const handleExportar = useCallback(async (item: MethodologyInventoryItem) => {
+    try {
+      const blob = await exportPublished(item.skill_id, item.version);
+      const objectUrl = window.URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `${item.skill_id}-${item.version}.zip`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.URL.revokeObjectURL(objectUrl);
+    } catch {
+      // Silent: the catalog row export already reports failures inline.
+    }
+  }, []);
 
   const handleWorldCreated = (created: string) => {
     setCreatingWorld(false);
@@ -136,12 +210,11 @@ export default function ToolWorkshop() {
           role="tab"
           aria-selected={view === tab.key}
           onClick={() => setView(tab.key)}
-          className={cn(
-            "rounded-md px-4 py-1.5 text-small transition-colors",
+          className={
             view === tab.key
-              ? "bg-action text-action-text"
-              : "text-muted hover:bg-surface-hover hover:text-primary",
-          )}
+              ? "rounded-md bg-action px-4 py-1.5 text-small text-action-text transition-colors"
+              : "rounded-md px-4 py-1.5 text-small text-muted transition-colors hover:bg-surface-hover hover:text-primary"
+          }
         >
           {tab.label}
         </button>
@@ -151,84 +224,84 @@ export default function ToolWorkshop() {
 
   return (
     <div className="flex min-h-screen flex-col bg-surface">
-      <main
-        className={cn(
-          "mx-auto w-full flex-1",
-          // The co-creation editor spans the full width and fixes its own
-          // height; the other views keep the constrained flowing layout.
-          view === "co-crear" ? "" : "max-w-7xl px-4 py-8",
-        )}
-      >
-        {view === "co-crear" ? (
-          <EditorLayout
-            header={
-              <ToolWorkshopHeader
-                subtitle="Co-creá una skill conversando con la Skill Madre, una pregunta por vez."
-                tablist={tablist}
-              />
-            }
-            sidebar={<CoCreationMilestoneSidebar state={coCreation} />}
-            rightPanel={<CoCreationContextPanel state={coCreation} />}
-          >
-            <CoCreationPanel
-              state={coCreation}
-              worlds={worlds.map((item) => item.name)}
+      {view === "co-crear" ? (
+        <EditorLayout
+          header={
+            <ToolWorkshopHeader
+              subtitle="Co-creá una skill conversando con la Skill Madre, una pregunta por vez."
+              tablist={tablist}
             />
-          </EditorLayout>
-        ) : (
-          <>
+          }
+          sidebar={<CoCreationMilestoneSidebar state={coCreation} />}
+          rightPanel={<CoCreationContextPanel state={coCreation} />}
+        >
+          <CoCreationPanel
+            state={coCreation}
+            worlds={worlds.map((item) => item.name)}
+          />
+        </EditorLayout>
+      ) : (
+        <EditorLayout
+          header={
             <ToolWorkshopHeader
               subtitle="Metodologías de construcción seguras: editar, compilar, publicar versiones inmutables y activarlas por mundo."
               tablist={tablist}
             />
-
-            <div className="flex items-center py-3">
-              <LensToggle lens={lens} onChange={setLens} />
+          }
+          sidebar={
+            <TallerExplorerSidebar
+              lens={lens}
+              onLensChange={setLens}
+              world={world}
+              worlds={worlds}
+              activeTaller={activeTaller}
+              onWorldChange={setWorld}
+              onTallerChange={setCurrentTaller}
+              onRequestCreateWorld={() => setCreatingWorld(true)}
+              status={status}
+              statusError={statusError}
+              onStatusRetry={() => void loadStatus()}
+              selected={selected}
+              onSelect={setSelected}
+              onActivate={(skillId, version) =>
+                void handleActivate(skillId, version)
+              }
+              onAdaptar={(item) => void handleAdaptar(item)}
+              busy={busy}
+              compareSelection={compareSelection}
+              onCompareToggle={handleComparar}
+              onCompareClear={() => setCompareSelection([])}
+            />
+          }
+          rightPanel={
+            <MethodologyStatePanel
+              selected={selected}
+              status={status}
+              lens={lens}
+              world={world}
+              onActivate={(skillId, version) =>
+                void handleActivate(skillId, version)
+              }
+              onAdaptar={(item) => void handleAdaptar(item)}
+              onComparar={handleComparar}
+              onExportar={(item) => void handleExportar(item)}
+            />
+          }
+        >
+          {isLoading ? (
+            <div className="flex justify-center py-16">
+              <Spinner size="lg" />
             </div>
-
-            {lens === "mi-mundo" ? (
-              isLoading ? (
-                <div className="flex justify-center py-16">
-                  <Spinner size="lg" />
-                </div>
-              ) : error ? (
-                <ErrorBanner
-                  message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
-                  onRetry={() => mutate()}
-                />
-              ) : (
-                <>
-                  <div className="mb-6 flex flex-wrap items-center gap-3">
-                    <TallerSelector
-                      activeTaller={activeTaller}
-                      onTallerChange={setCurrentTaller}
-                    />
-                    <WorldSelector
-                      worlds={worlds}
-                      currentWorld={world}
-                      onWorldChange={setWorld}
-                      onRequestCreate={() => setCreatingWorld(true)}
-                    />
-                    <p className="text-small text-muted">
-                      {world
-                        ? `Las activaciones se aplican a «${world}».`
-                        : worlds.length > 0
-                          ? "Elegí un mundo para poder activar versiones."
-                          : "No hay mundos disponibles; podés ver publicaciones pero no activar."}
-                    </p>
-                  </div>
-                  <MethodologyLibrary
-                    world={world}
-                    activeTaller={activeTaller}
-                  />
-                </>
-              )
-            ) : (
-              <GlobalMethodologyLibrary onAdaptar={(item) => void handleAdaptar(item)} />
-            )}
-          </>
-        )}
-      </main>
+          ) : error ? (
+            <ErrorBanner
+              message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
+              onRetry={() => mutate()}
+            />
+          ) : (
+            <MethodologyDetailView selected={selected} />
+          )}
+        </EditorLayout>
+      )}
 
       <CreateWorldModal
         isOpen={creatingWorld}

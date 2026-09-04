@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, within, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ToolWorkshop from "@/pages/ToolWorkshop";
@@ -13,11 +13,24 @@ vi.mock("@/api/methodologies", () => ({
   createMethodologyDraft: vi.fn(),
   publishMethodologyDraft: vi.fn(),
   activateMethodology: vi.fn(),
+  getMethodologyInventory: vi.fn(),
+  exportPublished: vi.fn(),
 }));
+
+/** Partial mock: `getPublishedDetail` is controllable for the selection
+ *  integration tests; the co-creation session APIs stay REAL (the page's
+ *  useCoCreation hook recovers nothing with an empty localStorage hint). */
+const mockGetPublishedDetail = vi.hoisted(() => vi.fn());
+
+vi.mock("@/api/coCreation", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/coCreation")>();
+  return { ...actual, getPublishedDetail: mockGetPublishedDetail };
+});
 
 import { useWorlds } from "@/hooks/useWorlds";
 import {
   activateMethodology,
+  getMethodologyInventory,
   getMethodologyStatus,
 } from "@/api/methodologies";
 import type { Mock } from "vitest";
@@ -47,6 +60,24 @@ const status = {
   drafts: [],
 };
 
+/** Published detail served by the center `MethodologyDetailView` once a row
+ *  is selected (SC-SB-3.1). */
+const detail = {
+  skill_id: "guided-character-v1",
+  version: "1.2.0",
+  name: "Guided character methodology",
+  description: "",
+  digest: "abc",
+  published_at: "2026-01-01",
+  phases: [],
+  language: "es",
+  source: "# Guided character\n\nContenido publicado.",
+  taller: "Herramientas",
+  etiquetas: [],
+  parent_skill_id: null,
+  parent_version: null,
+};
+
 function renderToolWorkshop() {
   return render(
     <MemoryRouter initialEntries={["/taller-herramientas"]}>
@@ -67,6 +98,7 @@ describe("ToolWorkshop", () => {
       mutate: vi.fn(),
     });
     (getMethodologyStatus as Mock).mockResolvedValue(status);
+    (getMethodologyInventory as Mock).mockResolvedValue({ items: [] });
     (activateMethodology as Mock).mockResolvedValue({
       world: "Vibrantes",
       skill_id: "guided-character-v1",
@@ -74,6 +106,8 @@ describe("ToolWorkshop", () => {
       digest: "abc",
       activated_at: "2026-01-01",
     });
+    mockGetPublishedDetail.mockReset();
+    mockGetPublishedDetail.mockResolvedValue(detail);
   });
 
   afterEach(() => {
@@ -116,9 +150,10 @@ describe("ToolWorkshop", () => {
       expect(screen.getByRole("button", { name: "Sin mundo" })).toBeDisabled();
     });
 
-    const main = screen.getByRole("main");
-    await user.click(within(main).getByRole("button", { name: "Mundos" }));
-    await user.click(within(main).getByRole("option", { name: "Vibrantes" }));
+    // The selectors now live in the EditorLayout sidebar header (SC-SB-1.1) —
+    // still reachable through the top-level queries.
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+    await user.click(screen.getByRole("option", { name: "Vibrantes" }));
     // Selecting a different world asks for confirmation before applying
     await user.click(screen.getByRole("button", { name: "Cambiar" }));
 
@@ -145,7 +180,11 @@ describe("ToolWorkshop", () => {
     });
 
     renderToolWorkshop();
-    expect(screen.getByRole("status", { name: "Cargando" })).toBeInTheDocument();
+    // Both the EditorLayout body and the sidebar tree can spin while their
+    // independent fetches are in flight — at least one honest spinner shows.
+    expect(
+      screen.getAllByRole("status", { name: "Cargando" }).length,
+    ).toBeGreaterThan(0);
   });
 
   it("shows an honest error state when worlds fail to load", () => {
@@ -244,5 +283,141 @@ describe("ToolWorkshop", () => {
     expect(
       screen.getByRole("button", { name: "Taller de Mundo" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the no-world prompt without touching the selection (SC-SB-5.3)", async () => {
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    // No world selected → the mi-mundo explorer shows the no-world prompt.
+    await waitFor(() => {
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/Elegí un mundo para poder activar versiones/),
+    ).toBeInTheDocument();
+
+    // Selection still works without a world...
+    await user.click(screen.getByText("Guided character methodology"));
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "Guided character methodology",
+      }),
+    ).toBeInTheDocument();
+
+    // ...and the no-world state does NOT clear or mutate the selection.
+    expect(
+      screen.getByText(/Elegí un mundo para poder activar versiones/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: "Guided character methodology",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("preserves the page-level selection across a lens switch (SC-SB-5.1)", async () => {
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    // Select M1 in "Mi mundo" — the center detail pane reflects it.
+    await waitFor(() => {
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Guided character methodology"));
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "Guided character methodology",
+      }),
+    ).toBeInTheDocument();
+
+    // Switch to "Catálogo total": the inventory explorer mounts (read GET)
+    // and `selected` survives — the center pane still reflects M1.
+    await user.click(screen.getByRole("tab", { name: "Catálogo total" }));
+    await waitFor(() => {
+      expect(getMethodologyInventory).toHaveBeenCalled();
+    });
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: "Guided character methodology",
+      }),
+    ).toBeInTheDocument();
+
+    // Switch back — selection preserved again.
+    await user.click(screen.getByRole("tab", { name: "Mi mundo" }));
+    expect(
+      screen.getByRole("heading", {
+        level: 2,
+        name: "Guided character methodology",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("preserves the page-level selection across a tab switch (SC-SB-5.2)", async () => {
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Guided character methodology"));
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "Guided character methodology",
+      }),
+    ).toBeInTheDocument();
+
+    // Switch to "Crear skill" and back — selection restored.
+    await user.click(screen.getByRole("tab", { name: "Crear skill" }));
+    expect(
+      screen.getByText(
+        "Co-creá una skill conversando con la Skill Madre, una pregunta por vez.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Taller" }));
+    expect(
+      await screen.findByRole("heading", {
+        level: 2,
+        name: "Guided character methodology",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("performs no API mutation when the lens is toggled (SC-LEN-1.4)", async () => {
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    // Baseline: the page-level status fetch happened on mount.
+    expect(getMethodologyStatus).toHaveBeenCalled();
+    (getMethodologyStatus as Mock).mockClear();
+    (activateMethodology as Mock).mockClear();
+
+    await user.click(screen.getByRole("tab", { name: "Catálogo total" }));
+    await waitFor(() => {
+      expect(getMethodologyInventory).toHaveBeenCalled();
+    });
+    await user.click(screen.getByRole("tab", { name: "Mi mundo" }));
+
+    // Lens toggling is pure client-side state presentation: no status
+    // refetch, no activation, no derivation — NO mutation of any kind.
+    expect(getMethodologyStatus).not.toHaveBeenCalled();
+    expect(activateMethodology).not.toHaveBeenCalled();
   });
 });

@@ -4,14 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
 import type { MethodologyStatus } from "@/api/types";
 
-const mockGetStatus = vi.hoisted(() => vi.fn());
-const mockActivate = vi.hoisted(() => vi.fn());
-
-vi.mock("@/api/methodologies", () => ({
-  getMethodologyStatus: mockGetStatus,
-  activateMethodology: mockActivate,
-}));
-
 const status: MethodologyStatus = {
   published: [
     {
@@ -27,73 +19,80 @@ const status: MethodologyStatus = {
   drafts: [],
 };
 
-function renderLibrary(world?: string, activeTaller = "Herramientas") {
-  return render(
-    <MethodologyLibrary world={world} activeTaller={activeTaller} />,
-  );
+/** Slimmed contract (task 2.3): the component no longer fetches — status and
+ *  the selection/activation handlers come from the page. */
+function renderLibrary(
+  overrides: Partial<Parameters<typeof MethodologyLibrary>[0]> = {},
+) {
+  const props = {
+    world: "nec",
+    activeTaller: "Herramientas",
+    status,
+    selected: null,
+    onSelect: vi.fn(),
+    onActivate: vi.fn(),
+    busy: false,
+  };
+  render(<MethodologyLibrary {...props} {...overrides} />);
+  return props;
 }
 
 describe("MethodologyLibrary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetStatus.mockResolvedValue(status);
-    mockActivate.mockResolvedValue({
-      world: "nec", skill_id: "guided-character-v1", version: "1.2.0",
-      digest: "abc", activated_at: "2026-01-01",
-    });
   });
 
   it("renders published versions from the library status", async () => {
-    renderLibrary("nec");
+    renderLibrary();
     await waitFor(() => {
       expect(screen.getByText("Guided character methodology")).toBeInTheDocument();
     });
     expect(screen.getByText(/guided-character-v1@1\.2\.0/)).toBeInTheDocument();
-    expect(mockGetStatus).toHaveBeenCalledWith();
   });
 
   it("shows the empty state when nothing is published", async () => {
-    mockGetStatus.mockResolvedValue({ published: [], activations: {}, drafts: [] });
-    renderLibrary("nec");
+    renderLibrary({
+      status: { published: [], activations: {}, drafts: [] },
+    });
     await waitFor(() => {
       expect(screen.getByText(/Todavía no hay metodologías publicadas/)).toBeInTheDocument();
     });
   });
 
-  it("activates a version for the selected world", async () => {
+  it("activates a version for the selected world through the page handler", async () => {
     const user = userEvent.setup();
-    renderLibrary("nec");
+    const props = renderLibrary();
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Activar" })).toBeEnabled();
     });
 
     await user.click(screen.getByRole("button", { name: "Activar" }));
     await waitFor(() => {
-      expect(mockActivate).toHaveBeenCalledWith(
-        "nec", "guided-character-v1", "1.2.0",
+      expect(props.onActivate).toHaveBeenCalledWith(
+        "guided-character-v1", "1.2.0",
       );
     });
-    expect(mockGetStatus).toHaveBeenCalledTimes(2);
   });
 
   it("disables activate without a selected world", async () => {
-    renderLibrary();
+    renderLibrary({ world: undefined });
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Sin mundo" })).toBeDisabled();
     });
   });
 
   it("shows the active badge once a version is active for the world", async () => {
-    mockGetStatus.mockResolvedValue({
-      ...status,
-      activations: {
-        nec: {
-          world: "nec", skill_id: "guided-character-v1", version: "1.2.0",
-          digest: "abc", activated_at: "2026-01-01",
+    renderLibrary({
+      status: {
+        ...status,
+        activations: {
+          nec: {
+            world: "nec", skill_id: "guided-character-v1", version: "1.2.0",
+            digest: "abc", activated_at: "2026-01-01",
+          },
         },
       },
     });
-    renderLibrary("nec");
     await waitFor(() => {
       expect(screen.getByText(/Activa en nec/)).toBeInTheDocument();
     });
@@ -163,8 +162,7 @@ describe("MethodologyLibrary", () => {
       },
       drafts: [],
     };
-    mockGetStatus.mockResolvedValue(fullStatus);
-    renderLibrary("nec");
+    renderLibrary({ status: fullStatus });
 
     await waitFor(() => {
       expect(screen.getByText("Skill activa")).toBeInTheDocument();
@@ -245,8 +243,7 @@ describe("MethodologyLibrary", () => {
       },
       drafts: [],
     };
-    mockGetStatus.mockResolvedValue(blockedStatus);
-    renderLibrary("nec");
+    renderLibrary({ status: blockedStatus });
 
     await waitFor(() => {
       expect(screen.getByText("Skill mundo bloqueada")).toBeInTheDocument();
@@ -283,5 +280,37 @@ describe("MethodologyLibrary", () => {
       "title",
       "Adaptation available in future phase",
     );
+  });
+
+  it("preserves the selection while the filtered row stays visible (SC-SB-2.3)", async () => {
+    const user = userEvent.setup();
+    const props = renderLibrary({
+      selected: { skill_id: "guided-character-v1", version: "1.2.0" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Guided character methodology")).toBeInTheDocument();
+    });
+
+    // A filter that keeps the selected row visible must NOT reset selection.
+    await user.type(screen.getByRole("searchbox"), "Guided");
+    expect(screen.getByText("Guided character methodology")).toBeInTheDocument();
+    expect(props.onSelect).not.toHaveBeenCalled();
+  });
+
+  it("clears the selection when the query filters the selected row out (SC-SB-2.3)", async () => {
+    const user = userEvent.setup();
+    const props = renderLibrary({
+      selected: { skill_id: "guided-character-v1", version: "1.2.0" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Guided character methodology")).toBeInTheDocument();
+    });
+
+    // A filter that hides the selected row clears the selection.
+    await user.type(screen.getByRole("searchbox"), "zzz");
+    expect(await screen.findByText("Sin resultados")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(props.onSelect).toHaveBeenCalledWith(null);
+    });
   });
 });
