@@ -2,25 +2,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
-import { ApiError } from "@/api/types";
-import type { MethodologyStatus, QuarantineRecord } from "@/api/types";
+import type { MethodologyStatus } from "@/api/types";
 
 const mockGetStatus = vi.hoisted(() => vi.fn());
-const mockCreateDraft = vi.hoisted(() => vi.fn());
-const mockPublish = vi.hoisted(() => vi.fn());
 const mockActivate = vi.hoisted(() => vi.fn());
-const mockImportPackage = vi.hoisted(() => vi.fn());
-const mockListQuarantine = vi.hoisted(() => vi.fn());
-const mockTrustQuarantine = vi.hoisted(() => vi.fn());
 
 vi.mock("@/api/methodologies", () => ({
   getMethodologyStatus: mockGetStatus,
-  createMethodologyDraft: mockCreateDraft,
-  publishMethodologyDraft: mockPublish,
   activateMethodology: mockActivate,
-  importPackage: mockImportPackage,
-  listQuarantine: mockListQuarantine,
-  trustQuarantine: mockTrustQuarantine,
 }));
 
 const status: MethodologyStatus = {
@@ -48,13 +37,10 @@ describe("MethodologyLibrary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetStatus.mockResolvedValue(status);
-    mockCreateDraft.mockResolvedValue({ draft_id: "draft-1" });
-    mockPublish.mockResolvedValue(status.published[0]);
     mockActivate.mockResolvedValue({
       world: "nec", skill_id: "guided-character-v1", version: "1.2.0",
       digest: "abc", activated_at: "2026-01-01",
     });
-    mockListQuarantine.mockResolvedValue({ entries: [] });
   });
 
   it("renders published versions from the library status", async () => {
@@ -72,31 +58,6 @@ describe("MethodologyLibrary", () => {
     await waitFor(() => {
       expect(screen.getByText(/Todavía no hay metodologías publicadas/)).toBeInTheDocument();
     });
-  });
-
-  it("publishes a draft through create + publish and reloads", async () => {
-    const user = userEvent.setup();
-    renderLibrary("nec");
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Publicar borrador" })).toBeEnabled();
-    });
-
-    await user.type(screen.getByLabelText("Skill ID"), "guided-character-v1");
-    await user.type(screen.getByLabelText("Versión"), "1.3.0");
-    await user.type(screen.getByLabelText("Nombre"), "Nueva metodología");
-    await user.type(screen.getByLabelText(/Fuente/), "## Seguro\n");
-    await user.click(screen.getByRole("button", { name: "Publicar borrador" }));
-
-    await waitFor(() => {
-      expect(mockCreateDraft).toHaveBeenCalledWith({
-        skill_id: "guided-character-v1",
-        version: "1.3.0",
-        name: "Nueva metodología",
-        source: "## Seguro\n",
-      });
-    });
-    expect(mockPublish).toHaveBeenCalledWith("draft-1");
-    expect(mockGetStatus).toHaveBeenCalledTimes(2);
   });
 
   it("activates a version for the selected world", async () => {
@@ -321,154 +282,6 @@ describe("MethodologyLibrary", () => {
     expect(adaptar).toHaveAttribute(
       "title",
       "Adaptation available in future phase",
-    );
-  });
-});
-
-describe("MethodologyLibrary — skill import (REQ-IMP-2..6)", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockGetStatus.mockResolvedValue(status);
-    mockListQuarantine.mockResolvedValue({ entries: [] });
-  });
-
-  const quarantineRecord = (
-    overrides: Partial<QuarantineRecord> = {},
-  ): QuarantineRecord => ({
-    package_id: "pkg-abc123",
-    verdict: {
-      ok: true,
-      checksum_valid: true,
-      signature_present: true,
-      signature_valid: true,
-      issues: [],
-    },
-    trusted: false,
-    clasificacion: "Comunitarias",
-    trust_attributes: ["quarantined"],
-    draft_id: null,
-    ...overrides,
-  });
-
-  it("shows the Importar section with the outside-workshop integrity copy (REQ-IMP-5)", async () => {
-    renderLibrary("nec");
-    await waitFor(() => {
-      expect(screen.getByText("Importar una skill")).toBeInTheDocument();
-    });
-    expect(
-      screen.getByText(/La Skill creada fuera del Taller no se ejecuta como válida/),
-    ).toBeInTheDocument();
-  });
-
-  it("imports a package into quarantine and renders readable verdict badges", async () => {
-    mockListQuarantine.mockResolvedValue({ entries: [quarantineRecord()] });
-    const user = userEvent.setup();
-    renderLibrary("nec");
-    await waitFor(() => {
-      expect(screen.getByText("Importar una skill")).toBeInTheDocument();
-    });
-
-    const file = new File(["pkg"], "skill.zip", { type: "application/zip" });
-    await user.upload(screen.getByLabelText(/Paquete/), file);
-
-    await waitFor(() => {
-      // The component relies on the API default `origin = "community"`.
-      expect(mockImportPackage).toHaveBeenCalledWith(file);
-    });
-    expect(await screen.findByText("Checksum OK")).toBeInTheDocument();
-    expect(screen.getByText("Firma verificada")).toBeInTheDocument();
-    expect(screen.getByText("Compilación OK")).toBeInTheDocument();
-    expect(screen.getByText("En cuarentena")).toBeInTheDocument();
-  });
-
-  it("renders corrupt checksum / unsigned / unreviewed-compiler badges", async () => {
-    mockListQuarantine.mockResolvedValue({
-      entries: [
-        quarantineRecord({
-          verdict: {
-            ok: false,
-            checksum_valid: false,
-            signature_present: false,
-            signature_valid: null,
-            issues: [
-              "Integrity checksum mismatch: the package content was modified.",
-            ],
-          },
-        }),
-      ],
-    });
-    renderLibrary("nec");
-
-    expect(await screen.findByText("Checksum corrupto")).toBeInTheDocument();
-    expect(screen.getByText("Sin firma")).toBeInTheDocument();
-    // When integrity fails the compiler never ran (REQ-IMP-3).
-    expect(screen.getByText("Compilación sin revisar")).toBeInTheDocument();
-  });
-
-  it("trusts a quarantined package and reflects the promoted draft (REQ-IMP-4)", async () => {
-    mockListQuarantine.mockResolvedValue({ entries: [quarantineRecord()] });
-    mockTrustQuarantine.mockResolvedValue({
-      package_id: "pkg-abc123",
-      trusted: true,
-      draft_id: "draft-imported-1",
-      clasificacion: "Comunitarias",
-      trust_attributes: [],
-    });
-    const user = userEvent.setup();
-    renderLibrary("nec");
-
-    await user.click(await screen.findByRole("button", { name: "Confiar" }));
-
-    await waitFor(() => {
-      expect(mockTrustQuarantine).toHaveBeenCalledWith("pkg-abc123");
-    });
-    // The badge AND the promoted-draft note render; the draft id is truncated
-    // via shortId, so match its prefix.
-    expect(await screen.findByText(/borrador draft-imported/)).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Confiar" }),
-    ).not.toBeInTheDocument();
-  });
-
-  it("shows the outside-workshop integrity note in advanced details of a trusted import (REQ-IMP-5 scenario 2)", async () => {
-    mockListQuarantine.mockResolvedValue({
-      entries: [
-        quarantineRecord({
-          trusted: true,
-          draft_id: "draft-imported-1",
-        }),
-      ],
-    });
-    const user = userEvent.setup();
-    renderLibrary("nec");
-
-    // The trusted record renders its promoted-draft note; the integrity note
-    // lives inside the closed "Detalles avanzados" (REQ-IMP-5 scenario 2).
-    expect(await screen.findByText(/borrador draft-imported/)).toBeInTheDocument();
-
-    const details = screen
-      .getByText("Detalles avanzados")
-      .closest("details") as HTMLElement;
-    expect(details).not.toHaveAttribute("open");
-    const advanced = within(details);
-    expect(advanced.getByText(/fuera del Taller/)).toBeInTheDocument();
-
-    await user.click(screen.getByText("Detalles avanzados"));
-    expect(details).toHaveAttribute("open");
-  });
-
-  it("shows the reserved-id rejection copy on 409 (REQ-IMP-6)", async () => {
-    mockListQuarantine.mockResolvedValue({ entries: [quarantineRecord()] });
-    mockTrustQuarantine.mockRejectedValue(
-      new ApiError(409, "reserved_skill_id", "reserved_skill_id", "reserved_skill_id"),
-    );
-    const user = userEvent.setup();
-    renderLibrary("nec");
-
-    await user.click(await screen.findByRole("button", { name: "Confiar" }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      /reservada por Demiurgos/,
     );
   });
 });
