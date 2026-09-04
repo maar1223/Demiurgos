@@ -11,9 +11,11 @@ layer in a later slice.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from co_creation_protocol import DerivedFrom
 from methodology_compiler import MethodologyIssue, compile_methodology
 from methodology_library import MethodologyLibrary
 
@@ -45,6 +47,79 @@ _TEMPLATE_KEYS = (
     "rules",
     "world_binding",
 )
+
+_SECTION_HEADERS = (
+    "## Propósito",
+    "## Alcance",
+    "## Flujo principal",
+    "## Ramas y reglas",
+)
+
+
+def parse_rendered_source(source: str) -> dict[str, Any]:
+    """Best-effort reverse of ``render_source`` (TW13 adaptation seed).
+
+    Splits the deterministic template output back into structured payload
+    keys so a published original can seed an adaptation session's canvas
+    (REQ-CC-17/REQ-CC-18). Only keys it can identify are returned and it
+    NEVER raises: a source that does not match the template shape yields an
+    empty mapping (the caller falls back to metadata-only seeding).
+
+    Known lossiness: the template renders ``branches`` and ``rules`` as two
+    adjacent bullet lists with no separator, so their combined bullets seed
+    into ``branches`` only (``rules`` is left empty for the Author to
+    classify in the canvas).
+    """
+    parsed: dict[str, Any] = {}
+    if not isinstance(source, str) or not source.strip():
+        return parsed
+    lines = source.split("\n")
+    headers: dict[str, int] = {}
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped in _SECTION_HEADERS and stripped not in headers:
+            headers[stripped] = index
+    first = lines[0].strip() if lines else ""
+    if first.startswith("# "):
+        parsed["name"] = first[2:]
+    if "## Propósito" in headers:
+        parsed["description"] = "\n".join(lines[1:headers["## Propósito"]]).strip()
+    if "## Propósito" in headers and "## Alcance" in headers:
+        parsed["purpose"] = "\n".join(
+            lines[headers["## Propósito"] + 1:headers["## Alcance"]]
+        ).strip()
+    if "## Alcance" in headers and "## Flujo principal" in headers:
+        scope_block = "\n".join(
+            lines[headers["## Alcance"] + 1:headers["## Flujo principal"]]
+        ).strip()
+        world: str | None = None
+        binding = ""
+        marker = "(mundo: "
+        if marker in scope_block:
+            start = scope_block.rfind(marker)
+            end = scope_block.find(")", start)
+            if end != -1:
+                world = scope_block[start + len(marker):end].strip() or None
+                binding = scope_block[start:end + 1]
+        if not binding and "(transversal)" in scope_block:
+            binding = "(transversal)"
+        parsed["scope"] = scope_block.replace(binding, "").strip() if binding else scope_block
+        if world:
+            parsed["world"] = world
+    if "## Flujo principal" in headers and "## Ramas y reglas" in headers:
+        parsed["main_flow"] = "\n".join(
+            lines[headers["## Flujo principal"] + 1:headers["## Ramas y reglas"]]
+        ).strip()
+    if "## Ramas y reglas" in headers:
+        tail = "\n".join(lines[headers["## Ramas y reglas"] + 1:]).strip()
+        bullets = [
+            line[2:].strip()
+            for line in tail.split("\n")
+            if line.startswith("- ")
+        ]
+        if bullets:
+            parsed["branches"] = bullets
+    return parsed
 
 
 def _render_value(value: object) -> str:
@@ -140,6 +215,50 @@ class CoCreationMaterializer:
             issues=tuple(compiled.issues),
             ok=compiled.ok,
         )
+
+    def seed_payload(
+        self,
+        source: str,
+        *,
+        name: str,
+        description: str,
+        world: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the adaptation session's initial canvas payload (TW13).
+
+        Seeded from a PUBLISHED original (REQ-CC-17/REQ-CC-18): structured
+        sections are best-effort parsed from the rendered source
+        (``parse_rendered_source``) and the published metadata is folded in.
+        The session's ``world`` binding overrides any parsed binding.
+        """
+        payload = parse_rendered_source(source)
+        payload["name"] = name
+        payload["description"] = description
+        payload["world"] = world
+        return payload
+
+    def inject_derived_from(
+        self,
+        payload: Mapping[str, Any],
+        skill_id: str,
+        version: str,
+    ) -> tuple[dict[str, Any], DerivedFrom]:
+        """Server-inject TW14 provenance into a derived session (REQ-CC-20).
+
+        The caller reads ``skill_id``/``version`` from the PUBLISHED record —
+        the client NEVER supplies provenance. Any client-supplied
+        ``derived_from`` in the payload is DROPPED (ignored) and replaced with
+        the server identity. Returns ``(clean_payload, DerivedFrom)``: the
+        clean payload never carries the provenance key (so it cannot leak into
+        the canvas payload, manifest, or digest) and the ``DerivedFrom``
+        marker is persisted on the session state (``derived_from_json``).
+        """
+        clean = {
+            key: deepcopy(value)
+            for key, value in payload.items()
+            if key != "derived_from"
+        }
+        return clean, DerivedFrom(skill_id=skill_id, version=version)
 
     def materialize(
         self,

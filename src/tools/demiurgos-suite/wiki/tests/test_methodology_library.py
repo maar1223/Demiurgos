@@ -24,6 +24,7 @@ from methodology_library import (  # noqa: E402
     MethodologyLibrary,
     NotPublishedError,
     ValidationError,
+    _bump_version,
 )
 
 
@@ -316,3 +317,275 @@ class TestInventoryRecords:
         assert published.etiquetas == ("lore",)
         assert published.clasificacion == "Comunitarias"
         assert published.trust_attributes == ()
+
+
+# ---------------------------------------------------------------------------
+# TW13/TW14 — derived drafts + server-injected provenance (Phase 2 / PR 2)
+# ---------------------------------------------------------------------------
+
+
+class TestDerivedDrafts:
+    """REQ-CC-16/19/20: derived drafts read identity from the PUBLISHED
+    record, inject provenance server-side, auto-version +1, and never touch
+    the original."""
+
+    def _published_original(self, library: MethodologyLibrary, *, version: str = "1.2.0",
+                            clasificacion: str | None = "Oficiales") -> None:
+        draft_id = library.create_draft(
+            skill_id="guided-character-v1", version=version,
+            name="Guided character methodology", source=_valid_source(),
+            description=_valid_manifest()["description"],
+            clasificacion=clasificacion,
+            trust_attributes=("verified",),
+        )
+        library.publish(draft_id)
+
+    def test_create_derived_draft_injects_provenance_from_published_record(
+        self, tmp_path: Path,
+    ) -> None:
+        library = _library(tmp_path)
+        self._published_original(library)
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source() + "\n# adaptado\n",
+            name="Guided character methodology (adaptada)",
+        )
+        derived = library.get_draft(derived_id)
+        assert derived is not None
+        # Server-injected identity read from the PUBLISHED record.
+        assert derived.parent_skill_id == "guided-character-v1"
+        assert derived.parent_version == "1.2.0"
+        # version+1 policy (REQ-CC-19).
+        assert derived.version == "1.2.1"
+        # Seed source + inherited metadata from the original.
+        assert derived.source.endswith("# adaptado\n")
+        assert derived.description == _valid_manifest()["description"]
+        assert derived.clasificacion == "Oficiales"
+        assert derived.trust_attributes == ("verified",)
+
+    def test_create_derived_draft_requires_published_original(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        with pytest.raises(NotPublishedError):
+            library.create_derived_draft(
+                "guided-character-v1", "9.9.9",
+                seed_source="x\n", name="Ghost",
+            )
+
+    def test_create_derived_draft_rejects_wrong_caller_version(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._published_original(library)
+        with pytest.raises(ValidationError):
+            library.create_derived_draft(
+                "guided-character-v1", "1.2.0",
+                seed_source="x\n", name="Bad", version="1.2.0",
+            )
+        # The matching version+1 value is accepted.
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source="x\n", name="Good", version="1.2.1",
+        )
+        assert library.get_draft(derived_id).version == "1.2.1"
+
+    def test_derived_draft_has_no_public_identity_params(self, tmp_path: Path) -> None:
+        """REQ-CC-20: the client can never supply provenance — the method
+        signature accepts no parent/derived_from parameters."""
+        library = _library(tmp_path)
+        self._published_original(library)
+        import inspect
+        signature = inspect.signature(library.create_derived_draft)
+        names = set(signature.parameters)
+        assert "parent_skill_id" not in names
+        assert "parent_version" not in names
+        assert "derived_from" not in names
+
+    def test_publish_copies_parent_fields_and_auto_versions(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._published_original(library)
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        published = library.publish(derived_id)
+        # REQ-CC-19: S@1.2.1 with provenance pointing to S@1.2.0.
+        assert published.version == "1.2.1"
+        assert published.parent_skill_id == "guided-character-v1"
+        assert published.parent_version == "1.2.0"
+        # REQ-CC-21: provenance visible on the published record.
+        stored = library.get_published("guided-character-v1", "1.2.1")
+        assert stored is not None
+        assert stored.parent_skill_id == "guided-character-v1"
+        assert stored.parent_version == "1.2.0"
+        # Original untouched (REQ-CC-19): same source and digest.
+        original = library.get_published("guided-character-v1", "1.2.0")
+        assert original is not None
+        assert original.source == _valid_source()
+        assert original.parent_skill_id is None
+
+    def test_derived_publish_version_mismatch_fails_closed(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._published_original(library)
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        # Tamper the draft record's version (white-box): a derived draft must
+        # publish as parent+1, never at the parent's own version.
+        with library._lock:
+            library._drafts[derived_id]["version"] = "1.2.0"
+        with pytest.raises(ValidationError):
+            library.publish(derived_id)
+        assert library.get_published("guided-character-v1", "1.2.0") is not None
+        assert library.get_published("guided-character-v1", "1.2.1") is None
+
+    def test_derived_publish_leaves_original_immutable_under_edits(self, tmp_path: Path) -> None:
+        """REQ-CC-19: editing the derived draft never changes S@V."""
+        library = _library(tmp_path)
+        self._published_original(library)
+        original = library.get_published("guided-character-v1", "1.2.0")
+        assert original is not None
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        library.update_draft(derived_id, source=_valid_source() + "# cambiado\n")
+        after = library.get_published("guided-character-v1", "1.2.0")
+        assert after is not None
+        assert after.source == original.source
+        assert after.digest == original.digest
+
+    def test_bump_version_policy(self) -> None:
+        assert _bump_version("1.2.0") == "1.2.1"
+        assert _bump_version("1.0") == "1.1"
+        assert _bump_version("9") == "10"
+        assert _bump_version("v1") == "v1.1"
+
+
+class TestDraftHistory:
+    """TW13: snapshot-on-update history for post-materialize edits."""
+
+    def test_update_draft_snapshots_previous_state(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        draft_id = _draft(library)
+        library.update_draft(draft_id, source=_valid_source() + "# v2\n")
+        library.update_draft(draft_id, source=_valid_source() + "# v3\n")
+        history = library.list_draft_history(draft_id)
+        assert len(history) == 2
+        # Each entry records the PRE-update record; oldest first.
+        assert history[0]["record"]["source"] == _valid_source()
+        assert history[1]["record"]["source"] == _valid_source() + "# v2\n"
+        assert library.get_draft(draft_id).source == _valid_source() + "# v3\n"
+
+    def test_draft_history_survives_reload(self, tmp_path: Path) -> None:
+        store = tmp_path / "library.json"
+        library = MethodologyLibrary(store)
+        draft_id = _draft(library)
+        library.update_draft(draft_id, source=_valid_source() + "# v2\n")
+        reloaded = MethodologyLibrary(store)
+        history = reloaded.list_draft_history(draft_id)
+        assert len(history) == 1
+        assert history[0]["record"]["source"] == _valid_source()
+
+    def test_update_draft_accepts_inventory_fields(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        draft_id = _draft(library)
+        updated = library.update_draft(
+            draft_id,
+            taller="Creación",
+            talleres_compatibles=("Diseño",),
+            categoria_funcional="Análisis",
+            etiquetas=("lore",),
+            clasificacion="Personalizadas",
+            trust_attributes=("verified",),
+        )
+        assert updated.taller == "Creación"
+        assert updated.talleres_compatibles == ("Diseño",)
+        assert updated.categoria_funcional == "Análisis"
+        assert updated.etiquetas == ("lore",)
+        assert updated.clasificacion == "Personalizadas"
+        assert updated.trust_attributes == ("verified",)
+
+    def test_update_draft_never_touches_provenance(self, tmp_path: Path) -> None:
+        """Ordinary edits preserve the server-injected parent identity."""
+        library = _library(tmp_path)
+        original = library.create_draft(
+            skill_id="guided-character-v1", version="1.2.0",
+            name="Original", source=_valid_source(),
+        )
+        library.publish(original)
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        library.update_draft(derived_id, source=_valid_source() + "# v2\n")
+        draft = library.get_draft(derived_id)
+        assert draft is not None
+        assert draft.parent_skill_id == "guided-character-v1"
+        assert draft.parent_version == "1.2.0"
+
+
+class TestProvenanceManifestExclusion:
+    """REQ-CC-22: provenance stays OUT of the manifest and the digest."""
+
+    def test_compiler_rejects_provenance_keys_in_manifest(self) -> None:
+        from methodology_compiler import compile_methodology
+        for key in ("parent_skill_id", "parent_version", "derived_from"):
+            manifest = dict(_valid_manifest())
+            manifest[key] = "x"
+            result = compile_methodology(manifest, _valid_source())
+            assert not result.ok, key
+            assert any(issue.code == "unknown-field" for issue in result.issues), key
+
+    def test_manifest_for_never_includes_provenance(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        library.publish(_draft(library))
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        derived = library.get_draft(derived_id)
+        assert derived is not None
+        manifest = library.manifest_for(derived)
+        assert "parent_skill_id" not in manifest
+        assert "parent_version" not in manifest
+        assert "derived_from" not in manifest
+
+    def test_digest_stable_across_provenance_variants(self, tmp_path: Path) -> None:
+        """Two drafts identical in content/version but different provenance
+        compile to the SAME digest (metadata, not identity)."""
+        library = _library(tmp_path)
+        library.publish(_draft(library))  # guided-character-v1@1.2.0 (Oficiales-free)
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        # The plain twin carries the same content the derived draft inherited
+        # from the original, at the same version+1 — only provenance differs.
+        plain_id = library.create_draft(
+            skill_id="guided-character-v1", version="1.2.1",
+            name="Adaptada", source=_valid_source(),
+            description=_valid_manifest()["description"],
+        )
+        derived_result = library.compile_draft(derived_id)
+        plain_result = library.compile_draft(plain_id)
+        assert derived_result.ok and plain_result.ok
+        assert derived_result.compiled is not None and plain_result.compiled is not None
+        assert derived_result.compiled.digest == plain_result.compiled.digest
+
+    def test_provenance_survives_reload_from_disk(self, tmp_path: Path) -> None:
+        store = tmp_path / "library.json"
+        library = MethodologyLibrary(store)
+        library.publish(_draft(library))
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        library.publish(derived_id)
+        reloaded = MethodologyLibrary(store)
+        draft = reloaded.get_draft(derived_id)
+        assert draft is not None
+        assert draft.parent_skill_id == "guided-character-v1"
+        assert draft.parent_version == "1.2.0"
+        published = reloaded.get_published("guided-character-v1", "1.2.1")
+        assert published is not None
+        assert published.parent_skill_id == "guided-character-v1"
+        assert published.parent_version == "1.2.0"

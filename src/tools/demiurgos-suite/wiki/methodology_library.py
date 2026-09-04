@@ -22,6 +22,7 @@ import os
 import tempfile
 import threading
 import uuid
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -73,6 +74,12 @@ class Draft:
     etiquetas: tuple[str, ...] = ()
     clasificacion: str | None = None
     trust_attributes: tuple[str, ...] = ()
+    # TW14 provenance (TW13 adaptation): server-injected parent identity of a
+    # derived draft, read from the PUBLISHED record by ``create_derived_draft``.
+    # Optional with defaults so old records deserialize safely; EXCLUDED from
+    # the manifest and digest (metadata, not identity — REQ-CC-22).
+    parent_skill_id: str | None = None
+    parent_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -97,6 +104,10 @@ class PublishedVersion:
     etiquetas: tuple[str, ...] = ()
     clasificacion: str | None = None
     trust_attributes: tuple[str, ...] = ()
+    # TW14 provenance: copied from the draft record at publish (server-injected
+    # only; EXCLUDED from manifest/digest — REQ-CC-22).
+    parent_skill_id: str | None = None
+    parent_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -114,6 +125,29 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _bump_version(version: str) -> str:
+    """Deterministic ``version+1`` for derived publishes (REQ-CC-19).
+
+    Increments the last numeric dot-segment of a bounded identifier:
+    ``1.2.0 -> 1.2.1``, ``1.0 -> 1.1``, ``9 -> 10``. A non-numeric trailing
+    segment (e.g. ``v1``) appends ``.1`` so the policy never fails closed on
+    an unexpected shape; the compiler's ``MAX_VERSION_LEN`` bound still
+    applies at publish.
+    """
+    parts = version.split(".")
+    for index in range(len(parts) - 1, -1, -1):
+        if parts[index].isdigit():
+            parts[index] = str(int(parts[index]) + 1)
+            return ".".join(parts[: index + 1])
+    return f"{version}.1"
+
+
+# Per-draft snapshot-on-update history cap (TW13 post-materialize edits).
+# Mirrors the session history cap (REQ-CC-15 spirit): append-only, oldest
+# evicted, so the file-backed store cannot grow without bound.
+DRAFT_HISTORY_CAP = 50
+
+
 class MethodologyLibrary:
     """JSON-file-backed methodology lifecycle store.
 
@@ -128,6 +162,9 @@ class MethodologyLibrary:
         self._published: dict[str, dict[str, Any]] = {}
         self._activations: dict[str, dict[str, Any]] = {}
         self._history: dict[str, list[dict[str, Any]]] = {}
+        # TW13/TW14: per-draft snapshot-on-update history (post-materialize
+        # edits). Append-only; capped at DRAFT_HISTORY_CAP per draft.
+        self._draft_history: dict[str, list[dict[str, Any]]] = {}
         self._load()
 
     # ------------------------------------------------------------------ #
@@ -174,6 +211,92 @@ class MethodologyLibrary:
             self._save_locked()
         return draft_id
 
+    def create_derived_draft(
+        self,
+        original_skill_id: str,
+        original_version: str,
+        seed_source: str,
+        *,
+        name: str,
+        version: str | None = None,
+        description: str | None = None,
+        phases: tuple[str, ...] | None = None,
+        language: str | None = None,
+        taller: str | None = None,
+        talleres_compatibles: tuple[str, ...] | None = None,
+        categoria_funcional: str | None = None,
+        etiquetas: tuple[str, ...] | None = None,
+        clasificacion: str | None = None,
+        trust_attributes: tuple[str, ...] | None = None,
+    ) -> str:
+        """Create a derived draft of a PUBLISHED skill (TW13/TW14).
+
+        The parent identity is read from the PUBLISHED record server-side
+        (REQ-CC-20): ``parent_skill_id``/``parent_version`` are injected from
+        ``get_published(original_skill_id, original_version)`` and the client
+        never supplies them. The version follows the ``version+1`` policy
+        (REQ-CC-19): the draft is created as ``_bump_version(parent_version)``
+        and any caller-supplied ``version`` must equal that value or the
+        request fails closed. ``seed_source`` seeds the draft's source from
+        the original; metadata fields default to the original's published
+        values. The original stays intact until the derived draft is
+        explicitly published AND activated.
+        """
+        original = self.get_published(original_skill_id, original_version)
+        if original is None:
+            raise NotPublishedError(
+                f"{original_skill_id}@{original_version} is not published"
+            )
+        expected = _bump_version(original.version)
+        if version is not None and version != expected:
+            raise ValidationError(
+                f"derived draft of {original_skill_id}@{original.version} "
+                f"must be version {expected!r}, got {version!r}"
+            )
+        draft_id = uuid.uuid4().hex[:12]
+        now = _utcnow()
+        with self._lock:
+            self._drafts[draft_id] = {
+                "draft_id": draft_id,
+                "skill_id": original.skill_id,
+                "version": expected,
+                "name": name,
+                "source": seed_source,
+                "description": (
+                    description if description is not None else original.description
+                ),
+                "phases": list(phases if phases is not None else original.phases),
+                "language": language if language is not None else original.language,
+                "taller": taller if taller is not None else original.taller,
+                "talleres_compatibles": list(
+                    talleres_compatibles
+                    if talleres_compatibles is not None
+                    else original.talleres_compatibles
+                ),
+                "categoria_funcional": (
+                    categoria_funcional
+                    if categoria_funcional is not None
+                    else original.categoria_funcional
+                ),
+                "etiquetas": list(
+                    etiquetas if etiquetas is not None else original.etiquetas
+                ),
+                "clasificacion": (
+                    clasificacion if clasificacion is not None else original.clasificacion
+                ),
+                "trust_attributes": list(
+                    trust_attributes
+                    if trust_attributes is not None
+                    else original.trust_attributes
+                ),
+                "parent_skill_id": original.skill_id,
+                "parent_version": original.version,
+                "created_at": now,
+                "updated_at": now,
+            }
+            self._save_locked()
+        return draft_id
+
     def get_draft(self, draft_id: str) -> Draft | None:
         with self._lock:
             record = self._drafts.get(draft_id)
@@ -192,11 +315,33 @@ class MethodologyLibrary:
         name: str | None = None,
         phases: tuple[str, ...] | None = None,
         language: str | None = None,
+        taller: str | None = None,
+        talleres_compatibles: tuple[str, ...] | None = None,
+        categoria_funcional: str | None = None,
+        etiquetas: tuple[str, ...] | None = None,
+        clasificacion: str | None = None,
+        trust_attributes: tuple[str, ...] | None = None,
+        provenance: tuple[str, str] | None = None,
     ) -> Draft:
+        """Update a draft, snapshotting the previous state (TW13/TW14).
+
+        Extends the Fase 4 field set with the inventory metadata
+        (``taller``/``talleres_compatibles``/``categoria_funcional``/
+        ``etiquetas``/``clasificacion``/``trust_attributes``). Every update
+        appends an immutable ``{ts, record}`` snapshot of the PRE-update
+        record to the per-draft history (``_draft_history``, cap
+        ``DRAFT_HISTORY_CAP``) — the post-materialize edit trace.
+
+        ``provenance`` is SERVER-INTERNAL only: it accepts ``(skill_id,
+        version)`` and is never wired to any client route (REQ-CC-20 —
+        provenance is server-injected; a client can never forge or mutate it).
+        ``skill_id``/``version`` themselves are immutable after creation.
+        """
         with self._lock:
             record = self._drafts.get(draft_id)
             if record is None:
                 raise KeyError(f"draft {draft_id!r} not found")
+            before = deepcopy(record)
             if source is not None:
                 record["source"] = source
             if description is not None:
@@ -207,9 +352,37 @@ class MethodologyLibrary:
                 record["phases"] = list(phases)
             if language is not None:
                 record["language"] = language
-            record["updated_at"] = _utcnow()
+            if taller is not None:
+                record["taller"] = taller
+            if talleres_compatibles is not None:
+                record["talleres_compatibles"] = list(talleres_compatibles)
+            if categoria_funcional is not None:
+                record["categoria_funcional"] = categoria_funcional
+            if etiquetas is not None:
+                record["etiquetas"] = list(etiquetas)
+            if clasificacion is not None:
+                record["clasificacion"] = clasificacion
+            if trust_attributes is not None:
+                record["trust_attributes"] = list(trust_attributes)
+            if provenance is not None:
+                record["parent_skill_id"], record["parent_version"] = provenance
+            now = _utcnow()
+            history = self._draft_history.setdefault(draft_id, [])
+            history.append({"ts": now, "record": before})
+            if len(history) > DRAFT_HISTORY_CAP:
+                del history[: len(history) - DRAFT_HISTORY_CAP]
+            record["updated_at"] = now
             self._save_locked()
             return self._draft_from(record)
+
+    def list_draft_history(self, draft_id: str) -> list[dict[str, Any]]:
+        """Immutable per-draft snapshot-on-update history (TW13).
+
+        Each entry is ``{ts, record}`` where ``record`` is the draft record
+        BEFORE the update that appended it (append-only, oldest first).
+        """
+        with self._lock:
+            return [deepcopy(entry) for entry in self._draft_history.get(draft_id, [])]
 
     def compile_draft(self, draft_id: str) -> CompileResult:
         draft = self.get_draft(draft_id)
@@ -261,6 +434,19 @@ class MethodologyLibrary:
         key = self._key(compiled.skill_id, compiled.version)
         now = _utcnow()
         with self._lock:
+            draft_record = self._drafts.get(draft_id) or {}
+            parent_version = draft_record.get("parent_version")
+            if parent_version is not None:
+                # REQ-CC-19: a derived draft publishes as parent_version+1.
+                # Enforced here, at the publish boundary, BEFORE any immutability
+                # lookup, so even a tampered draft record cannot publish at the
+                # wrong version.
+                expected = _bump_version(str(parent_version))
+                if compiled.version != expected:
+                    raise ValidationError(
+                        f"derived draft of {compiled.skill_id}@{parent_version} "
+                        f"must publish as version {expected!r}, got {compiled.version!r}"
+                    )
             existing = self._published.get(key)
             if existing is not None:
                 if existing["digest"] == compiled.digest:
@@ -269,7 +455,6 @@ class MethodologyLibrary:
                     f"{compiled.skill_id}@{compiled.version} is already published "
                     "with different content; published versions are immutable."
                 )
-            draft_record = self._drafts.get(draft_id) or {}
             record = {
                 "skill_id": compiled.skill_id,
                 "version": compiled.version,
@@ -287,6 +472,10 @@ class MethodologyLibrary:
                 "etiquetas": list(compiled.etiquetas),
                 "clasificacion": draft_record.get("clasificacion"),
                 "trust_attributes": list(draft_record.get("trust_attributes") or ()),
+                # TW14: provenance threads through to the published record so
+                # it stays visible across the lifecycle (REQ-CC-21).
+                "parent_skill_id": draft_record.get("parent_skill_id"),
+                "parent_version": parent_version,
             }
             self._published[key] = record
             self._save_locked()
@@ -393,6 +582,10 @@ class MethodologyLibrary:
             world: list(stack)
             for world, stack in (payload.get("history") or {}).items()
         }
+        self._draft_history = {
+            draft_id: list(stack)
+            for draft_id, stack in (payload.get("draft_history") or {}).items()
+        }
 
     def _save_locked(self) -> None:
         payload = {
@@ -400,6 +593,7 @@ class MethodologyLibrary:
             "published": self._published,
             "activations": self._activations,
             "history": self._history,
+            "draft_history": self._draft_history,
         }
         self._path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, tmp_path = tempfile.mkstemp(
@@ -432,6 +626,8 @@ class MethodologyLibrary:
             etiquetas=tuple(record.get("etiquetas") or ()),
             clasificacion=record.get("clasificacion"),
             trust_attributes=tuple(record.get("trust_attributes") or ()),
+            parent_skill_id=record.get("parent_skill_id"),
+            parent_version=record.get("parent_version"),
         )
 
     @staticmethod
@@ -452,6 +648,8 @@ class MethodologyLibrary:
             etiquetas=tuple(record.get("etiquetas") or ()),
             clasificacion=record.get("clasificacion"),
             trust_attributes=tuple(record.get("trust_attributes") or ()),
+            parent_skill_id=record.get("parent_skill_id"),
+            parent_version=record.get("parent_version"),
         )
 
     @staticmethod

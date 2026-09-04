@@ -51,6 +51,7 @@ ROUTES = {
     ("POST", "/api/co-creation/sessions/{session_id}/history/restore"),
     ("POST", "/api/co-creation/sessions/{session_id}/warnings/{idx}/status"),
     ("POST", "/api/co-creation/sessions/{session_id}/pending-questions/{idx}/status"),
+    ("POST", "/api/co-creation/derive"),
 }
 
 
@@ -190,6 +191,7 @@ def test_routes_fail_closed_with_stable_auth_error(client: TestClient) -> None:
         ("post", "/api/co-creation/sessions/s-1/history/restore", {"base_revision": 0, "revision": 1}),
         ("post", "/api/co-creation/sessions/s-1/warnings/0/status", {"base_revision": 0, "state": "resuelta"}),
         ("post", "/api/co-creation/sessions/s-1/pending-questions/0/status", {"base_revision": 0, "state": "resuelta"}),
+        ("post", "/api/co-creation/derive", {"skill_id": "s", "version": "1.0.0"}),
     ]
     for method, path, body in calls:
         response = getattr(client, method)(path, json=body) if body else getattr(client, method)(path)
@@ -697,6 +699,256 @@ def test_activate_pins_one_version_per_world(client: TestClient, monkeypatch) ->
     active = api_server._methodology_library().active_for("vibrantes")
     assert active is not None
     assert active.skill_id == activation["skill_id"]
+
+
+# ---------------------------------------------------------------------------
+# TW13/TW14 (Phase 2 / PR 2) — derivation + server-injected provenance
+# ---------------------------------------------------------------------------
+
+def _publish_skill(
+    *,
+    skill_id: str = "skill-oficial",
+    version: str = "1.0.0",
+    name: str = "Skill Oficial",
+    source: str | None = None,
+    clasificacion: str | None = "Oficiales",
+) -> None:
+    library = api_server._methodology_library()
+    draft_id = library.create_draft(
+        skill_id=skill_id,
+        version=version,
+        name=name,
+        source=source or f"# {name}\n\n## Propósito\nPropósito base.\n",
+        description="Descripción oficial.",
+        clasificacion=clasificacion,
+        trust_attributes=("verified",),
+    )
+    library.publish(draft_id)
+
+
+def _template_source(name: str, purpose: str = "Propósito base.") -> str:
+    """A template-shaped source so the adaptation seed parses back."""
+    return (
+        f"# {name}\nDescripción oficial.\n\n"
+        f"## Propósito\n{purpose}\n\n"
+        "## Alcance\nAlcance base. (transversal)\n\n"
+        "## Flujo principal\nFlujo base.\n\n"
+        "## Ramas y reglas\n- rama base\n- regla base\n"
+    )
+
+
+def test_derive_creates_derived_draft_with_server_injected_provenance(
+    client: TestClient, monkeypatch,
+) -> None:
+    _bind_principal(monkeypatch)
+    _publish_skill(source=_template_source("Skill Oficial"))
+    # REQ-CC-20: a client-supplied derived_from is IGNORED — the server
+    # injects its own identity read from the PUBLISHED record.
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial",
+        "version": "1.0.0",
+        "derived_from": {"skill_id": "evil-skill", "version": "9.9.9"},
+    })
+    assert derived.status_code == 200, derived.text
+    body = derived.json()
+    assert body["session_id"]
+    assert body["draft_id"]
+    assert body["derived_from"] == {"skill_id": "skill-oficial", "version": "1.0.0"}
+    library = api_server._methodology_library()
+    draft = library.get_draft(body["draft_id"])
+    assert draft is not None
+    assert draft.parent_skill_id == "skill-oficial"
+    assert draft.parent_version == "1.0.0"
+    assert draft.version == "1.0.1"  # version+1 policy (REQ-CC-19)
+    # The adaptation session is bound to the draft and exposes provenance.
+    session = client.get(f"/api/co-creation/sessions/{body['session_id']}")
+    assert session.status_code == 200, session.text
+    state = session.json()
+    assert state["draft_id"] == body["draft_id"]
+    assert state["derived_from"] == {"skill_id": "skill-oficial", "version": "1.0.0"}
+    # REQ-CC-17: the canvas payload is seeded from the original's sections.
+    assert state["draft_payload"]["purpose"] == "Propósito base."
+    assert state["draft_payload"]["branches"] == ["rama base", "regla base"]
+
+
+def test_derive_gate_oficiales_requires_derivation_and_blocks_in_place_edit(
+    client: TestClient, monkeypatch,
+) -> None:
+    """REQ-CC-16: Oficiales ⇒ derivation required; in-place replacement of a
+    published version is impossible (immutability)."""
+    _bind_principal(monkeypatch)
+    _publish_skill(source=_template_source("Skill Oficial"))
+    # The protected path IS derivation — it succeeds and records provenance.
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial", "version": "1.0.0",
+    })
+    assert derived.status_code == 200, derived.text
+    assert derived.json()["derived_from"] == {"skill_id": "skill-oficial", "version": "1.0.0"}
+    # In-place edit attempt: a same-version draft cannot replace the published
+    # Oficiales record — publish fails closed as immutable (409).
+    draft = client.post("/api/methodologies/drafts", json={
+        "skill_id": "skill-oficial", "version": "1.0.0",
+        "name": "Skill Oficial (editada)",
+        "source": "# Skill Oficial (editada)\n",
+    })
+    assert draft.status_code == 200, draft.text
+    published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
+    assert published.status_code == 409
+    assert published.json()["code"] == "already_published"
+    # The original is untouched.
+    original = api_server._methodology_library().get_published("skill-oficial", "1.0.0")
+    assert original is not None
+    assert original.name == "Skill Oficial"
+
+
+def test_derive_allows_non_protected_skills(client: TestClient, monkeypatch) -> None:
+    """REQ-CC-16: non-protected skills MAY be derived (optional path)."""
+    _bind_principal(monkeypatch)
+    _publish_skill(skill_id="skill-libre", clasificacion="Personalizadas")
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-libre", "version": "1.0.0",
+    })
+    assert derived.status_code == 200, derived.text
+    assert derived.json()["derived_from"] == {"skill_id": "skill-libre", "version": "1.0.0"}
+
+
+def test_derive_unpublished_skill_fails_closed(client: TestClient, monkeypatch) -> None:
+    _bind_principal(monkeypatch)
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-fantasma", "version": "9.9.9",
+    })
+    assert derived.status_code == 422
+    assert derived.json()["code"] == "invalid_input"
+    # Nothing created.
+    assert api_server._methodology_library().list_drafts() == []
+
+
+def test_derive_rejects_unavailable_world(client: TestClient, monkeypatch) -> None:
+    _bind_principal(monkeypatch)
+    _publish_skill(source=_template_source("Skill Oficial"))
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial", "version": "1.0.0", "world": "mundo-inexistente",
+    })
+    assert derived.status_code == 422
+    assert derived.json()["code"] == "invalid_input"
+
+
+def test_derived_publish_auto_versions_and_preserves_original(
+    client: TestClient, monkeypatch,
+) -> None:
+    """REQ-CC-19: derived publish → S@(V+1) with provenance; S@V intact."""
+    _bind_principal(monkeypatch)
+    _publish_skill(source=_template_source("Skill Oficial"))
+    library = api_server._methodology_library()
+    original = library.get_published("skill-oficial", "1.0.0")
+    assert original is not None
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial", "version": "1.0.0",
+    })
+    assert derived.status_code == 200
+    session_id = derived.json()["session_id"]
+    # Canvas edit on the adaptation session (revision 0 -> 1).
+    canvas = client.put(f"/api/co-creation/sessions/{session_id}/canvas", json={
+        "base_revision": 0,
+        "payload": {"purpose": "Propósito adaptado.", "scope": "Alcance adaptado."},
+    })
+    assert canvas.status_code == 200, canvas.text
+    assert canvas.json()["revision"] == 1
+    # Publish: the POST is the Author's explicit approval.
+    published = client.post(f"/api/co-creation/sessions/{session_id}/publish", json={
+        "base_revision": 1,
+    })
+    assert published.status_code == 200, published.text
+    assert published.json()["published"]["version"] == "1.0.1"
+    # New published version carries provenance + the canvas content.
+    new_version = library.get_published("skill-oficial", "1.0.1")
+    assert new_version is not None
+    assert new_version.parent_skill_id == "skill-oficial"
+    assert new_version.parent_version == "1.0.0"
+    assert "Propósito adaptado." in new_version.source
+    # The original is untouched (immutability preserved).
+    after = library.get_published("skill-oficial", "1.0.0")
+    assert after is not None
+    assert after.source == original.source
+    assert after.digest == original.digest
+    assert after.parent_skill_id is None
+
+
+def test_derived_session_publish_without_edits_preserves_original_content(
+    client: TestClient, monkeypatch,
+) -> None:
+    """Derive → publish with NO canvas edits: S@(V+1) still carries the
+    original's content (the seeded payload round-trips through the template)."""
+    _bind_principal(monkeypatch)
+    _publish_skill(source=_template_source("Skill Oficial"))
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial", "version": "1.0.0",
+    })
+    assert derived.status_code == 200
+    session_id = derived.json()["session_id"]
+    published = client.post(f"/api/co-creation/sessions/{session_id}/publish", json={
+        "base_revision": 0,
+    })
+    assert published.status_code == 200, published.text
+    new_version = api_server._methodology_library().get_published("skill-oficial", "1.0.1")
+    assert new_version is not None
+    assert "Propósito base." in new_version.source
+    assert "- rama base" in new_version.source
+
+
+def test_published_detail_route_returns_source_and_provenance(
+    client: TestClient, monkeypatch,
+) -> None:
+    _bind_principal(monkeypatch)
+    _publish_skill(source=_template_source("Skill Oficial"))
+    detail = client.get("/api/methodologies/published/skill-oficial/1.0.0")
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["skill_id"] == "skill-oficial"
+    assert body["version"] == "1.0.0"
+    assert "## Propósito" in body["source"]  # inventory omits source; detail has it
+    assert body["clasificacion"] == "Oficiales"
+    assert body["parent_skill_id"] is None
+    assert body["parent_version"] is None
+    # After a derived publish, the detail exposes the provenance (REQ-CC-21).
+    library = api_server._methodology_library()
+    derived_id = library.create_derived_draft(
+        "skill-oficial", "1.0.0", seed_source=_template_source("Skill Oficial"),
+        name="Skill Oficial",
+    )
+    library.publish(derived_id)
+    derived_detail = client.get("/api/methodologies/published/skill-oficial/1.0.1")
+    assert derived_detail.status_code == 200
+    assert derived_detail.json()["parent_skill_id"] == "skill-oficial"
+    assert derived_detail.json()["parent_version"] == "1.0.0"
+    # Missing version -> 404; unauthenticated -> 401.
+    missing = client.get("/api/methodologies/published/skill-oficial/9.9.9")
+    assert missing.status_code == 404
+
+
+def test_published_detail_route_fails_closed_without_auth(client: TestClient) -> None:
+    response = client.get("/api/methodologies/published/skill-oficial/1.0.0")
+    assert response.status_code == 401
+
+
+def test_canvas_put_rejects_nested_authority_keys_without_state_change(
+    client: TestClient, monkeypatch,
+) -> None:
+    """REQ-CC-7: authority keys nested (depth <= 4) inside a canvas payload are
+    envelope violations — rejected with zero state changes."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    rejected = client.put(f"/api/co-creation/sessions/{session_id}/canvas", json={
+        "base_revision": 1,
+        "payload": {"purpose": "x", "meta": {"deep": {"target": "y"}}},
+    })
+    assert rejected.status_code == 422
+    assert rejected.json()["code"] == "invalid_envelope"
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}")
+    assert recovered.json()["revision"] == 1
+    assert "purpose" not in recovered.json()["draft_payload"]
+    assert recovered.json()["history_count"] == 0
 
 
 # ---------------------------------------------------------------------------

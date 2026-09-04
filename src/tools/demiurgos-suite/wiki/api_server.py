@@ -2370,6 +2370,20 @@ class CoCreationPendingQuestionStatusRequest(BaseModel):
     state: str
 
 
+class CoCreationDeriveRequest(BaseModel):
+    """TW13 adaptation: derive a draft from a PUBLISHED skill (REQ-CC-16/20).
+
+    The client supplies ONLY the identity of the original
+    (``skill_id``/``version``/``world``). Provenance is never accepted here:
+    any client-supplied ``derived_from`` is ignored and the server injects
+    its own identity read from the PUBLISHED record (REQ-CC-20).
+    """
+
+    skill_id: str
+    version: str
+    world: str | None = None
+
+
 # Durable session store + Skill Madre provider seams (mirror the
 # _GUIDED_SESSIONS / _GUIDED_PROVIDER pattern). Tests replace these module
 # seams after import; the default store path is the gitignored repo-local
@@ -2780,6 +2794,35 @@ def publish_co_creation(session_id: str, body: CoCreationPublishRequest, request
             "The session has no materialized draft to publish.", False,
         ))
     library = _methodology_library()
+    draft = library.get_draft(state.draft_id)
+    if draft is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT, "The session draft is unavailable.", False,
+        ))
+    # TW12/TW13: sync the session's final canvas payload into the library
+    # draft through the SAME deterministic template used at materialization
+    # (post-materialize edit path — ``update_draft`` re-renders + recompiles;
+    # ``_draft_history`` snapshots the pre-publish state). Only payloads that
+    # carry structured editable content are synced: a metadata-only payload
+    # (e.g. an adaptation seed of a non-template original) leaves the draft's
+    # seeded source untouched so the original content is never clobbered.
+    # Provenance (parent fields) is never touched by this sync (REQ-CC-20).
+    materializer = _CO_CREATION_MATERIALIZER
+    if materializer is not None and state.draft_payload:
+        structured = {
+            key: state.draft_payload.get(key)
+            for key in ("purpose", "scope", "main_flow", "branches", "rules")
+            if state.draft_payload.get(key)
+        }
+        if structured:
+            rendered = materializer.render_source(state.draft_payload)
+            if rendered != draft.source:
+                updates: dict[str, Any] = {"source": rendered}
+                for key in ("name", "description"):
+                    value = state.draft_payload.get(key)
+                    if isinstance(value, str) and value:
+                        updates[key] = value
+                library.update_draft(state.draft_id, **updates)
     try:
         published = library.publish(state.draft_id)
     except ValidationError as exc:
@@ -2855,6 +2898,96 @@ def activate_co_creation(session_id: str, body: CoCreationActivateRequest, reque
             "version": activation.version,
             "digest": activation.digest,
             "activated_at": activation.activated_at,
+        },
+    }
+
+
+@app.post("/api/co-creation/derive")
+def derive_co_creation(body: CoCreationDeriveRequest, request: Request):
+    """TW13 adaptation: derive a draft from a PUBLISHED skill (REQ-CC-16/20).
+
+    The server reads the PUBLISHED record (``get_published``) — the client
+    never supplies provenance — injects ``parent_skill_id``/``parent_version``
+    (server-side identity), seeds the derived draft's source from the
+    original, and auto-versions it ``parent_version+1`` (REQ-CC-19). A
+    ``clasificacion=\"Oficiales\"`` original REQUIRES derivation (REQ-CC-16):
+    this route IS that path — published versions stay immutable, so an
+    in-place edit is impossible by construction. Non-protected skills MAY be
+    derived here too. Opens a co-creation session bound to the derived draft
+    with the server-injected provenance and a canvas payload seeded from the
+    original (REQ-CC-17). The original stays intact until the derived draft
+    explicitly publishes AND activates.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    if body.world is not None and _resolve_mundo_dir(body.world) is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT, "The world is unavailable.", False,
+        ))
+    library = _methodology_library()
+    original = library.get_published(body.skill_id, body.version)
+    if original is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT,
+            "The published skill is unavailable.", False,
+        ))
+    materializer = _CO_CREATION_MATERIALIZER
+    if materializer is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.CAPABILITY_UNAVAILABLE,
+            "Skill draft derivation is unavailable.", True,
+        ))
+    try:
+        draft_id = library.create_derived_draft(
+            original.skill_id,
+            original.version,
+            seed_source=original.source,
+            name=original.name,
+            description=original.description,
+            phases=original.phases,
+            language=original.language,
+            taller=original.taller,
+            talleres_compatibles=original.talleres_compatibles,
+            categoria_funcional=original.categoria_funcional,
+            etiquetas=original.etiquetas,
+            clasificacion=original.clasificacion,
+            trust_attributes=original.trust_attributes,
+        )
+    except NotPublishedError as exc:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.INVALID_INPUT, str(exc), False,
+        ))
+    except ValidationError as exc:
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "validation_error",
+        })
+    # Seed the adaptation session's canvas payload from the published
+    # original and bind the derived draft + server-injected provenance.
+    seed = materializer.seed_payload(
+        original.source,
+        name=original.name,
+        description=original.description,
+        world=body.world,
+    )
+    payload, derived_from = materializer.inject_derived_from(
+        seed, original.skill_id, original.version,
+    )
+    session_id = f"co-creation-{uuid.uuid4().hex}"
+    _CO_CREATION_SESSIONS.create(
+        session_id, principal.id, principal.id,
+        world=body.world,
+        seed_payload=payload,
+        draft_id=draft_id,
+        derived_from=derived_from,
+    )
+    _CO_CREATION_SESSION_PRINCIPALS[session_id] = principal.id
+    return {
+        "session_id": session_id,
+        "draft_id": draft_id,
+        "derived_from": {
+            "skill_id": derived_from.skill_id,
+            "version": derived_from.version,
         },
     }
 
@@ -6868,6 +7001,44 @@ app.include_router(
 # world's active version changed. Imports stay quarantined until the Author
 # manually trusts the package; nothing activates automatically.
 # ---------------------------------------------------------------------------
+
+@app.get("/api/methodologies/published/{skill_id}/{version}")
+def methodology_published_detail(skill_id: str, version: str, request: Request):
+    """Full published version + source (TW13 original render for adaptation).
+
+    The inventory omits ``source`` by design; this detail route exists so the
+    adaptation compare view and the derive flow can read the original
+    published source. Also exposes the server-injected TW14 provenance
+    (``parent_skill_id``/``parent_version``) when the version is itself a
+    derived publish (REQ-CC-21). Read-only GET; never mutates state.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    library = _methodology_library()
+    published = library.get_published(skill_id, version)
+    if published is None:
+        return JSONResponse(status_code=404, content={"detail": "Metodología no encontrada"})
+    return {
+        "skill_id": published.skill_id,
+        "version": published.version,
+        "name": published.name,
+        "description": published.description,
+        "phases": list(published.phases),
+        "language": published.language,
+        "source": published.source,
+        "digest": published.digest,
+        "published_at": published.published_at,
+        "taller": published.taller,
+        "talleres_compatibles": list(published.talleres_compatibles),
+        "categoria_funcional": published.categoria_funcional,
+        "etiquetas": list(published.etiquetas),
+        "clasificacion": published.clasificacion,
+        "trust_attributes": list(published.trust_attributes),
+        "parent_skill_id": published.parent_skill_id,
+        "parent_version": published.parent_version,
+    }
+
 
 @app.get("/api/methodologies/status")
 def methodologies_status(request: Request):

@@ -20,6 +20,7 @@ from co_creation_materializer import (  # noqa: E402
     CoCreationMaterializer,
     MaterializationResult,
     ValidateResult,
+    parse_rendered_source,
 )
 
 
@@ -222,3 +223,102 @@ def test_render_source_keeps_string_lists_backward_compatible(tmp_path: Path) ->
     assert "Si el archivo es inválido, mostrar errores." in source
     assert "No sobrescribir lore existente sin confirmación." in source
     assert "- Si el archivo" not in source
+
+
+# ---------------------------------------------------------------------------
+# TW13/TW14 — adaptation seed + server-injected provenance (Phase 2 / PR 2)
+# ---------------------------------------------------------------------------
+
+def test_inject_derived_from_drops_client_supplied_provenance(tmp_path: Path) -> None:
+    """REQ-CC-20: the client never supplies provenance — a client-supplied
+    ``derived_from`` is dropped and replaced by the server identity."""
+    materializer = CoCreationMaterializer(_library(tmp_path))
+    forged = {
+        "name": "Skill hackeada",
+        "derived_from": {"skill_id": "evil-skill", "version": "9.9.9"},
+    }
+    payload, derived_from = materializer.inject_derived_from(
+        forged, "real-skill", "1.0.0",
+    )
+    assert payload == {"name": "Skill hackeada"}
+    assert "derived_from" not in payload
+    assert derived_from.skill_id == "real-skill"
+    assert derived_from.version == "1.0.0"
+
+
+def test_inject_derived_from_preserves_the_rest_of_the_payload(tmp_path: Path) -> None:
+    materializer = CoCreationMaterializer(_library(tmp_path))
+    payload, derived_from = materializer.inject_derived_from(
+        {"name": "A", "description": "B", "purpose": "C"}, "s", "1.2.0",
+    )
+    assert payload == {"name": "A", "description": "B", "purpose": "C"}
+    assert (derived_from.skill_id, derived_from.version) == ("s", "1.2.0")
+
+
+def test_parse_rendered_source_roundtrips_template_output(tmp_path: Path) -> None:
+    materializer = CoCreationMaterializer(_library(tmp_path))
+    payload = {
+        "name": "Mi skill de importación",
+        "description": "Automatiza la importación de lore.",
+        "purpose": "Reducir el trabajo manual.",
+        "scope": "Importación de archivos OKF.",
+        "world": "nec",
+        "main_flow": "1. Subir 2. Validar 3. Importar.",
+        "branches": ["Rama A", "Rama B"],
+        "rules": ["Regla 1"],
+    }
+    source = materializer.render_source(payload)
+    parsed = parse_rendered_source(source)
+    assert parsed["name"] == "Mi skill de importación"
+    assert parsed["description"] == "Automatiza la importación de lore."
+    assert parsed["purpose"] == "Reducir el trabajo manual."
+    assert parsed["scope"] == "Importación de archivos OKF."
+    assert parsed["world"] == "nec"
+    assert parsed["main_flow"] == "1. Subir 2. Validar 3. Importar."
+    # Known lossiness: branches and rules render as adjacent bullet lists
+    # with no separator, so ALL bullets seed into ``branches``.
+    assert parsed["branches"] == ["Rama A", "Rama B", "Regla 1"]
+
+
+def test_parse_rendered_source_handles_transversal_and_empty_sections(tmp_path: Path) -> None:
+    source = CoCreationMaterializer(_library(tmp_path)).render_source({"name": "Solo nombre"})
+    parsed = parse_rendered_source(source)
+    assert parsed["name"] == "Solo nombre"
+    assert parsed["scope"] == ""
+    assert "world" not in parsed or parsed["world"] is None
+    assert "purpose" not in parsed or parsed["purpose"] == ""
+
+
+def test_parse_rendered_source_non_template_source_never_raises(tmp_path: Path) -> None:
+    for weird in ("", "not markdown at all", "# Título\n\ncuerpo libre sin secciones\n", 42):
+        parsed = parse_rendered_source(weird)  # type: ignore[arg-type]
+        assert isinstance(parsed, dict)
+
+
+def test_seed_payload_builds_adaptation_canvas_from_published_original(
+    tmp_path: Path,
+) -> None:
+    materializer = CoCreationMaterializer(_library(tmp_path))
+    payload = {
+        "name": "Skill base",
+        "description": "Descripción base.",
+        "purpose": "Propósito base.",
+        "scope": "Alcance base.",
+        "main_flow": "Flujo base.",
+        "branches": ["rama base"],
+        "rules": ["regla base"],
+        "world": "nec",
+    }
+    source = materializer.render_source(payload)
+    seed = materializer.seed_payload(source, name="Skill base", description="Descripción base.")
+    assert seed["name"] == "Skill base"
+    assert seed["description"] == "Descripción base."
+    assert seed["purpose"] == "Propósito base."
+    assert seed["scope"] == "Alcance base."
+    assert seed["main_flow"] == "Flujo base."
+    assert seed["branches"] == ["rama base", "regla base"]
+    # The session world binding overrides the parsed one.
+    override = materializer.seed_payload(
+        source, name="Skill base", description="Descripción base.", world="otro",
+    )
+    assert override["world"] == "otro"

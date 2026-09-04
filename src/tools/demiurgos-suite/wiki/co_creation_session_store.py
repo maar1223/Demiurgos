@@ -184,6 +184,10 @@ class CoCreationSessionStore:
         authorization_binding: str,
         world: str | None = None,
         author_input: str = "",
+        *,
+        seed_payload: Mapping[str, Any] | None = None,
+        draft_id: str | None = None,
+        derived_from: DerivedFrom | None = None,
     ) -> CoCreationSessionState:
         if world is not None and (not isinstance(world, str) or not world.strip()):
             raise ValueError("world must be a non-empty string or None")
@@ -199,10 +203,13 @@ class CoCreationSessionStore:
                 milestone="proposito",
                 milestone_states=initial_milestone_states(),
                 question_count=0,
+                draft_payload=dict(seed_payload) if seed_payload else {},
                 messages=(
                     [CoCreationMessage("author", author_input, 0)]
                     if author_input.strip() else []
                 ),
+                draft_id=draft_id,
+                derived_from=derived_from,
             )
             self._write_state(state, revalidation_required=0)
             self._in_process.add(session_id)
