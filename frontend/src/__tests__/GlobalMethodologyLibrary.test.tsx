@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { GlobalMethodologyLibrary } from "@/components/organisms/GlobalMethodologyLibrary";
 import type { MethodologyInventoryItem } from "@/api/types";
@@ -185,7 +185,7 @@ describe("GlobalMethodologyLibrary — client-side search (REQ-LIB-3)", () => {
 });
 
 describe("GlobalMethodologyLibrary — server-side filters (REQ-LIB-4)", () => {
-  it("re-queries conjunctively when clasificacion and taller are both set", async () => {
+  it("re-queries conjunctively when clasificacion and etiquetas are both set", async () => {
     const user = userEvent.setup();
     render(<GlobalMethodologyLibrary />);
     await waitFor(() => {
@@ -200,18 +200,17 @@ describe("GlobalMethodologyLibrary — server-side filters (REQ-LIB-4)", () => {
       });
     });
 
-    // The taller filter reuses TallerSelector as a filter-only control.
-    const tallerTrigger = screen
-      .getAllByRole("button")
-      .find((button) => button.getAttribute("aria-haspopup") === "listbox");
-    expect(tallerTrigger).toBeDefined();
-    await user.click(tallerTrigger!);
-    await user.click(await screen.findByRole("option", { name: "Taller de Mundo" }));
-
+    // No taller filter in the catalog (the sidebar header carries the taller
+    // selector); etiquetas is a server-side conjunctive control alongside
+    // clasificacion. fireEvent.change sets the value in one shot (user.type
+    // is flaky here because each keystroke re-queries and re-renders).
+    fireEvent.change(screen.getByLabelText("Etiquetas"), {
+      target: { value: "plot" },
+    });
     await waitFor(() => {
       expect(getInventoryMock).toHaveBeenLastCalledWith({
         clasificacion: "Oficiales",
-        taller: "Mundo",
+        etiquetas: "plot",
       });
     });
   });
@@ -224,22 +223,20 @@ describe("GlobalMethodologyLibrary — server-side filters (REQ-LIB-4)", () => {
     });
 
     await user.selectOptions(screen.getByLabelText("Clasificación"), "Oficiales");
-    const tallerTrigger = screen
-      .getAllByRole("button")
-      .find((button) => button.getAttribute("aria-haspopup") === "listbox");
-    await user.click(tallerTrigger!);
-    await user.click(await screen.findByRole("option", { name: "Taller de Mundo" }));
+    fireEvent.change(screen.getByLabelText("Etiquetas"), {
+      target: { value: "plot" },
+    });
     await waitFor(() => {
       expect(getInventoryMock).toHaveBeenLastCalledWith({
         clasificacion: "Oficiales",
-        taller: "Mundo",
+        etiquetas: "plot",
       });
     });
 
-    // Clear clasificacion → re-query without that key, taller persists.
+    // Clear clasificacion → re-query without that key, etiquetas persists.
     await user.selectOptions(screen.getByLabelText("Clasificación"), "");
     await waitFor(() => {
-      expect(getInventoryMock).toHaveBeenLastCalledWith({ taller: "Mundo" });
+      expect(getInventoryMock).toHaveBeenLastCalledWith({ etiquetas: "plot" });
     });
     expect(getInventoryMock).not.toHaveBeenLastCalledWith(
       expect.objectContaining({ clasificacion: expect.anything() }),

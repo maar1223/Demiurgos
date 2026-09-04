@@ -1,5 +1,4 @@
 import type { InventoryFilters } from "@/api/methodologies";
-import { TallerSelector } from "./TallerSelector";
 
 interface InventoryFilterBarProps {
   filters: InventoryFilters;
@@ -12,8 +11,9 @@ const CLASIFICACION_OPTIONS = ["Oficiales", "Personalizadas", "Comunitarias"];
  * Filter controls for the global inventory (REQ-LIB-4). Server-side
  * conjunctive: every control emits a full `InventoryFilters` object upward,
  * and a cleared control drops its key (undefined) so the backend re-queries
- * without it. The `TallerSelector` here is a FILTER ONLY — it never drives
- * `activeTaller` or world state (REQ-LIB-4, design decision).
+ * without it. There is deliberately NO taller filter here: the catalog is the
+ * global view across all tallers, and the sidebar header already carries the
+ * taller selector for scoped ("Mi mundo") exploration.
  */
 export function InventoryFilterBar({
   filters,
@@ -57,15 +57,6 @@ export function InventoryFilterBar({
           placeholder="Ej. Generación de ideas"
         />
       </label>
-
-      <div className="flex w-full flex-col gap-1 text-small text-muted">
-        Taller
-        <TallerSelector
-          activeTaller={filters.taller ?? ""}
-          onTallerChange={(taller) => update({ taller })}
-          fullWidth
-        />
-      </div>
 
       <label className="flex flex-col gap-1 text-small text-muted">
         Etiquetas

@@ -81,15 +81,16 @@ export function TallerExplorerSidebar({
   return (
     <div className="flex h-full flex-col">
       {/* Header block (SC-LEN-1.7): the lens toggle lives here, NOT as a
-       *  standalone flowing row. */}
+       *  standalone flowing row. World first (broadest context), then the
+       *  taller it scopes, then the lens toggle. */}
       <div className="space-y-3 border-b border-edge px-4 py-3">
-        <TallerSelector activeTaller={activeTaller} onTallerChange={onTallerChange} />
         <WorldSelector
           worlds={worlds}
           currentWorld={world}
           onWorldChange={onWorldChange}
           onRequestCreate={onRequestCreateWorld}
         />
+        <TallerSelector activeTaller={activeTaller} onTallerChange={onTallerChange} />
         <LensToggle lens={lens} onChange={onLensChange} />
       </div>
 
