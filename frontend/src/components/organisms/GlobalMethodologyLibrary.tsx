@@ -30,14 +30,21 @@ function sameVersion(
  * Read-only query view over the complete published-skills inventory,
  * activated or not (REQ-LIB-2…7 / TW7).
  *
- * NO props — isolation by construction (REQ-LIB-8): the only import from
- * `@/api/methodologies` is `getMethodologyInventory` (value) plus
- * `InventoryFilters` (type). The organism owns all of its state, performs
- * client-side search over the loaded list, forwards server-side conjunctive
- * filters, and renders the detail/compare panels from list payloads only.
- * Rendering this view never writes operational or persisted state.
+ * The only stateful prop is `onAdaptar` (TW13): when the parent wires it, each
+ * published row offers "Adaptar" — derive an editable draft from that version
+ * (the `clasificacion="Oficiales"` gate is enforced server-side; published
+ * versions are immutable, REQ-CC-16). The organism itself stays read-only:
+ * it renders list payloads and forwards the Author action upward.
  */
-export function GlobalMethodologyLibrary() {
+interface GlobalMethodologyLibraryProps {
+  /** TW13 adaptation entry on published rows. When omitted, rows render
+   *  without "Adaptar" (keeps the view read-only by default). */
+  onAdaptar?: (item: MethodologyInventoryItem) => void;
+}
+
+export function GlobalMethodologyLibrary({
+  onAdaptar,
+}: GlobalMethodologyLibraryProps) {
   const [items, setItems] = useState<MethodologyInventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -160,6 +167,7 @@ export function GlobalMethodologyLibrary() {
                 item={item}
                 onSelect={setDetail}
                 onToggleCompare={toggleCompare}
+                onAdaptar={onAdaptar}
                 selected={compareSelection.some((candidate) =>
                   sameVersion(candidate, item),
                 )}

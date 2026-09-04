@@ -595,6 +595,18 @@ export interface CoCreationSession {
   phase: CoCreationPhase;
   draft_id: string | null;
   compile_issues: CompileIssue[] | null;
+  /** TW12 editable structured draft payload (null until the session has one).
+   *  The canvas renders it and sends Author-originated edits back through the
+   *  revision-guarded merge (REQ-CC-11). */
+  draft_payload: DraftPayload | null;
+  /** TW12 3-state validation warnings (REQ-CC-13). Pending warnings NEVER
+   *  auto-clear; only the Author transitions out of `pendiente`. */
+  warnings: DraftWarning[];
+  /** TW12 immutable autosave snapshot count (REQ-CC-15). */
+  history_count: number;
+  /** TW14 server-injected provenance; null for non-derived sessions. The
+   *  client NEVER sends this — the server reads it from the PUBLISHED record. */
+  derived_from: DerivedFrom | null;
 }
 
 /** Milestone progress projection (GET .../sessions/{id}/progress). */
@@ -665,6 +677,122 @@ export interface CoCreationActivateResult {
     digest: string;
     activated_at: string;
   };
+}
+
+// ---------------------------------------------------------------------------
+// TW12/TW13/TW14 — canvas payload, warnings, history, provenance
+// ---------------------------------------------------------------------------
+
+/** Three-state draft-review warning lifecycle (REQ-CC-13). Pending warnings
+ *  NEVER auto-correct; only the Author transitions out of `pendiente`
+ *  (`resuelta` or `aceptada_por_autor`). */
+export type WarningState = "pendiente" | "resuelta" | "aceptada_por_autor";
+
+/** A chat-appended pending question with its Author-owned state (REQ-CC-14):
+ *  the canvas renders entries read-only; the Author may only transition
+ *  `Pendiente -> Resuelta | Aceptada_por_Autor`. Legacy wire entries may be
+ *  plain strings (normalized to `{text, state: "pendiente"}` at render). */
+export interface PendingQuestion {
+  text: string;
+  state: WarningState;
+}
+
+/** One validation-panel warning with a 3-state lifecycle (REQ-CC-13). */
+export interface DraftWarning {
+  code: string;
+  message: string;
+  field: string | null;
+  state: WarningState;
+}
+
+/** One immutable autosave snapshot (REQ-CC-15). Payloads are excluded from
+ *  the list view; the restore route returns the chosen snapshot's payload. */
+export interface DraftHistoryEntry {
+  revision: number;
+  source: "author" | "chat" | "autosave";
+  ts: string; // ISO 8601
+}
+
+/** Server-injected parent identity for a derived draft (TW14). The client
+ *  NEVER supplies this — the server reads it from the PUBLISHED record
+ *  (REQ-CC-20); client-supplied provenance is ignored. */
+export interface DerivedFrom {
+  skill_id: string;
+  version: string;
+}
+
+/** The typed, Author-editable structured draft sections exposed by the canvas
+ *  (REQ-CC-11). `branches`/`rules`/`pending_questions` are lists; the rest are
+ *  plain strings. `pending_questions` is chat-owned (REQ-CC-14): the canvas
+ *  may display it but never authors it. */
+export interface DraftPayload {
+  name: string;
+  description: string;
+  purpose: string;
+  scope: string;
+  main_flow: string;
+  branches: string[];
+  rules: string[];
+  pending_questions: PendingQuestion[];
+  world: string | null;
+}
+
+/** TW13 per-section compare classification (REQ-CC-18). */
+export type SectionClassification =
+  | "conservado"
+  | "modificado"
+  | "añadido"
+  | "eliminado";
+
+/** PUT .../sessions/{id}/canvas — revision-guarded debounced autosave.
+ *  The envelope keys (`base_revision`/`payload`) stay OUTSIDE the 8-key
+ *  authority set (REQ-CC-23); the server merges and validates (render +
+ *  compile, NO draft created) under the session's current revision. */
+export interface CoCreationCanvasResult {
+  revision: number;
+  issues: CompileIssue[];
+  warnings: DraftWarning[];
+  ok: boolean;
+}
+
+/** POST .../sessions/{id}/validate — pure render+compile preview. Never
+ *  creates, publishes, or mutates any session state (REQ-CC-13). */
+export interface CoCreationValidationResult {
+  issues: CompileIssue[];
+  warnings: DraftWarning[];
+  source_preview: string;
+  ok: boolean;
+}
+
+/** GET .../sessions/{id}/history — immutable autosave snapshot list. */
+export interface CoCreationHistoryList {
+  entries: DraftHistoryEntry[];
+}
+
+/** POST .../sessions/{id}/history/restore — revision-guarded restore
+ *  (REQ-CC-15); fails closed with REVISION_CONFLICT on a stale base. */
+export interface CoCreationRestoreResult {
+  revision: number;
+  payload: DraftPayload;
+}
+
+/** POST .../sessions/{id}/warnings/{idx}/status — Author-only transition. */
+export interface CoCreationWarningList {
+  warnings: DraftWarning[];
+}
+
+/** POST .../sessions/{id}/pending-questions/{idx}/status — Author-only
+ *  transition (REQ-CC-14). */
+export interface CoCreationPendingQuestionList {
+  pending_questions: PendingQuestion[];
+}
+
+/** POST /api/co-creation/derive — adaptation draft with server-injected
+ *  provenance (TW13/TW14). The client sends ONLY the original identity. */
+export interface CoCreationDeriveResult {
+  session_id: string;
+  draft_id: string;
+  derived_from: DerivedFrom;
 }
 
 /** OKF ficha status — UI maps Borrador → draft, Canon → stable. */
@@ -1382,6 +1510,20 @@ export interface PublishedMethodology {
   etiquetas?: string[];
   clasificacion?: string | null;
   trust_attributes?: string[];
+  /** TW14 server-injected provenance: the parent published version this one
+   *  was derived from (REQ-CC-21). Present only on derived publishes; list
+   *  endpoints may omit them (the detail route always exposes them). */
+  parent_skill_id?: string | null;
+  parent_version?: string | null;
+}
+
+/** Full published version + source from
+ *  GET /api/methodologies/published/{skill_id}/{version} (TW13 original render
+ *  for adaptation; auth-required because it exposes the author `source`). */
+export interface PublishedMethodologyDetail extends PublishedMethodology {
+  phases: string[];
+  language: string;
+  source: string;
 }
 
 /** The compiled methodology/version pinned to one world. */
@@ -1407,6 +1549,10 @@ export interface MethodologyDraft {
   talleres_compatibles?: string[];
   categoria_funcional?: string | null;
   etiquetas?: string[];
+  /** TW14 server-injected provenance (REQ-CC-20): parent published identity
+   *  for derived drafts. The client never supplies these. */
+  parent_skill_id?: string | null;
+  parent_version?: string | null;
 }
 
 /** Library status from GET /api/methodologies/status. */
@@ -1430,6 +1576,10 @@ export interface MethodologyInventoryItem {
   etiquetas?: string[];
   clasificacion?: string | null;
   trust_attributes?: string[];
+  /** TW14 provenance (REQ-CC-21) — populated when the inventory includes it
+   *  for a derived publish; absent otherwise (the badge simply hides). */
+  parent_skill_id?: string | null;
+  parent_version?: string | null;
 }
 
 /** Input for creating a methodology draft. */

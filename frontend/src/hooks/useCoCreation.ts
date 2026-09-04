@@ -1,21 +1,47 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   activateCoCreationSession,
   createCoCreationSession,
+  deriveDraft as deriveDraftApi,
+  getPublishedDetail as getPublishedDetailApi,
+  listHistory as listHistoryApi,
   materializeCoCreationSession,
   publishCoCreationSession,
   recoverCoCreationSession,
+  restoreHistory as restoreHistoryApi,
+  setPendingQuestionStatus as setPendingQuestionStatusApi,
+  setWarningStatus as setWarningStatusApi,
   turnCoCreationSession,
+  updateCanvas as updateCanvasApi,
+  validatePayload as validatePayloadApi,
 } from "@/api/coCreation";
+import { ApiError } from "@/api/types";
 import type {
   CoCreationActivateResult,
+  CoCreationDeriveResult,
   CoCreationMaterializeMetadata,
   CoCreationMaterializeResult,
   CoCreationPublishResult,
+  CoCreationRestoreResult,
   CoCreationSession,
+  CoCreationValidationResult,
+  DerivedFrom,
+  DraftHistoryEntry,
+  DraftPayload,
+  PublishedMethodologyDetail,
+  WarningState,
 } from "@/api/types";
 
 const STORAGE_KEY = "demiurgos-co-creation-session";
+
+/** Debounce window for canvas autosave (REQ-CC-15): edits coalesce into one
+ *  PUT /canvas after this much idle time. */
+const AUTOSAVE_DEBOUNCE_MS = 800;
+
+/** Optional hook configuration (tests shorten the autosave debounce). */
+export interface UseCoCreationOptions {
+  autosaveDebounceMs?: number;
+}
 
 /** The localStorage entry is ONLY a recovery hint — the backend is the
  *  authoritative session store (durable, principal-bound, revision-guarded). */
@@ -43,7 +69,7 @@ function rememberSession(sessionId: string | null): void {
 }
 
 /** Shared co-creation state distributed across the ToolWorkshop "Crear skill"
- *  panes (sidebar milestones, chat, right context/validation panel). */
+ *  panes (sidebar milestones, chat, canvas, right context/validation panel). */
 export interface UseCoCreationReturn {
   session: CoCreationSession | null;
   /** Immutable published version after the Author approves publishing. */
@@ -57,7 +83,9 @@ export interface UseCoCreationReturn {
     input: string,
     world?: string | null,
   ) => Promise<CoCreationSession | null>;
-  /** One Author answer -> one Skill Madre question (starts when no session). */
+  /** One Author answer -> one Skill Madre question (starts when no session).
+   *  Pending canvas edits are flushed BEFORE the turn so the Skill Madre sees
+   *  the latest payload (REQ-CC-12 bidirectional sync). */
   send: (input: string) => Promise<CoCreationSession | null>;
   /** Re-read the session from the backend (authoritative). */
   recover: () => Promise<void>;
@@ -71,9 +99,68 @@ export interface UseCoCreationReturn {
   activate: (world: string) => Promise<CoCreationActivateResult | null>;
   /** Discard the hint and the local session (backend session stays intact). */
   reset: () => void;
+
+  // -- TW12 canvas (REQ-CC-11/15) ------------------------------------------
+
+  /** Local editable copy of the session's structured draft payload. The
+   *  backend is authoritative: server-driven changes (chat merges, restores,
+   *  derive seeds) resync this value. */
+  draftPayload: DraftPayload | null;
+  /** Autosave/validation error surfaced in the canvas toolbar. */
+  canvasError: string | null;
+  /** Apply an Author section edit locally, push the previous payload onto the
+   *  in-memory undo stack, and schedule the debounced autosave. The payload
+   *  NEVER carries `pending_questions` changes (REQ-CC-14: chat-owned). */
+  editCanvas: (patch: Partial<DraftPayload>) => void;
+  /** Traverse the in-memory edit stack (REQ-CC-15). Persisted restores pull
+   *  snapshots through the revision-guarded history API instead. */
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  isSavingCanvas: boolean;
+  /** Pure render+compile preview (REQ-CC-13); never creates or publishes. */
+  validateCanvas: () => Promise<CoCreationValidationResult | null>;
+  validation: CoCreationValidationResult | null;
+  isValidating: boolean;
+  /** Load the immutable autosave snapshot list (REQ-CC-15). */
+  loadHistory: () => Promise<DraftHistoryEntry[]>;
+  historyEntries: DraftHistoryEntry[];
+  isLoadingHistory: boolean;
+  /** Revision-guarded snapshot restore (REQ-CC-15). */
+  restoreSnapshot: (revision: number) => Promise<CoCreationRestoreResult | null>;
+  isRestoring: boolean;
+  restoreError: string | null;
+  /** Author-only warning transition (REQ-CC-13). */
+  setWarningStatus: (idx: number, state: WarningState) => Promise<void>;
+  /** Author-only pending-question transition (REQ-CC-14). */
+  setPendingQuestionStatus: (
+    idx: number,
+    state: WarningState,
+  ) => Promise<void>;
+
+  // -- TW13/TW14 adaptation + provenance -----------------------------------
+
+  /** Derive an adaptation draft from a PUBLISHED skill and load the new
+   *  session (REQ-CC-16/17/20). The client sends ONLY the original identity. */
+  derive: (
+    skillId: string,
+    version: string,
+    world?: string | null,
+  ) => Promise<CoCreationDeriveResult | null>;
+  /** Full published version + source for the TW13 compare view. */
+  getPublishedDetail: (
+    skillId: string,
+    version: string,
+  ) => Promise<PublishedMethodologyDetail>;
+  /** Server-injected provenance (TW14); null for non-derived sessions. */
+  derivedFrom: DerivedFrom | null;
 }
 
-export function useCoCreation(): UseCoCreationReturn {
+export function useCoCreation(
+  options: UseCoCreationOptions = {},
+): UseCoCreationReturn {
+  const autosaveDebounceMs = options.autosaveDebounceMs ?? AUTOSAVE_DEBOUNCE_MS;
   const [session, setSession] = useState<CoCreationSession | null>(null);
   const [published, setPublished] = useState<CoCreationPublishResult | null>(
     null,
@@ -82,6 +169,48 @@ export function useCoCreation(): UseCoCreationReturn {
     useState<CoCreationActivateResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // -- TW12 canvas state ---------------------------------------------------
+
+  const [draftPayload, setDraftPayload] = useState<DraftPayload | null>(null);
+  const [past, setPast] = useState<DraftPayload[]>([]);
+  const [future, setFuture] = useState<DraftPayload[]>([]);
+  const [isSavingCanvas, setIsSavingCanvas] = useState(false);
+  const [canvasError, setCanvasError] = useState<string | null>(null);
+  const [validation, setValidation] =
+    useState<CoCreationValidationResult | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+  const [historyEntries, setHistoryEntries] = useState<DraftHistoryEntry[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+
+  // Refs mirroring mutable canvas state so async callbacks (debounce timers,
+  // in-flight autosaves) always read the latest values without stale closures.
+  const sessionRef = useRef<CoCreationSession | null>(null);
+  const payloadRef = useRef<DraftPayload | null>(null);
+  const pastRef = useRef<DraftPayload[]>([]);
+  const futureRef = useRef<DraftPayload[]>([]);
+  /** JSON of the last payload WE sent to the server. The sync effect below
+   *  only replaces the working copy when the server holds a payload we did
+   *  NOT originate (chat merge, restore, derive seed) — so an unsaved local
+   *  edit is never clobbered by our own autosave response. */
+  const lastSentPayloadJsonRef = useRef<string | null>(null);
+  const autosaveTimerRef = useRef<number | null>(null);
+  /** Revision to use for the next autosave once one is in flight (the server
+   *  returned it); cleared whenever an external server state resyncs. */
+  const pendingRevisionRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  const resetStacks = useCallback(() => {
+    pastRef.current = [];
+    futureRef.current = [];
+    setPast([]);
+    setFuture([]);
+  }, []);
 
   // Recovery hint -> backend recovery (backend authoritative). A failed
   // recovery clears the hint; a session the server no longer knows is gone.
@@ -105,6 +234,28 @@ export function useCoCreation(): UseCoCreationReturn {
     };
   }, []);
 
+  /** Server-driven canvas resync (REQ-CC-12): when the backend holds a
+   *  payload we did NOT autosave (chat merge, restore, derive seed), the
+   *  canvas reflects it and the in-memory edit stack resets. Our own autosave
+   *  responses fold the payload into the session, so they never trigger here
+   *  (JSON-identical -> skipped) and in-flight edits are preserved. */
+  useEffect(() => {
+    const serverPayload = session?.draft_payload ?? null;
+    if (serverPayload === null) {
+      setDraftPayload(null);
+      resetStacks();
+      payloadRef.current = null;
+      return;
+    }
+    const serverJson = JSON.stringify(serverPayload);
+    if (serverJson !== lastSentPayloadJsonRef.current) {
+      setDraftPayload(serverPayload);
+      resetStacks();
+      payloadRef.current = serverPayload;
+      pendingRevisionRef.current = undefined;
+    }
+  }, [session, resetStacks]);
+
   /** Shared success/error path for session-returning calls (create/send). */
   const apply = useCallback((request: () => Promise<CoCreationSession>) => {
     setIsLoading(true);
@@ -126,6 +277,302 @@ export function useCoCreation(): UseCoCreationReturn {
       .finally(() => setIsLoading(false));
   }, []);
 
+  // -- TW12 canvas: debounced autosave -------------------------------------
+
+  /** Persist the latest working payload through the revision-guarded canvas
+   *  route. Stale responses (the session moved past our base revision) are
+   *  dropped; a REVISION_CONFLICT resyncs from the authoritative session. */
+  const persistCanvas = useCallback(async () => {
+    const current = sessionRef.current;
+    const payload = payloadRef.current;
+    if (!current || !payload) return;
+    const baseRevision = pendingRevisionRef.current ?? current.revision;
+    setIsSavingCanvas(true);
+    try {
+      const result = await updateCanvasApi(
+        current.session_id,
+        baseRevision,
+        payload,
+      );
+      lastSentPayloadJsonRef.current = JSON.stringify(payload);
+      pendingRevisionRef.current = result.revision;
+      setSession((prev) => {
+        if (!prev || prev.revision !== baseRevision) return prev;
+        return {
+          ...prev,
+          revision: result.revision,
+          warnings: result.warnings,
+          draft_payload: payload,
+        };
+      });
+      setCanvasError(null);
+    } catch (cause) {
+      const message =
+        cause instanceof Error
+          ? cause.message
+          : "No se pudo guardar el lienzo.";
+      setCanvasError(message);
+      if (cause instanceof ApiError && cause.code === "revision_conflict") {
+        // The server payload moved on (chat turn, another edit source): resync
+        // so the canvas never keeps editing over lost state.
+        void recoverCoCreationSession(current.session_id)
+          .then((next) => setSession(next))
+          .catch(() => undefined);
+      }
+    } finally {
+      setIsSavingCanvas(false);
+    }
+  }, []);
+
+  const scheduleAutosave = useCallback(() => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+    }
+    autosaveTimerRef.current = window.setTimeout(() => {
+      autosaveTimerRef.current = null;
+      void persistCanvas();
+    }, autosaveDebounceMs);
+  }, [persistCanvas, autosaveDebounceMs]);
+
+  /** Persist any pending debounced edit NOW (used before chat turns and the
+   *  canonical Author mutations so the server always sees the latest payload). */
+  const flushCanvas = useCallback(async () => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+      await persistCanvas();
+    }
+  }, [persistCanvas]);
+
+  const editCanvas = useCallback(
+    (patch: Partial<DraftPayload>) => {
+      const current = payloadRef.current;
+      if (!current) return;
+      const next: DraftPayload = {
+        ...current,
+        ...patch,
+        // The canvas NEVER authors pending_questions (REQ-CC-14): the chat
+        // appends; the Author only transitions state via the status API.
+        pending_questions: current.pending_questions,
+      };
+      const nextPast = [...pastRef.current.slice(-99), current];
+      pastRef.current = nextPast;
+      setPast(nextPast);
+      futureRef.current = [];
+      setFuture([]);
+      payloadRef.current = next;
+      setDraftPayload(next);
+      scheduleAutosave();
+    },
+    [scheduleAutosave],
+  );
+
+  const undo = useCallback(() => {
+    const current = payloadRef.current;
+    if (!current || pastRef.current.length === 0) return;
+    const previous = pastRef.current[pastRef.current.length - 1];
+    const nextPast = pastRef.current.slice(0, -1);
+    pastRef.current = nextPast;
+    setPast(nextPast);
+    const nextFuture = [...futureRef.current, current];
+    futureRef.current = nextFuture;
+    setFuture(nextFuture);
+    payloadRef.current = previous;
+    setDraftPayload(previous);
+    scheduleAutosave();
+  }, [scheduleAutosave]);
+
+  const redo = useCallback(() => {
+    const current = payloadRef.current;
+    if (!current || futureRef.current.length === 0) return;
+    const next = futureRef.current[futureRef.current.length - 1];
+    const nextFuture = futureRef.current.slice(0, -1);
+    futureRef.current = nextFuture;
+    setFuture(nextFuture);
+    const nextPast = [...pastRef.current, current];
+    pastRef.current = nextPast;
+    setPast(nextPast);
+    payloadRef.current = next;
+    setDraftPayload(next);
+    scheduleAutosave();
+  }, [scheduleAutosave]);
+
+  const validateCanvas = useCallback(async () => {
+    await flushCanvas();
+    const current = sessionRef.current;
+    const payload = payloadRef.current;
+    if (!current || !payload) return null;
+    setIsValidating(true);
+    setCanvasError(null);
+    try {
+      const result = await validatePayloadApi(current.session_id, payload);
+      setValidation(result);
+      return result;
+    } catch (cause) {
+      setCanvasError(
+        cause instanceof Error
+          ? cause.message
+          : "No se pudo validar el borrador.",
+      );
+      return null;
+    } finally {
+      setIsValidating(false);
+    }
+  }, [flushCanvas]);
+
+  const loadHistory = useCallback(async () => {
+    const current = sessionRef.current;
+    if (!current) return [];
+    setIsLoadingHistory(true);
+    setRestoreError(null);
+    try {
+      const result = await listHistoryApi(current.session_id);
+      setHistoryEntries(result.entries);
+      return result.entries;
+    } catch (cause) {
+      setRestoreError(
+        cause instanceof Error
+          ? cause.message
+          : "No se pudo cargar el historial.",
+      );
+      return [];
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, []);
+
+  const restoreSnapshot = useCallback(
+    async (revision: number) => {
+      const current = sessionRef.current;
+      if (!current) return null;
+      setIsRestoring(true);
+      setRestoreError(null);
+      try {
+        const result = await restoreHistoryApi(
+          current.session_id,
+          current.revision,
+          revision,
+        );
+        // The server replaced the payload and bumped the revision: fold both
+        // in so the sync effect (which compares payloads) does not clobber it.
+        lastSentPayloadJsonRef.current = JSON.stringify(result.payload);
+        pendingRevisionRef.current = result.revision;
+        payloadRef.current = result.payload;
+        setDraftPayload(result.payload);
+        resetStacks();
+        setSession((prev) =>
+          prev
+            ? { ...prev, revision: result.revision, draft_payload: result.payload }
+            : prev,
+        );
+        return result;
+      } catch (cause) {
+        setRestoreError(
+          cause instanceof Error
+            ? cause.message
+            : "No se pudo restaurar la versión.",
+        );
+        return null;
+      } finally {
+        setIsRestoring(false);
+      }
+    },
+    [resetStacks],
+  );
+
+  const setWarningStatus = useCallback(
+    async (idx: number, state: WarningState) => {
+      const current = sessionRef.current;
+      if (!current) return;
+      setCanvasError(null);
+      try {
+        const result = await setWarningStatusApi(
+          current.session_id,
+          current.revision,
+          idx,
+          state,
+        );
+        setSession((prev) =>
+          prev ? { ...prev, warnings: result.warnings } : prev,
+        );
+      } catch (cause) {
+        setCanvasError(
+          cause instanceof Error
+            ? cause.message
+            : "No se pudo actualizar la advertencia.",
+        );
+      }
+    },
+    [],
+  );
+
+  const setPendingQuestionStatus = useCallback(
+    async (idx: number, state: WarningState) => {
+      const current = sessionRef.current;
+      if (!current) return;
+      setCanvasError(null);
+      try {
+        const result = await setPendingQuestionStatusApi(
+          current.session_id,
+          current.revision,
+          idx,
+          state,
+        );
+        setSession((prev) => {
+          if (!prev?.draft_payload) return prev;
+          const nextPayload = {
+            ...prev.draft_payload,
+            pending_questions: result.pending_questions,
+          };
+          // The transition is server-authoritative and folded verbatim, so the
+          // sync effect must treat it as "ours" (it is exactly what the server
+          // returned) and not reset the canvas edit stack.
+          lastSentPayloadJsonRef.current = JSON.stringify(nextPayload);
+          return { ...prev, draft_payload: nextPayload };
+        });
+      } catch (cause) {
+        setCanvasError(
+          cause instanceof Error
+            ? cause.message
+            : "No se pudo actualizar la pregunta.",
+        );
+      }
+    },
+    [],
+  );
+
+  const derive = useCallback(
+    async (skillId: string, version: string, world?: string | null) => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const result = await deriveDraftApi(skillId, version, world ?? null);
+        // Load the full adaptation session: the server seeded the canvas
+        // payload from the original and injected `derived_from` (REQ-CC-17/20).
+        const next = await recoverCoCreationSession(result.session_id);
+        setSession(next);
+        rememberSession(next.session_id);
+        return result;
+      } catch (cause) {
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : "No se pudo derivar la skill.",
+        );
+        return null;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [],
+  );
+
+  const getPublishedDetail = useCallback(
+    (skillId: string, version: string) =>
+      getPublishedDetailApi(skillId, version),
+    [],
+  );
+
   const create = useCallback(
     (input: string, world?: string | null) => {
       const trimmed = input.trim();
@@ -136,20 +583,23 @@ export function useCoCreation(): UseCoCreationReturn {
   );
 
   const send = useCallback(
-    (input: string) => {
+    async (input: string) => {
       const trimmed = input.trim();
-      if (!trimmed) return Promise.resolve(null);
+      if (!trimmed) return null;
+      // Flush pending canvas edits so the Skill Madre sees the latest payload
+      // in context (REQ-CC-12: canvas edits MUST be visible to the next turn).
+      await flushCanvas();
       return apply(() =>
-        session
+        sessionRef.current
           ? turnCoCreationSession(
-              session.session_id,
-              session.revision,
+              sessionRef.current.session_id,
+              sessionRef.current.revision,
               trimmed,
             )
           : createCoCreationSession(trimmed),
       );
     },
-    [apply, session],
+    [apply, flushCanvas],
   );
 
   const recover = useCallback(async () => {
@@ -174,42 +624,44 @@ export function useCoCreation(): UseCoCreationReturn {
   }, []);
 
   const materialize = useCallback(
-    (metadata?: CoCreationMaterializeMetadata) => {
-      if (!session) return Promise.resolve(null);
+    async (metadata?: CoCreationMaterializeMetadata) => {
+      await flushCanvas();
+      const current = sessionRef.current;
+      if (!current) return null;
       setIsLoading(true);
       setError(null);
       return materializeCoCreationSession(
-        session.session_id,
-        session.revision,
+        current.session_id,
+        current.revision,
         metadata,
       )
         .then((result) => {
           if (result.ok && result.session_id) {
             // Success returns the full public state: fold the authoritative
             // fields in and keep the rest of the local transcript.
-            setSession((current) =>
-              current
+            setSession((prev) =>
+              prev
                 ? {
-                    ...current,
+                    ...prev,
                     revision: result.revision,
                     phase: result.phase,
                     milestone: result.milestone,
                     draft_id: result.draft_id,
                     compile_issues: result.compile_issues ?? [],
                   }
-                : current,
+                : prev,
             );
           } else {
             // Compile issues: the session STAYS at borrador_listo for
             // correction (REQ-CC-5); surface the issues in the panel.
-            setSession((current) =>
-              current
+            setSession((prev) =>
+              prev
                 ? {
-                    ...current,
+                    ...prev,
                     compile_issues:
                       result.compile_issues ?? result.issues ?? [],
                   }
-                : current,
+                : prev,
             );
           }
           return result;
@@ -224,20 +676,22 @@ export function useCoCreation(): UseCoCreationReturn {
         })
         .finally(() => setIsLoading(false));
     },
-    [session],
+    [flushCanvas],
   );
 
-  const publish = useCallback(() => {
-    if (!session?.draft_id) return Promise.resolve(null);
+  const publish = useCallback(async () => {
+    await flushCanvas();
+    const current = sessionRef.current;
+    if (!current?.draft_id) return null;
     setIsLoading(true);
     setError(null);
-    return publishCoCreationSession(session.session_id, session.revision)
+    return publishCoCreationSession(current.session_id, current.revision)
       .then((result) => {
         setPublished(result);
-        setSession((current) =>
-          current
-            ? { ...current, phase: result.phase, revision: result.revision }
-            : current,
+        setSession((prev) =>
+          prev
+            ? { ...prev, phase: result.phase, revision: result.revision }
+            : prev,
         );
         return result;
       })
@@ -250,20 +704,26 @@ export function useCoCreation(): UseCoCreationReturn {
         throw cause;
       })
       .finally(() => setIsLoading(false));
-  }, [session]);
+  }, [flushCanvas]);
 
   const activate = useCallback(
-    (world: string) => {
-      if (!session) return Promise.resolve(null);
+    async (world: string) => {
+      await flushCanvas();
+      const current = sessionRef.current;
+      if (!current) return null;
       setIsLoading(true);
       setError(null);
-      return activateCoCreationSession(session.session_id, session.revision, world)
+      return activateCoCreationSession(
+        current.session_id,
+        current.revision,
+        world,
+      )
         .then((result) => {
           setActivation(result);
-          setSession((current) =>
-            current
-              ? { ...current, phase: result.phase, revision: result.revision }
-              : current,
+          setSession((prev) =>
+            prev
+              ? { ...prev, phase: result.phase, revision: result.revision }
+              : prev,
           );
           return result;
         })
@@ -277,16 +737,29 @@ export function useCoCreation(): UseCoCreationReturn {
         })
         .finally(() => setIsLoading(false));
     },
-    [session],
+    [flushCanvas],
   );
 
   const reset = useCallback(() => {
+    if (autosaveTimerRef.current !== null) {
+      window.clearTimeout(autosaveTimerRef.current);
+      autosaveTimerRef.current = null;
+    }
     rememberSession(null);
     setSession(null);
     setPublished(null);
     setActivation(null);
     setError(null);
-  }, []);
+    setDraftPayload(null);
+    resetStacks();
+    payloadRef.current = null;
+    lastSentPayloadJsonRef.current = null;
+    pendingRevisionRef.current = undefined;
+    setCanvasError(null);
+    setValidation(null);
+    setHistoryEntries([]);
+    setRestoreError(null);
+  }, [resetStacks]);
 
   return {
     session,
@@ -301,5 +774,31 @@ export function useCoCreation(): UseCoCreationReturn {
     publish,
     activate,
     reset,
+
+    // TW12 canvas
+    draftPayload,
+    canvasError,
+    editCanvas,
+    undo,
+    redo,
+    canUndo: past.length > 0,
+    canRedo: future.length > 0,
+    isSavingCanvas,
+    validateCanvas,
+    validation,
+    isValidating,
+    loadHistory,
+    historyEntries,
+    isLoadingHistory,
+    restoreSnapshot,
+    isRestoring,
+    restoreError,
+    setWarningStatus,
+    setPendingQuestionStatus,
+
+    // TW13/TW14
+    derive,
+    getPublishedDetail,
+    derivedFrom: session?.derived_from ?? null,
   };
 }

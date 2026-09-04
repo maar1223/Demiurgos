@@ -29,6 +29,12 @@ interface InventoryRowProps {
   onToggleCompare?: (item: MethodologyInventoryItem) => void;
   /** Marks the row as part of the compare selection. */
   selected?: boolean;
+  /** TW13 "Adaptar": derive an editable draft from this published version.
+   *  The gate (`clasificacion === "Oficiales"` => derivation is the ONLY path,
+   *  REQ-CC-16) is enforced server-side — published versions are immutable —
+   *  so the entry is offered on every published row; the title hints at the
+   *  required case. */
+  onAdaptar?: (item: MethodologyInventoryItem) => void;
 }
 
 /**
@@ -42,12 +48,14 @@ export function InventoryRow({
   onSelect,
   onToggleCompare,
   selected = false,
+  onAdaptar,
 }: InventoryRowProps) {
   const clasificacion = item.clasificacion ?? null;
   const clasificacionVariant = clasificacion
     ? (CLASIFICACION_VARIANT[clasificacion] ?? "default")
     : "default";
   const trust = item.trust_attributes ?? [];
+  const oficiales = clasificacion === "Oficiales";
 
   return (
     <div
@@ -69,21 +77,42 @@ export function InventoryRow({
             v{item.version} · {item.taller ?? "Sin taller"} · {item.skill_id}
           </span>
         </button>
-        {onToggleCompare && (
-          <button
-            type="button"
-            aria-pressed={selected}
-            onClick={() => onToggleCompare(item)}
-            className={cn(
-              "shrink-0 rounded-md border px-2.5 py-1 text-xs transition-colors",
-              selected
-                ? "border-action/40 bg-surface-hover text-action"
-                : "border-edge text-muted hover:border-action/40 hover:text-primary",
-            )}
-          >
-            {selected ? "Quitar" : "Comparar"}
-          </button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {onAdaptar && (
+            <button
+              type="button"
+              onClick={() => onAdaptar(item)}
+              title={
+                oficiales
+                  ? "Las skills oficiales se adaptan creando una versión derivada (no se editan en el lugar)."
+                  : "Derivar una versión editable de esta publicación"
+              }
+              className={cn(
+                "rounded-md border px-2.5 py-1 text-xs transition-colors",
+                oficiales
+                  ? "border-action/40 bg-action/10 text-action hover:bg-action/20"
+                  : "border-edge text-muted hover:border-action/40 hover:text-primary",
+              )}
+            >
+              Adaptar
+            </button>
+          )}
+          {onToggleCompare && (
+            <button
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onToggleCompare(item)}
+              className={cn(
+                "rounded-md border px-2.5 py-1 text-xs transition-colors",
+                selected
+                  ? "border-action/40 bg-surface-hover text-action"
+                  : "border-edge text-muted hover:border-action/40 hover:text-primary",
+              )}
+            >
+              {selected ? "Quitar" : "Comparar"}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">

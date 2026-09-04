@@ -36,6 +36,10 @@ const sessionFixture = (
   phase: "conversation",
   draft_id: null,
   compile_issues: null,
+  draft_payload: null,
+  warnings: [],
+  history_count: 0,
+  derived_from: null,
   ...overrides,
 });
 
@@ -52,6 +56,30 @@ const baseState = (): UseCoCreationReturn => ({
   publish: vi.fn(),
   activate: vi.fn(),
   reset: vi.fn(),
+  // TW12 canvas
+  draftPayload: null,
+  canvasError: null,
+  editCanvas: vi.fn(),
+  undo: vi.fn(),
+  redo: vi.fn(),
+  canUndo: false,
+  canRedo: false,
+  isSavingCanvas: false,
+  validateCanvas: vi.fn(),
+  validation: null,
+  isValidating: false,
+  loadHistory: vi.fn(),
+  historyEntries: [],
+  isLoadingHistory: false,
+  restoreSnapshot: vi.fn(),
+  isRestoring: false,
+  restoreError: null,
+  setWarningStatus: vi.fn(),
+  setPendingQuestionStatus: vi.fn(),
+  // TW13/TW14
+  derive: vi.fn(),
+  getPublishedDetail: vi.fn(),
+  derivedFrom: null,
 });
 
 describe("CoCreationMilestoneSidebar", () => {

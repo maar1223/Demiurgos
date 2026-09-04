@@ -16,6 +16,7 @@ import { EditorLayout } from "@/components/templates/EditorLayout";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { cn } from "@/lib/utils";
+import type { MethodologyInventoryItem } from "@/api/types";
 import {
   getCurrentTaller,
   setCurrentTaller,
@@ -80,6 +81,16 @@ export default function ToolWorkshop() {
     // Local world stays the same until the user confirms the switch.
     void mutate();
     setPendingSwitch(created);
+  };
+
+  /** TW13 adaptation entry on published inventory rows: derive an editable
+   *  draft from the published version (the ONLY path for `Oficiales`,
+   *  REQ-CC-16) and switch to the "Crear skill" tab, where the chat + canvas
+   *  work on the derived draft (REQ-CC-17). The world binding follows the
+   *  page's selected world when present; otherwise the session is transversal. */
+  const handleAdaptar = async (item: MethodologyInventoryItem) => {
+    const result = await coCreation.derive(item.skill_id, item.version, world ?? null);
+    if (result) setView("co-crear");
   };
 
   const confirmSwitch = () => {
@@ -208,7 +219,7 @@ export default function ToolWorkshop() {
                 </>
               )
             ) : (
-              <GlobalMethodologyLibrary />
+              <GlobalMethodologyLibrary onAdaptar={(item) => void handleAdaptar(item)} />
             )}
           </>
         )}
