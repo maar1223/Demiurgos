@@ -25,6 +25,15 @@ import {
   subscribeCurrentTaller,
 } from "@/lib/currentTaller";
 
+/** Page-level methodology selection (REQ-SB-5): the `{ skill_id, version }`
+ *  pair picked in the "Taller" explorer. Lives at page level so it survives
+ *  lens switches AND tab switches (SC-SB-5.1/5.2), mirroring the `lens`
+ *  precedent (REQ-LEN-1.3/1.4). */
+interface MethodologySelection {
+  skill_id: string;
+  version: string;
+}
+
 /** Active-Taller hook (spec REQ-TRE-2): subscribes to the custom event +
  *  cross-tab `storage` listener and re-renders on change. */
 function useActiveTaller(): string {
@@ -76,6 +85,12 @@ export default function ToolWorkshop() {
    *  global inventory. Page-level state so it survives tab switches
    *  (SC-LEN-1.3); never mutated by lens changes (SC-LEN-1.4). */
   const [lens, setLens] = useState<Lens>("mi-mundo");
+  /** Methodology selected in the "Taller" explorer (REQ-SB-5). Both names are
+   *  underscore-prefixed in this PR because no consumer exists yet — the
+   *  EditorLayout wiring (TallerExplorerSidebar + detail/state panels) lands
+   *  in the PR 2 integration slice, which renames them to `selected` /
+   *  `setSelected` (keeps tsc noUnusedLocals green on the foundation slice). */
+  const [_selected, _setSelected] = useState<MethodologySelection | null>(null);
   /** Single shared co-creation hook instance distributed across the three
    *  EditorLayout panes (backend authoritative; localStorage only a hint). */
   const coCreation = useCoCreation();

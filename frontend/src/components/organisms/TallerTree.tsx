@@ -21,6 +21,11 @@ interface TallerTreeProps {
   active?: MethodologyActivation;
   onActivate: (skillId: string, version: string) => void;
   busy: boolean;
+  /** Optional sidebar selection contract (SC-SB-2.1): when provided, rows
+   *  become clickable and report the clicked `skill_id`/`version`. */
+  onSelect?: (skillId: string, version: string) => void;
+  /** Currently selected row — highlighted when it matches (SC-SB-2.1). */
+  selected?: { skill_id: string; version: string } | null;
 }
 
 /** One collapsible group. `state` is the row badge state for every skill in
@@ -86,6 +91,8 @@ interface SkillRowProps {
   isActive: boolean;
   busy: boolean;
   onActivate: (skillId: string, version: string) => void;
+  onSelect?: (skillId: string, version: string) => void;
+  selected?: { skill_id: string; version: string } | null;
 }
 
 function SkillRow({
@@ -96,11 +103,25 @@ function SkillRow({
   isActive,
   busy,
   onActivate,
+  onSelect,
+  selected,
 }: SkillRowProps) {
   const badge = BADGE_META[state];
+  const isSelected =
+    selected?.skill_id === skill.skill_id && selected?.version === skill.version;
   return (
-    <li className="flex items-center justify-between gap-4 rounded-lg border border-edge/20 bg-surface-raised/40 p-4">
-      <div>
+    <li
+      className={[
+        "flex items-center justify-between gap-4 rounded-lg border border-edge/20 bg-surface-raised/40 p-4 transition-colors",
+        isSelected ? "border-action/50 bg-action/5" : "",
+      ].join(" ")}
+    >
+      <button
+        type="button"
+        aria-pressed={isSelected}
+        onClick={() => onSelect?.(skill.skill_id, skill.version)}
+        className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
+      >
         <p className="font-medium text-primary">{skill.name}</p>
         <p className="text-small text-muted">
           {skill.skill_id}@{skill.version}
@@ -113,7 +134,7 @@ function SkillRow({
             {blockedExplanation(activeTaller, skill.taller)}
           </p>
         )}
-      </div>
+      </button>
       <div className="flex shrink-0 items-center gap-2">
         <Badge variant={badge.variant}>{badge.label}</Badge>
         {state === "bloqueada" ? (
@@ -155,6 +176,8 @@ export function TallerTree({
   active,
   onActivate,
   busy,
+  onSelect,
+  selected,
 }: TallerTreeProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(GROUP_ORDER.map((group) => [group.key, true])),
@@ -209,6 +232,8 @@ export function TallerTree({
                       isActive={isActive}
                       busy={busy}
                       onActivate={onActivate}
+                      onSelect={onSelect}
+                      selected={selected}
                     />
                   );
                 })}
