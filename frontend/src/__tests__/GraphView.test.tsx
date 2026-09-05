@@ -183,6 +183,30 @@ const WITH_ORPHAN: GraphEntity[] = [
   },
 ];
 
+/** Self-contained fixture for the empty-section scenario: a "lore" folder
+ *  whose ONLY entity is an orphan (no forward AND no back links). Selecting
+ *  "lore" therefore renders zero visible nodes (orphans hidden by default)
+ *  and must show the empty-section message. Dottua lives in "lugares" so it
+ *  never leaks into the lore selection. */
+const WITH_FOLDER_ONLY_ORPHAN: GraphEntity[] = [
+  ...LINKED.map((entity) =>
+    entity.id === "Origen::Dottua"
+      ? { ...entity, path: "lugares/Dottua.md" }
+      : entity,
+  ),
+  {
+    id: "Sombra::Umbra",
+    name: "Umbra",
+    type: "cultura",
+    path: "lore/Umbra.md",
+    status: "draft",
+    content: "",
+    forward_links: [],
+    backlinks: [],
+    relaciones: [],
+  },
+];
+
 function renderGraphView() {
   return render(
     <MemoryRouter>
@@ -311,6 +335,11 @@ describe("GraphView", () => {
 
     expect(
       await screen.findByText("No hay entidades indexadas para este mundo."),
+    ).toBeInTheDocument();
+    // The folder dropdown still renders (with only the "All" option) so the
+    // empty state is never an untrappable UI dead-end.
+    expect(
+      screen.getByLabelText("Filtrar por sección"),
     ).toBeInTheDocument();
   });
 
@@ -543,5 +572,95 @@ describe("GraphView", () => {
     // An empty query never fires a search request; the graph stays untouched.
     expect(mockSearchEntities).not.toHaveBeenCalledWith("vibrantes", "");
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Folder filter (graph-connections-editor PR4) ──
+
+  it("lists every unique section prefix from the entity paths", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    const select = screen.getByLabelText("Filtrar por sección");
+    expect(
+      Array.from(select.querySelectorAll("option")).map((o) => o.textContent),
+    ).toEqual(["Todas las secciones", "lore", "personajes"]);
+  });
+
+  it("selecting a folder hides non-matching nodes and their edges", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(countEdges()).toBe(2));
+
+    await user.selectOptions(
+      screen.getByLabelText("Filtrar por sección"),
+      "personajes",
+    );
+
+    // Dottua (lore/) is hidden along with the Vael→Dottua edge; Rhyz→Vael
+    // survives because both endpoints share the selected folder.
+    await waitFor(() => expect(countNodes()).toBe(2));
+    await waitFor(() => expect(countEdges()).toBe(1));
+    expect(screen.getByText("Rhyz")).toBeInTheDocument();
+    expect(screen.getByText("Vael")).toBeInTheDocument();
+    expect(screen.queryByText("Dottua")).not.toBeInTheDocument();
+    // A filter that still has nodes is never an empty section.
+    expect(
+      screen.queryByText("Esta sección no tiene nodos para mostrar."),
+    ).not.toBeInTheDocument();
+  });
+
+  it('restores every node and edge when "All" is selected again', async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(countEdges()).toBe(2));
+
+    await user.selectOptions(
+      screen.getByLabelText("Filtrar por sección"),
+      "personajes",
+    );
+    await waitFor(() => expect(countNodes()).toBe(2));
+
+    await user.selectOptions(
+      screen.getByLabelText("Filtrar por sección"),
+      "all",
+    );
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(countEdges()).toBe(2));
+    expect(screen.getByText("Dottua")).toBeInTheDocument();
+  });
+
+  it("shows the empty-section message when the folder has no visible nodes", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({
+      entities: WITH_FOLDER_ONLY_ORPHAN,
+      links: LINKS,
+    });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    await user.selectOptions(
+      screen.getByLabelText("Filtrar por sección"),
+      "lore",
+    );
+
+    // Umbra is the only lore/ entity and it is an orphan (hidden by default),
+    // so the section renders no nodes and shows the empty-section message.
+    await waitFor(() => expect(countNodes()).toBe(0));
+    expect(
+      screen.getByText("Esta sección no tiene nodos para mostrar."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No hay entidades indexadas para este mundo."),
+    ).not.toBeInTheDocument();
   });
 });

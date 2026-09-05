@@ -79,6 +79,8 @@ const NODE_MIN_WIDTH = 140;
 const NODE_MIN_HEIGHT = 36;
 /** Synchronous settle budget; enough for ~52-node worlds. */
 const SETTLE_TICKS = 300;
+/** Sentinel value for the folder filter dropdown: show every folder. */
+const FOLDER_ALL = "all";
 
 /**
  * Layout area side length scales with node count (sqrt(N) * spacing) so the
@@ -273,6 +275,8 @@ interface GraphViewProps {
  *   "Mostrar nodos aislados" toggle reveals them.
  * - Node click navigates to the entity ficha route.
  * - Node search input (debounced) centers a matching node in the viewport.
+ * - Folder filter dropdown (client-side) hides nodes whose section prefix
+ *   does not match the selected folder; edges touching hidden nodes vanish.
  * - Zoom/pan come from React Flow; referencias content is never included
  *   (backend _SCAN_SECTIONS excludes it — FR2.13 note below the filter bar).
  */
@@ -284,6 +288,10 @@ export default function GraphView({ mundo }: GraphViewProps) {
   const [showOrphans, setShowOrphans] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Folder filter (client-side): section prefixes derived from loaded
+  // entities ("personajes/Rhyz.md" → "personajes"). "all" shows every folder.
+  const [folder, setFolder] = useState<string>(FOLDER_ALL);
 
   // Pending gated write: a connection proposal awaiting author confirmation.
   // `pendingConnection` is set by onConnect (drag/click-to-connect),
@@ -333,6 +341,28 @@ export default function GraphView({ mundo }: GraphViewProps) {
     void load();
   }, [load]);
 
+  // Unique section prefixes ("folder") from the loaded entities. Sorted so
+  // the dropdown order is deterministic regardless of fetch order.
+  const folders = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          entities
+            .map((e) => e.path.split("/")[0].trim())
+            .filter((folderName) => folderName.length > 0),
+        ),
+      ).sort(),
+    [entities],
+  );
+
+  // When the loaded entity set no longer contains the selected folder (status
+  // re-fetch, mundo switch, empty result), fall back to "all" so the dropdown
+  // value never points at an option that vanished.
+  useEffect(() => {
+    if (folder === FOLDER_ALL) return;
+    if (!folders.includes(folder)) setFolder(FOLDER_ALL);
+  }, [folders, folder]);
+
   // Auto-clear the feedback toast (mirrors WikiEditor/IdeasWorkshop).
   useEffect(() => {
     if (!toast) return;
@@ -375,16 +405,23 @@ export default function GraphView({ mundo }: GraphViewProps) {
   }, [searchQuery, mundo]);
 
   // Build the settled force layout and (re)seed the draggable node state
-  // whenever the dataset changes (filter/orphans). Dragging a node updates
-  // state via onNodesChange and is NOT reset until the dataset changes.
+  // whenever the dataset changes (folder filter/orphans). Dragging a node
+  // updates state via onNodesChange and is NOT reset until the dataset
+  // changes.
   useEffect(() => {
     if (loading || error) return;
     if (entities.length === 0) {
       setNodes([]);
       return;
     }
+    // Folder filter first: entities outside the selected folder never
+    // participate — not in the layout, the node set, or the orphan pass.
+    const inFolder =
+      folder === FOLDER_ALL
+        ? entities
+        : entities.filter((e) => e.path.split("/")[0] === folder);
     const orphanKeys = new Set(
-      entities
+      inFolder
         .filter(
           (e) => e.forward_links.length === 0 && e.backlinks.length === 0,
         )
@@ -392,8 +429,8 @@ export default function GraphView({ mundo }: GraphViewProps) {
     );
     // Orphans hidden by default (W12); the toggle reveals them.
     const visible = showOrphans
-      ? entities
-      : entities.filter((e) => !orphanKeys.has(nodeKey(e)));
+      ? inFolder
+      : inFolder.filter((e) => !orphanKeys.has(nodeKey(e)));
 
     const size = computeLayoutSize(visible.length);
     const positions = computeForcePositions(visible, links, size);
@@ -417,7 +454,15 @@ export default function GraphView({ mundo }: GraphViewProps) {
     }));
     setNodes(nextNodes);
     requestAnimationFrame(() => rf.current?.fitView({ padding: 0.2 }));
-  }, [entities, links, showOrphans, loading, error, setNodes]);
+  }, [
+    entities,
+    links,
+    showOrphans,
+    folder,
+    loading,
+    error,
+    setNodes,
+  ]);
 
   // Edges derived from the current node set (read-only; follow dragged nodes).
   // Mutual references (A→B and B→A) collapse into a single line per pair so
@@ -673,6 +718,23 @@ export default function GraphView({ mundo }: GraphViewProps) {
         </label>
 
         <label className="flex items-center gap-2 text-small text-muted">
+          <span>Sección</span>
+          <select
+            aria-label="Filtrar por sección"
+            value={folder}
+            onChange={(event) => setFolder(event.target.value)}
+            className="rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary"
+          >
+            <option value={FOLDER_ALL}>Todas las secciones</option>
+            {folders.map((folderName) => (
+              <option key={folderName} value={folderName}>
+                {folderName}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex items-center gap-2 text-small text-muted">
           <input
             type="checkbox"
             checked={showOrphans}
@@ -705,10 +767,17 @@ export default function GraphView({ mundo }: GraphViewProps) {
         <ErrorBanner message={error} onRetry={() => void load()} />
       )}
 
-      {!loading && !error && nodes.length === 0 && (
+      {!loading && !error && entities.length === 0 && (
         <EmptyState
           icon="empty"
           message="No hay entidades indexadas para este mundo."
+        />
+      )}
+
+      {!loading && !error && entities.length > 0 && nodes.length === 0 && (
+        <EmptyState
+          icon="empty"
+          message="Esta sección no tiene nodos para mostrar."
         />
       )}
 
