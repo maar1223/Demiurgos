@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import type { EntityLink, GraphEntity } from "@/api/types";
+import type { ComponentProps, ElementType } from "react";
+import type { ReactFlowInstance } from "@xyflow/react";
+import type { EntityLink, GraphEntity, SearchResult } from "@/api/types";
 import type { Mock } from "vitest";
 
 const navigate = vi.fn();
@@ -16,14 +18,50 @@ vi.mock("@/api/graph", () => ({
   fetchGraphEntities: vi.fn(),
   createRelation: vi.fn(),
   breakRelation: vi.fn(),
+  searchEntities: vi.fn(),
 }));
 
-import { breakRelation, createRelation, fetchGraphEntities } from "@/api/graph";
+/**
+ * Holds the live React Flow instance once the graph mounts (set by the
+ * onInit wrapper below) so tests can spy on viewport helpers like fitView.
+ * The "mock" prefix is required: vitest hoists vi.mock factories above all
+ * imports, and only mock-prefixed module variables are reachable from them.
+ */
+const mockFlowInstance: { instance: ReactFlowInstance | null } = {
+  instance: null,
+};
+
+vi.mock("@xyflow/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@xyflow/react")>();
+  const { createElement } = await import("react");
+  const RealReactFlow = actual.ReactFlow;
+  return {
+    ...actual,
+    // Wrap ReactFlow to capture the instance onInit receives; every other
+    // prop is forwarded untouched, so rendering behavior stays identical.
+    ReactFlow: (props: ComponentProps<typeof RealReactFlow>) =>
+      createElement(RealReactFlow as ElementType, {
+        ...props,
+        onInit: (instance: ReactFlowInstance) => {
+          mockFlowInstance.instance = instance;
+          props.onInit?.(instance);
+        },
+      }),
+  };
+});
+
+import {
+  breakRelation,
+  createRelation,
+  fetchGraphEntities,
+  searchEntities,
+} from "@/api/graph";
 import GraphView from "@/components/GraphView";
 
 const mockFetch = fetchGraphEntities as Mock;
 const mockCreateRelation = createRelation as Mock;
 const mockBreakRelation = breakRelation as Mock;
+const mockSearchEntities = searchEntities as Mock;
 
 /**
  * jsdom does not implement ResizeObserver; React Flow needs it on mount AND
@@ -116,6 +154,18 @@ const LINKS: EntityLink[] = [
   { source: "Stal::Rhyz", target: "Stal::Vael", kind: "forward" },
   { source: "Stal::Vael", target: "Origen::Dottua", kind: "forward" },
 ];
+
+/** Search API result for Rhyz — matches LINKED[0] by path and name. */
+const RHYZ_RESULT: SearchResult = {
+  name: "Rhyz",
+  type: "personaje",
+  path: "personajes/Rhyz.md",
+  title: "Rhyz",
+  description: "Un personaje de prueba",
+  tags: [],
+  link_count: 1,
+  score: 0.9,
+};
 
 /** LINKED plus a true orphan (no forward AND no backlinks). */
 const WITH_ORPHAN: GraphEntity[] = [
@@ -428,5 +478,70 @@ describe("GraphView", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(mockCreateRelation).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledTimes(1); // no reload on failure
+  });
+
+  // ── Node search (graph-connections-editor PR3) ──
+
+  it("debounces the searchEntities call as the author types a node query", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    mockSearchEntities.mockResolvedValue([RHYZ_RESULT]);
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    await user.type(screen.getByLabelText("Buscar nodo"), "Rhy");
+    // Inside the 300ms debounce window nothing has fired yet…
+    expect(mockSearchEntities).not.toHaveBeenCalled();
+    // …then the settled query is sent for the current mundo.
+    await waitFor(() =>
+      expect(mockSearchEntities).toHaveBeenCalledWith("vibrantes", "Rhy"),
+    );
+  });
+
+  it("centers the selected search result in the viewport via fitView", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    mockSearchEntities.mockResolvedValue([RHYZ_RESULT]);
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+
+    await user.type(screen.getByLabelText("Buscar nodo"), "Rhy");
+    await screen.findByRole("option", { name: /Rhyz/ });
+
+    // Ignore the initial auto-fit calls (layout settle) — only the
+    // search-driven fitView matters.
+    const fitViewSpy = vi.spyOn(mockFlowInstance.instance!, "fitView");
+    fitViewSpy.mockClear();
+
+    await user.click(screen.getByRole("option", { name: /Rhyz/ }));
+
+    expect(fitViewSpy).toHaveBeenCalledWith({
+      nodes: [{ id: "Stal::Rhyz" }],
+      duration: 300,
+    });
+    // Picking a result closes the dropdown.
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  });
+
+  it("shows a no-results message and drops the dropdown when the query is emptied", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    mockSearchEntities.mockResolvedValue([]);
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    await user.type(screen.getByLabelText("Buscar nodo"), "Zzz");
+    expect(await screen.findByText("Sin resultados")).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("Buscar nodo"));
+    expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+    expect(screen.queryByText("Sin resultados")).not.toBeInTheDocument();
+    // An empty query never fires a search request; the graph stays untouched.
+    expect(mockSearchEntities).not.toHaveBeenCalledWith("vibrantes", "");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

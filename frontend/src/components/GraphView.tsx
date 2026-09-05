@@ -30,9 +30,15 @@ import {
   breakRelation,
   createRelation,
   fetchGraphEntities,
+  searchEntities,
   type GraphStatusFilter,
 } from "@/api/graph";
-import type { EntityLink, FichaStatus, GraphEntity } from "@/api/types";
+import type {
+  EntityLink,
+  FichaStatus,
+  GraphEntity,
+  SearchResult,
+} from "@/api/types";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -266,6 +272,7 @@ interface GraphViewProps {
  * - Orphans (no forward AND no back links) are hidden by default; the
  *   "Mostrar nodos aislados" toggle reveals them.
  * - Node click navigates to the entity ficha route.
+ * - Node search input (debounced) centers a matching node in the viewport.
  * - Zoom/pan come from React Flow; referencias content is never included
  *   (backend _SCAN_SECTIONS excludes it — FR2.13 note below the filter bar).
  */
@@ -292,6 +299,13 @@ export default function GraphView({ mundo }: GraphViewProps) {
     message: string;
     kind: "success" | "error";
   } | null>(null);
+
+  // Node search: debounced server-side search (searchEntities) with a
+  // results dropdown. Selecting a result centers the node in the viewport.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   // Draggable node state. Nodes are seeded from the settled force layout and
   // updated by onNodesChange on drag; they are re-seeded only when the
@@ -325,6 +339,40 @@ export default function GraphView({ mundo }: GraphViewProps) {
     const t = setTimeout(() => setToast(null), 2500);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // Debounce the searchEntities call (300ms) so each keystroke does not fire
+  // a request. A monotonic request id discards out-of-order responses when
+  // the query changes while a previous request is still in flight.
+  const searchRequestId = useRef(0);
+  useEffect(() => {
+    const query = searchQuery.trim();
+    const requestId = ++searchRequestId.current;
+    if (!query) {
+      setSearching(false);
+      setSearchResults([]);
+      setSearchError(null);
+      return;
+    }
+    setSearching(true);
+    setSearchResults([]);
+    const timer = setTimeout(async () => {
+      try {
+        const results = await searchEntities(mundo, query);
+        if (searchRequestId.current !== requestId) return;
+        setSearchResults(results);
+        setSearchError(null);
+      } catch (err) {
+        if (searchRequestId.current !== requestId) return;
+        setSearchError(
+          err instanceof Error ? err.message : "No se pudo buscar nodos",
+        );
+        setSearchResults([]);
+      } finally {
+        if (searchRequestId.current === requestId) setSearching(false);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, mundo]);
 
   // Build the settled force layout and (re)seed the draggable node state
   // whenever the dataset changes (filter/orphans). Dragging a node updates
@@ -406,6 +454,22 @@ export default function GraphView({ mundo }: GraphViewProps) {
       navigate(`/wiki/${encodeURIComponent(mundo)}/entity/${encoded}`);
     },
     [entities, mundo, navigate],
+  );
+
+  /** Select a search result: center the matching flow node in the viewport.
+   *  The node id is nodeKey(entity) (canonical id, path fallback) — the same
+   *  id the flow nodes use. Results for entities not in the current node set
+   *  (orphans hidden by default, status filter) are safe no-ops. */
+  const handleSelectResult = useCallback(
+    (result: SearchResult) => {
+      setSearchQuery("");
+      const entity = entities.find(
+        (e) => e.path === result.path || e.name === result.name,
+      );
+      if (!entity) return;
+      rf.current?.fitView({ nodes: [{ id: nodeKey(entity) }], duration: 300 });
+    },
+    [entities],
   );
 
   /** Resolve the two entities behind a proposed connection. The node ids are
@@ -542,6 +606,56 @@ export default function GraphView({ mundo }: GraphViewProps) {
     <div className="flex flex-col gap-3">
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-4">
+        {/* Node search: debounced searchEntities with a results dropdown. */}
+        <div className="relative">
+          <label className="flex items-center gap-2 text-small text-muted">
+            <span>Buscar</span>
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Nombre o id del nodo…"
+              aria-label="Buscar nodo"
+              className="w-44 rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary placeholder:text-muted focus:border-action focus:outline-none"
+            />
+          </label>
+
+          {searchQuery.trim().length > 0 && (
+            <div
+              role="listbox"
+              aria-label="Resultados de búsqueda"
+              className="absolute left-0 top-full z-10 mt-1 max-h-64 w-64 overflow-y-auto rounded-md border border-edge bg-surface-raised shadow-lg"
+            >
+              {searchError && (
+                <p className="px-3 py-2 text-xs text-status-error">
+                  {searchError}
+                </p>
+              )}
+              {!searchError && !searching && searchResults.length === 0 && (
+                <p className="px-3 py-2 text-xs text-muted">
+                  Sin resultados
+                </p>
+              )}
+              {searchResults.map((result) => (
+                <button
+                  key={result.path}
+                  type="button"
+                  role="option"
+                  onClick={() => handleSelectResult(result)}
+                  className="flex w-full items-center gap-2 border-b border-edge/50 px-3 py-2 text-left text-small text-primary transition-colors last:border-b-0 hover:bg-surface-hover"
+                >
+                  <span className="truncate font-medium">{result.name}</span>
+                  {result.type && (
+                    <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 text-xs text-muted">
+                      {result.type}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <label className="flex items-center gap-2 text-small text-muted">
           <span>Estado</span>
           <select
