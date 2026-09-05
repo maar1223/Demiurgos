@@ -33,6 +33,7 @@ if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
 import uvicorn
+import yaml
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
@@ -4389,6 +4390,13 @@ VALID_FICHA_STATUSES = {"draft", "stable"}
 
 _RE_FRONTMATTER = re.compile(r"^---\r?\n([\s\S]*?)^---[ \t]*(?=\r?\n|$)", re.MULTILINE)
 _RE_FM_STATUS_LINE = re.compile(r"^(?P<indent>[ \t]*)status:[ \t]*[^\r\n]*(?P<term>\r?\n|$)", re.MULTILINE)
+_RE_FM_RELACIONES_HEADER = re.compile(
+    r"^(?P<indent>[ \t]*)relaciones:[ \t]*(?P<rest>[^\r\n]*)(?P<term>\r?\n|$)"
+)
+_RE_FM_RELACIONES_ITEM = re.compile(
+    r"^(?P<indent>[ \t]*)-(?P<body>[ \t]*[^\r\n]*)(?P<term>\r?\n|$)"
+)
+_RE_FM_WIKILINK = re.compile(r"\[\[([^\]]+)\]\]")
 
 
 def _file_status(full: Path) -> str | None:
@@ -4444,6 +4452,132 @@ def _set_frontmatter_status(content: str, status: str) -> str:
             + inner[line_match.end():]
         )
 
+    return content[: m.start(1)] + updated_inner + content[m.end(1):]
+
+
+class RelationConflict(ValueError):
+    """Raised when a create targets an existing relation or a break a missing one."""
+
+
+def _validate_fm_yaml(inner: str) -> None:
+    """Raise ValueError when the frontmatter block is not valid YAML.
+
+    Safety net for the relaciones rewrite: the block is validated before AND
+    after the line edit so a malformed frontmatter is never touched and the
+    rewrite can never corrupt one.
+    """
+    try:
+        yaml.safe_load(inner)
+    except yaml.YAMLError:
+        raise ValueError("Frontmatter YAML inválido") from None
+
+
+def _relaciones_entry_key(raw: str) -> str:
+    """Normalize one ``relaciones:`` entry to its dedupe key.
+
+    The key is the inner wikilink text for ``[[Name]]`` entries or the bare
+    (quote/bracket-stripped) scalar otherwise — matching the graph indexer's
+    canonical-id resolution so duplicate detection works across both forms.
+    """
+    raw = raw.strip().strip('"').strip("'").strip()
+    m = _RE_FM_WIKILINK.search(raw)
+    if m:
+        return m.group(1).strip()
+    return raw.strip("[]").strip()
+
+
+def _set_frontmatter_relaciones(content: str, action: str, target_id: str) -> str:
+    """Add or remove a canonical-id entry from the frontmatter ``relaciones:`` list.
+
+    Follows the _set_frontmatter_status pattern: CRLF-safe and byte-preserving
+    for everything else. ``create`` appends ``  - <target_id>`` to the
+    ``relaciones:`` block, inserts the whole block before the closing ``---``
+    when the field is absent, or prepends a leading frontmatter block when the
+    file has none. ``break`` removes only the matching entry and drops the
+    now-empty ``relaciones:`` block. Both frontmatter states are YAML-validated
+    before and after. Raises RelationConflict when create targets an existing
+    relation or break a missing one.
+    """
+    if action not in ("create", "break"):
+        raise ValueError(f"Acción inválida: {action!r}")
+    m = _RE_FRONTMATTER.match(content)
+    if m is None:
+        if action == "break":
+            raise RelationConflict("La relación no existe")
+        return f"---\nrelaciones:\n  - {target_id}\n---\n{content}"
+
+    inner = m.group(1)
+    eol = "\r\n" if "\r\n" in inner else "\n"
+    _validate_fm_yaml(inner)  # never rewrite a broken frontmatter block
+
+    lines = inner.splitlines(keepends=True)
+    rel_idx = next(
+        (i for i, line in enumerate(lines) if _RE_FM_RELACIONES_HEADER.match(line)),
+        None,
+    )
+    if rel_idx is None:
+        if action == "break":
+            raise RelationConflict("La relación no existe")
+        updated_inner = inner + f"relaciones:{eol}  - {target_id}{eol}"
+        _validate_fm_yaml(updated_inner)
+        return content[: m.start(1)] + updated_inner + content[m.end(1):]
+
+    # Collect existing entries: flow-form residue on the header line plus the
+    # block-form ``- item`` lines that follow (until the next key, a blank
+    # line, or the end of the frontmatter block).
+    keys: list[str] = []
+    header_line = lines[rel_idx]
+    rest = header_line.split(":", 1)[1].strip()
+    if rest:
+        for part in rest.split(","):
+            key = _relaciones_entry_key(part)
+            if key and key not in keys:
+                keys.append(key)
+    item_matches: list[re.Match] = []
+    section_end = rel_idx + 1
+    while section_end < len(lines):
+        item = _RE_FM_RELACIONES_ITEM.match(lines[section_end])
+        if item is None:
+            break
+        item_matches.append(item)
+        key = _relaciones_entry_key(item.group("body"))
+        if key and key not in keys:
+            keys.append(key)
+        section_end += 1
+
+    if action == "create":
+        if target_id in keys:
+            raise RelationConflict("La relación ya existe")
+        if rest:
+            # Flow form: normalize to the importer's ``  - item`` block layout
+            # so the section stays homogeneous YAML.
+            new_lines = (
+                [f"relaciones:{eol}"]
+                + [f"  - {k}{eol}" for k in keys]
+                + [f"  - {target_id}{eol}"]
+            )
+        else:
+            new_lines = [header_line, *lines[rel_idx + 1:section_end], f"  - {target_id}{eol}"]
+    else:
+        if target_id not in keys:
+            raise RelationConflict("La relación no existe")
+        if rest:
+            remaining = [k for k in keys if k != target_id]
+            new_lines = (
+                [f"relaciones:{eol}"] + [f"  - {k}{eol}" for k in remaining]
+                if remaining
+                else []
+            )
+        else:
+            kept = [
+                item.group(0)
+                for item in item_matches
+                if _relaciones_entry_key(item.group("body")) != target_id
+            ]
+            new_lines = [header_line, *kept] if kept else []
+
+    updated_inner = "".join(lines[:rel_idx] + new_lines + lines[section_end:])
+    _validate_fm_yaml(updated_inner)
     return content[: m.start(1)] + updated_inner + content[m.end(1):]
 
 
@@ -4742,6 +4876,66 @@ def graph_entities(
                         )
 
     return {"entities": entity_list, "links": link_list}
+
+
+@app.post("/api/{mundo}/graph/relation")
+def set_graph_relation(mundo: str, body: dict):
+    """Create or break a graph connection by rewriting the source ficha's
+    frontmatter ``relaciones:`` list (create/break a canonical-id entry).
+
+    Writes are anchored by the target entity's canonical id and follow the
+    set_file_status pattern: read the source ficha, rewrite ONLY the
+    ``relaciones:`` block (CRLF-safe, YAML-validated), write back, and
+    invalidate the graph cache so the next read rebuilds it (the watcher
+    auto-reindexes the changed file). Errors: 400 invalid action / missing
+    fields / path traversal, 404 mundo / source entity / target entity not
+    found, 409 duplicate relation (create) or missing relation (break).
+    """
+    action = body.get("action")
+    if action not in ("create", "break"):
+        raise HTTPException(status_code=400, detail="Acción inválida: 'create' o 'break'")
+    source_path = body.get("source_path")
+    if not isinstance(source_path, str) or not source_path.strip():
+        raise HTTPException(status_code=400, detail="Se requiere el campo 'source_path'")
+    target_id = body.get("target_id")
+    if not isinstance(target_id, str) or not target_id.strip():
+        raise HTTPException(status_code=400, detail="Se requiere el campo 'target_id'")
+
+    mundo_dir = _resolve_mundo_dir(mundo)
+    if mundo_dir is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    idx = _get_graph(mundo)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+
+    full = _resolve_mundo_path(mundo, source_path)
+    if full is None:
+        raise HTTPException(status_code=400, detail="Path traversal detectado")
+    with idx._lock:
+        entities = idx._cache.get("entities", {})
+        rel_source = str(full.relative_to(mundo_dir)).replace("\\", "/")
+        if entities.get(rel_source) is None:
+            raise HTTPException(status_code=404, detail="Entidad origen no encontrada")
+        if not any(ent.get("id") == target_id for ent in entities.values()):
+            raise HTTPException(status_code=404, detail="Entidad destino no encontrada")
+
+    try:
+        # newline="" keeps \r\n byte-exact on Windows (Path.read_text would
+        # normalize them through universal newlines).
+        with open(full, "r", encoding="utf-8", newline="") as fh:
+            content = fh.read()
+        updated = _set_frontmatter_relaciones(content, action, target_id)
+        with open(full, "w", encoding="utf-8", newline="") as fh:
+            fh.write(updated)
+    except RelationConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error al actualizar relaciones: {exc}") from exc
+
+    _graph_indices.pop(mundo, None)
+    return {"success": True, "path": rel_source, "action": action, "target_id": target_id}
 
 
 # ---------------------------------------------------------------------------

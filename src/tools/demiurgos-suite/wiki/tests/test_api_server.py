@@ -1086,6 +1086,204 @@ class TestStatusEndpoint:
         assert resp.status_code == 400
 
 
+class TestSetFrontmatterRelaciones:
+    """Unit tests for api_server._set_frontmatter_relaciones — the CRLF-safe,
+    YAML-validated rewrite of the frontmatter `relaciones:` list."""
+
+    @staticmethod
+    def _set(content: str, action: str, target_id: str) -> str:
+        return api_server._set_frontmatter_relaciones(content, action, target_id)
+
+    def test_create_adds_entry_when_field_absent(self):
+        content = "---\ntype: Personaje\ntitle: Rhyz\n---\n# Cuerpo\n"
+        out = self._set(content, "create", "Stal::Vael")
+        assert out == (
+            "---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - Stal::Vael\n---\n# Cuerpo\n"
+        )
+
+    def test_create_appends_to_existing_block(self):
+        content = "---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - Stal::Otro\n---\n# Cuerpo\n"
+        out = self._set(content, "create", "Stal::Vael")
+        assert out == (
+            "---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - Stal::Otro\n  - Stal::Vael\n---\n# Cuerpo\n"
+        )
+
+    def test_break_removes_entry_and_keeps_others(self):
+        content = "---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - Stal::Vael\n  - Stal::Otro\n---\n# Cuerpo\n"
+        out = self._set(content, "break", "Stal::Vael")
+        assert out == (
+            "---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - Stal::Otro\n---\n# Cuerpo\n"
+        )
+
+    def test_break_removes_now_empty_block(self):
+        content = "---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - Stal::Vael\n---\n# Cuerpo\n"
+        out = self._set(content, "break", "Stal::Vael")
+        assert out == "---\ntype: Personaje\ntitle: Rhyz\n---\n# Cuerpo\n"
+
+    def test_crlf_preserved_byte_for_byte(self):
+        content = "---\r\ntype: Personaje\r\ntitle: Rhyz\r\n---\r\n# Cuerpo\r\n"
+        out = self._set(content, "create", "Stal::Vael")
+        assert out == (
+            "---\r\ntype: Personaje\r\ntitle: Rhyz\r\nrelaciones:\r\n  - Stal::Vael\r\n---\r\n# Cuerpo\r\n"
+        )
+
+    def test_no_frontmatter_prepends_block(self):
+        content = "# Plain\n"
+        out = self._set(content, "create", "Stal::Vael")
+        assert out == "---\nrelaciones:\n  - Stal::Vael\n---\n# Plain\n"
+
+    def test_duplicate_create_raises_conflict(self):
+        content = "---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - Stal::Vael\n---\n"
+        with pytest.raises(api_server.RelationConflict):
+            self._set(content, "create", "Stal::Vael")
+
+    def test_break_missing_raises_conflict(self):
+        content = "---\ntype: Personaje\ntitle: Rhyz\n---\n"
+        with pytest.raises(api_server.RelationConflict):
+            self._set(content, "break", "Stal::Vael")
+
+    def test_flow_form_normalized_on_create(self):
+        content = "---\ntype: Personaje\ntitle: Rhyz\nrelaciones: [Stal::Otro]\n---\n"
+        out = self._set(content, "create", "Stal::Vael")
+        assert out == (
+            "---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - Stal::Otro\n  - Stal::Vael\n---\n"
+        )
+
+    def test_break_matches_wikilink_wrapped_entry(self):
+        content = '---\ntype: Personaje\ntitle: Rhyz\nrelaciones:\n  - "[[Stal::Vael]]"\n---\n'
+        out = self._set(content, "break", "Stal::Vael")
+        assert out == "---\ntype: Personaje\ntitle: Rhyz\n---\n"
+
+    def test_invalid_action_raises_value_error(self):
+        with pytest.raises(ValueError):
+            self._set("---\ntype: X\n---\n", "rename", "Stal::Vael")
+
+
+class TestGraphRelationEndpoint:
+    """POST /api/{mundo}/graph/relation — create/break a graph connection by
+    rewriting the source ficha's frontmatter `relaciones:` list."""
+
+    @staticmethod
+    def _personajes() -> Path:
+        return api_server.MUNDOS_DIR / "test_mundo" / "personajes"
+
+    def _seed(self) -> None:
+        """Two indexed fichas with canonical ids: Rhyz (source) + Vael (target)."""
+        personajes = self._personajes()
+        personajes.mkdir(parents=True, exist_ok=True)
+        (personajes / "Rhyz.md").write_text(
+            "---\ntype: Personaje\ntitle: Rhyz\nid: Rhyz::Vael\n---\n# Rhyz\n",
+            encoding="utf-8",
+        )
+        (personajes / "Vael.md").write_text(
+            "---\ntype: Personaje\ntitle: Vael\nid: Stal::Vael\n---\n# Vael\n",
+            encoding="utf-8",
+        )
+
+    def _seed_with_relation(self) -> None:
+        self._seed()
+        (self._personajes() / "Rhyz.md").write_text(
+            "---\ntype: Personaje\ntitle: Rhyz\nid: Rhyz::Vael\n"
+            "relaciones:\n  - Stal::Vael\n---\n# Rhyz\n",
+            encoding="utf-8",
+        )
+
+    def test_create_relation_returns_200(self, client: TestClient):
+        self._seed()
+        resp = client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "create", "source_path": "personajes/Rhyz.md", "target_id": "Stal::Vael"},
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "success": True,
+            "path": "personajes/Rhyz.md",
+            "action": "create",
+            "target_id": "Stal::Vael",
+        }
+        saved = (self._personajes() / "Rhyz.md").read_text(encoding="utf-8")
+        assert "relaciones:\n  - Stal::Vael" in saved
+        # Graph cache invalidated so the watcher reindexes on next read.
+        assert "test_mundo" not in api_server._graph_indices
+
+    def test_break_relation_returns_200(self, client: TestClient):
+        self._seed_with_relation()
+        resp = client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "break", "source_path": "personajes/Rhyz.md", "target_id": "Stal::Vael"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["success"] is True
+        saved = (self._personajes() / "Rhyz.md").read_text(encoding="utf-8")
+        assert "relaciones:" not in saved
+        assert "test_mundo" not in api_server._graph_indices
+
+    def test_source_not_found_returns_404(self, client: TestClient):
+        self._seed()
+        resp = client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "create", "source_path": "personajes/NoExiste.md", "target_id": "Stal::Vael"},
+        )
+        assert resp.status_code == 404
+        assert "origen" in resp.json()["detail"].lower()
+
+    def test_target_not_found_returns_404(self, client: TestClient):
+        self._seed()
+        resp = client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "create", "source_path": "personajes/Rhyz.md", "target_id": "Stal::Fantasmal"},
+        )
+        assert resp.status_code == 404
+        assert "destino" in resp.json()["detail"].lower()
+
+    def test_duplicate_relation_returns_409(self, client: TestClient):
+        self._seed_with_relation()
+        resp = client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "create", "source_path": "personajes/Rhyz.md", "target_id": "Stal::Vael"},
+        )
+        assert resp.status_code == 409
+
+    def test_break_non_existent_returns_409(self, client: TestClient):
+        self._seed()
+        resp = client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "break", "source_path": "personajes/Rhyz.md", "target_id": "Stal::Vael"},
+        )
+        assert resp.status_code == 409
+
+    def test_path_traversal_returns_400(self, client: TestClient):
+        self._seed()
+        resp = client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "create", "source_path": "../../secrets.md", "target_id": "Stal::Vael"},
+        )
+        assert resp.status_code == 400
+        assert "traversal" in resp.json()["detail"].lower()
+
+    def test_missing_fields_returns_400(self, client: TestClient):
+        self._seed()
+        assert client.post(
+            "/api/test_mundo/graph/relation", json={}
+        ).status_code == 400
+        assert client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "create", "target_id": "Stal::Vael"},
+        ).status_code == 400
+        assert client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "create", "source_path": "personajes/Rhyz.md"},
+        ).status_code == 400
+
+    def test_invalid_action_returns_400(self, client: TestClient):
+        self._seed()
+        resp = client.post(
+            "/api/test_mundo/graph/relation",
+            json={"action": "rename", "source_path": "personajes/Rhyz.md", "target_id": "Stal::Vael"},
+        )
+        assert resp.status_code == 400
+
+
 class TestAiAsk:
     def test_natural_character_message_handoffs_to_guided_session(self, client: TestClient, monkeypatch):
         """Hermes-first: a natural character message becomes a guarded guided
