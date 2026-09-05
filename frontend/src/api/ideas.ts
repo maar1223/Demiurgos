@@ -269,3 +269,27 @@ export function discardCapture(id: string): Promise<{ ok: true }> {
     ...CREDENTIALS,
   });
 }
+
+/**
+ * GET /api/ideas/{slug}/export/docx — download an idea's body (embedded
+ * images rewritten to disk paths server-side) as a `.docx` blob. The
+ * endpoint is principal-gated, so the local-dev session cookie is carried
+ * like the rest of the ideas API. The caller triggers the download with
+ * `downloadBlob`.
+ */
+export async function exportIdeaDocx(slug: string): Promise<Blob> {
+  const response = await fetch(ideasUrl([slug, "export", "docx"]), CREDENTIALS);
+
+  if (!response.ok) {
+    let detail: string | undefined;
+    try {
+      const body = await response.json();
+      detail = body.detail;
+    } catch {
+      // ignore parse errors on error responses
+    }
+    throw new ApiError(response.status, detail ?? `HTTP ${response.status}`, detail);
+  }
+
+  return response.blob();
+}

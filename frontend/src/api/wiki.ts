@@ -702,6 +702,39 @@ export function getMediaUrl(mundo: string, path: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Export (DOCX)
+// ---------------------------------------------------------------------------
+
+/**
+ * GET /api/{mundo}/export/docx?path= — download the open ficha's body
+ * (frontmatter stripped, images embedded) as a `.docx` blob. The backend
+ * converts via pandoc and returns the binary; the caller triggers the
+ * download with `downloadBlob`.
+ */
+export async function exportFichaDocx(
+  mundo: string,
+  path: string,
+): Promise<Blob> {
+  const response = await fetch(
+    apiUrl(["api", mundo, "export", "docx"], { path }),
+    { credentials: "same-origin" },
+  );
+
+  if (!response.ok) {
+    let detail: string | undefined;
+    try {
+      const body = await response.json();
+      detail = body.detail;
+    } catch {
+      // ignore parse errors on error responses
+    }
+    throw new ApiError(response.status, detail ?? `HTTP ${response.status}`, detail);
+  }
+
+  return response.blob();
+}
+
+// ---------------------------------------------------------------------------
 // Papelera (Trash)
 // ---------------------------------------------------------------------------
 
