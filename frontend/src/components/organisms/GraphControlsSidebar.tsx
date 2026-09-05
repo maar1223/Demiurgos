@@ -1,0 +1,182 @@
+import type { FolderNode } from "@/lib/graphFilters";
+import type { GraphStatusFilter } from "@/api/graph";
+import type { SearchResult } from "@/api/types";
+import { Spinner } from "@/components/atoms/Spinner";
+import { Switch } from "@/components/atoms/Switch";
+import { FolderTreeNode } from "@/components/molecules/FolderTreeNode";
+
+interface GraphControlsSidebarProps {
+  status: GraphStatusFilter;
+  onStatusChange: (status: GraphStatusFilter) => void;
+  selectedFolders: string[];
+  onSelectedFoldersChange: (folders: string[]) => void;
+  showOrphans: boolean;
+  onShowOrphansChange: (show: boolean) => void;
+  searchQuery: string;
+  onSearchQueryChange: (query: string) => void;
+  searchResults: SearchResult[];
+  searching: boolean;
+  searchError: string | null;
+  onSelectResult: (result: SearchResult) => void;
+  folderTree: FolderNode[];
+  onFitView: () => void;
+}
+
+/**
+ * Left sidebar of the graph view, consolidating every graph control:
+ * node search (input + results dropdown), status filter, hierarchical folder
+ * tree, orphans toggle, and the "Ver todo" (fitView) button.
+ *
+ * PURE PRESENTATION component: every piece of state arrives as a prop and
+ * every change is reported through a callback. No filter logic, no search
+ * orchestration, no direct access to React Flow state — GraphView owns all
+ * of that and passes the data down.
+ *
+ * Layout mirrors `TallerExplorerSidebar`: a header block of stacked labeled
+ * controls above a scrollable body (the folder tree can grow long).
+ */
+export function GraphControlsSidebar({
+  status,
+  onStatusChange,
+  selectedFolders,
+  onSelectedFoldersChange,
+  showOrphans,
+  onShowOrphansChange,
+  searchQuery,
+  onSearchQueryChange,
+  searchResults,
+  searching,
+  searchError,
+  onSelectResult,
+  folderTree,
+  onFitView,
+}: GraphControlsSidebarProps) {
+  /** Controlled single-folder toggle: add or remove `path` from the array. */
+  const handleToggleFolder = (path: string) => {
+    const next = selectedFolders.includes(path)
+      ? selectedFolders.filter((p) => p !== path)
+      : [...selectedFolders, path];
+    onSelectedFoldersChange(next);
+  };
+
+  return (
+    <aside className="flex h-full w-72 flex-col border-r border-edge bg-surface">
+      {/* Header block: stacked labeled controls (search + status) */}
+      <div className="space-y-3 border-b border-edge px-4 py-3">
+        {/* Node search: debounced server-side search with results dropdown */}
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-muted">Buscar</span>
+          <div className="relative">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(event) => onSearchQueryChange(event.target.value)}
+              placeholder="Nombre o id del nodo…"
+              aria-label="Buscar nodo"
+              className="w-full rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary placeholder:text-muted focus:border-action focus:outline-none"
+            />
+
+            {searchQuery.trim().length > 0 && (
+              <div
+                role="listbox"
+                aria-label="Resultados de búsqueda"
+                className="absolute left-0 top-full z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-edge bg-surface-raised shadow-lg"
+              >
+                {searchError && (
+                  <p className="px-3 py-2 text-xs text-status-error">
+                    {searchError}
+                  </p>
+                )}
+                {!searchError && searching && (
+                  <div className="flex justify-center px-3 py-2">
+                    <Spinner size="sm" />
+                  </div>
+                )}
+                {!searchError && !searching && searchResults.length === 0 && (
+                  <p className="px-3 py-2 text-xs text-muted">Sin resultados</p>
+                )}
+                {searchResults.map((result) => (
+                  <button
+                    key={result.path}
+                    type="button"
+                    role="option"
+                    onClick={() => onSelectResult(result)}
+                    className="flex w-full items-center gap-2 border-b border-edge/50 px-3 py-2 text-left text-small text-primary transition-colors last:border-b-0 hover:bg-surface-hover"
+                  >
+                    <span className="truncate font-medium">{result.name}</span>
+                    {result.type && (
+                      <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 text-xs text-muted">
+                        {result.type}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Status filter */}
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-muted">Estado</span>
+          <select
+            aria-label="Filtrar por estado"
+            value={status}
+            onChange={(event) =>
+              onStatusChange(event.target.value as GraphStatusFilter)
+            }
+            className="w-full rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary"
+          >
+            <option value="all">Todos los estados</option>
+            <option value="draft">Borrador</option>
+            <option value="stable">Canon</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Scrollable body: folder tree + orphans toggle + fitView */}
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        {/* Folder tree: hierarchical multi-select with prefix semantics */}
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-muted">Sección</span>
+          <button
+            type="button"
+            onClick={() => onSelectedFoldersChange([])}
+            className="mb-1 rounded px-1 py-0.5 text-small text-muted transition-colors hover:text-action"
+          >
+            Todas las secciones
+          </button>
+          <ul className="list-none">
+            {folderTree.map((node) => (
+              <FolderTreeNode
+                key={node.path}
+                node={node}
+                selectedFolders={selectedFolders}
+                onToggle={handleToggleFolder}
+              />
+            ))}
+          </ul>
+        </div>
+
+        {/* Orphans toggle */}
+        <div className="mt-4 flex items-center justify-between gap-2">
+          <span className="text-small text-muted">Mostrar nodos aislados</span>
+          <Switch
+            checked={showOrphans}
+            onChange={onShowOrphansChange}
+            aria-label="Mostrar nodos aislados"
+          />
+        </div>
+
+        {/* FitView */}
+        <button
+          type="button"
+          onClick={onFitView}
+          className="mt-4 w-full rounded border border-edge bg-surface-raised px-3 py-1 text-small text-primary transition-colors hover:border-action"
+        >
+          Ver todo
+        </button>
+      </div>
+    </aside>
+  );
+}
