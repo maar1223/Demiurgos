@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { GlobalMethodologyLibrary } from "@/components/organisms/GlobalMethodologyLibrary";
-import type { MethodologyInventoryItem } from "@/api/types";
+import { GlobalMethodologyLibrary, toggleCompareSelection } from "@/components/organisms/GlobalMethodologyLibrary";
+import { MethodologyStatePanel } from "@/components/organisms/MethodologyStatePanel";
+import type { MethodologyInventoryItem, MethodologyStatus } from "@/api/types";
 // Raw source of the organism under test — used by the REQ-LIB-8 import
 // boundary test (no node:fs dependency needed).
 import globalLibrarySource from "@/components/organisms/GlobalMethodologyLibrary.tsx?raw";
@@ -126,8 +127,8 @@ describe("GlobalMethodologyLibrary — list render (REQ-LIB-2)", () => {
     // the option labels (Oficiales/Personalizadas/Comunitarias).
     const list = screen.getByRole("list");
     expect(within(list).getByText("Oficiales")).toBeInTheDocument();
-    expect(within(list).getByText("fundamental")).toBeInTheDocument();
-    expect(within(list).getByText("verified")).toBeInTheDocument();
+    expect(within(list).getByText("Fundamental")).toBeInTheDocument();
+    expect(within(list).getByText("Verificado")).toBeInTheDocument();
     // Missing clasificacion → neutral badge, row still visible.
     expect(within(list).getByText("Sin clasificación")).toBeInTheDocument();
   });
@@ -242,6 +243,17 @@ describe("GlobalMethodologyLibrary — server-side filters (REQ-LIB-4)", () => {
       expect.objectContaining({ clasificacion: expect.anything() }),
     );
   });
+
+  it("shows the categoría funcional placeholder drawn from the allowed set (UC-5 S1)", async () => {
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
+    // The placeholder must be an example from CATEGORIA_FUNCIONAL_ALLOWED
+    // (spec UC-5 S1), not the old "Ej. Generación de ideas".
+    expect(screen.getByPlaceholderText("Ej. Creación")).toBeInTheDocument();
+  });
 });
 
 describe("GlobalMethodologyLibrary — detail panel (REQ-LIB-6)", () => {
@@ -268,7 +280,7 @@ describe("GlobalMethodologyLibrary — detail panel (REQ-LIB-6)", () => {
     ).toBeInTheDocument();
     expect(within(detailPanel).getByText("narrativa")).toBeInTheDocument();
     expect(within(detailPanel).getByText("Oficiales")).toBeInTheDocument();
-    expect(within(detailPanel).getByText("fundamental")).toBeInTheDocument();
+    expect(within(detailPanel).getByText("Fundamental")).toBeInTheDocument();
 
     // Closing hides the panel again.
     await user.click(screen.getByRole("button", { name: "Cerrar" }));
@@ -278,19 +290,58 @@ describe("GlobalMethodologyLibrary — detail panel (REQ-LIB-6)", () => {
   });
 });
 
-describe("GlobalMethodologyLibrary — compare selection (REQ-LIB-7)", () => {
-  it("renders a side-by-side comparison of seven fields for two selections", async () => {
-    const user = userEvent.setup();
-    render(<GlobalMethodologyLibrary />);
-    await waitFor(() => {
-      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
-    });
+describe("Compare selection (REQ-LIB-7 / UL-4) — compare panel lives in the right panel area", () => {
+  const panelSelected = { skill_id: "narrative-proposer", version: "1.2.0" };
+  const panelStatus: MethodologyStatus = {
+    published: [
+      {
+        skill_id: "narrative-proposer",
+        version: "1.2.0",
+        name: "Narrative Proposer",
+        description: "Genera propuestas narrativas coherentes con el mundo.",
+        digest: "abc123",
+        published_at: "2026-01-01",
+        taller: "Mundo",
+      },
+      {
+        skill_id: "worldbuilding-core",
+        version: "2.0.0",
+        name: "Worldbuilding core",
+        description: "Construcción segura de mundos desde cero.",
+        digest: "def456",
+        published_at: "2026-02-01",
+        taller: "Herramientas",
+      },
+    ],
+    activations: {},
+    drafts: [],
+  };
 
-    await user.click(screen.getAllByRole("button", { name: "Comparar" })[0]);
-    await user.click(screen.getAllByRole("button", { name: "Comparar" })[0]);
+  function renderComparePanel(
+    compareSelection: MethodologyInventoryItem[],
+    onCompareClear = vi.fn(),
+  ) {
+    render(
+      <MethodologyStatePanel
+        selected={panelSelected}
+        status={panelStatus}
+        lens="catalogo-total"
+        onActivate={vi.fn()}
+        onAdaptar={vi.fn()}
+        onComparar={vi.fn()}
+        onExportar={vi.fn()}
+        compareSelection={compareSelection}
+        onCompareClear={onCompareClear}
+      />,
+    );
+    return onCompareClear;
+  }
+
+  it("renders the side-by-side comparison of seven fields in MethodologyStatePanel (UL-4)", () => {
+    renderComparePanel([narrative, worldbuilding]);
 
     expect(screen.getByText("Comparación")).toBeInTheDocument();
-    // Scope to the comparison table: the filter bar shares several labels
+    // Scope to the comparison table: the state panel shares several labels
     // (Taller, Etiquetas, Categoría funcional, Clasificación).
     const comparePanel = screen.getByText("Comparación").closest("section")!;
     for (const field of [
@@ -306,29 +357,45 @@ describe("GlobalMethodologyLibrary — compare selection (REQ-LIB-7)", () => {
     }
   });
 
-  it("caps selection at two, replaces the oldest on a third selection, and clears on demand", async () => {
-    getInventoryMock.mockResolvedValue({ items: [narrative, worldbuilding, brainstorming] });
-    const user = userEvent.setup();
-    render(<GlobalMethodologyLibrary />);
-    await waitFor(() => {
-      expect(screen.getByText("Brainstorming")).toBeInTheDocument();
-    });
-
-    await user.click(screen.getAllByRole("button", { name: "Comparar" })[0]);
-    await user.click(screen.getAllByRole("button", { name: "Comparar" })[0]);
-    await user.click(screen.getAllByRole("button", { name: "Comparar" })[0]);
+  it("caps selection at two and replaces the oldest on a third selection (REQ-LIB-7)", () => {
+    let selection = toggleCompareSelection([], narrative);
+    selection = toggleCompareSelection(selection, worldbuilding);
+    selection = toggleCompareSelection(selection, brainstorming);
 
     // Narrative (oldest) was replaced; Worldbuilding and Brainstorming stay.
-    const states = screen.getAllByRole("button", { name: /Comparar|Quitar/ });
-    expect(states).toHaveLength(3);
-    expect(states[0]).toHaveTextContent("Comparar");
-    expect(states[1]).toHaveTextContent("Quitar");
-    expect(states[2]).toHaveTextContent("Quitar");
+    expect(selection).toEqual([worldbuilding, brainstorming]);
+
+    // Toggling an already-selected item removes it again.
+    selection = toggleCompareSelection(selection, worldbuilding);
+    expect(selection).toEqual([brainstorming]);
+  });
+
+  it("clears the comparison through onCompareClear in the right panel (UL-4)", () => {
+    const onCompareClear = renderComparePanel([narrative, worldbuilding]);
     expect(screen.getByText("Comparación")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Limpiar" }));
+    // The clear control moved with the panel: it lives in the right panel
+    // area now, not the catalog.
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar" }));
+    expect(onCompareClear).toHaveBeenCalled();
+  });
+
+  it("does not render the compare panel or Limpiar in the catalog (moved to the right panel)", async () => {
+    getInventoryMock.mockResolvedValue({ items: [narrative, worldbuilding] });
+    render(
+      <GlobalMethodologyLibrary
+        compareSelection={[narrative, worldbuilding]}
+        onCompareToggle={vi.fn()}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
     expect(screen.queryByText("Comparación")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Comparar" })).toHaveLength(3);
+    expect(
+      screen.queryByRole("button", { name: "Limpiar" }),
+    ).not.toBeInTheDocument();
   });
 });
 

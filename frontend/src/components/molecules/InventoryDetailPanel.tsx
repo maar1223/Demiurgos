@@ -1,6 +1,6 @@
 import type { MethodologyInventoryItem } from "@/api/types";
 import { Badge } from "@/components/atoms/Badge";
-import { CLASIFICACION_VARIANT, TRUST_VARIANT } from "./InventoryRow";
+import { CLASIFICACION_VARIANT, TRUST_LABEL, TRUST_VARIANT } from "./InventoryRow";
 
 interface InventoryDetailPanelProps {
   item: MethodologyInventoryItem;
@@ -73,7 +73,7 @@ export function InventoryDetailPanel({ item }: InventoryDetailPanelProps) {
             {trust.length > 0 ? (
               trust.map((attr) => (
                 <Badge key={attr} variant={TRUST_VARIANT[attr] ?? "default"}>
-                  {attr}
+                  {TRUST_LABEL[attr] ?? attr}
                 </Badge>
               ))
             ) : (

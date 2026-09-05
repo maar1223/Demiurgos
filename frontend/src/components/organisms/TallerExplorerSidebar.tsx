@@ -44,7 +44,9 @@ interface TallerExplorerSidebarProps {
   // ── controlled compare selection (shared with the right panel) ──────
   compareSelection: MethodologyInventoryItem[];
   onCompareToggle: (item: MethodologyInventoryItem) => void;
-  onCompareClear: () => void;
+  /** UL-5: empty-state CTA of the mi-mundo library — switches the page to
+   *  the "Crear skill" tab. Forwarded to MethodologyLibrary. */
+  onGoToCoCrear?: () => void;
 }
 
 /**
@@ -76,22 +78,37 @@ export function TallerExplorerSidebar({
   busy,
   compareSelection,
   onCompareToggle,
-  onCompareClear,
+  onGoToCoCrear,
 }: TallerExplorerSidebarProps) {
   return (
     <div className="flex h-full flex-col">
       {/* Header block (SC-LEN-1.7): the lens toggle lives here, NOT as a
        *  standalone flowing row. World first (broadest context), then the
-       *  taller it scopes, then the lens toggle. */}
+       *  taller it scopes, then the lens toggle. Each control carries a
+       *  visible text label (SB-1); the World/Taller selectors are suppressed
+       *  in the "catalogo-total" lens (UL-2) — only the lens toggle stays. */}
       <div className="space-y-3 border-b border-edge px-4 py-3">
-        <WorldSelector
-          worlds={worlds}
-          currentWorld={world}
-          onWorldChange={onWorldChange}
-          onRequestCreate={onRequestCreateWorld}
-        />
-        <TallerSelector activeTaller={activeTaller} onTallerChange={onTallerChange} />
-        <LensToggle lens={lens} onChange={onLensChange} />
+        {lens === "mi-mundo" && (
+          <>
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-muted">Mundo</span>
+              <WorldSelector
+                worlds={worlds}
+                currentWorld={world}
+                onWorldChange={onWorldChange}
+                onRequestCreate={onRequestCreateWorld}
+              />
+            </div>
+            <div className="space-y-1">
+              <span className="text-xs font-medium text-muted">Taller</span>
+              <TallerSelector activeTaller={activeTaller} onTallerChange={onTallerChange} />
+            </div>
+          </>
+        )}
+        <div className="space-y-1">
+          <span className="text-xs font-medium text-muted">Lente</span>
+          <LensToggle lens={lens} onChange={onLensChange} />
+        </div>
       </div>
 
       {/* Explorer per lens */}
@@ -117,6 +134,7 @@ export function TallerExplorerSidebar({
               onSelect={onSelect}
               onActivate={onActivate}
               busy={busy}
+              onGoToCoCrear={onGoToCoCrear}
             />
           </div>
         ) : (
@@ -125,7 +143,6 @@ export function TallerExplorerSidebar({
             onSelect={onSelect}
             compareSelection={compareSelection}
             onCompareToggle={onCompareToggle}
-            onCompareClear={onCompareClear}
           />
         )}
       </div>

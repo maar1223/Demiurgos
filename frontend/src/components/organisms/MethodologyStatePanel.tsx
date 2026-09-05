@@ -3,6 +3,7 @@ import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ProvenanceBadge } from "@/components/organisms/CoCreation/ProvenanceBadge";
+import { MethodologyComparePanel } from "@/components/molecules/MethodologyComparePanel";
 import type { Lens } from "@/components/organisms/LensToggle";
 
 interface MethodologySelection {
@@ -24,6 +25,12 @@ interface MethodologyStatePanelProps {
   onAdaptar: (item: MethodologyInventoryItem) => void;
   onComparar: (item: MethodologyInventoryItem) => void;
   onExportar: (item: MethodologyInventoryItem) => void;
+  /** Clickable Versiones (UL-3): fired when a version row is clicked. */
+  onSelect?: (selection: MethodologySelection) => void;
+  /** Controlled compare selection (UL-4): when exactly two items are
+   *  compared, the compare panel renders below the actions block. */
+  compareSelection?: MethodologyInventoryItem[];
+  onCompareClear?: () => void;
 }
 
 /**
@@ -45,6 +52,9 @@ export function MethodologyStatePanel({
   onAdaptar,
   onComparar,
   onExportar,
+  onSelect,
+  compareSelection,
+  onCompareClear,
 }: MethodologyStatePanelProps) {
   if (!selected) {
     return (
@@ -115,21 +125,29 @@ export function MethodologyStatePanel({
                 )
                 .map((activation) => activation.world);
               return (
-                <li
-                  key={version.version}
-                  className="flex flex-wrap items-center gap-2 text-small"
-                >
-                  <span className="font-medium text-primary">
-                    v{version.version}
-                  </span>
-                  {isCurrent && (
-                    <Badge variant="info">Seleccionada</Badge>
-                  )}
-                  {activeWorlds.length > 0 && (
-                    <span className="text-action">
-                      Activa en {activeWorlds.join(", ")}
+                <li key={version.version}>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onSelect?.({
+                        skill_id: selected.skill_id,
+                        version: version.version,
+                      })
+                    }
+                    className="flex w-full cursor-pointer flex-wrap items-center gap-2 rounded-md px-1 py-0.5 text-left text-small transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
+                  >
+                    <span className="font-medium text-primary">
+                      v{version.version}
                     </span>
-                  )}
+                    {isCurrent && (
+                      <Badge variant="info">Seleccionada</Badge>
+                    )}
+                    {activeWorlds.length > 0 && (
+                      <span className="text-action">
+                        Activa en {activeWorlds.join(", ")}
+                      </span>
+                    )}
+                  </button>
                 </li>
               );
             })}
@@ -200,16 +218,27 @@ export function MethodologyStatePanel({
                 size="sm"
                 disabled={!world}
                 onClick={() => onActivate(selected.skill_id, selected.version)}
+                title="Activa esta versión para nuevas sesiones en el mundo seleccionado."
               >
                 Activar
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => onAdaptar(item)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onAdaptar(item)}
+                title="Derivá una versión editable de esta publicación."
+              >
                 Adaptar
               </Button>
             </>
           ) : (
             <>
-              <Button variant="secondary" size="sm" onClick={() => onAdaptar(item)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => onAdaptar(item)}
+                title="Derivá una versión editable de esta publicación."
+              >
                 Adaptar
               </Button>
               <Button variant="secondary" size="sm" onClick={() => onComparar(item)}>
@@ -222,6 +251,23 @@ export function MethodologyStatePanel({
           )}
         </div>
       </div>
+
+      {/* Compare panel (UL-4): rendered in the right panel area, below the
+       *  actions block, when exactly two items are compared. The clear
+       *  control moved here with the panel (REQ-LIB-7). */}
+      {compareSelection && compareSelection.length === 2 && (
+        <div className="space-y-2">
+          <div className="flex justify-end">
+            <Button variant="ghost" size="sm" onClick={onCompareClear}>
+              Limpiar
+            </Button>
+          </div>
+          <MethodologyComparePanel
+            a={compareSelection[0]}
+            b={compareSelection[1]}
+          />
+        </div>
+      )}
     </section>
   );
 }

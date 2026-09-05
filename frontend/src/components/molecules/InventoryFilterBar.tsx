@@ -54,7 +54,7 @@ export function InventoryFilterBar({
           onChange={(event) =>
             update({ categoria_funcional: event.target.value || undefined })
           }
-          placeholder="Ej. Generación de ideas"
+          placeholder="Ej. Creación"
         />
       </label>
 

@@ -25,7 +25,7 @@ export function LensToggle({ lens, onChange }: LensToggleProps) {
   return (
     <div
       role="tablist"
-      aria-label="Lente del taller"
+      aria-label="Lente de la biblioteca"
       className="inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
     >
       {LENS_OPTIONS.map((option) => (

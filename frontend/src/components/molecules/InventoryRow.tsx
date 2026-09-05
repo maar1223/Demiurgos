@@ -21,6 +21,15 @@ export const TRUST_VARIANT: Record<string, BadgeVariant> = {
   quarantined: "error",
 };
 
+/** trust_attributes value → Spanish display label (spec UC-4). */
+export const TRUST_LABEL: Record<string, string> = {
+  fundamental: "Fundamental",
+  verified: "Verificado",
+  derived: "Derivado",
+  "co-created": "Co-creado",
+  quarantined: "En cuarentena",
+};
+
 interface InventoryRowProps {
   item: MethodologyInventoryItem;
   /** Opens the detail panel for this item. */
@@ -136,7 +145,7 @@ export function InventoryRow({
         </Badge>
         {trust.map((attr) => (
           <Badge key={attr} variant={TRUST_VARIANT[attr] ?? "default"}>
-            {attr}
+            {TRUST_LABEL[attr] ?? attr}
           </Badge>
         ))}
       </div>

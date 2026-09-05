@@ -177,7 +177,7 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
     });
     expect(
       screen.getByText(
-        "Co-creá una skill conversando con la Skill Madre, una pregunta por vez.",
+        "Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez.",
       ),
     ).toBeInTheDocument();
     expect(recoverCoCreationSession).toHaveBeenCalledWith("adaptation-session");
@@ -200,7 +200,7 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
       expect(deriveDraft).toHaveBeenCalled();
     });
     // Still on the "Taller" tab — the failed derive must not switch views.
-    expect(screen.getByRole("tab", { name: "Taller" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Biblioteca" })).toHaveAttribute(
       "aria-selected",
       "true",
     );

@@ -164,7 +164,7 @@ export function CoCreationCanvas({
     return (
       <div className="flex h-full items-center justify-center p-6">
         <p className="text-sm text-muted">
-          El lienzo todavía no tiene contenido. Conversá con la Skill Madre para
+          El lienzo todavía no tiene contenido. Conversá con el Co-creador de skills para
           empezar a estructurar el borrador.
         </p>
       </div>
@@ -309,7 +309,7 @@ export function CoCreationCanvas({
           </h3>
           {questions.length === 0 ? (
             <p className="mt-2 text-xs text-muted">
-              No hay preguntas pendientes. La Skill Madre las agrega durante la
+              No hay preguntas pendientes. El Co-creador de skills las agrega durante la
               conversación.
             </p>
           ) : (

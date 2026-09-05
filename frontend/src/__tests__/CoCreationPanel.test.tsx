@@ -486,6 +486,39 @@ describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
     );
     expect(screen.getByRole("button", { name: "Historial" })).toBeInTheDocument();
   });
+
+  it("shows the guided intro line (UC-3 S1)", () => {
+    render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
+
+    // Guided mode is the default: the intro must read exactly per spec UC-3 S1.
+    expect(
+      screen.getByText(
+        "Una pregunta por vez, guiada por el Co-creador de skills. Vos aprobás cada paso.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("swaps the intro line per authoring sub-mode (UL-6 S1)", async () => {
+    const user = userEvent.setup();
+    render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
+
+    // guided (default)
+    expect(
+      screen.getByText(
+        "Una pregunta por vez, guiada por el Co-creador de skills. Vos aprobás cada paso.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Manual" }));
+    expect(
+      screen.getByText("Escribí el markdown de tu skill directamente."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Importar" }));
+    expect(
+      screen.getByText("Importá un .zip para revisión y cuarentena."),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("CoCreationContextPanel", () => {

@@ -119,7 +119,7 @@ describe("ToolWorkshop", () => {
 
     // REQ-TAB-1 (SC-TAB-1.1): exactly 2 top-level tabs; the previous
     // "Biblioteca global" tab no longer exists (it became the lens toggle).
-    expect(screen.getByRole("tab", { name: "Taller" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: "Biblioteca" })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -382,11 +382,11 @@ describe("ToolWorkshop", () => {
     await user.click(screen.getByRole("tab", { name: "Crear skill" }));
     expect(
       screen.getByText(
-        "Co-creá una skill conversando con la Skill Madre, una pregunta por vez.",
+        "Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez.",
       ),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Taller" }));
+    await user.click(screen.getByRole("tab", { name: "Biblioteca" }));
     expect(
       await screen.findByRole("heading", {
         level: 2,
@@ -419,5 +419,124 @@ describe("ToolWorkshop", () => {
     // refetch, no activation, no derivation — NO mutation of any kind.
     expect(getMethodologyStatus).not.toHaveBeenCalled();
     expect(activateMethodology).not.toHaveBeenCalled();
+  });
+
+  it("shows the Biblioteca subtitle in the taller view (UC-2 S1 / TAB-2 S1)", () => {
+    renderToolWorkshop();
+
+    // The default view is "taller" (Biblioteca tab): the shared header must
+    // carry the exploration subtitle, exactly per spec UC-2 S1 / TAB-2 S1.
+    expect(screen.getByRole("tab", { name: "Biblioteca" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByText("Explorá y activá skills publicadas por mundo."),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the Co-creador subtitle in the co-crear view (TAB-2 S2)", async () => {
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    await user.click(screen.getByRole("tab", { name: "Crear skill" }));
+
+    expect(
+      screen.getByText(
+        "Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("labels the top-level tablist with the library-views aria-label (TAB-1 S2)", () => {
+    renderToolWorkshop();
+
+    expect(
+      screen.getByRole("tablist", {
+        name: "Vistas de la biblioteca de herramientas",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("labels the lens toggle with the library aria-label (LEN-1 S1)", () => {
+    renderToolWorkshop();
+
+    // LensToggle is the internal segmented control of the taller view; its
+    // aria-label must reference the biblioteca, not the taller (spec LEN-1).
+    expect(
+      screen.getByRole("tablist", { name: "Lente de la biblioteca" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the Mundo/Taller/Lente control labels in the sidebar header (UL-1 S1 / SB-1 S1)", async () => {
+    renderToolWorkshop();
+
+    // Let the initial status fetch settle so the assertions run inside act().
+    await screen.findByText("Guided character methodology");
+
+    // Each sidebar control carries a visible text label (spec UL-1 / SB-1).
+    expect(screen.getByText("Mundo")).toBeInTheDocument();
+    expect(screen.getByText("Taller")).toBeInTheDocument();
+    expect(screen.getByText("Lente")).toBeInTheDocument();
+  });
+
+  it("suppresses the World and Taller selectors in catalogo-total, keeping the lens toggle (UL-2 S1)", async () => {
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    // mi-mundo: all three controls (Mundo, Taller, Lente) are present.
+    expect(screen.getByText("Mundo")).toBeInTheDocument();
+    expect(screen.getByText("Taller")).toBeInTheDocument();
+    expect(screen.getByText("Lente")).toBeInTheDocument();
+
+    // Switch to the read-only catalog lens (the empty inventory fixture).
+    await user.click(screen.getByRole("tab", { name: "Catálogo total" }));
+    await waitFor(() => {
+      expect(getMethodologyInventory).toHaveBeenCalled();
+    });
+
+    // catalogo-total: WorldSelector and TallerSelector (and their labels) are
+    // suppressed; the LensToggle escape hatch stays rendered (spec UL-2 S1).
+    expect(screen.queryByText("Mundo")).not.toBeInTheDocument();
+    expect(screen.queryByText("Taller")).not.toBeInTheDocument();
+    expect(screen.getByText("Lente")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tablist", { name: "Lente de la biblioteca" }),
+    ).toBeInTheDocument();
+  });
+
+  it("navigates from the empty-state CTA to the Crear skill tab (UL-5 S1)", async () => {
+    const user = userEvent.setup();
+    (getMethodologyStatus as Mock).mockResolvedValue({
+      published: [],
+      activations: {},
+      drafts: [],
+    });
+
+    renderToolWorkshop();
+
+    // Zero published skills in mi-mundo → the empty state offers the CTA.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Crear tu primera skill" }),
+      ).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: "Crear tu primera skill" }),
+    );
+
+    // The page switches to the "Crear skill" tab (spec UL-5 S1).
+    await waitFor(() => {
+      expect(screen.getByRole("tab", { name: "Crear skill" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+    });
+    expect(
+      screen.getByText(
+        "Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez.",
+      ),
+    ).toBeInTheDocument();
   });
 });

@@ -369,8 +369,11 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
       <div className="border-b border-edge px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-muted">
-            Una pregunta por vez, guiada por la Skill Madre. Vos aprobás cada
-            paso.
+            {authoringMode === "guided"
+              ? "Una pregunta por vez, guiada por el Co-creador de skills. Vos aprobás cada paso."
+              : authoringMode === "manual"
+                ? "Escribí el markdown de tu skill directamente."
+                : "Importá un .zip para revisión y cuarentena."}
           </p>
           {session && authoringMode === "guided" && (
             <div
@@ -500,7 +503,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
             {!session ? (
               <div className="mx-auto max-w-xl">
                 <p className="text-sm text-primary">
-                  Describí la skill que querés crear. La Skill Madre te va guiando
+                  Describí la skill que querés crear. El Co-creador de skills te va guiando
                   con una pregunta por vez, del propósito al borrador.
                 </p>
                 <label className="mt-4 block text-xs text-muted">
@@ -563,7 +566,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                   Borrador listo — confirmá los datos
                 </h3>
                 <p className="mt-1 text-xs text-muted">
-                  La Skill Madre ya juntó propósito, alcance y flujo. Confirmá el
+                  El Co-creador de skills ya juntó propósito, alcance y flujo. Confirmá el
                   nombre y los metadatos para materializar el borrador en la
                   biblioteca (todavía no se publica nada).
                 </p>
@@ -941,7 +944,7 @@ export function CoCreationContextPanel({
         <h3 className="text-xs font-medium text-muted">Contexto de mundo</h3>
         {session?.world ? (
           <p className="mt-2 text-sm text-primary">
-            La sesión está ligada a «{session.world}»: la Skill Madre solo usa
+            La sesión está ligada a «{session.world}»: el Co-creador de skills solo usa
             el contexto autorizado de ese mundo.
           </p>
         ) : (
@@ -967,7 +970,7 @@ export function CoCreationContextPanel({
                 {session.draft_id}
               </p>
               <p className="mt-1 text-xs text-muted">
-                Materializado por la Skill Madre desde las respuestas
+                Materializado por el Co-creador de skills desde las respuestas
                 estructuradas.
               </p>
             </div>

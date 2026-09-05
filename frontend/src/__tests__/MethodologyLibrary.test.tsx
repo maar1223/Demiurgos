@@ -168,16 +168,16 @@ describe("MethodologyLibrary", () => {
       expect(screen.getByText("Skill activa")).toBeInTheDocument();
     });
 
-    // TW3 order (spec REQ-TRE-3 S1): Activas → Inactivas → Transversales
-    // inactivas → Sin taller. Transversales activas and Bloqueadas are empty
-    // → hidden (REQ-TRE-3 S3).
+    // TW3 order (spec REQ-TRE-3 S1): En uso → Apagada → Apagada de otros
+    // talleres → Sin taller. En uso de otros talleres and En conflicto are
+    // empty → hidden (REQ-TRE-3 S3).
     const headings = screen.getAllByRole("heading", {
-      name: /Activas del Taller|Inactivas del Taller|Transversales inactivas|Sin taller/,
+      name: /En uso · funciona solo en este taller|Apagada · funciona solo en este taller|Apagada · funciona también en otros talleres|Sin taller/,
     });
     expect(headings.map((h) => h.textContent)).toEqual([
-      "Activas del Taller",
-      "Inactivas del Taller",
-      "Transversales inactivas",
+      "En uso · funciona solo en este taller",
+      "Apagada · funciona solo en este taller",
+      "Apagada · funciona también en otros talleres",
       "Sin taller",
     ]);
 
@@ -249,20 +249,20 @@ describe("MethodologyLibrary", () => {
       expect(screen.getByText("Skill mundo bloqueada")).toBeInTheDocument();
     });
 
-    // Transversales activas comes before Bloqueadas (TW3 order + 5th group).
+    // En uso de otros talleres comes before En conflicto (TW3 order + 5th group).
     const headings = screen.getAllByRole("heading", {
-      name: /Transversales activas|Bloqueadas/,
+      name: /En uso · funciona también en otros talleres|En conflicto · su taller de origen ya tiene una activa/,
     });
     expect(headings.map((h) => h.textContent)).toEqual([
-      "Transversales activas",
-      "Bloqueadas",
+      "En uso · funciona también en otros talleres",
+      "En conflicto · su taller de origen ya tiene una activa",
     ]);
 
     // Exact conflict copy from spec REQ-TRE-6 S1, taller names interpolated
     // via CORE_TALLER_LABELS (display labels, not short keys).
     expect(
       screen.getByText(
-        "This skill is a transversal of Taller de Herramientas but its primary taller (Taller de Mundo) already has an active skill in this world. Adapt the skill to resolve the conflict or activate it in a different world.",
+        "Esta skill es transversal de Taller de Herramientas pero su taller primario (Taller de Mundo) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.",
       ),
     ).toBeInTheDocument();
 
@@ -278,7 +278,7 @@ describe("MethodologyLibrary", () => {
     expect(adaptar).toBeDisabled();
     expect(adaptar).toHaveAttribute(
       "title",
-      "Adaptation available in future phase",
+      "Adaptación disponible en fase futura",
     );
   });
 
@@ -312,5 +312,26 @@ describe("MethodologyLibrary", () => {
     await waitFor(() => {
       expect(props.onSelect).toHaveBeenCalledWith(null);
     });
+  });
+
+  it("renders the empty-state CTA wired to onGoToCoCrear (UL-5)", async () => {
+    const user = userEvent.setup();
+    const onGoToCoCrear = vi.fn();
+    renderLibrary({
+      status: { published: [], activations: {}, drafts: [] },
+      onGoToCoCrear,
+    });
+
+    // Zero published skills → the empty state offers the "Crear tu primera
+    // skill" CTA (spec UL-5 S1); clicking it reports the navigation upward.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Crear tu primera skill" }),
+      ).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Crear tu primera skill" }),
+    );
+    expect(onGoToCoCrear).toHaveBeenCalledTimes(1);
   });
 });

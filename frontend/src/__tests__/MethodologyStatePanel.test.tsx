@@ -122,4 +122,83 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activar" })).not.toBeInTheDocument();
   });
+
+  it("switches the selection when a version row is clicked (UL-3)", () => {
+    const props = renderPanel({
+      onSelect: vi.fn(),
+    });
+
+    // Versiones rows are clickable buttons: clicking v1.3.0 reports the new
+    // selection upward (spec UL-3 S1).
+    fireEvent.click(screen.getByText("v1.3.0"));
+    expect(props.onSelect).toHaveBeenCalledWith({
+      skill_id: "eneagrama",
+      version: "1.3.0",
+    });
+  });
+
+  it("renders the compare panel below the actions when two items are compared (UL-4)", () => {
+    const compareItems = [
+      {
+        skill_id: "eneagrama",
+        version: "1.2.0",
+        name: "Eneagrama",
+        description: "",
+        digest: "abc",
+        published_at: "2026-01-01",
+      },
+      {
+        skill_id: "eneagrama",
+        version: "1.3.0",
+        name: "Eneagrama",
+        description: "",
+        digest: "def",
+        published_at: "2026-02-01",
+      },
+    ];
+    const props = renderPanel({
+      compareSelection: compareItems,
+      onCompareClear: vi.fn(),
+    });
+
+    expect(screen.getByText("Comparación")).toBeInTheDocument();
+
+    // The clear control moved with the panel (REQ-LIB-7).
+    fireEvent.click(screen.getByRole("button", { name: "Limpiar" }));
+    expect(props.onCompareClear).toHaveBeenCalled();
+  });
+
+  it("does not render the compare panel with fewer than two comparisons (UL-4)", () => {
+    renderPanel({
+      compareSelection: [
+        {
+          skill_id: "eneagrama",
+          version: "1.2.0",
+          name: "Eneagrama",
+          description: "",
+          digest: "abc",
+          published_at: "2026-01-01",
+        },
+      ],
+      onCompareClear: vi.fn(),
+    });
+
+    expect(screen.queryByText("Comparación")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Limpiar" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows consequence tooltips on the Activar and Adaptar actions (UC-6)", () => {
+    renderPanel();
+
+    expect(screen.getByRole("button", { name: "Activar" })).toHaveAttribute(
+      "title",
+      "Activa esta versión para nuevas sesiones en el mundo seleccionado.",
+    );
+    expect(screen.getByRole("button", { name: "Adaptar" })).toHaveAttribute(
+      "title",
+      "Derivá una versión editable de esta publicación.",
+    );
+  });
 });

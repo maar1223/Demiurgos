@@ -12,7 +12,6 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { InventoryRow } from "@/components/molecules/InventoryRow";
 import { InventoryDetailPanel } from "@/components/molecules/InventoryDetailPanel";
 import { InventoryFilterBar } from "@/components/molecules/InventoryFilterBar";
-import { MethodologyComparePanel } from "@/components/molecules/MethodologyComparePanel";
 
 const EMPTY_INVENTORY_MESSAGE = "No hay metodologías publicadas";
 const NO_RESULTS_MESSAGE = "Sin resultados";
@@ -58,7 +57,6 @@ interface GlobalMethodologyLibraryProps {
    *  (backward compatible with standalone usage). */
   compareSelection?: MethodologyInventoryItem[];
   onCompareToggle?: (item: MethodologyInventoryItem) => void;
-  onCompareClear?: () => void;
 }
 
 /**
@@ -79,7 +77,6 @@ export function GlobalMethodologyLibrary({
   onSelect,
   compareSelection: controlledCompare,
   onCompareToggle,
-  onCompareClear,
 }: GlobalMethodologyLibraryProps) {
   const [items, setItems] = useState<MethodologyInventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -99,13 +96,6 @@ export function GlobalMethodologyLibrary({
       return;
     }
     setInternalCompare((prev) => toggleCompareSelection(prev, item));
-  };
-  const clearCompare = () => {
-    if (onCompareClear) {
-      onCompareClear();
-      return;
-    }
-    setInternalCompare([]);
   };
 
   const load = useCallback(async (activeFilters: InventoryFilters) => {
@@ -172,24 +162,11 @@ export function GlobalMethodologyLibrary({
     return <ErrorBanner message={error} onRetry={() => void load(filters)} />;
   }
 
-  const comparing =
-    compareSelection.length === 2
-      ? { a: compareSelection[0], b: compareSelection[1] }
-      : null;
-
   return (
     <section
       aria-label="Biblioteca global de metodologías"
       className="space-y-4"
     >
-      {compareSelection.length > 0 && (
-        <div className="flex justify-end">
-          <Button variant="ghost" size="sm" onClick={clearCompare}>
-            Limpiar
-          </Button>
-        </div>
-      )}
-
       <InventoryFilterBar filters={filters} onChange={setFilters} />
 
       {exportError && (
@@ -247,10 +224,6 @@ export function GlobalMethodologyLibrary({
             Cerrar
           </Button>
         </div>
-      )}
-
-      {comparing && (
-        <MethodologyComparePanel a={comparing.a} b={comparing.b} />
       )}
     </section>
   );

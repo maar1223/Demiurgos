@@ -40,19 +40,19 @@ interface GroupDef {
 /** TW3 group order (spec REQ-TRE-3) + the separate "Sin taller" bucket
  *  (REQ-TRE-1 S3). The 5th "Bloqueadas" group is Author-approved Option B. */
 const GROUP_ORDER: GroupDef[] = [
-  { key: "activas", label: "Activas del Taller", state: "activa" },
+  { key: "activas", label: "En uso · funciona solo en este taller", state: "activa" },
   {
     key: "transversalesActivas",
-    label: "Transversales activas",
+    label: "En uso · funciona también en otros talleres",
     state: "transversal-activa",
   },
-  { key: "inactivas", label: "Inactivas del Taller", state: "inactiva" },
+  { key: "inactivas", label: "Apagada · funciona solo en este taller", state: "inactiva" },
   {
     key: "transversalesInactivas",
-    label: "Transversales inactivas",
+    label: "Apagada · funciona también en otros talleres",
     state: "transversal-inactiva",
   },
-  { key: "bloqueadas", label: "Bloqueadas", state: "bloqueada" },
+  { key: "bloqueadas", label: "En conflicto · su taller de origen ya tiene una activa", state: "bloqueada" },
   { key: "sinTaller", label: "Sin taller", state: "sin-taller" },
 ];
 
@@ -80,7 +80,7 @@ function blockedExplanation(
   activeTaller: string,
   skillTaller: string | null | undefined,
 ): string {
-  return `This skill is a transversal of ${tallerLabel(activeTaller)} but its primary taller (${tallerLabel(skillTaller)}) already has an active skill in this world. Adapt the skill to resolve the conflict or activate it in a different world.`;
+  return `Esta skill es transversal de ${tallerLabel(activeTaller)} pero su taller primario (${tallerLabel(skillTaller)}) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.`;
 }
 
 interface SkillRowProps {
@@ -142,7 +142,7 @@ function SkillRow({
             variant="secondary"
             size="sm"
             disabled
-            title="Adaptation available in future phase"
+            title="Adaptación disponible en fase futura"
           >
             Adaptar
           </Button>

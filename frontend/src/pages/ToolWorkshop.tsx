@@ -186,6 +186,10 @@ export default function ToolWorkshop() {
     if (result) setView("co-crear");
   };
 
+  /** UL-5: empty-state CTA of the mi-mundo library — jumps straight to the
+   *  "Crear skill" tab to author the first skill. */
+  const handleGoToCoCrear = useCallback(() => setView("co-crear"), []);
+
   const confirmSwitch = () => {
     if (!pendingSwitch) return;
     setWorld(pendingSwitch);
@@ -193,14 +197,14 @@ export default function ToolWorkshop() {
   };
 
   const tabs = [
-    { key: "taller", label: "Taller" },
+    { key: "taller", label: "Biblioteca" },
     { key: "co-crear", label: "Crear skill" },
   ] as const;
 
   const tablist = (
     <div
       role="tablist"
-      aria-label="Vistas del taller de herramientas"
+      aria-label="Vistas de la biblioteca de herramientas"
       className="inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
     >
       {tabs.map((tab) => (
@@ -228,7 +232,7 @@ export default function ToolWorkshop() {
         <EditorLayout
           header={
             <ToolWorkshopHeader
-              subtitle="Co-creá una skill conversando con la Skill Madre, una pregunta por vez."
+              subtitle="Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez."
               tablist={tablist}
             />
           }
@@ -244,7 +248,7 @@ export default function ToolWorkshop() {
         <EditorLayout
           header={
             <ToolWorkshopHeader
-              subtitle="Metodologías de construcción seguras: editar, compilar, publicar versiones inmutables y activarlas por mundo."
+              subtitle="Explorá y activá skills publicadas por mundo."
               tablist={tablist}
             />
           }
@@ -270,7 +274,7 @@ export default function ToolWorkshop() {
               busy={busy}
               compareSelection={compareSelection}
               onCompareToggle={handleComparar}
-              onCompareClear={() => setCompareSelection([])}
+              onGoToCoCrear={handleGoToCoCrear}
             />
           }
           rightPanel={
@@ -279,12 +283,15 @@ export default function ToolWorkshop() {
               status={status}
               lens={lens}
               world={world}
+              onSelect={setSelected}
               onActivate={(skillId, version) =>
                 void handleActivate(skillId, version)
               }
               onAdaptar={(item) => void handleAdaptar(item)}
               onComparar={handleComparar}
               onExportar={(item) => void handleExportar(item)}
+              compareSelection={compareSelection}
+              onCompareClear={() => setCompareSelection([])}
             />
           }
         >

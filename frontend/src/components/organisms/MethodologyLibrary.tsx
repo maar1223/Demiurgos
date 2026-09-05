@@ -34,6 +34,9 @@ interface MethodologyLibraryProps {
    *  fetch. */
   error?: string | null;
   onRetry?: () => void;
+  /** UL-5: empty-state CTA — navigates the Author to the "Crear skill" tab
+   *  (wired by the page through TallerExplorerSidebar). */
+  onGoToCoCrear?: () => void;
 }
 
 /**
@@ -57,6 +60,7 @@ export function MethodologyLibrary({
   busy,
   error,
   onRetry,
+  onGoToCoCrear,
 }: MethodologyLibraryProps) {
   /** Client-side filter over the grouped tree (SC-SB-1.1 "filters"). */
   const [query, setQuery] = useState("");
@@ -153,6 +157,8 @@ export function MethodologyLibrary({
         <EmptyState
           icon="empty"
           message="Todavía no hay metodologías publicadas. Escribí un borrador y publicalo para activarlo por mundo."
+          actionLabel="Crear tu primera skill"
+          onAction={onGoToCoCrear}
         />
       ) : noResults ? (
         <EmptyState icon="search" message="Sin resultados" />
