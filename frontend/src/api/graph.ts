@@ -92,8 +92,7 @@ export type GraphStatusFilter = "all" | "draft" | "stable";
 
 /**
  * GET /api/{mundo}/graph/entities?status= — bulk entities + links for
- * graph consumption. Each entity carries `status` (draft|stable); the
- * server excludes referencias content (not indexed by _SCAN_SECTIONS).
+ * graph consumption. Each entity carries `status` (draft|stable).
  */
 export async function fetchGraphEntities(
   mundo: string,

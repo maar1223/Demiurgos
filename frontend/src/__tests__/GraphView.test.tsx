@@ -207,6 +207,24 @@ const WITH_FOLDER_ONLY_ORPHAN: GraphEntity[] = [
   },
 ];
 
+/** LINKED plus a nested entity under lore/historia — exercises the tree's
+ *  nested rendering and the folder filter's prefix reach into subfolders.
+ *  Historia carries a backlink so it is never hidden as an orphan. */
+const WITH_NESTED: GraphEntity[] = [
+  ...LINKED,
+  {
+    id: "Lore::Historia",
+    name: "Historia",
+    type: "lugar",
+    path: "lore/historia/Historia.md",
+    status: "draft",
+    content: "",
+    forward_links: [],
+    backlinks: ["personajes/Rhyz.md"],
+    relaciones: [],
+  },
+];
+
 function renderGraphView() {
   return render(
     <MemoryRouter>
@@ -336,19 +354,10 @@ describe("GraphView", () => {
     expect(
       await screen.findByText("No hay entidades indexadas para este mundo."),
     ).toBeInTheDocument();
-    // The folder dropdown still renders (with only the "All" option) so the
-    // empty state is never an untrappable UI dead-end.
+    // The sidebar still renders (with an empty folder tree) so the empty
+    // state is never an untrappable UI dead-end.
     expect(
-      screen.getByLabelText("Filtrar por sección"),
-    ).toBeInTheDocument();
-  });
-
-  it("renders the referencias-exclusion note (FR2.13)", async () => {
-    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
-    renderGraphView();
-
-    expect(
-      screen.getByText("El grafo no incluye contenido de Referencias"),
+      screen.getByRole("button", { name: "Todas las secciones" }),
     ).toBeInTheDocument();
   });
 
@@ -574,21 +583,37 @@ describe("GraphView", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
-  // ── Folder filter (graph-connections-editor PR4) ──
+  // ── Folder filter (graph-controls-sidebar PR3: hierarchical tree) ──
 
-  it("lists every unique section prefix from the entity paths", async () => {
-    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+  it("renders the hierarchical folder tree from the entity paths", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: WITH_NESTED, links: LINKS });
     renderGraphView();
 
-    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(countNodes()).toBe(4));
 
-    const select = screen.getByLabelText("Filtrar por sección");
+    // The flat "Sección" dropdown is gone: level-1 folders render as tree
+    // checkboxes, plus the clear-selection button.
+    expect(screen.getByRole("checkbox", { name: "lore" })).toBeInTheDocument();
     expect(
-      Array.from(select.querySelectorAll("option")).map((o) => o.textContent),
-    ).toEqual(["Todas las secciones", "lore", "personajes"]);
+      screen.getByRole("checkbox", { name: "personajes" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Todas las secciones" }),
+    ).toBeInTheDocument();
+
+    // Nested folders are hidden inside their collapsed parent…
+    expect(
+      screen.queryByRole("checkbox", { name: "historia" }),
+    ).not.toBeInTheDocument();
+    // …and appear once the parent is expanded.
+    await user.click(screen.getByRole("button", { name: "Expandir lore" }));
+    expect(
+      screen.getByRole("checkbox", { name: "historia" }),
+    ).toBeInTheDocument();
   });
 
-  it("selecting a folder hides non-matching nodes and their edges", async () => {
+  it("selecting a folder in the tree filters the canvas to its prefix", async () => {
     const user = userEvent.setup();
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     renderGraphView();
@@ -596,10 +621,7 @@ describe("GraphView", () => {
     await waitFor(() => expect(countNodes()).toBe(3));
     await waitFor(() => expect(countEdges()).toBe(2));
 
-    await user.selectOptions(
-      screen.getByLabelText("Filtrar por sección"),
-      "personajes",
-    );
+    await user.click(screen.getByRole("checkbox", { name: "personajes" }));
 
     // Dottua (lore/) is hidden along with the Vael→Dottua edge; Rhyz→Vael
     // survives because both endpoints share the selected folder.
@@ -614,7 +636,28 @@ describe("GraphView", () => {
     ).not.toBeInTheDocument();
   });
 
-  it('restores every node and edge when "All" is selected again', async () => {
+  it("multi-select union shows entities from every selected folder", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: WITH_NESTED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(4));
+
+    // Selecting "lore" alone shows lore/** — including the nested historia
+    // entity (prefix semantics reach into subfolders).
+    await user.click(screen.getByRole("checkbox", { name: "lore" }));
+    await waitFor(() => expect(countNodes()).toBe(2));
+    expect(screen.getByText("Dottua")).toBeInTheDocument();
+    expect(screen.getByText("Historia")).toBeInTheDocument();
+
+    // Adding "personajes" is a union: entities from both folders show.
+    await user.click(screen.getByRole("checkbox", { name: "personajes" }));
+    await waitFor(() => expect(countNodes()).toBe(4));
+    expect(screen.getByText("Rhyz")).toBeInTheDocument();
+    expect(screen.getByText("Vael")).toBeInTheDocument();
+  });
+
+  it('restores every node and edge via "Todas las secciones"', async () => {
     const user = userEvent.setup();
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     renderGraphView();
@@ -622,15 +665,11 @@ describe("GraphView", () => {
     await waitFor(() => expect(countNodes()).toBe(3));
     await waitFor(() => expect(countEdges()).toBe(2));
 
-    await user.selectOptions(
-      screen.getByLabelText("Filtrar por sección"),
-      "personajes",
-    );
+    await user.click(screen.getByRole("checkbox", { name: "personajes" }));
     await waitFor(() => expect(countNodes()).toBe(2));
 
-    await user.selectOptions(
-      screen.getByLabelText("Filtrar por sección"),
-      "all",
+    await user.click(
+      screen.getByRole("button", { name: "Todas las secciones" }),
     );
 
     await waitFor(() => expect(countNodes()).toBe(3));
@@ -648,10 +687,7 @@ describe("GraphView", () => {
 
     await waitFor(() => expect(countNodes()).toBe(3));
 
-    await user.selectOptions(
-      screen.getByLabelText("Filtrar por sección"),
-      "lore",
-    );
+    await user.click(screen.getByRole("checkbox", { name: "lore" }));
 
     // Umbra is the only lore/ entity and it is an orphan (hidden by default),
     // so the section renders no nodes and shows the empty-section message.

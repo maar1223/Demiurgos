@@ -44,6 +44,12 @@ import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Toast } from "@/components/atoms/Toast";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
+import { GraphControlsSidebar } from "@/components/organisms/GraphControlsSidebar";
+import {
+  buildFolderTree,
+  filterEntitiesByFolders,
+  type FolderNode,
+} from "@/lib/graphFilters";
 import { cn } from "@/lib/utils";
 
 /** Node key: canonical id when present, path fallback for legacy entities. */
@@ -79,8 +85,6 @@ const NODE_MIN_WIDTH = 140;
 const NODE_MIN_HEIGHT = 36;
 /** Synchronous settle budget; enough for ~52-node worlds. */
 const SETTLE_TICKS = 300;
-/** Sentinel value for the folder filter dropdown: show every folder. */
-const FOLDER_ALL = "all";
 
 /**
  * Layout area side length scales with node count (sqrt(N) * spacing) so the
@@ -275,10 +279,11 @@ interface GraphViewProps {
  *   "Mostrar nodos aislados" toggle reveals them.
  * - Node click navigates to the entity ficha route.
  * - Node search input (debounced) centers a matching node in the viewport.
- * - Folder filter dropdown (client-side) hides nodes whose section prefix
- *   does not match the selected folder; edges touching hidden nodes vanish.
- * - Zoom/pan come from React Flow; referencias content is never included
- *   (backend _SCAN_SECTIONS excludes it — FR2.13 note below the filter bar).
+ * - All graph controls (search, status, folder tree, orphans toggle, fitView)
+ *   live in the left GraphControlsSidebar. The folder tree is a hierarchical
+ *   multi-select that hides nodes outside the selected folders (prefix union);
+ *   edges touching hidden nodes vanish.
+ * - Zoom/pan come from React Flow.
  */
 export default function GraphView({ mundo }: GraphViewProps) {
   const navigate = useNavigate();
@@ -289,9 +294,9 @@ export default function GraphView({ mundo }: GraphViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Folder filter (client-side): section prefixes derived from loaded
-  // entities ("personajes/Rhyz.md" → "personajes"). "all" shows every folder.
-  const [folder, setFolder] = useState<string>(FOLDER_ALL);
+  // Folder filter (client-side): hierarchical multi-select over entity
+  // folder paths. An empty selection shows every folder.
+  const [selectedFolders, setSelectedFolders] = useState<string[]>([]);
 
   // Pending gated write: a connection proposal awaiting author confirmation.
   // `pendingConnection` is set by onConnect (drag/click-to-connect),
@@ -341,27 +346,33 @@ export default function GraphView({ mundo }: GraphViewProps) {
     void load();
   }, [load]);
 
-  // Unique section prefixes ("folder") from the loaded entities. Sorted so
-  // the dropdown order is deterministic regardless of fetch order.
-  const folders = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          entities
-            .map((e) => e.path.split("/")[0].trim())
-            .filter((folderName) => folderName.length > 0),
-        ),
-      ).sort(),
-    [entities],
+  // Hierarchical folder tree derived from the loaded entity paths (folders
+  // only, arbitrary depth). Rebuilt whenever the entity set changes.
+  const folderTree = useMemo(() => buildFolderTree(entities), [entities]);
+
+  // Entities inside the selected folders (prefix union). An empty selection
+  // keeps every entity visible.
+  const visibleEntities = useMemo(
+    () => filterEntitiesByFolders(entities, selectedFolders),
+    [entities, selectedFolders],
   );
 
-  // When the loaded entity set no longer contains the selected folder (status
-  // re-fetch, mundo switch, empty result), fall back to "all" so the dropdown
-  // value never points at an option that vanished.
+  // When the loaded entity set no longer contains a selected folder (status
+  // re-fetch, mundo switch, empty result), prune it so the tree never shows
+  // a selection pointing at a folder that vanished.
   useEffect(() => {
-    if (folder === FOLDER_ALL) return;
-    if (!folders.includes(folder)) setFolder(FOLDER_ALL);
-  }, [folders, folder]);
+    if (selectedFolders.length === 0) return;
+    const existing = new Set<string>();
+    const collect = (nodes: FolderNode[]): void => {
+      for (const node of nodes) {
+        existing.add(node.path);
+        collect(node.children);
+      }
+    };
+    collect(folderTree);
+    const next = selectedFolders.filter((path) => existing.has(path));
+    if (next.length !== selectedFolders.length) setSelectedFolders(next);
+  }, [folderTree, selectedFolders]);
 
   // Auto-clear the feedback toast (mirrors WikiEditor/IdeasWorkshop).
   useEffect(() => {
@@ -410,18 +421,14 @@ export default function GraphView({ mundo }: GraphViewProps) {
   // changes.
   useEffect(() => {
     if (loading || error) return;
-    if (entities.length === 0) {
+    if (visibleEntities.length === 0) {
       setNodes([]);
       return;
     }
-    // Folder filter first: entities outside the selected folder never
+    // Folder filter first: entities outside the selected folders never
     // participate — not in the layout, the node set, or the orphan pass.
-    const inFolder =
-      folder === FOLDER_ALL
-        ? entities
-        : entities.filter((e) => e.path.split("/")[0] === folder);
     const orphanKeys = new Set(
-      inFolder
+      visibleEntities
         .filter(
           (e) => e.forward_links.length === 0 && e.backlinks.length === 0,
         )
@@ -429,8 +436,8 @@ export default function GraphView({ mundo }: GraphViewProps) {
     );
     // Orphans hidden by default (W12); the toggle reveals them.
     const visible = showOrphans
-      ? inFolder
-      : inFolder.filter((e) => !orphanKeys.has(nodeKey(e)));
+      ? visibleEntities
+      : visibleEntities.filter((e) => !orphanKeys.has(nodeKey(e)));
 
     const size = computeLayoutSize(visible.length);
     const positions = computeForcePositions(visible, links, size);
@@ -455,10 +462,9 @@ export default function GraphView({ mundo }: GraphViewProps) {
     setNodes(nextNodes);
     requestAnimationFrame(() => rf.current?.fitView({ padding: 0.2 }));
   }, [
-    entities,
+    visibleEntities,
     links,
     showOrphans,
-    folder,
     loading,
     error,
     setNodes,
@@ -648,166 +654,77 @@ export default function GraphView({ mundo }: GraphViewProps) {
   );
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-4">
-        {/* Node search: debounced searchEntities with a results dropdown. */}
-        <div className="relative">
-          <label className="flex items-center gap-2 text-small text-muted">
-            <span>Buscar</span>
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-              placeholder="Nombre o id del nodo…"
-              aria-label="Buscar nodo"
-              className="w-44 rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary placeholder:text-muted focus:border-action focus:outline-none"
-            />
-          </label>
+    <div className="flex h-full flex-col gap-3 md:flex-row">
+      <GraphControlsSidebar
+        status={status}
+        onStatusChange={setStatus}
+        selectedFolders={selectedFolders}
+        onSelectedFoldersChange={setSelectedFolders}
+        showOrphans={showOrphans}
+        onShowOrphansChange={setShowOrphans}
+        searchQuery={searchQuery}
+        onSearchQueryChange={setSearchQuery}
+        searchResults={searchResults}
+        searching={searching}
+        searchError={searchError}
+        onSelectResult={handleSelectResult}
+        folderTree={folderTree}
+        onFitView={() => rf.current?.fitView()}
+      />
 
-          {searchQuery.trim().length > 0 && (
-            <div
-              role="listbox"
-              aria-label="Resultados de búsqueda"
-              className="absolute left-0 top-full z-10 mt-1 max-h-64 w-64 overflow-y-auto rounded-md border border-edge bg-surface-raised shadow-lg"
-            >
-              {searchError && (
-                <p className="px-3 py-2 text-xs text-status-error">
-                  {searchError}
-                </p>
-              )}
-              {!searchError && !searching && searchResults.length === 0 && (
-                <p className="px-3 py-2 text-xs text-muted">
-                  Sin resultados
-                </p>
-              )}
-              {searchResults.map((result) => (
-                <button
-                  key={result.path}
-                  type="button"
-                  role="option"
-                  onClick={() => handleSelectResult(result)}
-                  className="flex w-full items-center gap-2 border-b border-edge/50 px-3 py-2 text-left text-small text-primary transition-colors last:border-b-0 hover:bg-surface-hover"
-                >
-                  <span className="truncate font-medium">{result.name}</span>
-                  {result.type && (
-                    <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 text-xs text-muted">
-                      {result.type}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+      <main className="min-w-0 flex-1">
+        {loading && (
+          <div className="flex items-center justify-center py-24">
+            <Spinner size="lg" />
+          </div>
+        )}
 
-        <label className="flex items-center gap-2 text-small text-muted">
-          <span>Estado</span>
-          <select
-            aria-label="Filtrar por estado"
-            value={status}
-            onChange={(event) =>
-              setStatus(event.target.value as GraphStatusFilter)
-            }
-            className="rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary"
-          >
-            <option value="all">Todos los estados</option>
-            <option value="draft">Borrador</option>
-            <option value="stable">Canon</option>
-          </select>
-        </label>
+        {error && !loading && (
+          <ErrorBanner message={error} onRetry={() => void load()} />
+        )}
 
-        <label className="flex items-center gap-2 text-small text-muted">
-          <span>Sección</span>
-          <select
-            aria-label="Filtrar por sección"
-            value={folder}
-            onChange={(event) => setFolder(event.target.value)}
-            className="rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary"
-          >
-            <option value={FOLDER_ALL}>Todas las secciones</option>
-            {folders.map((folderName) => (
-              <option key={folderName} value={folderName}>
-                {folderName}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="flex items-center gap-2 text-small text-muted">
-          <input
-            type="checkbox"
-            checked={showOrphans}
-            onChange={(event) => setShowOrphans(event.target.checked)}
+        {!loading && !error && entities.length === 0 && (
+          <EmptyState
+            icon="empty"
+            message="No hay entidades indexadas para este mundo."
           />
-          Mostrar nodos aislados
-        </label>
+        )}
 
-        <button
-          type="button"
-          onClick={() => rf.current?.fitView({ padding: 0.2 })}
-          className="rounded border border-edge bg-surface-raised px-3 py-1 text-small text-primary transition-colors hover:border-action"
-        >
-          Ver todo
-        </button>
-      </div>
+        {!loading && !error && entities.length > 0 && nodes.length === 0 && (
+          <EmptyState
+            icon="empty"
+            message="Esta sección no tiene nodos para mostrar."
+          />
+        )}
 
-      {/* Referencias-exclusion note (FR2.13) */}
-      <p className="text-xs text-muted">
-        El grafo no incluye contenido de Referencias
-      </p>
-
-      {loading && (
-        <div className="flex items-center justify-center py-24">
-          <Spinner size="lg" />
-        </div>
-      )}
-
-      {error && !loading && (
-        <ErrorBanner message={error} onRetry={() => void load()} />
-      )}
-
-      {!loading && !error && entities.length === 0 && (
-        <EmptyState
-          icon="empty"
-          message="No hay entidades indexadas para este mundo."
-        />
-      )}
-
-      {!loading && !error && entities.length > 0 && nodes.length === 0 && (
-        <EmptyState
-          icon="empty"
-          message="Esta sección no tiene nodos para mostrar."
-        />
-      )}
-
-      {!loading && !error && nodes.length > 0 && (
-        <div
-          className="min-h-[520px] h-[70vh] w-full rounded-xl border border-edge bg-surface"
-          data-testid="graph-view"
-        >
-          <ReactFlow
-            nodes={nodes}
-            edges={edges}
-            onNodesChange={onNodesChange}
-            nodeTypes={nodeTypes}
-            defaultEdgeOptions={{ type: "straight" }}
-            onNodeClick={handleNodeClick}
-            onNodeDragStop={handleNodeDragStop}
-            onConnect={handleConnect}
-            onEdgeClick={handleEdgeClick}
-            onInit={(inst) => {
-              rf.current = inst;
-            }}
-            fitView
-            fitViewOptions={{ padding: 0.2 }}
-            minZoom={0.2}
-            maxZoom={2}
+        {!loading && !error && nodes.length > 0 && (
+          <div
+            className="min-h-[520px] h-[70vh] w-full rounded-xl border border-edge bg-surface"
+            data-testid="graph-view"
           >
-            <Background />
-          </ReactFlow>
-        </div>
-      )}
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              nodeTypes={nodeTypes}
+              defaultEdgeOptions={{ type: "straight" }}
+              onNodeClick={handleNodeClick}
+              onNodeDragStop={handleNodeDragStop}
+              onConnect={handleConnect}
+              onEdgeClick={handleEdgeClick}
+              onInit={(inst) => {
+                rf.current = inst;
+              }}
+              fitView
+              fitViewOptions={{ padding: 0.2 }}
+              minZoom={0.2}
+              maxZoom={2}
+            >
+              <Background />
+            </ReactFlow>
+          </div>
+        )}
+      </main>
 
       {/* Gated write modal: the author reviews the pending connection change
           (create or break) before it is persisted. Cancel/overlay/Escape abort
