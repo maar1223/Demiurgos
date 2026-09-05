@@ -78,6 +78,7 @@ vi.mock("@/api/wiki", () => ({
   getMediaUrl: vi.fn((_mundo: string, path: string) => `/media/${path}`),
   moveNode: vi.fn(),
   duplicateFile: vi.fn(),
+  exportFichaDocx: vi.fn(),
   getFileContent: vi.fn(),
   createFile: vi.fn(),
   deleteFile: vi.fn(),
@@ -132,12 +133,14 @@ import {
   listHistory,
   moveNode,
   duplicateFile,
+  exportFichaDocx,
   getFileContent,
   createFile,
   deleteFile,
   setStatus,
   listTrash,
 } from "@/api/wiki";
+import { ApiError } from "@/api/types";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
@@ -183,6 +186,30 @@ function renderWikiEditor(initialEntries: string[] = ["/wiki/Vibrantes/lore"]) {
       </Routes>
     </MemoryRouter>,
   );
+}
+
+/** jsdom lacks URL.createObjectURL; define it for the blob-download path. */
+function stubObjectUrl() {
+  const createObjectURL = vi.fn(() => "blob:mock");
+  const revokeObjectURL = vi.fn();
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: createObjectURL,
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: revokeObjectURL,
+  });
+  return { createObjectURL, revokeObjectURL };
+}
+
+function unstubObjectUrl() {
+  const urlApi = URL as unknown as {
+    createObjectURL?: unknown;
+    revokeObjectURL?: unknown;
+  };
+  delete urlApi.createObjectURL;
+  delete urlApi.revokeObjectURL;
 }
 
 describe("WikiEditor", () => {
@@ -1930,6 +1957,79 @@ describe("WikiEditor", () => {
 
     expect(
       screen.getByRole("dialog", { name: /exportar ficha a pdf/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("file bar: ⋯ menu 'Exportar Ficha a DOCX' downloads the ficha blob", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    (exportFichaDocx as Mock).mockResolvedValue(
+      new Blob(["docx-bytes"], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    );
+    const { createObjectURL, revokeObjectURL } = stubObjectUrl();
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    // The ⋯ options dropdown lists the DOCX export as a sibling of the PDF
+    // item, before the destructive 'Eliminar Ficha' entry.
+    await user.click(screen.getByRole("button", { name: /opciones de ficha/i }));
+    const menu = screen.getByRole("menu", { name: /opciones de ficha/i });
+    expect(
+      within(menu).getByRole("menuitem", { name: "Exportar Ficha a DOCX" }),
+    ).toBeInTheDocument();
+
+    // Selecting it fetches the ficha through the export endpoint and drives
+    // the blob-download flow (createObjectURL → anchor click → revoke).
+    await user.click(
+      within(menu).getByRole("menuitem", { name: "Exportar Ficha a DOCX" }),
+    );
+
+    await waitFor(() => {
+      expect(exportFichaDocx).toHaveBeenCalledWith(
+        "Vibrantes",
+        "capitulos/cap1.md",
+      );
+    });
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalled();
+
+    unstubObjectUrl();
+  });
+
+  it("file bar: ⋯ menu DOCX export shows an error toast on fetch failure", async () => {
+    (useFileContent as Mock).mockReturnValue({
+      file: mockFileContent,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+    (exportFichaDocx as Mock).mockRejectedValue(
+      new ApiError(500, "Error interno del servidor", "pandoc not installed"),
+    );
+
+    const user = userEvent.setup();
+    renderWikiEditor(["/wiki/Vibrantes/lore/capitulos/cap1.md"]);
+
+    await user.click(screen.getByRole("button", { name: /opciones de ficha/i }));
+    await user.click(
+      within(screen.getByRole("menu", { name: /opciones de ficha/i })).getByRole(
+        "menuitem",
+        { name: "Exportar Ficha a DOCX" },
+      ),
+    );
+
+    // No file is downloaded — the failure surfaces as an error toast.
+    expect(
+      await screen.findByText(
+        "Error interno del servidor. Revisá los logs del backend.",
+      ),
     ).toBeInTheDocument();
   });
 

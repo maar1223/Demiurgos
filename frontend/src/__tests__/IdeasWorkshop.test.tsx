@@ -19,6 +19,7 @@ vi.mock("@/api/ideas", async (importOriginal) => {
     updateIdea: vi.fn(),
     deleteIdea: vi.fn(),
     materializeIdea: vi.fn(),
+    exportIdeaDocx: vi.fn(),
     listPendingCaptures: vi.fn(),
     confirmCapture: vi.fn(),
     discardCapture: vi.fn(),
@@ -62,6 +63,7 @@ const createIdeaMock = vi.mocked(ideasApi.createIdea);
 const updateIdeaMock = vi.mocked(ideasApi.updateIdea);
 const deleteIdeaMock = vi.mocked(ideasApi.deleteIdea);
 const materializeIdeaMock = vi.mocked(ideasApi.materializeIdea);
+const exportIdeaDocxMock = vi.mocked(ideasApi.exportIdeaDocx);
 const listPendingCapturesMock = vi.mocked(ideasApi.listPendingCaptures);
 const confirmCaptureMock = vi.mocked(ideasApi.confirmCapture);
 const discardCaptureMock = vi.mocked(ideasApi.discardCapture);
@@ -104,6 +106,30 @@ function renderPage() {
   );
 }
 
+/** jsdom lacks URL.createObjectURL; define it for the blob-download path. */
+function stubObjectUrl() {
+  const createObjectURL = vi.fn(() => "blob:mock");
+  const revokeObjectURL = vi.fn();
+  Object.defineProperty(URL, "createObjectURL", {
+    configurable: true,
+    value: createObjectURL,
+  });
+  Object.defineProperty(URL, "revokeObjectURL", {
+    configurable: true,
+    value: revokeObjectURL,
+  });
+  return { createObjectURL, revokeObjectURL };
+}
+
+function unstubObjectUrl() {
+  const urlApi = URL as unknown as {
+    createObjectURL?: unknown;
+    revokeObjectURL?: unknown;
+  };
+  delete urlApi.createObjectURL;
+  delete urlApi.revokeObjectURL;
+}
+
 describe("IdeasWorkshop", () => {
   beforeEach(() => {
     listIdeasMock.mockReset();
@@ -113,6 +139,7 @@ describe("IdeasWorkshop", () => {
     updateIdeaMock.mockReset();
     deleteIdeaMock.mockReset();
     materializeIdeaMock.mockReset();
+    exportIdeaDocxMock.mockReset();
     listPendingCapturesMock.mockReset();
     confirmCaptureMock.mockReset();
     discardCaptureMock.mockReset();
@@ -510,6 +537,63 @@ describe("IdeasWorkshop", () => {
     await waitFor(() =>
       expect(screen.queryByText(pendingCapture.raw_text)).not.toBeInTheDocument(),
     );
+  });
+
+  it("detail header: PDF + DOCX buttons render and DOCX downloads the idea blob", async () => {
+    listIdeasMock.mockResolvedValue({ ideas: [summary], total: 1 });
+    getIdeaMock.mockResolvedValue(detail);
+    exportIdeaDocxMock.mockResolvedValue(
+      new Blob(["docx-bytes"], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      }),
+    );
+    const { createObjectURL, revokeObjectURL } = stubObjectUrl();
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    // Detail header exposes both export buttons (Spanish voseo UI copy).
+    expect(
+      screen.getByRole("button", { name: "Exportar idea a PDF" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Exportar idea a DOCX" }),
+    ).toBeInTheDocument();
+
+    // DOCX fetches the idea through the export endpoint and drives the
+    // blob-download flow (createObjectURL → anchor click → revoke).
+    await user.click(screen.getByRole("button", { name: "Exportar idea a DOCX" }));
+
+    await waitFor(() => {
+      expect(exportIdeaDocxMock).toHaveBeenCalledWith("arquero-ciego");
+    });
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(revokeObjectURL).toHaveBeenCalled();
+
+    unstubObjectUrl();
+  });
+
+  it("detail header: PDF button opens the ExportPdfDialog (mundo='')", async () => {
+    listIdeasMock.mockResolvedValue({ ideas: [summary], total: 1 });
+    getIdeaMock.mockResolvedValue(detail);
+
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    await user.click(screen.getByRole("button", { name: "Exportar idea a PDF" }));
+
+    // The dialog renders with the idea body; mundo="" keeps the absolute
+    // /api/ideas/... image URLs untouched.
+    expect(
+      screen.getByRole("dialog", { name: /exportar ficha a pdf/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Un arquero que no ve.")).toBeInTheDocument();
   });
 });
 
