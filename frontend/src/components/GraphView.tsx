@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   forceCenter,
+  forceCollide,
   forceLink,
   forceManyBody,
   forceSimulation,
@@ -44,23 +45,85 @@ interface SimNode extends SimulationNodeDatum {
   id: string;
 }
 
-/** Force-layout canvas (matches the graph container's 480px height). */
-const LAYOUT_WIDTH = 800;
-const LAYOUT_HEIGHT = 480;
-/** Hard bounds for the layout and node dragging: nodes can never leave this
- *  region, so nothing can drift off into an infinite canvas. */
-const LAYOUT_BOUNDS: CoordinateExtent = [
-  [0, 0],
-  [LAYOUT_WIDTH, LAYOUT_HEIGHT],
-];
+/** Minimum layout area side; grows with node count so nodes never overlap. */
+const LAYOUT_MIN_SIZE = 400;
+/** Per-node target spacing used to size the layout area (no collision force). */
+const LAYOUT_NODE_SPACING = 180;
 /** Preferred link length in the settled layout. */
-const LINK_DISTANCE = 130;
+const LINK_DISTANCE = 160;
 /** Repulsive force between every node pair (negative = repel). */
-const CHARGE_STRENGTH = -300;
+const CHARGE_STRENGTH = -400;
 /** Strength pulling every node toward the center (limits group spread). */
-const CENTER_STRENGTH = 0.08;
+const CENTER_STRENGTH = 0.06;
+/** Collision radius keeping node centers apart so labels never overlap. */
+const NODE_COLLIDE_RADIUS = 75;
+/** Minimum distance a node center keeps from edges it is NOT connected to,
+ *  so a node never sits on another group's relations looking connected. */
+const EDGE_MIN_DISTANCE = 60;
+/** Fallback node size used when measured dimensions are unavailable. */
+const NODE_MIN_WIDTH = 140;
+const NODE_MIN_HEIGHT = 36;
 /** Synchronous settle budget; enough for ~52-node worlds. */
 const SETTLE_TICKS = 300;
+
+/**
+ * Layout area side length scales with node count (sqrt(N) * spacing) so the
+ * graph has room to spread nodes without overlapping — no collision force.
+ */
+function computeLayoutSize(nodeCount: number): number {
+  return Math.max(
+    LAYOUT_MIN_SIZE,
+    Math.sqrt(Math.max(1, nodeCount)) * LAYOUT_NODE_SPACING,
+  );
+}
+
+/**
+ * Custom d3-force: repels every node from edge SEGMENTS it is NOT connected
+ * to. Keeps a node from sitting on another group's relations, which visually
+ * reads as a connection that does not exist. Runs inside the settle ticks.
+ */
+function edgeAvoidanceForce(
+  simNodes: SimNode[],
+  simLinks: SimulationLinkDatum<SimNode>[],
+) {
+  return (alpha: number) => {
+    for (const node of simNodes) {
+      for (const link of simLinks) {
+        const sourceNode =
+          typeof link.source === "object" ? (link.source as SimNode) : undefined;
+        const targetNode =
+          typeof link.target === "object" ? (link.target as SimNode) : undefined;
+        if (!sourceNode || !targetNode) continue;
+        if (sourceNode.id === node.id || targetNode.id === node.id) continue;
+        const sx = sourceNode.x ?? 0;
+        const sy = sourceNode.y ?? 0;
+        const tx = targetNode.x ?? 0;
+        const ty = targetNode.y ?? 0;
+        const dx = tx - sx;
+        const dy = ty - sy;
+        const len2 = dx * dx + dy * dy;
+        let t = 0;
+        if (len2 > 0) {
+          t = Math.max(
+            0,
+            Math.min(
+              1,
+              (((node.x ?? 0) - sx) * dx + ((node.y ?? 0) - sy) * dy) / len2,
+            ),
+          );
+        }
+        const px = sx + t * dx;
+        const py = sy + t * dy;
+        const dist = Math.hypot((node.x ?? 0) - px, (node.y ?? 0) - py);
+        if (dist < EDGE_MIN_DISTANCE && dist > 0.0001) {
+          const force = ((EDGE_MIN_DISTANCE - dist) / dist) * alpha * 0.4;
+          node.vx = (node.vx ?? 0) + ((node.x ?? 0) - px) * force;
+          node.vy = (node.vy ?? 0) + ((node.y ?? 0) - py) * force;
+        }
+      }
+    }
+  };
+}
 
 /**
  * Force-directed layout via d3-force — replaces the deterministic grid.
@@ -74,7 +137,12 @@ const SETTLE_TICKS = 300;
 function computeForcePositions(
   entities: GraphEntity[],
   links: EntityLink[],
+  size: number,
 ): Map<string, { x: number; y: number }> {
+  const bounds: CoordinateExtent = [
+    [0, 0],
+    [size, size],
+  ];
   const nodeIds = new Set(entities.map(nodeKey));
   const simNodes: SimNode[] = entities.map((entity) => ({
     id: nodeKey(entity),
@@ -93,9 +161,16 @@ function computeForcePositions(
         .distance(LINK_DISTANCE),
     )
     .force("charge", forceManyBody<SimNode>().strength(CHARGE_STRENGTH))
-    .force("center", forceCenter<SimNode>(LAYOUT_WIDTH / 2, LAYOUT_HEIGHT / 2))
-    .force("x", forceX<SimNode>(LAYOUT_WIDTH / 2).strength(CENTER_STRENGTH))
-    .force("y", forceY<SimNode>(LAYOUT_HEIGHT / 2).strength(CENTER_STRENGTH))
+    .force("center", forceCenter<SimNode>(size / 2, size / 2))
+    .force("x", forceX<SimNode>(size / 2).strength(CENTER_STRENGTH))
+    .force("y", forceY<SimNode>(size / 2).strength(CENTER_STRENGTH))
+    .force(
+      "collide",
+      forceCollide<SimNode>()
+        .radius(NODE_COLLIDE_RADIUS)
+        .strength(0.8),
+    )
+    .force("edgeAvoid", edgeAvoidanceForce(simNodes, simLinks))
     .stop();
 
   simulation.tick(SETTLE_TICKS);
@@ -103,18 +178,19 @@ function computeForcePositions(
   const positions = new Map<string, { x: number; y: number }>();
   for (const node of simulation.nodes()) {
     // Clamp to the layout bounds so clusters never spread off-canvas.
-    const x = Math.min(Math.max(node.x ?? 0, LAYOUT_BOUNDS[0][0]), LAYOUT_BOUNDS[1][0]);
-    const y = Math.min(Math.max(node.y ?? 0, LAYOUT_BOUNDS[0][1]), LAYOUT_BOUNDS[1][1]);
+    const x = Math.min(Math.max(node.x ?? 0, bounds[0][0]), bounds[1][0]);
+    const y = Math.min(Math.max(node.y ?? 0, bounds[0][1]), bounds[1][1]);
     positions.set(node.id, { x, y });
   }
   return positions;
 }
 
 /** Solid-background node look keyed by status (chips keep translucent bg).
- *  Border colors match STATUS_META so node colors never drift from chips. */
+ *  Border colors match STATUS_META so node colors never drift from chips.
+ *  Text uses dark: variants: dark amber/emerald on light mode, light on dark. */
 const NODE_STATUS_CLASS: Record<FichaStatus, string> = {
-  draft: "border-amber-400/50 text-amber-200",
-  stable: "border-emerald-500/60 text-emerald-200",
+  draft: "border-amber-400/50 text-amber-700 dark:text-amber-200",
+  stable: "border-emerald-500/60 text-emerald-700 dark:text-emerald-200",
 };
 
 interface GraphNodeData extends Record<string, unknown> {
@@ -227,14 +303,19 @@ export default function GraphView({ mundo }: GraphViewProps) {
       ? entities
       : entities.filter((e) => !orphanKeys.has(nodeKey(e)));
 
-    const positions = computeForcePositions(visible, links);
+    const size = computeLayoutSize(visible.length);
+    const positions = computeForcePositions(visible, links, size);
+    const bounds: CoordinateExtent = [
+      [0, 0],
+      [size, size],
+    ];
 
     const nextNodes: GraphNodeType[] = visible.map((entity) => ({
       id: nodeKey(entity),
       type: "graph",
       position: positions.get(nodeKey(entity)) ?? { x: 0, y: 0 },
       data: { label: entity.name },
-      extent: LAYOUT_BOUNDS,
+      extent: bounds,
       className: cn(
         "rounded-lg border-2 px-3 py-2 text-xs font-medium bg-surface-raised",
         entity.status
@@ -247,15 +328,24 @@ export default function GraphView({ mundo }: GraphViewProps) {
   }, [entities, links, showOrphans, loading, error, setNodes]);
 
   // Edges derived from the current node set (read-only; follow dragged nodes).
+  // Mutual references (A→B and B→A) collapse into a single line per pair so
+  // one relationship never renders as two overlapping edges.
   const edges = useMemo(() => {
     const nodeIds = new Set(nodes.map((n) => n.id));
-    return links
-      .filter((link) => nodeIds.has(link.source) && nodeIds.has(link.target))
-      .map((link): Edge => ({
+    const seen = new Set<string>();
+    const result: Edge[] = [];
+    for (const link of links) {
+      if (!nodeIds.has(link.source) || !nodeIds.has(link.target)) continue;
+      const key = [link.source, link.target].sort().join("::");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push({
         id: `${link.source}->${link.target}`,
         source: link.source,
         target: link.target,
-      }));
+      });
+    }
+    return result;
   }, [nodes, links]);
 
   const handleNodeClick = useCallback(
@@ -269,6 +359,49 @@ export default function GraphView({ mundo }: GraphViewProps) {
       navigate(`/wiki/${encodeURIComponent(mundo)}/entity/${encoded}`);
     },
     [entities, mundo, navigate],
+  );
+
+  // After a drag ends, push the dropped node out of any overlap so nodes can
+  // never be left stacked on top of each other (extent bounds the canvas, but
+  // not node-vs-node collision).
+  const handleNodeDragStop = useCallback(
+    (_event: unknown, dragged: Node) => {
+      setNodes((current) => {
+        const dw = dragged.measured?.width ?? NODE_MIN_WIDTH;
+        const dh = dragged.measured?.height ?? NODE_MIN_HEIGHT;
+        let nx = dragged.position.x;
+        let ny = dragged.position.y;
+        for (const other of current) {
+          if (other.id === dragged.id) continue;
+          const ow = other.measured?.width ?? NODE_MIN_WIDTH;
+          const oh = other.measured?.height ?? NODE_MIN_HEIGHT;
+          const overlapX = Math.min(
+            nx + dw - other.position.x,
+            other.position.x + ow - nx,
+          );
+          const overlapY = Math.min(
+            ny + dh - other.position.y,
+            other.position.y + oh - ny,
+          );
+          if (overlapX > 0 && overlapY > 0) {
+            // Push out along the axis of least penetration.
+            if (overlapX < overlapY) {
+              nx = nx < other.position.x
+                ? other.position.x - dw
+                : other.position.x + ow;
+            } else {
+              ny = ny < other.position.y
+                ? other.position.y - dh
+                : other.position.y + oh;
+            }
+          }
+        }
+        return current.map((n) =>
+          n.id === dragged.id ? { ...n, position: { x: nx, y: ny } } : n,
+        );
+      });
+    },
+    [setNodes],
   );
 
   return (
@@ -333,7 +466,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
 
       {!loading && !error && nodes.length > 0 && (
         <div
-          className="h-[480px] w-full rounded-xl border border-edge bg-surface"
+          className="min-h-[520px] h-[70vh] w-full rounded-xl border border-edge bg-surface"
           data-testid="graph-view"
         >
           <ReactFlow
@@ -343,6 +476,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
             nodeTypes={nodeTypes}
             defaultEdgeOptions={{ type: "straight" }}
             onNodeClick={handleNodeClick}
+            onNodeDragStop={handleNodeDragStop}
             onInit={(inst) => {
               rf.current = inst;
             }}
