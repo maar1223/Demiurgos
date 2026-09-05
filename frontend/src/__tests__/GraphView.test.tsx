@@ -14,12 +14,16 @@ vi.mock("react-router-dom", async (importOriginal) => {
 
 vi.mock("@/api/graph", () => ({
   fetchGraphEntities: vi.fn(),
+  createRelation: vi.fn(),
+  breakRelation: vi.fn(),
 }));
 
-import { fetchGraphEntities } from "@/api/graph";
+import { breakRelation, createRelation, fetchGraphEntities } from "@/api/graph";
 import GraphView from "@/components/GraphView";
 
 const mockFetch = fetchGraphEntities as Mock;
+const mockCreateRelation = createRelation as Mock;
+const mockBreakRelation = breakRelation as Mock;
 
 /**
  * jsdom does not implement ResizeObserver; React Flow needs it on mount AND
@@ -151,11 +155,17 @@ describe("GraphView", () => {
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
     vi.stubGlobal("DOMMatrixReadOnly", DOMMatrixReadOnlyMock);
     vi.stubGlobal("DOMMatrix", DOMMatrixReadOnlyMock);
+    // jsdom lacks elementFromPoint; returning null makes React Flow's
+    // connection validation fall back to its handleDomNode querySelector.
+    document.elementFromPoint = () => null;
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    delete (
+      document as unknown as { elementFromPoint?: () => Element | null }
+    ).elementFromPoint;
   });
 
   it("renders nodes and edges from entities and links", async () => {
@@ -261,5 +271,162 @@ describe("GraphView", () => {
     expect(
       screen.getByText("El grafo no incluye contenido de Referencias"),
     ).toBeInTheDocument();
+  });
+
+  // ── Connection UI + gated write flow (graph-connections-editor PR2) ──
+
+  /** Connect Rhyz → Vael via React Flow click-to-connect: click the source
+   *  handle (bottom) of Rhyz, then the target handle (top) of Vael. */
+  async function connectRhyzToVael() {
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(countEdges()).toBe(2));
+    fireEvent.click(
+      document.querySelector(
+        '.react-flow__handle[data-nodeid="Stal::Rhyz"][data-handlepos="bottom"]',
+      ) as Element,
+    );
+    fireEvent.click(
+      document.querySelector(
+        '.react-flow__handle[data-nodeid="Stal::Vael"][data-handlepos="top"]',
+      ) as Element,
+    );
+  }
+
+  it("opens the create-connection modal when a connection is made", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await connectRhyzToVael();
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent('Conectar "Rhyz" con "Vael"');
+    // A connect start on a handle must never navigate to the ficha.
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("confirming the create modal calls createRelation and reloads the graph", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    mockCreateRelation.mockResolvedValue({
+      success: true,
+      path: "personajes/Rhyz.md",
+      action: "create",
+      target_id: "Stal::Vael",
+    });
+    renderGraphView();
+
+    await connectRhyzToVael();
+    await screen.findByRole("dialog");
+
+    await user.click(screen.getByRole("button", { name: "Crear" }));
+
+    await waitFor(() =>
+      expect(mockCreateRelation).toHaveBeenCalledWith(
+        "vibrantes",
+        "personajes/Rhyz.md",
+        "Stal::Vael",
+      ),
+    );
+    // Initial fetch + post-write re-fetch (load()).
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("opens the break-connection modal when an edge is clicked", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(countEdges()).toBe(2));
+
+    fireEvent.click(
+      document.querySelector(
+        '[data-testid="rf__edge-Stal::Rhyz->Stal::Vael"]',
+      ) as Element,
+    );
+
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent(
+      'Romper la conexión entre "Rhyz" y "Vael"',
+    );
+  });
+
+  it("confirming the break modal calls breakRelation and reloads the graph", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    mockBreakRelation.mockResolvedValue({
+      success: true,
+      path: "personajes/Rhyz.md",
+      action: "break",
+      target_id: "Stal::Vael",
+    });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(countEdges()).toBe(2));
+
+    fireEvent.click(
+      document.querySelector(
+        '[data-testid="rf__edge-Stal::Rhyz->Stal::Vael"]',
+      ) as Element,
+    );
+    await screen.findByRole("dialog");
+
+    await user.click(screen.getByRole("button", { name: "Romper" }));
+
+    await waitFor(() =>
+      expect(mockBreakRelation).toHaveBeenCalledWith(
+        "vibrantes",
+        "personajes/Rhyz.md",
+        "Stal::Vael",
+      ),
+    );
+    await waitFor(() => expect(mockFetch).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("cancelling the modal closes it without any API call", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await connectRhyzToVael();
+    await screen.findByRole("dialog");
+
+    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(mockCreateRelation).not.toHaveBeenCalled();
+    expect(mockBreakRelation).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an error toast and keeps the modal open when the write fails", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    mockCreateRelation.mockRejectedValue(new Error("La relación ya existe"));
+    renderGraphView();
+
+    await connectRhyzToVael();
+    await screen.findByRole("dialog");
+
+    await user.click(screen.getByRole("button", { name: "Crear" }));
+
+    // Error toast (role="status") surfaces the failure…
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "La relación ya existe",
+      ),
+    );
+    // …and the modal stays open so the author can retry or cancel.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(mockCreateRelation).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(1); // no reload on failure
   });
 });

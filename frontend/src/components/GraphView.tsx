@@ -17,6 +17,7 @@ import {
   Position,
   ReactFlow,
   useNodesState,
+  type Connection,
   type CoordinateExtent,
   type Edge,
   type Node,
@@ -25,11 +26,18 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { fetchGraphEntities, type GraphStatusFilter } from "@/api/graph";
+import {
+  breakRelation,
+  createRelation,
+  fetchGraphEntities,
+  type GraphStatusFilter,
+} from "@/api/graph";
 import type { EntityLink, FichaStatus, GraphEntity } from "@/api/types";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
+import { Toast } from "@/components/atoms/Toast";
+import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { cn } from "@/lib/utils";
 
 /** Node key: canonical id when present, path fallback for legacy entities. */
@@ -197,32 +205,46 @@ interface GraphNodeData extends Record<string, unknown> {
   label: string;
 }
 
-/** Custom node type: centered source/target handles so edges meet at the
- *  node center (Obsidian-style) instead of fanning from top/bottom edges. */
+/**
+ * A connection write awaiting author confirmation in the modal. `kind`
+ * selects the endpoint action; `sourcePath`/`targetId` are exactly what the
+ * backend relation endpoint expects (mundo-relative ficha path + canonical id).
+ */
+interface PendingRelation {
+  kind: "create" | "break";
+  sourcePath: string;
+  sourceLabel: string;
+  targetId: string;
+  targetLabel: string;
+}
+
+/**
+ * Custom node type with invisible connection handles: the target handle sits
+ * at the top edge and the source handle at the bottom edge, so drag-to-connect
+ * and click-to-connect work while the graph keeps its current look (edge
+ * anchors are computed from the handle `position` prop, so they still meet the
+ * node at top/bottom center). `opacity: 0` hides the handles; pointer events
+ * stay enabled so connections can actually be started on them.
+ */
 type GraphNodeType = Node<GraphNodeData, "graph">;
 
+const handleStyle = { opacity: 0 } as const;
+
 function GraphNode({ data }: NodeProps<GraphNodeType>) {
-  const centerHandleStyle = {
-    left: "50%",
-    top: "50%",
-    transform: "translate(-50%, -50%)",
-    opacity: 0,
-    pointerEvents: "none",
-  } as const;
   return (
     <div className="relative">
       <Handle
         type="target"
         position={Position.Top}
-        style={centerHandleStyle}
-        isConnectable={false}
+        style={handleStyle}
+        isConnectable={true}
       />
       <span>{data.label}</span>
       <Handle
         type="source"
         position={Position.Bottom}
-        style={centerHandleStyle}
-        isConnectable={false}
+        style={handleStyle}
+        isConnectable={true}
       />
     </div>
   );
@@ -256,6 +278,21 @@ export default function GraphView({ mundo }: GraphViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Pending gated write: a connection proposal awaiting author confirmation.
+  // `pendingConnection` is set by onConnect (drag/click-to-connect),
+  // `pendingBreak` by onEdgeClick. Only one is ever non-null at a time; the
+  // confirmation modal is the governance gate before any write reaches disk.
+  const [pendingConnection, setPendingConnection] =
+    useState<PendingRelation | null>(null);
+  const [pendingBreak, setPendingBreak] =
+    useState<PendingRelation | null>(null);
+  const [modalBusy, setModalBusy] = useState(false);
+  const [modalError, setModalError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    kind: "success" | "error";
+  } | null>(null);
+
   // Draggable node state. Nodes are seeded from the settled force layout and
   // updated by onNodesChange on drag; they are re-seeded only when the
   // dataset (filter/orphans) changes.
@@ -281,6 +318,13 @@ export default function GraphView({ mundo }: GraphViewProps) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Auto-clear the feedback toast (mirrors WikiEditor/IdeasWorkshop).
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   // Build the settled force layout and (re)seed the draggable node state
   // whenever the dataset changes (filter/orphans). Dragging a node updates
@@ -350,6 +394,9 @@ export default function GraphView({ mundo }: GraphViewProps) {
 
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
+      // A click starting on a connection handle is click-to-connect, not
+      // navigation — never route the author to the ficha from a handle.
+      if ((_event.target as HTMLElement).closest(".react-flow__handle")) return;
       const entity = entities.find((e) => nodeKey(e) === node.id);
       if (!entity) return;
       const encoded = entity.path
@@ -360,6 +407,93 @@ export default function GraphView({ mundo }: GraphViewProps) {
     },
     [entities, mundo, navigate],
   );
+
+  /** Resolve the two entities behind a proposed connection. The node ids are
+   *  nodeKey(entity) (canonical id, path fallback), so both endpoints resolve
+   *  back to GraphEntities. */
+  const resolveEndpoints = useCallback(
+    (sourceId: string, targetId: string) => {
+      const source = entities.find((e) => nodeKey(e) === sourceId);
+      const target = entities.find((e) => nodeKey(e) === targetId);
+      if (!source || !target || !target.id) return null;
+      return { source, target };
+    },
+    [entities],
+  );
+
+  /** onConnect — the author dragged (or click-connected) node-to-node:
+   *  stage the create proposal and open the confirmation gate. */
+  const handleConnect = useCallback(
+    (connection: Connection) => {
+      const resolved = resolveEndpoints(
+        connection.source,
+        connection.target,
+      );
+      if (!resolved) return;
+      const { source, target } = resolved;
+      setPendingConnection({
+        kind: "create",
+        sourcePath: source.path,
+        sourceLabel: source.name,
+        targetId: target.id,
+        targetLabel: target.name,
+      });
+    },
+    [resolveEndpoints],
+  );
+
+  /** onEdgeClick — the author clicked an existing edge: stage the break
+   *  proposal for the source ficha and open the confirmation gate. */
+  const handleEdgeClick = useCallback(
+    (_event: React.MouseEvent, edge: Edge) => {
+      const resolved = resolveEndpoints(edge.source, edge.target);
+      if (!resolved) return;
+      const { source, target } = resolved;
+      setPendingBreak({
+        kind: "break",
+        sourcePath: source.path,
+        sourceLabel: source.name,
+        targetId: target.id,
+        targetLabel: target.name,
+      });
+    },
+    [resolveEndpoints],
+  );
+
+  const closeModal = useCallback(() => {
+    setPendingConnection(null);
+    setPendingBreak(null);
+    setModalError(null);
+  }, []);
+
+  /** Modal confirm — the governance gate: only now does the write hit the
+   *  backend (create or break). On success re-fetch the graph so the new/
+   *  removed edge renders; on failure keep the modal open and toast the error. */
+  const handleConfirm = useCallback(async () => {
+    const pending = pendingConnection ?? pendingBreak;
+    if (!pending) return;
+    setModalBusy(true);
+    setModalError(null);
+    try {
+      if (pending.kind === "create") {
+        await createRelation(mundo, pending.sourcePath, pending.targetId);
+      } else {
+        await breakRelation(mundo, pending.sourcePath, pending.targetId);
+      }
+      closeModal();
+      await load();
+      setToast({ message: "Conexión actualizada", kind: "success" });
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "No se pudo actualizar la conexión";
+      setModalError(message);
+      setToast({ message, kind: "error" });
+    } finally {
+      setModalBusy(false);
+    }
+  }, [pendingConnection, pendingBreak, mundo, load, closeModal]);
 
   // After a drag ends, push the dropped node out of any overlap so nodes can
   // never be left stacked on top of each other (extent bounds the canvas, but
@@ -477,6 +611,8 @@ export default function GraphView({ mundo }: GraphViewProps) {
             defaultEdgeOptions={{ type: "straight" }}
             onNodeClick={handleNodeClick}
             onNodeDragStop={handleNodeDragStop}
+            onConnect={handleConnect}
+            onEdgeClick={handleEdgeClick}
             onInit={(inst) => {
               rf.current = inst;
             }}
@@ -489,6 +625,27 @@ export default function GraphView({ mundo }: GraphViewProps) {
           </ReactFlow>
         </div>
       )}
+
+      {/* Gated write modal: the author reviews the pending connection change
+          (create or break) before it is persisted. Cancel/overlay/Escape abort
+          with no API call — the write only happens on explicit confirm. */}
+      {(pendingConnection || pendingBreak) && (
+        <ConfirmDialog
+          title={pendingConnection ? "Crear conexión" : "Romper conexión"}
+          message={
+            pendingConnection
+              ? `Conectar "${pendingConnection.sourceLabel}" con "${pendingConnection.targetLabel}"?`
+              : `Romper la conexión entre "${pendingBreak!.sourceLabel}" y "${pendingBreak!.targetLabel}"?`
+          }
+          confirmLabel={pendingConnection ? "Crear" : "Romper"}
+          isBusy={modalBusy}
+          error={modalError}
+          onConfirm={() => void handleConfirm()}
+          onClose={closeModal}
+        />
+      )}
+
+      {toast && <Toast message={toast.message} kind={toast.kind} />}
     </div>
   );
 }

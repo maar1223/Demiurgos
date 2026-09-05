@@ -3,6 +3,7 @@ import type {
   EntityLink,
   GraphEntity,
   GraphStatus,
+  RelationResponse,
   SearchResult,
 } from "@/api/types";
 import { API_BASE_URL } from "@/lib/constants";
@@ -101,4 +102,52 @@ export async function fetchGraphEntities(
   return apiFetch<{ entities: GraphEntity[]; links: EntityLink[] }>(
     apiUrl(["api", mundo, "graph", "entities"], { status }),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Relations (BLOQUE 4 — crear/romper conexiones del grafo)
+// ---------------------------------------------------------------------------
+
+/**
+ * Shared POST /api/{mundo}/graph/relation — rewrites the source ficha's
+ * frontmatter `relaciones:` list (create/break a canonical-id entry).
+ */
+async function setRelation(
+  mundo: string,
+  action: "create" | "break",
+  sourcePath: string,
+  targetId: string,
+): Promise<RelationResponse> {
+  return apiFetch<RelationResponse>(
+    apiUrl(["api", mundo, "graph", "relation"]),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        action,
+        source_path: sourcePath,
+        target_id: targetId,
+      }),
+    },
+  );
+}
+
+/** POST /api/{mundo}/graph/relation {action: "create"} — add a connection
+ *  from the source ficha (sourcePath) to the target entity (targetId). */
+export async function createRelation(
+  mundo: string,
+  sourcePath: string,
+  targetId: string,
+): Promise<RelationResponse> {
+  return setRelation(mundo, "create", sourcePath, targetId);
+}
+
+/** POST /api/{mundo}/graph/relation {action: "break"} — remove the
+ *  connection from the source ficha (sourcePath) to the target entity
+ *  (targetId). */
+export async function breakRelation(
+  mundo: string,
+  sourcePath: string,
+  targetId: string,
+): Promise<RelationResponse> {
+  return setRelation(mundo, "break", sourcePath, targetId);
 }

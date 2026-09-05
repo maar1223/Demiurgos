@@ -1429,6 +1429,19 @@ export interface GraphStatus {
   indexed: boolean;
 }
 
+/**
+ * Result of POST /api/{mundo}/graph/relation — a create/break write to the
+ * source ficha's frontmatter `relaciones:` list, anchored by the target's
+ * canonical id. `action` echoes the requested operation; `path` is the
+ * normalized mundo-relative source ficha path.
+ */
+export interface RelationResponse {
+  success: boolean;
+  path: string;
+  action: "create" | "break";
+  target_id: string;
+}
+
 // ---------------------------------------------------------------------------
 // Media / Images
 // ---------------------------------------------------------------------------
