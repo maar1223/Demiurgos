@@ -53,12 +53,14 @@ import {
   createFileConfirmed,
   deleteFile,
   duplicateFile,
+  exportFichaDocx,
   getFileContent,
   moveNode,
   saveFile,
   saveFileConfirmed,
   setStatus,
 } from "@/api/wiki";
+import { downloadBlob } from "@/lib/downloadBlob";
 import type {
   ApiError,
   EditProposal,
@@ -865,6 +867,29 @@ export default function WikiEditor() {
     [mundo, section, filePath, retryContent],
   );
 
+  /**
+   * "Exportar Ficha a DOCX" (⋯ menu): fetch the open ficha through the DOCX
+   * export endpoint and download the returned blob. The filename mirrors the
+   * backend (`{basename}.docx` — the .md extension is swapped for .docx).
+   * Unresolvable images are substituted server-side with the
+   * `[imagen no disponible]` placeholder — no client-side logic needed.
+   * Failures surface as an error toast (no file is downloaded).
+   */
+  const handleExportFichaDocx = useCallback(async () => {
+    if (!mundo || !filePath || !file) return;
+    try {
+      const blob = await exportFichaDocx(mundo, filePath);
+      const basename = filePath.split("/").pop() ?? "ficha";
+      downloadBlob(blob, `${basename.replace(/\.md$/i, "")}.docx`);
+    } catch (err) {
+      const apiError = err as ApiError;
+      setToast({
+        message: getErrorMessage(apiError.status, apiError.detail),
+        kind: "error",
+      });
+    }
+  }, [mundo, filePath, file]);
+
   // Toggle edit mode — exiting resets preview and transient state
   const handleToggleEdit = useCallback(() => {
     if (isEditing) {
@@ -1242,6 +1267,20 @@ export default function WikiEditor() {
                     <span className="flex items-center gap-2">
                       <Icon name="file" size={14} className="shrink-0 text-muted" />
                       Exportar Ficha a PDF
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      void handleExportFichaDocx();
+                      setOptionsOpen(false);
+                    }}
+                    className="block w-full px-3 py-2 text-left text-small text-primary transition-colors hover:bg-surface-hover hover:text-action focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-action/50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <Icon name="file" size={14} className="shrink-0 text-muted" />
+                      Exportar Ficha a DOCX
                     </span>
                   </button>
                   <button

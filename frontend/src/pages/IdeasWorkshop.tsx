@@ -4,15 +4,18 @@ import { EditorLayout } from "@/components/templates/EditorLayout";
 import { TabBar, type SidebarTab } from "@/components/molecules/TabBar";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
+import { ExportPdfDialog } from "@/components/organisms/ExportPdfDialog";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useWorlds } from "@/hooks/useWorlds";
+import { downloadBlob } from "@/lib/downloadBlob";
 import {
   attachIdeaMedia,
   confirmCapture,
   createIdea,
   deleteIdea,
   discardCapture,
+  exportIdeaDocx,
   getIdea,
   getIdeaVersions,
   listIdeas,
@@ -353,6 +356,34 @@ export default function IdeasWorkshop() {
       setSavingTitle(false);
     }
   }, [selectedSlug, editTitle, selectedIdea?.title, mutateDetail, mutateList, mutateVersions, notifyError, showToast]);
+
+  // ── Export (PDF / DOCX) ──────────────────────────────────────────────────
+  /** "PDF" target — opens ExportPdfDialog with the idea body. `mundo=""` by
+   *  design: the idea's absolute /api/ideas/... image URLs pass through
+   *  MarkdownImage untouched. */
+  const [pdfTarget, setPdfTarget] = useState<{
+    content: string;
+    fileName: string;
+  } | null>(null);
+
+  const handleExportIdeaPdf = useCallback(() => {
+    if (!selectedIdea) return;
+    setPdfTarget({ content: selectedIdea.body, fileName: selectedIdea.slug });
+  }, [selectedIdea]);
+
+  /** "DOCX" — fetch the idea through the export endpoint and download the
+   *  returned blob ({slug}.docx, mirroring the backend filename). Failures
+   *  surface as the inline action error; no file is downloaded. */
+  const handleExportIdeaDocx = useCallback(async () => {
+    if (!selectedSlug) return;
+    setActionError(null);
+    try {
+      const blob = await exportIdeaDocx(selectedSlug);
+      downloadBlob(blob, `${selectedSlug}.docx`);
+    } catch (err) {
+      notifyError(err);
+    }
+  }, [selectedSlug, notifyError]);
 
   // ── Attach image ("adjuntar imagen", POST /api/ideas/{slug}/media) ─────
   const [attachingMedia, setAttachingMedia] = useState(false);
@@ -780,6 +811,30 @@ export default function IdeasWorkshop() {
               <span className="rounded-full bg-surface-raised px-2.5 py-0.5 text-xs text-muted">
                 {STATUS_LABELS[selectedIdea.status]}
               </span>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleExportIdeaPdf}
+                  aria-label="Exportar idea a PDF"
+                  className="rounded-md border border-edge bg-surface px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action"
+                >
+                  <span className="flex items-center gap-1">
+                    <Icon name="file" size={12} />
+                    PDF
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleExportIdeaDocx()}
+                  aria-label="Exportar idea a DOCX"
+                  className="rounded-md border border-edge bg-surface px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action"
+                >
+                  <span className="flex items-center gap-1">
+                    <Icon name="file" size={12} />
+                    DOCX
+                  </span>
+                </button>
+              </div>
             </div>
             <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
               <div>
@@ -1087,6 +1142,19 @@ export default function IdeasWorkshop() {
         </div>
       )}
       {main}
+
+      {/* Export to PDF dialog — opened from the detail header "PDF" button.
+          mundo="" keeps the idea's absolute /api/ideas/... image URLs
+          untouched (MarkdownImage passes them through unchanged). */}
+      {pdfTarget && (
+        <ExportPdfDialog
+          open={!!pdfTarget}
+          onClose={() => setPdfTarget(null)}
+          content={pdfTarget.content}
+          fileName={pdfTarget.fileName}
+          mundo=""
+        />
+      )}
     </EditorLayout>
   );
 }
