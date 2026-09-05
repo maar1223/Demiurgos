@@ -13,6 +13,7 @@ import re
 import secrets
 import shutil
 import sys
+import tempfile
 import threading
 import uuid
 from contextlib import asynccontextmanager
@@ -36,6 +37,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
+from starlette.background import BackgroundTask
 
 from PIL import Image
 
@@ -6582,6 +6584,8 @@ async def ai_edit_suggest(mundo: str, body: dict, request: Request):
 
 from idea_capture_ui import create_idea_capture_router  # noqa: E402
 from ideas_bank_router import create_ideas_bank_router  # noqa: E402
+from docx_export import _convert_markdown_to_docx, _strip_frontmatter  # noqa: E402
+from ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
 from assistant_settings import create_assistant_settings_router  # noqa: E402
 from telegram_settings import create_telegram_settings_router  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
@@ -6685,6 +6689,157 @@ app.include_router(
         require_principal=lambda request: _resolve_principal(request),
     ),
 )
+
+# ---------------------------------------------------------------------------
+# DOCX export endpoints (ficha-export-pdf-docx, backend slice)
+#
+# Server-side markdown -> .docx via pandoc (see docx_export.py). The ficha
+# export reuses the traversal-protected media resolver for embedded images;
+# the idea export rewrites the absolute ``/api/ideas/media/...`` URLs that the
+# idea embed uses back to disk paths under the ideas media store.
+# ---------------------------------------------------------------------------
+
+DOCX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
+
+
+def _unlink_quiet(path: str) -> None:
+    """Best-effort temp-file cleanup after the response is sent."""
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _docx_file_response(data: bytes, filename: str) -> FileResponse:
+    """Serve in-memory DOCX bytes as an attachment FileResponse.
+
+    pandoc produces bytes in memory, but FileResponse needs a real path, so
+    the bytes are spilled to a temp file that is unlinked once the response
+    has been sent.
+    """
+    fd, tmp_path = tempfile.mkstemp(suffix=".docx")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+    return FileResponse(
+        tmp_path,
+        media_type=DOCX_MEDIA_TYPE,
+        filename=filename,
+        background=BackgroundTask(_unlink_quiet, tmp_path),
+    )
+
+
+def _resolve_idea_media(src: str, media_dir: Path) -> Path | None:
+    """Resolve an absolute ``/api/ideas/media/{filename}`` URL to a disk path.
+
+    Mirrors the traversal protections of the ideas media route: the filename
+    must be a bare name (no separators, no ``..``) and the resolved file must
+    stay inside ``<ideas_root>/media``. Missing files resolve to None so the
+    conversion emits the ``[imagen no disponible]`` placeholder.
+    """
+    prefix = "/api/ideas/media/"
+    if not src.startswith(prefix):
+        return None
+    filename = src[len(prefix):]
+    if not filename or "/" in filename or "\\" in filename or ".." in filename:
+        return None
+    try:
+        full = (media_dir / filename).resolve()
+    except (OSError, ValueError):
+        return None
+    if full.parent != media_dir.resolve():
+        return None
+    return full if full.is_file() else None
+
+
+def _resolve_media_for_export(mundo: str, src: str) -> Path | None:
+    """Resolve a ficha image for DOCX embedding — existing files only.
+
+    ``_resolve_media_path`` returns structurally valid paths even when the
+    file is missing (so the media endpoint can 404 vs 400). pandoc cannot
+    embed a missing file, so the export resolver requires the file to exist
+    and maps missing files to None, which degrades the image to the
+    ``[imagen no disponible]`` placeholder.
+    """
+    full = _resolve_media_path(mundo, src)
+    return full if full is not None and full.is_file() else None
+
+
+@app.get("/api/{mundo}/export/docx")
+def export_ficha_docx(
+    mundo: str,
+    path: str = Query(..., description="Ruta de la ficha (sección + relativa), p.ej. lore/00_inicio.md"),
+):
+    """Export a world ficha's body (frontmatter stripped) as a .docx file.
+
+    ``path`` is the section-relative ficha path (``lore/00_inicio.md``).
+    Embedded images resolve through the traversal-protected
+    ``_resolve_media_path``; unresolvable images degrade to
+    ``[imagen no disponible]``. 400 on traversal/invalid path, 404 on missing
+    ficha, 500 when the pandoc conversion fails (e.g. pandoc not installed).
+    """
+    raw_parts = path.split("/")
+    if (
+        any(p == ".." for p in raw_parts)
+        or path.startswith("/")
+        or "\\" in path
+        or "\x00" in path
+    ):
+        raise HTTPException(status_code=400, detail="Ruta de ficha inválida")
+    parts = [p for p in raw_parts if p not in ("", ".")]
+    if not parts or parts[0] not in VALID_SECTIONS:
+        raise HTTPException(status_code=400, detail="Ruta de ficha inválida")
+    section, rel = parts[0], "/".join(parts[1:])
+    full = _resolve_path(mundo, section, rel)
+    if full is None:
+        raise HTTPException(status_code=404, detail="Ficha no encontrada")
+    try:
+        raw = full.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"No se pudo leer la ficha: {exc}")
+    try:
+        data = _convert_markdown_to_docx(
+            _strip_frontmatter(raw),
+            resolve_image=lambda src: _resolve_media_for_export(mundo, src),
+            resource_paths=_get_media_bases(mundo),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return _docx_file_response(data, f"{Path(path).stem}.docx")
+
+
+@app.get("/api/ideas/{slug}/export/docx")
+def export_idea_docx(slug: str, request: Request):
+    """Export an idea's body + embedded images as a .docx file.
+
+    Mirrors the /api/ideas auth contract (trusted principal required). The
+    idea body's absolute ``/api/ideas/media/...`` image URLs are rewritten to
+    disk paths under the ideas media store; unresolvable images degrade to
+    the ``[imagen no disponible]`` placeholder. 404 on unknown slug, 500 when
+    the pandoc conversion fails.
+    """
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    bank = IdeasBank()
+    try:
+        idea = bank.read(slug)
+    except IdeaNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    media_dir = bank._ideas_root / "media"
+    try:
+        data = _convert_markdown_to_docx(
+            idea.body,
+            resolve_image=lambda src: _resolve_idea_media(src, media_dir),
+            resource_paths=[media_dir],
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return _docx_file_response(data, f"{slug}.docx")
 
 app.include_router(
     create_assistant_settings_router(

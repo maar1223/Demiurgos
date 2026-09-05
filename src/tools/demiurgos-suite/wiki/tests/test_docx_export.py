@@ -22,6 +22,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+from fastapi.testclient import TestClient
 
 _HERE = Path(__file__).resolve().parent
 _WIKI = _HERE.parent
@@ -30,7 +31,9 @@ for _p in (str(_WIKI), str(_SUITE)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import api_server  # noqa: E402
 import docx_export  # noqa: E402
+from ideas_bank import IdeasBank  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -252,3 +255,149 @@ def test_convert_pandoc_timeout_raises_runtime_error(monkeypatch) -> None:
         docx_export._convert_markdown_to_docx(
             "# T\n", resolve_image=lambda _src: None
         )
+
+
+# ---------------------------------------------------------------------------
+# Endpoints — ficha export (GET /api/{mundo}/export/docx)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """TestClient with a temp mundos dir, a sample ficha and a media file."""
+    mundos = tmp_path / "mundos"
+    world = mundos / "test_mundo"
+    (world / "lore").mkdir(parents=True)
+    (world / "wiki" / "media").mkdir(parents=True)
+    (world / "lore" / "00_inicio.md").write_text(
+        "---\ntype: criatura\ntitle: Inicio\n---\n"
+        "# Inicio\n\n![foto](media/foto.png#left)\n\n[[Entidad]] y wiki://otra-cosa\n",
+        encoding="utf-8",
+    )
+    (world / "wiki" / "media" / "foto.png").write_bytes(
+        b"\x89PNG\r\n\x1a\nfake"
+    )
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", mundos)
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+    monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
+    with api_server._local_session_lock:
+        api_server._local_sessions.clear()
+    return TestClient(api_server.app, client=("127.0.0.1", 50000))
+
+
+def _assert_docx_response(response) -> None:
+    assert response.status_code == 200
+    assert (
+        response.headers["content-type"]
+        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert zipfile.is_zipfile(io.BytesIO(response.content))
+    with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+        assert "word/document.xml" in zf.namelist()
+
+
+def test_export_ficha_docx_happy_path(client, monkeypatch) -> None:
+    run = _stub_pandoc(monkeypatch)
+    response = client.get(
+        "/api/test_mundo/export/docx", params={"path": "lore/00_inicio.md"}
+    )
+    _assert_docx_response(response)
+    assert 'filename="00_inicio.docx"' in response.headers["content-disposition"]
+    markdown = _pandoc_input(run)
+    # Frontmatter stripped — the pandoc input is body only.
+    assert "type: criatura" not in markdown
+    assert "# Inicio" in markdown
+    # Image resolved to the absolute disk path; suffix stripped; wikilinks
+    # degraded to plain text.
+    resolved = api_server.MUNDOS_DIR / "test_mundo" / "wiki" / "media" / "foto.png"
+    assert f"![foto](<{resolved}>)" in markdown
+    assert "#left" not in markdown
+    assert "[[Entidad]]" not in markdown
+    assert "Entidad" in markdown
+    assert "otra-cosa" in markdown
+    assert "wiki://" not in markdown
+
+
+def test_export_ficha_docx_unresolvable_image_placeholder(client, monkeypatch) -> None:
+    run = _stub_pandoc(monkeypatch)
+    (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "rota.md").write_text(
+        "# Rota\n\n![alt](missing.png)\n", encoding="utf-8"
+    )
+    response = client.get(
+        "/api/test_mundo/export/docx", params={"path": "lore/rota.md"}
+    )
+    assert response.status_code == 200
+    assert "[imagen no disponible]" in _pandoc_input(run)
+    assert "![alt]" not in _pandoc_input(run)
+
+
+def test_export_ficha_docx_path_traversal_400(client) -> None:
+    response = client.get(
+        "/api/test_mundo/export/docx",
+        params={"path": "lore/../wiki/media/foto.png"},
+    )
+    assert response.status_code == 400
+    response = client.get(
+        "/api/test_mundo/export/docx", params={"path": "../etc/passwd"}
+    )
+    assert response.status_code == 400
+
+
+def test_export_ficha_docx_not_found_404(client) -> None:
+    response = client.get(
+        "/api/test_mundo/export/docx", params={"path": "lore/no-existe.md"}
+    )
+    assert response.status_code == 404
+
+
+def test_export_ficha_docx_pandoc_missing_500(client, monkeypatch) -> None:
+    monkeypatch.setattr(docx_export, "shutil", _FakeShutil(None))
+    response = client.get(
+        "/api/test_mundo/export/docx", params={"path": "lore/00_inicio.md"}
+    )
+    assert response.status_code == 500
+    assert "pandoc" in response.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Endpoints — idea export (GET /api/ideas/{slug}/export/docx)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def ideas(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """An ideas bank rooted at tmp_path, wired into api_server.IdeasBank."""
+    bank = IdeasBank(ideas_root=tmp_path / "ideas", mundos_root=tmp_path / "mundos")
+    monkeypatch.setattr(api_server, "IdeasBank", lambda: bank)
+    return bank
+
+
+def _authed_client(client: TestClient) -> TestClient:
+    client.post("/api/auth/local-dev/session")
+    return client
+
+
+def test_export_idea_docx_happy_path(client, monkeypatch, ideas, tmp_path) -> None:
+    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
+    ideas.create(slug="arquero", type="personaje", body="# Idea\n\n![idea image](/api/ideas/media/arquero.png)\n")
+    media = tmp_path / "ideas" / "media"
+    media.mkdir(parents=True)
+    (media / "arquero.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    run = _stub_pandoc(monkeypatch)
+    response = _authed_client(client).get("/api/ideas/arquero/export/docx")
+    _assert_docx_response(response)
+    assert 'filename="arquero.docx"' in response.headers["content-disposition"]
+    markdown = _pandoc_input(run)
+    assert "/api/ideas/media/arquero.png" not in markdown
+    assert str((tmp_path / "ideas" / "media" / "arquero.png")) in markdown
+
+
+def test_export_idea_docx_requires_auth_401(client) -> None:
+    response = client.get("/api/ideas/arquero/export/docx")
+    assert response.status_code == 401
+
+
+def test_export_idea_docx_not_found_404(client, monkeypatch, ideas) -> None:
+    monkeypatch.setenv("DEMIURGOS_AUTH_MODE", "local-dev")
+    response = _authed_client(client).get("/api/ideas/desconocida/export/docx")
+    assert response.status_code == 404
