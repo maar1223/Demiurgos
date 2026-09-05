@@ -42,7 +42,13 @@ from ideas_bank import IdeasBank  # noqa: E402
 
 
 def _minimal_docx_bytes() -> bytes:
-    """Build a minimal valid DOCX ZIP in memory (OOXML parses as a zip)."""
+    """Build a minimal valid DOCX ZIP in memory (OOXML parses as a zip).
+
+    The member timestamp is pinned so the bytes are deterministic across
+    calls — the fixture is also used as a default argument evaluated at
+    import time, and a live timestamp would make two calls differ whenever
+    they cross a second boundary.
+    """
     document = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/'
@@ -51,8 +57,9 @@ def _minimal_docx_bytes() -> bytes:
         "<w:sectPr/></w:body></w:document>"
     )
     buf = io.BytesIO()
+    info = zipfile.ZipInfo("word/document.xml", date_time=(2020, 1, 1, 0, 0, 0))
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("word/document.xml", document)
+        zf.writestr(info, document)
     return buf.getvalue()
 
 
