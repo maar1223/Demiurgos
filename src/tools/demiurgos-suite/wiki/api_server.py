@@ -4818,7 +4818,8 @@ def graph_entities(
 
     Returns ``{ entities: [...], links: [...] }``.
     Each entity: id, name, type, path, status, description, tags,
-    forward_links, backlinks. Each link: ``{source, target}`` node keys —
+    forward_links, backlinks, content, relaciones. Each link: ``{source,
+    target}`` node keys —
     the entity id when present, falling back to the entity path so legacy
     entities (empty id) still emit edges GraphView can match (id || path).
     ``status`` filter: "all" (default) returns every entity; "draft"|"stable"
@@ -4855,6 +4856,8 @@ def graph_entities(
                     "tags": ent.get("tags", []),
                     "forward_links": ent.get("forward_links", []),
                     "backlinks": ent.get("backlinks", []),
+                    "content": ent.get("content", ""),
+                    "relaciones": ent.get("relaciones", []),
                 }
             )
             for link_name in ent.get("forward_links", []):

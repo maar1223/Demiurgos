@@ -5846,8 +5846,74 @@ class TestGraphEntitiesEndpoint:
             assert set(ent.keys()) == {
                 "id", "name", "type", "path", "status",
                 "description", "tags", "forward_links", "backlinks",
+                "content", "relaciones",
             }
         assert body["entities"][0]["status"] in ("draft", "stable")
+
+    def test_graph_entities_content_and_relaciones(self, client: TestClient, monkeypatch):
+        """The bulk payload ships content + relaciones per entity.
+
+        Missing keys default to ``""`` / ``[]`` (never null or absent), and
+        legacy entities (empty id) emit both fields alongside their
+        path-based node key (REQ-BULK-1/BULK-3).
+        """
+        entities = [
+            {
+                "name": "Rhyz",
+                "id": "Stal::Rhyz",
+                "type": "personaje",
+                "path": "personajes/Rhyz.md",
+                "status": "stable",
+                "forward_links": [],
+                "backlinks": [],
+                "content": "Rhyz es un cazador de la estepa.",
+                "relaciones": ["Stal::Vael"],
+            },
+            {
+                # No content/relaciones keys → empty defaults.
+                "name": "Vael",
+                "id": "Stal::Vael",
+                "type": "personaje",
+                "path": "personajes/Vael.md",
+                "status": "draft",
+                "forward_links": [],
+                "backlinks": [],
+            },
+            {
+                # Legacy entity: empty canonical id → path-based node key;
+                # the new fields are still emitted.
+                "name": "Dottua",
+                "id": "",
+                "type": "lugar",
+                "path": "lore/Dottua.md",
+                "status": "stable",
+                "forward_links": [],
+                "backlinks": [],
+                "content": "Dottua es una región del sur.",
+                "relaciones": [],
+            },
+        ]
+        index = self._index_with(entities)
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: index)
+        body = client.get("/api/test_mundo/graph/entities?status=all").json()
+
+        by_path = {e["path"]: e for e in body["entities"]}
+
+        # Full content + relaciones round-trip untouched.
+        rhyz = by_path["personajes/Rhyz.md"]
+        assert rhyz["content"] == "Rhyz es un cazador de la estepa."
+        assert rhyz["relaciones"] == ["Stal::Vael"]
+
+        # Missing keys default to "" / [] — never null or absent.
+        vael = by_path["personajes/Vael.md"]
+        assert vael["content"] == ""
+        assert vael["relaciones"] == []
+
+        # Legacy entity (empty id) still emits both fields.
+        dottua = by_path["lore/Dottua.md"]
+        assert dottua["id"] == ""
+        assert dottua["content"] == "Dottua es una región del sur."
+        assert dottua["relaciones"] == []
 
     def test_graph_entities_filter_all(self, client: TestClient, monkeypatch):
         index = self._index_with(self._synthetic_world())
