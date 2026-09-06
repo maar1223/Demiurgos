@@ -1412,7 +1412,9 @@ export interface GraphEntity {
   content: string;
   forward_links: string[];
   backlinks: string[];
-  relaciones: Record<string, unknown>[];
+  /** Frontmatter `relaciones:` entries — canonical-id strings or objects.
+   *  The backend ships the raw list, so both forms are valid on the wire. */
+  relaciones: (string | Record<string, unknown>)[];
 }
 
 /** A directed connection between two entities in the graph. */
