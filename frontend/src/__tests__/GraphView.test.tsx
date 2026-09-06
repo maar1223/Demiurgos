@@ -890,7 +890,7 @@ describe("GraphView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Abrir ficha" }));
 
     expect(navigate).toHaveBeenCalledWith(
-      "/wiki/vibrantes/entity/personajes/Rhyz.md",
+      "/wiki/vibrantes/entity/Rhyz",
     );
   });
 

@@ -597,11 +597,13 @@ export default function GraphView({ mundo }: GraphViewProps) {
     [],
   );
 
-  /** "Abrir ficha" in the inspector — same URL pattern the node click used
-   *  before selection replaced navigation: /wiki/{mundo}/entity/{path}. */
+  /** "Abrir ficha" in the inspector — navigate by the entity NAME (the same
+   *  identifier WikiLink uses). The entity page resolves a name, not a file
+   *  path; passing the path left the backend unable to resolve it and the
+   *  page rendered a blank screen (crash on a malformed entity). */
   const handleOpenFicha = useCallback(() => {
     if (!selectedEntity) return;
-    const encoded = selectedEntity.path
+    const encoded = selectedEntity.name
       .split("/")
       .map((s) => encodeURIComponent(s))
       .join("/");
