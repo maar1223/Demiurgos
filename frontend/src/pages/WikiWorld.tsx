@@ -108,34 +108,39 @@ export default function WikiWorld() {
             />
           ))}
           {/* Relaciones y Canon — W9/W12: semantic relations graph entry.
-              Inline card (SectionCard meta is fixed to content sections). */}
-          <button
-            type="button"
-            onClick={handleRelacionesClick}
-            className={cn(
-              "group flex w-full flex-col gap-3 rounded-xl border border-edge bg-surface-raised p-5 text-left transition-all",
-              "hover:border-action/40 hover:bg-surface-hover",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
-              "focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
-            )}
-          >
-            <div className="flex h-32 items-center justify-center rounded-lg bg-surface-raised/50 text-action transition-colors group-hover:bg-surface-raised">
-              <Icon name="world" size={48} />
-            </div>
-            <div className="flex items-center justify-between">
-              <h3 className="font-heading text-h4 text-primary transition-colors group-hover:text-action">
-                Relaciones y Canon
-              </h3>
-              <Icon
-                name="chevron-right"
-                size={16}
-                className="text-icon-muted/50 transition-colors group-hover:text-action"
-              />
-            </div>
-            <p className="text-small text-muted">
-              Grafo de entidades, estados de certeza y conexiones
-            </p>
-          </button>
+              Inline card (SectionCard meta is fixed to content sections).
+              DEV-only: hidden from the MVP production build, but kept visible
+              in the author's dev session (implementation 0 — Demiurgos is
+              being born, the relations graph still needs separate testing). */}
+          {import.meta.env.DEV && (
+            <button
+              type="button"
+              onClick={handleRelacionesClick}
+              className={cn(
+                "group flex w-full flex-col gap-3 rounded-xl border border-edge bg-surface-raised p-5 text-left transition-all",
+                "hover:border-action/40 hover:bg-surface-hover",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50",
+                "focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
+              )}
+            >
+              <div className="flex h-32 items-center justify-center rounded-lg bg-surface-raised/50 text-action transition-colors group-hover:bg-surface-raised">
+                <Icon name="world" size={48} />
+              </div>
+              <div className="flex items-center justify-between">
+                <h3 className="font-heading text-h4 text-primary transition-colors group-hover:text-action">
+                  Relaciones y Canon
+                </h3>
+                <Icon
+                  name="chevron-right"
+                  size={16}
+                  className="text-icon-muted/50 transition-colors group-hover:text-action"
+                />
+              </div>
+              <p className="text-small text-muted">
+                Grafo de entidades, estados de certeza y conexiones
+              </p>
+            </button>
+          )}
         </>
       )}
     </WikiHomeLayout>
