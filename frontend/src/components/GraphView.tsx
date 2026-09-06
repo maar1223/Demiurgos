@@ -43,8 +43,10 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Toast } from "@/components/atoms/Toast";
+import { Icon } from "@/components/atoms/Icon";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { GraphControlsSidebar } from "@/components/organisms/GraphControlsSidebar";
+import { NodeInspectorPanel } from "@/components/organisms/NodeInspectorPanel";
 import {
   buildFolderTree,
   filterEntitiesByFolders,
@@ -56,6 +58,21 @@ import { cn } from "@/lib/utils";
 function nodeKey(entity: GraphEntity): string {
   return entity.id || entity.path;
 }
+
+/** Default inspector panel width (desktop). */
+const RIGHT_DEFAULT = 280;
+
+/** Proportional inspector limits (1/5–2/5 of the viewport width) — computed
+ *  live so drag/resize adapts to the current window size (EditorLayout). */
+const panelLimits = () => {
+  const vw = window.innerWidth || 1200;
+  return { min: Math.round(vw * 0.2), max: Math.round(vw * 0.4) };
+};
+
+const clampPanel = (w: number) => {
+  const { min, max } = panelLimits();
+  return Math.min(max, Math.max(min, Math.round(w)));
+};
 
 /**
  * Simulation node: d3-force datum carrying the entity's node key as id.
@@ -277,7 +294,9 @@ interface GraphViewProps {
  * - Status filter (all/draft/stable) re-fetches with the query param.
  * - Orphans (no forward AND no back links) are hidden by default; the
  *   "Mostrar nodos aislados" toggle reveals them.
- * - Node click navigates to the entity ficha route.
+ * - Node click SELECTS the node and opens the right-hand inspector panel
+ *   (name, type, status, path, neighbor links, content preview); the ficha
+ *   route is reached via the panel's "Abrir ficha" button.
  * - Node search input (debounced) centers a matching node in the viewport.
  * - All graph controls (search, status, folder tree, orphans toggle, fitView)
  *   live in the left GraphControlsSidebar. The folder tree is a hierarchical
@@ -326,6 +345,17 @@ export default function GraphView({ mundo }: GraphViewProps) {
   const [nodes, setNodes, onNodesChange] = useNodesState<GraphNodeType>([]);
   const rf = useRef<ReactFlowInstance<GraphNodeType, Edge> | null>(null);
 
+  // Node inspector: selection state plus right-panel resize/focus. The
+  // selected entity is DERIVED from the loaded set (by node key), so a status
+  // re-fetch or mundo switch can never leave the panel showing stale data.
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [panelWidth, setPanelWidth] = useState<number>(() =>
+    clampPanel(RIGHT_DEFAULT),
+  );
+  const [focusMode, setFocusMode] = useState(false);
+  const [draggingPanel, setDraggingPanel] = useState(false);
+  const panelDragRef = useRef<{ startX: number; startW: number } | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -356,6 +386,70 @@ export default function GraphView({ mundo }: GraphViewProps) {
     () => filterEntitiesByFolders(entities, selectedFolders),
     [entities, selectedFolders],
   );
+
+  // Inspector lookups: the selected entity is re-derived from the loaded set
+  // on every render, so it is never stale after a re-fetch. `entityByKey`
+  // covers ALL loaded entities (neighbor resolution still works for
+  // filtered-out neighbors, which then render as plain text); the visible
+  // key set is exactly the rendered node set (orphan/folder filtered).
+  const selectedEntity = useMemo(
+    () => entities.find((e) => nodeKey(e) === selectedNodeId) ?? null,
+    [entities, selectedNodeId],
+  );
+  const entityByKey = useMemo(
+    () => new Map(entities.map((e) => [nodeKey(e), e])),
+    [entities],
+  );
+  const visibleEntityKeys = useMemo(
+    () => new Set(nodes.map((n) => n.id)),
+    [nodes],
+  );
+
+  // Inspector panel resize (EditorLayout pattern): document-level
+  // mousedown/mousemove/mouseup drag loop, widths clamped to the live
+  // proportional limits, and re-clamp on window resize.
+  const startPanelDrag = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      panelDragRef.current = { startX: e.clientX, startW: panelWidth };
+      setDraggingPanel(true);
+    },
+    [panelWidth],
+  );
+
+  useEffect(() => {
+    if (!draggingPanel) return;
+    const onMove = (e: MouseEvent) => {
+      if (!panelDragRef.current) return;
+      const { startX, startW } = panelDragRef.current;
+      setPanelWidth(clampPanel(startW + (startX - e.clientX)));
+    };
+    const onUp = () => {
+      panelDragRef.current = null;
+      setDraggingPanel(false);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [draggingPanel]);
+
+  useEffect(() => {
+    const onResize = () => setPanelWidth((w) => clampPanel(w));
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Clear the selection when the selected entity leaves the LOADED set
+  // (status re-fetch, mundo switch, empty result) — the panel must never
+  // show an entity that no longer exists in the current world view.
+  useEffect(() => {
+    if (!selectedNodeId) return;
+    const stillLoaded = entities.some((e) => nodeKey(e) === selectedNodeId);
+    if (!stillLoaded) setSelectedNodeId(null);
+  }, [entities, selectedNodeId]);
 
   // When the loaded entity set no longer contains a selected folder (status
   // re-fetch, mundo switch, empty result), prune it so the tree never shows
@@ -494,18 +588,32 @@ export default function GraphView({ mundo }: GraphViewProps) {
   const handleNodeClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
       // A click starting on a connection handle is click-to-connect, not
-      // navigation — never route the author to the ficha from a handle.
+      // selection — never select a node from a handle.
       if ((_event.target as HTMLElement).closest(".react-flow__handle")) return;
-      const entity = entities.find((e) => nodeKey(e) === node.id);
-      if (!entity) return;
-      const encoded = entity.path
-        .split("/")
-        .map((s) => encodeURIComponent(s))
-        .join("/");
-      navigate(`/wiki/${encodeURIComponent(mundo)}/entity/${encoded}`);
+      // Selecting opens the inspector panel; ficha access moves to the
+      // panel's "Abrir ficha" button (REQ-INS-1/INS-4).
+      setSelectedNodeId(node.id);
     },
-    [entities, mundo, navigate],
+    [],
   );
+
+  /** "Abrir ficha" in the inspector — same URL pattern the node click used
+   *  before selection replaced navigation: /wiki/{mundo}/entity/{path}. */
+  const handleOpenFicha = useCallback(() => {
+    if (!selectedEntity) return;
+    const encoded = selectedEntity.path
+      .split("/")
+      .map((s) => encodeURIComponent(s))
+      .join("/");
+    navigate(`/wiki/${encodeURIComponent(mundo)}/entity/${encoded}`);
+  }, [selectedEntity, mundo, navigate]);
+
+  /** Neighbor link clicked in the inspector: center the neighbor node in the
+   *  viewport. Only visible neighbors are clickable, so the id is always in
+   *  the current node set; fitView with an unknown id is a safe no-op. */
+  const handleNeighborClick = useCallback((nodeKey: string) => {
+    rf.current?.fitView({ nodes: [{ id: nodeKey }], duration: 300 });
+  }, []);
 
   /** Select a search result: center the matching flow node in the viewport.
    *  The node id is nodeKey(entity) (canonical id, path fallback) — the same
@@ -699,7 +807,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
 
         {!loading && !error && nodes.length > 0 && (
           <div
-            className="min-h-[520px] h-[70vh] w-full rounded-xl border border-edge bg-surface"
+            className="relative min-h-[520px] h-[70vh] w-full rounded-xl border border-edge bg-surface"
             data-testid="graph-view"
           >
             <ReactFlow
@@ -722,9 +830,75 @@ export default function GraphView({ mundo }: GraphViewProps) {
             >
               <Background />
             </ReactFlow>
+
+            {/* Focus toggle: hide the inspector (and its divider) to give the
+                canvas every pixel; toggling back restores the last width. */}
+            {selectedEntity && (
+              <button
+                type="button"
+                onClick={() => setFocusMode((prev) => !prev)}
+                aria-label={
+                  focusMode
+                    ? "Mostrar panel de inspección"
+                    : "Ocultar panel de inspección"
+                }
+                aria-pressed={focusMode}
+                className="absolute right-2 top-2 z-10 rounded border border-edge bg-surface-raised p-1.5 text-icon-muted shadow-sm transition-colors hover:text-primary"
+              >
+                <Icon
+                  name={focusMode ? "minimize" : "expand"}
+                  size={16}
+                />
+              </button>
+            )}
           </div>
         )}
       </main>
+
+      {/* Right-hand inspector (node-inspector): divider + panel, siblings of
+          <main> in the flex row (Approach 1). Hidden in focus mode at ALL
+          breakpoints; absent entirely when nothing is selected. */}
+      {selectedEntity && !focusMode && (
+        <>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Redimensionar panel de inspección"
+            tabIndex={0}
+            onMouseDown={startPanelDrag}
+            onKeyDown={(e) => {
+              const { min, max } = panelLimits();
+              const step = 40;
+              if (e.key === "ArrowLeft")
+                setPanelWidth((w) => Math.min(max, w + step));
+              if (e.key === "ArrowRight")
+                setPanelWidth((w) => Math.max(min, w - step));
+            }}
+            className={cn(
+              "hidden md:flex w-2 cursor-col-resize items-center justify-center border-l border-edge bg-surface-raised hover:bg-surface-hover active:bg-surface-hover transition-colors",
+              draggingPanel && "bg-surface-hover select-none",
+            )}
+          >
+            <Icon name="grip" size={14} className="text-muted" />
+          </div>
+
+          <div
+            className="hidden md:flex h-full overflow-hidden"
+            style={{ width: panelWidth }}
+            data-testid="node-inspector"
+          >
+            <NodeInspectorPanel
+              entity={selectedEntity}
+              visibleEntityKeys={visibleEntityKeys}
+              entityByKey={entityByKey}
+              onNeighborClick={handleNeighborClick}
+              onOpenFicha={handleOpenFicha}
+              onClose={() => setSelectedNodeId(null)}
+              mundo={mundo}
+            />
+          </div>
+        </>
+      )}
 
       {/* Gated write modal: the author reviews the pending connection change
           (create or break) before it is persisted. Cancel/overlay/Escape abort

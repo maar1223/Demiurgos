@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { ComponentProps, ElementType } from "react";
@@ -316,7 +316,7 @@ describe("GraphView", () => {
     expect(screen.getByText("Ecos")).toBeInTheDocument();
   });
 
-  it("navigates to the ficha route when a node is clicked", async () => {
+  it("selects a node and opens the inspector panel instead of navigating", async () => {
     mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
     renderGraphView();
 
@@ -326,9 +326,13 @@ describe("GraphView", () => {
     // event.view.document and crashes in jsdom (event.view is null).
     fireEvent.click(screen.getByText("Rhyz"));
 
-    expect(navigate).toHaveBeenCalledWith(
-      "/wiki/vibrantes/entity/personajes/Rhyz.md",
+    // Selection opens the panel with Rhyz's data…
+    await waitFor(() =>
+      expect(screen.getByTestId("node-inspector-panel")).toBeInTheDocument(),
     );
+    expect(screen.getByRole("heading", { name: "Rhyz" })).toBeInTheDocument();
+    // …and the URL does NOT change (no navigation on node click).
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("shows an error banner with retry when the fetch fails", async () => {
@@ -698,5 +702,268 @@ describe("GraphView", () => {
     expect(
       screen.queryByText("No hay entidades indexadas para este mundo."),
     ).not.toBeInTheDocument();
+  });
+
+  // ── Node inspector (graph-node-inspector PR3: selection + panel) ──
+
+  it("does not render the inspector before any node is selected", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    expect(
+      screen.queryByTestId("node-inspector-panel"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("separator", {
+        name: "Redimensionar panel de inspección",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not select a node when the click starts on a connection handle", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    // A click on a handle is click-to-connect, never selection.
+    fireEvent.click(
+      document.querySelector(
+        '.react-flow__handle[data-nodeid="Stal::Rhyz"][data-handlepos="bottom"]',
+      ) as Element,
+    );
+
+    expect(
+      screen.queryByTestId("node-inspector-panel"),
+    ).not.toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("clicking a different node replaces the selection", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    fireEvent.click(screen.getByText("Rhyz"));
+    await screen.findByTestId("node-inspector-panel");
+    expect(screen.getByRole("heading", { name: "Rhyz" })).toBeInTheDocument();
+
+    // Click the Vael NODE (the panel already renders a "Vael" neighbor link,
+    // so the click must target the graph node label, not the panel).
+    fireEvent.click(
+      document.querySelector(
+        '.react-flow__node[data-id="Stal::Vael"] span',
+      ) as Element,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("heading", { name: "Vael" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.queryByRole("heading", { name: "Rhyz" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the selected entity's metadata in the panel", async () => {
+    const WITH_CONTENT: GraphEntity[] = [
+      { ...LINKED[0], content: "Rhyz es un cazador de la estepa." },
+      ...LINKED.slice(1),
+    ];
+    mockFetch.mockResolvedValue({ entities: WITH_CONTENT, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    fireEvent.click(screen.getByText("Rhyz"));
+    await screen.findByTestId("node-inspector-panel");
+    // Scope to the panel: the sidebar's status select also renders "Canon".
+    const panel = within(screen.getByTestId("node-inspector-panel"));
+
+    expect(panel.getByRole("heading", { name: "Rhyz" })).toBeInTheDocument();
+    expect(panel.getByText("Personaje")).toBeInTheDocument();
+    // Status chip via STATUS_META (stable → "Canon").
+    expect(panel.getByText("Canon")).toBeInTheDocument();
+    expect(panel.getByText("personajes/Rhyz.md")).toBeInTheDocument();
+    expect(
+      panel.getByText("Rhyz es un cazador de la estepa."),
+    ).toBeInTheDocument();
+    // Rhyz's forward link "Vael" resolves to a clickable neighbor link.
+    expect(panel.getByRole("button", { name: "Vael" })).toBeInTheDocument();
+  });
+
+  it("centers a visible neighbor via fitView when its panel link is clicked", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+    await waitFor(() => expect(mockFlowInstance.instance).not.toBeNull());
+
+    fireEvent.click(screen.getByText("Rhyz"));
+    await screen.findByTestId("node-inspector-panel");
+
+    const fitViewSpy = vi.spyOn(mockFlowInstance.instance!, "fitView");
+    fitViewSpy.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Vael" }));
+
+    expect(fitViewSpy).toHaveBeenCalledWith({
+      nodes: [{ id: "Stal::Vael" }],
+      duration: 300,
+    });
+  });
+
+  it("renders a status-filtered neighbor as plain text (not a link)", async () => {
+    const user = userEvent.setup();
+    // First fetch: all three. Stable refetch drops Vael (draft) entirely.
+    mockFetch
+      .mockResolvedValueOnce({ entities: LINKED, links: LINKS })
+      .mockResolvedValueOnce({
+        entities: LINKED.filter((entity) => entity.status === "stable"),
+        links: [],
+      });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    fireEvent.click(screen.getByText("Rhyz"));
+    await screen.findByTestId("node-inspector-panel");
+    expect(screen.getByRole("button", { name: "Vael" })).toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByLabelText("Filtrar por estado"),
+      "stable",
+    );
+
+    // Rhyz is still stable → selection survives the refetch…
+    await waitFor(() => expect(countNodes()).toBe(2));
+    expect(screen.getByTestId("node-inspector-panel")).toBeInTheDocument();
+    // …but Vael is no longer loaded → its entry degrades to plain text.
+    const vaelEntry = screen.getByText("Vael");
+    expect(vaelEntry.tagName).toBe("SPAN");
+    expect(
+      screen.queryByRole("button", { name: "Vael" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clears the selection when the selected entity leaves the loaded set", async () => {
+    const user = userEvent.setup();
+    // First fetch: all three. Stable refetch drops Vael (draft) entirely.
+    mockFetch
+      .mockResolvedValueOnce({ entities: LINKED, links: LINKS })
+      .mockResolvedValueOnce({
+        entities: LINKED.filter((entity) => entity.status === "stable"),
+        links: [],
+      });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    fireEvent.click(screen.getByText("Vael"));
+    await screen.findByTestId("node-inspector-panel");
+    expect(screen.getByRole("heading", { name: "Vael" })).toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByLabelText("Filtrar por estado"),
+      "stable",
+    );
+
+    // Vael (draft) is gone after the stable refetch → the panel closes.
+    await waitFor(() =>
+      expect(screen.queryByTestId("node-inspector-panel")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("navigates to the ficha route via the panel's ficha button", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    fireEvent.click(screen.getByText("Rhyz"));
+    await screen.findByTestId("node-inspector-panel");
+
+    fireEvent.click(screen.getByRole("button", { name: "Abrir ficha" }));
+
+    expect(navigate).toHaveBeenCalledWith(
+      "/wiki/vibrantes/entity/personajes/Rhyz.md",
+    );
+  });
+
+  it("closes the inspector when the panel close button is clicked", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    fireEvent.click(screen.getByText("Rhyz"));
+    await screen.findByTestId("node-inspector-panel");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Cerrar panel de inspección" }),
+    );
+
+    expect(screen.queryByTestId("node-inspector-panel")).not.toBeInTheDocument();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("clamps the inspector width when the divider is dragged", async () => {
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    fireEvent.click(screen.getByText("Rhyz"));
+    await screen.findByTestId("node-inspector-panel");
+
+    // jsdom viewport is 1024px → limits [205, 410]. Drag far left (600px of
+    // travel) would grow the width to 880 → clamped to the 410px max.
+    const divider = screen.getByRole("separator", {
+      name: "Redimensionar panel de inspección",
+    });
+    fireEvent.mouseDown(divider, { clientX: 500 });
+    fireEvent.mouseMove(document, { clientX: -100 });
+    fireEvent.mouseUp(document);
+
+    expect(screen.getByTestId("node-inspector")).toHaveStyle({
+      width: "410px",
+    });
+  });
+
+  it("hides and restores the inspector with the focus toggle", async () => {
+    const user = userEvent.setup();
+    mockFetch.mockResolvedValue({ entities: LINKED, links: LINKS });
+    renderGraphView();
+
+    await waitFor(() => expect(countNodes()).toBe(3));
+
+    fireEvent.click(screen.getByText("Rhyz"));
+    await screen.findByTestId("node-inspector-panel");
+
+    // Activate focus mode → panel AND divider disappear (canvas expands).
+    await user.click(
+      screen.getByRole("button", { name: "Ocultar panel de inspección" }),
+    );
+    expect(screen.queryByTestId("node-inspector-panel")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("separator", {
+        name: "Redimensionar panel de inspección",
+      }),
+    ).not.toBeInTheDocument();
+
+    // Deactivate → the panel returns.
+    await user.click(
+      screen.getByRole("button", { name: "Mostrar panel de inspección" }),
+    );
+    expect(screen.getByTestId("node-inspector-panel")).toBeInTheDocument();
+    expect(
+      screen.getByRole("separator", {
+        name: "Redimensionar panel de inspección",
+      }),
+    ).toBeInTheDocument();
   });
 });
