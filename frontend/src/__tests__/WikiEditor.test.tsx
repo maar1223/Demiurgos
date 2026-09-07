@@ -1994,7 +1994,7 @@ describe("WikiEditor", () => {
     await waitFor(() => {
       expect(exportFichaDocx).toHaveBeenCalledWith(
         "Vibrantes",
-        "capitulos/cap1.md",
+        "lore/capitulos/cap1.md",
       );
     });
     expect(createObjectURL).toHaveBeenCalled();

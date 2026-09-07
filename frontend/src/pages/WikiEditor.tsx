@@ -876,9 +876,13 @@ export default function WikiEditor() {
    * Failures surface as an error toast (no file is downloaded).
    */
   const handleExportFichaDocx = useCallback(async () => {
-    if (!mundo || !filePath || !file) return;
+    if (!mundo || !section || !filePath || !file) return;
     try {
-      const blob = await exportFichaDocx(mundo, filePath);
+      // The export endpoint expects a mundo-relative path whose first segment
+      // is a valid section (e.g. `lore/capitulos/cap1.md`), but `filePath` is
+      // section-relative. Prepend the active section so the backend can
+      // resolve it instead of returning 400 "Ruta de ficha inválida".
+      const blob = await exportFichaDocx(mundo, `${section}/${filePath}`);
       const basename = filePath.split("/").pop() ?? "ficha";
       downloadBlob(blob, `${basename.replace(/\.md$/i, "")}.docx`);
     } catch (err) {
@@ -888,7 +892,7 @@ export default function WikiEditor() {
         kind: "error",
       });
     }
-  }, [mundo, filePath, file]);
+  }, [mundo, section, filePath, file]);
 
   // Toggle edit mode — exiting resets preview and transient state
   const handleToggleEdit = useCallback(() => {
