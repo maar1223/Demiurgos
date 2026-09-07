@@ -25,6 +25,13 @@ GATEWAY_LOG="/tmp/demiurgos-gateway.log"
 
 mkdir -p "$STATE_DIR"
 
+# Whether the dev frontend should be launched. The MVP launcher sets
+# DEMIURGOS_SKIP_FRONTEND=1 to start only the backend (API + gateway) and
+# serve the production build itself on the preview port.
+frontend_enabled() {
+    [ "${DEMIURGOS_SKIP_FRONTEND:-}" != "1" ]
+}
+
 load_project_auth_mode() {
     local mode
     mode="$(PROJECT_ENV="$PROJECT_ROOT/.env" python3 - <<'PY'
@@ -270,13 +277,18 @@ start_all() {
     fi
     start_component gateway
     start_component api
-    start_component frontend
+    if frontend_enabled; then
+        start_component frontend
+    fi
     for port in "$GATEWAY_PORT" "$API_PORT" "$FRONTEND_PORT"; do
         case "$port" in
             "$GATEWAY_PORT") name="Hermes Gateway" ;;
             "$API_PORT") name="API" ;;
             *) name="Frontend" ;;
         esac
+        if [ "$port" = "$FRONTEND_PORT" ] && ! frontend_enabled; then
+            continue
+        fi
         if wait_for_port "$port"; then
             printf '%s ready on 127.0.0.1:%s\n' "$name" "$port"
         elif [ "$?" -eq 2 ]; then
@@ -337,7 +349,7 @@ usage() {
 main() {
     local action="${1:-restart}"
     case "$action" in
-        start) start_all; open_frontend; show_status ;;
+        start) start_all; if frontend_enabled; then open_frontend; fi; show_status ;;
         # Restart does NOT reopen the browser: the already-open tab detects the
         # backend is back and reloads itself (auto-reload in the Navbar), so
         # opening a new tab would double-enter the app.
