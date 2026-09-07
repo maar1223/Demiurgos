@@ -22,6 +22,7 @@ from dataclasses import dataclass
 import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -302,10 +303,22 @@ class ProbeRunner:
                 body = None
             return response.status_code, body
 
+    def _is_opencode_host(self) -> bool:
+        """True when the probe target is OpenCode Go (requires a session id)."""
+        host = (urlsplit(self.base_url).hostname or "").lower()
+        return host == "opencode.ai" or host.endswith(".opencode.ai")
+
     def _headers(self) -> dict[str, str]:
         headers = {"Accept": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        # OpenCode Go (Console Go) requires a stable per-conversation session id
+        # in ``x-opencode-session`` for routing/prompt-cache optimization; a
+        # probe without it is rejected with HTTP 400 "missing x-opencode-session".
+        # Send a stable identifier derived from the probed model. Other providers
+        # ignore the extra header, so this only gates on the OpenCode host.
+        if self._is_opencode_host():
+            headers["x-opencode-session"] = f"demiurgos-probe-{self.model or 'default'}"
         return headers
 
     def _chat(self, content: Mapping[str, Any]) -> str:
