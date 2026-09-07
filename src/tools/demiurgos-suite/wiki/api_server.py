@@ -6316,14 +6316,13 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     except Exception:
         return _fail_closed_activity_response(result, request_id)
 
-    # Memory + skill routing for the activity surface (side effects). Only a
-    # real session is routed/persisted (fricción 4). The prompt carries the
-    # recent window + distilled summary + routed skill into the run.
+    # Memory context for the activity surface (side effects). Only a real
+    # session is routed/persisted (fricción 4). The prompt carries the recent
+    # window + distilled summary into the run. Skill routing is fire-and-forget:
+    # it never blocks the response and its skill_id is persisted at stream close.
     distilled_state = _distilled_summary(body.session_id)
-    skill_id = None
     recent_turns: list[Turn] = []
     if body.session_id and _CONVERSATION_MEMORY is not None:
-        skill_id = await _route_skill(body.prompt, mundo, distilled_state)
         try:
             recent_turns = _CONVERSATION_MEMORY.get_recent_turns(body.session_id)
         except Exception:
@@ -6335,13 +6334,9 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             mundo, body,
             memory_turns=recent_turns or None,
             distilled_state=distilled_state,
-            skill_id=skill_id,
         ),
         session_id=body.session_id,
     )
-    # Register the user turn up front (side effect); the assistant turn is
-    # registered at stream close once the full answer text is known.
-    _persist_memory_turn(body.session_id, mundo, "user", body.prompt, skill_id)
     try:
         run_id = adapter.start(activity_request)
         if inspect.isawaitable(run_id):
@@ -6369,7 +6364,13 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         yield _sse_event(_semantic_decision_event(result).as_dict())
         completed = False
         disconnected = False
+        # Fire-and-forget skill routing: runs concurrently with the activity
+        # run, never blocks the response. The skill_id is only needed at close
+        # for persistence (analytics / future summaries).
+        route_task = None
         try:
+            if body.session_id and _CONVERSATION_MEMORY is not None:
+                route_task = asyncio.create_task(_route_skill(body.prompt, mundo, distilled_state))
             source = events(run_id)
             if inspect.isawaitable(source):
                 source = await source
@@ -6435,9 +6436,19 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         finally:
             if not completed:
                 await _cancel_activity(adapter, run_id)
-            # Assistant turn at stream close (fricción 5): persist the full
-            # answer once it is known; skip on disconnect. The envelope of each
-            # event is untouched (SC-08).
+            # Resolve the fire-and-forget skill routing (side effect for
+            # analytics / future summaries) and persist the user turn with it.
+            # The user turn is persisted unconditionally (the prompt was sent);
+            # the assistant turn is persisted at close once the answer is known,
+            # skipping on disconnect. The envelope of each event is untouched
+            # (SC-08).
+            skill_id = None
+            if route_task is not None:
+                try:
+                    skill_id = await route_task
+                except Exception:
+                    skill_id = None
+            _persist_memory_turn(body.session_id, mundo, "user", body.prompt, skill_id)
             if not disconnected and assistant_parts:
                 _persist_memory_turn(body.session_id, mundo, "assistant", "".join(assistant_parts))
                 await _maybe_refresh_distilled(body.session_id, mundo)
