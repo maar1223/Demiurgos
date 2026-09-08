@@ -6108,6 +6108,20 @@ def _build_ai_ask_prompt(
             "nothing for the world, say so plainly instead of inventing facts.]"
         )
 
+        # Long-term memory guidance: engram as auxiliary, per-world memory.
+        # Live graph evidence always outranks stored memories (contamination
+        # guard); the block is world-keyed so facts never bleed across worlds.
+        parts.append(
+            "[Long-term memory guidance: Engram tools (mem_search, mem_save) are auxiliary "
+            "cross-session memory, not evidence. Use them only for durable notes: canon "
+            "decisions the author states in conversation, and author preferences (format, "
+            "tone, naming). Always key by world: prefix titles with the world name (e.g. "
+            '"Vibrantes: Impulsor canon decision") and include the world name in queries. '
+            "Never store ficha contents or raw world text in memory; store short facts only. "
+            "If a memory conflicts with the live graph or ficha, the live evidence wins: "
+            "answer from the ficha and treat the stale memory as unreliable.]"
+        )
+
         # Entity graph context (search for entities matching the prompt)
         graph_index = _get_graph(mundo) if mundo else None
         graph_ctx = build_graph_context(body.prompt, graph_index)
