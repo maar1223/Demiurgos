@@ -5411,8 +5411,8 @@ async def chat_endpoint(body: ChatRequest):
     mundo = body.mundo if _resolve_mundo_dir(body.mundo) is not None else ""
     result = await _semantic_gate(
         mundo, user_msg,
-        session_id=body.session_id,
         distilled_state=_distilled_summary(body.session_id),
+        recent_turns=_gate_recent_turns(body.session_id),
     )
     payload = result.as_dict()
     if result.decision is not None:
@@ -5592,9 +5592,9 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
     distilled_state = _distilled_summary(body.session_id)
     result = await _semantic_gate(
         mundo, body.prompt,
-        session_id=body.session_id,
         context=context,
         distilled_state=distilled_state,
+        recent_turns=_gate_recent_turns(body.session_id),
     )
     if result.decision is None:
         logger.info(
@@ -5683,10 +5683,42 @@ def _distilled_summary(session_id: str) -> str | None:
     return state.summary if state is not None else None
 
 
+GATE_RECENT_TURNS = 2
+"""Turns passed verbatim to the semantic gate (blind-spot window)."""
+
+GATE_RECENT_TURN_CHARS = 240
+"""Per-turn character cap inside the gate's verbatim window."""
+
+
+def _gate_recent_turns(session_id: str) -> str:
+    """Bounded verbatim window of the last turns for the stateless gate.
+
+    The distilled summary refreshes only every ``DISTILL_REFRESH_INTERVAL``
+    turns, so a stateless gate would miss fresh follow-up references
+    ("no, el segundo"). The last few turns, truncated, close that gap without
+    re-reading the transcript. The empty-string session never names a real
+    conversation (friccion 4) and returns ""."""
+    if not session_id or _CONVERSATION_MEMORY is None:
+        return ""
+    try:
+        turns = _CONVERSATION_MEMORY.get_recent_turns(
+            session_id, limit=GATE_RECENT_TURNS,
+        )
+    except Exception:
+        return ""
+    lines: list[str] = []
+    for turn in turns:
+        text = " ".join(str(turn.content).split())[:GATE_RECENT_TURN_CHARS]
+        if text:
+            lines.append(f"{turn.role.capitalize()}: {text}")
+    return "\n".join(lines)
+
+
 async def _semantic_gate(
     mundo: str, prompt: str, *, session_id: str = "",
     ficha: str | None = None, context: SemanticContext | None = None,
     request_id: str | None = None, distilled_state: str | None = None,
+    recent_turns: str | None = None,
 ) -> SemanticResult:
     """Mandatory Hermes-first semantic gate shared by every assistant surface.
 
@@ -5696,9 +5728,13 @@ async def _semantic_gate(
     proposal, or write. ``decide`` is the only semantic interpretation
     boundary and always receives the bounded authorized context.
 
-    ``distilled_state`` (optional, keyword-only) carries the session's compact
-    memory summary into the classification prompt so the gate's single-run
-    answer stays memory-aware without expanding ``SemanticContext``.
+    The gate runs STATELESS by design (no gateway session replay): it is a
+    classifier, and the guided/co-creation surfaces already decide correctly
+    without any transcript. Conversation awareness comes from the bounded
+    ``distilled_state`` summary plus ``recent_turns``, a verbatim window of
+    the last turns that closes the refresh gap between distillations.
+    ``session_id`` is only echoed into the result envelope when a caller
+    deliberately supplies one.
     """
     provider = _SEMANTIC_PROVIDER
     if provider is None:
@@ -5717,6 +5753,7 @@ async def _semantic_gate(
         session_id=session_id or None,
         context=context,
         distilled_state=distilled_state,
+        recent_turns=recent_turns,
     )
 
 
@@ -6275,11 +6312,13 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         context = SemanticContext()
     else:
         context, _, _, _ = _semantic_context(mundo, body.prompt)
+    distilled_state = _distilled_summary(body.session_id)
     result = await _semantic_gate(
         mundo, body.prompt,
-        session_id=body.session_id,
         context=context,
         request_id=request_id,
+        distilled_state=distilled_state,
+        recent_turns=_gate_recent_turns(body.session_id),
     )
     decision = result.decision
     if decision is not None and decision.state in CONTINUATION_STATES:
@@ -6319,16 +6358,16 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         return _fail_closed_activity_response(result, request_id)
 
     # Memory context for the activity surface (side effects). Only a real
-    # session is routed/persisted (fricción 4). The prompt carries the distilled
-    # summary into the run; the raw recent-turns window is NOT embedded here
-    # because the Hermes gateway already replays the session transcript for this
-    # session_id when no conversation_history is passed (api_server_runs:
-    # _conversation_history_for_session -> get_messages_as_conversation), so
-    # embedding it would duplicate history and inflate the input context.
+    # session is routed/persisted (fricción 4). The gate above ran stateless on
+    # the distilled summary plus a bounded verbatim window. The agent prompt
+    # carries the distilled summary into the run; the raw recent-turns window
+    # is NOT embedded here because the Hermes gateway still replays the session
+    # transcript for this session_id when no conversation_history is passed
+    # (api_server_runs: _conversation_history_for_session ->
+    # get_messages_as_conversation), so embedding it would duplicate history
+    # and inflate the input context.
     # Skill routing is fire-and-forget: it never blocks the response and its
     # skill_id is persisted at stream close.
-    distilled_state = _distilled_summary(body.session_id)
-
     activity_request = HermesActivityRequest(
         request_id=request_id,
         prompt=_build_ai_ask_prompt(

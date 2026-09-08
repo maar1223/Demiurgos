@@ -406,6 +406,7 @@ class SemanticIntentProvider:
         session_id: str | None,
         context: SemanticContext | Mapping[str, Any] | None = None,
         distilled_state: str | None = None,
+        recent_turns: str | None = None,
     ) -> str:
         session_instruction = (
             f" and session_id {json.dumps(session_id)}" if session_id else ""
@@ -414,6 +415,10 @@ class SemanticIntentProvider:
         distilled_block = (
             f" [Conversation context (summarized): {distilled_state}]"
             if distilled_state else ""
+        )
+        recent_block = (
+            f" [Recent exchange (verbatim, last turns): {recent_turns}]"
+            if recent_turns else ""
         )
         return (
             "Act as the Hermes semantic intent interpreter. Return ONLY one JSON "
@@ -435,6 +440,7 @@ class SemanticIntentProvider:
             "the JSON object."
             + context_block
             + distilled_block
+            + recent_block
             + " Never include reference, proposal, target, digest, revision, or "
             "authority fields; those are server-owned. Never write or claim "
             "approval. Author input: " + author_input
@@ -485,6 +491,7 @@ class SemanticIntentProvider:
         session_id: str | None = None,
         context: SemanticContext | Mapping[str, Any] | None = None,
         distilled_state: str | None = None,
+        recent_turns: str | None = None,
     ) -> SemanticResult:
         for attempt in range(1, self._max_attempts + 1):
             try:
@@ -493,7 +500,7 @@ class SemanticIntentProvider:
                         request_id=request_id,
                         prompt=self._build_prompt(
                             author_input, request_id, session_id, context,
-                            distilled_state,
+                            distilled_state, recent_turns,
                         ),
                         session_id=session_id or "",
                     )
