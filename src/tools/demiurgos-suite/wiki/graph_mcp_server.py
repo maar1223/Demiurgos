@@ -129,13 +129,15 @@ def graph_search(query: str, type: str = "", tag: str = "", mundo: str = "") -> 
 
 @mcp.tool()
 def graph_read(entity_path: str, mundo: str = "") -> dict:
-    """Read a full entity by its path, including content and all links.
+    """Read a full entity by its exact filesystem path.
 
-    Returns the entity with content, forward_links, backlinks, relaciones,
-    and word count.  If the entity does not exist, returns {exists: false}.
-    ``mundo`` defaults to the active world; pass another world name to
-    read that world. When you return results, tell the user which world
-    they came from.
+    The required argument ``entity_path`` must be the ``path`` field returned
+    by graph_search (e.g. "lore/ayagars-reptiles-vibrantes/entity.md").  Do
+    NOT pass the display title, the name, or a "Parent::Name" reference — they
+    will not resolve.  Returns the entity with content, forward_links,
+    backlinks, relaciones, and word count; {exists: false} when not found.
+    ``mundo`` defaults to the active world; pass another world to read that
+    world.  When you return results, tell the user which world they came from.
     """
     assert _adapter is not None, "graph_mcp_server.init() must be called before tools"
     return _adapter.tool_read(entity_path, mundo)

@@ -6062,10 +6062,12 @@ def _build_ai_ask_prompt(
         parts.append(
             "[Tool usage guidance: For questions about this world, use the Demiurgos graph "
             "tools, not generic file tools. Prefer this flow: call graph_search to locate an "
-            "entity, then graph_read to read its ficha, then answer using only what was read. "
-            "Use graph_links only when the question is about connections between entities. Do "
-            "NOT use generic search/read file tools (search_files, read_file) or lore_search "
-            "for world lore when the graph tools allow answering directly. If the graph returns "
+            "entity (it returns a \"path\" field for each match), then call graph_read passing "
+            "that exact value as the required \"entity_path\" argument — not the display title, "
+            "name, or a \"Parent::Name\" reference — then answer using only what was read. Use "
+            "graph_links only when the question is about connections between entities. Do NOT "
+            "use generic search/read file tools (search_files, read_file) or lore_search for "
+            "world lore when the graph tools allow answering directly. If the graph returns "
             "nothing for the world, say so plainly instead of inventing facts.]"
         )
 
