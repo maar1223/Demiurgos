@@ -419,7 +419,8 @@ class SemanticIntentProvider:
             "Act as the Hermes semantic intent interpreter. Return ONLY one JSON "
             "object — no markdown fences, no code blocks — with exactly: state "
             "(one of allow, clarify, require_confirmation, proposal_ready, "
-            "blocked), response (a bounded string under 4096 characters), "
+            "blocked), response (a single concise sentence under 240 characters "
+            "stating the interpretation — not an explanation of world lore), "
             "request_id "
             f"{json.dumps(request_id)}{session_instruction}, and guided (boolean). "
             "When state is require_confirmation include continuation "
@@ -429,7 +430,9 @@ class SemanticIntentProvider:
             "fields, at most 50 keys>}}. continuation is allowed only for "
             "require_confirmation and proposal_ready and must not contain target, "
             "digest, revision, authority, reference, acceptance, or accepted_canon "
-            "keys. You have no filesystem, graph, credential, or write access."
+            "keys. You have no filesystem, graph, credential, or write access. "
+            "Do not explain your reasoning or analysis; classify and emit only "
+            "the JSON object."
             + context_block
             + distilled_block
             + " Never include reference, proposal, target, digest, revision, or "
