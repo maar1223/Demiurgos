@@ -6317,22 +6317,20 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         return _fail_closed_activity_response(result, request_id)
 
     # Memory context for the activity surface (side effects). Only a real
-    # session is routed/persisted (fricción 4). The prompt carries the recent
-    # window + distilled summary into the run. Skill routing is fire-and-forget:
-    # it never blocks the response and its skill_id is persisted at stream close.
+    # session is routed/persisted (fricción 4). The prompt carries the distilled
+    # summary into the run; the raw recent-turns window is NOT embedded here
+    # because the Hermes gateway already replays the session transcript for this
+    # session_id when no conversation_history is passed (api_server_runs:
+    # _conversation_history_for_session -> get_messages_as_conversation), so
+    # embedding it would duplicate history and inflate the input context.
+    # Skill routing is fire-and-forget: it never blocks the response and its
+    # skill_id is persisted at stream close.
     distilled_state = _distilled_summary(body.session_id)
-    recent_turns: list[Turn] = []
-    if body.session_id and _CONVERSATION_MEMORY is not None:
-        try:
-            recent_turns = _CONVERSATION_MEMORY.get_recent_turns(body.session_id)
-        except Exception:
-            recent_turns = []
 
     activity_request = HermesActivityRequest(
         request_id=request_id,
         prompt=_build_ai_ask_prompt(
             mundo, body,
-            memory_turns=recent_turns or None,
             distilled_state=distilled_state,
         ),
         session_id=body.session_id,
