@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { MethodologyStatePanel } from "@/components/organisms/MethodologyStatePanel";
+import {
+  getCompanionLatencyNotified,
+  markCompanionLatencyNotified,
+} from "@/lib/companionLatency";
 import type { MethodologyStatus } from "@/api/types";
 
 const status: MethodologyStatus = {
@@ -51,6 +55,22 @@ const status: MethodologyStatus = {
 
 const selected = { skill_id: "eneagrama", version: "1.2.0" };
 
+/** Status carrying one active companion (eneagrama@1.2.0) in world "nec". */
+const companionStatus: MethodologyStatus = {
+  ...status,
+  companions: {
+    nec: [
+      {
+        world: "nec",
+        skill_id: "eneagrama",
+        version: "1.2.0",
+        description: "",
+        activated_at: "2026-01-03",
+      },
+    ],
+  },
+};
+
 function renderPanel(
   overrides: Partial<Parameters<typeof MethodologyStatePanel>[0]> = {},
 ) {
@@ -63,6 +83,9 @@ function renderPanel(
     onAdaptar: vi.fn(),
     onComparar: vi.fn(),
     onExportar: vi.fn(),
+    onToggleCompanion: vi.fn(),
+    busy: false,
+    latencyNoticeWorld: null,
     ...overrides,
   };
   render(<MethodologyStatePanel {...props} />);
@@ -199,6 +222,74 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     expect(screen.getByRole("button", { name: "Adaptar" })).toHaveAttribute(
       "title",
       "Derivá una versión editable de esta publicación.",
+    );
+  });
+
+  it("reflects a companion chip ON from status and lists the ON entry (R-UI chips)", () => {
+    const props = renderPanel({ status: companionStatus });
+
+    const chip = screen.getByRole("switch", { name: "Compañera en nec" });
+    expect(chip).toHaveAttribute("aria-checked", "true");
+
+    // Flipping the ON chip OFF reports the toggle with the selected version.
+    fireEvent.click(chip);
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.2.0",
+      false,
+    );
+
+    // The companion list shows the active entry with an OFF button.
+    expect(screen.getByText("eneagrama@1.2.0")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Apagar" }));
+    expect(props.onToggleCompanion).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.2.0",
+      false,
+    );
+  });
+
+  it("keeps the chip OFF for a selected version that is not a companion (R-UI chips)", () => {
+    renderPanel({
+      status: companionStatus,
+      selected: { skill_id: "eneagrama", version: "1.3.0" },
+    });
+
+    expect(screen.getByRole("switch", { name: "Compañera en nec" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+
+  it("never renders the word slot in the panel (R-UI slot vocabulary)", () => {
+    renderPanel({ status: companionStatus });
+    expect(screen.queryByText(/slot/i)).not.toBeInTheDocument();
+  });
+
+  it("shows the latency notice for the world just activated (R-UI notice)", () => {
+    renderPanel({ latencyNoticeWorld: "nec" });
+    expect(
+      screen.getByText(
+        /Las charlas de IA en este mundo pueden tardar un poco más/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the latency notice hidden for other worlds (R-UI notice)", () => {
+    renderPanel({ latencyNoticeWorld: "otro-mundo" });
+    expect(
+      screen.queryByText(/Las charlas de IA en este mundo pueden tardar/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("persists the notice-once flag in localStorage (R-UI notice)", () => {
+    window.localStorage.clear();
+
+    expect(markCompanionLatencyNotified("nec")).toBe(true);
+    expect(markCompanionLatencyNotified("nec")).toBe(false);
+    expect(getCompanionLatencyNotified()).toEqual(["nec"]);
+    expect(window.localStorage.getItem("demiurgos-companion-latency-notified")).toBe(
+      '["nec"]',
     );
   });
 });

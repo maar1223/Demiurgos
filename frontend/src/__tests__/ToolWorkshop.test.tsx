@@ -13,6 +13,8 @@ vi.mock("@/api/methodologies", () => ({
   createMethodologyDraft: vi.fn(),
   publishMethodologyDraft: vi.fn(),
   activateMethodology: vi.fn(),
+  activateCompanion: vi.fn(),
+  deactivateCompanion: vi.fn(),
   getMethodologyInventory: vi.fn(),
   exportPublished: vi.fn(),
 }));
@@ -29,6 +31,7 @@ vi.mock("@/api/coCreation", async (importOriginal) => {
 
 import { useWorlds } from "@/hooks/useWorlds";
 import {
+  activateCompanion,
   activateMethodology,
   getMethodologyInventory,
   getMethodologyStatus,
@@ -105,6 +108,16 @@ describe("ToolWorkshop", () => {
       version: "1.2.0",
       digest: "abc",
       activated_at: "2026-01-01",
+    });
+    (activateCompanion as Mock).mockResolvedValue({
+      world: "Vibrantes",
+      companion: {
+        world: "Vibrantes",
+        skill_id: "guided-character-v1",
+        version: "1.2.0",
+        description: "",
+        activated_at: "2026-01-01",
+      },
     });
     mockGetPublishedDetail.mockReset();
     mockGetPublishedDetail.mockResolvedValue(detail);
@@ -538,5 +551,72 @@ describe("ToolWorkshop", () => {
         "Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez.",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("toggles a companion chip ON, refetches status and shows the latency notice (R-UI)", async () => {
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    // Select the world, then the published row, so the right panel renders.
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+    await user.click(screen.getByRole("option", { name: "Vibrantes" }));
+    await user.click(screen.getByRole("button", { name: "Cambiar" }));
+    await user.click(screen.getByText("Guided character methodology"));
+    const chip = await screen.findByRole("switch", {
+      name: "Compañera en Vibrantes",
+    });
+
+    const statusCallsBefore = (getMethodologyStatus as Mock).mock.calls.length;
+    await user.click(chip);
+
+    await waitFor(() => {
+      expect(activateCompanion).toHaveBeenCalledWith(
+        "Vibrantes",
+        "guided-character-v1",
+        "1.2.0",
+      );
+    });
+    await waitFor(() => {
+      expect((getMethodologyStatus as Mock).mock.calls.length).toBeGreaterThan(
+        statusCallsBefore,
+      );
+    });
+    // First-ever activation in the world → one-time latency notice.
+    expect(
+      await screen.findByText(
+        /Las charlas de IA en este mundo pueden tardar un poco más/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("surfaces the Spanish error banner when the companion toggle fails (R-UI)", async () => {
+    const user = userEvent.setup();
+    (activateCompanion as Mock).mockRejectedValue(new Error("boom"));
+    renderToolWorkshop();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Mundos" }));
+    await user.click(screen.getByRole("option", { name: "Vibrantes" }));
+    await user.click(screen.getByRole("button", { name: "Cambiar" }));
+    await user.click(screen.getByText("Guided character methodology"));
+    const chip = await screen.findByRole("switch", {
+      name: "Compañera en Vibrantes",
+    });
+    await user.click(chip);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/No se pudo actualizar la skill compañera/),
+      ).toBeInTheDocument();
+    });
   });
 });
