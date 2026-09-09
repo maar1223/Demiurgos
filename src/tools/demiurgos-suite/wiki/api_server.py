@@ -5344,6 +5344,11 @@ _GATEWAY_TIMEOUT = int(os.getenv("HERMES_GATEWAY_TIMEOUT", "300"))
 # neutral fallback and never receive a run submission.
 ACTIVITY_ADAPTER = None
 ACTIVITY_EVENT_TIMEOUT_SECONDS = 30.0
+# Companion-gated awaited routing budget: one small Hermes classification run
+# (same class as the already-awaited semantic gate) may delay the prompt build
+# by at most this long in companion worlds; on timeout the prompt falls back to
+# today's fire-and-forget shape and the shielded task resolves at stream close.
+ROUTING_AWAIT_TIMEOUT_SECONDS = 5.0
 ACTIVITY_CLEANUP_TIMEOUT_SECONDS = 1.0
 ACTIVITY_UNAVAILABLE_REASON = "file_evidence_contract_unverified"
 ACTIVITY_PROVIDER_FAILURE_REASON = "provider_activity_unavailable"
@@ -5448,6 +5453,34 @@ async def _route_skill(prompt: str, mundo: str, distilled_state: str | None) -> 
         logger.warning("skill routing failed safely for world %r", mundo, exc_info=True)
         return None
     return result.skill_id if isinstance(result, SkillRouteResult) else None
+
+
+def _companion_contract_for(
+    winner: str | None, companions: list, mundo: str
+) -> str | None:
+    """Build the bounded companion methodology marker for ``winner``.
+
+    Only a winner that is one of ``mundo``'s companions injects content: the
+    published record is resolved from the companion's pinned version and its
+    bounded name (≤120 chars) plus projected markdown (≤1000 tokens) is
+    returned. Timeouts, no winner, non-companion winners (including
+    transversals — never inject), and lookup misses all return ``None`` so the
+    prompt falls back to today's byte-for-byte shape. Per-turn only: parameter,
+    zero state.
+    """
+    if winner is None or not companions:
+        return None
+    library = _methodology_library()
+    if library is None:
+        return None
+    for companion in companions:
+        if companion.skill_id == winner and companion.world == mundo:
+            published = library.get_published(companion.skill_id, companion.version)
+            if published is None:
+                return None
+            name = (getattr(published, "name", "") or "")[:120]
+            return f"[Companion methodology: {name}]\n{project_contract_markdown(published)}"
+    return None
 
 
 def _persist_memory_turn(
@@ -6087,7 +6120,7 @@ def _build_ai_ask_prompt(
     reference_name: str | None = None,
     memory_turns: list[Turn] | None = None,
     distilled_state: str | None = None,
-    skill_id: str | None = None,
+    skill_contract: str | None = None,
 ) -> str:
     from demiurgos_personality import build_identity_prompt, build_graph_context
 
@@ -6194,8 +6227,8 @@ def _build_ai_ask_prompt(
         parts.append(
             f"[Conversation context (summarized): {distilled_state}]"
         )
-    if skill_id:
-        parts.append(f"[Active skill: {skill_id}. Follow the skill's methodology.]")
+    if skill_contract:
+        parts.append(skill_contract)
     if parts:
         joined = "\n".join(parts)
         return f"{joined}\n\n{body.prompt}"
@@ -6392,6 +6425,24 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
     # (api_server_runs: _conversation_history_for_session ->
     # get_messages_as_conversation), so embedding it would duplicate history
     # and inflate the input context.
+    # Companion-gated awaited routing (bridge): when the world has ≥1 companion
+    # AND a real session is active, routing is awaited (≤5s) BEFORE the prompt
+    # is built so a companion winner's methodology can be injected as content.
+    # Zero-companion worlds and session-less turns keep today's fire-and-forget
+    # byte-for-byte: no added await and no extra provider call.
+    library = _methodology_library()
+    companions = library.list_companions(mundo)
+    early_route_task = None
+    skill_contract = None
+    if companions and body.session_id and _CONVERSATION_MEMORY is not None:
+        early_route_task = asyncio.create_task(_route_skill(body.prompt, mundo, distilled_state))
+        try:
+            winner = await asyncio.wait_for(
+                asyncio.shield(early_route_task), ROUTING_AWAIT_TIMEOUT_SECONDS
+            )
+        except Exception:
+            winner = None
+        skill_contract = _companion_contract_for(winner, companions, mundo)
     # Skill routing is fire-and-forget: it never blocks the response and its
     # skill_id is persisted at stream close.
     activity_request = HermesActivityRequest(
@@ -6399,6 +6450,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         prompt=_build_ai_ask_prompt(
             mundo, body,
             distilled_state=distilled_state,
+            skill_contract=skill_contract,
         ),
         session_id=body.session_id,
     )
@@ -6429,12 +6481,13 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
         yield _sse_event(_semantic_decision_event(result).as_dict())
         completed = False
         disconnected = False
-        # Fire-and-forget skill routing: runs concurrently with the activity
-        # run, never blocks the response. The skill_id is only needed at close
-        # for persistence (analytics / future summaries).
-        route_task = None
+        # Skill routing: reuse the companion-gated early task when one was
+        # started (already resolved or shielded for close-time persistence);
+        # otherwise fire-and-forget as today — the zero-companion spawn site is
+        # byte-identical and adds no provider call.
+        route_task = early_route_task
         try:
-            if body.session_id and _CONVERSATION_MEMORY is not None:
+            if route_task is None and body.session_id and _CONVERSATION_MEMORY is not None:
                 route_task = asyncio.create_task(_route_skill(body.prompt, mundo, distilled_state))
             source = events(run_id)
             if inspect.isawaitable(source):

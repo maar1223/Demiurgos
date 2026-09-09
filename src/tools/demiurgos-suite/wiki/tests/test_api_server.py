@@ -2746,6 +2746,185 @@ class TestMethodologyApi:
         assert api_server._compiled_contract_markdown("test_mundo") is None
 
 
+# ------------------------------------------------------------------ #
+# Companion-gated awaited routing bridge (WU3b): injection + fallback.
+# ------------------------------------------------------------------ #
+
+
+class _RecordingActivityAdapter:
+    """Records every submitted prompt and cancellation (leak/call assertions)."""
+
+    available = True
+    capability = _activity_capability()
+
+    def __init__(self):
+        self.prompts = []
+        self.cancelled = []
+        self._n = 0
+
+    def start(self, request):
+        self.prompts.append(request.prompt)
+        self._n += 1
+        return f"bridge-run-{self._n}"
+
+    async def events(self, run_id):
+        yield {"event": "run.completed", "run_id": run_id, "output": "bridge answer"}
+
+    def cancel(self, run_id):
+        self.cancelled.append(run_id)
+
+
+class _BridgeRouter:
+    """Scripted skill router: yields pre-set winners in order; records calls."""
+
+    def __init__(self, *winners):
+        self._winners = list(winners)
+        self.calls = []
+
+    async def route(self, prompt, mundo, distilled_state=None):
+        self.calls.append((prompt, mundo))
+        winner = self._winners.pop(0) if self._winners else None
+        return api_server.SkillRouteResult(
+            skill_id=winner, confidence=0.9 if winner else 0.0,
+            source="llm" if winner else "fallback", routed=winner is not None,
+        )
+
+
+class _SlowRouter:
+    """Router that sleeps past the routing budget (timeout fallback test)."""
+
+    async def route(self, prompt, mundo, distilled_state=None):
+        await asyncio.sleep(0.2)
+        return api_server.SkillRouteResult(
+            skill_id="companion-skill", confidence=0.9, source="llm", routed=True,
+        )
+
+
+class TestCompanionActivityBridge:
+    """WU3b bridge: companion-gated awaited routing + bounded injection.
+
+    R-BRIDGE scenarios: a companion winner injects the projected methodology
+    (content, not name-only); a routing timeout falls back to today's prompt
+    with persistence intact; a zero-companion baseline stays byte-identical
+    with no double routing; injection is per-turn only (no sticky state); and
+    the marker leaks no digest or internal path.
+    """
+
+    def _wire(self, monkeypatch, tmp_path, router, payloads=1, *, companions=True):
+        library = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
+        draft_id = library.create_draft(
+            skill_id="companion-skill", version="1.0.0",
+            name="Companion skill",
+            source="## Compañera\n\nMetodología compañera.\n",
+            description="Metodología compañera de prueba.",
+        )
+        library.publish(draft_id)
+        if companions:
+            library.add_companion("test_mundo", "companion-skill", "1.0.0")
+        monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+        monkeypatch.setattr(
+            api_server, "_CONVERSATION_MEMORY", api_server.ConversationMemoryStore(":memory:")
+        )
+        monkeypatch.setattr(api_server, "_SKILL_ROUTER", router)
+        runs = _SemanticRuns(*([_semantic_payload("allow")] * payloads))
+        _wire_semantic_provider(monkeypatch, runs)
+        adapter = _RecordingActivityAdapter()
+        monkeypatch.setattr(api_server, "ACTIVITY_ADAPTER", adapter)
+        return library, runs, adapter
+
+    def test_activity_companion_winner_injects_contract(self, client, monkeypatch, tmp_path):
+        """A companion winner's projected methodology is injected as CONTENT."""
+        library, runs, adapter = self._wire(
+            monkeypatch, tmp_path, _BridgeRouter("companion-skill")
+        )
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "bridge-1",
+        })
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+        published = library.get_published("companion-skill", "1.0.0")
+        assert f"[Companion methodology: {published.name}]\n" in adapter.prompts[0]
+        # Projected markdown content rides in the marker (not name-only).
+        assert "Metodología compañera de prueba." in adapter.prompts[0]
+        assert adapter.prompts[0].endswith("\n\nHola")
+        # Exactly one semantic provider run — the gate; routing adds none.
+        assert runs.starts == 1
+
+    def test_activity_timeout_falls_back_and_persists(self, client, monkeypatch, tmp_path):
+        """A routing timeout keeps today's prompt AND persistence intact."""
+        library, runs, adapter = self._wire(monkeypatch, tmp_path, _SlowRouter())
+        monkeypatch.setattr(api_server, "ROUTING_AWAIT_TIMEOUT_SECONDS", 0.01)
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "bridge-timeout",
+        })
+        assert response.status_code == 200
+        prompt = adapter.prompts[0]
+        assert "[Companion methodology:" not in prompt
+        assert prompt.endswith("\n\nHola")
+        # The shielded task resolved at close: the user turn persisted with the
+        # companion winner recorded for analytics while the prompt stayed clean.
+        turns = api_server._CONVERSATION_MEMORY.get_recent_turns("bridge-timeout")
+        assert [turn.role for turn in turns] == ["user", "assistant"]
+        assert turns[0].skill_id == "companion-skill"
+
+    def test_activity_nonmatching_prompt_identical_baseline(self, client, monkeypatch, tmp_path):
+        """Zero-companion baseline == companion-no-winner prompt; one routing
+        decision per turn (no double routing)."""
+        router = _BridgeRouter()
+        library, runs, adapter = self._wire(
+            monkeypatch, tmp_path, router, payloads=2, companions=False,
+        )
+        baseline = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "bridge-baseline",
+        })
+        assert baseline.status_code == 200
+        baseline_prompt = adapter.prompts[0]
+        # The same world now gains a companion but classification yields no
+        # winner: the prompt must be byte-identical to today's no-skill prompt.
+        library.add_companion("test_mundo", "companion-skill", "1.0.0")
+        no_winner = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "bridge-nowinner",
+        })
+        assert no_winner.status_code == 200
+        assert adapter.prompts[1] == baseline_prompt
+        # One routing decision per turn: the awaited early task is reused at
+        # close (never re-spawned), so exactly 2 total for 2 turns.
+        assert len(router.calls) == 2
+
+    def test_activity_no_stickiness_next_turn(self, client, monkeypatch, tmp_path):
+        """Injection is per-turn only: a later non-matching turn has no marker."""
+        router = _BridgeRouter("companion-skill")
+        library, runs, adapter = self._wire(monkeypatch, tmp_path, router, payloads=2)
+        first = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "bridge-sticky",
+        })
+        assert first.status_code == 200
+        assert "[Companion methodology:" in adapter.prompts[0]
+        second = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Chau", "session_id": "bridge-sticky",
+        })
+        assert second.status_code == 200
+        assert "[Companion methodology:" not in adapter.prompts[1]
+
+    def test_injection_marker_no_digest_no_path(self, client, monkeypatch, tmp_path):
+        """The marker is bounded: name + projected markdown only — no digest,
+        no library file, no methodology dir, no absolute path."""
+        library, runs, adapter = self._wire(
+            monkeypatch, tmp_path, _BridgeRouter("companion-skill")
+        )
+        response = client.post("/api/test_mundo/ai/ask/activity", json={
+            "prompt": "Hola", "session_id": "bridge-leak",
+        })
+        assert response.status_code == 200
+        prompt = adapter.prompts[0]
+        assert "[Companion methodology:" in prompt
+        for forbidden in (
+            "sha256:", "digest", "library.json", "data/methodology",
+            "/mnt/", "tmp/", "CompiledMethodology",
+        ):
+            assert forbidden not in prompt
+
+
 def _delta_guided_provider():
     async def provider(request, _token):
         return {
