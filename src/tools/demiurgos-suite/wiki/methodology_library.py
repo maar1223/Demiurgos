@@ -34,7 +34,7 @@ from methodology_compiler import (
     MethodologyIssue,
     compile_methodology,
 )
-from methodology_trust import PERSONALIZADAS, scrub_foundational
+from methodology_trust import FOUNDATIONAL, PERSONALIZADAS, scrub_foundational
 
 
 # The id of the author-created foundational character-creation skill.
@@ -57,6 +57,15 @@ class AlreadyPublishedError(MethodologyLibraryError):
 
 class NotPublishedError(MethodologyLibraryError):
     """The skill/version is not published (or was deleted)."""
+
+
+class FoundationalImmutableError(MethodologyLibraryError):
+    """A foundational (``fundacional``) record cannot be soft-deleted.
+
+    The guard keys on the ``fundacional`` trust attribute, not the visible
+    category: a signed non-``fundacional`` ``Oficiales`` record stays
+    deletable (S10/S11).
+    """
 
 
 class CompanionLimitError(ValidationError):
@@ -542,6 +551,13 @@ class MethodologyLibrary:
             record = self._published.get(key)
             if record is None:
                 raise NotPublishedError(f"{skill_id}@{version} is not published")
+            # S10: a foundational record is immutable — reject BEFORE any
+            # mutation (record, activations, and companions stay untouched).
+            # Guard keys on the ``fundacional`` attribute, not the category.
+            if FOUNDATIONAL in (record.get("trust_attributes") or ()):
+                raise FoundationalImmutableError(
+                    f"{skill_id}@{version} is a foundational skill and cannot be deleted"
+                )
             record["deleted_at"] = _utcnow()
             # A deleted version cannot stay active anywhere.
             for world, active in list(self._activations.items()):

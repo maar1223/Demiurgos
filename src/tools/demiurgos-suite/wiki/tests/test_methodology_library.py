@@ -27,6 +27,7 @@ from methodology_library import (  # noqa: E402
     MethodologyLibraryError,
     NotPublishedError,
     FOUNDATIONAL_CHARACTER_SKILL_ID,
+    FoundationalImmutableError,
     ValidationError,
     _bump_version,
 )
@@ -174,6 +175,59 @@ class TestSoftDelete:
         library.soft_delete("guided-character-v1", "1.2.0")
         with pytest.raises(NotPublishedError):
             library.activate("nec", "guided-character-v1", "1.2.0")
+
+
+class TestFoundationalImmutability:
+    """S10/S11: records carrying the ``fundacional`` trust attribute are
+    immutable — soft_delete raises before ANY mutation. The guard keys on
+    the attribute, not the category: a signed non-``fundacional`` Oficiales
+    record stays deletable. White-box: no DELETE route exists."""
+
+    def _publish_foundational(self, library: MethodologyLibrary, *,
+                              skill_id: str = "foundational-skill",
+                              version: str = "1.0.0") -> None:
+        draft_id = library.create_draft(
+            skill_id=skill_id, version=version,
+            name="Foundational skill", source=_valid_source(),
+            description="A server-installed foundational skill.",
+            clasificacion="Oficiales",
+            trust_attributes=("fundacional", "verified"),
+        )
+        library.publish(draft_id)
+
+    def test_soft_delete_foundational_raises_and_preserves_state(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._publish_foundational(library)
+        library.activate("nec", "foundational-skill", "1.0.0")
+        library.add_companion("nec", "foundational-skill", "1.0.0")
+        with pytest.raises(FoundationalImmutableError):
+            library.soft_delete("foundational-skill", "1.0.0")
+        # Nothing mutated: record still published, activation + companion intact.
+        assert library.get_published("foundational-skill", "1.0.0") is not None
+        assert library.list_published()
+        assert library.active_for("nec") is not None
+        assert [c.skill_id for c in library.list_companions("nec")] == ["foundational-skill"]
+
+    def test_soft_delete_unknown_foundational_still_not_published(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        with pytest.raises(NotPublishedError):
+            library.soft_delete("foundational-skill", "9.9.9")
+
+    def test_soft_delete_non_fundacional_oficiales_is_allowed(self, tmp_path: Path) -> None:
+        """S11: the guard keys on the attribute — a hypothetical signed
+        (verified) non-fundacional Oficiales record IS deletable."""
+        library = _library(tmp_path)
+        draft_id = library.create_draft(
+            skill_id="signed-official", version="1.0.0",
+            name="Signed official skill", source=_valid_source(),
+            description="Officially signed, NOT foundational.",
+            clasificacion="Oficiales",
+            trust_attributes=("verified",),
+        )
+        library.publish(draft_id)
+        library.soft_delete("signed-official", "1.0.0")
+        assert library.get_published("signed-official", "1.0.0") is None
+        assert library.list_published() == []
 
 
 class TestCompanions:
