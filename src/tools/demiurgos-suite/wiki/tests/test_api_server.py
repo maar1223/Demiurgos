@@ -2329,6 +2329,66 @@ class TestMethodologyApi:
         assert published.status_code == 422
         assert published.json()["code"] == "validation_error"
 
+    # ------------------------------------------------------------------ #
+    # Server-authoritative trust (S7/S8): client trust claims are rejected
+    # with 400; omission/null/[] stay valid; a clean draft publishes as
+    # Personalizadas with no trust attributes (local-author, G14).
+    # ------------------------------------------------------------------ #
+
+    def test_draft_claims_clasificacion_rejected_400(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch, "author-1")
+        claimed = client.post("/api/methodologies/drafts", json={
+            "skill_id": "guided-character-v1",
+            "version": "1.0.0",
+            "name": "Forge",
+            "source": "## Intento\n\nTexto.\n",
+            "clasificacion": "Oficiales",
+        })
+        assert claimed.status_code == 400
+        assert claimed.json()["code"] == "client_trust_claim_not_allowed"
+        # No draft was created.
+        assert api_server._methodology_library().list_drafts() == []
+
+    def test_draft_claims_trust_attributes_rejected_400(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch, "author-1")
+        claimed = client.post("/api/methodologies/drafts", json={
+            "skill_id": "guided-character-v1",
+            "version": "1.0.0",
+            "name": "Forge",
+            "source": "## Intento\n\nTexto.\n",
+            "trust_attributes": ["fundacional"],
+        })
+        assert claimed.status_code == 400
+        assert claimed.json()["code"] == "client_trust_claim_not_allowed"
+        assert api_server._methodology_library().list_drafts() == []
+
+    def test_draft_null_and_empty_trust_fields_stay_valid(self, client: TestClient, monkeypatch):
+        """S8: explicit null/[] claims are omission — accepted."""
+        _principal(monkeypatch, "author-1")
+        clean = client.post("/api/methodologies/drafts", json={
+            "skill_id": "guided-character-v1",
+            "version": "1.0.0",
+            "name": "Clean",
+            "source": "## Limpio\n\nTexto.\n",
+            "clasificacion": None,
+            "trust_attributes": [],
+        })
+        assert clean.status_code == 200, clean.text
+        assert clean.json()["clasificacion"] is None
+        assert clean.json()["trust_attributes"] == []
+
+    def test_clean_draft_publishes_personalizadas_with_no_trust(self, client: TestClient, monkeypatch):
+        """AC: a normal draft->publish record lands Personalizadas + []."""
+        _principal(monkeypatch, "author-1")
+        draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
+        assert draft.status_code == 200, draft.text
+        published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
+        assert published.status_code == 200, published.text
+        record = api_server._methodology_library().get_published("guided-character-v1", "1.2.0")
+        assert record is not None
+        assert record.clasificacion == "Personalizadas"
+        assert record.trust_attributes == ()
+
     def test_activate_requires_published_version(self, client: TestClient, monkeypatch):
         _principal(monkeypatch, "author-1")
         activated = client.post("/api/methodologies/activate", json={

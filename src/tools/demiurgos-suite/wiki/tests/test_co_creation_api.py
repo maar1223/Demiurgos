@@ -1059,7 +1059,9 @@ def test_draft_request_accepts_original_fields_backward_compatible(
     assert body["trust_attributes"] == []
 
 
-def test_draft_request_echoes_extended_fields(client: TestClient, monkeypatch) -> None:
+def test_draft_request_rejects_claimed_trust_fields(client: TestClient, monkeypatch) -> None:
+    """S7: clasificacion/trust_attributes are server-derived — a client claim
+    is 400-rejected before any draft exists (old passthrough removed)."""
     _bind_principal(monkeypatch)
     response = client.post("/api/methodologies/drafts", json={
         "skill_id": "skill-ext",
@@ -1073,16 +1075,7 @@ def test_draft_request_echoes_extended_fields(client: TestClient, monkeypatch) -
         "clasificacion": "creacion",
         "trust_attributes": ["kernel"],
     })
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["taller"] == "narrativa"
-    assert body["categoria_funcional"] == "Diseño"
-    assert body["etiquetas"] == ["plot", "combate"]
-    assert body["clasificacion"] == "creacion"
-    assert body["trust_attributes"] == ["kernel"]
+    assert response.status_code == 400, response.text
+    assert response.json()["code"] == "client_trust_claim_not_allowed"
     drafts = api_server._methodology_library().list_drafts()
-    assert len(drafts) == 1
-    assert drafts[0].taller == "narrativa"
-    assert drafts[0].etiquetas == ("plot", "combate")
-    assert drafts[0].clasificacion == "creacion"
-    assert drafts[0].trust_attributes == ("kernel",)
+    assert drafts == []

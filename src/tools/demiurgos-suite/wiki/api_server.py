@@ -1732,6 +1732,10 @@ class MethodologyDraftRequest(BaseModel):
     taller: str | None = None
     categoria_funcional: str | None = None
     etiquetas: list[str] = []
+    # Wire doc only (S7): kept in the model so omission/null/[] stay valid,
+    # but the route REJECTS any non-null clasificacion or non-empty
+    # trust_attributes claim with 400 ``client_trust_claim_not_allowed``.
+    # Trust values are server-derived exclusively.
     clasificacion: str | None = None
     trust_attributes: list[str] = []
 
@@ -7656,10 +7660,23 @@ def _known_worlds() -> list[str]:
 
 @app.post("/api/methodologies/drafts")
 def methodologies_create_draft(body: MethodologyDraftRequest, request: Request):
-    """Create an editable draft. The compiler validates it on publish."""
+    """Create an editable draft. The compiler validates it on publish.
+
+    ``clasificacion`` and ``trust_attributes`` are SERVER-derived (S7): a
+    client claim is rejected with 400 before any draft is created. Omission,
+    ``null``, and ``[]`` stay valid (S8) — ``create_draft`` receives no trust
+    fields and the published record lands ``Personalizadas`` with no trust
+    attributes (local-author semantics, G14).
+    """
     principal = _resolve_principal(request)
     if principal is None:
         return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if body.clasificacion is not None or body.trust_attributes:
+        return JSONResponse(status_code=400, content={
+            "detail": "clasificacion and trust_attributes are server-derived; "
+                      "client claims are not allowed.",
+            "code": "client_trust_claim_not_allowed",
+        })
     library = _methodology_library()
     draft_id = library.create_draft(
         skill_id=body.skill_id,
@@ -7672,8 +7689,6 @@ def methodologies_create_draft(body: MethodologyDraftRequest, request: Request):
         taller=body.taller,
         categoria_funcional=body.categoria_funcional,
         etiquetas=tuple(body.etiquetas or []),
-        clasificacion=body.clasificacion,
-        trust_attributes=tuple(body.trust_attributes or []),
     )
     draft = library.get_draft(draft_id)
     assert draft is not None

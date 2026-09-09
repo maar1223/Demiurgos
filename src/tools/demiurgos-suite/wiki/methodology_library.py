@@ -34,6 +34,7 @@ from methodology_compiler import (
     MethodologyIssue,
     compile_methodology,
 )
+from methodology_trust import PERSONALIZADAS
 
 
 # The id of the author-created foundational character-creation skill.
@@ -496,7 +497,12 @@ class MethodologyLibrary:
                 "talleres_compatibles": list(compiled.talleres_compatibles),
                 "categoria_funcional": compiled.categoria_funcional,
                 "etiquetas": list(compiled.etiquetas),
-                "clasificacion": draft_record.get("clasificacion"),
+                # Local-author semantics (G14): a plain draft publishes as
+                # Personalizadas with no trust attributes — the server never
+                # carries a client-claimed value. Server-derived values
+                # (Oficiales/Comunitarias from the import trust path) pass
+                # through untouched.
+                "clasificacion": draft_record.get("clasificacion") or PERSONALIZADAS,
                 "trust_attributes": list(draft_record.get("trust_attributes") or ()),
                 # TW14: provenance threads through to the published record so
                 # it stays visible across the lifecycle (REQ-CC-21).
