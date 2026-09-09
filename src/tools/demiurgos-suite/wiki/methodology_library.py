@@ -36,10 +36,10 @@ from methodology_compiler import (
 )
 
 
-# The reserved Skill Madre id (REQ-IMP-6): this skill is authored by Demiurgos
-# itself and must never be published from an import-derived draft. Single
-# source of truth shared with the skill router and the API trust boundary.
-SKILL_MADRE_ID = "narrative-character-creation"
+# The id of the author-created foundational character-creation skill.
+# Reserved against import-derived publishing (REQ-IMP-6); single source of
+# truth shared with the skill router and the API trust boundary.
+FOUNDATIONAL_CHARACTER_SKILL_ID = "narrative-character-creation"
 
 
 class MethodologyLibraryError(Exception):
@@ -441,12 +441,12 @@ class MethodologyLibrary:
         now = _utcnow()
         with self._lock:
             draft_record = self._drafts.get(draft_id) or {}
-            # REQ-IMP-6: the Skill Madre must never be published from an
-            # import-derived draft. Import-derived drafts carry server-injected
-            # ``parent_skill_id`` (provenance); the Skill Madre itself stays
-            # publishable when authored directly in the workshop.
+            # REQ-IMP-6: this id belongs to the author-created foundational
+            # character-creation skill and is never publishable from an import-derived
+            # draft (server-injected ``parent_skill_id``). The Skill Madre is a core
+            # co-creation capability outside this library (G13) — no guard needed here.
             if (
-                compiled.skill_id == SKILL_MADRE_ID
+                compiled.skill_id == FOUNDATIONAL_CHARACTER_SKILL_ID
                 and draft_record.get("parent_skill_id")
             ):
                 raise MethodologyLibraryError("reserved_skill_id")

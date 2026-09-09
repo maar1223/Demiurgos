@@ -24,7 +24,7 @@ from methodology_library import (  # noqa: E402
     MethodologyLibrary,
     MethodologyLibraryError,
     NotPublishedError,
-    SKILL_MADRE_ID,
+    FOUNDATIONAL_CHARACTER_SKILL_ID,
     ValidationError,
     _bump_version,
 )
@@ -463,38 +463,42 @@ class TestDerivedDrafts:
 
 
 class TestReservedSkillId:
-    """REQ-IMP-6: the Skill Madre id is reserved — it can never be published
-    from an import-derived draft, while direct workshop authorship stays valid."""
+    """REQ-IMP-6: the foundational character-skill id is reserved — it can
+    never be published from an import-derived draft, while direct workshop
+    authorship stays valid."""
 
-    def test_publish_skill_madre_original_is_allowed(self, tmp_path: Path) -> None:
+    def test_constant_value_is_pinned(self) -> None:
+        assert FOUNDATIONAL_CHARACTER_SKILL_ID == "narrative-character-creation"
+
+    def test_publish_foundational_original_is_allowed(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
         draft_id = library.create_draft(
-            skill_id=SKILL_MADRE_ID, version="1.0.0",
+            skill_id=FOUNDATIONAL_CHARACTER_SKILL_ID, version="1.0.0",
             name="Skill Madre", source=_valid_source(),
             description="La skill madre del taller.",
         )
         published = library.publish(draft_id)
-        assert published.skill_id == SKILL_MADRE_ID
+        assert published.skill_id == FOUNDATIONAL_CHARACTER_SKILL_ID
         assert published.version == "1.0.0"
 
-    def test_publish_import_derived_skill_madre_is_rejected(self, tmp_path: Path) -> None:
+    def test_publish_import_derived_foundational_is_rejected(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        madre = library.create_draft(
-            skill_id=SKILL_MADRE_ID, version="1.0.0",
+        foundational = library.create_draft(
+            skill_id=FOUNDATIONAL_CHARACTER_SKILL_ID, version="1.0.0",
             name="Skill Madre", source=_valid_source(),
             description="La skill madre del taller.",
         )
-        library.publish(madre)
+        library.publish(foundational)
         # An import-derived draft carries server-injected parent_skill_id;
         # publishing it must fail closed before any record is written.
         derived = library.create_derived_draft(
-            SKILL_MADRE_ID, "1.0.0",
+            FOUNDATIONAL_CHARACTER_SKILL_ID, "1.0.0",
             seed_source=_valid_source(), name="Skill Madre importada",
         )
         with pytest.raises(MethodologyLibraryError) as excinfo:
             library.publish(derived)
         assert str(excinfo.value) == "reserved_skill_id"
-        assert library.get_published(SKILL_MADRE_ID, "1.0.1") is None
+        assert library.get_published(FOUNDATIONAL_CHARACTER_SKILL_ID, "1.0.1") is None
 
 
 class TestDraftHistory:

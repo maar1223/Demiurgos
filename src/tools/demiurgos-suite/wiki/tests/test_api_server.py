@@ -2575,10 +2575,10 @@ class TestMethodologyApi:
         assert response.status_code == 404
 
     def test_reserved_skill_id_rejected_at_trust(self, client: TestClient, monkeypatch):
-        """REQ-IMP-6 scenario: trusting a package with the Skill Madre id is
-        rejected with 409 and no draft is created."""
+        """REQ-IMP-6 scenario: trusting a package with the foundational
+        character-skill id is rejected with 409 and no draft is created."""
         _principal(monkeypatch, "author-1")
-        madre = build_package({
+        foundational = build_package({
             "skill_id": "narrative-character-creation",
             "version": "1.0.0",
             "name": "Skill Madre",
@@ -2586,7 +2586,7 @@ class TestMethodologyApi:
             "phases": ["conversation", "review", "complete"],
             "language": "es",
         }, "## Skill Madre\n\nTexto.\n")
-        imported = self._upload(client, madre, filename="madre.zip").json()
+        imported = self._upload(client, foundational, filename="madre.zip").json()
         assert imported["verdict"]["ok"] is True
         trusted = client.post(f"/api/methodologies/quarantine/{imported['package_id']}/trust")
         assert trusted.status_code == 409
@@ -2594,8 +2594,8 @@ class TestMethodologyApi:
         assert client.get("/api/methodologies/status").json()["drafts"] == []
 
     def test_reserved_skill_id_rejected_at_publish(self, client: TestClient, monkeypatch):
-        """REQ-IMP-6 scenario: an import-derived Skill Madre draft can never
-        be published (409 reserved_skill_id)."""
+        """REQ-IMP-6 scenario: an import-derived foundational character-skill
+        draft can never be published (409 reserved_skill_id)."""
         _principal(monkeypatch, "author-1")
         draft = client.post("/api/methodologies/drafts", json={
             "skill_id": "narrative-character-creation",
@@ -2614,9 +2614,9 @@ class TestMethodologyApi:
         assert published.status_code == 409
         assert published.json()["code"] == "reserved_skill_id"
 
-    def test_reserved_skill_madre_author_publish_is_allowed(self, client: TestClient, monkeypatch):
-        """The guard only blocks import-derived publishes: the Skill Madre
-        authored directly in the workshop still publishes normally."""
+    def test_reserved_foundational_author_publish_is_allowed(self, client: TestClient, monkeypatch):
+        """The guard only blocks import-derived publishes: the foundational
+        character skill authored directly in the workshop still publishes normally."""
         _principal(monkeypatch, "author-1")
         draft = client.post("/api/methodologies/drafts", json={
             "skill_id": "narrative-character-creation",

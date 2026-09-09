@@ -125,7 +125,7 @@ from methodology_library import (
     MethodologyLibrary,
     MethodologyLibraryError,
     NotPublishedError,
-    SKILL_MADRE_ID,
+    FOUNDATIONAL_CHARACTER_SKILL_ID,
     ValidationError,
 )
 from methodology_trust import QuarantineRecord, QuarantineStore, build_package
@@ -7623,8 +7623,9 @@ def methodologies_publish(draft_id: str, request: Request):
             "detail": str(exc), "code": "already_published",
         })
     except MethodologyLibraryError as exc:
-        # REQ-IMP-6: the Skill Madre id is reserved — an import-derived draft
-        # can never be published. All other library errors are caught above.
+        # REQ-IMP-6: the reserved id belongs to the foundational character
+        # skill — an import-derived draft can never publish it. All other
+        # library errors are caught above.
         return JSONResponse(status_code=409, content={
             "detail": str(exc), "code": "reserved_skill_id",
         })
@@ -7684,8 +7685,8 @@ def methodologies_rollback(body: MethodologyRollbackRequest, request: Request):
 # ---------------------------------------------------------------------------
 # Skill transfer (Fase 5b, REQ-IMP-1..6): export published versions as `.zip`
 # packages and import them through mandatory quarantine → manual trust →
-# editable draft. The Skill Madre id is reserved: it can never be trusted or
-# published from an import.
+# editable draft. The foundational character-skill id is reserved: it can
+# never be trusted or published from an import.
 # ---------------------------------------------------------------------------
 
 
@@ -7786,7 +7787,7 @@ def methodologies_quarantine_list(request: Request):
 def methodologies_quarantine_trust(package_id: str, request: Request):
     """Manually trust a quarantined package, promoting it to a draft (REQ-IMP-4).
 
-    Rejects the reserved Skill Madre id with 409 (REQ-IMP-6) and fails closed
+    Rejects the reserved foundational id with 409 (REQ-IMP-6) and fails closed
     (422) when the package no longer re-validates.
     """
     principal = _resolve_principal(request)
@@ -7797,7 +7798,7 @@ def methodologies_quarantine_trust(package_id: str, request: Request):
     if record is None:
         return JSONResponse(status_code=404, content={"detail": "Metodología no encontrada"})
     compiled = record.verdict.compiled
-    if compiled is not None and compiled.skill_id == SKILL_MADRE_ID:
+    if compiled is not None and compiled.skill_id == FOUNDATIONAL_CHARACTER_SKILL_ID:
         return JSONResponse(status_code=409, content={
             "detail": "reserved_skill_id", "code": "reserved_skill_id",
         })
