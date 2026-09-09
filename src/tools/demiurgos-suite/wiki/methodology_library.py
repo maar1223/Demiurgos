@@ -34,7 +34,7 @@ from methodology_compiler import (
     MethodologyIssue,
     compile_methodology,
 )
-from methodology_trust import PERSONALIZADAS
+from methodology_trust import PERSONALIZADAS, scrub_foundational
 
 
 # The id of the author-created foundational character-creation skill.
@@ -259,6 +259,12 @@ class MethodologyLibrary:
         the original; metadata fields default to the original's published
         values. The original stays intact until the derived draft is
         explicitly published AND activated.
+
+        Trust semantics (S9): a derived fork is local authorship, so
+        ``clasificacion`` is FORCED to ``Personalizadas`` (any caller-supplied
+        value is ignored) and ``trust_attributes`` are scrubbed of
+        ``fundacional`` while other inherited attributes (e.g. ``verified``)
+        are kept. TW14 provenance is injected below and survives to publish.
         """
         original = self.get_published(original_skill_id, original_version)
         if original is None:
@@ -299,14 +305,18 @@ class MethodologyLibrary:
                 "etiquetas": list(
                     etiquetas if etiquetas is not None else original.etiquetas
                 ),
-                "clasificacion": (
-                    clasificacion if clasificacion is not None else original.clasificacion
-                ),
-                "trust_attributes": list(
-                    trust_attributes
+                # S9: a derived fork is local authorship — classification is
+                # forced to Personalizadas unconditionally and the
+                # ``fundacional`` marker is scrubbed from the inherited trust
+                # attributes (other attributes like ``verified`` are kept).
+                # TW14 provenance (parent_skill_id/parent_version) is
+                # injected below and stays intact.
+                "clasificacion": PERSONALIZADAS,
+                "trust_attributes": list(scrub_foundational(
+                    tuple(trust_attributes)
                     if trust_attributes is not None
                     else original.trust_attributes
-                ),
+                )),
                 "parent_skill_id": original.skill_id,
                 "parent_version": original.version,
                 "created_at": now,

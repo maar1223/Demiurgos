@@ -458,8 +458,37 @@ class TestDerivedDrafts:
         # Seed source + inherited metadata from the original.
         assert derived.source.endswith("# adaptado\n")
         assert derived.description == _valid_manifest()["description"]
-        assert derived.clasificacion == "Oficiales"
+        # S9: a derived fork is local authorship — classification is forced
+        # to Personalizadas (deliberate flip from the pre-change inheritance
+        # of the original's Oficiales), trust keeps verified.
+        assert derived.clasificacion == "Personalizadas"
         assert derived.trust_attributes == ("verified",)
+
+    def test_derived_draft_scrubs_foundational_keeps_provenance(self, tmp_path: Path) -> None:
+        """S9: deriving from a fundacional original demotes the fork —
+        Personalizadas, no ``fundacional`` marker, other attributes kept,
+        TW14 provenance intact."""
+        library = _library(tmp_path)
+        original_id = library.create_draft(
+            skill_id="guided-character-v1", version="1.2.0",
+            name="Guided character methodology", source=_valid_source(),
+            description=_valid_manifest()["description"],
+            clasificacion="Oficiales",
+            trust_attributes=("fundacional", "verified"),
+        )
+        library.publish(original_id)
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source() + "\n# adaptado\n",
+            name="Guided character methodology (adaptada)",
+        )
+        derived = library.get_draft(derived_id)
+        assert derived is not None
+        assert derived.clasificacion == "Personalizadas"
+        assert "fundacional" not in derived.trust_attributes
+        assert derived.trust_attributes == ("verified",)
+        assert derived.parent_skill_id == "guided-character-v1"
+        assert derived.parent_version == "1.2.0"
 
     def test_create_derived_draft_requires_published_original(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
