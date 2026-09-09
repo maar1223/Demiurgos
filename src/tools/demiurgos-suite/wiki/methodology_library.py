@@ -58,6 +58,10 @@ class NotPublishedError(MethodologyLibraryError):
     """The skill/version is not published (or was deleted)."""
 
 
+class CompanionLimitError(ValidationError):
+    """The per-world companion cap (MAX_COMPANIONS_PER_WORLD) was reached."""
+
+
 @dataclass
 class Draft:
     """An editable methodology draft. Never reaches runtime until published."""
@@ -153,6 +157,10 @@ def _bump_version(version: str) -> str:
 # evicted, so the file-backed store cannot grow without bound.
 DRAFT_HISTORY_CAP = 50
 
+# Per-world companion cap (skill-runtime-bridge): one companion slot per
+# skill_id per world; adding a NEW skill beyond this many fails closed.
+MAX_COMPANIONS_PER_WORLD = 8
+
 
 class MethodologyLibrary:
     """JSON-file-backed methodology lifecycle store.
@@ -171,6 +179,9 @@ class MethodologyLibrary:
         # TW13/TW14: per-draft snapshot-on-update history (post-materialize
         # edits). Append-only; capped at DRAFT_HISTORY_CAP per draft.
         self._draft_history: dict[str, list[dict[str, Any]]] = {}
+        # Per-world companion skills (skill-runtime-bridge): many published
+        # versions per world, one slot per skill_id; slot ops never touch it.
+        self._companions: dict[str, list[dict[str, Any]]] = {}
         self._load()
 
     # ------------------------------------------------------------------ #
@@ -520,6 +531,17 @@ class MethodologyLibrary:
             for world, active in list(self._activations.items()):
                 if active.get("skill_id") == skill_id and active.get("version") == version:
                     self._activations.pop(world, None)
+            # ...nor can it stay a companion anywhere.
+            for world, companions in list(self._companions.items()):
+                remaining = [
+                    entry for entry in companions
+                    if not (entry.get("skill_id") == skill_id
+                            and entry.get("version") == version)
+                ]
+                if remaining:
+                    self._companions[world] = remaining
+                else:
+                    self._companions.pop(world, None)
             self._save_locked()
 
     def restore(self, skill_id: str, version: str) -> None:
@@ -578,6 +600,79 @@ class MethodologyLibrary:
             return self._activation_from(restored)
 
     # ------------------------------------------------------------------ #
+    # Companions by world
+    # ------------------------------------------------------------------ #
+
+    def add_companion(self, world: str, skill_id: str, version: str) -> Activation:
+        """Pin a PUBLISHED version as a companion skill of ``world``.
+
+        One companion slot per skill_id per world: re-adding the same
+        skill_id replaces its version (a same-version re-add is a no-op that
+        returns the existing entry untouched). Adding a NEW skill past
+        ``MAX_COMPANIONS_PER_WORLD`` fails closed. Companion state is fully
+        independent of the activation slot (``activate``/``active_for``/
+        ``rollback`` never read or write it).
+        """
+        with self._lock:
+            record = self._published.get(self._key(skill_id, version))
+            if record is None or record.get("deleted_at"):
+                raise NotPublishedError(f"{skill_id}@{version} is not published")
+            companions = self._companions.setdefault(world, [])
+            existing = next(
+                (entry for entry in companions if entry.get("skill_id") == skill_id),
+                None,
+            )
+            if existing is not None:
+                if existing.get("version") == version:
+                    return self._activation_from(existing)
+                existing["version"] = version
+                existing["digest"] = str(record["digest"])
+                existing["activated_at"] = _utcnow()
+                self._save_locked()
+                return self._activation_from(existing)
+            if len(companions) >= MAX_COMPANIONS_PER_WORLD:
+                raise CompanionLimitError(
+                    f"world {world!r} already has {MAX_COMPANIONS_PER_WORLD} companions"
+                )
+            now = _utcnow()
+            entry = {
+                "world": world,
+                "skill_id": skill_id,
+                "version": version,
+                "digest": str(record["digest"]),
+                "activated_at": now,
+            }
+            companions.append(entry)
+            self._save_locked()
+            return self._activation_from(entry)
+
+    def remove_companion(self, world: str, skill_id: str) -> bool:
+        """Remove ``skill_id`` from ``world``'s companions (idempotent)."""
+        with self._lock:
+            companions = self._companions.get(world)
+            if not companions:
+                return False
+            remaining = [
+                entry for entry in companions if entry.get("skill_id") != skill_id
+            ]
+            removed = len(remaining) != len(companions)
+            if remaining:
+                self._companions[world] = remaining
+            else:
+                self._companions.pop(world, None)
+            if removed:
+                self._save_locked()
+            return removed
+
+    def list_companions(self, world: str) -> list[Activation]:
+        """Companion skills of ``world`` in storage (insertion) order."""
+        with self._lock:
+            return [
+                self._activation_from(entry)
+                for entry in self._companions.get(world, [])
+            ]
+
+    # ------------------------------------------------------------------ #
     # Persistence
     # ------------------------------------------------------------------ #
 
@@ -601,12 +696,14 @@ class MethodologyLibrary:
             draft_id: list(stack)
             for draft_id, stack in (payload.get("draft_history") or {}).items()
         }
+        self._companions = dict(payload.get("companions") or {})
 
     def _save_locked(self) -> None:
         payload = {
             "drafts": self._drafts,
             "published": self._published,
             "activations": self._activations,
+            "companions": self._companions,
             "history": self._history,
             "draft_history": self._draft_history,
         }

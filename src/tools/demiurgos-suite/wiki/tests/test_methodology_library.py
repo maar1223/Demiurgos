@@ -21,6 +21,8 @@ if str(_WIKI) not in sys.path:
 
 from methodology_library import (  # noqa: E402
     AlreadyPublishedError,
+    CompanionLimitError,
+    MAX_COMPANIONS_PER_WORLD,
     MethodologyLibrary,
     MethodologyLibraryError,
     NotPublishedError,
@@ -172,6 +174,100 @@ class TestSoftDelete:
         library.soft_delete("guided-character-v1", "1.2.0")
         with pytest.raises(NotPublishedError):
             library.activate("nec", "guided-character-v1", "1.2.0")
+
+
+class TestCompanions:
+    """skill-runtime-bridge WU1 (R-ACT): per-world companion skills.
+
+    Companion state is an independent per-world list — one slot per skill_id,
+    capped at 8 (``MAX_COMPANIONS_PER_WORLD``, design DD2/DD4), persisted
+    under the additive ``companions`` JSON key, scrubbed by ``soft_delete``,
+    and never touching the activation slot.
+    """
+
+    def _published_skill(self, library: MethodologyLibrary, *,
+                         skill_id: str = "guided-character-v1",
+                         version: str = "1.2.0") -> None:
+        draft_id = library.create_draft(
+            skill_id=skill_id, version=version,
+            name="Skill", source=_valid_source(),
+            description="A companion skill.",
+        )
+        library.publish(draft_id)
+
+    def test_companions_persist_and_reload(self, tmp_path: Path) -> None:
+        store = tmp_path / "library.json"
+        library = MethodologyLibrary(store)
+        self._published_skill(library)
+        library.add_companion("nec", "guided-character-v1", "1.2.0")
+        # Persisted under the additive ``companions`` JSON key.
+        payload = json.loads(store.read_text(encoding="utf-8"))
+        assert payload["companions"]["nec"][0]["version"] == "1.2.0"
+        reloaded = MethodologyLibrary(store)
+        companions = reloaded.list_companions("nec")
+        assert len(companions) == 1
+        assert companions[0].world == "nec"
+        assert companions[0].skill_id == "guided-character-v1"
+        assert companions[0].version == "1.2.0"
+
+    def test_legacy_file_without_companions_key_loads_empty(self, tmp_path: Path) -> None:
+        store = tmp_path / "library.json"
+        legacy = {"drafts": {}, "published": {}, "activations": {}, "history": {}}
+        store.write_text(json.dumps(legacy), encoding="utf-8")
+        library = MethodologyLibrary(store)
+        assert library.list_companions("nec") == []
+        assert library.remove_companion("nec", "guided-character-v1") is False
+
+    def test_add_companion_rejects_not_published(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        with pytest.raises(NotPublishedError):
+            library.add_companion("nec", "guided-character-v1", "9.9.9")
+        # A soft-deleted version is not published either.
+        self._published_skill(library)
+        library.soft_delete("guided-character-v1", "1.2.0")
+        with pytest.raises(NotPublishedError):
+            library.add_companion("nec", "guided-character-v1", "1.2.0")
+
+    def test_add_companion_enforces_limit(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        for index in range(MAX_COMPANIONS_PER_WORLD):
+            self._published_skill(library, skill_id=f"skill-{index}", version="1.0.0")
+            library.add_companion("nec", f"skill-{index}", "1.0.0")
+        with pytest.raises(CompanionLimitError):
+            self._published_skill(library, skill_id="overflow", version="1.0.0")
+            library.add_companion("nec", "overflow", "1.0.0")
+        # Re-adding an EXISTING skill at a new version replaces it (no growth).
+        self._published_skill(library, skill_id="skill-0", version="1.1.0")
+        replaced = library.add_companion("nec", "skill-0", "1.1.0")
+        assert replaced.version == "1.1.0"
+        assert len(library.list_companions("nec")) == MAX_COMPANIONS_PER_WORLD
+
+    def test_companion_ops_never_touch_slot(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._published_skill(library, skill_id="slot-skill", version="1.0.0")
+        self._published_skill(library, skill_id="companion-skill", version="1.0.0")
+        library.activate("nec", "slot-skill", "1.0.0")
+        slot = library.active_for("nec")
+        assert slot is not None and slot.skill_id == "slot-skill"
+        library.add_companion("nec", "companion-skill", "1.0.0")
+        assert library.active_for("nec") == slot
+        assert library.list_companions("nec")[0].skill_id == "companion-skill"
+        assert library.remove_companion("nec", "companion-skill") is True
+        assert library.remove_companion("nec", "companion-skill") is False
+        assert library.active_for("nec") == slot
+        assert library._history == {}
+
+    def test_soft_delete_scrubs_companions_all_worlds(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        self._published_skill(library, skill_id="victim", version="1.0.0")
+        self._published_skill(library, skill_id="survivor", version="1.0.0")
+        library.add_companion("w1", "victim", "1.0.0")
+        library.add_companion("w1", "survivor", "1.0.0")
+        library.add_companion("w2", "victim", "1.0.0")
+        library.soft_delete("victim", "1.0.0")
+        assert [c.skill_id for c in library.list_companions("w1")] == ["survivor"]
+        assert library.list_companions("w2") == []
+        assert "w2" not in library._companions
 
 
 class TestNoKernelAccess:
