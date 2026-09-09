@@ -122,6 +122,7 @@ from wiki.world_authority import (
 from wiki.world_authority import detect_legacy_layout
 from methodology_library import (
     AlreadyPublishedError,
+    CompanionLimitError,
     MethodologyLibrary,
     MethodologyLibraryError,
     NotPublishedError,
@@ -1743,6 +1744,17 @@ class MethodologyActivateRequest(BaseModel):
 
 class MethodologyRollbackRequest(BaseModel):
     world: str
+
+
+class MethodologyCompanionActivateRequest(BaseModel):
+    world: str
+    skill_id: str
+    version: str
+
+
+class MethodologyCompanionDeactivateRequest(BaseModel):
+    world: str
+    skill_id: str
 
 
 # The provider is capability-admitted and separate from the legacy chat route.
@@ -7509,7 +7521,30 @@ def methodologies_status(request: Request):
         }
         for draft in library.list_drafts()
     ]
-    return {"published": published, "activations": activations, "drafts": drafts}
+    # Additive companions map (world -> entries). Only worlds with at least
+    # one companion appear; empty world keys are dropped by the library on the
+    # last removal, and list_companions tolerates a missing key.
+    companions = {}
+    for world in _known_worlds():
+        world_companions = library.list_companions(world)
+        if not world_companions:
+            continue
+        companions[world] = []
+        for companion in world_companions:
+            published_record = library.get_published(companion.skill_id, companion.version)
+            companions[world].append({
+                "world": companion.world,
+                "skill_id": companion.skill_id,
+                "version": companion.version,
+                "description": published_record.description if published_record is not None else "",
+                "activated_at": companion.activated_at,
+            })
+    return {
+        "published": published,
+        "activations": activations,
+        "drafts": drafts,
+        "companions": companions,
+    }
 
 
 @app.get("/api/methodologies/inventory")
@@ -7680,6 +7715,54 @@ def methodologies_rollback(body: MethodologyRollbackRequest, request: Request):
         "digest": activation.digest,
         "activated_at": activation.activated_at,
     }
+
+
+@app.post("/api/methodologies/companions/activate")
+def methodologies_activate_companion(body: MethodologyCompanionActivateRequest, request: Request):
+    """Pin a published methodology version as a companion skill of a world.
+
+    Mirrors the slot activate route's auth/world prelude; the activation slot
+    itself is never touched (companions are independent of ``activate``).
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if _resolve_mundo_dir(body.world) is None:
+        return JSONResponse(status_code=404, content={"detail": "Mundo no encontrado"})
+    library = _methodology_library()
+    try:
+        companion = library.add_companion(body.world, body.skill_id, body.version)
+    except NotPublishedError as exc:
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "not_published",
+        })
+    except CompanionLimitError as exc:
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "companion_limit_reached",
+        })
+    published = library.get_published(body.skill_id, body.version)
+    return {
+        "world": companion.world,
+        "companion": {
+            "world": companion.world,
+            "skill_id": companion.skill_id,
+            "version": companion.version,
+            "description": published.description if published is not None else "",
+            "activated_at": companion.activated_at,
+        },
+    }
+
+
+@app.post("/api/methodologies/companions/deactivate")
+def methodologies_deactivate_companion(body: MethodologyCompanionDeactivateRequest, request: Request):
+    """Remove a companion skill from a world (idempotent: ``removed`` false)."""
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if _resolve_mundo_dir(body.world) is None:
+        return JSONResponse(status_code=404, content={"detail": "Mundo no encontrado"})
+    removed = _methodology_library().remove_companion(body.world, body.skill_id)
+    return {"world": body.world, "removed": removed}
 
 
 # ---------------------------------------------------------------------------

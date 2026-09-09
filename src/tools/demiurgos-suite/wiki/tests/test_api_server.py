@@ -2629,6 +2629,122 @@ class TestMethodologyApi:
         assert published.status_code == 200, published.text
         assert published.json()["skill_id"] == "narrative-character-creation"
 
+    # ------------------------------------------------------------------ #
+    # Companion routes (WU2): activate/deactivate + additive status key.
+    # ------------------------------------------------------------------ #
+
+    def _seed_companion_library(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> MethodologyLibrary:
+        library = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
+        draft_id = library.create_draft(
+            skill_id="companion-skill", version="1.0.0",
+            name="Companion skill",
+            source="## Compañera\n\nTexto.\n",
+            description="Metodología compañera de prueba.",
+        )
+        library.publish(draft_id)
+        monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+        return library
+
+    def test_activate_companion_happy_path(self, client: TestClient, monkeypatch, tmp_path):
+        _principal(monkeypatch, "author-1")
+        library = self._seed_companion_library(monkeypatch, tmp_path)
+        published = library.get_published("companion-skill", "1.0.0")
+        resp = client.post("/api/methodologies/companions/activate", json={
+            "world": "test_mundo", "skill_id": "companion-skill", "version": "1.0.0",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["world"] == "test_mundo"
+        assert resp.json()["companion"] == {
+            "world": "test_mundo",
+            "skill_id": "companion-skill",
+            "version": "1.0.0",
+            "description": published.description,
+            "activated_at": library.list_companions("test_mundo")[0].activated_at,
+        }
+        assert [c.skill_id for c in library.list_companions("test_mundo")] == ["companion-skill"]
+
+    def test_companion_routes_auth_and_unknown_world(self, client: TestClient, monkeypatch, tmp_path):
+        self._seed_companion_library(monkeypatch, tmp_path)
+        activate = {"world": "test_mundo", "skill_id": "companion-skill", "version": "1.0.0"}
+        deactivate = {"world": "test_mundo", "skill_id": "companion-skill"}
+        # No principal -> 401 on both routes.
+        assert client.post("/api/methodologies/companions/activate", json=activate).status_code == 401
+        assert client.post("/api/methodologies/companions/deactivate", json=deactivate).status_code == 401
+        # Unknown world -> 404 on both routes.
+        _principal(monkeypatch, "author-1")
+        assert client.post(
+            "/api/methodologies/companions/activate",
+            json={"world": "ghost", "skill_id": "companion-skill", "version": "1.0.0"},
+        ).status_code == 404
+        assert client.post(
+            "/api/methodologies/companions/deactivate",
+            json={"world": "ghost", "skill_id": "companion-skill"},
+        ).status_code == 404
+
+    def test_deactivate_companion_idempotent(self, client: TestClient, monkeypatch, tmp_path):
+        _principal(monkeypatch, "author-1")
+        library = self._seed_companion_library(monkeypatch, tmp_path)
+        client.post("/api/methodologies/companions/activate", json={
+            "world": "test_mundo", "skill_id": "companion-skill", "version": "1.0.0",
+        })
+        removed = client.post("/api/methodologies/companions/deactivate", json={
+            "world": "test_mundo", "skill_id": "companion-skill",
+        })
+        assert removed.status_code == 200, removed.text
+        assert removed.json() == {"world": "test_mundo", "removed": True}
+        assert library.list_companions("test_mundo") == []
+        again = client.post("/api/methodologies/companions/deactivate", json={
+            "world": "test_mundo", "skill_id": "companion-skill",
+        })
+        assert again.json() == {"world": "test_mundo", "removed": False}
+
+    def test_status_companions_additive_and_stable(self, client: TestClient, monkeypatch, tmp_path):
+        _principal(monkeypatch, "author-1")
+        library = self._seed_companion_library(monkeypatch, tmp_path)
+        baseline = client.get("/api/methodologies/status").json()
+        client.post("/api/methodologies/companions/activate", json={
+            "world": "test_mundo", "skill_id": "companion-skill", "version": "1.0.0",
+        })
+        after = client.get("/api/methodologies/status").json()
+        # Every pre-existing key is byte-stable vs the no-companion baseline.
+        for key in ("published", "activations", "drafts"):
+            assert after[key] == baseline[key]
+        companion = library.list_companions("test_mundo")[0]
+        assert after["companions"] == {
+            "test_mundo": [{
+                "world": "test_mundo",
+                "skill_id": "companion-skill",
+                "version": "1.0.0",
+                "description": "Metodología compañera de prueba.",
+                "activated_at": companion.activated_at,
+            }],
+        }
+
+    def test_status_includes_ideas_global_only_when_present(self, client: TestClient, monkeypatch, tmp_path):
+        """D-GLOBAL regression (C3): ideas-global is not a real world, so the
+        companion routes 404 it and it never appears in the status map."""
+        _principal(monkeypatch, "author-1")
+        self._seed_companion_library(monkeypatch, tmp_path)
+        resp = client.post("/api/methodologies/companions/activate", json={
+            "world": "ideas-global", "skill_id": "companion-skill", "version": "1.0.0",
+        })
+        assert resp.status_code == 404
+        status = client.get("/api/methodologies/status").json()
+        assert "ideas-global" not in status["companions"]
+
+    def test_guided_flow_ignores_companions(self, client: TestClient, monkeypatch, tmp_path):
+        """R-GUIDED-INVARIANT anchor: a companion-rich world with an EMPTY slot
+        yields the exact same guided contract projection as a companion-free
+        world — ``_compiled_contract_markdown`` reads only ``active_for``."""
+        _principal(monkeypatch, "author-1")
+        library = self._seed_companion_library(monkeypatch, tmp_path)
+        assert api_server._compiled_contract_markdown("test_mundo") is None
+        library.add_companion("test_mundo", "companion-skill", "1.0.0")
+        assert library.active_for("test_mundo") is None
+        assert api_server._compiled_contract_markdown("test_mundo") is None
+
 
 def _delta_guided_provider():
     async def provider(request, _token):
