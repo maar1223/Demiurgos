@@ -1,10 +1,12 @@
 import type { MethodologyInventoryItem, MethodologyStatus } from "@/api/types";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
+import { Switch } from "@/components/atoms/Switch";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ProvenanceBadge } from "@/components/organisms/CoCreation/ProvenanceBadge";
 import { MethodologyComparePanel } from "@/components/molecules/MethodologyComparePanel";
 import type { Lens } from "@/components/organisms/LensToggle";
+import { GLOBAL_ASSISTANT_CONTEXT } from "@/hooks/useAIAssistantSessions";
 
 interface MethodologySelection {
   skill_id: string;
@@ -25,6 +27,13 @@ interface MethodologyStatePanelProps {
   onAdaptar: (item: MethodologyInventoryItem) => void;
   onComparar: (item: MethodologyInventoryItem) => void;
   onExportar: (item: MethodologyInventoryItem) => void;
+  /** Companion toggle, page-owned (mirrors onActivate; refetches status).
+   *  `on` true activates the selected version, false deactivates the skill. */
+  onToggleCompanion?: (skillId: string, version: string, on: boolean) => void;
+  /** World whose first-activation latency notice is active (R-UI notice). */
+  latencyNoticeWorld?: string | null;
+  /** Request in flight — disables the chip and the OFF buttons. */
+  busy?: boolean;
   /** Clickable Versiones (UL-3): fired when a version row is clicked. */
   onSelect?: (selection: MethodologySelection) => void;
   /** Controlled compare selection (UL-4): when exactly two items are
@@ -53,6 +62,9 @@ export function MethodologyStatePanel({
   onComparar,
   onExportar,
   onSelect,
+  onToggleCompanion,
+  latencyNoticeWorld,
+  busy = false,
   compareSelection,
   onCompareClear,
 }: MethodologyStatePanelProps) {
@@ -100,6 +112,18 @@ export function MethodologyStatePanel({
   const talleresCompatibles = entry?.talleres_compatibles ?? [];
   const etiquetas = entry?.etiquetas ?? [];
   const isMiMundo = lens === "mi-mundo";
+  /** Companions of the current world (status-derived; absent key → none).
+   *  The selected version is ON when it appears in this list. */
+  const companions = world ? status?.companions?.[world] ?? [] : [];
+  const isCompanion = companions.some(
+    (companion) =>
+      companion.skill_id === selected.skill_id &&
+      companion.version === selected.version,
+  );
+  /** ideas-global is the assistant's null-mundo context, NOT a workshop
+   *  world: it never gets companion chips and its slot Activar stays disabled
+   *  (the companion routes 404 it). */
+  const isIdeasGlobal = world === GLOBAL_ASSISTANT_CONTEXT;
 
   return (
     <section
@@ -216,7 +240,7 @@ export function MethodologyStatePanel({
               <Button
                 variant="primary"
                 size="sm"
-                disabled={!world}
+                disabled={!world || isIdeasGlobal}
                 onClick={() => onActivate(selected.skill_id, selected.version)}
                 title="Activa esta versión para nuevas sesiones en el mundo seleccionado."
               >
@@ -250,6 +274,61 @@ export function MethodologyStatePanel({
             </>
           )}
         </div>
+
+        {/* Companion ON/OFF chips (R-UI): a world-scoped, multi-activation
+         * control beside Activar — the single activation slot is never
+         * labeled to the user. Only real workshop worlds get chips. */}
+        {isMiMundo && !isIdeasGlobal && (
+          <div className="mt-4 space-y-3 border-t border-edge pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-small font-medium text-primary">
+                Compañera en {world}
+              </span>
+              <Switch
+                checked={isCompanion}
+                disabled={!world || busy}
+                aria-label={`Compañera en ${world}`}
+                onChange={(on) =>
+                  onToggleCompanion?.(selected.skill_id, selected.version, on)
+                }
+              />
+            </div>
+            {companions.length > 0 && (
+              <ul className="space-y-1.5">
+                {companions.map((companion) => (
+                  <li
+                    key={`${companion.skill_id}@${companion.version}`}
+                    className="flex items-center justify-between gap-2 text-small"
+                  >
+                    <span className="text-primary">
+                      {companion.skill_id}@{companion.version}
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() =>
+                        onToggleCompanion?.(
+                          companion.skill_id,
+                          companion.version,
+                          false,
+                        )
+                      }
+                    >
+                      Apagar
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {latencyNoticeWorld === world && (
+              <p className="text-small text-muted">
+                Las charlas de IA en este mundo pueden tardar un poco más
+                mientras haya skills compañeras activas.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Compare panel (UL-4): rendered in the right panel area, below the

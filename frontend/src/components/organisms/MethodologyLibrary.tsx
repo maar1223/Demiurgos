@@ -168,6 +168,7 @@ export function MethodologyLibrary({
           world={world}
           activeTaller={activeTaller}
           active={active}
+          companions={world ? status.companions?.[world] ?? [] : []}
           onActivate={onActivate}
           busy={busy}
           onSelect={(skillId, version) => onSelect({ skill_id: skillId, version })}

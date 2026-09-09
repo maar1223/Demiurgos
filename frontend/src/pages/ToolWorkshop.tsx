@@ -17,12 +17,15 @@ import { EditorLayout } from "@/components/templates/EditorLayout";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import {
+  activateCompanion,
   activateMethodology,
+  deactivateCompanion,
   exportPublished,
   getMethodologyStatus,
 } from "@/api/methodologies";
 import type { Lens } from "@/components/organisms/LensToggle";
 import type { MethodologyInventoryItem, MethodologyStatus } from "@/api/types";
+import { markCompanionLatencyNotified } from "@/lib/companionLatency";
 import {
   getCurrentTaller,
   setCurrentTaller,
@@ -99,6 +102,11 @@ export default function ToolWorkshop() {
   const [status, setStatus] = useState<MethodologyStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** World whose first-activation latency notice is active (R-UI notice): set
+   *  only on the FIRST-ever successful companion activation in that world. */
+  const [latencyNoticeWorld, setLatencyNoticeWorld] = useState<string | null>(
+    null,
+  );
   /** Compare selection shared by the catalog explorer rows and the right
    *  panel's "Comparar" action (SC-SB-4.2). */
   const [compareSelection, setCompareSelection] = useState<
@@ -141,6 +149,41 @@ export default function ToolWorkshop() {
       }
     },
     [world, loadStatus],
+  );
+
+  /** World-scoped companion toggle (R-UI chips): mirrors handleActivate — the
+   *  client call is followed by the shared status refetch. The first-ever
+   *  successful activation in a world surfaces the one-time latency notice
+   *  (persisted per world so it never repeats, R-UI notice). */
+  const handleToggleCompanion = useCallback(
+    async (skillId: string, version: string, on: boolean) => {
+      if (!world) {
+        return;
+      }
+      const previousCompanions = status?.companions?.[world] ?? [];
+      setBusy(true);
+      setStatusError(null);
+      try {
+        if (on) {
+          await activateCompanion(world, skillId, version);
+        } else {
+          await deactivateCompanion(world, skillId);
+        }
+        await loadStatus();
+        if (
+          on &&
+          previousCompanions.length === 0 &&
+          markCompanionLatencyNotified(world)
+        ) {
+          setLatencyNoticeWorld(world);
+        }
+      } catch {
+        setStatusError("No se pudo actualizar la skill compañera para este mundo.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [world, status, loadStatus],
   );
 
   /** Catalogo "Comparar" (SC-SB-4.2): toggles the selected item in the
@@ -283,10 +326,15 @@ export default function ToolWorkshop() {
               status={status}
               lens={lens}
               world={world}
+              busy={busy}
               onSelect={setSelected}
               onActivate={(skillId, version) =>
                 void handleActivate(skillId, version)
               }
+              onToggleCompanion={(skillId, version, on) =>
+                void handleToggleCompanion(skillId, version, on)
+              }
+              latencyNoticeWorld={latencyNoticeWorld}
               onAdaptar={(item) => void handleAdaptar(item)}
               onComparar={handleComparar}
               onExportar={(item) => void handleExportar(item)}

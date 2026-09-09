@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type {
   MethodologyActivation,
+  MethodologyCompanion,
   PublishedMethodology,
 } from "@/api/types";
 import { Badge } from "@/components/atoms/Badge";
@@ -19,6 +20,9 @@ interface TallerTreeProps {
    *  "Activada"/"Activa en {world}" state (REQ-TRE-7: one active version per
    *  world) and the sin-taller bucket badges. */
   active?: MethodologyActivation;
+  /** Companions of the current world (status-derived, R-UI): rows whose
+   *  skill@version is ON render a read-only "Compañera" badge. */
+  companions?: MethodologyCompanion[];
   onActivate: (skillId: string, version: string) => void;
   busy: boolean;
   /** Optional sidebar selection contract (SC-SB-2.1): when provided, rows
@@ -89,6 +93,9 @@ interface SkillRowProps {
   world: string | undefined;
   activeTaller: string;
   isActive: boolean;
+  /** Read-only companion marker (R-UI): true when this row's skill@version
+   *  is an active companion in the current world. */
+  isCompanion: boolean;
   busy: boolean;
   onActivate: (skillId: string, version: string) => void;
   onSelect?: (skillId: string, version: string) => void;
@@ -101,6 +108,7 @@ function SkillRow({
   world,
   activeTaller,
   isActive,
+  isCompanion,
   busy,
   onActivate,
   onSelect,
@@ -137,6 +145,7 @@ function SkillRow({
       </button>
       <div className="flex shrink-0 items-center gap-2">
         <Badge variant={badge.variant}>{badge.label}</Badge>
+        {isCompanion && <Badge variant="info">Compañera</Badge>}
         {state === "bloqueada" ? (
           <Button
             variant="secondary"
@@ -174,6 +183,7 @@ export function TallerTree({
   world,
   activeTaller,
   active,
+  companions,
   onActivate,
   busy,
   onSelect,
@@ -216,6 +226,12 @@ export function TallerTree({
                   const isActive =
                     active?.skill_id === skill.skill_id &&
                     active?.version === skill.version;
+                  const isCompanion =
+                    companions?.some(
+                      (companion) =>
+                        companion.skill_id === skill.skill_id &&
+                        companion.version === skill.version,
+                    ) ?? false;
                   const rowState =
                     group.state === "sin-taller"
                       ? isActive
@@ -230,6 +246,7 @@ export function TallerTree({
                       world={world}
                       activeTaller={activeTaller}
                       isActive={isActive}
+                      isCompanion={isCompanion}
                       busy={busy}
                       onActivate={onActivate}
                       onSelect={onSelect}
