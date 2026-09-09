@@ -1550,6 +1550,16 @@ export interface MethodologyActivation {
   activated_at: string;
 }
 
+/** A published methodology version pinned as a per-world companion skill
+ *  (several per world, independent of the single activation slot). */
+export interface MethodologyCompanion {
+  world: string;
+  skill_id: string;
+  version: string;
+  description: string;
+  activated_at: string;
+}
+
 /** A editable methodology draft. */
 export interface MethodologyDraft {
   draft_id: string;
@@ -1575,6 +1585,10 @@ export interface MethodologyStatus {
   published: PublishedMethodology[];
   activations: Record<string, MethodologyActivation>;
   drafts: MethodologyDraft[];
+  /** Additive companions map (world → entries) — only worlds with at least
+   *  one companion appear; absent on pre-companion payloads (old servers
+   *  keep parsing: optional, additive-only). */
+  companions?: Record<string, MethodologyCompanion[]>;
 }
 
 /** One catalog entry from GET /api/methodologies/inventory (TW7). */

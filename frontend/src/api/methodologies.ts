@@ -3,6 +3,7 @@ import { ApiError } from "@/api/types";
 import type {
   ImportResult,
   MethodologyActivation,
+  MethodologyCompanion,
   MethodologyDraft,
   MethodologyDraftInput,
   MethodologyInventoryItem,
@@ -97,6 +98,40 @@ export function rollbackMethodology(
     body: JSON.stringify({ world }),
     timeout: METHODOLOGIES_TIMEOUT_MS,
   });
+}
+
+/** POST /api/methodologies/companions/activate — pin a published version as
+ *  a companion of a world (several per world; the activation slot is
+ *  untouched). */
+export function activateCompanion(
+  world: string,
+  skillId: string,
+  version: string,
+): Promise<{ world: string; companion: MethodologyCompanion }> {
+  return apiFetch<{ world: string; companion: MethodologyCompanion }>(
+    url("/companions/activate"),
+    {
+      method: "POST",
+      body: JSON.stringify({ world, skill_id: skillId, version }),
+      timeout: METHODOLOGIES_TIMEOUT_MS,
+    },
+  );
+}
+
+/** POST /api/methodologies/companions/deactivate — remove a companion
+ *  (idempotent: an unknown companion resolves to `removed: false`). */
+export function deactivateCompanion(
+  world: string,
+  skillId: string,
+): Promise<{ world: string; removed: boolean }> {
+  return apiFetch<{ world: string; removed: boolean }>(
+    url("/companions/deactivate"),
+    {
+      method: "POST",
+      body: JSON.stringify({ world, skill_id: skillId }),
+      timeout: METHODOLOGIES_TIMEOUT_MS,
+    },
+  );
 }
 
 // ---------------------------------------------------------------------------

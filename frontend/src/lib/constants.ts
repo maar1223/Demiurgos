@@ -88,6 +88,12 @@ export type CoreTaller = (typeof CORE_TALLERES)[number];
 /** localStorage key persisting the active Taller (REQ-TRE-2). */
 export const ACTIVE_TALLER_STORAGE_KEY = "demiurgos-active-taller";
 
+/** localStorage key persisting the worlds that already received the companion
+ *  first-activation latency notice (R-UI notice): JSON string-array of world
+ *  names — the notice shows once per world, never again. */
+export const COMPANION_LATENCY_NOTIFIED_KEY =
+  "demiurgos-companion-latency-notified";
+
 /**
  * Default active Taller shown before any explicit selection (REQ-TRE-1).
  * Value is a `CORE_TALLERES` short key (matching the `taller` field a skill

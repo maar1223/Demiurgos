@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  activateCompanion,
   activateMethodology,
   createMethodologyDraft,
+  deactivateCompanion,
   getMethodologyInventory,
   getMethodologyStatus,
   publishMethodologyDraft,
@@ -71,6 +73,34 @@ describe("methodologies API contract", () => {
       body: JSON.stringify({ world: "nec" }),
       timeout: 15_000,
     });
+  });
+
+  it("POST companions/activate pins a published version as a world companion", async () => {
+    await activateCompanion("nec", "eneagrama", "1.2.0");
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/methodologies/companions/activate",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          world: "nec",
+          skill_id: "eneagrama",
+          version: "1.2.0",
+        }),
+        timeout: 15_000,
+      },
+    );
+  });
+
+  it("POST companions/deactivate removes a companion idempotently", async () => {
+    await deactivateCompanion("nec", "eneagrama");
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/methodologies/companions/deactivate",
+      {
+        method: "POST",
+        body: JSON.stringify({ world: "nec", skill_id: "eneagrama" }),
+        timeout: 15_000,
+      },
+    );
   });
 
   it("preserves backend fail-closed errors", async () => {
