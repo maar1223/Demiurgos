@@ -35,6 +35,11 @@ TRANSVERSAL_SKILLS: frozenset[str] = frozenset({
 
 CONFIDENCE_THRESHOLD = 0.7
 
+# Companion-world classification cap: each per-line description is collapsed
+# (newlines -> spaces) and clipped to this many characters at prompt build, so
+# the total classification prompt stays within the bounded token budget (DD2).
+_DESCRIPTION_MAX_CHARS = 160
+
 # Deterministic keyword fallback: map simple terms to the transversal skills.
 # ``narrative-character-creation`` is handled by the domain classifier
 # (route_new_character_intent) which understands character intent precisely;
@@ -99,7 +104,14 @@ class SkillRouter:
         return sorted(skills)
 
     def _route_keyword(self, prompt: str) -> SkillRouteResult:
-        """Deterministic keyword fallback. Never raises; never returns None."""
+        """Deterministic keyword fallback. Never raises; never returns None.
+
+        Degraded-mode rule (Rule A): the keyword layer MAY claim TRANSVERSAL
+        candidates only — companions are NEVER reachable through keywords. When
+        the LLM classification gateway is unavailable, routing degrades exactly
+        as today (a transversal or fail-open); a companion is never selected
+        without a >= threshold LLM verdict over the full candidate set.
+        """
         # Character creation is classified by the domain's intent classifier,
         # which understands new-character vs edit-character precisely.
         try:
@@ -174,15 +186,108 @@ class SkillRouter:
             f"User intent: {prompt}"
         )
 
+    @staticmethod
+    def _clip_description(description: str) -> str:
+        """Collapse newlines/whitespace and clip a description to 160 chars."""
+        collapsed = " ".join(description.split())
+        return collapsed[:_DESCRIPTION_MAX_CHARS]
+
+    def _description_for(self, skill_id: str, version: str | None) -> str | None:
+        """Published description for a skill/version, clipped, or None."""
+        if not version or self._library is None:
+            return None
+        try:
+            published = self._library.get_published(skill_id, version)
+        except Exception:
+            return None
+        description = getattr(published, "description", None)
+        if not description:
+            return None
+        return self._clip_description(description)
+
+    def _companion_candidates(self, mundo: str) -> list[tuple[str, str | None]] | None:
+        """Ordered description-aware candidate set for a companion world.
+
+        Returns ``None`` when the world has no companions, so callers keep the
+        byte-identical legacy bare-id prompt path. Order (DD2): companions
+        sorted by ``skill_id`` -> the slot activation skill (if any) -> sorted
+        transversals. Descriptions come from the published record and are
+        clipped to 160 chars; transversals (versionless) stay bare ids.
+        """
+        if self._library is None:
+            return None
+        try:
+            companions = self._library.list_companions(mundo)
+        except Exception:
+            return None
+        if not companions:
+            return None
+        ordered: list[tuple[str, str | None]] = []
+        seen: set[str] = set()
+        for comp in sorted(companions, key=lambda c: getattr(c, "skill_id", "") or ""):
+            skill_id = getattr(comp, "skill_id", None)
+            if not skill_id or skill_id in seen:
+                continue
+            seen.add(skill_id)
+            ordered.append(
+                (skill_id, self._description_for(skill_id, getattr(comp, "version", None)))
+            )
+        try:
+            activation = self._library.active_for(mundo)
+        except Exception:
+            activation = None
+        if activation is not None:
+            skill_id = getattr(activation, "skill_id", None)
+            if skill_id and skill_id not in seen:
+                seen.add(skill_id)
+                ordered.append(
+                    (skill_id, self._description_for(skill_id, getattr(activation, "version", None)))
+                )
+        for skill_id in sorted(TRANSVERSAL_SKILLS):
+            if skill_id not in seen:
+                seen.add(skill_id)
+                ordered.append((skill_id, None))
+        return ordered
+
+    def _build_classification_prompt_with_descriptions(
+        self, prompt: str, candidates: list[tuple[str, str | None]],
+    ) -> str:
+        lines = []
+        for skill_id, description in candidates:
+            if description:
+                lines.append(f"- {skill_id}: {description}")
+            else:
+                lines.append(f"- {skill_id}")
+        candidate_block = "\n".join(lines)
+        return (
+            f"Classify the user intent into exactly one skill from this list:\n"
+            f"{candidate_block}\n"
+            "If several skills could match, prefer the world-specific (non-transversal) "
+            "skill listed first.\n"
+            'Return ONLY a JSON object: {"skill_id": "<id or null>", '
+            '"confidence": <0.0-1.0>}.\n'
+            'If no skill matches, return {"skill_id": null, "confidence": 0.0}.\n'
+            f"User intent: {prompt}"
+        )
+
     async def _classify_llm(self, prompt: str, candidates: list[str]) -> dict[str, Any] | None:
-        """Single bounded Hermes classification run; None on any failure."""
+        """Single bounded Hermes classification run; None on any failure.
+
+        ``candidates`` is either a list of bare ids (legacy companion-free
+        prompt) or a list of ``(skill_id, description)`` tuples (companion
+        worlds) — the prompt builder dispatches on the shape.
+        """
         if self._provider is None:
             return None
         request_id = uuid.uuid4().hex
+        if candidates and isinstance(candidates[0], tuple):
+            prompt_text = self._build_classification_prompt_with_descriptions(prompt, candidates)
+        else:
+            prompt_text = self._build_classification_prompt(prompt, candidates)
         try:
             run_id = await self._provider.start(HermesActivityRequest(
                 request_id=request_id,
-                prompt=self._build_classification_prompt(prompt, candidates),
+                prompt=prompt_text,
                 session_id="",
             ))
             output = await self._collect_output(run_id)
@@ -202,19 +307,29 @@ class SkillRouter:
         Order: LLM classification → threshold check → keyword fallback →
         fail-open to generic. ``distilled_state`` is accepted for interface
         symmetry with the memory layer but is not required for routing.
+
+        Companion worlds (≥1 companion) classify over the description-aware
+        ordered candidate set (DD2); companion-free worlds keep the byte-identical
+        legacy bare-id prompt. The keyword layer never claims a companion.
         """
-        candidates = self._available_skills(mundo)
-        if not candidates:
+        companion_candidates = self._companion_candidates(mundo)
+        if companion_candidates is not None:
+            candidate_ids = [skill_id for skill_id, _ in companion_candidates]
+            candidate_pool = companion_candidates
+        else:
+            candidate_ids = self._available_skills(mundo)
+            candidate_pool = candidate_ids
+        if not candidate_ids:
             return SkillRouteResult(None, 0.0, "fallback", False)
 
-        classification = await self._classify_llm(prompt, candidates)
+        classification = await self._classify_llm(prompt, candidate_pool)
         if classification is not None:
             skill_id = classification.get("skill_id")
             try:
                 confidence = float(classification.get("confidence", 0.0))
             except (TypeError, ValueError):
                 confidence = 0.0
-            if skill_id in candidates and confidence >= CONFIDENCE_THRESHOLD:
+            if skill_id in candidate_ids and confidence >= CONFIDENCE_THRESHOLD:
                 return SkillRouteResult(skill_id, confidence, "llm", True)
             # Low confidence or an invalid skill: fall through to keyword.
             return self._route_keyword(prompt)

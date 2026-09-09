@@ -48,21 +48,41 @@ class _FailingRuns:
 
 
 class _Library:
-    """Minimal MethodologyLibrary stub exposing only active_for."""
+    """Minimal MethodologyLibrary stub exposing active_for, list_companions,
+    and get_published (the subset the skill router reads)."""
 
-    def __init__(self, activation: Any = None) -> None:
+    def __init__(
+        self, activation: Any = None, companions: list[Any] | None = None,
+        published: dict[tuple[str, str], Any] | None = None,
+    ) -> None:
         self._activation = activation
+        self._companions = list(companions or [])
+        self._published = dict(published or {})
         self.calls: list[str] = []
 
     def active_for(self, mundo: str):
         self.calls.append(mundo)
         return self._activation
 
+    def list_companions(self, mundo: str):
+        self.calls.append(f"list:{mundo}")
+        return list(self._companions)
+
+    def get_published(self, skill_id: str, version: str):
+        self.calls.append(f"get:{skill_id}:{version}")
+        return self._published.get((skill_id, version))
+
 
 @dataclass(frozen=True)
 class _Activation:
     skill_id: str
     version: str
+
+
+@dataclass(frozen=True)
+class _Published:
+    description: str
+    name: str = ""
 
 
 def _result(router: SkillRouter, prompt: str, mundo: str = "vibrantes") -> SkillRouteResult:
@@ -211,3 +231,99 @@ def test_llm_returning_unknown_skill_falls_back() -> None:
     result = _result(router, "hello there random text")
     assert result.source == "fallback"
     assert result.routed is False
+
+
+# --------------------------------------------------------------------------- #
+# Companion worlds (WU3): description-aware classification over
+# TRANSVERSAL ∪ list_companions with deterministic ordering (DD2).
+# --------------------------------------------------------------------------- #
+
+def test_companion_candidates_order_and_descriptions() -> None:
+    library = _Library(
+        companions=[
+            _Activation(skill_id="alpha", version="1.0"),
+            _Activation(skill_id="omega", version="2.0"),
+        ],
+        published={
+            ("alpha", "1.0"): _Published(description="Alpha methodology"),
+            ("omega", "2.0"): _Published(description="Omega methodology"),
+        },
+    )
+    runs = _Runs({"skill_id": "alpha", "confidence": 0.9})
+    router = SkillRouter(methodology_library=library, provider=runs)
+    _result(router, "do the alpha thing")
+    prompt = runs.prompts[0]
+    # Deterministic order: companions sorted by skill_id first, then the slot
+    # skill (none here), then sorted transversals.
+    assert prompt.index("- alpha: Alpha methodology") < prompt.index("- omega: Omega methodology")
+    # Descriptions present for companions; transversals stay bare ids.
+    assert "- alpha: Alpha methodology" in prompt
+    assert "- omega: Omega methodology" in prompt
+    assert "- narrative-world-spec" in prompt
+    # World-specific-over-transversal tie instruction is present.
+    assert "prefer the world-specific (non-transversal) skill listed first" in prompt
+    # The world's companions are read from the library.
+    assert "list:vibrantes" in library.calls
+
+
+def test_companion_free_world_prompt_byte_identical() -> None:
+    """A world with a library but ZERO companions keeps the legacy bare-id
+    comma-separated prompt byte-for-byte (spec R-CLASSIFY invariance)."""
+    library = _Library(companions=[], published={})
+    runs = _Runs({"skill_id": "narrative-draft", "confidence": 0.95})
+    router = SkillRouter(methodology_library=library, provider=runs)
+    _result(router, "write a scene")
+    legacy = router._build_classification_prompt(
+        "write a scene", router._available_skills("vibrantes")
+    )
+    assert runs.prompts[0] == legacy
+    # The companion prompt format (bullets / tie sentence) is absent.
+    assert "prefer the world-specific" not in runs.prompts[0]
+    assert "- narrative-world-spec" not in runs.prompts[0]
+
+
+def test_description_clipped_at_160() -> None:
+    long = "x" * 500
+    library = _Library(
+        companions=[_Activation(skill_id="alpha", version="1.0")],
+        published={("alpha", "1.0"): _Published(description=long)},
+    )
+    runs = _Runs({"skill_id": "alpha", "confidence": 0.9})
+    router = SkillRouter(methodology_library=library, provider=runs)
+    _result(router, "hello")
+    prompt = runs.prompts[0]
+    line = next(l for l in prompt.splitlines() if l.startswith("- alpha:"))
+    desc = line[len("- alpha: "):]
+    assert desc == "x" * 160
+
+
+def test_gateway_down_companions_unreachable() -> None:
+    """Rule A degraded mode: with the classification gateway unavailable the
+    keyword layer claims TRANSVERSAL candidates only — a companion is NEVER
+    keyword-reachable."""
+    library = _Library(
+        companions=[_Activation(skill_id="alpha", version="1.0")],
+        published={("alpha", "1.0"): _Published(description="Alpha methodology")},
+    )
+    router = SkillRouter(methodology_library=library, provider=_FailingRuns())
+    result = _result(router, "give me an outline for my novel")
+    assert result.source == "keyword"
+    assert result.skill_id == "narrative-outline"
+    assert result.skill_id != "alpha"
+
+
+def test_tie_candidate_order_companions_first() -> None:
+    library = _Library(
+        companions=[_Activation(skill_id="alpha", version="1.0")],
+        published={("alpha", "1.0"): _Published(description="Alpha methodology")},
+    )
+    runs = _Runs({"skill_id": "alpha", "confidence": 0.7})
+    router = SkillRouter(methodology_library=library, provider=runs)
+    result = _result(router, "alpha thing")
+    prompt = runs.prompts[0]
+    assert result.skill_id == "alpha"
+    assert result.source == "llm"
+    # The companion is listed before every transversal in the prompt.
+    alpha_idx = prompt.index("- alpha: Alpha methodology")
+    for skill in TRANSVERSAL_SKILLS:
+        assert alpha_idx < prompt.index(f"- {skill}")
