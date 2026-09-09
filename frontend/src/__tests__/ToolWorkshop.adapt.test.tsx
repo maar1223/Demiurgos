@@ -68,7 +68,7 @@ const inventory = {
       digest: "abc",
       published_at: "2026-01-01",
       clasificacion: "Oficiales",
-      trust_attributes: ["fundamental"],
+      trust_attributes: ["fundacional"],
     },
   ],
 };

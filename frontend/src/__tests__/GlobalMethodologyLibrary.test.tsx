@@ -29,7 +29,7 @@ const narrative: MethodologyInventoryItem = {
   categoria_funcional: "Generación de ideas",
   etiquetas: ["narrativa", "ideas"],
   clasificacion: "Oficiales",
-  trust_attributes: ["fundamental", "verified"],
+  trust_attributes: ["fundacional", "verified"],
 };
 
 const worldbuilding: MethodologyInventoryItem = {
@@ -127,7 +127,7 @@ describe("GlobalMethodologyLibrary — list render (REQ-LIB-2)", () => {
     // the option labels (Oficiales/Personalizadas/Comunitarias).
     const list = screen.getByRole("list");
     expect(within(list).getByText("Oficiales")).toBeInTheDocument();
-    expect(within(list).getByText("Fundamental")).toBeInTheDocument();
+    expect(within(list).getByText("Fundacional")).toBeInTheDocument();
     expect(within(list).getByText("Verificado")).toBeInTheDocument();
     // Missing clasificacion → neutral badge, row still visible.
     expect(within(list).getByText("Sin clasificación")).toBeInTheDocument();
@@ -280,7 +280,7 @@ describe("GlobalMethodologyLibrary — detail panel (REQ-LIB-6)", () => {
     ).toBeInTheDocument();
     expect(within(detailPanel).getByText("narrativa")).toBeInTheDocument();
     expect(within(detailPanel).getByText("Oficiales")).toBeInTheDocument();
-    expect(within(detailPanel).getByText("Fundamental")).toBeInTheDocument();
+    expect(within(detailPanel).getByText("Fundacional")).toBeInTheDocument();
 
     // Closing hides the panel again.
     await user.click(screen.getByRole("button", { name: "Cerrar" }));

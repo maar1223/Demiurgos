@@ -106,7 +106,7 @@ def _derive_trust_attributes(verdict: PackageVerdict, trusted: bool) -> tuple[st
     """Derive trust attributes from package state.
 
     ``verified`` tracks an official signature; ``quarantined`` tracks the
-    mandatory pre-trust state. ``fundamental``/``derived``/``co-created`` are
+    mandatory pre-trust state. ``fundacional``/``derived``/``co-created`` are
     reserved for later phases.
     """
     attributes: list[str] = []

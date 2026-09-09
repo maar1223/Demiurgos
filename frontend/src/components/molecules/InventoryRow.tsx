@@ -14,7 +14,7 @@ export const CLASIFICACION_VARIANT: Record<string, BadgeVariant> = {
 
 /** trust_attributes value → Badge variant (REQ-LIB-5 / TW5). */
 export const TRUST_VARIANT: Record<string, BadgeVariant> = {
-  fundamental: "success",
+  fundacional: "success",
   verified: "success",
   derived: "info",
   "co-created": "warning",
@@ -23,7 +23,7 @@ export const TRUST_VARIANT: Record<string, BadgeVariant> = {
 
 /** trust_attributes value → Spanish display label (spec UC-4). */
 export const TRUST_LABEL: Record<string, string> = {
-  fundamental: "Fundamental",
+  fundacional: "Fundacional",
   verified: "Verificado",
   derived: "Derivado",
   "co-created": "Co-creado",
