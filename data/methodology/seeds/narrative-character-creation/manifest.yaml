@@ -1,0 +1,23 @@
+skill_id: narrative-character-creation
+version: "1.0"
+name: Creación de Personajes
+description: >-
+  Metodología fundacional para co-crear personajes narrativos nuevos, agnóstica
+  al mundo. Esqueleto universal de ficha: identidad, carácter, Eneatipo,
+  Subtipo, Arquetipo, Alineamiento, conflicto y arco. Principio 40/60
+  (diálogo, no cuestionario) y densidad por nivel narrativo (1º, 2º y 3º).
+  El color del mundo lo aporta la skill personalizada de mundo.
+phases:
+  - Objetivo y contexto
+  - Consulta de grafo
+  - Rol y profundidad
+  - Anclas mínimas
+  - Exploración adaptativa
+  - Certeza y provenance
+  - Convergencia
+  - Propuesta diskless
+  - Aceptar o rechazar
+  - Aprobación final
+  - Persistencia e indexado
+language: es
+categoria_funcional: Creación

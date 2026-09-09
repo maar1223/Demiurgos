@@ -99,3 +99,10 @@ start-opencode-serve.ps1
 .atl/
 data/import-spool/
 data/world-trash/
+
+# ============================================================
+# Metodología — store runtime y cuarentena (los seeds SÍ se versionan:
+# data/methodology/seeds/ queda trackeado)
+# ============================================================
+data/methodology/library.json
+data/methodology/quarantine/
