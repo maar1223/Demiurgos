@@ -118,6 +118,40 @@ def _derive_trust_attributes(verdict: PackageVerdict, trusted: bool) -> tuple[st
 
 
 # ---------------------------------------------------------------------------
+# Server-authoritative trust values (sole origin)
+#
+# ``clasificacion`` values and trust attributes are SERVER-ONLY: no client
+# request, manifest, or import path may set them. They originate exclusively
+# here (S12). Two-axis invariant (G14): every ``fundacional`` skill is also
+# ``Oficiales``, but ``Oficiales`` skills need not be ``fundacional``.
+# ---------------------------------------------------------------------------
+
+OFFICIAL = "Oficiales"
+PERSONALIZADAS = "Personalizadas"
+FOUNDATIONAL = "fundacional"
+
+
+def foundational_trust() -> tuple[str, tuple[str, ...]]:
+    """Return the classification + trust attributes of a foundational skill.
+
+    The sole origin of server trust for seeded skills: ``("Oficiales",
+    ("fundacional",))``. Only server install paths may use it; no client or
+    manifest path may claim these values.
+    """
+    return (OFFICIAL, (FOUNDATIONAL,))
+
+
+def scrub_foundational(trust: tuple[str, ...]) -> tuple[str, ...]:
+    """Return ``trust`` without the ``fundacional`` attribute.
+
+    Applied when deriving from a foundational skill: a fork is local
+    authorship, so it keeps other inherited attributes (e.g. ``verified``)
+    but never the foundational marker.
+    """
+    return tuple(attribute for attribute in trust if attribute != FOUNDATIONAL)
+
+
+# ---------------------------------------------------------------------------
 # Package building (export)
 # ---------------------------------------------------------------------------
 

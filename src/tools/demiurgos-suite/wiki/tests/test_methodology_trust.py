@@ -19,9 +19,14 @@ if str(_WIKI) not in sys.path:
 
 from methodology_library import MethodologyLibrary  # noqa: E402
 from methodology_trust import (  # noqa: E402
+    FOUNDATIONAL,
+    OFFICIAL,
+    PERSONALIZADAS,
     QuarantineStore,
     build_package,
+    foundational_trust,
     inspect_package,
+    scrub_foundational,
 )
 
 
@@ -267,3 +272,30 @@ class TestInventoryClassification:
         assert draft.talleres_compatibles == ("Investigación",)
         assert draft.categoria_funcional == "Análisis"
         assert draft.etiquetas == ("lore", "npc")
+
+
+class TestServerTrustOrigin:
+    """S12: classification values and trust attributes originate ONLY here.
+
+    ``methodology_trust`` is the sole origin of server trust — constants are
+    pinned, ``foundational_trust`` yields the canonical Oficiales+fundacional
+    pair, and ``scrub_foundational`` strips the marker while keeping other
+    attributes (e.g. ``verified``).
+    """
+
+    def test_constants_are_pinned(self) -> None:
+        assert OFFICIAL == "Oficiales"
+        assert PERSONALIZADAS == "Personalizadas"
+        assert FOUNDATIONAL == "fundacional"
+
+    def test_foundational_trust_returns_canonical_pair(self) -> None:
+        assert foundational_trust() == ("Oficiales", ("fundacional",))
+
+    def test_scrub_foundational_keeps_other_attributes(self) -> None:
+        assert scrub_foundational(("fundacional", "verified")) == ("verified",)
+        assert scrub_foundational(("verified",)) == ("verified",)
+        assert scrub_foundational(()) == ()
+
+    def test_scrub_foundational_never_invents_attributes(self) -> None:
+        assert scrub_foundational(("fundacional",)) == ()
+        assert "fundacional" not in scrub_foundational(("fundacional",))
