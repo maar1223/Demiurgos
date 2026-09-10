@@ -18,6 +18,7 @@ kernel, canon files, or any path outside its own store file.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -26,7 +27,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from methodology_compiler import (
     CompileResult,
@@ -34,7 +35,9 @@ from methodology_compiler import (
     MethodologyIssue,
     compile_methodology,
 )
-from methodology_trust import FOUNDATIONAL, PERSONALIZADAS, scrub_foundational
+from methodology_trust import FOUNDATIONAL, OFFICIAL, PERSONALIZADAS, scrub_foundational
+
+logger = logging.getLogger("demiurgos-api")
 
 
 # The id of the author-created foundational character-creation skill.
@@ -160,6 +163,20 @@ def _bump_version(version: str) -> str:
             parts[index] = str(int(parts[index]) + 1)
             return ".".join(parts[: index + 1])
     return f"{version}.1"
+
+
+def _version_key(version: str) -> tuple[tuple[int, int | str], ...]:
+    """Dependency-free version comparison key (dot-segment split).
+
+    Each dot-segment maps to ``(0, int)`` when numeric, else ``(1, str)``, so
+    ``1.2.0 > 1.1.9`` and ``1.0 < 1.0.1`` compare correctly without any
+    packaging/semver dependency (design decision). Seed reconciliation uses it
+    to decide "newer than all stored versions" for insert-only installs.
+    """
+    return tuple(
+        (0, int(segment)) if segment.isdigit() else (1, segment)
+        for segment in version.split(".")
+    )
 
 
 # Per-draft snapshot-on-update history cap (TW13 post-materialize edits).
@@ -501,36 +518,146 @@ class MethodologyLibrary:
                     f"{compiled.skill_id}@{compiled.version} is already published "
                     "with different content; published versions are immutable."
                 )
-            record = {
-                "skill_id": compiled.skill_id,
-                "version": compiled.version,
-                "name": compiled.name,
-                "description": compiled.description,
-                "phases": list(compiled.phases),
-                "language": compiled.language,
-                "source": compiled.source,
-                "digest": compiled.digest,
-                "published_at": now,
-                "deleted_at": None,
-                "taller": compiled.taller,
-                "talleres_compatibles": list(compiled.talleres_compatibles),
-                "categoria_funcional": compiled.categoria_funcional,
-                "etiquetas": list(compiled.etiquetas),
+            record = self._published_record(
+                compiled,
+                now=now,
                 # Local-author semantics (G14): a plain draft publishes as
                 # Personalizadas with no trust attributes — the server never
                 # carries a client-claimed value. Server-derived values
                 # (Oficiales/Comunitarias from the import trust path) pass
                 # through untouched.
-                "clasificacion": draft_record.get("clasificacion") or PERSONALIZADAS,
-                "trust_attributes": list(draft_record.get("trust_attributes") or ()),
+                clasificacion=draft_record.get("clasificacion") or PERSONALIZADAS,
+                trust_attributes=tuple(draft_record.get("trust_attributes") or ()),
                 # TW14: provenance threads through to the published record so
                 # it stays visible across the lifecycle (REQ-CC-21).
-                "parent_skill_id": draft_record.get("parent_skill_id"),
-                "parent_version": parent_version,
-            }
+                parent_skill_id=draft_record.get("parent_skill_id"),
+                parent_version=parent_version,
+            )
             self._published[key] = record
             self._save_locked()
             return self._published_from(record)
+
+    def published_versions_for(self, skill_id: str) -> list[dict[str, str]]:
+        """Version + digest records of the published (non-deleted) versions of a skill.
+
+        The input to seed reconciliation: only live versions gate installs, so
+        soft-deleted records are excluded. Sorted ascending by version key for
+        deterministic output.
+        """
+        with self._lock:
+            records = [
+                {
+                    "skill_id": record["skill_id"],
+                    "version": record["version"],
+                    "digest": record["digest"],
+                }
+                for record in self._published.values()
+                if record.get("skill_id") == skill_id and not record.get("deleted_at")
+            ]
+        records.sort(key=lambda record: _version_key(record["version"]))
+        return records
+
+    @staticmethod
+    def _published_record(
+        compiled: CompiledMethodology,
+        *,
+        now: str,
+        clasificacion: str | None,
+        trust_attributes: tuple[str, ...],
+        parent_skill_id: str | None = None,
+        parent_version: str | None = None,
+    ) -> dict[str, Any]:
+        """Build the immutable published record dict shared by publish paths.
+
+        Single source of truth for the record shape: ``publish()`` and
+        ``install_published_version()`` both land here, so a seeded record and
+        a draft-published record carry the same fields. Classification and
+        trust attributes arrive server-derived (never client-claimed).
+        """
+        return {
+            "skill_id": compiled.skill_id,
+            "version": compiled.version,
+            "name": compiled.name,
+            "description": compiled.description,
+            "phases": list(compiled.phases),
+            "language": compiled.language,
+            "source": compiled.source,
+            "digest": compiled.digest,
+            "published_at": now,
+            "deleted_at": None,
+            "taller": compiled.taller,
+            "talleres_compatibles": list(compiled.talleres_compatibles),
+            "categoria_funcional": compiled.categoria_funcional,
+            "etiquetas": list(compiled.etiquetas),
+            "clasificacion": clasificacion,
+            "trust_attributes": list(trust_attributes),
+            "parent_skill_id": parent_skill_id,
+            "parent_version": parent_version,
+        }
+
+    def install_published_version(
+        self,
+        compiled: CompiledMethodology,
+        *,
+        clasificacion: str,
+        trust_attributes: tuple[str, ...],
+    ) -> Literal["installed", "existing", "stale", "conflict"]:
+        """Install a compiled methodology version as an immutable published record.
+
+        The server-side install path for repo-bundled foundational seeds (no
+        draft is created). Serialized under the same store lock as every other
+        mutation; insert-only — activations and companions are never touched
+        (TW15) and an existing record is never overwritten.
+
+        Two-axis invariant (G14): the ``fundacional`` trust attribute may only
+        accompany the ``Oficiales`` classification — enforced by assertion,
+        since only server install paths may set these values.
+
+        Outcomes:
+        - ``installed`` — the key was absent and no stored version is newer.
+        - ``existing`` — the exact same version+digest is already published
+          (idempotent rerun; skipped, not re-written).
+        - ``stale`` — a newer non-deleted version of the skill is already
+          stored; insert-only reconciliation skips older seeds.
+        - ``conflict`` — the same version is stored with a DIFFERENT digest:
+          logged and PERMANENTLY skipped. Immutability over auto-heal: the
+          stored bytes win and the conflicting seed version is never
+          re-installed (by design).
+        """
+        assert not (
+            FOUNDATIONAL in trust_attributes and clasificacion != OFFICIAL
+        ), "fundacional trust may only accompany Oficiales classification"
+        key = self._key(compiled.skill_id, compiled.version)
+        with self._lock:
+            existing = self._published.get(key)
+            if existing is not None:
+                if existing["digest"] == compiled.digest:
+                    return "existing"
+                logger.warning(
+                    "seed install conflict: %s@%s is already published with a "
+                    "different digest; skipping (immutability over auto-heal)",
+                    compiled.skill_id, compiled.version,
+                )
+                return "conflict"
+            # Insert-only reconciliation: never install when a newer live
+            # version of the skill is already stored (soft-deleted versions
+            # do not gate — they are not published).
+            for record in self._published.values():
+                if (
+                    record.get("skill_id") == compiled.skill_id
+                    and not record.get("deleted_at")
+                    and _version_key(record["version"]) > _version_key(compiled.version)
+                ):
+                    return "stale"
+            record = self._published_record(
+                compiled,
+                now=_utcnow(),
+                clasificacion=clasificacion,
+                trust_attributes=trust_attributes,
+            )
+            self._published[key] = record
+            self._save_locked()
+            return "installed"
 
     def get_published(self, skill_id: str, version: str) -> PublishedVersion | None:
         with self._lock:

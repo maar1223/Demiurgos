@@ -30,7 +30,10 @@ from methodology_library import (  # noqa: E402
     FoundationalImmutableError,
     ValidationError,
     _bump_version,
+    _version_key,
 )
+from methodology_compiler import compile_methodology  # noqa: E402
+from methodology_trust import OFFICIAL, PERSONALIZADAS  # noqa: E402
 
 
 def _valid_manifest() -> dict:
@@ -228,6 +231,179 @@ class TestFoundationalImmutability:
         library.soft_delete("signed-official", "1.0.0")
         assert library.get_published("signed-official", "1.0.0") is None
         assert library.list_published() == []
+
+
+def _compiled(*, version: str = "1.0", skill_id: str = "seeded-skill") -> object:
+    """Compile a valid methodology bound to ``skill_id@version``."""
+    manifest = dict(_valid_manifest(), skill_id=skill_id, version=version)
+    result = compile_methodology(manifest, _valid_source())
+    assert result.ok, [issue.message for issue in result.issues]
+    return result.compiled
+
+
+class TestInstallPublishedVersion:
+    """3.1: server-side install path — immutable, idempotent, insert-only.
+
+    Covers the two-axis invariant (``fundacional`` ⇒ ``Oficiales``), the
+    digest-equal rerun skip, the same-version different-digest permanent
+    conflict skip (immutability over auto-heal), and the stored-newer stale
+    skip. Install never touches activations or companions (TW15).
+    """
+
+    def test_installs_foundational_record_with_server_trust(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        outcome = library.install_published_version(
+            _compiled(), clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        assert outcome == "installed"
+        published = library.get_published("seeded-skill", "1.0")
+        assert published is not None
+        assert published.clasificacion == "Oficiales"
+        assert published.trust_attributes == ("fundacional",)
+        assert published.digest == _compiled().digest
+        assert published.parent_skill_id is None
+
+    def test_digest_equal_rerun_is_existing_and_never_duplicates(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        compiled = _compiled()
+        assert library.install_published_version(
+            compiled, clasificacion="Oficiales", trust_attributes=("fundacional",),
+        ) == "installed"
+        assert library.install_published_version(
+            compiled, clasificacion="Oficiales", trust_attributes=("fundacional",),
+        ) == "existing"
+        assert len(library.published_versions_for("seeded-skill")) == 1
+
+    def test_same_version_different_digest_conflicts_and_skips_never_heals(
+        self, tmp_path: Path,
+    ) -> None:
+        """A same-version digest mismatch is a PERMANENT skip — the stored
+        bytes win; the conflict is never auto-healed (by design)."""
+        library = _library(tmp_path)
+        original = _compiled()
+        library.install_published_version(
+            original, clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        tampered = _compiled()
+        # A different source yields a different digest at the same version.
+        tampered_manifest = dict(_valid_manifest(), skill_id="seeded-skill", version="1.0")
+        result = compile_methodology(tampered_manifest, _valid_source() + "\n## extra\n")
+        assert result.ok and result.compiled.digest != original.digest
+        assert library.install_published_version(
+            result.compiled, clasificacion="Oficiales", trust_attributes=("fundacional",),
+        ) == "conflict"
+        # Skip, not heal: the original digest is untouched and only one record exists.
+        versions = library.published_versions_for("seeded-skill")
+        assert len(versions) == 1
+        assert versions[0]["digest"] == original.digest
+        assert library.get_published("seeded-skill", "1.0").digest == original.digest
+
+    def test_older_seed_than_stored_version_is_stale(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        library.install_published_version(
+            _compiled(version="1.0"), clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        library.install_published_version(
+            _compiled(version="2.0"), clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        # A seed shipping 1.5 (absent key, but older than the stored 2.0) is stale.
+        assert library.install_published_version(
+            _compiled(version="1.5"), clasificacion="Oficiales", trust_attributes=("fundacional",),
+        ) == "stale"
+        assert [v["version"] for v in library.published_versions_for("seeded-skill")] == ["1.0", "2.0"]
+
+    def test_newer_seed_installs_beside_older_versions(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        library.install_published_version(
+            _compiled(version="1.0"), clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        assert library.install_published_version(
+            _compiled(version="2.0"), clasificacion="Oficiales", trust_attributes=("fundacional",),
+        ) == "installed"
+        assert [v["version"] for v in library.published_versions_for("seeded-skill")] == ["1.0", "2.0"]
+
+    def test_fundacional_requires_oficiales_two_axis_invariant(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        with pytest.raises(AssertionError):
+            library.install_published_version(
+                _compiled(), clasificacion="Personalizadas", trust_attributes=("fundacional",),
+            )
+
+    def test_non_fundacional_install_can_be_soft_deleted(self, tmp_path: Path) -> None:
+        """The guard keys on the attribute: a signed (verified) non-fundacional
+        Oficiales install stays deletable (S11 parity for the install path)."""
+        library = _library(tmp_path)
+        library.install_published_version(
+            _compiled(), clasificacion="Oficiales", trust_attributes=("verified",),
+        )
+        library.soft_delete("seeded-skill", "1.0")
+        assert library.published_versions_for("seeded-skill") == []
+
+    def test_install_record_persists_and_reloads(self, tmp_path: Path) -> None:
+        path = tmp_path / "library.json"
+        library = MethodologyLibrary(path)
+        library.install_published_version(
+            _compiled(), clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        reloaded = MethodologyLibrary(path)
+        published = reloaded.get_published("seeded-skill", "1.0")
+        assert published is not None
+        assert published.clasificacion == "Oficiales"
+        assert published.trust_attributes == ("fundacional",)
+
+    def test_install_never_touches_activations_or_companions(self, tmp_path: Path) -> None:
+        """TW15: the install path is insert-only — activation slots and
+        companion lists for the skill stay exactly as they were."""
+        library = _library(tmp_path)
+        library.install_published_version(
+            _compiled(version="1.0"), clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        library.activate("nec", "seeded-skill", "1.0")
+        library.add_companion("nec", "seeded-skill", "1.0")
+        library.install_published_version(
+            _compiled(version="2.0"), clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        assert library.active_for("nec").version == "1.0"
+        assert [c.version for c in library.list_companions("nec")] == ["1.0"]
+
+
+class TestPublishedVersionsFor:
+    """3.1: reconciliation input — live published versions only, sorted."""
+
+    def test_excludes_soft_deleted_versions(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        library.install_published_version(
+            _compiled(version="1.0"), clasificacion="Oficiales", trust_attributes=("verified",),
+        )
+        library.soft_delete("seeded-skill", "1.0")
+        assert library.published_versions_for("seeded-skill") == []
+
+    def test_other_skills_are_not_included(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        library.install_published_version(
+            _compiled(skill_id="seeded-skill", version="1.0"),
+            clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        library.install_published_version(
+            _compiled(skill_id="other-skill", version="1.0"),
+            clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        assert [v["version"] for v in library.published_versions_for("seeded-skill")] == ["1.0"]
+
+
+class TestVersionKey:
+    """Dependency-free dot-split version comparison (design decision)."""
+
+    def test_numeric_segments_compare_numerically(self) -> None:
+        assert _version_key("1.10.0") > _version_key("1.9.0")
+        assert _version_key("2.0") > _version_key("1.99.99")
+
+    def test_missing_segments_sort_before_present(self) -> None:
+        assert _version_key("1.0") < _version_key("1.0.1")
+
+    def test_non_numeric_segments_sort_after_numeric(self) -> None:
+        assert _version_key("1.0") < _version_key("1.v1")
+        assert _version_key("1.a") == _version_key("1.a")
 
 
 class TestCompanions:
