@@ -228,11 +228,23 @@ Estado verificado en el repositorio (existe hoy; no es objetivo):
 | Biblioteca de metodologías (listado, publicar borrador validado, activar versión inmutable por mundo) | `frontend/src/components/organisms/MethodologyLibrary.tsx` |
 | API de metodologías | `frontend/src/api/methodologies.ts` — `status`, `drafts`, `drafts/{id}/publish`, `activate`, `rollback` |
 | Subsistema backend | `src/tools/demiurgos-suite/wiki/methodology_library.py`, `methodology_compiler.py`, `methodology_trust.py` |
+| Sembrado de skills fundacionales (mecanismo completo, sección 8.1) | `data/methodology/seeds/narrative-character-creation/` (`manifest.yaml` + `source.md` + `checksums.json`), `src/tools/demiurgos-suite/wiki/methodology_seed.py` (carga + verificación + instalación), `methodology_trust.py` (inyección server-side de Oficiales + `fundacional`), hook de arranque `_seed_foundational_skills` en `api_server.py` |
 | Navbar por talleres disponibles | `frontend/src/components/organisms/Navbar.tsx` — contrato `available`/`teaser`, teaser "Próximamente" |
 
 **No implementado (superficie objetivo):** el selector de Taller y el árbol contextual (sección 2), los estados visibles bloqueada/transversal en la UI (sección 3), categorías funcionales y etiquetas en la UI (sección 4), la Skill Madre y la co-creación conversacional (secciones 5–6), el editor visual + chat, la comparación visual de adaptación y la vista de aprobación comprensible. Todo ello es `[OBJETIVO]`/`[DECISIÓN CERRADA]`, no `[ACTUAL]`.
 
 > Regla de etiquetas: todo lo listado como `[ACTUAL]` está verificado; las superficies objetivo de las secciones 1–7 llevan su propia etiqueta y **no se presentan como implementadas**.
+
+### 8.1 Skills fundacionales: mecanismo de sembrado `[DECISIÓN CERRADA — TW5, G14]` `[ACTUAL]`
+
+Las skills fundacionales son metodologías oficiales que Demiurgos instala y mantiene desde el propio repositorio, sin pasar por la biblioteca gestionada por el Autor:
+
+- **Catálogo sembrado en el repo**: cada skill fundacional vive en `data/methodology/seeds/<skill-id>/` con `manifest.yaml` (compilable por el compilador del subsistema), `source.md` y `checksums.json` (SHA-256 de los bytes empaquetados). El catálogo es extensible por directorio; el MVP siembra exactamente `narrative-character-creation@1.0`.
+- **Instalación en primer arranque, validada por compilación**: en la inicialización perezosa de la biblioteca, el servidor compila cada entrada con `compile_methodology` (los reclamos de autoridad se rechazan) e inserta la versión publicada con `clasificacion="Oficiales"` y el atributo `fundacional` **inyectados por el servidor** — única fuente: `methodology_trust.py`; la UI nunca los envía (sección 4). Un fallo de integridad (checksum o compilación) aborta el sembrado completo: cero registros parciales y el servidor sigue sirviendo sin semillas.
+- **Reconciliación insert-only**: en cada arranque se inserta la versión sembrada solo si es más nueva que todas las versiones almacenadas del skill; las versiones antiguas se conservan y **nunca se re-apuntan activaciones ni compañeros** (TW15). Los reintentos son idempotentes: mismo digest ⇒ `existing` (skip); misma versión con digest distinto ⇒ conflicto permanente — la inmutabilidad gana sobre el auto-curado.
+- **Derivación demuestra a Personalizadas**: adaptar una skill fundacional crea una derivada `Personalizadas` sin `fundacional`, con procedencia intacta (TW13, TW14).
+- **No-eliminación por atributo**: `soft_delete` rechaza cualquier registro con `fundacional` en `trust_attributes`; la protección se ancla en el atributo, no en la categoría — un `Oficiales` firmado sin `fundacional` seguiría siendo eliminable (G14).
+- **Skill Madre intacta**: el sembrado no toca la Skill Madre (G13, sección 5); sigue fuera de la biblioteca gestionada.
 
 ---
 
