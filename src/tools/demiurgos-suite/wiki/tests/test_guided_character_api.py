@@ -2,9 +2,11 @@
 
 from pathlib import Path
 import json
+import shutil
 import sys
 from unittest.mock import AsyncMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 _WIKI = Path(__file__).resolve().parents[1]
@@ -23,9 +25,31 @@ from guided_character_protocol import (  # noqa: E402
     TypedMessage,
 )
 from guided_character_provider import HermesGuidedProvider  # noqa: E402
+from methodology_library import MethodologyLibrary  # noqa: E402
+from methodology_seed import install_seeds  # noqa: E402
+
+REPO_ROOT = _WIKI.parents[3]
+SEED_ROOT = REPO_ROOT / "data" / "methodology" / "seeds"
 
 
 client = TestClient(api_server.app)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_methodology_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep guided tests off the real repo methodology store.
+
+    The guided start route snapshots the active methodology, which lazy-inits
+    the server library; without isolation the first such call would construct
+    AND seed the real ``data/methodology/library.json`` (this module shares
+    one module-level TestClient across tests). A fresh empty tmp library keeps
+    the builtin runtime and the repo store untouched (S6 guard).
+    """
+    monkeypatch.setattr(
+        api_server,
+        "_METHODOLOGY_LIBRARY",
+        MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json"),
+    )
 
 ROUTES = {
     ("GET", "/api/{mundo}/guided-character/session/{session_id}"),
@@ -1166,3 +1190,27 @@ def test_guided_turn_semantic_decides_before_confirmation_policy(monkeypatch, tm
     assert response.status_code == 200
     assert order == ["semantic.decide", "confirmation_decision"]
     assert runs.starts == 1
+
+
+def test_seeded_library_leaves_builtin_guided_runtime_untouched(monkeypatch, tmp_path) -> None:
+    """S6: the seeded library never wires or alters the builtin guided runtime.
+
+    A library with the bundled foundational seed installed must behave exactly
+    like the pre-change builtin pin: ``_ACTIVE_METHODOLOGY_VERSION`` stays
+    ``"builtin"`` and the guided snapshot for a world without an activation is
+    the builtin contract (no compiled methodology is loaded dynamically).
+    """
+    seed_root = tmp_path / "seeds"
+    shutil.copytree(SEED_ROOT, seed_root)
+    library = MethodologyLibrary(tmp_path / "library.json")
+    report = install_seeds(library, seed_root)
+    assert report.installed == 1
+    monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+
+    assert api_server._BUILTIN_METHODOLOGY_VERSION == "builtin"
+    assert api_server._ACTIVE_METHODOLOGY_VERSION == "builtin"
+    snapshot = api_server._active_methodology_snapshot("nec")
+    assert snapshot.skill_id == "guided-character-v1"
+    assert snapshot.skill_version == "builtin"
+    assert snapshot.compiled_contract_digest is None
+    assert api_server._compiled_contract_markdown("nec") is None

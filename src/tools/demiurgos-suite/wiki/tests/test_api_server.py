@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -23,6 +24,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import requests
+import yaml
 from fastapi.testclient import TestClient
 
 _HERE = Path(__file__).resolve().parent
@@ -38,7 +40,9 @@ import guided_session_store  # noqa: E402
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore  # noqa: E402
 from guided_session_store import SESSION_TTL  # noqa: E402
 import idea_capture_ui  # noqa: E402
+from methodology_compiler import compile_methodology  # noqa: E402
 from methodology_library import MethodologyLibrary  # noqa: E402
+from methodology_seed import load_seed_catalog  # noqa: E402
 from methodology_trust import build_package, inspect_package  # noqa: E402
 import telegram_settings  # noqa: E402
 from wiki import migration as migration_module  # noqa: E402
@@ -46,6 +50,9 @@ from wiki.graph_indexer import EntityGraphIndex  # noqa: E402
 from wiki.world_authority import _is_case_insensitive_fs  # noqa: E402
 from wiki.world_authority import _same_physical_dir  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
+
+REPO_ROOT = _WIKI.parents[3]
+SEED_ROOT = REPO_ROOT / "data" / "methodology" / "seeds"
 
 
 def _fs_case_insensitive() -> bool:
@@ -2804,6 +2811,121 @@ class TestMethodologyApi:
         library.add_companion("test_mundo", "companion-skill", "1.0.0")
         assert library.active_for("test_mundo") is None
         assert api_server._compiled_contract_markdown("test_mundo") is None
+
+
+class TestSeedFirstBoot:
+    """PR3: first-boot seeding through the API (S2, S3-boot, S4).
+
+    Seeding runs on lazy init of ``_methodology_library()``; the seed root is
+    resolved from PROJECT_ROOT at call time, so these tests copy the REAL
+    bundled seeds into the tmp project root the ``client`` fixture patches —
+    the repo store is never written by tests.
+    """
+
+    @staticmethod
+    def _write_seed_entry(
+        root: Path, skill_id: str, *, source: str,
+    ) -> None:
+        """Write a seed entry whose checksums match its own bytes (integrity
+        passes) but whose content may fail compilation."""
+        entry_dir = root / skill_id
+        entry_dir.mkdir(parents=True, exist_ok=True)
+        manifest = {
+            "skill_id": skill_id,
+            "version": "1.0",
+            "name": "Skill de prueba",
+            "description": "Metodología de prueba para el catálogo de seeds.",
+            "phases": ["fase uno", "fase dos"],
+            "language": "es",
+        }
+        manifest_bytes = yaml.safe_dump(
+            manifest, sort_keys=False, allow_unicode=True,
+        ).encode("utf-8")
+        source_bytes = source.encode("utf-8")
+        (entry_dir / "manifest.yaml").write_bytes(manifest_bytes)
+        (entry_dir / "source.md").write_bytes(source_bytes)
+        (entry_dir / "checksums.json").write_text(
+            json.dumps({
+                "manifest.yaml": hashlib.sha256(manifest_bytes).hexdigest(),
+                "source.md": hashlib.sha256(source_bytes).hexdigest(),
+            }, sort_keys=True, separators=(",", ":")),
+            encoding="utf-8",
+        )
+
+    def test_fresh_boot_seeds_foundational_skill(
+        self, client: TestClient, monkeypatch, tmp_path: Path,
+    ) -> None:
+        """S2: with the real seeds copied into the tmp PROJECT_ROOT, lazy init
+        publishes the skill as Oficiales + fundacional with the digest pinned
+        to the compiled bundled bytes; inventory and status expose it."""
+        shutil.copytree(SEED_ROOT, tmp_path / "data" / "methodology" / "seeds")
+        response = client.get("/api/methodologies/inventory")
+        assert response.status_code == 200
+        items = response.json()["items"]
+        assert [item["skill_id"] for item in items] == ["narrative-character-creation"]
+        item = items[0]
+        assert item["version"] == "1.0"
+        assert item["clasificacion"] == "Oficiales"
+        assert item["trust_attributes"] == ["fundacional"]
+        entry = load_seed_catalog(SEED_ROOT)[0]
+        compiled = compile_methodology(entry.manifest, entry.source)
+        assert compiled.ok
+        assert item["digest"] == compiled.compiled.digest
+        _principal(monkeypatch, "author-1")
+        status = client.get("/api/methodologies/status").json()
+        published = status["published"]
+        assert [p["skill_id"] for p in published] == ["narrative-character-creation"]
+        assert published[0]["clasificacion"] == "Oficiales"
+        assert published[0]["trust_attributes"] == ["fundacional"]
+
+    def test_compiler_invalid_seed_fails_closed_and_routes_serve(
+        self, client: TestClient, monkeypatch, tmp_path: Path,
+    ) -> None:
+        """S3-boot: a seed whose bytes are intact (checksums match) but whose
+        source claims authority aborts the install — ZERO records inserted,
+        the lazy-init never raises, and the routes still serve."""
+        seed_root = tmp_path / "data" / "methodology" / "seeds"
+        seed_root.mkdir(parents=True)
+        self._write_seed_entry(
+            seed_root, "broken-skill",
+            source="## Rota\n\n#!demiurgos-authority\nContenido que reclama autoridad.\n",
+        )
+        response = client.get("/api/methodologies/inventory")
+        assert response.status_code == 200
+        assert response.json() == {"items": []}
+        assert not (tmp_path / "data" / "methodology" / "library.json").exists()
+
+    def test_concurrent_first_boot_installs_one_copy(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+    ) -> None:
+        """S4: two threads racing ``_methodology_library()`` yield ONE
+        published copy and a valid, reloadable store."""
+        monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+        api_server._METHODOLOGY_LIBRARY = None
+        shutil.copytree(SEED_ROOT, tmp_path / "data" / "methodology" / "seeds")
+        barrier = threading.Barrier(2)
+        seen = []
+
+        def _init() -> None:
+            barrier.wait()
+            seen.append(api_server._methodology_library())
+
+        threads = [threading.Thread(target=_init) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        # Double-checked init: both racers resolve the same instance.
+        assert seen[0] is seen[1]
+        versions = api_server._methodology_library().published_versions_for(
+            "narrative-character-creation",
+        )
+        assert len(versions) == 1
+        reloaded = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
+        assert [v["version"] for v in
+                reloaded.published_versions_for("narrative-character-creation")] == ["1.0"]
+        # Leave the module global clean for later tests.
+        api_server._METHODOLOGY_LIBRARY = None
 
 
 # ------------------------------------------------------------------ #

@@ -129,6 +129,7 @@ from methodology_library import (
     FOUNDATIONAL_CHARACTER_SKILL_ID,
     ValidationError,
 )
+from methodology_seed import install_seeds
 from methodology_trust import QuarantineRecord, QuarantineStore, build_package
 from semantic_intent import (
     CONTINUATION_STATES,
@@ -1782,14 +1783,41 @@ _ACTIVE_METHODOLOGY_VERSION: str | None = _BUILTIN_METHODOLOGY_VERSION
 # are created lazily so tests and callers can swap roots per process.
 _METHODOLOGY_LIBRARY: MethodologyLibrary | None = None
 _METHODOLOGY_QUARANTINE: QuarantineStore | None = None
+# Serializes first-boot library construction (the lazy-init was previously an
+# unguarded ``if None:``; install writes disk, so concurrent inits must not
+# race — S4). The seed root is resolved from PROJECT_ROOT AT CALL TIME so the
+# API fixtures that monkeypatch PROJECT_ROOT keep their isolation.
+_METHODOLOGY_INIT_LOCK = threading.Lock()
+
+
+def _seed_foundational_skills(library: MethodologyLibrary, seed_root: Path) -> None:
+    """Best-effort first-boot reconciliation of repo-bundled foundational seeds.
+
+    Thin bridge to ``install_seeds``: every failure is caught and logged —
+    boot must serve WITHOUT the seed rather than 500 every route, so lazy
+    init never raises (S2/S3-boot).
+    """
+    try:
+        report = install_seeds(library, seed_root)
+        if report.installed or report.conflict:
+            logger.info("Foundational seed reconciliation: %s", report)
+    except Exception as exc:  # noqa: BLE001 — never break the request path
+        logger.warning("Foundational seed install failed: %s", exc)
 
 
 def _methodology_library() -> MethodologyLibrary:
     global _METHODOLOGY_LIBRARY
     if _METHODOLOGY_LIBRARY is None:
-        _METHODOLOGY_LIBRARY = MethodologyLibrary(
-            PROJECT_ROOT / "data" / "methodology" / "library.json"
-        )
+        with _METHODOLOGY_INIT_LOCK:
+            if _METHODOLOGY_LIBRARY is None:
+                library = MethodologyLibrary(
+                    PROJECT_ROOT / "data" / "methodology" / "library.json"
+                )
+                _seed_foundational_skills(
+                    library,
+                    PROJECT_ROOT / "data" / "methodology" / "seeds",
+                )
+                _METHODOLOGY_LIBRARY = library
     return _METHODOLOGY_LIBRARY
 
 
@@ -5399,8 +5427,26 @@ _SEMANTIC_PROVIDER = SemanticIntentProvider(ACTIVITY_ADAPTER)
 # LLM classification over the same runs adapter. Both are module seams that
 # tests may replace after import.
 _CONVERSATION_MEMORY = ConversationMemoryStore()
+
+
+class _DeferredMethodologyLibrary:
+    """Lazy binding for the module-level ``_SKILL_ROUTER`` seam.
+
+    The router is wired at import time, but the library must NOT be
+    constructed — or seeded — before ``PROJECT_ROOT`` reaches its final
+    (possibly test-swapped) state: an import-time construction would write
+    seed records into the real repo store from test processes. Resolving
+    ``_methodology_library()`` on first attribute access keeps the import
+    side-effect free while the router sees the same seeded global instance on
+    every request.
+    """
+
+    def __getattr__(self, name: str):
+        return getattr(_methodology_library(), name)
+
+
 _SKILL_ROUTER = SkillRouter(
-    methodology_library=_methodology_library(),
+    methodology_library=_DeferredMethodologyLibrary(),
     provider=ACTIVITY_ADAPTER,
 )
 
