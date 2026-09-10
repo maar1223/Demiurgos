@@ -28,7 +28,8 @@ REPO_ROOT = _WIKI.parents[3]
 SEED_ROOT = REPO_ROOT / "data" / "methodology" / "seeds"
 
 from methodology_compiler import compile_methodology  # noqa: E402
-from methodology_seed import SeedIntegrityError, load_seed_catalog  # noqa: E402
+from methodology_library import MethodologyLibrary  # noqa: E402
+from methodology_seed import SeedIntegrityError, install_seeds, load_seed_catalog  # noqa: E402
 
 
 def _valid_manifest(skill_id: str) -> dict:
@@ -171,3 +172,97 @@ class TestSeedGitTracking:
                 capture_output=True, text=True, check=False,
             )
             assert ignored.returncode == 0, f"{path} must be git-ignored"
+
+
+class TestInstallSeeds:
+    """PR3 install path — two-phase fail-closed, idempotent, insert-only."""
+
+    def _real_entry_compiled(self) -> object:
+        entry = load_seed_catalog(SEED_ROOT)[0]
+        result = compile_methodology(entry.manifest, entry.source)
+        assert result.ok
+        return result.compiled
+
+    def test_fresh_install_publishes_foundational_seed(self, tmp_path: Path) -> None:
+        library = MethodologyLibrary(tmp_path / "library.json")
+        report = install_seeds(library, SEED_ROOT)
+        assert report.installed == 1
+        published = library.get_published("narrative-character-creation", "1.0")
+        assert published is not None
+        assert published.clasificacion == "Oficiales"
+        assert published.trust_attributes == ("fundacional",)
+        assert published.digest == self._real_entry_compiled().digest
+
+    def test_rerun_is_idempotent(self, tmp_path: Path) -> None:
+        library = MethodologyLibrary(tmp_path / "library.json")
+        first = install_seeds(library, SEED_ROOT)
+        second = install_seeds(library, SEED_ROOT)
+        assert first.installed == 1
+        assert second.existing == 1 and second.installed == 0
+        assert len(library.published_versions_for("narrative-character-creation")) == 1
+
+    def test_compiler_invalid_seed_aborts_with_zero_records(self, tmp_path: Path) -> None:
+        """S3: an authority-claiming source passes integrity (checksums match
+        the bundled bytes) but fails compilation — the whole install aborts
+        and ZERO records are inserted."""
+        bad_root = tmp_path / "seeds"
+        bad_root.mkdir()
+        _write_seed(
+            bad_root, "broken-skill",
+            source="## Rota\n\n#!demiurgos-authority\nContenido que reclama autoridad.\n",
+        )
+        library = MethodologyLibrary(tmp_path / "library.json")
+        with pytest.raises(SeedIntegrityError):
+            install_seeds(library, bad_root)
+        assert library.published_versions_for("broken-skill") == []
+        assert not (tmp_path / "library.json").exists()
+
+    def test_older_seed_than_stored_version_is_stale(self, tmp_path: Path) -> None:
+        """Insert-only reconciliation: a seed shipping an older version than a
+        stored version of the same skill is skipped, never downgraded."""
+        library = MethodologyLibrary(tmp_path / "library.json")
+        library.install_published_version(
+            self._real_entry_compiled(),
+            clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        older_root = tmp_path / "seeds-v09"
+        older_root.mkdir()
+        _write_seed(
+            older_root, "narrative-character-creation",
+            manifest=dict(_valid_manifest("narrative-character-creation"), version="0.9"),
+        )
+        report = install_seeds(library, older_root)
+        assert report.stale == 1 and report.installed == 0
+        assert [v["version"] for v in
+                library.published_versions_for("narrative-character-creation")] == ["1.0"]
+
+    def test_upgrade_inserts_v2_beside_active_v1_and_never_repoints(self, tmp_path: Path) -> None:
+        """S5: seed v1 active in a world; boot with a v2 seed dir inserts v2
+        immutably beside v1 — the activation still points to v1 and companion
+        lists are untouched (TW15)."""
+        library = MethodologyLibrary(tmp_path / "library.json")
+        compiled_v1 = self._real_entry_compiled()
+        library.install_published_version(
+            compiled_v1, clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        library.activate("mundo-a", "narrative-character-creation", "1.0")
+        library.add_companion("mundo-a", "narrative-character-creation", "1.0")
+
+        v2_root = tmp_path / "seeds-v2"
+        v2_root.mkdir()
+        _write_seed(
+            v2_root, "narrative-character-creation",
+            manifest=dict(_valid_manifest("narrative-character-creation"), version="2.0"),
+        )
+        report = install_seeds(library, v2_root)
+        assert report.installed == 1
+        versions = library.published_versions_for("narrative-character-creation")
+        assert [v["version"] for v in versions] == ["1.0", "2.0"]
+        # Never re-point: activation and companion stay pinned to v1.
+        assert library.active_for("mundo-a").version == "1.0"
+        assert [c.version for c in library.list_companions("mundo-a")] == ["1.0"]
+
+    def test_absent_seed_root_installs_nothing(self, tmp_path: Path) -> None:
+        library = MethodologyLibrary(tmp_path / "library.json")
+        report = install_seeds(library, tmp_path / "no-seeds")
+        assert report.entries == 0 and report.installed == 0

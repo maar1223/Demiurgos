@@ -1,4 +1,4 @@
-"""Seed catalog loader — repo-bundled foundational methodology seeds.
+"""Seed catalog loader and installer — repo-bundled foundational methodology seeds.
 
 A seed is a committed directory of plain files at
 ``data/methodology/seeds/<skill-id>/{manifest.yaml, source.md, checksums.json}``
@@ -11,9 +11,13 @@ the exact bundled bytes — the same integrity semantics as the methodology
 package trust boundary — and fails closed with :class:`SeedIntegrityError` on
 any mismatch. A partial or tampered catalog is never returned.
 
-This module is deliberately inert at boot: it only loads and integrity-checks
-seeds. Compilation (``compile_methodology``) and installation are owned by the
-first-boot seeding wiring, so this loader stays pure and read-only.
+Installation (:func:`install_seeds`) is two-phase and fail-closed: every entry
+is loaded, checksum-verified, AND compiled before any write (a single
+failure or authority claim aborts with ZERO records inserted), then each
+compiled entry is inserted through the library's ``install_published_version``
+with trust values from :func:`methodology_trust.foundational_trust` ONLY.
+The reconciliation is insert-only and idempotent — it never re-points
+activations or companions (TW15).
 """
 
 from __future__ import annotations
@@ -23,7 +27,8 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from methodology_compiler import parse_manifest
+from methodology_compiler import CompiledMethodology, compile_methodology, parse_manifest
+from methodology_trust import foundational_trust
 
 _MANIFEST_NAME = "manifest.yaml"
 _SOURCE_NAME = "source.md"
@@ -47,6 +52,21 @@ class SeedEntry:
     version: str
     manifest: dict
     source: str
+
+
+@dataclass(frozen=True)
+class SeedInstallReport:
+    """Outcome of one ``install_seeds`` reconciliation pass.
+
+    ``entries`` is the number of compiler-clean seed entries processed; the
+    four outcome counters partition them (their sum equals ``entries``).
+    """
+
+    entries: int
+    installed: int
+    existing: int
+    stale: int
+    conflict: int
 
 
 def _sha256(data: bytes) -> str:
@@ -141,3 +161,38 @@ def load_seed_catalog(root: Path) -> list[SeedEntry]:
     for entry_dir in sorted(path for path in root.iterdir() if path.is_dir()):
         entries.append(_verify_entry(entry_dir))
     return entries
+
+
+def install_seeds(library, root: Path) -> SeedInstallReport:
+    """Install the repo-bundled foundational seeds (two-phase, fail closed).
+
+    Phase 1 verifies AND compiles every seed entry before any write: a
+    checksum failure, a compiler rejection, or an authority claim aborts the
+    whole install with ZERO records inserted. Phase 2 inserts each compiled
+    entry through ``MethodologyLibrary.install_published_version`` with trust
+    from :func:`methodology_trust.foundational_trust` ONLY (the sole origin of
+    server trust — seeds never claim their own classification). The insert is
+    idempotent and insert-only: digest-equal reruns skip, newer stored
+    versions make the seed stale, and activations/companions are never
+    touched (TW15).
+    """
+    compiled_entries: list[tuple[SeedEntry, CompiledMethodology]] = []
+    for entry in load_seed_catalog(root):
+        result = compile_methodology(entry.manifest, entry.source)
+        if not result.ok or result.compiled is None:
+            raise SeedIntegrityError(
+                f"Seed entry {entry.skill_id!r} failed compilation: "
+                + "; ".join(issue.message for issue in result.issues)
+            )
+        compiled_entries.append((entry, result.compiled))
+
+    clasificacion, trust_attributes = foundational_trust()
+    counts = {"installed": 0, "existing": 0, "stale": 0, "conflict": 0}
+    for _entry, compiled in compiled_entries:
+        outcome = library.install_published_version(
+            compiled,
+            clasificacion=clasificacion,
+            trust_attributes=trust_attributes,
+        )
+        counts[outcome] += 1
+    return SeedInstallReport(entries=len(compiled_entries), **counts)
