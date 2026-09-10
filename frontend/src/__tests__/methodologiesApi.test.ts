@@ -45,6 +45,31 @@ describe("methodologies API contract", () => {
     });
   });
 
+  it("draft-create never sends clasificacion or trust_attributes (server 400-rejects client trust claims)", async () => {
+    await createMethodologyDraft({
+      skill_id: "guided-character-v1",
+      version: "1.2.0",
+      name: "Guided character methodology",
+      source: "## Construcción segura\n",
+    });
+    const [, options] = mockApiFetch.mock.calls[0] as [
+      string,
+      { body: string },
+    ];
+    const sentBody = JSON.parse(options.body) as Record<string, unknown>;
+    // The client contract is bounded to the four editable fields — trust
+    // fields are server-derived only, so the 400-reject path can never fire
+    // on the real client (foundational-skills-seeding compatibility).
+    expect(Object.keys(sentBody).sort()).toEqual([
+      "name",
+      "skill_id",
+      "source",
+      "version",
+    ]);
+    expect(sentBody).not.toHaveProperty("clasificacion");
+    expect(sentBody).not.toHaveProperty("trust_attributes");
+  });
+
   it("POST publish compiles and publishes an immutable version", async () => {
     await publishMethodologyDraft("draft-1");
     expect(mockApiFetch).toHaveBeenCalledWith(

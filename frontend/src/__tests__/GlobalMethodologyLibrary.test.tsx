@@ -59,6 +59,25 @@ const brainstorming: MethodologyInventoryItem = {
   trust_attributes: ["co-created"],
 };
 
+/** Seeded-style inventory item: mirrors the record the server installs for
+ *  `narrative-character-creation@1.0` (foundational-skills-seeding) — Oficiales
+ *  + `fundacional` from server-injected trust; taller null because the seed
+ *  manifest declares none. */
+const seededNarrative: MethodologyInventoryItem = {
+  skill_id: "narrative-character-creation",
+  version: "1.0",
+  name: "Creación de Personajes",
+  description:
+    "Metodología fundacional para co-crear personajes narrativos nuevos, agnóstica al mundo. Esqueleto universal de ficha: identidad, carácter, Eneatipo, Subtipo, Arquetipo, Alineamiento, conflicto y arco. Principio 40/60 (diálogo, no cuestionario) y densidad por nivel narrativo (1º, 2º y 3º). El color del mundo lo aporta la skill personalizada de mundo.",
+  digest: "seed-digest-1",
+  published_at: "2026-09-09",
+  taller: null,
+  categoria_funcional: "Creación",
+  etiquetas: [],
+  clasificacion: "Oficiales",
+  trust_attributes: ["fundacional"],
+};
+
 beforeEach(() => {
   getInventoryMock.mockReset();
   getInventoryMock.mockResolvedValue({ items: [narrative, worldbuilding] });
@@ -131,6 +150,24 @@ describe("GlobalMethodologyLibrary — list render (REQ-LIB-2)", () => {
     expect(within(list).getByText("Verificado")).toBeInTheDocument();
     // Missing clasificacion → neutral badge, row still visible.
     expect(within(list).getByText("Sin clasificación")).toBeInTheDocument();
+  });
+});
+
+describe("GlobalMethodologyLibrary — seeded foundational skill (foundational-skills-seeding)", () => {
+  it("renders a seeded-style item with Oficiales + Fundacional badges and its null-taller sub-line", async () => {
+    getInventoryMock.mockResolvedValue({ items: [seededNarrative] });
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Creación de Personajes")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText("v1.0 · Sin taller · narrative-character-creation"),
+    ).toBeInTheDocument();
+    // Scope to the list: the filter bar's clasificacion select also contains
+    // the option labels (Oficiales/Personalizadas/Comunitarias).
+    const list = screen.getByRole("list");
+    expect(within(list).getByText("Oficiales")).toBeInTheDocument();
+    expect(within(list).getByText("Fundacional")).toBeInTheDocument();
   });
 });
 

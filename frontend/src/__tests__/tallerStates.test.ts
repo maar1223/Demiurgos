@@ -213,6 +213,53 @@ describe("computeSkillState", () => {
   });
 });
 
+describe("seeded foundational skill narrative-character-creation@1.0 (Taller de Herramientas tree)", () => {
+  // The real seed manifest (data/methodology/seeds/narrative-character-creation/
+  // manifest.yaml) declares NO taller and NO talleres_compatibles, so the
+  // server-installed record lands here with taller null: it derives
+  // activa/inactiva in the contextual tree and buckets under "Sin taller",
+  // never in a Core group (foundational-skills-seeding FE add-on).
+  const seeded = skill({
+    skill_id: "narrative-character-creation",
+    version: "1.0",
+    name: "Creación de Personajes",
+    taller: null,
+    talleres_compatibles: [],
+  });
+
+  it("derives 'inactiva' in the Taller de Herramientas while not active in the world", () => {
+    expect(
+      computeSkillState(seeded, HERRAMIENTAS, WORLD, {}, [seeded]),
+    ).toBe("inactiva");
+  });
+
+  it("derives 'activa' when the seeded skill is active in the world", () => {
+    expect(
+      computeSkillState(
+        seeded,
+        HERRAMIENTAS,
+        WORLD,
+        { [WORLD]: activation("narrative-character-creation", "1.0") },
+        [seeded],
+      ),
+    ).toBe("activa");
+  });
+
+  it("buckets it under 'Sin taller' — never a Core group, never hidden", () => {
+    const groups = groupSkillsByState([seeded], HERRAMIENTAS, WORLD, {});
+    expect(groups.sinTaller.map((s) => s.skill_id)).toEqual([
+      "narrative-character-creation",
+    ]);
+    expect([
+      ...groups.activas,
+      ...groups.inactivas,
+      ...groups.transversalesActivas,
+      ...groups.transversalesInactivas,
+      ...groups.bloqueadas,
+    ]).toHaveLength(0);
+  });
+});
+
 describe("publishedHasActiveInWorld", () => {
   it("is true when a published skill of the taller is the world's active skill", () => {
     const s = skill({ skill_id: "p1", taller: MUNDO });
