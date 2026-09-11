@@ -7,6 +7,10 @@ import {
   ACTIVE_TALLER_STORAGE_KEY,
   OPERATIONAL_TALLERES,
 } from "@/lib/constants";
+import {
+  ACTIVE_WORLD_STORAGE_KEY,
+  setCurrentWorld,
+} from "@/lib/currentWorld";
 
 vi.mock("@/hooks/useWorlds", () => ({
   useWorlds: vi.fn(),
@@ -182,6 +186,44 @@ describe("ToolWorkshop", () => {
     await waitFor(() => {
       expect(activateMethodology).toHaveBeenCalledWith(
         "Vibrantes",
+        "guided-character-v1",
+        "1.2.0",
+      );
+    });
+  });
+
+  it("adopts the Navbar-persisted world on first render and follows live switches (regression: dead 'Sin mundo')", async () => {
+    // The sidebar WorldSelector falls back to the persisted global world for
+    // DISPLAY while the page-local activation target stayed undefined — the
+    // tree showed "Vibrantes" yet every activation button remained disabled
+    // ("Sin mundo") until a manual switch+confirm.
+    window.localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Activar" })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: "Activar" }));
+    await waitFor(() => {
+      expect(activateMethodology).toHaveBeenCalledWith(
+        "Vibrantes",
+        "guided-character-v1",
+        "1.2.0",
+      );
+    });
+
+    // Live sync: a Navbar switch (storage write + custom event) follows the
+    // workshop without another manual selection.
+    vi.mocked(activateMethodology).mockClear();
+    setCurrentWorld("OtroMundo");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Activar" })).toBeEnabled();
+    });
+    await user.click(screen.getByRole("button", { name: "Activar" }));
+    await waitFor(() => {
+      expect(activateMethodology).toHaveBeenCalledWith(
+        "OtroMundo",
         "guided-character-v1",
         "1.2.0",
       );

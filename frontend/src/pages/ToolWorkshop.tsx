@@ -26,6 +26,7 @@ import {
 import type { Lens } from "@/components/organisms/LensToggle";
 import type { MethodologyInventoryItem, MethodologyStatus } from "@/api/types";
 import { markCompanionLatencyNotified } from "@/lib/companionLatency";
+import { getCurrentWorld, subscribeCurrentWorld } from "@/lib/currentWorld";
 import {
   getCurrentTaller,
   setCurrentTaller,
@@ -80,7 +81,19 @@ function useActiveTaller(): string {
  */
 export default function ToolWorkshop() {
   const { worlds, isLoading, error, mutate } = useWorlds();
-  const [world, setWorld] = useState<string>();
+  /** Activation target world. Initialized from the Navbar-persisted global
+   *  world and kept in sync with it (same subscribe pattern as
+   *  `useActiveTaller`): without this, the sidebar `WorldSelector` falls back
+   *  to the Navbar world for DISPLAY while this state stayed `undefined`, so
+   *  the tree rendered a world-labeled selector next to a permanently
+   *  disabled "Sin mundo" activation button until a manual switch-confirm. */
+  const [world, setWorld] = useState<string | undefined>(
+    () => getCurrentWorld() ?? undefined,
+  );
+  useEffect(
+    () => subscribeCurrentWorld(() => setWorld(getCurrentWorld() ?? undefined)),
+    [],
+  );
   const activeTaller = useActiveTaller();
   const [creatingWorld, setCreatingWorld] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
