@@ -12,7 +12,7 @@
 | Alcance | INICIATIVA (subsistema técnico): **biblioteca de skills gestionada por el Autor** (metodologías/skills, plantillas y catálogos), paquete `.zip`/manifest, compilador/validador, runtime, ciclo de vida técnico, import/export/cuarentena/Skool y flujo guiado de personaje nuevo. La **superficie del Taller de Herramientas** se contrata en `docs/architecture/tool-workshop.md` |
 | Depende de | `docs/architecture/demiurgos-platform.md` (constitución global del producto) |
 | Relación con SDD | Requisito previo. Ningún SDD de este dominio debe comenzar sin este contrato aprobado, el de superficie (`tool-workshop.md`) y sus decisiones abiertas resueltas |
-| Documentos relacionados | `docs/architecture/demiurgos-platform.md`, `docs/architecture/tool-workshop.md` (contrato de superficie del Taller de Herramientas), `docs/architecture/world-workshop.md` (Taller de Mundo), `skills/narrative-character-creation/SKILL.md`, `skills/narrative-character-creation/references/conversation-examples.md`, `skills/crear_personaje.md` (legacy), `AGENTS.md` (límites de dominio), runtime en `src/tools/demiurgos-suite/wiki/` |
+| Documentos relacionados | `docs/architecture/demiurgos-platform.md`, `docs/architecture/tool-workshop.md` (contrato de superficie del Taller de Herramientas), `docs/architecture/world-workshop.md` (Taller de Mundo), `docs/architecture/skill-runtime-consumption-contract.md` (consumo de skills en runtime — SR1–SR6), `skills/narrative-character-creation/SKILL.md`, `skills/narrative-character-creation/references/conversation-examples.md`, `skills/crear_personaje.md` (legacy), `AGENTS.md` (límites de dominio), runtime en `src/tools/demiurgos-suite/wiki/` |
 
 ## Leyenda de etiquetas
 

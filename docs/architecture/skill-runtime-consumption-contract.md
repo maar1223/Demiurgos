@@ -76,8 +76,9 @@
 **[DECISIÓN CERRADA — SR2, origen D2]** La política del **pool transversal** debe derivar de la **auditoría del corpus** (Apéndice A): cada entrada se clasifica como **recuperable / a rehacer / legado** y la composición del pool se fija **después** de la auditoría, no antes. `[DECISIÓN CERRADA]`
 
 - **Pool actual**: `TRANSVERSAL_SKILLS` hardcodea 7 slugs (`wiki/skill_router.py:26-34`); la biblioteca publica **solo** `narrative-character-creation@1.0` (`data/methodology/library.json`, `published`), así que 6 de esos slugs son **fantasma** (no tienen entrada publicada). `[ACTUAL]`
-- **Pool objetivo**: el pool transversal será la lista derivada de la auditoría — los transversales reales, **pendiente de Apéndice A** — junto con los compañeros y los slots de activación (`wiki/skill_router.py:94-104`, `:208-250`). `[OBJETIVO]`
+- **Pool objetivo (consecuencia de la auditoría del Apéndice A)**: la auditoría clasifica 1 recuperable y 19 legado, así que el pool transversal derivado se reduce a **compañeros del mundo ∪ slots de activación por flujo ∪ el transversal fundacional `narrative-character-creation`** (`wiki/skill_router.py:94-104`, `:208-250`). Los 19 legado **no** son miembros del pool; los 6 slugs fantasma se retiran del pool en el PR ② (sección 9) — el retiro se ejecuta **allí**, no en este contrato. `[OBJETIVO]`
 - **Trazabilidad**: toda afirmación de membresía transversal debe **trazarse a una clase de auditoría** (Apéndice A); ningún slug fantasma queda en el pool sin clasificar. `[OBJETIVO]`
+- **El dominio del orquestador no se retira**: los activos de flujo de trabajo (`src/prompts/narrative/`, `src/commands/narrative-*`, `Agente_Maestro.md`) **no se retiran ni se declaran muertos** por este contrato; siguen vivos como subsistema narrativo del orquestador (sección 0). Lo que este contrato declara es **solo** su **ausencia del pool del router** (Apéndice A). `[DECISIÓN CERRADA — D2]`
 
 **[DECISIÓN CERRADA — SR3, origen D3]** El enrutamiento de compañeros es **fail-open** ante ambigüedad. Ambigüedad ⇔ (confianza del ganador `< 0.7`) **O** (diferencia top-2 entre candidatos clase compañero `< NEAR_TIE_MARGIN = 0.15`). `[OBJETIVO]`
 
@@ -176,14 +177,14 @@ Estado verificado en el repositorio contra HEAD en el momento de redactar (todas
 
 > Tabla SR1–SR6 completada en la segunda unidad de trabajo (WU2), tras cerrar el Apéndice A y el pool transversal (§3); cada fila se anota "(origen: D1–D6, ledger #3149)". Mientras tanto, los requisitos normativos están en sus secciones (§§2–6).
 
-| ID | Decisión |
-|---|---|
-| **SR1** | *(origen: D1, ledger #3149)* — §2 |
-| **SR2** | *(origen: D2, ledger #3149)* — §3 |
-| **SR3** | *(origen: D3, ledger #3149)* — §3 |
-| **SR4** | *(origen: D6, ledger #3149)* — §4 |
-| **SR5** | *(origen: D4, ledger #3149)* — §5 |
-| **SR6** | *(origen: D5, ledger #3149)* — §4/§6 |
+| ID | Decisión | Etiqueta |
+|---|---|---|
+| **SR1** | *(origen: D1, ledger #3149)* Un slot de activación **por tipo de flujo guiado** por mundo (extiende el `active_for` único); el slot **nunca inyecta** en chat libre; la intención de chat abre el flujo guiado con su Skill; los compañeros siguen moldeando el chat (§2) | `[OBJETIVO]` |
+| **SR2** | *(origen: D2, ledger #3149)* La política del pool transversal **deriva de la auditoría** (Apéndice A): 1 recuperable + 19 legado → pool = compañeros ∪ slots por flujo ∪ `narrative-character-creation`; los fantasma se retiran en el PR ②; el dominio del orquestador no se retira (§3) | `[DECISIÓN CERRADA]` |
+| **SR3** | *(origen: D3, ledger #3149)* Enrutamiento de compañeros **fail-open**: ambigüedad ⇔ confianza `< 0.7` **o** top-2 de clase compañero `< NEAR_TIE_MARGIN = 0.15` → **cero inyecciones** (genérico o preguntar); reemplaza el "primer ganador silencioso"; el clasificador reporta top-2 (§3) | `[OBJETIVO]` |
+| **SR4** | *(origen: D6, ledger #3149)* Campo **adjuntos** por `skill@version` en manifest/compilador/registro publicado, **digest-pinned** por SHA-256; ≤ 8 adjuntos/skill, ≤ 12288 B; desajuste de digest falla build/publish; nunca bajo `mundos/**/referencias/**` (§4) | `[OBJETIVO]` |
+| **SR5** | *(origen: D4, ledger #3149)* **Cuatro ejes canónicos** de vocabulario (activación por flujo, compañero en chat, alcance de taller, conflicto); la fila muestra solo los dos primeros con **atribución de eje**; alcance/conflicto a tooltip/panel; prohibida la contradicción entre ejes sin atribución; rename "Compañera" registrado para el pase de copy (§5) | `[OBJETIVO]` |
+| **SR6** | *(origen: D5, ledger #3149)* Ejemplo de espécimen terminado se inyecta en la **fase de propuesta/convergencia** (nunca turno uno), dentro de su presupuesto (1 adjunto/turno ≤ 3072 tokens estimados, fuera de la proyección ≤ 1000); estructura de salida llega vía la proyección (§4/§6) | `[OBJETIVO]` |
 
 ### 8.2 Abiertas (acotadas; no se expande el alcance sin consolidar primero)
 
@@ -209,4 +210,29 @@ Un SDD de este dominio **solo** puede comenzar cuando se cumplan todos:
 
 ## Apéndice A — Auditoría del corpus de skills
 
-> **Pendiente de Apéndice A.** La tabla de auditoría de las 20 entradas (14 `skills/*/SKILL.md` + 6 slugs fantasma de `TRANSVERSAL_SKILLS`) se completa en la segunda unidad de trabajo (WU2), junto con la fijación del pool transversal en §3. El inventario crudo (clases y consumidores) queda registrado en el progreso de apply de la WU1.
+> La auditoría precede a la política (§3): cada entrada se clasifica como **recuperable / a rehacer / legado**, y el pool transversal se fija **después** de esta tabla, no antes. Criterio de clase (design #3152): **recuperable** = metodología coherente hoy, trasladable al manifest de 10 campos sin reescribir flujo/reglas y con rol viable de runtime; **a rehacer** = contenido sustancial pero necesita revisión previa (deriva manifest/schema, colisión de vocabulario D4, duplicación frente a `narrative-character-creation@1.0` publicado); **legado** = superado o con hogar en el dominio del flujo de trabajo del orquestador → fuera del pool del router (su retiro lo ejecuta un PR posterior, no este contrato). "Runtime" = `wiki/` + `tests/` + `fe/`; "workflow" = corpus del orquestador (`Agente_Maestro.md`, `src/commands/narrative-*`, `src/prompts/narrative/`).
+
+| entry | origin | runtime visibility | consumers | class | rationale |
+|---|---|---|---|---|---|
+| narrative-archive SKILL.md | `skills/narrative-archive/SKILL.md` | none | workflow-only (`narrative-archive`/`help`/`onboard` cmds, prompts, `Agente_Maestro`) | legado | Hogar = flujo de trabajo del orquestador (arc close/CHANGELOG); sin referencias de runtime |
+| narrative-character-creation SKILL.md | `skills/narrative-character-creation/SKILL.md` | published+routable+injectable | runtime (methodology_library, skill_router, tests, fe tests) | recuperable | Publica `narrative-character-creation@1.0`, sembrada y limpia para el compilador; la única skill viable de runtime |
+| narrative-character-spec SKILL.md | `skills/narrative-character-spec/SKILL.md` | none | workflow-only (`narrative-ff`, prompts, `Agente_Maestro`) | legado | Hogar = flujo de trabajo del orquestador; sin referencias de runtime |
+| narrative-design SKILL.md | `skills/narrative-design/SKILL.md` | none | workflow-only (`narrative-ff`, prompts, `Agente_Maestro`) | legado | Hogar = flujo de trabajo del orquestador; sin referencias de runtime |
+| narrative-draft SKILL.md | `skills/narrative-draft/SKILL.md` | routable (slug fantasma) | runtime (router+keyword, tests) + workflow-only (`narrative-write`, prompts) | legado | Slug fantasma (sin entrada de biblioteca); contenido con hogar = flujo de trabajo del orquestador |
+| narrative-explore SKILL.md | `skills/narrative-explore/SKILL.md` | routable (slug fantasma) | runtime (router+keyword) + workflow-only (`narrative-explore`/`new`/`help`) | legado | Slug fantasma; contenido con hogar = flujo de trabajo del orquestador |
+| narrative-idea SKILL.md | `skills/narrative-idea/SKILL.md` | routable (slug fantasma) | runtime (router+keyword, fixture en `wiki/tests/test_conversation_memory_store.py:57,:68`) + workflow-only (`narrative-idea`) | legado | Slug fantasma; contenido con hogar = flujo de trabajo del orquestador (la capacidad Banco de Ideas vive en el runtime dedicado `ideas_bank.py`, no en este slug) |
+| narrative-init SKILL.md | `skills/narrative-init/SKILL.md` | none | workflow-only (`narrative-init`/`help`/`onboard`, prompts, `Agente_Maestro`) | legado | Hogar = flujo de trabajo del orquestador (bootstrap de proyecto); sin referencias de runtime |
+| narrative-outline SKILL.md | `skills/narrative-outline/SKILL.md` | routable (slug fantasma) | runtime (router+keyword, tests) + workflow-only (`narrative-write`) | legado | Slug fantasma; contenido con hogar = flujo de trabajo del orquestador |
+| narrative-propose SKILL.md | `skills/narrative-propose/SKILL.md` | none | workflow-only (`narrative-ff`/`idea`/`new`, prompts, `Agente_Maestro`) | legado | Hogar = flujo de trabajo del orquestador; la referencia del test fe es un slug distinto (`narrative-proposer`) |
+| narrative-revise SKILL.md | `skills/narrative-revise/SKILL.md` | routable (slug fantasma) | runtime (router+keyword) + workflow-only (`narrative-write`) | legado | Slug fantasma; contenido con hogar = flujo de trabajo del orquestador |
+| narrative-tasks SKILL.md | `skills/narrative-tasks/SKILL.md` | none | workflow-only (`narrative-ff`, prompts, `Agente_Maestro`) | legado | Hogar = flujo de trabajo del orquestador; sin referencias de runtime |
+| narrative-verify SKILL.md | `skills/narrative-verify/SKILL.md` | none | workflow-only (`narrative-verify`/`help`/`onboard`, prompts, `Agente_Maestro`) | legado | Hogar = flujo de trabajo del orquestador; sin referencias de runtime |
+| narrative-world-spec SKILL.md | `skills/narrative-world-spec/SKILL.md` | routable (slug fantasma) | runtime (router+keyword, tests) + workflow-only (`narrative-ff`) | legado | Slug fantasma; contenido con hogar = flujo de trabajo del orquestador |
+| slug `narrative-world-spec` | `wiki/skill_router.py:26-34` (`TRANSVERSAL_SKILLS`) | routable (candidato, nunca inyecta) | runtime (router, tests) | legado | Fantasma (la biblioteca publica solo `narrative-character-creation@1.0`); retirar del pool en el PR ② |
+| slug `narrative-idea` | `wiki/skill_router.py:26-34` | routable (candidato, nunca inyecta) | runtime (router, tests) | legado | Fantasma; retirar del pool en el PR ② |
+| slug `narrative-outline` | `wiki/skill_router.py:26-34` | routable (candidato, nunca inyecta) | runtime (router, tests) | legado | Fantasma; retirar del pool en el PR ② |
+| slug `narrative-draft` | `wiki/skill_router.py:26-34` | routable (candidato, nunca inyecta) | runtime (router, tests) | legado | Fantasma; retirar del pool en el PR ② |
+| slug `narrative-revise` | `wiki/skill_router.py:26-34` | routable (candidato, nunca inyecta) | runtime (router, tests) | legado | Fantasma; retirar del pool en el PR ② |
+| slug `narrative-explore` | `wiki/skill_router.py:26-34` | routable (candidato, nunca inyecta) | runtime (router, tests) | legado | Fantasma; retirar del pool en el PR ② |
+
+**Resultado:** 1 recuperable (`narrative-character-creation`), 0 a rehacer, 19 legado. Ningún slug fantasma sin clasificar queda en el pool. Los 6 slugs fantasma y la ruta de keywords fundamentales (`route_new_character_intent`, `wiki/skill_router.py:117-124`) se retiran como PR ② (sección 9, seguimiento); ese retiro se ejecuta allí, **no** en este contrato.

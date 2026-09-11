@@ -12,7 +12,7 @@
 | Alcance | TALLER (superficie): **Taller de Herramientas** — selector de Taller y árbol contextual de Skills, estados visibles (activa/transversal/inactiva/bloqueada), categorías funcionales y etiquetas, biblioteca global de consulta, Skill Madre protegida, co-creación de Skills con la Skill Madre (detección/handoff, ritmo conversacional, editor visual + chat, adaptación, revisión/publicación/activación), transparencia y frontera con otros Talleres |
 | Depende de | `docs/architecture/demiurgos-platform.md` (constitución global del producto) |
 | Relación con SDD | Requisito previo. Ningún SDD de este dominio debe comenzar sin este contrato aprobado y sus decisiones abiertas resueltas |
-| Documentos relacionados | `docs/architecture/demiurgos-platform.md`, `docs/architecture/skill-library-and-guided-character-creation.md` (subsistema técnico), `docs/architecture/world-workshop.md` (Taller de Mundo), `docs/architecture/foundational-research-skill.md` (Skill Fundacional de Investigación — skill transversal del Core), `AGENTS.md` (límites de dominio), runtime en `frontend/src/` y `src/tools/demiurgos-suite/wiki/` |
+| Documentos relacionados | `docs/architecture/demiurgos-platform.md`, `docs/architecture/skill-library-and-guided-character-creation.md` (subsistema técnico), `docs/architecture/world-workshop.md` (Taller de Mundo), `docs/architecture/foundational-research-skill.md` (Skill Fundacional de Investigación — skill transversal del Core), `docs/architecture/skill-runtime-consumption-contract.md` (consumo de skills en runtime — SR1–SR6), `AGENTS.md` (límites de dominio), runtime en `frontend/src/` y `src/tools/demiurgos-suite/wiki/` |
 
 ## Leyenda de etiquetas
 
@@ -99,6 +99,7 @@ activas del Taller ──> transversales activas ──> inactivas del Taller �
 
 **Reglas de estado:**
 - Una Skill **bloqueada no se desbloquea sola**: el Autor decide entre adaptarla (sección 6.5) o dejarla sin activar. La detección de solapamientos **recomienda, no bloquea por defecto**. `[DECISIÓN CERRADA — TW4, TW7]`
+- Los **solapamientos de tiempo de catálogo** (TW4/TW7) **no son colisiones de runtime**: detectar que dos skills se solapan en creación **no** prescribe qué inyecta el router en un turno. Las colisiones de runtime (ambigüedad, empate cercano, fail-open) son política del contrato de consumo de skills (`docs/architecture/skill-runtime-consumption-contract.md`, §3, SR3). `[DECISIÓN CERRADA]`
 - **Desactivar** conserva la versión y el historial pero impide **nuevas sesiones**; las sesiones existentes conservan su snapshot y pueden terminar. `[DECISIÓN CERRADA — subsistema, 16.k]`
 - La **cuarentena** (paquetes importados) es un estado del subsistema técnico, gestionado en la biblioteca (subsistema, sección 7.3); en superficie se muestra como importable solo tras revisión/validación.
 
