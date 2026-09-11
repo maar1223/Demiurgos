@@ -6,8 +6,9 @@ Server-owned lifecycle store for author methodology:
 - **Publishing** compiles a draft into an immutable ``PublishedVersion`` that
   cannot be edited; republishing the same skill/version with a different
   content digest is rejected.
-- **Activation** pins one published version per world. Deactivation clears
-  the pin; rollback restores the previously active version.
+- **Activation** pins one published version per world per guided-flow type
+  (SR1). Deactivation clears the pin; rollback restores the previously active
+  version.
 - **Soft deletion** marks a published version as deleted without erasing it;
   restore brings it back.
 
@@ -44,6 +45,19 @@ logger = logging.getLogger("demiurgos-api")
 # Reserved against import-derived publishing (REQ-IMP-6); single source of
 # truth shared with the skill router and the API trust boundary.
 FOUNDATIONAL_CHARACTER_SKILL_ID = "narrative-character-creation"
+
+# Guided flow types (SR1 — one activation slot per guided-flow type per world;
+# contract §2). ``guided-character`` is the shipped guided flow; ``co-creation``
+# is the Author-facing skill-creation flow. The set is the enumeration for the
+# per-flow slot mechanism: adding a guided flow costs one constant + one set
+# entry + its fallback branch (design D2 — no registry object).
+GUIDED_CHARACTER_FLOW = "guided-character"
+CO_CREATION_FLOW = "co-creation"
+SUPPORTED_FLOW_TYPES: frozenset[str] = frozenset({
+    GUIDED_CHARACTER_FLOW,
+    CO_CREATION_FLOW,
+})
+DEFAULT_FLOW_TYPE = GUIDED_CHARACTER_FLOW
 
 
 class MethodologyLibraryError(Exception):
@@ -135,13 +149,16 @@ class PublishedVersion:
 
 @dataclass(frozen=True)
 class Activation:
-    """The compiled methodology/version pinned to one world."""
+    """The compiled methodology/version pinned to one world's flow slot."""
 
     world: str
     skill_id: str
     version: str
     digest: str
     activated_at: str
+    # The guided-flow type this slot belongs to (SR1). None only for
+    # companion entries, which are flow-less by design.
+    flow_type: str | None = None
 
 
 def _utcnow() -> str:
@@ -201,8 +218,10 @@ class MethodologyLibrary:
         self._lock = threading.Lock()
         self._drafts: dict[str, dict[str, Any]] = {}
         self._published: dict[str, dict[str, Any]] = {}
-        self._activations: dict[str, dict[str, Any]] = {}
-        self._history: dict[str, list[dict[str, Any]]] = {}
+        # Per-flow activation slots (SR1): {world: {flow_type: record}}.
+        self._activations: dict[str, dict[str, dict[str, Any]]] = {}
+        # Per-flow history stacks (SR1): {world: {flow_type: [records]}}.
+        self._history: dict[str, dict[str, list[dict[str, Any]]]] = {}
         # TW13/TW14: per-draft snapshot-on-update history (post-materialize
         # edits). Append-only; capped at DRAFT_HISTORY_CAP per draft.
         self._draft_history: dict[str, list[dict[str, Any]]] = {}
@@ -686,9 +705,13 @@ class MethodologyLibrary:
                     f"{skill_id}@{version} is a foundational skill and cannot be deleted"
                 )
             record["deleted_at"] = _utcnow()
-            # A deleted version cannot stay active anywhere.
-            for world, active in list(self._activations.items()):
-                if active.get("skill_id") == skill_id and active.get("version") == version:
+            # A deleted version cannot stay active in any flow slot.
+            for world, flows in list(self._activations.items()):
+                for flow in list(flows):
+                    active = flows[flow]
+                    if active.get("skill_id") == skill_id and active.get("version") == version:
+                        del flows[flow]
+                if not flows:
                     self._activations.pop(world, None)
             # ...nor can it stay a companion anywhere.
             for world, companions in list(self._companions.items()):
@@ -713,48 +736,85 @@ class MethodologyLibrary:
             self._save_locked()
 
     # ------------------------------------------------------------------ #
-    # Activation by world
+    # Activation by world and flow type
     # ------------------------------------------------------------------ #
 
-    def activate(self, world: str, skill_id: str, version: str) -> Activation:
+    def activate(
+        self,
+        world: str,
+        skill_id: str,
+        version: str,
+        flow_type: str = DEFAULT_FLOW_TYPE,
+    ) -> Activation:
+        """Pin a published version to ``world``'s ``flow_type`` slot (SR1).
+
+        One activation slot per guided-flow type per world: activating a flow
+        moves that flow's previous pin onto its history stack; other flows'
+        slots are untouched. Unsupported flow types fail closed BEFORE any
+        mutation.
+        """
+        if flow_type not in SUPPORTED_FLOW_TYPES:
+            raise ValidationError(f"unsupported flow type {flow_type!r}")
         with self._lock:
             record = self._published.get(self._key(skill_id, version))
             if record is None or record.get("deleted_at"):
                 raise NotPublishedError(f"{skill_id}@{version} is not published")
             digest = str(record["digest"])
             now = _utcnow()
-            previous = self._activations.get(world)
+            flows = self._activations.setdefault(world, {})
+            previous = flows.get(flow_type)
             if previous is not None:
-                self._history.setdefault(world, []).append(dict(previous))
-            self._activations[world] = {
+                self._history.setdefault(world, {}).setdefault(flow_type, []).append(
+                    dict(previous)
+                )
+            flows[flow_type] = {
                 "world": world,
                 "skill_id": skill_id,
                 "version": version,
                 "digest": digest,
                 "activated_at": now,
+                "flow_type": flow_type,
             }
             self._save_locked()
-            return self._activation_from(self._activations[world])
+            return self._activation_from(flows[flow_type])
 
-    def active_for(self, world: str) -> Activation | None:
+    def active_for(
+        self,
+        world: str,
+        flow_type: str = DEFAULT_FLOW_TYPE,
+    ) -> Activation | None:
         with self._lock:
-            record = self._activations.get(world)
+            record = (self._activations.get(world) or {}).get(flow_type)
             return self._activation_from(record) if record else None
 
-    def deactivate(self, world: str) -> None:
+    def deactivate(self, world: str, flow_type: str = DEFAULT_FLOW_TYPE) -> None:
         with self._lock:
-            self._activations.pop(world, None)
+            flows = self._activations.get(world)
+            if flows is not None:
+                flows.pop(flow_type, None)
+                if not flows:
+                    self._activations.pop(world, None)
             self._save_locked()
 
-    def rollback(self, world: str) -> Activation | None:
+    def rollback(
+        self,
+        world: str,
+        flow_type: str = DEFAULT_FLOW_TYPE,
+    ) -> Activation | None:
         with self._lock:
-            history = self._history.get(world) or []
+            history = (self._history.get(world) or {}).get(flow_type) or []
+            flows = self._activations.get(world)
             if not history:
-                self._activations.pop(world, None)
+                if flows is not None:
+                    flows.pop(flow_type, None)
+                    if not flows:
+                        self._activations.pop(world, None)
                 self._save_locked()
                 return None
             restored = history.pop()
-            self._activations[world] = restored
+            if flows is None:
+                flows = self._activations.setdefault(world, {})
+            flows[flow_type] = restored
             self._save_locked()
             return self._activation_from(restored)
 
@@ -846,18 +906,69 @@ class MethodologyLibrary:
             payload = json.load(handle)
         self._drafts = dict(payload.get("drafts", {}))
         self._published = dict(payload.get("published", {}))
-        self._activations = dict(payload.get("activations", {}))
-        self._history = {
-            world: list(stack)
-            for world, stack in (payload.get("history") or {}).items()
-        }
+        # Read-only coercion (design D3): memory is ALWAYS per-flow nested;
+        # the file is never rewritten at load — the first mutating save
+        # persists the nested shape under the stable keys.
+        self._activations = self._coerce_activations(payload.get("activations") or {})
+        self._history = self._coerce_history(payload.get("history") or {})
         self._draft_history = {
             draft_id: list(stack)
             for draft_id, stack in (payload.get("draft_history") or {}).items()
         }
         self._companions = dict(payload.get("companions") or {})
 
+    @staticmethod
+    def _coerce_activations(
+        raw: Mapping[str, Any],
+    ) -> dict[str, dict[str, dict[str, Any]]]:
+        """Normalize on-disk activations to the per-flow shape (design D1/D3).
+
+        Legacy world-keyed records (the value has a ``skill_id`` key) map into
+        the ``guided-character`` slot preserving every field; nested per-flow
+        maps pass through. Read-only — no mutation of the raw payload.
+        """
+        coerced: dict[str, dict[str, dict[str, Any]]] = {}
+        for world, value in raw.items():
+            if not isinstance(value, dict):
+                continue
+            if "skill_id" in value:
+                coerced[world] = {DEFAULT_FLOW_TYPE: dict(value)}
+            else:
+                coerced[world] = {
+                    flow: dict(record)
+                    for flow, record in value.items()
+                    if isinstance(record, dict)
+                }
+        return coerced
+
+    @staticmethod
+    def _coerce_history(
+        raw: Mapping[str, Any],
+    ) -> dict[str, dict[str, list[dict[str, Any]]]]:
+        """Normalize on-disk history to the per-flow shape (design D1/D3).
+
+        Legacy world-keyed stacks (the value is a ``list``) map into the
+        ``guided-character`` slot; per-flow maps pass through. Read-only.
+        """
+        coerced: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        for world, value in raw.items():
+            if isinstance(value, list):
+                coerced[world] = {
+                    DEFAULT_FLOW_TYPE: [dict(entry) for entry in value],
+                }
+            elif isinstance(value, dict):
+                coerced[world] = {
+                    flow: [dict(entry) for entry in stack]
+                    for flow, stack in value.items()
+                    if isinstance(stack, list)
+                }
+            else:
+                coerced[world] = {}
+        return coerced
+
     def _save_locked(self) -> None:
+        # ``activations``/``history`` are written in the per-flow nested shape
+        # (memory is always nested post-coercion) under the stable keys.
         payload = {
             "drafts": self._drafts,
             "published": self._published,
@@ -931,4 +1042,7 @@ class MethodologyLibrary:
             version=record["version"],
             digest=record["digest"],
             activated_at=record.get("activated_at", ""),
+            # Per-flow slots carry ``flow_type``; companion entries (which are
+            # flow-less by design) read it as None.
+            flow_type=record.get("flow_type"),
         )
