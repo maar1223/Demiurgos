@@ -59,7 +59,7 @@
 
 - Funciona **dentro de cualquier conversación**, independientemente del Taller activo, y no exige cambiar de contexto para investigar.
 - Es **reutilizable por Talleres actuales y futuros**: el **núcleo común** (propósito, flujo, procedencia, estados, comparación con canon, multimodales) es único; los **perfiles/ramas específicos** por Taller se contratan aparte (sección 15).
-- En el árbol del Taller de Herramientas se declara como **transversal activa** según los estados de Skill existentes (`tool-workshop.md`, sección 3; TW3), sin duplicar ese contrato.
+- En el árbol del Taller de Herramientas se declara como **transversal activa** según los estados de Skill existentes (`tool-workshop.md`, sección 3; TW3), sin duplicar ese contrato (la declaración transversal no se ve afectada: los talleres primarios de las skills transversales son siempre operativos; 'Herramientas' nunca es taller primario operativo).
 - Un Taller futuro puede **derivar un perfil** de investigación (ramas, fuentes y criterios específicos) **sin redefinir el núcleo** (sección 15).
 
 ---
