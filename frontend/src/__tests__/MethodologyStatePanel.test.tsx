@@ -16,7 +16,7 @@ const status: MethodologyStatus = {
       description: "Tipos de personalidad",
       digest: "abc",
       published_at: "2026-01-01",
-      taller: "Herramientas",
+      taller: "Mundo",
       talleres_compatibles: ["Mundo", "Ideas"],
       etiquetas: ["personalidad"],
       parent_skill_id: "base",
@@ -29,7 +29,7 @@ const status: MethodologyStatus = {
       description: "Tipos de personalidad",
       digest: "def",
       published_at: "2026-02-01",
-      taller: "Herramientas",
+      taller: "Mundo",
     },
     {
       skill_id: "otra-skill",

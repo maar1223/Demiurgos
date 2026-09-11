@@ -20,7 +20,7 @@ const detail: PublishedMethodologyDetail = {
   phases: [],
   language: "es",
   source: "# Eneagrama\n\nModelar los nueve eneatipos.",
-  taller: "Herramientas",
+  taller: "Mundo",
   etiquetas: ["personalidad"],
   parent_skill_id: null,
   parent_version: null,

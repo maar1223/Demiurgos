@@ -7,7 +7,10 @@ import type {
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
-import { CORE_TALLER_LABELS, type CoreTaller } from "@/lib/constants";
+import {
+  OPERATIONAL_TALLER_LABELS,
+  type OperationalTaller,
+} from "@/lib/constants";
 import type { GroupedSkills, SkillState } from "@/lib/tallerStates";
 
 interface TallerTreeProps {
@@ -71,15 +74,16 @@ const BADGE_META: Record<
   bloqueada: { label: "Bloqueada", variant: "error" },
 };
 
-/** Display label for a Taller key (short key → CORE_TALLER_LABELS label,
- *  raw value fallback for unknown keys). */
+/** Display label for a Taller key (short key → OPERATIONAL_TALLER_LABELS
+ *  label, raw value fallback for unknown keys — e.g. imported free-form
+ *  talleres). */
 function tallerLabel(taller: string | null | undefined): string {
   if (taller == null) return "";
-  return CORE_TALLER_LABELS[taller as CoreTaller] ?? taller;
+  return OPERATIONAL_TALLER_LABELS[taller as OperationalTaller] ?? taller;
 }
 
 /** Exact conflict copy from spec REQ-TRE-6 S1, taller names interpolated via
- *  CORE_TALLER_LABELS. */
+ *  OPERATIONAL_TALLER_LABELS. */
 function blockedExplanation(
   activeTaller: string,
   skillTaller: string | null | undefined,

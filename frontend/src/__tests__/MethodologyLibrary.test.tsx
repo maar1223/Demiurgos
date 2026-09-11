@@ -26,7 +26,7 @@ function renderLibrary(
 ) {
   const props = {
     world: "nec",
-    activeTaller: "Herramientas",
+    activeTaller: "Mundo",
     status,
     selected: null,
     onSelect: vi.fn(),
@@ -109,7 +109,7 @@ describe("MethodologyLibrary", () => {
           description: "",
           digest: "a",
           published_at: "2026-01-01",
-          taller: "Herramientas",
+          taller: "Mundo",
           talleres_compatibles: [],
         },
         {
@@ -119,7 +119,7 @@ describe("MethodologyLibrary", () => {
           description: "",
           digest: "b",
           published_at: "2026-01-01",
-          taller: "Herramientas",
+          taller: "Mundo",
           talleres_compatibles: [],
         },
         {
@@ -129,17 +129,17 @@ describe("MethodologyLibrary", () => {
           description: "",
           digest: "c",
           published_at: "2026-01-01",
-          taller: "Mundo",
-          talleres_compatibles: ["Herramientas"],
+          taller: "Ideas",
+          talleres_compatibles: ["Mundo"],
         },
         {
-          skill_id: "sk-idea-oculta",
+          skill_id: "sk-heredada-herramientas",
           version: "1.0.0",
-          name: "Skill idea oculta",
+          name: "Skill heredada herramientas",
           description: "",
           digest: "d",
           published_at: "2026-01-01",
-          taller: "Ideas",
+          taller: "Herramientas",
           talleres_compatibles: [],
         },
         {
@@ -181,8 +181,9 @@ describe("MethodologyLibrary", () => {
       "Sin taller",
     ]);
 
-    // Not a transversal of Herramientas → hidden (TW2, REQ-TRE-5 S6).
-    expect(screen.queryByText("Skill idea oculta")).not.toBeInTheDocument();
+    // A legacy Herramientas-tagged record lands in "Sin taller", never hidden
+    // (REQ-TRE-5 S8 / OC-4 S3).
+    expect(screen.getByText("Skill heredada herramientas")).toBeInTheDocument();
 
     // Badge variants (spec REQ-TRE-4 S1): Activa → success, Inactiva →
     // default, Transversal → info.
@@ -212,30 +213,30 @@ describe("MethodologyLibrary", () => {
     const blockedStatus: MethodologyStatus = {
       published: [
         {
-          skill_id: "sk-mundo-activa",
+          skill_id: "sk-ideas-activa",
           version: "1.0.0",
-          name: "Skill mundo activa",
+          name: "Skill ideas activa",
           description: "",
           digest: "f",
           published_at: "2026-01-01",
-          taller: "Mundo",
-          talleres_compatibles: ["Herramientas"],
+          taller: "Ideas",
+          talleres_compatibles: ["Mundo"],
         },
         {
-          skill_id: "sk-mundo-bloqueada",
+          skill_id: "sk-ideas-bloqueada",
           version: "1.0.0",
-          name: "Skill mundo bloqueada",
+          name: "Skill ideas bloqueada",
           description: "",
           digest: "g",
           published_at: "2026-01-01",
-          taller: "Mundo",
-          talleres_compatibles: ["Herramientas"],
+          taller: "Ideas",
+          talleres_compatibles: ["Mundo"],
         },
       ],
       activations: {
         nec: {
           world: "nec",
-          skill_id: "sk-mundo-activa",
+          skill_id: "sk-ideas-activa",
           version: "1.0.0",
           digest: "f",
           activated_at: "2026-01-01",
@@ -246,7 +247,7 @@ describe("MethodologyLibrary", () => {
     renderLibrary({ status: blockedStatus });
 
     await waitFor(() => {
-      expect(screen.getByText("Skill mundo bloqueada")).toBeInTheDocument();
+      expect(screen.getByText("Skill ideas bloqueada")).toBeInTheDocument();
     });
 
     // En uso de otros talleres comes before En conflicto (TW3 order + 5th group).
@@ -259,14 +260,14 @@ describe("MethodologyLibrary", () => {
     ]);
 
     // Exact conflict copy from spec REQ-TRE-6 S1, taller names interpolated
-    // via CORE_TALLER_LABELS (display labels, not short keys).
+    // via OPERATIONAL_TALLER_LABELS (display labels, not short keys).
     expect(
       screen.getByText(
-        "Esta skill es transversal de Taller de Herramientas pero su taller primario (Taller de Mundo) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.",
+        "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.",
       ),
     ).toBeInTheDocument();
 
-    const blockedRow = screen.getByText("Skill mundo bloqueada").closest(
+    const blockedRow = screen.getByText("Skill ideas bloqueada").closest(
       "li",
     ) as HTMLElement;
     expect(within(blockedRow).getByText("Bloqueada")).toHaveClass(

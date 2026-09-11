@@ -2,16 +2,17 @@ import { useState } from "react";
 import { Icon } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
 import {
-  CORE_TALLERES,
-  CORE_TALLER_LABELS,
-  type CoreTaller,
+  isOperationalTaller,
+  OPERATIONAL_TALLERES,
+  OPERATIONAL_TALLER_LABELS,
+  type OperationalTaller,
 } from "@/lib/constants";
 
 interface TallerSelectorProps {
-  /** Currently active Taller SHORT KEY (Herramientas | Mundo | Ideas). */
+  /** Currently active Taller SHORT KEY (Mundo | Ideas). */
   activeTaller: string;
   /** Called with the selected Taller SHORT KEY — display labels live in
-   *  CORE_TALLER_LABELS (taller-selector-tree-states spec REQ-TRE-1). */
+   *  OPERATIONAL_TALLER_LABELS (taller-selector-tree-states spec REQ-TRE-1). */
   onTallerChange: (taller: string) => void;
   /** Stretch the trigger and dropdown to the full width of their container.
    *  Used inside the narrow sidebar filter bar (REQ-LIB-4) where a compact
@@ -19,18 +20,15 @@ interface TallerSelectorProps {
   fullWidth?: boolean;
 }
 
-function isCoreTaller(taller: string): taller is CoreTaller {
-  return (CORE_TALLERES as readonly string[]).includes(taller);
-}
-
 /**
  * Dropdown for selecting the active Taller (spec REQ-TRE-1).
  *
  * Mirrors the WorldSelector shape (button + listbox + chevron +
- * close-on-outside-click) over the curated CORE_TALLERES list. Switching is
- * cheap — no confirmation dialog and no "+ Nuevo" entry (REQ-TRE-1). The
- * value passed to `onTallerChange` and persisted is the SHORT KEY; the
- * trigger and the options display the CORE_TALLER_LABELS label.
+ * close-on-outside-click) over the curated OPERATIONAL_TALLERES list.
+ * Switching is cheap — no confirmation dialog and no "+ Nuevo" entry
+ * (REQ-TRE-1). The value passed to `onTallerChange` and persisted is the
+ * SHORT KEY; the trigger and the options display the
+ * OPERATIONAL_TALLER_LABELS label.
  */
 export function TallerSelector({
   activeTaller,
@@ -39,11 +37,11 @@ export function TallerSelector({
 }: TallerSelectorProps) {
   const [open, setOpen] = useState(false);
 
-  const triggerLabel = isCoreTaller(activeTaller)
-    ? CORE_TALLER_LABELS[activeTaller]
+  const triggerLabel = isOperationalTaller(activeTaller)
+    ? OPERATIONAL_TALLER_LABELS[activeTaller]
     : activeTaller;
 
-  const handleSelect = (taller: CoreTaller) => {
+  const handleSelect = (taller: OperationalTaller) => {
     setOpen(false);
     if (taller === activeTaller) return;
     onTallerChange(taller);
@@ -80,7 +78,7 @@ export function TallerSelector({
               fullWidth ? "left-0 right-0" : "right-0 w-48",
             )}
           >
-            {CORE_TALLERES.map((taller) => (
+            {OPERATIONAL_TALLERES.map((taller) => (
               <button
                 key={taller}
                 type="button"
@@ -91,7 +89,7 @@ export function TallerSelector({
                   taller === activeTaller ? "text-action" : "text-primary"
                 }`}
               >
-                {CORE_TALLER_LABELS[taller]}
+                {OPERATIONAL_TALLER_LABELS[taller]}
               </button>
             ))}
           </div>

@@ -7,7 +7,10 @@ import type {
   PublishedMethodologyDetail,
   WarningState,
 } from "@/api/types";
-import { CORE_TALLERES } from "@/lib/constants";
+import {
+  DEFAULT_TALLER,
+  OPERATIONAL_TALLERES,
+} from "@/lib/constants";
 import { Button } from "@/components/atoms/Button";
 import { Badge } from "@/components/atoms/Badge";
 import { Spinner } from "@/components/atoms/Spinner";
@@ -256,7 +259,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
   const [activateWorld, setActivateWorld] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [taller, setTaller] = useState("");
+  const [taller, setTaller] = useState<string>(DEFAULT_TALLER);
   const [etiquetas, setEtiquetas] = useState("");
   /** TW12 center-pane surface: chat (intention) or canvas (structure). */
   const [centerView, setCenterView] = useState<"chat" | "canvas">("chat");
@@ -598,10 +601,9 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                         onChange={(event) => setTaller(event.target.value)}
                         className="mt-1 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary focus:border-action focus:outline-none"
                       >
-                        <option value="">Sin taller</option>
-                        {CORE_TALLERES.map((core) => (
-                          <option key={core} value={core}>
-                            {core}
+                        {OPERATIONAL_TALLERES.map((operational) => (
+                          <option key={operational} value={operational}>
+                            {operational}
                           </option>
                         ))}
                       </select>

@@ -199,6 +199,33 @@ describe("CoCreationPanel", () => {
     expect(state.materialize).toHaveBeenCalledTimes(1);
   });
 
+  it("offers exactly the operational taller options in the materialize dropdown (OC-4 S1)", () => {
+    const state = {
+      ...baseState(),
+      session: sessionFixture({
+        milestone: "borrador_listo",
+        pending_question: null,
+        pending_options: [],
+        messages: [{ role: "assistant", content: "El borrador está listo." }],
+      }),
+    };
+    render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
+
+    const tallerSelect = screen.getByLabelText("Taller");
+    expect(
+      within(tallerSelect)
+        .getAllByRole("option")
+        .map((option) => option.textContent),
+    ).toEqual(["Mundo", "Ideas"]);
+    // No empty-value "Sin taller" option: every manually created skill
+    // declares its operational home taller (OC-4).
+    expect(
+      within(tallerSelect).queryByRole("option", { name: "Sin taller" }),
+    ).not.toBeInTheDocument();
+    // The dropdown initializes to the operational default (OC-3).
+    expect(tallerSelect).toHaveValue("Mundo");
+  });
+
   it("keeps the publish button disabled while compiler issues remain", () => {
     const state = {
       ...baseState(),
@@ -257,7 +284,7 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     pending_questions: [],
     world: "Vibrantes",
     // Manifest metadata the server folds into the payload at materialization.
-    taller: "Herramientas",
+    taller: "Mundo",
     etiquetas: ["eneagrama", "personajes"],
     skill_id: "co-created-eneagrama",
     version: "0.1.0",
@@ -295,7 +322,7 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("ramificacion-1, ramificacion-2")).toBeInTheDocument();
     expect(screen.getByText("regla-1")).toBeInTheDocument();
-    expect(screen.getByText("Herramientas")).toBeInTheDocument();
+    expect(screen.getByText("Mundo")).toBeInTheDocument();
     expect(screen.getByText("eneagrama, personajes")).toBeInTheDocument();
   });
 

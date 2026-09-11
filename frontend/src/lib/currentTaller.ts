@@ -1,15 +1,21 @@
 import {
   ACTIVE_TALLER_STORAGE_KEY,
   DEFAULT_TALLER,
+  isOperationalTaller,
 } from "@/lib/constants";
 
 const ACTIVE_TALLER_EVENT = "demiurgos:active-taller";
 
 /** Returns the persisted active Taller, or DEFAULT_TALLER when nothing has
- *  been selected yet (taller-selector-tree-states spec REQ-TRE-1/REQ-TRE-2). */
+ *  been selected yet (taller-selector-tree-states spec REQ-TRE-1/REQ-TRE-2).
+ *  Validates the stored value against OPERATIONAL_TALLERES on EVERY read
+ *  (OC-2): stale/legacy values (e.g. "Herramientas") and corrupted strings
+ *  resolve to DEFAULT_TALLER WITHOUT writing through to localStorage — the
+ *  next explicit selection persists normally. */
 export function getCurrentTaller(): string {
   if (typeof window === "undefined") return DEFAULT_TALLER;
-  return window.localStorage.getItem(ACTIVE_TALLER_STORAGE_KEY) ?? DEFAULT_TALLER;
+  const stored = window.localStorage.getItem(ACTIVE_TALLER_STORAGE_KEY);
+  return isOperationalTaller(stored) ? stored : DEFAULT_TALLER;
 }
 
 export function setCurrentTaller(taller: string): void {

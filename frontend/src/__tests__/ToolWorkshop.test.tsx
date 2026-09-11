@@ -3,6 +3,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ToolWorkshop from "@/pages/ToolWorkshop";
+import {
+  ACTIVE_TALLER_STORAGE_KEY,
+  OPERATIONAL_TALLERES,
+} from "@/lib/constants";
 
 vi.mock("@/hooks/useWorlds", () => ({
   useWorlds: vi.fn(),
@@ -75,7 +79,7 @@ const detail = {
   phases: [],
   language: "es",
   source: "# Guided character\n\nContenido publicado.",
-  taller: "Herramientas",
+  taller: "Mundo",
   etiquetas: [],
   parent_skill_id: null,
   parent_version: null,
@@ -235,29 +239,52 @@ describe("ToolWorkshop", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the taller selector with the default Taller de Herramientas", () => {
+  it("renders the taller selector with the default Taller de Mundo", () => {
     renderToolWorkshop();
 
-    // Default active taller (REQ-TRE-1 S1) displayed via CORE_TALLER_LABELS.
+    // Default active taller (REQ-TRE-1 S1) displayed via OPERATIONAL_TALLER_LABELS.
     expect(
-      screen.getByRole("button", { name: "Taller de Herramientas" }),
+      screen.getByRole("button", { name: "Taller de Mundo" }),
     ).toBeInTheDocument();
   });
 
-  it("recomputes the tree when the taller selector changes", async () => {
+  it("offers exactly the operational taller options in the selector (OC-2 S4)", async () => {
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    await user.click(screen.getByRole("button", { name: "Taller de Mundo" }));
+    const options = screen.getAllByRole("option");
+    expect(options.map((option) => option.textContent)).toEqual([
+      "Taller de Mundo",
+      "Taller de Ideas",
+    ]);
+    expect(options).toHaveLength(OPERATIONAL_TALLERES.length);
+    expect(
+      screen.queryByRole("option", { name: "Taller de Herramientas" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Sin taller" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Todos" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("remembers the last selected taller across visits (OC-3 S2)", () => {
+    window.localStorage.setItem(ACTIVE_TALLER_STORAGE_KEY, "Ideas");
+    renderToolWorkshop();
+
+    // A valid stored short key is preserved: the trigger shows the Ideas
+    // label and the tree computes for the Ideas context.
+    expect(
+      screen.getByRole("button", { name: "Taller de Ideas" }),
+    ).toBeInTheDocument();
+  });
+
+  it("recomputes the tree when the taller selector changes (REQ-TRE-1 S2)", async () => {
     const user = userEvent.setup();
     const multiTallerStatus = {
       published: [
-        {
-          skill_id: "herramientas-core",
-          version: "1.0.0",
-          name: "Herramientas core skill",
-          description: "",
-          digest: "h",
-          published_at: "2026-01-01",
-          taller: "Herramientas",
-          talleres_compatibles: [],
-        },
         {
           skill_id: "mundo-core",
           version: "1.0.0",
@@ -268,6 +295,26 @@ describe("ToolWorkshop", () => {
           taller: "Mundo",
           talleres_compatibles: [],
         },
+        {
+          skill_id: "ideas-core",
+          version: "1.0.0",
+          name: "Ideas core skill",
+          description: "",
+          digest: "i",
+          published_at: "2026-01-01",
+          taller: "Ideas",
+          talleres_compatibles: [],
+        },
+        {
+          skill_id: "herramientas-core",
+          version: "1.0.0",
+          name: "Herramientas core skill",
+          description: "",
+          digest: "h",
+          published_at: "2026-01-01",
+          taller: "Herramientas",
+          talleres_compatibles: [],
+        },
       ],
       activations: {},
       drafts: [],
@@ -276,25 +323,29 @@ describe("ToolWorkshop", () => {
 
     renderToolWorkshop();
 
-    // Default active taller is Herramientas → only the Herramientas skill is
-    // part of its context; the Mundo skill is not a transversal → hidden.
-    await waitFor(() => {
-      expect(screen.getByText("Herramientas core skill")).toBeInTheDocument();
-    });
-    expect(screen.queryByText("Mundo core skill")).not.toBeInTheDocument();
-
-    // Switch to Taller de Mundo → the contextual tree recomputes.
-    await user.click(
-      screen.getByRole("button", { name: "Taller de Herramientas" }),
-    );
-    await user.click(screen.getByRole("option", { name: "Taller de Mundo" }));
-
+    // Default active taller is Mundo → the Mundo skill is part of its
+    // context; the Ideas skill is not a transversal → hidden; the legacy
+    // Herramientas-tagged record lands in the "Sin taller" bucket, NOT hidden
+    // (REQ-TRE-5 S8 / OC-4 S3).
     await waitFor(() => {
       expect(screen.getByText("Mundo core skill")).toBeInTheDocument();
     });
-    expect(screen.queryByText("Herramientas core skill")).not.toBeInTheDocument();
-    expect(
+    expect(screen.queryByText("Ideas core skill")).not.toBeInTheDocument();
+    expect(screen.getByText("Herramientas core skill")).toBeInTheDocument();
+
+    // Switch to Taller de Ideas → the contextual tree recomputes.
+    await user.click(
       screen.getByRole("button", { name: "Taller de Mundo" }),
+    );
+    await user.click(screen.getByRole("option", { name: "Taller de Ideas" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Ideas core skill")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Mundo core skill")).not.toBeInTheDocument();
+    expect(screen.getByText("Herramientas core skill")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Taller de Ideas" }),
     ).toBeInTheDocument();
   });
 

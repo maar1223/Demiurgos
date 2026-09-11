@@ -9,8 +9,8 @@ import {
   publishedHasActiveInWorld,
 } from "@/lib/tallerStates";
 
-const HERRAMIENTAS = "Herramientas";
 const MUNDO = "Mundo";
+const IDEAS = "Ideas";
 const WORLD = "Vibrantes";
 
 function skill(
@@ -23,7 +23,7 @@ function skill(
     description: "desc",
     digest: "digest-1",
     published_at: "2026-01-01T00:00:00Z",
-    taller: HERRAMIENTAS,
+    taller: MUNDO,
     talleres_compatibles: [],
     ...overrides,
   };
@@ -45,11 +45,11 @@ function activation(
 
 describe("computeSkillState", () => {
   it("returns 'activa' for an own-taller skill active in the world (REQ-TRE-5 S1)", () => {
-    const s = skill({ skill_id: "s1", taller: HERRAMIENTAS });
+    const s = skill({ skill_id: "s1", taller: MUNDO });
     expect(
       computeSkillState(
         s,
-        HERRAMIENTAS,
+        MUNDO,
         WORLD,
         { [WORLD]: activation("s1") },
         [s],
@@ -60,13 +60,13 @@ describe("computeSkillState", () => {
   it("returns 'transversal-activa' for a compatible skill of another taller active in the world (S2)", () => {
     const s = skill({
       skill_id: "s2",
-      taller: MUNDO,
-      talleres_compatibles: [HERRAMIENTAS],
+      taller: IDEAS,
+      talleres_compatibles: [MUNDO],
     });
     expect(
       computeSkillState(
         s,
-        HERRAMIENTAS,
+        MUNDO,
         WORLD,
         { [WORLD]: activation("s2") },
         [s],
@@ -77,16 +77,16 @@ describe("computeSkillState", () => {
   it("returns 'transversal-inactiva' when its primary taller has no active skill in the world (S3)", () => {
     const s = skill({
       skill_id: "s3",
-      taller: MUNDO,
-      talleres_compatibles: [HERRAMIENTAS],
+      taller: IDEAS,
+      talleres_compatibles: [MUNDO],
     });
-    // The world's active skill belongs to the active taller — Mundo has
+    // The world's active skill belongs to the active taller — Ideas has
     // nothing active, so S is NOT blocked.
-    const other = skill({ skill_id: "s3b", taller: HERRAMIENTAS, name: "Otro" });
+    const other = skill({ skill_id: "s3b", taller: MUNDO, name: "Otro" });
     expect(
       computeSkillState(
         s,
-        HERRAMIENTAS,
+        MUNDO,
         WORLD,
         { [WORLD]: activation("s3b") },
         [s, other],
@@ -97,21 +97,21 @@ describe("computeSkillState", () => {
   it("returns 'bloqueada' when its primary taller already has an active skill in the world (S4)", () => {
     const s = skill({
       skill_id: "s4",
-      taller: MUNDO,
-      talleres_compatibles: [HERRAMIENTAS],
+      taller: IDEAS,
+      talleres_compatibles: [MUNDO],
     });
-    const activeMundo = skill({
+    const activeIdeas = skill({
       skill_id: "s4b",
-      taller: MUNDO,
-      name: "Activa Mundo",
+      taller: IDEAS,
+      name: "Activa Ideas",
     });
     expect(
       computeSkillState(
         s,
-        HERRAMIENTAS,
+        MUNDO,
         WORLD,
         { [WORLD]: activation("s4b") },
-        [s, activeMundo],
+        [s, activeIdeas],
       ),
     ).toBe("bloqueada");
   });
@@ -119,14 +119,14 @@ describe("computeSkillState", () => {
   it("returns 'transversal-activa' — an active skill is never blocked (S5)", () => {
     const s = skill({
       skill_id: "s5",
-      taller: MUNDO,
-      talleres_compatibles: [HERRAMIENTAS],
+      taller: IDEAS,
+      talleres_compatibles: [MUNDO],
     });
-    const other = skill({ skill_id: "s5b", taller: MUNDO, name: "Otra Mundo" });
+    const other = skill({ skill_id: "s5b", taller: IDEAS, name: "Otra Ideas" });
     expect(
       computeSkillState(
         s,
-        HERRAMIENTAS,
+        MUNDO,
         WORLD,
         { [WORLD]: activation("s5") },
         [s, other],
@@ -135,31 +135,31 @@ describe("computeSkillState", () => {
   });
 
   it("returns 'hidden' for a non-transversal skill of another taller (S6)", () => {
-    const s = skill({ skill_id: "s6", taller: MUNDO, talleres_compatibles: [] });
-    expect(computeSkillState(s, HERRAMIENTAS, WORLD, {}, [s])).toBe("hidden");
+    const s = skill({ skill_id: "s6", taller: IDEAS, talleres_compatibles: [] });
+    expect(computeSkillState(s, MUNDO, WORLD, {}, [s])).toBe("hidden");
   });
 
   it("returns 'inactiva' for an own-taller skill that is not active", () => {
-    const s = skill({ skill_id: "s7", taller: HERRAMIENTAS });
-    expect(computeSkillState(s, HERRAMIENTAS, WORLD, {}, [s])).toBe("inactiva");
+    const s = skill({ skill_id: "s7", taller: MUNDO });
+    expect(computeSkillState(s, MUNDO, WORLD, {}, [s])).toBe("inactiva");
   });
 
   describe("no world selected (S7)", () => {
     it("marks own-taller skills 'inactiva' and transversals 'transversal-inactiva'", () => {
-      const propia = skill({ skill_id: "s8", taller: HERRAMIENTAS });
+      const propia = skill({ skill_id: "s8", taller: MUNDO });
       const transversal = skill({
         skill_id: "s9",
-        taller: MUNDO,
-        talleres_compatibles: [HERRAMIENTAS],
+        taller: IDEAS,
+        talleres_compatibles: [MUNDO],
       });
       expect(
-        computeSkillState(propia, HERRAMIENTAS, undefined, {}, [
+        computeSkillState(propia, MUNDO, undefined, {}, [
           propia,
           transversal,
         ]),
       ).toBe("inactiva");
       expect(
-        computeSkillState(transversal, HERRAMIENTAS, undefined, {}, [
+        computeSkillState(transversal, MUNDO, undefined, {}, [
           propia,
           transversal,
         ]),
@@ -169,21 +169,21 @@ describe("computeSkillState", () => {
     it("never blocks without a world, even with an activation record present", () => {
       const s = skill({
         skill_id: "s10",
-        taller: MUNDO,
-        talleres_compatibles: [HERRAMIENTAS],
+        taller: IDEAS,
+        talleres_compatibles: [MUNDO],
       });
-      const activeMundo = skill({
+      const activeIdeas = skill({
         skill_id: "s10b",
-        taller: MUNDO,
-        name: "Activa Mundo",
+        taller: IDEAS,
+        name: "Activa Ideas",
       });
       expect(
         computeSkillState(
           s,
-          HERRAMIENTAS,
+          MUNDO,
           undefined,
           { [WORLD]: activation("s10b") },
-          [s, activeMundo],
+          [s, activeIdeas],
         ),
       ).toBe("transversal-inactiva");
     });
@@ -192,7 +192,7 @@ describe("computeSkillState", () => {
   describe("sin taller bucket", () => {
     it("returns 'inactiva' for a null-taller skill that is not active", () => {
       const s = skill({ skill_id: "s11", taller: null });
-      expect(computeSkillState(s, HERRAMIENTAS, WORLD, {}, [s])).toBe(
+      expect(computeSkillState(s, MUNDO, WORLD, {}, [s])).toBe(
         "inactiva",
       );
     });
@@ -200,36 +200,69 @@ describe("computeSkillState", () => {
     it("returns 'activa' for a null-taller skill active in the world", () => {
       const s = skill({ skill_id: "s12", taller: null });
       expect(
-        computeSkillState(s, HERRAMIENTAS, WORLD, { [WORLD]: activation("s12") }, [s]),
+        computeSkillState(s, MUNDO, WORLD, { [WORLD]: activation("s12") }, [s]),
       ).toBe("activa");
     });
 
-    it("returns 'inactiva' for a skill whose taller is not in CORE_TALLERES", () => {
+    it("returns 'inactiva' for a skill whose taller is not in OPERATIONAL_TALLERES", () => {
       const s = skill({ skill_id: "s13", taller: "No Core" });
-      expect(computeSkillState(s, HERRAMIENTAS, WORLD, {}, [s])).toBe(
+      expect(computeSkillState(s, MUNDO, WORLD, {}, [s])).toBe(
         "inactiva",
       );
+    });
+
+    it("routes a 'Herramientas' primary to the bucket — never blocks (REQ-TRE-5 S8)", () => {
+      const s = skill({
+        skill_id: "s14",
+        taller: "Herramientas",
+        talleres_compatibles: [MUNDO],
+      });
+      const activeHerramientas = skill({
+        skill_id: "s14b",
+        taller: "Herramientas",
+        name: "Activa Herramientas",
+      });
+      expect(
+        computeSkillState(
+          s,
+          MUNDO,
+          WORLD,
+          { [WORLD]: activation("s14b") },
+          [s, activeHerramientas],
+        ),
+      ).toBe("inactiva");
+      const groups = groupSkillsByState(
+        [s, activeHerramientas],
+        MUNDO,
+        WORLD,
+        { [WORLD]: activation("s14b") },
+      );
+      expect(groups.sinTaller.map((skill) => skill.skill_id)).toEqual([
+        "s14b",
+        "s14",
+      ]);
+      expect(groups.bloqueadas).toEqual([]);
     });
   });
 });
 
-describe("seeded foundational skill narrative-character-creation@1.0 (Taller de Herramientas tree)", () => {
+describe("seeded foundational skill narrative-character-creation@1.0 (Taller de Mundo tree)", () => {
   // The real seed manifest (data/methodology/seeds/narrative-character-creation/
-  // manifest.yaml) declares NO taller and NO talleres_compatibles, so the
-  // server-installed record lands here with taller null: it derives
-  // activa/inactiva in the contextual tree and buckets under "Sin taller",
-  // never in a Core group (foundational-skills-seeding FE add-on).
+  // manifest.yaml) declares `taller: Mundo` and NO talleres_compatibles, so
+  // the server-installed record lands here with taller "Mundo": it derives
+  // activa/inactiva in the contextual tree and groups under Inactivas, never
+  // under "Sin taller" (foundational-skills-seeding FE add-on, seeding S2).
   const seeded = skill({
     skill_id: "narrative-character-creation",
     version: "1.0",
     name: "Creación de Personajes",
-    taller: null,
+    taller: MUNDO,
     talleres_compatibles: [],
   });
 
-  it("derives 'inactiva' in the Taller de Herramientas while not active in the world", () => {
+  it("derives 'inactiva' in the Taller de Mundo while not active in the world", () => {
     expect(
-      computeSkillState(seeded, HERRAMIENTAS, WORLD, {}, [seeded]),
+      computeSkillState(seeded, MUNDO, WORLD, {}, [seeded]),
     ).toBe("inactiva");
   });
 
@@ -237,7 +270,7 @@ describe("seeded foundational skill narrative-character-creation@1.0 (Taller de 
     expect(
       computeSkillState(
         seeded,
-        HERRAMIENTAS,
+        MUNDO,
         WORLD,
         { [WORLD]: activation("narrative-character-creation", "1.0") },
         [seeded],
@@ -245,14 +278,14 @@ describe("seeded foundational skill narrative-character-creation@1.0 (Taller de 
     ).toBe("activa");
   });
 
-  it("buckets it under 'Sin taller' — never a Core group, never hidden", () => {
-    const groups = groupSkillsByState([seeded], HERRAMIENTAS, WORLD, {});
-    expect(groups.sinTaller.map((s) => s.skill_id)).toEqual([
+  it("groups it under Inactivas — never Sin taller, never hidden (seeding S2)", () => {
+    const groups = groupSkillsByState([seeded], MUNDO, WORLD, {});
+    expect(groups.inactivas.map((s) => s.skill_id)).toEqual([
       "narrative-character-creation",
     ]);
+    expect(groups.sinTaller).toEqual([]);
     expect([
       ...groups.activas,
-      ...groups.inactivas,
       ...groups.transversalesActivas,
       ...groups.transversalesInactivas,
       ...groups.bloqueadas,
@@ -269,7 +302,7 @@ describe("publishedHasActiveInWorld", () => {
   });
 
   it("is false when the world's active skill belongs to another taller", () => {
-    const s = skill({ skill_id: "p2", taller: HERRAMIENTAS });
+    const s = skill({ skill_id: "p2", taller: IDEAS });
     expect(
       publishedHasActiveInWorld(MUNDO, WORLD, { [WORLD]: activation("p2") }, [s]),
     ).toBe(false);
@@ -289,7 +322,7 @@ describe("publishedHasActiveInWorld", () => {
 
 describe("groupSkillsByState", () => {
   it("returns empty arrays (not undefined) when nothing is published", () => {
-    expect(groupSkillsByState([], HERRAMIENTAS, WORLD, {})).toEqual({
+    expect(groupSkillsByState([], MUNDO, WORLD, {})).toEqual({
       activas: [],
       transversalesActivas: [],
       inactivas: [],
@@ -300,19 +333,19 @@ describe("groupSkillsByState", () => {
   });
 
   it("routes each skill into its state bucket and drops hidden skills", () => {
-    const activa = skill({ skill_id: "a1", taller: HERRAMIENTAS, name: "Alfa Activa" });
-    const inactiva = skill({ skill_id: "i1", taller: HERRAMIENTAS, name: "Inactiva" });
+    const activa = skill({ skill_id: "a1", taller: MUNDO, name: "Alfa Activa" });
+    const inactiva = skill({ skill_id: "i1", taller: MUNDO, name: "Inactiva" });
     const transversalInactiva = skill({
       skill_id: "ti1",
-      taller: MUNDO,
-      talleres_compatibles: [HERRAMIENTAS],
+      taller: IDEAS,
+      talleres_compatibles: [MUNDO],
       name: "Transversal Inactiva",
     });
-    const oculta = skill({ skill_id: "h1", taller: MUNDO, name: "Oculta" });
+    const oculta = skill({ skill_id: "h1", taller: IDEAS, name: "Oculta" });
 
     const groups = groupSkillsByState(
       [activa, inactiva, transversalInactiva, oculta],
-      HERRAMIENTAS,
+      MUNDO,
       WORLD,
       { [WORLD]: activation("a1") },
     );
@@ -328,21 +361,21 @@ describe("groupSkillsByState", () => {
   it("routes an active transversal to transversalesActivas and a conflicting one to bloqueadas", () => {
     const transversalActiva = skill({
       skill_id: "ta1",
-      taller: MUNDO,
-      talleres_compatibles: [HERRAMIENTAS],
+      taller: IDEAS,
+      talleres_compatibles: [MUNDO],
       name: "Transversal Activa",
     });
     const bloqueada = skill({
       skill_id: "b1",
-      taller: MUNDO,
-      talleres_compatibles: [HERRAMIENTAS],
+      taller: IDEAS,
+      talleres_compatibles: [MUNDO],
       name: "Bloqueada",
     });
-    const inactiva = skill({ skill_id: "i2", taller: HERRAMIENTAS, name: "Inactiva" });
+    const inactiva = skill({ skill_id: "i2", taller: MUNDO, name: "Inactiva" });
 
     const groups = groupSkillsByState(
       [transversalActiva, bloqueada, inactiva],
-      HERRAMIENTAS,
+      MUNDO,
       WORLD,
       { [WORLD]: activation("ta1") },
     );
@@ -356,23 +389,23 @@ describe("groupSkillsByState", () => {
   it("routes null/off-list taller skills into the sinTaller bucket only", () => {
     const sinTallerNull = skill({ skill_id: "st1", taller: null, name: "Sin Taller Null" });
     const sinTallerNoCore = skill({ skill_id: "st2", taller: "No Core", name: "Sin Taller No Core" });
-    const activa = skill({ skill_id: "a2", taller: HERRAMIENTAS, name: "Activa" });
+    const activa = skill({ skill_id: "a2", taller: MUNDO, name: "Activa" });
 
     const groups = groupSkillsByState(
       [sinTallerNull, sinTallerNoCore, activa],
-      HERRAMIENTAS,
+      MUNDO,
       WORLD,
       { [WORLD]: activation("a2") },
     );
 
     // Sin-taller skills route to the bucket sorted alphabetically by name
-    // ("No Core" < "Null"), and never leak into the Core state groups.
+    // ("No Core" < "Null"), and never leak into the operational state groups.
     expect(groups.sinTaller.map((s) => s.name)).toEqual([
       "Sin Taller No Core",
       "Sin Taller Null",
     ]);
     expect(groups.activas.map((s) => s.skill_id)).toEqual(["a2"]);
-    // Sin-taller skills never leak into the Core state groups.
+    // Sin-taller skills never leak into the operational state groups.
     expect([
       ...groups.activas,
       ...groups.inactivas,
@@ -383,22 +416,22 @@ describe("groupSkillsByState", () => {
   });
 
   it("with no world, own-taller skills are inactivas and transversals are transversal-inactivas (S7)", () => {
-    const propia = skill({ skill_id: "nw1", taller: HERRAMIENTAS, name: "Propia" });
+    const propia = skill({ skill_id: "nw1", taller: MUNDO, name: "Propia" });
     const transversal = skill({
       skill_id: "nw2",
-      taller: MUNDO,
-      talleres_compatibles: [HERRAMIENTAS],
+      taller: IDEAS,
+      talleres_compatibles: [MUNDO],
       name: "Transversal",
     });
-    const activaMundo = skill({
+    const activaIdeas = skill({
       skill_id: "nw3",
-      taller: MUNDO,
-      name: "Activa Mundo",
+      taller: IDEAS,
+      name: "Activa Ideas",
     });
 
     const groups = groupSkillsByState(
-      [propia, transversal, activaMundo],
-      HERRAMIENTAS,
+      [propia, transversal, activaIdeas],
+      MUNDO,
       undefined,
       { [WORLD]: activation("nw3") },
     );
@@ -411,9 +444,9 @@ describe("groupSkillsByState", () => {
 
   it("sorts each group alphabetically by name", () => {
     const inactivas = [
-      skill({ skill_id: "z", taller: HERRAMIENTAS, name: "Zeta" }),
-      skill({ skill_id: "a", taller: HERRAMIENTAS, name: "Alfa" }),
-      skill({ skill_id: "m", taller: HERRAMIENTAS, name: "Media" }),
+      skill({ skill_id: "z", taller: MUNDO, name: "Zeta" }),
+      skill({ skill_id: "a", taller: MUNDO, name: "Alfa" }),
+      skill({ skill_id: "m", taller: MUNDO, name: "Media" }),
     ];
     const sinTaller = [
       skill({ skill_id: "stz", taller: null, name: "Zeta Sin" }),
@@ -422,7 +455,7 @@ describe("groupSkillsByState", () => {
 
     const groups = groupSkillsByState(
       [...inactivas, ...sinTaller],
-      HERRAMIENTAS,
+      MUNDO,
       WORLD,
       {},
     );

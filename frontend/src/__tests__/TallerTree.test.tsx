@@ -11,7 +11,7 @@ const skillA: PublishedMethodology = {
   description: "",
   digest: "abc",
   published_at: "2026-01-01",
-  taller: "Herramientas",
+  taller: "Mundo",
 };
 
 const skillB: PublishedMethodology = {
@@ -21,7 +21,7 @@ const skillB: PublishedMethodology = {
   description: "",
   digest: "def",
   published_at: "2026-01-01",
-  taller: "Herramientas",
+  taller: "Mundo",
 };
 
 const groups: GroupedSkills = {
@@ -39,7 +39,7 @@ function renderTree(
   const props = {
     groups,
     world: "nec",
-    activeTaller: "Herramientas",
+    activeTaller: "Mundo",
     onActivate: vi.fn(),
     busy: false,
     ...overrides,

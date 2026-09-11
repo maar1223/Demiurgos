@@ -2,7 +2,7 @@ import type {
   MethodologyActivation,
   PublishedMethodology,
 } from "@/api/types";
-import { CORE_TALLERES, type CoreTaller } from "@/lib/constants";
+import { isOperationalTaller } from "@/lib/constants";
 
 /** Derived state of a published methodology for a (activeTaller, world) pair
  *  (taller-selector-tree-states spec REQ-TRE-5). `"hidden"` means the skill
@@ -18,7 +18,7 @@ export type SkillState =
 
 /** Skills bucketed by derived state, each sorted alphabetically by name.
  *  `sinTaller` is a separate section (REQ-TRE-1 S3), never one of the
- *  Core groups. */
+ *  operational groups. */
 export interface GroupedSkills {
   activas: PublishedMethodology[];
   transversalesActivas: PublishedMethodology[];
@@ -29,14 +29,6 @@ export interface GroupedSkills {
 }
 
 type Activations = Record<string, MethodologyActivation>;
-
-function isCoreTaller(
-  taller: string | null | undefined,
-): taller is CoreTaller {
-  return (
-    taller != null && (CORE_TALLERES as readonly string[]).includes(taller)
-  );
-}
 
 /** True when the world's active skill belongs to a published methodology of
  *  the given primary taller — the blocked-rule lookup (REQ-TRE-5). */
@@ -73,7 +65,7 @@ export function computeSkillState(
 
   // Sin taller bucket — separate section, not part of the 4+1 groups
   // (caller routes to the sinTaller bucket based on the taller value).
-  if (!isCoreTaller(skill.taller)) {
+  if (!isOperationalTaller(skill.taller)) {
     return activeInWorld ? "activa" : "inactiva";
   }
 
@@ -84,11 +76,11 @@ export function computeSkillState(
   if (isTransversal && activeInWorld) return "transversal-activa";
 
   // 3. Bloqueada — transversal + NOT active + primary taller is another
-  //    Core taller that already has an active skill in this world
+  //    operational taller that already has an active skill in this world
   if (
     isTransversal &&
     !activeInWorld &&
-    isCoreTaller(skill.taller) &&
+    isOperationalTaller(skill.taller) &&
     skill.taller !== activeTaller &&
     publishedHasActiveInWorld(skill.taller, world, activations, published)
   ) {
@@ -126,7 +118,7 @@ export function groupSkillsByState(
   };
 
   for (const skill of published) {
-    if (!isCoreTaller(skill.taller)) {
+    if (!isOperationalTaller(skill.taller)) {
       groups.sinTaller.push(skill);
       continue;
     }

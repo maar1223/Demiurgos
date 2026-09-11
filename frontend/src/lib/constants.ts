@@ -78,12 +78,14 @@ export const NAV_LINKS: readonly NavLink[] = [
 ];
 
 /**
- * Curated Core Talleres (taller-selector-tree-states spec REQ-TRE-1): the
- * selector exposes exactly these; skills with `taller` null or not in this
- * list land in the "Sin taller" bucket.
+ * Operational Talleres (operational-taller-context spec OC-1): the selector,
+ * the persistence guard and the tree derivation all key on exactly this list.
+ * Herramientas is NEVER a member — it is the management/co-creation surface,
+ * not a selectable runtime context. Skills with `taller` null or not in this
+ * list land in the "Sin taller" bucket (OC-4).
  */
-export const CORE_TALLERES = ["Herramientas", "Mundo", "Ideas"] as const;
-export type CoreTaller = (typeof CORE_TALLERES)[number];
+export const OPERATIONAL_TALLERES = ["Mundo", "Ideas"] as const;
+export type OperationalTaller = (typeof OPERATIONAL_TALLERES)[number];
 
 /** localStorage key persisting the active Taller (REQ-TRE-2). */
 export const ACTIVE_TALLER_STORAGE_KEY = "demiurgos-active-taller";
@@ -96,17 +98,27 @@ export const COMPANION_LATENCY_NOTIFIED_KEY =
 
 /**
  * Default active Taller shown before any explicit selection (REQ-TRE-1).
- * Value is a `CORE_TALLERES` short key (matching the `taller` field a skill
- * carries), NOT a display label — the label is derived at render time.
+ * Value is an `OPERATIONAL_TALLERES` short key (matching the `taller` field a
+ * skill carries), NOT a display label — the label is derived at render time.
  */
-export const DEFAULT_TALLER: CoreTaller = "Herramientas";
+export const DEFAULT_TALLER: OperationalTaller = "Mundo";
 
-/** Human-readable label for a Core Taller key (display-only). */
-export const CORE_TALLER_LABELS: Record<CoreTaller, string> = {
-  Herramientas: "Taller de Herramientas",
+/** Human-readable label for an Operational Taller key (display-only). */
+export const OPERATIONAL_TALLER_LABELS: Record<OperationalTaller, string> = {
   Mundo: "Taller de Mundo",
   Ideas: "Taller de Ideas",
 };
+
+/** Membership guard (OC-1 S1): only operational talleres pass — Herramientas
+ *  is a management surface, never a selectable runtime context. */
+export function isOperationalTaller(
+  taller: string | null | undefined,
+): taller is OperationalTaller {
+  return (
+    taller != null &&
+    (OPERATIONAL_TALLERES as readonly string[]).includes(taller)
+  );
+}
 
 export const PLACEHOLDER_TOAST =
   "Módulo en desarrollo — próximamente" as const;
