@@ -21,7 +21,7 @@ from typing import Any, Mapping
 
 from assistant_activity import HermesActivityRequest
 from guided_character_domain import route_new_character_intent
-from methodology_library import FOUNDATIONAL_CHARACTER_SKILL_ID
+from methodology_library import FOUNDATIONAL_CHARACTER_SKILL_ID, GUIDED_CHARACTER_FLOW
 
 TRANSVERSAL_SKILLS: frozenset[str] = frozenset({
     FOUNDATIONAL_CHARACTER_SKILL_ID,
@@ -96,7 +96,7 @@ class SkillRouter:
         skills = set(TRANSVERSAL_SKILLS)
         if self._library is not None:
             try:
-                activation = self._library.active_for(mundo)
+                activation = self._library.active_for(mundo, GUIDED_CHARACTER_FLOW)
             except Exception:
                 activation = None
             if activation is not None and getattr(activation, "skill_id", None):
@@ -233,7 +233,7 @@ class SkillRouter:
                 (skill_id, self._description_for(skill_id, getattr(comp, "version", None)))
             )
         try:
-            activation = self._library.active_for(mundo)
+            activation = self._library.active_for(mundo, GUIDED_CHARACTER_FLOW)
         except Exception:
             activation = None
         if activation is not None:

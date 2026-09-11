@@ -1775,6 +1775,7 @@ class TestGuidedSessionDurability:
         snapshot = store.methodology_snapshot(fresh.json()["session_id"], "author-1")
         assert snapshot is not None
         assert snapshot.skill_version == "custom-v2"
+        assert snapshot.flow_type == "guided-character"
 
     def test_legacy_in_memory_sessions_fail_closed_without_migration(self, client: TestClient, monkeypatch, tmp_path):
         _principal(monkeypatch, "author-1")
@@ -2287,6 +2288,7 @@ class TestMethodologyApi:
         assert snapshot is not None
         assert snapshot.skill_version == "1.2.0"
         assert snapshot.compiled_contract_digest is not None
+        assert snapshot.flow_type == "guided-character"
 
     def test_existing_session_fails_closed_after_activation(self, client: TestClient, monkeypatch, tmp_path):
         """A session created BEFORE activation keeps its pinned version and is
@@ -2310,7 +2312,9 @@ class TestMethodologyApi:
         })
         assert started.status_code == 200
         sid, revision = started.json()["session_id"], started.json()["revision"]
-        assert store.methodology_snapshot(sid, "author-1").skill_version == "builtin"
+        builtin = store.methodology_snapshot(sid, "author-1")
+        assert builtin.skill_version == "builtin"
+        assert builtin.flow_type == "guided-character"
 
         self._publish_and_activate(client)
         resumed = client.get(f"/api/test_mundo/guided-character/session/{sid}")

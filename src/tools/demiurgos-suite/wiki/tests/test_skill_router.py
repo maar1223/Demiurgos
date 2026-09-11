@@ -60,7 +60,7 @@ class _Library:
         self._published = dict(published or {})
         self.calls: list[str] = []
 
-    def active_for(self, mundo: str):
+    def active_for(self, mundo: str, flow_type: str | None = None):
         self.calls.append(mundo)
         return self._activation
 

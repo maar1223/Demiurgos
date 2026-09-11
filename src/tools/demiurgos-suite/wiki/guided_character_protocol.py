@@ -167,7 +167,9 @@ class MethodologySnapshot:
     """Immutable methodology/version pin for one guided session.
 
     ``skill_id`` / ``skill_version`` identify the active methodology and
-    ``compiled_contract_digest`` is the compiled contract identity. The snapshot
+    ``compiled_contract_digest`` is the compiled contract identity. ``flow_type``
+    is the guided-flow slot the pin belongs to (SR1): ``None`` means the
+    guided-character slot (backward-compatible with pre-SR1 pins). The snapshot
     is server-issued at session creation and never rewritten; applying a
     methodology change requires a brand-new session.
     """
@@ -175,12 +177,14 @@ class MethodologySnapshot:
     skill_id: str | None = None
     skill_version: str | None = None
     compiled_contract_digest: str | None = None
+    flow_type: str | None = None
 
     def as_dict(self) -> dict[str, str | None]:
         return {
             "skill_id": self.skill_id,
             "skill_version": self.skill_version,
             "compiled_contract_digest": self.compiled_contract_digest,
+            "flow_type": self.flow_type,
         }
 
 

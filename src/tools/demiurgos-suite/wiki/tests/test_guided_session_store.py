@@ -149,6 +149,7 @@ def test_immutable_methodology_snapshot_is_pinned_at_create(tmp_path: Path) -> N
         "skill_id": "guided-character-v1",
         "skill_version": "builtin",
         "compiled_contract_digest": "contract-digest-v1",
+        "flow_type": None,
     }
 
     restarted = GuidedSessionStore(db)

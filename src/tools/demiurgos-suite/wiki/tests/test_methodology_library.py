@@ -21,6 +21,7 @@ if str(_WIKI) not in sys.path:
 
 from methodology_library import (  # noqa: E402
     AlreadyPublishedError,
+    CO_CREATION_FLOW,
     CompanionLimitError,
     MAX_COMPANIONS_PER_WORLD,
     MethodologyLibrary,
@@ -477,14 +478,19 @@ class TestCompanions:
         self._published_skill(library, skill_id="slot-skill", version="1.0.0")
         self._published_skill(library, skill_id="companion-skill", version="1.0.0")
         library.activate("nec", "slot-skill", "1.0.0")
+        library.activate("nec", "slot-skill", "1.0.0", CO_CREATION_FLOW)
         slot = library.active_for("nec")
+        slot_cc = library.active_for("nec", CO_CREATION_FLOW)
         assert slot is not None and slot.skill_id == "slot-skill"
+        assert slot_cc is not None and slot_cc.skill_id == "slot-skill"
         library.add_companion("nec", "companion-skill", "1.0.0")
         assert library.active_for("nec") == slot
+        assert library.active_for("nec", CO_CREATION_FLOW) == slot_cc
         assert library.list_companions("nec")[0].skill_id == "companion-skill"
         assert library.remove_companion("nec", "companion-skill") is True
         assert library.remove_companion("nec", "companion-skill") is False
         assert library.active_for("nec") == slot
+        assert library.active_for("nec", CO_CREATION_FLOW) == slot_cc
         assert library._history == {}
 
     def test_soft_delete_scrubs_companions_all_worlds(self, tmp_path: Path) -> None:

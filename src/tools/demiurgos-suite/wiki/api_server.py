@@ -123,9 +123,12 @@ from wiki.world_authority import detect_legacy_layout
 from methodology_library import (
     AlreadyPublishedError,
     CompanionLimitError,
+    DEFAULT_FLOW_TYPE,
+    GUIDED_CHARACTER_FLOW,
     MethodologyLibrary,
     MethodologyLibraryError,
     NotPublishedError,
+    SUPPORTED_FLOW_TYPES,
     FOUNDATIONAL_CHARACTER_SKILL_ID,
     ValidationError,
 )
@@ -1745,10 +1748,14 @@ class MethodologyActivateRequest(BaseModel):
     world: str
     skill_id: str
     version: str
+    # The guided-flow slot to pin (SR1); absent/omitted = guided-character.
+    flow_type: str = DEFAULT_FLOW_TYPE
 
 
 class MethodologyRollbackRequest(BaseModel):
     world: str
+    # The guided-flow slot to roll back (SR1); absent/omitted = guided-character.
+    flow_type: str = DEFAULT_FLOW_TYPE
 
 
 class MethodologyCompanionActivateRequest(BaseModel):
@@ -1830,37 +1837,47 @@ def _methodology_quarantine() -> QuarantineStore:
     return _METHODOLOGY_QUARANTINE
 
 
-def _active_methodology_version(world: str) -> str | None:
-    """Active methodology version for a world.
+def _active_methodology_version(world: str, flow_type: str = DEFAULT_FLOW_TYPE) -> str | None:
+    """Active methodology version for a world's ``flow_type`` slot.
 
-    A published version explicitly activated for the world wins; otherwise the
-    builtin pin applies. Only NEW sessions consult this; existing sessions
+    A published version explicitly activated for the world/flow wins; otherwise
+    the builtin pin applies. Only NEW sessions consult this; existing sessions
     keep their pinned snapshot and fail closed when it no longer matches.
     """
-    activation = _methodology_library().active_for(world)
+    activation = _methodology_library().active_for(world, flow_type)
     if activation is not None:
         return activation.version
     return _ACTIVE_METHODOLOGY_VERSION
 
 
-def _active_methodology_snapshot(world: str) -> MethodologySnapshot:
+def _active_methodology_snapshot(
+    world: str, flow_type: str = DEFAULT_FLOW_TYPE,
+) -> MethodologySnapshot:
     """Pin the currently active methodology/version at session creation."""
-    activation = _methodology_library().active_for(world)
+    activation = _methodology_library().active_for(world, flow_type)
     if activation is not None:
         return MethodologySnapshot(
             skill_id=activation.skill_id,
             skill_version=activation.version,
             compiled_contract_digest=activation.digest,
+            flow_type=flow_type,
         )
+    if flow_type != GUIDED_CHARACTER_FLOW:
+        # The builtin contract only exists for the guided-character flow;
+        # other flow slots have no activation-based fallback (SR1).
+        return MethodologySnapshot(flow_type=flow_type)
     active = _ACTIVE_METHODOLOGY_VERSION or _BUILTIN_METHODOLOGY_VERSION
     return MethodologySnapshot(
         skill_id="guided-character-v1",
         skill_version=active,
         compiled_contract_digest=None,
+        flow_type=flow_type,
     )
 
 
-def _compiled_contract_markdown(world: str) -> str | None:
+def _compiled_contract_markdown(
+    world: str, flow_type: str = DEFAULT_FLOW_TYPE,
+) -> str | None:
     """Resolve the world's active compiled methodology as bounded Markdown.
 
     Walks activation → published version → ``project_contract_markdown`` and
@@ -1868,7 +1885,7 @@ def _compiled_contract_markdown(world: str) -> str | None:
     failure, so callers fall back to the legacy version-string injection.
     """
     try:
-        activation = _methodology_library().active_for(world)
+        activation = _methodology_library().active_for(world, flow_type)
         if activation is None:
             return None
         published = _methodology_library().get_published(activation.skill_id, activation.version)
@@ -2002,7 +2019,8 @@ def _guided_methodology_block(state: SessionState) -> JSONResponse | None:
     snapshot = _GUIDED_SESSIONS.methodology_snapshot(state.session_id, state.authorization_binding)
     if snapshot is None or snapshot.skill_version is None:
         return None
-    active = _active_methodology_version(state.world)
+    flow_type = snapshot.flow_type or DEFAULT_FLOW_TYPE
+    active = _active_methodology_version(state.world, flow_type)
     if active is not None and snapshot.skill_version != active:
         return _guided_error_response(StructuredError(
             ErrorCode.INVALID_INPUT,
@@ -2076,9 +2094,16 @@ async def _guided_continue(
     )
     # Compiled contract projection (fricción 2): resolved here so every guided
     # continuation path carries the world's active methodology as bounded
-    # Markdown into the provider invoke. Builtin worlds (no activation) resolve
-    # to None and the provider falls back to the version-string methodology.
-    compiled = _compiled_contract_markdown(mundo)
+    # Markdown into the provider invoke. The projection is per-flow: it follows
+    # the session's own pinned flow slot (SR1). Builtin worlds (no activation)
+    # resolve to None and the provider falls back to the version-string
+    # methodology.
+    session_snapshot = state.methodology_snapshot if state is not None else None
+    session_flow = (
+        session_snapshot.flow_type or DEFAULT_FLOW_TYPE
+        if session_snapshot is not None else DEFAULT_FLOW_TYPE
+    )
+    compiled = _compiled_contract_markdown(mundo, session_flow)
     response, state = await continue_session(
         _GUIDED_SESSIONS, _GUIDED_PROVIDER, request, _GUIDED_CAPABILITIES,
         compiled_contract_markdown=compiled,
@@ -2180,7 +2205,7 @@ async def start_guided_character(mundo: str, body: GuidedStartRequest, request: 
         session_id, mundo, principal.id,
         reference_context=reference_context, reference_name=reference_name,
         relation_goal=relation_goal, mode=intent.mode, depth=intent.depth,
-        methodology_snapshot=_active_methodology_snapshot(mundo),
+        methodology_snapshot=_active_methodology_snapshot(mundo, GUIDED_CHARACTER_FLOW),
     )
     if intent.requires_confirmation:
         confirmed = _GUIDED_SESSIONS.begin_confirmation(
@@ -2947,6 +2972,7 @@ def activate_co_creation(session_id: str, body: CoCreationActivateRequest, reque
             "version": activation.version,
             "digest": activation.digest,
             "activated_at": activation.activated_at,
+            "flow_type": activation.flow_type,
         },
     }
 
@@ -5901,7 +5927,7 @@ async def _semantic_guided_continuation(
             session_id, mundo, principal.id,
             reference_context=reference_context, reference_name=reference_name,
             relation_goal=relation_goal,
-            methodology_snapshot=_active_methodology_snapshot(mundo),
+            methodology_snapshot=_active_methodology_snapshot(mundo, GUIDED_CHARACTER_FLOW),
         )
         if decision.state == "require_confirmation":
             return _semantic_confirmation_continuation(
@@ -7603,7 +7629,9 @@ def methodologies_status(request: Request):
     ]
     activations = {}
     for world in _known_worlds():
-        activation = library.active_for(world)
+        # Status keeps the guided-character projection (D4): the UI parses
+        # ``activations[world]`` as the guided slot; ``flow_type`` is additive.
+        activation = library.active_for(world, GUIDED_CHARACTER_FLOW)
         if activation is not None:
             activations[world] = {
                 "world": activation.world,
@@ -7611,6 +7639,7 @@ def methodologies_status(request: Request):
                 "version": activation.version,
                 "digest": activation.digest,
                 "activated_at": activation.activated_at,
+                "flow_type": activation.flow_type,
             }
     drafts = [
         {
@@ -7790,15 +7819,25 @@ def methodologies_publish(draft_id: str, request: Request):
 
 @app.post("/api/methodologies/activate")
 def methodologies_activate(body: MethodologyActivateRequest, request: Request):
-    """Pin a published methodology version to a world (new sessions only)."""
+    """Pin a published methodology version to a world's flow slot (SR1).
+
+    Per-flow (``body.flow_type``, default guided-character); unknown/empty
+    flow types fail as 422 BEFORE any library call, so a rejected request
+    never mutates any slot.
+    """
     principal = _resolve_principal(request)
     if principal is None:
         return JSONResponse(status_code=401, content={"detail": "Authentication required."})
     if _resolve_mundo_dir(body.world) is None:
         return JSONResponse(status_code=404, content={"detail": "Mundo no encontrado"})
+    if body.flow_type not in SUPPORTED_FLOW_TYPES:
+        return JSONResponse(status_code=422, content={
+            "detail": f"unsupported flow type {body.flow_type!r}",
+            "code": "unsupported_flow_type",
+        })
     library = _methodology_library()
     try:
-        activation = library.activate(body.world, body.skill_id, body.version)
+        activation = library.activate(body.world, body.skill_id, body.version, body.flow_type)
     except NotPublishedError as exc:
         return JSONResponse(status_code=422, content={
             "detail": str(exc), "code": "not_published",
@@ -7809,21 +7848,73 @@ def methodologies_activate(body: MethodologyActivateRequest, request: Request):
         "version": activation.version,
         "digest": activation.digest,
         "activated_at": activation.activated_at,
+        "flow_type": activation.flow_type,
+    }
+
+
+@app.get("/api/methodologies/active/{world}")
+def methodologies_active(world: str, request: Request, flow_type: str = DEFAULT_FLOW_TYPE):
+    """Read a world's active methodology for one flow slot (SR1, D4).
+
+    Mirrors the slot routes' prelude (401 unauth / 404 unknown world) and
+    rejects unknown/empty flow types with 422 before any library call. The
+    response echoes the requested flow; ``activation`` is ``None`` when the
+    slot is empty.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if _resolve_mundo_dir(world) is None:
+        return JSONResponse(status_code=404, content={"detail": "Mundo no encontrado"})
+    if flow_type not in SUPPORTED_FLOW_TYPES:
+        return JSONResponse(status_code=422, content={
+            "detail": f"unsupported flow type {flow_type!r}",
+            "code": "unsupported_flow_type",
+        })
+    activation = _methodology_library().active_for(world, flow_type)
+    if activation is None:
+        return {"world": world, "flow_type": flow_type, "activation": None}
+    return {
+        "world": world,
+        "flow_type": flow_type,
+        "activation": {
+            "world": activation.world,
+            "skill_id": activation.skill_id,
+            "version": activation.version,
+            "digest": activation.digest,
+            "activated_at": activation.activated_at,
+            "flow_type": activation.flow_type,
+        },
     }
 
 
 @app.post("/api/methodologies/rollback")
 def methodologies_rollback(body: MethodologyRollbackRequest, request: Request):
-    """Roll back a world's active methodology to its previous version."""
+    """Roll back a world's flow slot to its previous version (SR1).
+
+    Per-flow (``body.flow_type``, default guided-character); gains the
+    world-404 prelude for parity with the other slot routes. Empty slots clear
+    idempotently and echo the requested flow; unknown/empty flow types fail as
+    422 before any library call.
+    """
     principal = _resolve_principal(request)
     if principal is None:
         return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if _resolve_mundo_dir(body.world) is None:
+        return JSONResponse(status_code=404, content={"detail": "Mundo no encontrado"})
+    if body.flow_type not in SUPPORTED_FLOW_TYPES:
+        return JSONResponse(status_code=422, content={
+            "detail": f"unsupported flow type {body.flow_type!r}",
+            "code": "unsupported_flow_type",
+        })
     library = _methodology_library()
-    activation = library.rollback(body.world)
+    activation = library.rollback(body.world, body.flow_type)
     if activation is None:
-        return {"world": body.world, "skill_id": None, "version": None, "digest": None, "activated_at": None}
+        return {"world": body.world, "flow_type": body.flow_type,
+                "skill_id": None, "version": None, "digest": None, "activated_at": None}
     return {
         "world": activation.world,
+        "flow_type": activation.flow_type,
         "skill_id": activation.skill_id,
         "version": activation.version,
         "digest": activation.digest,
