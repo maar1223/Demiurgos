@@ -87,6 +87,9 @@ class TestSeedCatalogS1:
         assert entry.version == "1.0"
         assert entry.manifest["skill_id"] == "narrative-character-creation"
         assert entry.manifest["version"] == "1.0"
+        # The seed manifest declares its operational home taller (S1): the
+        # seeded skill renders in the Mundo tree, never in "Sin taller".
+        assert entry.manifest["taller"] == "Mundo"
 
     def test_real_seed_is_compiler_clean(self) -> None:
         entry = load_seed_catalog(SEED_ROOT)[0]
