@@ -1,6 +1,7 @@
 """PR5-A route and public contract smoke tests."""
 
 from pathlib import Path
+import asyncio
 import json
 import shutil
 import sys
@@ -17,9 +18,13 @@ import api_server  # noqa: E402
 from guided_character_protocol import (  # noqa: E402
     Capabilities,
     CandidateState,
+    GuidedRequest,
+    GuidedResponse,
     GuidedSessionStore,
     ErrorCode,
     MessageType,
+    Outcome,
+    PROTOCOL_VERSION,
     SessionState,
     StructuredError,
     TypedMessage,
@@ -1214,3 +1219,135 @@ def test_seeded_library_leaves_builtin_guided_runtime_untouched(monkeypatch, tmp
     assert snapshot.skill_version == "builtin"
     assert snapshot.compiled_contract_digest is None
     assert api_server._compiled_contract_markdown("nec") is None
+
+
+class _SpecimenCapturingProvider:
+    """Guided provider that records the convergence_specimen_markdown hint."""
+
+    def __init__(self) -> None:
+        self.received: list[str | None] = []
+
+    async def invoke(self, request, token, *, compiled_contract_markdown=None,
+                     convergence_specimen_markdown=None) -> dict:
+        self.received.append(convergence_specimen_markdown)
+        return {
+            "protocol_version": "guided-character-v1",
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "What drives them?",
+        }
+
+
+class TestConvergenceSpecimenB5:
+    """R10/R11/R13 (④b): the convergence specimen is resolved pre-invocation
+    in ``_guided_continue`` and threaded beside the compiled contract — never
+    on turn one, gated by the finished-exchange conjunct, exactly one block
+    when the gate passes, and fail-open byte-identical for pre-PR④ records."""
+
+    def _wired_library(self, tmp_path: Path) -> MethodologyLibrary:
+        """Library with the REAL wired seed published and activated for
+        ``vibrantes``; the serving seam reads the real repo seed dir."""
+        seed_root = tmp_path / "seeds"
+        shutil.copytree(SEED_ROOT, seed_root)
+        library = MethodologyLibrary(tmp_path / "library.json")
+        report = install_seeds(library, seed_root)
+        assert report.installed == 1
+        library.activate("vibrantes", "narrative-character-creation", "1.0")
+        return library
+
+    def _harness(self, monkeypatch, tmp_path: Path, *, mode: str = "full",
+                 library: MethodologyLibrary | None = None):
+        (tmp_path / "vibrantes").mkdir()
+        monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+        provider = _SpecimenCapturingProvider()
+        store = GuidedSessionStore()
+        store.create(
+            "guided-1", "vibrantes", "author-1", mode=mode,
+            depth="fundamental" if mode == "fast" else "standard",
+        )
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities(
+            "guided-character-v1", True, True, True, 30000,
+        ))
+        if library is not None:
+            monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
+        return provider, store
+
+    @staticmethod
+    def _finish_exchange(store: GuidedSessionStore) -> None:
+        """Commit one provider DELTA: a finished exchange (PROPOSAL) and a
+        minimum-complete candidate (identity + desire) in one step."""
+        request = GuidedRequest(
+            PROTOCOL_VERSION, "req-1", "guided-1", "vibrantes", 0, "author-1",
+            "Create a character",
+        )
+        response = GuidedResponse(
+            PROTOCOL_VERSION, "req-1", "guided-1", 0, Outcome.DELTA,
+            delta={"name": "Pert", "desire": "freedom"},
+        )
+        assert store.commit(request, response) is not None
+
+    def test_never_turn_one_resolves_no_specimen(self, monkeypatch, tmp_path) -> None:
+        """Scenario "never turn one": turn one resolves NO specimen — the
+        prompt stays byte-identical to pre-PR④ (the None hint path is locked
+        byte-for-byte in the provider tests)."""
+        provider, _ = self._harness(monkeypatch, tmp_path, library=self._wired_library(tmp_path))
+        asyncio.run(api_server._guided_continue(
+            "vibrantes", "guided-1", 0, "Create a character",
+            api_server.EditPrincipal("author-1"),
+        ))
+        assert provider.received == [None]
+
+    def test_fast_mode_guard_finished_exchange_conjunct_blocks(self, monkeypatch, tmp_path) -> None:
+        """Scenario "fast-mode guard": fast mode short-circuits the gate, but
+        the finished-exchange conjunct still blocks injection on turn one."""
+        provider, _ = self._harness(
+            monkeypatch, tmp_path, mode="fast", library=self._wired_library(tmp_path),
+        )
+        asyncio.run(api_server._guided_continue(
+            "vibrantes", "guided-1", 0, "Create a character",
+            api_server.EditPrincipal("author-1"),
+        ))
+        assert provider.received == [None]
+
+    def test_gate_passed_injects_exactly_one_specimen_block(self, monkeypatch, tmp_path) -> None:
+        """Scenario "gate-passed injects": a gate-passed turn appends exactly
+        one specimen block (unknown nivel → 1º Korrane principal exemplar)."""
+        provider, store = self._harness(monkeypatch, tmp_path, library=self._wired_library(tmp_path))
+        self._finish_exchange(store)
+        asyncio.run(api_server._guided_continue(
+            "vibrantes", "guided-1", 1, "Add a scar",
+            api_server.EditPrincipal("author-1"),
+        ))
+        assert len(provider.received) == 1
+        block = provider.received[0]
+        assert block is not None
+        assert block.count("[Convergence specimen — nivel ") == 1
+        assert block.startswith("[Convergence specimen — nivel 1º]")
+        assert "Korrane" in block
+
+    def test_pre_pr4_fail_open_record_without_adjuntos_stays_byte_identical(
+        self, monkeypatch, tmp_path,
+    ) -> None:
+        """Scenario "pre-PR④ fail-open": a published record WITHOUT adjuntos
+        resolves no specimen even on a gate-passed turn — the prompt stays
+        byte-identical to today."""
+        library = self._wired_library(tmp_path)
+        payload = json.loads((tmp_path / "library.json").read_text(encoding="utf-8"))
+        record = next(iter(payload["published"].values()))
+        record.pop("adjuntos", None)
+        (tmp_path / "library.json").write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        stripped = MethodologyLibrary(tmp_path / "library.json")
+        stripped.activate("vibrantes", "narrative-character-creation", "1.0")
+        provider, store = self._harness(monkeypatch, tmp_path, library=stripped)
+        self._finish_exchange(store)
+        asyncio.run(api_server._guided_continue(
+            "vibrantes", "guided-1", 1, "Add a scar",
+            api_server.EditPrincipal("author-1"),
+        ))
+        assert provider.received == [None]

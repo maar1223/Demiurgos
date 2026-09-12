@@ -71,7 +71,11 @@ from guided_character_domain import (
     route_new_character_intent,
     confirmation_decision,
     serialize_ficha,
+    candidate_minimum_complete,
+    has_finished_exchange,
+    resolve_candidate_nivel,
 )
+from convergence_injection import build_specimen_block
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
@@ -1914,6 +1918,43 @@ def _compiled_contract_markdown(
     except Exception:
         logger.warning("compiled contract projection failed for world %r", world, exc_info=True)
         return None
+
+
+def _convergence_specimen_markdown(
+    world: str, flow_type: str, state: SessionState | None,
+) -> str | None:
+    """Resolve the world's convergence specimen as bounded Markdown (R10–R13).
+
+    Trigger conjuncts (all must hold, D2/D5): the recovered state exists, the
+    candidate is minimally complete pre-invocation (``delta=None`` — the gate
+    is evaluated BEFORE this turn's provider run, never after), and at least
+    one finished exchange exists (D3). The published skill's ``adjuntos`` pins
+    then drive the block. Builtin worlds (no activation), zero-attachment
+    records, and every resolution failure resolve to ``None`` so the turn
+    proceeds byte-identically — fail-open, mirroring :1914.
+    """
+    try:
+        if state is None:
+            return None
+        if not candidate_minimum_complete(state.candidate, delta=None, mode=state.mode):
+            return None
+        if not has_finished_exchange(state):
+            return None
+        activation = _methodology_library().active_for(world, flow_type)
+        if activation is None:
+            return None
+        published = _methodology_library().get_published(activation.skill_id, activation.version)
+        if published is None or not published.adjuntos:
+            return None
+        nivel = resolve_candidate_nivel(state.candidate)
+        return build_specimen_block(
+            PROJECT_ROOT / "data" / "methodology" / "seeds" / published.skill_id,
+            published.adjuntos,
+            nivel,
+        )
+    except Exception:
+        logger.warning("convergence specimen resolution failed for world %r", world, exc_info=True)
+        return None
 # Semantic routing seam: the mandatory Hermes-first semantic gate. Wired to a
 # SemanticIntentProvider(ACTIVITY_ADAPTER) below, after the runs adapter exists.
 # No lexical/plain-chat fallback exists; unavailable/invalid/exhausted Hermes
@@ -2123,9 +2164,15 @@ async def _guided_continue(
         if session_snapshot is not None else DEFAULT_FLOW_TYPE
     )
     compiled = _compiled_contract_markdown(mundo, session_flow)
+    # Convergence specimen (④b, R10–R13): resolved pre-invocation beside the
+    # compiled contract. All trigger conjuncts are evaluated against the
+    # RECOVERED state (delta=None), so turn one and fast-mode turn one can
+    # never inject; gate-passed turns inject ≤1 pinned carrier block.
+    specimen = _convergence_specimen_markdown(mundo, session_flow, state)
     response, state = await continue_session(
         _GUIDED_SESSIONS, _GUIDED_PROVIDER, request, _GUIDED_CAPABILITIES,
         compiled_contract_markdown=compiled,
+        convergence_specimen_markdown=specimen,
     )
     if state is not None:
         _invalidate_guided_proposal(session_id)
