@@ -8,15 +8,20 @@ library mutation, no canon write).
 
 from __future__ import annotations
 
+import io
+import json
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 _WIKI = Path(__file__).resolve().parents[1]
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
+import methodology_trust  # noqa: E402
 from methodology_library import MethodologyLibrary  # noqa: E402
 from methodology_trust import (  # noqa: E402
     FOUNDATIONAL,
@@ -67,6 +72,37 @@ def _signer(data: str) -> str:
 
 def _verifier(payload: str, signature: str) -> bool:
     return signature == _signer(payload)
+
+
+class TestZipAttachmentFailClosed:
+    """S11/R7 (locked D4): the trust boundary keeps rejecting
+    attachment-carrying packages; ``_ALLOWED_ENTRIES`` is NOT extended in PR ③.
+    """
+
+    def test_zip_with_attachment_entry_is_rejected(self) -> None:
+        """A package carrying any attachment file fails on unexpected-entries."""
+        manifest_bytes = yaml.safe_dump(
+            _valid_manifest(), sort_keys=False, allow_unicode=True,
+        ).encode("utf-8")
+        source_bytes = _valid_source().encode("utf-8")
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.yaml", manifest_bytes)
+            archive.writestr("source.md", source_bytes)
+            archive.writestr("ejemplos/Axill.md", b"# attachment\n")
+            archive.writestr("checksums.json", json.dumps({
+                "manifest.yaml": methodology_trust._sha256(manifest_bytes),
+                "source.md": methodology_trust._sha256(source_bytes),
+            }))
+        verdict = inspect_package(buffer.getvalue())
+        assert not verdict.ok
+        assert any("unexpected entries" in issue for issue in verdict.issues)
+
+    def test_allowed_entries_never_extended(self) -> None:
+        """Assertion-only lock: PR ③ ships zero attachment zip entries."""
+        assert methodology_trust._ALLOWED_ENTRIES == frozenset({
+            "manifest.yaml", "source.md", "checksums.json", "signature",
+        })
 
 
 class TestChecksumIntegrity:

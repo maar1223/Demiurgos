@@ -122,6 +122,7 @@ from wiki.world_authority import (
 from wiki.world_authority import detect_legacy_layout
 from methodology_library import (
     AlreadyPublishedError,
+    AttachmentLimitError,
     CompanionLimitError,
     DEFAULT_FLOW_TYPE,
     GUIDED_CHARACTER_FLOW,
@@ -132,6 +133,7 @@ from methodology_library import (
     FOUNDATIONAL_CHARACTER_SKILL_ID,
     ValidationError,
 )
+from methodology_compiler import AttachmentEntry
 from methodology_seed import install_seeds
 from methodology_trust import QuarantineRecord, QuarantineStore, build_package
 from semantic_intent import (
@@ -1721,6 +1723,20 @@ class GuidedSerializeRequest(BaseModel):
 # Methodology library contracts (Taller de Herramientas)
 # ---------------------------------------------------------------------------
 
+class AttachmentEntryRequest(BaseModel):
+    """One attachment entry wire shape (contract §4, SR4).
+
+    Shape-validated at the boundary; the compiler enforces the count/bytes/
+    path limits on publish (R2) — a draft POST with a malformed entry is
+    rejected by FastAPI before any library call.
+    """
+
+    path: str
+    sha256: str
+    bytes: int
+    nivel: str
+
+
 class MethodologyDraftRequest(BaseModel):
     skill_id: str
     version: str
@@ -1742,6 +1758,9 @@ class MethodologyDraftRequest(BaseModel):
     # Trust values are server-derived exclusively.
     clasificacion: str | None = None
     trust_attributes: list[str] = []
+    # Attachment entries (contract §4, SR4): optional and backward-compatible;
+    # the compiler enforces shape/count/bytes on publish (R2).
+    adjuntos: list[AttachmentEntryRequest] = []
 
 
 class MethodologyActivateRequest(BaseModel):
@@ -7764,6 +7783,10 @@ def methodologies_create_draft(body: MethodologyDraftRequest, request: Request):
         taller=body.taller,
         categoria_funcional=body.categoria_funcional,
         etiquetas=tuple(body.etiquetas or []),
+        adjuntos=tuple(
+            AttachmentEntry(path=e.path, sha256=e.sha256, bytes=e.bytes, nivel=e.nivel)
+            for e in body.adjuntos
+        ),
     )
     draft = library.get_draft(draft_id)
     assert draft is not None
@@ -7792,6 +7815,12 @@ def methodologies_publish(draft_id: str, request: Request):
     library = _methodology_library()
     try:
         published = library.publish(draft_id)
+    except AttachmentLimitError as exc:
+        # R2: adjuntos overflow/oversize — 422 BEFORE the generic
+        # ValidationError handler so the code stays distinct.
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "attachment_limit_reached",
+        })
     except ValidationError as exc:
         return JSONResponse(status_code=422, content={
             "detail": str(exc), "code": "validation_error",
@@ -7807,7 +7836,7 @@ def methodologies_publish(draft_id: str, request: Request):
         return JSONResponse(status_code=409, content={
             "detail": str(exc), "code": "reserved_skill_id",
         })
-    return {
+    payload = {
         "skill_id": published.skill_id,
         "version": published.version,
         "name": published.name,
@@ -7815,6 +7844,11 @@ def methodologies_publish(draft_id: str, request: Request):
         "digest": published.digest,
         "published_at": published.published_at,
     }
+    # Conditional echo (4.2): the response gains ``adjuntos`` only when entries
+    # exist, so pre-PR③ payloads stay byte-identical.
+    if published.adjuntos:
+        payload["adjuntos"] = [entry.as_dict() for entry in published.adjuntos]
+    return payload
 
 
 @app.post("/api/methodologies/activate")

@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Any, Literal, Mapping
 
 from methodology_compiler import (
+    AttachmentEntry,
     CompileResult,
     CompiledMethodology,
     MethodologyIssue,
@@ -98,6 +99,16 @@ class CompanionLimitError(ValidationError):
     """The per-world companion cap (MAX_COMPANIONS_PER_WORLD) was reached."""
 
 
+class AttachmentLimitError(ValidationError):
+    """Compile issues on the ``adjuntos`` field (overflow/oversize, R2).
+
+    Raised by ``publish()`` when the compiler rejects attachment entries
+    (code ``invalid-value``/``oversized``, field ``adjuntos``); the API maps
+    it to 422 ``attachment_limit_reached`` before the generic
+    ``ValidationError`` handler.
+    """
+
+
 @dataclass
 class Draft:
     """An editable methodology draft. Never reaches runtime until published."""
@@ -126,6 +137,10 @@ class Draft:
     # the manifest and digest (metadata, not identity — REQ-CC-22).
     parent_skill_id: str | None = None
     parent_version: str | None = None
+    # Attachment entries (contract §4, SR4): metadata only, excluded from the
+    # digest canonical (per-attachment sha256 IS the pin, D1). Optional with
+    # defaults so old records deserialize safely.
+    adjuntos: tuple[AttachmentEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -154,6 +169,9 @@ class PublishedVersion:
     # only; EXCLUDED from manifest/digest — REQ-CC-22).
     parent_skill_id: str | None = None
     parent_version: str | None = None
+    # Attachment entries (contract §4, SR4): metadata only; excluded from the
+    # digest canonical (per-attachment sha256 IS the pin, D1).
+    adjuntos: tuple[AttachmentEntry, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -258,6 +276,7 @@ class MethodologyLibrary:
         etiquetas: tuple[str, ...] = (),
         clasificacion: str | None = None,
         trust_attributes: tuple[str, ...] = (),
+        adjuntos: tuple[AttachmentEntry, ...] = (),
     ) -> str:
         draft_id = uuid.uuid4().hex[:12]
         now = _utcnow()
@@ -277,6 +296,7 @@ class MethodologyLibrary:
                 "etiquetas": list(etiquetas),
                 "clasificacion": clasificacion,
                 "trust_attributes": list(trust_attributes),
+                "adjuntos": [entry.as_dict() for entry in adjuntos],
                 "created_at": now,
                 "updated_at": now,
             }
@@ -483,6 +503,7 @@ class MethodologyLibrary:
             "talleres_compatibles": list(draft.talleres_compatibles),
             "categoria_funcional": draft.categoria_funcional,
             "etiquetas": list(draft.etiquetas),
+            "adjuntos": [entry.as_dict() for entry in draft.adjuntos],
         }
         return compile_methodology(manifest, draft.source)
 
@@ -499,6 +520,7 @@ class MethodologyLibrary:
             "talleres_compatibles": list(draft.talleres_compatibles),
             "categoria_funcional": draft.categoria_funcional,
             "etiquetas": list(draft.etiquetas),
+            "adjuntos": [entry.as_dict() for entry in draft.adjuntos],
         }
 
     # ------------------------------------------------------------------ #
@@ -508,6 +530,19 @@ class MethodologyLibrary:
     def publish(self, draft_id: str) -> PublishedVersion:
         result = self.compile_draft(draft_id)
         if not result.ok or result.compiled is None:
+            # R2: attachment-limit compile failures (field ``adjuntos`` with
+            # code ``invalid-value``/``oversized``) surface as a distinct
+            # error so the API maps them to 422 ``attachment_limit_reached``
+            # BEFORE the generic ValidationError handler.
+            if any(
+                issue.field == "adjuntos"
+                and issue.code in ("invalid-value", "oversized")
+                for issue in result.issues
+            ):
+                raise AttachmentLimitError(
+                    "draft failed compiler validation: "
+                    + "; ".join(issue.message for issue in result.issues)
+                )
             raise ValidationError(
                 "draft failed compiler validation: "
                 + "; ".join(issue.message for issue in result.issues)
@@ -621,6 +656,7 @@ class MethodologyLibrary:
             "trust_attributes": list(trust_attributes),
             "parent_skill_id": parent_skill_id,
             "parent_version": parent_version,
+            "adjuntos": [entry.as_dict() for entry in compiled.adjuntos],
         }
 
     def install_published_version(
@@ -1019,6 +1055,9 @@ class MethodologyLibrary:
             trust_attributes=tuple(record.get("trust_attributes") or ()),
             parent_skill_id=record.get("parent_skill_id"),
             parent_version=record.get("parent_version"),
+            adjuntos=tuple(
+                AttachmentEntry(**entry) for entry in (record.get("adjuntos") or ())
+            ),
         )
 
     @staticmethod
@@ -1041,6 +1080,9 @@ class MethodologyLibrary:
             trust_attributes=tuple(record.get("trust_attributes") or ()),
             parent_skill_id=record.get("parent_skill_id"),
             parent_version=record.get("parent_version"),
+            adjuntos=tuple(
+                AttachmentEntry(**entry) for entry in (record.get("adjuntos") or ())
+            ),
         )
 
     @staticmethod

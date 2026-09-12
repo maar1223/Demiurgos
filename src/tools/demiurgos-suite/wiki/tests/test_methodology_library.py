@@ -33,7 +33,7 @@ from methodology_library import (  # noqa: E402
     _bump_version,
     _version_key,
 )
-from methodology_compiler import compile_methodology  # noqa: E402
+from methodology_compiler import AttachmentEntry, compile_methodology  # noqa: E402
 from methodology_trust import OFFICIAL, PERSONALIZADAS  # noqa: E402
 
 
@@ -651,6 +651,86 @@ class TestInventoryRecords:
         assert published.etiquetas == ("lore",)
         assert published.clasificacion == "Comunitarias"
         assert published.trust_attributes == ()
+
+
+class TestAdjuntosRegistry:
+    """Contract §4 (SR4): the published record carries ``adjuntos`` additively.
+
+    R4: ``_published_record`` always writes the field and ``_published_from``
+    decodes it with a ``.get()`` default, so pre-PR③ records (no ``adjuntos``)
+    load unchanged with an empty tuple and a publish with entries round-trips
+    every entry and field intact (S6/S7).
+    """
+
+    def _entries(self) -> tuple[AttachmentEntry, ...]:
+        return (
+            AttachmentEntry(
+                path="ejemplos/Axill_Garner.md", sha256="a" * 64,
+                bytes=6115, nivel="1º",
+            ),
+            AttachmentEntry(
+                path="ejemplos/Villano_Korrane.md", sha256="b" * 64,
+                bytes=9802, nivel="3º",
+            ),
+        )
+
+    def test_publish_with_entries_round_trips_every_field(self, tmp_path: Path) -> None:
+        """S7: publish with two entries — every entry and field survives."""
+        store = tmp_path / "library.json"
+        library = MethodologyLibrary(store)
+        draft_id = library.create_draft(
+            skill_id=_valid_manifest()["skill_id"],
+            version=_valid_manifest()["version"],
+            name=_valid_manifest()["name"],
+            source=_valid_source(),
+            description=_valid_manifest()["description"],
+            adjuntos=self._entries(),
+        )
+        published = library.publish(draft_id)
+        assert [e.as_dict() for e in published.adjuntos] == [
+            e.as_dict() for e in self._entries()
+        ]
+        read_back = library.get_published(
+            _valid_manifest()["skill_id"], _valid_manifest()["version"],
+        )
+        assert read_back is not None
+        assert [e.as_dict() for e in read_back.adjuntos] == [
+            e.as_dict() for e in self._entries()
+        ]
+        reloaded = MethodologyLibrary(store)
+        persisted = reloaded.get_published(
+            _valid_manifest()["skill_id"], _valid_manifest()["version"],
+        )
+        assert persisted is not None
+        assert persisted.adjuntos == self._entries()
+
+    def test_publish_without_adjuntos_defaults_empty(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        published = library.publish(_draft(library))
+        assert published.adjuntos == ()
+
+    def test_pre_pr3_record_without_adjuntos_decodes_empty(self, tmp_path: Path) -> None:
+        """S6: a hand-written pre-PR③ record (no ``adjuntos``) decodes with
+        an empty default — additive back-compat, nothing dropped."""
+        store = tmp_path / "library.json"
+        legacy_payload = {
+            "drafts": {},
+            "published": {
+                "guided-character-v1@1.2.0": {
+                    "skill_id": "guided-character-v1", "version": "1.2.0",
+                    "name": "Old published", "description": "", "phases": [],
+                    "language": "es", "source": "x\n", "digest": "a" * 64,
+                    "published_at": "2026-01-01T00:00:00+00:00", "deleted_at": None,
+                },
+            },
+            "activations": {},
+            "history": {},
+        }
+        store.write_text(json.dumps(legacy_payload), encoding="utf-8")
+        library = MethodologyLibrary(store)
+        published = library.get_published("guided-character-v1", "1.2.0")
+        assert published is not None
+        assert published.adjuntos == ()
 
 
 # ---------------------------------------------------------------------------

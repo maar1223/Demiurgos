@@ -138,6 +138,42 @@ def _verify_entry(entry_dir: Path) -> SeedEntry:
             f"manifest skill_id {skill_id!r}."
         )
 
+    # Contract §4 (SR4): declared attachment carriers are verified against
+    # BOTH the manifest ``sha256`` and ``checksums.json`` — missing entry,
+    # missing file, or digest mismatch fails the whole catalog (no partial
+    # load). An empty/absent ``adjuntos`` list adds zero code paths, so
+    # zero-attachment seeds behave byte-identically to pre-PR③ (S10).
+    for entry in (manifest.get("adjuntos") or []):
+        if not isinstance(entry, dict):
+            raise SeedIntegrityError(
+                f"Seed entry {entry_dir.name!r}: manifest adjuntos entries "
+                "must be mappings."
+            )
+        path = entry.get("path")
+        if not isinstance(path, str) or not path.strip():
+            raise SeedIntegrityError(
+                f"Seed entry {entry_dir.name!r}: adjuntos entry is missing a path."
+            )
+        carrier_path = entry_dir / path
+        if not carrier_path.is_file():
+            raise SeedIntegrityError(
+                f"Seed entry {entry_dir.name!r}: declared attachment {path!r} "
+                "is missing from the bundled files."
+            )
+        carrier_sha = _sha256(carrier_path.read_bytes())
+        declared_sha = entry.get("sha256")
+        if not isinstance(declared_sha, str) or carrier_sha != declared_sha:
+            raise SeedIntegrityError(
+                f"Seed entry {entry_dir.name!r}: attachment {path!r} does not "
+                "match its declared sha256 digest."
+            )
+        checksum_sha = declared.get(path)
+        if not isinstance(checksum_sha, str) or carrier_sha != checksum_sha:
+            raise SeedIntegrityError(
+                f"Seed entry {entry_dir.name!r}: attachment {path!r} does not "
+                "match its checksums.json entry."
+            )
+
     return SeedEntry(
         skill_id=skill_id,
         version=version,

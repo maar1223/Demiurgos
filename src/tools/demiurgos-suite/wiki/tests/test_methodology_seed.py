@@ -49,25 +49,43 @@ def _write_seed(
     *,
     manifest: dict | None = None,
     source: str = "## Metodología de prueba\n\nContenido de prueba.\n",
+    adjuntos: list[dict] | None = None,
 ) -> Path:
     """Write a valid seed entry mirroring the trust-boundary canonical bytes.
 
     ``manifest.yaml`` is serialized with the same YAML dump the package
     builder uses and ``checksums.json`` holds the SHA-256 of the exact bundled
-    bytes, so the fixture matches real seed semantics.
+    bytes, so the fixture matches real seed semantics. When ``adjuntos`` is
+    given, each entry's carrier file is written (deterministic bytes derived
+    from the path) and a ``sha256`` left as ``None`` is filled from the actual
+    carrier bytes; the carrier path joins ``checksums.json`` exactly like a
+    real seed package would.
     """
     entry_dir = root / skill_id
     entry_dir.mkdir(parents=True, exist_ok=True)
+    manifest_dict = dict(manifest or _valid_manifest(skill_id))
+    carriers: dict[str, bytes] = {}
+    for entry in (adjuntos or []):
+        path = entry["path"]
+        carrier = f"# {path}\n\nContenido de ejemplo.\n".encode("utf-8")
+        if entry.get("sha256") is None:
+            entry["sha256"] = hashlib.sha256(carrier).hexdigest()
+        carriers[path] = carrier
+    if adjuntos is not None:
+        manifest_dict["adjuntos"] = adjuntos
     manifest_bytes = yaml.safe_dump(
-        dict(manifest or _valid_manifest(skill_id)),
-        sort_keys=False, allow_unicode=True,
+        manifest_dict, sort_keys=False, allow_unicode=True,
     ).encode("utf-8")
     source_bytes = source.encode("utf-8")
     (entry_dir / "manifest.yaml").write_bytes(manifest_bytes)
     (entry_dir / "source.md").write_bytes(source_bytes)
+    for path, carrier in carriers.items():
+        (entry_dir / path).parent.mkdir(parents=True, exist_ok=True)
+        (entry_dir / path).write_bytes(carrier)
     checksums = {
         "manifest.yaml": hashlib.sha256(manifest_bytes).hexdigest(),
         "source.md": hashlib.sha256(source_bytes).hexdigest(),
+        **{path: hashlib.sha256(carrier).hexdigest() for path, carrier in carriers.items()},
     }
     (entry_dir / "checksums.json").write_text(
         json.dumps(checksums, sort_keys=True, separators=(",", ":")),
@@ -175,6 +193,82 @@ class TestSeedGitTracking:
                 capture_output=True, text=True, check=False,
             )
             assert ignored.returncode == 0, f"{path} must be git-ignored"
+
+
+class TestSeedAdjuntosVerification:
+    """R3/R6 (S5/S9/S10): declared attachment carriers are verified against the
+    manifest ``sha256`` AND ``checksums.json``; zero-attachment seeds behave
+    byte-identically to pre-PR③ (same validation, same error texts).
+    """
+
+    def _adjunto(self, path: str = "ejemplos/Axill.md", sha256: str | None = None) -> dict:
+        return {"path": path, "sha256": sha256, "bytes": 1024, "nivel": "1º"}
+
+    def test_carrier_verified_and_manifest_compiler_clean(self, tmp_path: Path) -> None:
+        """S5: a seed with a declared attachment loads and compiles clean."""
+        _write_seed(tmp_path, "demo-skill", adjuntos=[self._adjunto()])
+        catalog = load_seed_catalog(tmp_path)
+        assert len(catalog) == 1
+        assert catalog[0].manifest["adjuntos"][0]["path"] == "ejemplos/Axill.md"
+        result = compile_methodology(catalog[0].manifest, catalog[0].source)
+        assert result.ok, [issue.message for issue in result.issues]
+
+    def test_tampered_carrier_raises_with_no_partial_catalog(self, tmp_path: Path) -> None:
+        """S9: modifying the carrier bytes fails the whole catalog load."""
+        _write_seed(tmp_path, "good-skill")
+        bad = _write_seed(tmp_path, "bad-skill", adjuntos=[self._adjunto()])
+        (bad / "ejemplos" / "Axill.md").write_bytes(b"tampered bytes")
+        with pytest.raises(SeedIntegrityError):
+            load_seed_catalog(tmp_path)
+
+    def test_absent_carrier_raises(self, tmp_path: Path) -> None:
+        entry = _write_seed(tmp_path, "demo-skill", adjuntos=[self._adjunto()])
+        (entry / "ejemplos" / "Axill.md").unlink()
+        with pytest.raises(SeedIntegrityError):
+            load_seed_catalog(tmp_path)
+
+    def test_missing_checksums_entry_raises(self, tmp_path: Path) -> None:
+        entry = _write_seed(tmp_path, "demo-skill", adjuntos=[self._adjunto()])
+        checksums = json.loads((entry / "checksums.json").read_text(encoding="utf-8"))
+        checksums.pop("ejemplos/Axill.md")
+        (entry / "checksums.json").write_text(json.dumps(checksums), encoding="utf-8")
+        with pytest.raises(SeedIntegrityError):
+            load_seed_catalog(tmp_path)
+
+    def test_declared_sha256_mismatch_raises(self, tmp_path: Path) -> None:
+        """R3: manifest sha256 not matching observed carrier bytes fails closed."""
+        _write_seed(tmp_path, "demo-skill", adjuntos=[self._adjunto(sha256="0" * 64)])
+        with pytest.raises(SeedIntegrityError):
+            load_seed_catalog(tmp_path)
+
+    def test_zero_attachment_seed_is_byte_identical(self, tmp_path: Path) -> None:
+        """S10/R6 + S8/R5: the real zero-adjunto seed validates identically,
+        keeps its canonical digest ``2ae521a0…``, and installs without ever
+        reporting a conflict."""
+        entry = load_seed_catalog(SEED_ROOT)[0]
+        result = compile_methodology(entry.manifest, entry.source)
+        assert result.ok, [issue.message for issue in result.issues]
+        assert result.compiled is not None
+        assert result.compiled.digest == (
+            "2ae521a09bf014ccdefd7296f6ec94092aa6421703802f2d432d9eaf4f1bbe81"
+        )
+        library = MethodologyLibrary(tmp_path / "library.json")
+        report = install_seeds(library, SEED_ROOT)
+        assert report.installed == 1 and report.conflict == 0
+
+    def test_zero_attachment_corruption_error_text_is_unchanged(self, tmp_path: Path) -> None:
+        """S10: a zero-attachment integrity failure keeps the exact pre-PR③
+        error text — the extension adds no new code path for empty lists."""
+        entry = _write_seed(tmp_path, "demo-skill")
+        (entry / "source.md").write_text(
+            "## Metodología de prueba\n\nContenido modificado.\n", encoding="utf-8",
+        )
+        with pytest.raises(SeedIntegrityError) as excinfo:
+            load_seed_catalog(tmp_path)
+        assert str(excinfo.value) == (
+            "Seed entry 'demo-skill': integrity checksum mismatch — "
+            "the bundled content was modified."
+        )
 
 
 class TestInstallSeeds:

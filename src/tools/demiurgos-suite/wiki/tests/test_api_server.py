@@ -2400,6 +2400,49 @@ class TestMethodologyApi:
         assert record.clasificacion == "Personalizadas"
         assert record.trust_attributes == ()
 
+    def test_publish_attachment_overflow_returns_422_and_never_mutates(
+        self, client: TestClient, monkeypatch,
+    ):
+        """S4/R2: an adjuntos overflow at publish returns 422 with code
+        ``attachment_limit_reached`` and ZERO mutation — no record is written."""
+        _principal(monkeypatch, "author-1")
+        overflow = [
+            {
+                "path": f"ejemplos/e{i}.md",
+                "sha256": f"{i:064x}",
+                "bytes": 1024,
+                "nivel": "1º",
+            }
+            for i in range(9)
+        ]
+        draft = client.post("/api/methodologies/drafts", json={
+            "skill_id": "guided-character-v1",
+            "version": "1.2.0",
+            "name": "Guided character methodology",
+            "source": "## Construcción segura\n\nHaz preguntas de a una.\n",
+            "adjuntos": overflow,
+        })
+        assert draft.status_code == 200, draft.text
+        published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
+        assert published.status_code == 422
+        assert published.json()["code"] == "attachment_limit_reached"
+        # Zero mutation: nothing published, the draft remains editable.
+        assert api_server._methodology_library().published_versions_for("guided-character-v1") == []
+        assert api_server._methodology_library().get_draft(draft.json()["draft_id"]) is not None
+
+    def test_publish_echoes_adjuntos_only_when_present(self, client: TestClient, monkeypatch):
+        """4.2: the publish response gains ``adjuntos`` only when entries exist —
+        today's (pre-PR③) payloads stay byte-identical."""
+        _principal(monkeypatch, "author-1")
+        draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
+        assert draft.status_code == 200, draft.text
+        published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
+        assert published.status_code == 200, published.text
+        assert "adjuntos" not in published.json()
+        assert set(published.json()) == {
+            "skill_id", "version", "name", "description", "digest", "published_at",
+        }
+
     def test_activate_requires_published_version(self, client: TestClient, monkeypatch):
         _principal(monkeypatch, "author-1")
         activated = client.post("/api/methodologies/activate", json={
