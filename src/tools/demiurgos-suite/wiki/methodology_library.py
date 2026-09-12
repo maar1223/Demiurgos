@@ -52,6 +52,15 @@ FOUNDATIONAL_CHARACTER_SKILL_ID = "narrative-character-creation"
 # per-flow slot mechanism: adding a guided flow costs one constant + one set
 # entry + its fallback branch (design D2 — no registry object).
 GUIDED_CHARACTER_FLOW = "guided-character"
+# RESERVED (WARNING-1 resolution, PR ②): ``co-creation`` is documented and
+# kept but deliberately NOT bound as an activation slot. Co-created skills
+# activate into the guided-character slot (``activate_co_creation`` calls
+# ``activate`` without a flow arg), so binding this constant would orphan them
+# from the guided flow they govern and from the skill-router candidate pool
+# (which reads GUIDED_CHARACTER_FLOW only). It stays as the spec R1 "slots are
+# independent" flow-B test vehicle and the API-reachable generic flow. Do not
+# remove it; do not bind it without also unioning co-creation slots into the
+# router pool.
 CO_CREATION_FLOW = "co-creation"
 SUPPORTED_FLOW_TYPES: frozenset[str] = frozenset({
     GUIDED_CHARACTER_FLOW,

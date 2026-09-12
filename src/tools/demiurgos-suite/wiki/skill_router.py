@@ -33,6 +33,13 @@ TRANSVERSAL_SKILLS: frozenset[str] = frozenset({
 
 CONFIDENCE_THRESHOLD = 0.7
 
+# Companion near-tie margin (contract §6, PR ②): when BOTH top-2 classifier
+# choices are companions and winner − runner-up confidence is below this
+# margin, routing fails open to ``skill_id=None`` (zero injection via
+# ``_companion_contract_for``). The rule is vacuous with fewer than two
+# companions or a non-companion runner-up.
+NEAR_TIE_MARGIN = 0.15
+
 # Companion-world classification cap: each per-line description is collapsed
 # (newlines -> spaces) and clipped to this many characters at prompt build, so
 # the total classification prompt stays within the bounded token budget (DD2).
@@ -45,7 +52,8 @@ class SkillRouteResult:
 
     ``skill_id`` is None for a non-guided generic response. ``routed`` is True
     exactly when ``skill_id`` is not None. ``source`` records how the decision
-    was reached: ``"llm"`` or ``"fallback"``.
+    was reached: ``"llm"`` (above-threshold winner), ``"ambiguous"`` (companion
+    near-tie fail-open), or ``"fallback"`` (degraded fail-open).
     """
 
     skill_id: str | None
@@ -129,7 +137,24 @@ class SkillRouter:
         skill_id = output.get("skill_id")
         if skill_id is not None and not isinstance(skill_id, str):
             return None
-        return {"skill_id": skill_id, "confidence": output.get("confidence", 0.0)}
+        # Classifier top-2 output contract (PR ②): the runner-up is optional.
+        # Absent or malformed runner-up fields parse to None so the near-tie
+        # margin rule stays vacuous — never an error.
+        runner_up_id = output.get("runner_up_skill_id")
+        if runner_up_id is not None and not isinstance(runner_up_id, str):
+            runner_up_id = None
+        runner_up_confidence = output.get("runner_up_confidence")
+        if runner_up_confidence is not None:
+            try:
+                runner_up_confidence = float(runner_up_confidence)
+            except (TypeError, ValueError):
+                runner_up_confidence = None
+        return {
+            "skill_id": skill_id,
+            "confidence": output.get("confidence", 0.0),
+            "runner_up_skill_id": runner_up_id,
+            "runner_up_confidence": runner_up_confidence,
+        }
 
     def _build_classification_prompt(self, prompt: str, candidates: list[str]) -> str:
         candidate_list = ", ".join(candidates)
@@ -161,14 +186,20 @@ class SkillRouter:
             return None
         return self._clip_description(description)
 
-    def _companion_candidates(self, mundo: str) -> list[tuple[str, str | None]] | None:
+    def _companion_candidates(
+        self, mundo: str,
+    ) -> tuple[list[tuple[str, str | None]], frozenset[str]] | None:
         """Ordered description-aware candidate set for a companion world.
 
         Returns ``None`` when the world has no companions, so callers keep the
-        byte-identical legacy bare-id prompt path. Order (DD2): companions
-        sorted by ``skill_id`` -> the slot activation skill (if any) -> sorted
-        transversals. Descriptions come from the published record and are
-        clipped to 160 chars; transversals (versionless) stay bare ids.
+        byte-identical legacy bare-id prompt path. Otherwise returns
+        ``(ordered, companion_ids)``: ``ordered`` is the candidate list
+        (companions sorted by ``skill_id`` -> the slot activation skill (if
+        any) -> sorted transversals) and ``companion_ids`` is the set of the
+        world's companion skill ids — the near-tie margin (SR3) applies only
+        when BOTH top-2 classifier choices are in this set. Descriptions come
+        from the published record and are clipped to 160 chars; transversals
+        (versionless) stay bare ids.
         """
         if self._library is None:
             return None
@@ -179,12 +210,14 @@ class SkillRouter:
         if not companions:
             return None
         ordered: list[tuple[str, str | None]] = []
+        companion_ids: set[str] = set()
         seen: set[str] = set()
         for comp in sorted(companions, key=lambda c: getattr(c, "skill_id", "") or ""):
             skill_id = getattr(comp, "skill_id", None)
             if not skill_id or skill_id in seen:
                 continue
             seen.add(skill_id)
+            companion_ids.add(skill_id)
             ordered.append(
                 (skill_id, self._description_for(skill_id, getattr(comp, "version", None)))
             )
@@ -203,7 +236,7 @@ class SkillRouter:
             if skill_id not in seen:
                 seen.add(skill_id)
                 ordered.append((skill_id, None))
-        return ordered
+        return ordered, frozenset(companion_ids)
 
     def _build_classification_prompt_with_descriptions(
         self, prompt: str, candidates: list[tuple[str, str | None]],
@@ -221,8 +254,10 @@ class SkillRouter:
             "If several skills could match, prefer the world-specific (non-transversal) "
             "skill listed first.\n"
             'Return ONLY a JSON object: {"skill_id": "<id or null>", '
-            '"confidence": <0.0-1.0>}.\n'
-            'If no skill matches, return {"skill_id": null, "confidence": 0.0}.\n'
+            '"confidence": <0.0-1.0>, "runner_up_skill_id": "<id or null>", '
+            '"runner_up_confidence": <0.0-1.0>}.\n'
+            'If no skill matches, return {"skill_id": null, "confidence": 0.0, '
+            '"runner_up_skill_id": null, "runner_up_confidence": 0.0}.\n'
             f"User intent: {prompt}"
         )
 
@@ -260,23 +295,25 @@ class SkillRouter:
     ) -> SkillRouteResult:
         """Route ``prompt`` for world ``mundo`` to a skill.
 
-        Order: LLM classification → threshold check → fail-open to generic.
-        ``distilled_state`` is accepted for interface symmetry with the memory
-        layer but is not required for routing.
+        Order: LLM classification → near-tie margin → threshold check →
+        fail-open to generic. ``distilled_state`` is accepted for interface
+        symmetry with the memory layer but is not required for routing.
 
         Companion worlds (≥1 companion) classify over the description-aware
         ordered candidate set (DD2); companion-free worlds keep the byte-identical
-        legacy bare-id prompt. The keyword layer is retired, so degraded mode
-        (provider absent/failed, or a below-threshold verdict) fails open to the
-        generic assistant with zero skill injection.
+        legacy bare-id prompt. When both top-2 classifier choices are companions
+        and their confidence gap is below ``NEAR_TIE_MARGIN``, routing fails open
+        with ``source="ambiguous"`` (zero injection); below-threshold verdicts and
+        degraded mode fail open with ``source="fallback"``.
         """
         companion_candidates = self._companion_candidates(mundo)
         if companion_candidates is not None:
-            candidate_ids = [skill_id for skill_id, _ in companion_candidates]
-            candidate_pool = companion_candidates
+            candidate_pool, companion_ids = companion_candidates
+            candidate_ids = [skill_id for skill_id, _ in candidate_pool]
         else:
             candidate_ids = self._available_skills(mundo)
             candidate_pool = candidate_ids
+            companion_ids = frozenset()
         if not candidate_ids:
             return SkillRouteResult(None, 0.0, "fallback", False)
 
@@ -288,6 +325,17 @@ class SkillRouter:
             except (TypeError, ValueError):
                 confidence = 0.0
             if skill_id in candidate_ids and confidence >= CONFIDENCE_THRESHOLD:
+                # Companion near-tie (SR3): both top-2 choices are companions
+                # and too close to call → fail open, zero injection. Vacuous
+                # when the runner-up is absent/malformed (None) or not in the
+                # companion set, or when the winner is not a companion.
+                runner_up_id = classification.get("runner_up_skill_id")
+                runner_up_conf = classification.get("runner_up_confidence")
+                if (runner_up_id in companion_ids
+                        and skill_id in companion_ids
+                        and runner_up_conf is not None
+                        and confidence - runner_up_conf < NEAR_TIE_MARGIN):
+                    return SkillRouteResult(None, 0.0, "ambiguous", False)
                 return SkillRouteResult(skill_id, confidence, "llm", True)
             # Low confidence or an invalid skill: fail open directly.
             return SkillRouteResult(None, 0.0, "fallback", False)
