@@ -1548,6 +1548,9 @@ export interface MethodologyActivation {
   version: string;
   digest: string;
   activated_at: string;
+  /** The guided-flow type this slot belongs to (SR1). Additive — the server
+   *  already ships it; absent on pre-① payloads (optional, additive-only). */
+  flow_type?: string;
 }
 
 /** A published methodology version pinned as a per-world companion skill
