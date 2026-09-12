@@ -117,6 +117,19 @@
 >   estructura** (no canon). Los fundacionales (`Villano_Korrane.md`) son **agnósticos al mundo**:
 >   sin Stal, sin lugares, sin razas de mundo. El color de mundo lo aporta la Skill Personalizada
 >   por Mundo (decisión #10).
+>
+> **Divergencia docs ↔ semilla (PR ⑥, intencional).** Las 3 copias fundacionales que el runtime sirve
+> como adjuntos viven en `data/methodology/seeds/narrative-character-creation/` y fueron
+> **reescritas agnósticas al mundo** en el PR ⑥: sin "Axill"/"Kae"/"Ciudad Mineral"/"Humano
+> Vibrante"/"escena del mercado"/"compañía de plataformas" (roles genéricos), errata
+> "Cresció"→"Creció" y títulos unificados. Los originales de `examples/` de este README **no** se
+> tocaron: son textos **pre-⑥** que conservan el color de mundo. El byte-mirror docs ↔ semilla queda
+> **intencionalmente roto** y se acepta (decisión D6, PR ⑥ `copy-polish-pass`).
+>
+> **Set de 5 (D5 — cierre del registro).** `Axill_Garner.md` y `Kae_Turant.md` **permanecen
+> docs-only**: el runtime sirve **un pin por nivel narrativo** (1º/2º/3º), por lo que un segundo
+> carrier de 1º nivel nunca se sirve; además ambos traen color de mundo Vibrantes, que contradice el
+> principio fundacional agnóstico (#10).
 
 ## Decisiones abiertas (para resolver en la skill)
 
