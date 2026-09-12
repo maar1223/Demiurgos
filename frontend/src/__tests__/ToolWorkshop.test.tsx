@@ -661,7 +661,7 @@ describe("ToolWorkshop", () => {
     await user.click(screen.getByRole("button", { name: "Cambiar" }));
     await user.click(screen.getByText("Guided character methodology"));
     const chip = await screen.findByRole("switch", {
-      name: "Compañera en Vibrantes",
+      name: "Metodología de chat en Vibrantes",
     });
 
     const statusCallsBefore = (getMethodologyStatus as Mock).mock.calls.length;
@@ -702,13 +702,13 @@ describe("ToolWorkshop", () => {
     await user.click(screen.getByRole("button", { name: "Cambiar" }));
     await user.click(screen.getByText("Guided character methodology"));
     const chip = await screen.findByRole("switch", {
-      name: "Compañera en Vibrantes",
+      name: "Metodología de chat en Vibrantes",
     });
     await user.click(chip);
 
     await waitFor(() => {
       expect(
-        screen.getByText(/No se pudo actualizar la skill compañera/),
+        screen.getByText(/No se pudo actualizar la skill de metodología de chat/),
       ).toBeInTheDocument();
     });
   });

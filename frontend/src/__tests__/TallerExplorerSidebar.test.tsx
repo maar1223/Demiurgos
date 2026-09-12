@@ -76,9 +76,9 @@ describe("TallerExplorerSidebar companion badge (R-UI chips)", () => {
     renderSidebar();
 
     expect(screen.getByText("Eneagrama")).toBeInTheDocument();
-    // "Compañera" renders as an attributed axis-2 chip (axis-binding-ui R1) —
-    // copy byte-frozen (R7), the assertion targets the attributed surface.
-    const companionChip = screen.getByText("Compañera").closest("[data-axis]");
+    // "Método en chat" renders as an attributed axis-2 chip (axis-binding-ui R1) —
+    // copy committed in ⑥, the assertion targets the attributed surface.
+    const companionChip = screen.getByText("Método en chat").closest("[data-axis]");
     expect(companionChip).toHaveAttribute("data-axis", "companion");
   });
 
@@ -86,6 +86,6 @@ describe("TallerExplorerSidebar companion badge (R-UI chips)", () => {
     renderSidebar({ status: { ...status, companions: {} } });
 
     expect(screen.getByText("Eneagrama")).toBeInTheDocument();
-    expect(screen.queryByText("Compañera")).not.toBeInTheDocument();
+    expect(screen.queryByText("Método en chat")).not.toBeInTheDocument();
   });
 });

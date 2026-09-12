@@ -26,7 +26,7 @@ interface TallerTreeProps {
    *  world) and the sin-taller bucket badges. */
   active?: MethodologyActivation;
   /** Companions of the current world (status-derived, R-UI): rows whose
-   *  skill@version is ON render a read-only "Compañera" badge. */
+   *  skill@version is ON render a read-only "Método en chat" badge. */
   companions?: MethodologyCompanion[];
   onActivate: (skillId: string, version: string) => void;
   busy: boolean;

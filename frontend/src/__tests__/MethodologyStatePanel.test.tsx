@@ -64,7 +64,7 @@ const SCOPE_TERM =
 /** REQ-TRE-6 S1 conflict copy — verbatim, taller names interpolated via
  *  OPERATIONAL_TALLER_LABELS (Taller de Mundo / Taller de Ideas). */
 const BLOCKED_COPY =
-  "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.";
+  "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.";
 
 /** A transversal skill of the active taller "Mundo" (own taller Ideas) that
  *  is NOT active and NOT blocked — the scope block surface. */
@@ -212,7 +212,7 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     renderPanel({ selected: null });
 
     expect(
-      screen.getByText(/Seleccioná una metodología para ver su estado/),
+      screen.getByText(/Selecciona una metodología para ver su estado/),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Activar" })).not.toBeInTheDocument();
   });
@@ -292,14 +292,14 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     );
     expect(screen.getByRole("button", { name: "Adaptar" })).toHaveAttribute(
       "title",
-      "Derivá una versión editable de esta publicación.",
+      "Deriva una versión editable de esta publicación.",
     );
   });
 
   it("reflects a companion chip ON from status and lists the ON entry (R-UI chips)", () => {
     const props = renderPanel({ status: companionStatus });
 
-    const chip = screen.getByRole("switch", { name: "Compañera en nec" });
+    const chip = screen.getByRole("switch", { name: "Metodología de chat en nec" });
     expect(chip).toHaveAttribute("aria-checked", "true");
 
     // Flipping the ON chip OFF reports the toggle with the selected version.
@@ -326,7 +326,7 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
       selected: { skill_id: "eneagrama", version: "1.3.0" },
     });
 
-    expect(screen.getByRole("switch", { name: "Compañera en nec" })).toHaveAttribute(
+    expect(screen.getByRole("switch", { name: "Metodología de chat en nec" })).toHaveAttribute(
       "aria-checked",
       "false",
     );

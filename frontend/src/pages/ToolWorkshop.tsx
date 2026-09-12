@@ -191,7 +191,7 @@ export default function ToolWorkshop() {
           setLatencyNoticeWorld(world);
         }
       } catch {
-        setStatusError("No se pudo actualizar la skill compañera para este mundo.");
+        setStatusError("No se pudo actualizar la skill de metodología de chat para este mundo.");
       } finally {
         setBusy(false);
       }

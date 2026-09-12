@@ -134,12 +134,12 @@ describe("axis-attributed row chips (axis-binding-ui R1/R2/R3)", () => {
     expect(slotChip).toHaveAttribute("data-axis", "activation");
 
     const companionChip = within(row)
-      .getByText("Compañera")
+      .getByText("Método en chat")
       .closest("[data-axis]");
     expect(companionChip).toHaveAttribute("data-axis", "companion");
   });
 
-  it("separates slot and companion attribution — bare Inactiva + Compañera impossible (Companion not active)", () => {
+  it("separates slot and companion attribution — bare Inactiva + Método en chat impossible (Companion not active)", () => {
     renderTree({
       active: activeA,
       companions: [
@@ -158,12 +158,12 @@ describe("axis-attributed row chips (axis-binding-ui R1/R2/R3)", () => {
     expect(slotChip).toHaveAttribute("data-axis", "activation");
 
     const companionChip = within(row)
-      .getByText("Compañera")
+      .getByText("Método en chat")
       .closest("[data-axis]");
     expect(companionChip).toHaveAttribute("data-axis", "companion");
 
     // The two axis terms never merge into a single mixed badge (§5:122).
-    expect(screen.queryByText("Inactiva Compañera")).not.toBeInTheDocument();
+    expect(screen.queryByText("Inactiva Método en chat")).not.toBeInTheDocument();
   });
 
   it("renders the conflict copy only inside the row tooltip — no Bloqueada badge (Blocked conflict via tooltip)", () => {
@@ -179,7 +179,7 @@ describe("axis-attributed row chips (axis-binding-ui R1/R2/R3)", () => {
     expect(tooltip).not.toBeNull();
     expect(
       within(tooltip).getByText(
-        "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.",
+        "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.",
       ),
     ).toBeInTheDocument();
   });

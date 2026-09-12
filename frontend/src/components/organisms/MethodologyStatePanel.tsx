@@ -91,7 +91,7 @@ export function MethodologyStatePanel({
     return (
       <EmptyState
         icon="empty"
-        message="Seleccioná una metodología para ver su estado y sus acciones."
+        message="Selecciona una metodología para ver su estado y sus acciones."
       />
     );
   }
@@ -335,7 +335,7 @@ export function MethodologyStatePanel({
                 variant="secondary"
                 size="sm"
                 onClick={() => onAdaptar(item)}
-                title="Derivá una versión editable de esta publicación."
+                title="Deriva una versión editable de esta publicación."
               >
                 Adaptar
               </Button>
@@ -346,7 +346,7 @@ export function MethodologyStatePanel({
                 variant="secondary"
                 size="sm"
                 onClick={() => onAdaptar(item)}
-                title="Derivá una versión editable de esta publicación."
+                title="Deriva una versión editable de esta publicación."
               >
                 Adaptar
               </Button>
@@ -367,12 +367,12 @@ export function MethodologyStatePanel({
           <div className="mt-4 space-y-3 border-t border-edge pt-4">
             <div className="flex items-center justify-between gap-3">
               <span className="text-small font-medium text-primary">
-                Compañera en {world}
+                Metodología de chat en {world}
               </span>
               <Switch
                 checked={isCompanion}
                 disabled={!world || busy}
-                aria-label={`Compañera en ${world}`}
+                aria-label={`Metodología de chat en ${world}`}
                 onChange={(on) =>
                   onToggleCompanion?.(selected.skill_id, selected.version, on)
                 }
@@ -409,7 +409,7 @@ export function MethodologyStatePanel({
             {latencyNoticeWorld === world && (
               <p className="text-small text-muted">
                 Las charlas de IA en este mundo pueden tardar un poco más
-                mientras haya skills compañeras activas.
+                mientras haya skills de metodología de chat activas.
               </p>
             )}
           </div>
