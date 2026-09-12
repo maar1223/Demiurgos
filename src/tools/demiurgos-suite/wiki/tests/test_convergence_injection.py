@@ -16,18 +16,26 @@ _WIKI = Path(__file__).resolve().parents[1]
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
-from convergence_injection import MAX_SPECIMEN_TOKENS, serve_adjunto  # noqa: E402
+from convergence_injection import (  # noqa: E402
+    MAX_SPECIMEN_TOKENS,
+    build_specimen_block,
+    serve_adjunto,
+)
+from contract_projection import _CHARS_PER_TOKEN, _estimate_tokens  # noqa: E402
 from methodology_compiler import AttachmentEntry  # noqa: E402
 
+REPO_ROOT = _WIKI.parents[3]
+SEED_ROOT = REPO_ROOT / "data" / "methodology" / "seeds"
 
-def _pin(path: str, *, sha256: str | None = None, text: str | None = None):
+
+def _pin(path: str, *, sha256: str | None = None, text: str | None = None, nivel: str = "1º"):
     """Build an AttachmentEntry whose sha256 matches ``text`` by default."""
     data = text.encode("utf-8") if text is not None else b"# Carrier\n\nContenido.\n"
     return AttachmentEntry(
         path=path,
         sha256=sha256 or hashlib.sha256(data).hexdigest(),
         bytes=len(data),
-        nivel="1º",
+        nivel=nivel,
     ), data
 
 
@@ -73,3 +81,85 @@ class TestServeAdjunto:
         (tmp_path / "ejemplos").mkdir()
         (tmp_path / "ejemplos" / "ejemplo.md").write_bytes(data)
         assert serve_adjunto(tmp_path, pin) is None
+
+
+def _three_pins(tmp_path: Path):
+    """Write the three nivel carriers and return their pins (R11 carriers)."""
+    pins = []
+    for path, nivel, text in (
+        ("nivel-1.md", "1º", "# Principal\n\nContenido principal.\n"),
+        ("nivel-2.md", "2º", "# Secundario\n\nContenido secundario.\n"),
+        ("nivel-3.md", "3º", "# Relleno\n\nContenido de relleno.\n"),
+    ):
+        pin, data = _pin(path, text=text, nivel=nivel)
+        (tmp_path / path).write_bytes(data)
+        pins.append(pin)
+    return tuple(pins)
+
+
+class TestBuildSpecimenBlock:
+    """R11/R12 (④b): ``build_specimen_block`` selects ≤1 nivel-matched pin per
+    turn (scenario "one per turn"), falls back to the 1º principal exemplar
+    (scenario "unknown nivel → 1º"), and returns the single D7 block format."""
+
+    def test_nivel_matched_pin_serves_that_carrier(self, tmp_path: Path) -> None:
+        """The block carries exactly the nivel-matched carrier bytes (verbatim,
+        trailing newline included) with the D7 header and trailer."""
+        pins = _three_pins(tmp_path)
+        block = build_specimen_block(tmp_path, pins, "2º")
+        assert block == (
+            "[Convergence specimen — nivel 2º]\n\n"
+            "# Secundario\n\nContenido secundario.\n\n"
+        )
+
+    def test_unknown_nivel_falls_back_to_principal_pin(self, tmp_path: Path) -> None:
+        """Scenario "unknown nivel → 1º": no match → 1º principal carrier."""
+        pins = _three_pins(tmp_path)
+        block = build_specimen_block(tmp_path, pins, "4º")
+        assert block is not None
+        assert block.startswith("[Convergence specimen — nivel 1º]")
+        assert "# Principal" in block and "Contenido secundario" not in block
+
+    def test_one_block_per_turn(self, tmp_path: Path) -> None:
+        """Scenario "one per turn": exactly one block per gate-passed turn."""
+        pins = _three_pins(tmp_path)
+        block = build_specimen_block(tmp_path, pins, "2º")
+        assert block is not None
+        assert block.count("[Convergence specimen — nivel ") == 1
+
+    def test_header_carrier_and_trailer_format_single_site(self, tmp_path: Path) -> None:
+        """D7: ``[Convergence specimen — nivel {label}]`` + blank line + the
+        pinned carrier bytes verbatim + trailing newline — the only format
+        site."""
+        pin, data = _pin("carrier.md", text="# Contenido\n\nLínea dos.\n", nivel="3º")
+        (tmp_path / "carrier.md").write_bytes(data)
+        block = build_specimen_block(tmp_path, (pin,), "3º")
+        assert block == "[Convergence specimen — nivel 3º]\n\n# Contenido\n\nLínea dos.\n\n"
+
+    def test_over_budget_carrier_skips_block(self, tmp_path: Path) -> None:
+        """Scenario "over-budget skip": an over-budget carrier never injects."""
+        over = "x" * (MAX_SPECIMEN_TOKENS * 4 + 1)
+        pin, data = _pin("grande.md", text=over, nivel="1º")
+        (tmp_path / "grande.md").write_bytes(data)
+        assert build_specimen_block(tmp_path, (pin,), "1º") is None
+
+    def test_empty_adjuntos_returns_none(self, tmp_path: Path) -> None:
+        """Zero-attachment skills never build a block."""
+        assert build_specimen_block(tmp_path, (), "1º") is None
+
+    def test_combined_bound_projection_cap_plus_korrane_block(self) -> None:
+        """Scenario "combined bound": projection (≤1000-token cap) + the
+        largest real carrier (Korrane = 1º) stay ≤ 4072 estimated tokens."""
+        seed_dir = SEED_ROOT / "narrative-character-creation"
+        carrier = (seed_dir / "adjunto-nivel-1-principal.md").read_bytes()
+        pin = AttachmentEntry(
+            path="adjunto-nivel-1-principal.md",
+            sha256=hashlib.sha256(carrier).hexdigest(),
+            bytes=len(carrier),
+            nivel="1º",
+        )
+        block = build_specimen_block(seed_dir, (pin,), "1º")
+        assert block is not None
+        projection_at_cap = "x" * (1000 * _CHARS_PER_TOKEN)
+        combined = _estimate_tokens(projection_at_cap) + _estimate_tokens(block)
+        assert combined <= 4072

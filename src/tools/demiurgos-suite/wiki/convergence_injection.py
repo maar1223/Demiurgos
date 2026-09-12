@@ -48,3 +48,29 @@ def serve_adjunto(seed_dir: Path, pin: AttachmentEntry) -> str | None:
     if _estimate_tokens(text) > MAX_SPECIMEN_TOKENS:
         return None
     return text
+
+
+def build_specimen_block(
+    seed_dir: Path, adjuntos: tuple[AttachmentEntry, ...], nivel: str,
+) -> str | None:
+    """Build the final convergence specimen block for one turn (R11, D7).
+
+    Selects at most one pin: the entry whose ``nivel`` matches the resolved
+    candidate nivel, falling back to the ``1º`` principal exemplar when
+    nothing matches (unknown nivel → 1º). With no pins, or when the selected
+    carrier cannot be served (drift / missing / over-budget), returns ``None``
+    so the turn proceeds without a specimen — never a drifted or cut block
+    (D6). This is the single format site: the header, the carrier bytes, and
+    the trailing newline are assembled only here.
+    """
+    if not adjuntos:
+        return None
+    matched = next((pin for pin in adjuntos if pin.nivel == nivel), None)
+    if matched is None:
+        matched = next((pin for pin in adjuntos if pin.nivel == "1º"), None)
+    if matched is None:
+        return None
+    content = serve_adjunto(seed_dir, matched)
+    if content is None:
+        return None
+    return f"[Convergence specimen — nivel {matched.nivel}]\n\n{content}\n"
