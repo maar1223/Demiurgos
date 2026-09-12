@@ -339,6 +339,7 @@ export default function ToolWorkshop() {
               status={status}
               lens={lens}
               world={world}
+              activeTaller={activeTaller}
               busy={busy}
               onSelect={setSelected}
               onActivate={(skillId, version) =>

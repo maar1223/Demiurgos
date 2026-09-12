@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { MethodologyStatePanel } from "@/components/organisms/MethodologyStatePanel";
 import {
   getCompanionLatencyNotified,
   markCompanionLatencyNotified,
 } from "@/lib/companionLatency";
+import { AXIS_SCOPE, AXIS_TERMS } from "@/lib/vocabularyAxes";
 import type { MethodologyStatus } from "@/api/types";
 
 const status: MethodologyStatus = {
@@ -55,6 +56,75 @@ const status: MethodologyStatus = {
 
 const selected = { skill_id: "eneagrama", version: "1.2.0" };
 
+/** Registry scope term for axis-3 — reverse lookup so the test never
+ *  hardcodes the vocabulary (spec R1: visible text equals registry value). */
+const SCOPE_TERM =
+  Object.entries(AXIS_TERMS).find(([, axis]) => axis === AXIS_SCOPE)?.[0] ?? "";
+
+/** REQ-TRE-6 S1 conflict copy — verbatim, taller names interpolated via
+ *  OPERATIONAL_TALLER_LABELS (Taller de Mundo / Taller de Ideas). */
+const BLOCKED_COPY =
+  "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.";
+
+/** A transversal skill of the active taller "Mundo" (own taller Ideas) that
+ *  is NOT active and NOT blocked — the scope block surface. */
+const transversalStatus: MethodologyStatus = {
+  published: [
+    {
+      skill_id: "sk-trans",
+      version: "1.0.0",
+      name: "Skill transversal",
+      description: "",
+      digest: "t",
+      published_at: "2026-01-01",
+      taller: "Ideas",
+      talleres_compatibles: ["Mundo"],
+    },
+  ],
+  activations: {},
+  drafts: [],
+};
+
+/** Blocked scenario (REQ-TRE-5): the Ideas slot in world "nec" is taken by
+ *  sk-ideas-activa, so the Ideas-transversal sk-ideas-bloqueada is blocked
+ *  for the active taller "Mundo". */
+const blockedStatus: MethodologyStatus = {
+  published: [
+    {
+      skill_id: "sk-ideas-activa",
+      version: "1.0.0",
+      name: "Skill ideas activa",
+      description: "",
+      digest: "f",
+      published_at: "2026-01-01",
+      taller: "Ideas",
+      talleres_compatibles: ["Mundo"],
+    },
+    {
+      skill_id: "sk-ideas-bloqueada",
+      version: "1.0.0",
+      name: "Skill ideas bloqueada",
+      description: "",
+      digest: "g",
+      published_at: "2026-01-01",
+      taller: "Ideas",
+      talleres_compatibles: ["Mundo"],
+    },
+  ],
+  activations: {
+    nec: {
+      world: "nec",
+      skill_id: "sk-ideas-activa",
+      version: "1.0.0",
+      digest: "f",
+      activated_at: "2026-01-01",
+    },
+  },
+  drafts: [],
+};
+
+const blockedSelected = { skill_id: "sk-ideas-bloqueada", version: "1.0.0" };
+
 /** Status carrying one active companion (eneagrama@1.2.0) in world "nec". */
 const companionStatus: MethodologyStatus = {
   ...status,
@@ -79,6 +149,7 @@ function renderPanel(
     status,
     lens: "mi-mundo" as const,
     world: "nec",
+    activeTaller: "Mundo",
     onActivate: vi.fn(),
     onAdaptar: vi.fn(),
     onComparar: vi.fn(),
@@ -291,5 +362,98 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     expect(window.localStorage.getItem("demiurgos-companion-latency-notified")).toBe(
       '["nec"]',
     );
+  });
+});
+
+describe("axis-binding-ui panel blocks (R3 / REQ-TRE-6)", () => {
+  it("shows the registry scope term in the Alcance de taller block for a transversal skill (R3)", () => {
+    renderPanel({
+      status: transversalStatus,
+      selected: { skill_id: "sk-trans", version: "1.0.0" },
+      activeTaller: "Mundo",
+    });
+
+    // Registry-sourced (R3): the visible term is the AXIS_TERMS scope value
+    // and the chip carries the scope axis attribution — the panel surface.
+    const block = screen.getByText("Alcance de taller").closest("div")!;
+    const chip = within(block).getByText(SCOPE_TERM).closest("[data-axis]");
+    expect(chip).toHaveAttribute("data-axis", AXIS_SCOPE);
+  });
+
+  it("renders the blocked explanation verbatim in the Conflicto block (S1 — Blocked explanation rendered)", () => {
+    renderPanel({
+      status: blockedStatus,
+      selected: blockedSelected,
+      activeTaller: "Mundo",
+    });
+
+    const block = screen.getByText("Conflicto").closest("div")!;
+    expect(
+      within(block).getByText(BLOCKED_COPY, { selector: "p" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the conflict copy only inside the panel tooltip — no Bloqueada badge (Blocked conflict via tooltip)", () => {
+    renderPanel({
+      status: blockedStatus,
+      selected: blockedSelected,
+      activeTaller: "Mundo",
+    });
+
+    const block = screen.getByText("Conflicto").closest("div")!;
+    // Conflict vocabulary lives in the block tooltip — never a badge (R3).
+    expect(within(block).queryByText("Bloqueada")).not.toBeInTheDocument();
+
+    const tooltip = within(block).getByRole("tooltip");
+    expect(within(tooltip).getByText(BLOCKED_COPY)).toBeInTheDocument();
+  });
+
+  it("exposes the conflict copy to keyboard-only authors via the panel tooltip (Keyboard-only conflict access)", () => {
+    renderPanel({
+      status: blockedStatus,
+      selected: blockedSelected,
+      activeTaller: "Mundo",
+    });
+
+    const block = screen.getByText("Conflicto").closest("div")!;
+    const trigger = block.querySelector(
+      '[aria-describedby^="conflicto-panel-"]',
+    ) as HTMLElement | null;
+    expect(trigger).not.toBeNull();
+    expect(trigger).toHaveAttribute("tabindex", "0");
+
+    // The trigger's aria-describedby points at the sr-only accessible copy —
+    // assistive tech reads it regardless of the CSS reveal state (R5).
+    const accessible = document.getElementById(
+      trigger!.getAttribute("aria-describedby")!,
+    );
+    expect(accessible).not.toBeNull();
+    expect(accessible).toHaveAttribute("role", "tooltip");
+    expect(
+      within(accessible as HTMLElement).getByText(BLOCKED_COPY),
+    ).toBeInTheDocument();
+  });
+
+  it("labels the slot display from flow_type at model level — zero per-flow copy (R6)", () => {
+    renderPanel({
+      status: {
+        ...status,
+        activations: {
+          nec: {
+            world: "nec",
+            skill_id: "eneagrama",
+            version: "1.2.0",
+            digest: "abc",
+            activated_at: "2026-01-02",
+            flow_type: "guided-character",
+          },
+        },
+      },
+    });
+
+    const slot = screen.getByText("Activa en nec");
+    expect(slot).toHaveAttribute("data-flow-type", "guided-character");
+    // Model-level attribution only — never committed as display copy (R6).
+    expect(screen.queryByText("guided-character")).not.toBeInTheDocument();
   });
 });

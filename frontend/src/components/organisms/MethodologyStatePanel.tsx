@@ -1,12 +1,26 @@
 import type { MethodologyInventoryItem, MethodologyStatus } from "@/api/types";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
+import { Icon } from "@/components/atoms/Icon";
 import { Switch } from "@/components/atoms/Switch";
+import { Tooltip } from "@/components/atoms/Tooltip";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ProvenanceBadge } from "@/components/organisms/CoCreation/ProvenanceBadge";
 import { MethodologyComparePanel } from "@/components/molecules/MethodologyComparePanel";
 import type { Lens } from "@/components/organisms/LensToggle";
 import { GLOBAL_ASSISTANT_CONTEXT } from "@/hooks/useAIAssistantSessions";
+import { computeSkillState } from "@/lib/tallerStates";
+import {
+  AXIS_SCOPE,
+  AXIS_TERMS,
+  conflictExplanation,
+} from "@/lib/vocabularyAxes";
+
+/** Registry scope term (axis-3) — reverse lookup so the panel never hardcodes
+ *  axis vocabulary (spec R3: scope/conflict terms render only from the
+ *  registry). */
+const SCOPE_TERM =
+  Object.entries(AXIS_TERMS).find(([, axis]) => axis === AXIS_SCOPE)?.[0] ?? "";
 
 interface MethodologySelection {
   skill_id: string;
@@ -23,6 +37,10 @@ interface MethodologyStatePanelProps {
   lens: Lens;
   /** World for activation gating (mi-mundo): Activar is disabled when null. */
   world?: string;
+  /** Active Taller SHORT KEY (Herramientas | Mundo | Ideas) — the browsing
+   *  context shared with the sidebar tree. Drives the "Alcance de taller" /
+   *  "Conflicto" panel blocks (axis-binding-ui R3, REQ-TRE-6). */
+  activeTaller?: string;
   onActivate: (skillId: string, version: string) => void;
   onAdaptar: (item: MethodologyInventoryItem) => void;
   onComparar: (item: MethodologyInventoryItem) => void;
@@ -57,6 +75,7 @@ export function MethodologyStatePanel({
   status,
   lens,
   world,
+  activeTaller,
   onActivate,
   onAdaptar,
   onComparar,
@@ -125,6 +144,21 @@ export function MethodologyStatePanel({
    *  (the companion routes 404 it). */
   const isIdeasGlobal = world === GLOBAL_ASSISTANT_CONTEXT;
 
+  /** Axis-surface derivations (axis-binding-ui R3, REQ-TRE-6): the selected
+   *  skill's scope and conflict state, driven by the same activeTaller/world
+   *  context the sidebar tree uses. The blocked rule reuses
+   *  `computeSkillState` (tallerStates — the single state-derivation source). */
+  const skillState =
+    entry != null && activeTaller != null
+      ? computeSkillState(entry, activeTaller, world, activations, published)
+      : null;
+  const isBlocked = skillState === "bloqueada";
+  const isTransversal =
+    entry != null &&
+    activeTaller != null &&
+    entry.taller !== activeTaller &&
+    (entry.talleres_compatibles ?? []).includes(activeTaller);
+
   return (
     <section
       aria-label="Estado y acciones de la metodología"
@@ -148,6 +182,13 @@ export function MethodologyStatePanel({
                   (activation) => activation.version === version.version,
                 )
                 .map((activation) => activation.world);
+              /** Model-level flow attribution for the current world's slot
+               *  (axis-binding-ui R6): `flow_type` labels the slot display —
+               *  never per-flow display copy. */
+              const worldFlowType =
+                world != null && activations[world]?.version === version.version
+                  ? activations[world]?.flow_type
+                  : undefined;
               return (
                 <li key={version.version}>
                   <button
@@ -167,7 +208,7 @@ export function MethodologyStatePanel({
                       <Badge variant="info">Seleccionada</Badge>
                     )}
                     {activeWorlds.length > 0 && (
-                      <span className="text-action">
+                      <span className="text-action" data-flow-type={worldFlowType}>
                         Activa en {activeWorlds.join(", ")}
                       </span>
                     )}
@@ -209,6 +250,50 @@ export function MethodologyStatePanel({
                 {taller}
               </Badge>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Alcance de taller (axis-binding-ui R3): the registry scope term
+       * renders ONLY in this panel block — never a primary badge. Shown when
+       * the selected skill is a transversal of the active taller. */}
+      {isTransversal && (
+        <div className="rounded-lg border border-edge bg-surface-raised p-4">
+          <h3 className="font-heading text-small font-semibold text-primary">
+            Alcance de taller
+          </h3>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <span data-axis={AXIS_SCOPE} className="inline-flex">
+              <Badge variant="default">{SCOPE_TERM}</Badge>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Conflicto (REQ-TRE-6 S1 + axis-binding-ui R3): the blocked skill's
+       * conflict copy renders ONLY in this panel block and the row tooltip —
+       * registry-sourced, verbatim, taller names interpolated. The Tooltip
+       * mirrors the row (R5): aria-describedby + sr-only copy, so
+       * keyboard-only Authors reach the same copy. */}
+      {isBlocked && entry && activeTaller != null && (
+        <div className="rounded-lg border border-edge bg-surface-raised p-4">
+          <h3 className="font-heading text-small font-semibold text-primary">
+            Conflicto
+          </h3>
+          <div className="mt-2 flex items-start gap-2">
+            <Tooltip
+              id={`conflicto-panel-${entry.skill_id}@${entry.version}`}
+              content={conflictExplanation(activeTaller, entry.taller)}
+            >
+              <Icon
+                name="error"
+                size={16}
+                className="cursor-help text-status-error"
+              />
+            </Tooltip>
+            <p className="text-small text-muted">
+              {conflictExplanation(activeTaller, entry.taller)}
+            </p>
           </div>
         </div>
       )}
