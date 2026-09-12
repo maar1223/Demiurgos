@@ -94,13 +94,13 @@
 
 ## 4. Adjuntos `skill@version` `[OBJETIVO]` — SR4
 
-**[DECISIÓN CERRADA — SR4, origen D6]** Manifest, compilador y registro publicado deben incluir un campo **adjuntos** por `skill@version` — hoy **ausente** (`wiki/methodology_compiler.py:60-63` `ALLOWED_MANIFEST_FIELDS`, 10 campos, sin adjuntos). `[OBJETIVO]`
+**[DECISIÓN CERRADA — SR4, origen D6]** Manifest, compilador y registro publicado incluyen un campo **adjuntos** por `skill@version`, **implementado en el PR ③** (`attachment-digests`): `adjuntos` en `ALLOWED_MANIFEST_FIELDS` (`wiki/methodology_compiler.py:67-71`). `[ACTUAL]`
 
-- **Registro de adjunto (esquema normativo)**: `{path: .md relativo al paquete, sha256: hex sobre los bytes del paquete, bytes: ≤ 12288, nivel: "1º" | "2º" | "3º" | etiqueta-de-rama}`. `[OBJETIVO]`
-- **Límites**: **≤ 8 adjuntos por skill** (tope de casa, cf. `MAX_COMPANIONS_PER_WORLD` en `wiki/methodology_library.py:187-189`) y **≤ 12288 B por adjunto** (el ejemplar existente más grande, `Villano_Korrane.md` = 9802 B, con ~25% de holgura). `[OBJETIVO]`
-- **Digest-pinning**: los adjuntos quedan **fijados por SHA-256** en el registro publicado (mismo algoritmo que `checksums.json` de las semillas, `data/methodology/seeds/narrative-character-creation/`); el runtime **sirve solo los bytes del digest fijado**. `[OBJETIVO]`
-- **Fallo en build/publish**: un **desajuste de digest** (el adjunto cambió tras publicarse) **falla el build/publish**; no existe auto-curado. `[OBJETIVO]`
-- **Fuera de mundos/referencias**: los ejemplos **nunca** viven bajo `mundos/{world}/referencias/` — el indexador trata `referencias/` como entidades de grafo (`wiki/graph_indexer.py:46`, `:55`), y colocarlos allí **contaminaría el grafo**. La validación de publish **rechaza** rutas `mundos/**`/`referencias/**`. `[DECISIÓN CERRADA — origen D5/D6]`
+- **Registro de adjunto (esquema normativo)**: `{path: .md relativo al paquete, sha256: hex sobre los bytes del paquete, bytes: ≤ 12288, nivel: "1º" | "2º" | "3º" | etiqueta-de-rama}`; entrada exacta de 4 claves exigida por el compilador (`wiki/methodology_compiler.py:458`, `AttachmentEntry` `:125-146`). `[ACTUAL]`
+- **Límites**: **≤ 8 adjuntos por skill** (tope de casa, cf. `MAX_COMPANIONS_PER_WORLD` en `wiki/methodology_library.py:187-189`) y **≤ 12288 B por adjunto** (el ejemplar existente más grande, `Villano_Korrane.md` = 9802 B, con ~25% de holgura) — `MAX_ADJUNTOS`/`MAX_ADJUNTO_BYTES` en `wiki/methodology_compiler.py:55-56`. `[ACTUAL]`
+- **Digest-pinning**: los adjuntos quedan **fijados por SHA-256** en el registro publicado (mismo algoritmo que `checksums.json` de las semillas, `data/methodology/seeds/narrative-character-creation/`); la semilla verifica el pin (PR ③). `[ACTUAL]` El runtime **sirve solo los bytes del digest fijado** — servicio de bytes pendiente de PR ④ (retención post-publish). `[OBJETIVO]`
+- **Fallo en build/publish**: un **desajuste de digest** (el adjunto cambió tras publicarse) **falla el build/publish**; no existe auto-curado — verificado en `wiki/methodology_seed.py:146-172` (`_verify_entry`, `SeedIntegrityError`); overflow de publish → 422 `attachment_limit_reached` (`wiki/api_server.py:7818-7822`). `[ACTUAL]`
+- **Fuera de mundos/referencias**: los ejemplos **nunca** viven bajo `mundos/{world}/referencias/` — el indexador trata `referencias/` como entidades de grafo (`wiki/graph_indexer.py:46`, `:55`), y colocarlos allí **contaminaría el grafo**. La validación de publish **rechaza** rutas `mundos/**`/`referencias/**` — implementada en el compilador (PR ③, `invalid-value` en `wiki/methodology_compiler.py:467-546`). `[DECISIÓN CERRADA — origen D5/D6]`
 - **Inyección en convergencia**: el ejemplo de espécimen terminado se inyecta en la fase de **propuesta/convergencia**, nunca en el primer turno; la estructura de salida ya llega al runtime vía la descripción de semilla en la **proyección ≤ 1000 tokens** (`wiki/contract_projection.py:99-136`, tope `:102`); el adjunto aporta los **ejemplares** dentro de su propio presupuesto (sección 6). `[OBJETIVO]`
 
 **Escenarios cubiertos (spec, skill-example-attachments):** deriva de contenido (`Content drift`), sesión de creación guiada (`Guided creation session`), validación de publish (`Publish validation`).
@@ -159,14 +159,20 @@ Estado verificado en el repositorio contra HEAD en el momento de redactar (todas
 | Sin activación → `guided-character-v1` integrado | `wiki/api_server.py:1855-1860`, `:1780` |
 | Inyección de chat solo para compañero ganador; transversales/slot nunca inyectan | `wiki/api_server.py:5508-5533`, docstring `:5516-5517` |
 | Compuerta de compañero esperada antes del prompt (bridge) | `wiki/api_server.py:6478-6495` |
-| Manifest sin campo de adjuntos (10 campos) | `wiki/methodology_compiler.py:60-63` |
+| Compilador acepta `adjuntos` {path, sha256, bytes, nivel} (11 campos en `ALLOWED_MANIFEST_FIELDS`) | `wiki/methodology_compiler.py:67-71`, `AttachmentEntry` `:125-146`, `_collect_adjuntos_issues` `:467-546` |
+| Límites ≤ 8 adjuntos/skill, ≤ 12288 B/adjunto, `nivel` ≤ 64 chars | `wiki/methodology_compiler.py:55-57` (`MAX_ADJUNTOS`, `MAX_ADJUNTO_BYTES`, `MAX_NIVEL_LEN`) |
+| Digest-canonical EXCLUYE `adjuntos` (per-attachment sha256 es el pin); digest `narrative-character-creation@1.0` = `2ae521a0…` estable | `wiki/methodology_compiler.py:274-288` (canonical fijo) |
+| Publish overflow → 422 `attachment_limit_reached` (analog `companion_limit_reached`), cero mutación | `wiki/methodology_library.py:102-110` (`AttachmentLimitError`), `:531-545` (pre-check en `publish()`), `wiki/api_server.py:7818-7822` |
+| Registro publicado lleva `adjuntos`; decode aditivo `.get()` → registros pre-PR③ válidos | `wiki/methodology_library.py:174` (`PublishedVersion.adjuntos`), `:656-659` (`_published_record`), `:1083-1085` (`_published_from`) |
+| Semilla: `_verify_entry` verifica carrier + checksums + sha256 por adjunto cuando presente; cero adjuntos hoy → sin cambio de comportamiento | `wiki/methodology_seed.py:76`, `:146-172` |
+| Zip sigue fail-closed: `_ALLOWED_ENTRIES` sin extender; paquete con adjuntos rechazado | `wiki/methodology_trust.py:46`, `:212` |
 | Proyección de contrato ≤ 1000 tokens con heurístico ~4 chars/token | `wiki/contract_projection.py:23`, `:99-136`, `:102` |
 | `referencias/` indexado como entidades de grafo | `wiki/graph_indexer.py:46`, `:55` |
 | Ejes de vocabulario en la UI (grupos mixtos, badges, slot sin etiquetar) | `fe/components/organisms/TallerTree.tsx:49-64`, `:70-74`, `:140-142`, `:152`, `:169`; `fe/components/organisms/MethodologyStatePanel.tsx:278-280`, `:285-290`, `:318`; `fe/lib/tallerStates.ts:12-17`, `:53-98` |
 | Ejemplos canónicos de salida (5, solo en docs; runtime no los referencia) | `docs/architecture/character-creation/examples/` (`Axill_Garner.md`, `Kae_Turant.md`, `Secundario_Ejemplo.md`, `Relleno_Ejemplo.md`, `Villano_Korrane.md` = 9802 B), `docs/architecture/character-creation/README.md:13-17`, `:113-119` |
 | Ejemplos de técnica en dominio de skill | `skills/narrative-character-creation/references/conversation-examples.md`, citado en `docs/architecture/character-creation/README.md:146-148` |
 
-**No implementado (objetivo):** el slot por tipo de flujo guiado (§2), el campo de adjuntos con digest (§4), la inyección de convergencia (§4) y los ejes de vocabulario atribuidos (§5). Todo ello es `[OBJETIVO]`/`[DECISIÓN CERRADA]`, no `[ACTUAL]`.
+**No implementado (objetivo):** el slot por tipo de flujo guiado (§2), la inyección de convergencia (§4/SR6) y los ejes de vocabulario atribuidos (§5). Todo ello es `[OBJETIVO]`/`[DECISIÓN CERRADA]`, no `[ACTUAL]`.
 
 > Regla de etiquetas: todo lo listado como `[ACTUAL]` está verificado contra el código; las superficies objetivo de las secciones 2–5 llevan su propia etiqueta y **no se presentan como implementadas**.
 
@@ -183,7 +189,7 @@ Estado verificado en el repositorio contra HEAD en el momento de redactar (todas
 | **SR1** | *(origen: D1, ledger #3149)* Un slot de activación **por tipo de flujo guiado** por mundo (extiende el `active_for` único); el slot **nunca inyecta** en chat libre; la intención de chat abre el flujo guiado con su Skill; los compañeros siguen moldeando el chat (§2) | `[OBJETIVO]` |
 | **SR2** | *(origen: D2, ledger #3149)* La política del pool transversal **deriva de la auditoría** (Apéndice A): 1 recuperable + 19 legado → pool = compañeros ∪ slot activado (`GUIDED_CHARACTER_FLOW`) ∪ `narrative-character-creation`; los fantasma se retiraron en el PR ②; la unión de slots de todos los flujos queda diferida; el dominio del orquestador no se retira (§3) | `[ACTUAL]` |
 | **SR3** | *(origen: D3, ledger #3149)* Enrutamiento de compañeros **fail-open**: ambigüedad ⇔ confianza `< 0.7` **o** top-2 de clase compañero `< NEAR_TIE_MARGIN = 0.15` → **cero inyecciones** (genérico o preguntar); reemplaza el "primer ganador silencioso"; el clasificador reporta top-2 (§3). Implementado en el PR ② | `[ACTUAL]` |
-| **SR4** | *(origen: D6, ledger #3149)* Campo **adjuntos** por `skill@version` en manifest/compilador/registro publicado, **digest-pinned** por SHA-256; ≤ 8 adjuntos/skill, ≤ 12288 B; desajuste de digest falla build/publish; nunca bajo `mundos/**/referencias/**` (§4) | `[OBJETIVO]` |
+| **SR4** | *(origen: D6, ledger #3149)* Campo **adjuntos** por `skill@version` en manifest/compilador/registro publicado, **digest-pinned** por SHA-256; ≤ 8 adjuntos/skill, ≤ 12288 B; desajuste de digest falla build/publish; nunca bajo `mundos/**/referencias/**` (§4). Implementado en el PR ③ (`attachment-digests`); digest-canonical excluido (D1); la inyección en convergencia queda en SR6 | `[ACTUAL]` |
 | **SR5** | *(origen: D4, ledger #3149)* **Cuatro ejes canónicos** de vocabulario (activación por flujo, compañero en chat, alcance de taller, conflicto); la fila muestra solo los dos primeros con **atribución de eje**; alcance/conflicto a tooltip/panel; prohibida la contradicción entre ejes sin atribución; rename "Compañera" registrado para el pase de copy (§5) | `[OBJETIVO]` |
 | **SR6** | *(origen: D5, ledger #3149)* Ejemplo de espécimen terminado se inyecta en la **fase de propuesta/convergencia** (nunca turno uno), dentro de su presupuesto (1 adjunto/turno ≤ 3072 tokens estimados, fuera de la proyección ≤ 1000); estructura de salida llega vía la proyección (§4/§6) | `[OBJETIVO]` |
 
@@ -205,7 +211,7 @@ Un SDD de este dominio **solo** puede comenzar cuando se cumplan todos:
 - [ ] El SDD declara explícitamente qué NO toca (copy visible, ejemplos en `mundos/{world}/referencias/`, corpus del orquestador).
 - [ ] Las pruebas cubren las invariantes afectadas (fail-open §3, digest-pinning §4, ejes §5) y las ramas de fallo relevantes.
 
-**Seguimiento (PRs encadenados, fuera de este cambio):** ① slot por tipo de flujo guiado (SR1); ~~② derivación del pool + retiro de fantasma + `NEAR_TIE_MARGIN` + top-2 (SR2/SR3)~~ — ✅ **completado en el PR ②** (`pool-router-derivation`; §3 y §7 pasan a `[ACTUAL]`); ③ adjuntos del manifest/compilador + digest (SR4); ④ inyección de convergencia (SR6); ⑤ binding de ejes en la UI (SR5); ⑥ pase de copy incl. rename "Compañera". Todos encadenados, stacked-to-main, presupuesto ~400 líneas cada uno.
+**Seguimiento (PRs encadenados, fuera de este cambio):** ① slot por tipo de flujo guiado (SR1); ~~② derivación del pool + retiro de fantasma + `NEAR_TIE_MARGIN` + top-2 (SR2/SR3)~~ — ✅ **completado en el PR ②** (`pool-router-derivation`; §3 y §7 pasan a `[ACTUAL]`); ~~③ adjuntos del manifest/compilador + digest (SR4)~~ — ✅ **completado en el PR ③** (`attachment-digests`; §4 y §7 pasan a `[ACTUAL]` para la maquinaria de adjuntos; la inyección de convergencia queda en ④); ④ inyección de convergencia (SR6); ⑤ binding de ejes en la UI (SR5); ⑥ pase de copy incl. rename "Compañera". Todos encadenados, stacked-to-main, presupuesto ~400 líneas cada uno.
 
 ---
 
