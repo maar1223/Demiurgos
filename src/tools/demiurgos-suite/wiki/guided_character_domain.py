@@ -106,6 +106,54 @@ def candidate_minimum_complete(candidate: CandidateState, *, delta: Mapping[str,
     )
 
 
+# Free-form nivel probes (D4): there is no structured nivel field on the
+# candidate; the narrative-density label is read from these known-field keys,
+# first string hit wins.
+_NIVEL_PROBES = ("nivel", "nivel_narrativo", "rol_narrativo", "nivel narrativo", "rol narrativo")
+
+
+def has_finished_exchange(state: SessionState) -> bool:
+    """True once a provider-committed exchange has finished (D3).
+
+    A finished exchange is a provider-committed typed message: a committed
+    QUESTION (``ASSISTANT_RESPONSE`` carrying the ``"question"`` key) or a
+    committed DELTA (``PROPOSAL``). Server-authored messages — e.g. the
+    ``{"text": …}`` copies written by ``begin_confirmation`` /
+    ``resolve_confirmation`` without any provider run — are excluded by shape,
+    so the finished-exchange conjunct can never be satisfied by a
+    confirmation script (R10).
+    """
+    return any(
+        message.message_type is MessageType.PROPOSAL
+        or (
+            message.message_type is MessageType.ASSISTANT_RESPONSE
+            and "question" in message.content
+        )
+        for message in state.messages
+    )
+
+
+def resolve_candidate_nivel(candidate: CandidateState) -> str:
+    """Resolve the candidate's narrative-density label (1º/2º/3º; D4).
+
+    Probes the free-form known fields in a fixed order (first string hit
+    wins) and normalizes: ``"2"``/``"secund"`` → 2º, ``"3"``/``"rellen"`` →
+    3º, anything else or missing → 1º (locked fallback: an unknown nivel is
+    treated as the principal exemplar, R11).
+    """
+    known = _candidate_known_fields(candidate)
+    for probe in _NIVEL_PROBES:
+        value = known.get(probe)
+        if isinstance(value, str):
+            text = value.casefold()
+            if "2" in text or "secund" in text:
+                return "2º"
+            if "3" in text or "rellen" in text:
+                return "3º"
+            return "1º"
+    return "1º"
+
+
 def _identity_question(language: str) -> str:
     if language == "en":
         return "What is this character's name?"

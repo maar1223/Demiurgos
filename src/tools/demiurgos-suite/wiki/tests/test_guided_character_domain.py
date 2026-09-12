@@ -24,9 +24,16 @@ from guided_character_domain import (  # noqa: E402
     confirmation_decision,
     serialize_ficha,
     candidate_minimum_complete,
+    has_finished_exchange,
     next_required_question,
+    resolve_candidate_nivel,
 )
-from guided_character_protocol import CandidateState  # noqa: E402
+from guided_character_protocol import (  # noqa: E402
+    CandidateState,
+    MessageType,
+    SessionState,
+    TypedMessage,
+)
 
 
 def test_new_character_routing_is_focused_and_compact() -> None:
@@ -329,3 +336,66 @@ def test_ficha_is_additive_v1_and_validates_slug_collisions() -> None:
         serialize_ficha(candidate, world="vibrantes", slug="aria_storm", title="Aria Storm")
     with pytest.raises(FichaValidationError):
         serialize_ficha(candidate, world="vibrantes", slug="aria-storm", title="Aria Storm", existing_targets={proposal.target})
+
+
+def _state_with(*messages: tuple[MessageType, dict]) -> SessionState:
+    """SessionState carrying exactly the given typed messages, in order."""
+    state = SessionState("s", "nec", "conversation", 0, "author")
+    for revision, (message_type, content) in enumerate(messages, start=1):
+        state.messages.append(TypedMessage(message_type, content, revision))
+    return state
+
+
+def test_has_finished_exchange_shape_table() -> None:
+    """D3: a finished exchange is a provider-committed message — a committed
+    QUESTION (``ASSISTANT_RESPONSE`` carrying the ``"question"`` key) or a
+    committed DELTA (``PROPOSAL``). Server-authored ``{"text": …}``
+    confirmation messages are excluded by shape."""
+    assert has_finished_exchange(_state_with()) is False
+    # Committed QUESTION → ASSISTANT_RESPONSE with "question" key counts.
+    assert has_finished_exchange(_state_with(
+        (MessageType.ASSISTANT_RESPONSE, {"question": "¿Cómo se llama este personaje?"}),
+    )) is True
+    # Committed DELTA → PROPOSAL counts regardless of its content shape.
+    assert has_finished_exchange(_state_with(
+        (MessageType.PROPOSAL, {"name": "Pert", "desire": "freedom"}),
+    )) is True
+    # begin_confirmation / resolve_confirmation messages {"text": …} do NOT
+    # count — they are server-authored, never a provider run.
+    assert has_finished_exchange(_state_with(
+        (MessageType.ASSISTANT_RESPONSE, {"text": "Start? (yes/no)"}),
+    )) is False
+    assert has_finished_exchange(_state_with(
+        (MessageType.AUTHOR_INPUT, {"text": "Create a character"}),
+        (MessageType.ASSISTANT_RESPONSE, {"text": "Start? (yes/no)"}),
+    )) is False
+    # A mixed history counts once any committed exchange exists.
+    assert has_finished_exchange(_state_with(
+        (MessageType.AUTHOR_INPUT, {"text": "Create a character"}),
+        (MessageType.ASSISTANT_RESPONSE, {"question": "¿Cómo se llama?"}),
+    )) is True
+
+
+def test_resolve_candidate_nivel_table() -> None:
+    """D4: the free-form nivel probes resolve to 1º/2º/3º by first string hit;
+    unknown or missing nivel locks to 1º (scenario "unknown nivel → 1º")."""
+    # contains "2"/"secund" → 2º
+    assert resolve_candidate_nivel(CandidateState(proposals={"nivel": "2"})) == "2º"
+    assert resolve_candidate_nivel(CandidateState(proposals={"nivel": "Secundario"})) == "2º"
+    assert resolve_candidate_nivel(CandidateState(proposals={"nivel_narrativo": "secundario"})) == "2º"
+    assert resolve_candidate_nivel(CandidateState(proposals={"rol_narrativo": "Secundario"})) == "2º"
+    assert resolve_candidate_nivel(CandidateState(proposals={"nivel narrativo": "2"})) == "2º"
+    assert resolve_candidate_nivel(CandidateState(proposals={"rol narrativo": "secundario"})) == "2º"
+    # contains "3"/"rellen" → 3º
+    assert resolve_candidate_nivel(CandidateState(proposals={"nivel": "3"})) == "3º"
+    assert resolve_candidate_nivel(CandidateState(proposals={"nivel_narrativo": "Relleno"})) == "3º"
+    assert resolve_candidate_nivel(CandidateState(proposals={"rol_narrativo": "relleno"})) == "3º"
+    assert resolve_candidate_nivel(CandidateState(proposals={"nivel": "3º"})) == "3º"
+    # else / missing → 1º (locked fallback)
+    assert resolve_candidate_nivel(CandidateState(proposals={"nivel": "Protagonista"})) == "1º"
+    assert resolve_candidate_nivel(CandidateState(proposals={"otro": "2"})) == "1º"
+    assert resolve_candidate_nivel(CandidateState()) == "1º"
+    # accepted canon counts too (first probe order: nivel before others).
+    assert resolve_candidate_nivel(CandidateState(
+        accepted_canon={"nivel": "secundario"}, proposals={"nivel_narrativo": "3"},
+    )) == "2º"
