@@ -49,6 +49,13 @@ MAX_TALLERES_COMPATIBLES = 16
 MAX_ETIQUETAS = 32
 MAX_ETIQUETA_LEN = 64
 
+# Attachment entries (contract §4, SR4): bounded, SHA-256-pinned metadata.
+# Also excluded from the digest canonical — the per-attachment ``sha256`` IS
+# the contract pin (locked decision D1, discovery #3173).
+MAX_ADJUNTOS = 8
+MAX_ADJUNTO_BYTES = 12_288
+MAX_NIVEL_LEN = 64
+
 # The single functional category a skill may claim (TW6). System-derived
 # classification (Oficiales/Personalizadas/Comunitarias) is NOT claimable:
 # ``clasificacion`` stays an unknown field and is rejected.
@@ -60,6 +67,7 @@ CATEGORIA_FUNCIONAL_ALLOWED = frozenset({
 ALLOWED_MANIFEST_FIELDS = frozenset({
     "skill_id", "version", "name", "description", "phases", "language",
     "taller", "talleres_compatibles", "categoria_funcional", "etiquetas",
+    "adjuntos",
 })
 
 # Kernel-owned fields a methodology must NEVER claim. Present in the manifest
@@ -114,6 +122,29 @@ class MethodologyIssue:
 
 
 @dataclass(frozen=True)
+class AttachmentEntry:
+    """One SHA-256-pinned attachment entry (contract §4, SR4).
+
+    ``path`` is package-relative Markdown; ``sha256`` is the 64-hex digest
+    over the attachment bytes; ``bytes`` is the declared size (<= 12288);
+    ``nivel`` is a non-empty bounded narrative-density label.
+    """
+
+    path: str
+    sha256: str
+    bytes: int
+    nivel: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "sha256": self.sha256,
+            "bytes": self.bytes,
+            "nivel": self.nivel,
+        }
+
+
+@dataclass(frozen=True)
 class CompiledMethodology:
     """Immutable, validated runtime contract for one methodology."""
 
@@ -131,6 +162,9 @@ class CompiledMethodology:
     talleres_compatibles: tuple[str, ...] = ()
     categoria_funcional: str | None = None
     etiquetas: tuple[str, ...] = ()
+    # Attachment entries (contract §4, SR4) — metadata only; also excluded
+    # from the digest canonical (per-attachment sha256 IS the pin, D1).
+    adjuntos: tuple[AttachmentEntry, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -146,6 +180,7 @@ class CompiledMethodology:
             "talleres_compatibles": list(self.talleres_compatibles),
             "categoria_funcional": self.categoria_funcional,
             "etiquetas": list(self.etiquetas),
+            "adjuntos": [entry.as_dict() for entry in self.adjuntos],
         }
 
 
@@ -223,9 +258,22 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
     etiquetas = tuple(
         str(e).strip() for e in (manifest.get("etiquetas") or [])
     )
+    # Attachment entries (contract §4, SR4): validation happened in the issue
+    # pass, so a clean result guarantees every entry is well-formed.
+    raw_adjuntos = manifest.get("adjuntos")
+    adjuntos = tuple(
+        AttachmentEntry(
+            path=str(entry["path"]).strip(),
+            sha256=str(entry["sha256"]).strip(),
+            bytes=int(entry["bytes"]),
+            nivel=str(entry["nivel"]).strip(),
+        )
+        for entry in (raw_adjuntos or [])
+    )
 
     # Digest canonical: STABLE. Inventory fields are metadata, not content
-    # identity, so they must never change a digest.
+    # identity, so they must never change a digest. Attachment entries are
+    # likewise excluded — the per-attachment sha256 IS the contract pin (D1).
     canonical = {
         "skill_id": skill_id,
         "version": version,
@@ -252,6 +300,7 @@ def compile_methodology(manifest: object, source: str) -> CompileResult:
         talleres_compatibles=talleres_compatibles,
         categoria_funcional=categoria_funcional,
         etiquetas=etiquetas,
+        adjuntos=adjuntos,
     )
     return CompileResult(True, (), compiled)
 
@@ -364,6 +413,8 @@ def _collect_manifest_issues(manifest: Mapping, issues: list[MethodologyIssue]) 
         MAX_ETIQUETAS, MAX_ETIQUETA_LEN, issues,
     )
 
+    _collect_adjuntos_issues(manifest.get("adjuntos"), issues)
+
 
 def _collect_string_list_issues(
     value: object,
@@ -400,6 +451,100 @@ def _collect_string_list_issues(
                 "oversized",
                 f"An item in {field} exceeds {max_item_len} characters.",
                 field,
+            ))
+
+
+# Attachment entry keys (contract §4, SR4): exactly these four may appear.
+_ATTACHMENT_ENTRY_FIELDS = frozenset({"path", "sha256", "bytes", "nivel"})
+
+# Path prefixes that would contaminate the graph indexer: attachments never
+# live under ``mundos/**`` or ``referencias/**`` (contract §4, D5/D6).
+_RESERVED_ATTACHMENT_PREFIXES = ("mundos/", "referencias/")
+
+_RE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _collect_adjuntos_issues(value: object, issues: list[MethodologyIssue]) -> None:
+    """Validate the optional ``adjuntos`` manifest field (contract §4, SR4).
+
+    Missing/None is valid (defaults to empty). Otherwise the value must be a
+    list of at most ``MAX_ADJUNTOS`` entry mappings carrying exactly
+    ``path``/``sha256``/``bytes``/``nivel``; every violation surfaces as a
+    house-style ``MethodologyIssue`` naming the ``adjuntos`` field, and the
+    compiler never raises on bad manifests.
+    """
+    if value is None:
+        return
+    if not isinstance(value, list) or not all(isinstance(item, Mapping) for item in value):
+        issues.append(MethodologyIssue(
+            "invalid-value", "adjuntos must be a list of entries.", "adjuntos",
+        ))
+        return
+    if len(value) > MAX_ADJUNTOS:
+        issues.append(MethodologyIssue(
+            "invalid-value", f"adjuntos exceeds {MAX_ADJUNTOS} entries.", "adjuntos",
+        ))
+        return
+
+    for entry in value:
+        for key in sorted(set(entry) - _ATTACHMENT_ENTRY_FIELDS):
+            issues.append(MethodologyIssue(
+                "unknown-field", f"Unknown adjuntos entry key {key!r}.", "adjuntos",
+            ))
+        for key in sorted(_ATTACHMENT_ENTRY_FIELDS - set(entry)):
+            issues.append(MethodologyIssue(
+                "missing-field", f"adjuntos entry is missing {key!r}.", "adjuntos",
+            ))
+
+        path = entry.get("path")
+        if not isinstance(path, str) or not path.strip():
+            issues.append(MethodologyIssue(
+                "invalid-value", "adjuntos path must be a package-relative .md path.",
+                "adjuntos",
+            ))
+        elif (
+            path.startswith("/")
+            or not path.endswith(".md")
+            or path.startswith(_RESERVED_ATTACHMENT_PREFIXES)
+        ):
+            issues.append(MethodologyIssue(
+                "invalid-value",
+                "adjuntos path must be a package-relative .md outside "
+                "mundos/** and referencias/**.",
+                "adjuntos",
+            ))
+
+        sha256 = entry.get("sha256")
+        if not isinstance(sha256, str) or not _RE_SHA256.match(sha256):
+            issues.append(MethodologyIssue(
+                "invalid-value", "adjuntos sha256 must be a 64-hex digest.",
+                "adjuntos",
+            ))
+
+        byte_count = entry.get("bytes")
+        if isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count < 1:
+            issues.append(MethodologyIssue(
+                "invalid-value", "adjuntos bytes must be a positive integer.",
+                "adjuntos",
+            ))
+        elif byte_count > MAX_ADJUNTO_BYTES:
+            issues.append(MethodologyIssue(
+                "oversized",
+                f"adjuntos entry exceeds {MAX_ADJUNTO_BYTES} bytes.",
+                "adjuntos",
+            ))
+
+        nivel = entry.get("nivel")
+        if not isinstance(nivel, str) or not nivel.strip():
+            issues.append(MethodologyIssue(
+                "invalid-value", "adjuntos nivel must be a non-empty label.",
+                "adjuntos",
+            ))
+        elif len(nivel.strip()) > MAX_NIVEL_LEN:
+            issues.append(MethodologyIssue(
+                "oversized",
+                f"adjuntos nivel exceeds {MAX_NIVEL_LEN} characters.",
+                "adjuntos",
             ))
 
 

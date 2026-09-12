@@ -10,6 +10,7 @@ returns a result; it never writes to the filesystem, canon, or runtime.
 
 from __future__ import annotations
 
+import hashlib
 import sys
 import tempfile
 from pathlib import Path
@@ -19,6 +20,8 @@ import pytest
 _WIKI = Path(__file__).resolve().parents[1]
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
+
+REPO_ROOT = _WIKI.parents[3]
 
 import methodology_compiler  # noqa: E402
 from methodology_compiler import (  # noqa: E402
@@ -334,3 +337,144 @@ class TestInventoryFields:
         assert not result.ok
         assert any(issue.code == "unknown-field" and issue.field == "clasificacion"
                    for issue in result.issues)
+
+
+def _sha256(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _valid_adjunto(
+    *,
+    path: str = "ejemplos/Axill_Garner.md",
+    sha256: str | None = None,
+    byte_count: int = 6115,
+    nivel: str = "1º",
+) -> dict:
+    """One well-formed attachment entry per contract §4 (SR4)."""
+    return {
+        "path": path,
+        "sha256": sha256 if sha256 is not None else _sha256(b"attachment bytes"),
+        "bytes": byte_count,
+        "nivel": nivel,
+    }
+
+
+class TestAdjuntosField:
+    """Contract §4 (SR4): SHA-256-pinned ``adjuntos`` entries on the manifest.
+
+    Entries carry exactly ``path``/``sha256``/``bytes``/``nivel``; violations
+    surface as house-style ``MethodologyIssue`` codes naming the ``adjuntos``
+    field. The compiler never raises on bad manifests.
+    """
+
+    def test_valid_entry_compiles_and_is_exposed(self) -> None:
+        entry = _valid_adjunto()
+        result = _compile(dict(_valid_manifest(), adjuntos=[entry]), _valid_source())
+        assert result.ok, result.issues
+        assert result.compiled is not None
+        assert result.compiled.adjuntos == (
+            methodology_compiler.AttachmentEntry(
+                path=entry["path"],
+                sha256=entry["sha256"],
+                bytes=entry["bytes"],
+                nivel=entry["nivel"],
+            ),
+        )
+        data = result.compiled.as_dict()
+        assert data["adjuntos"] == [entry]
+
+    def test_missing_adjuntos_defaults_to_empty(self) -> None:
+        result = _compile(_valid_manifest(), _valid_source())
+        assert result.ok
+        assert result.compiled is not None
+        assert result.compiled.adjuntos == ()
+
+    @pytest.mark.parametrize("extra_key", ["titulo", "id"])
+    def test_unknown_entry_key_is_rejected(self, extra_key: str) -> None:
+        entry = dict(_valid_adjunto(), **{extra_key: "x"})
+        result = _compile(dict(_valid_manifest(), adjuntos=[entry]), _valid_source())
+        assert not result.ok
+        assert any(issue.code == "unknown-field" and issue.field == "adjuntos"
+                   for issue in result.issues), result.issues
+
+    @pytest.mark.parametrize("missing", ["path", "sha256", "bytes", "nivel"])
+    def test_missing_entry_key_is_rejected(self, missing: str) -> None:
+        entry = dict(_valid_adjunto())
+        entry.pop(missing)
+        result = _compile(dict(_valid_manifest(), adjuntos=[entry]), _valid_source())
+        assert not result.ok
+        assert any(issue.code == "missing-field" and issue.field == "adjuntos"
+                   for issue in result.issues), result.issues
+
+    def test_non_hex_sha256_is_rejected(self) -> None:
+        entry = dict(_valid_adjunto(), sha256="nothex")
+        result = _compile(dict(_valid_manifest(), adjuntos=[entry]), _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "adjuntos"
+                   for issue in result.issues), result.issues
+
+    @pytest.mark.parametrize("path", [
+        "mundos/nec/referencias/Korrane.md",
+        "mundos/nec/ejemplos/Axill.md",
+        "referencias/lore.md",
+    ])
+    def test_path_under_reserved_prefixes_is_rejected(self, path: str) -> None:
+        """Attachment paths never live under ``mundos/**``/``referencias/**``."""
+        entry = dict(_valid_adjunto(), path=path)
+        result = _compile(dict(_valid_manifest(), adjuntos=[entry]), _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "adjuntos"
+                   for issue in result.issues), result.issues
+
+    def test_eight_entries_are_accepted(self) -> None:
+        many = [_valid_adjunto(path=f"ejemplos/e{i}.md") for i in range(8)]
+        result = _compile(dict(_valid_manifest(), adjuntos=many), _valid_source())
+        assert result.ok, result.issues
+
+    def test_more_than_eight_entries_is_rejected(self) -> None:
+        many = [_valid_adjunto(path=f"ejemplos/e{i}.md") for i in range(9)]
+        result = _compile(dict(_valid_manifest(), adjuntos=many), _valid_source())
+        assert not result.ok
+        assert any(issue.code == "invalid-value" and issue.field == "adjuntos"
+                   for issue in result.issues), result.issues
+
+    def test_entry_over_byte_limit_is_rejected(self) -> None:
+        entry = _valid_adjunto(byte_count=12_289)
+        result = _compile(dict(_valid_manifest(), adjuntos=[entry]), _valid_source())
+        assert not result.ok
+        assert any(issue.code == "oversized" and issue.field == "adjuntos"
+                   for issue in result.issues), result.issues
+
+
+class TestAdjuntosDigestExclusion:
+    """Locked D1 (discovery #3173): attachments never enter the digest canonical.
+
+    Per-attachment ``sha256`` IS the contract pin; adding or removing
+    ``adjuntos`` must never change a skill's methodology digest.
+    """
+
+    def test_digest_is_stable_across_adjuntos(self) -> None:
+        base = _compile(_valid_manifest(), _valid_source())
+        with_adjuntos = _compile(
+            dict(_valid_manifest(), adjuntos=[_valid_adjunto()]),
+            _valid_source(),
+        )
+        assert base.compiled is not None and with_adjuntos.compiled is not None
+        assert base.compiled.digest == with_adjuntos.compiled.digest
+
+    def test_seed_canonical_digest_is_unchanged_with_adjuntos(self) -> None:
+        """Regression pin: ``narrative-character-creation@1.0`` stays ``2ae521a0…``."""
+        seed_dir = (
+            REPO_ROOT / "data" / "methodology" / "seeds"
+            / "narrative-character-creation"
+        )
+        manifest = parse_manifest((seed_dir / "manifest.yaml").read_text(encoding="utf-8"))
+        source = (seed_dir / "source.md").read_text(encoding="utf-8")
+        assert manifest is not None
+        plain = _compile(manifest, source)
+        with_adjuntos = _compile(
+            dict(manifest, adjuntos=[_valid_adjunto()]), source,
+        )
+        assert plain.compiled is not None and with_adjuntos.compiled is not None
+        assert plain.compiled.digest == "2ae521a09bf014ccdefd7296f6ec94092aa6421703802f2d432d9eaf4f1bbe81"
+        assert with_adjuntos.compiled.digest == plain.compiled.digest
