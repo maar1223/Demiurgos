@@ -1,4 +1,4 @@
-# Ejemplo de referencia — Ficha de personaje RELLENO (3er nivel, 1 arquetipo)
+# Ejemplo de referencia — Ficha de personaje 3º nivel
 
 > **Formato de salida de la Skill para personajes de TERCER nivel (relleno / fondo / extra).**
 > El relleno NO tiene peso narrativo individual. Existe para dar **textura al mundo** y cumplir una
@@ -14,14 +14,14 @@ Ficha de personaje:
 **Nombre:** Nira
 
 **Función (rol en la escena):** Vendedora del puesto de galletas rellenas de maní; aparece una vez
-como punto de calma entre Kae y Axill.
+como punto de calma entre el colega y el protagonista.
 
 **Rasgo distintivo:** Siempre añade un comentario picante a cada venta, y guarda "la mejor galleta"
 bajo el mostrador para quien note el detalle.
 
 **Arquetipo:** 1 — "La chispa" (Prolífica-diligente).
 
-**Aparición / vínculo:** Reparto fijo de la escena del mercado. Se usa para dar color al barrio y
+**Aparición / vínculo:** Reparto fijo de una escena de barrio. Se usa para dar color al barrio y
 para que el lector sepa que ese rincón de la ciudad tiene vida propia.
 
 ---

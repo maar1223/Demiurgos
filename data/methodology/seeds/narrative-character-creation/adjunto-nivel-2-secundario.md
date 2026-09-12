@@ -1,4 +1,4 @@
-# Ejemplo de referencia — Ficha de personaje SECUNDARIO (2º nivel, 2 arquetipos)
+# Ejemplo de referencia — Ficha de personaje 2º nivel
 
 > **Formato de salida de la Skill para personajes de SEGUNDO nivel (secundario).**
 > El secundario tiene peso narrativo pero NO es el foco de la historia. No lleva arco completo de
@@ -13,24 +13,24 @@ Ficha de personaje:
 
 **Nombre:** Denin Vael
 
-**Rol narrativo:** Secundario — colega y contraste de Axill en la compañía de plataformas.
+**Rol narrativo:** Secundario — colega y contraste del protagonista en el taller.
 
 **Edad:** 31 años
 
-**Raza:** Humano Vibrante
+**Raza:** Humano
 
-**Lugar de origen:** Ciudad Mineral (distrito de talleres)
+**Lugar de origen:** Una ciudad minera (distrito de talleres)
 
 **Género:** Masculino
 
-**Estudios:** Técnico en mantenimiento de plataformas.
+**Estudios:** Técnico en mantenimiento.
 
-**Trabajo:** Supervisor de taller en la compañía; el único que sospecha que Axill hackea de noche.
+**Trabajo:** Supervisor del taller; el único que sospecha que el protagonista hackea de noche.
 
 **Religión:** Gnóstico
 
 **Relación con el protagonista:** Mentor a regañadientes y rival silencioso. Le enseña el oficio
-pero se siente amenazado por la facilidad con la que Axill resuelve lo que a él le costó años.
+pero se siente amenazado por la facilidad con la que el protagonista resuelve lo que a él le costó años.
 
 **Aspecto físico (con algún defecto):** Bajo, fornido, con las manos marcadas por años de grasa y
 soldadura. Un tic nervioso en el párpado derecho que se acentúa cuando miente.
@@ -52,15 +52,15 @@ nunca confronta, socava en silencio.
 **Arquetipo:** Dominante: "El serio" (Quiere estabilidad) × fricción: "El guardián" (lo consigue
 protegiendo el status quo).
 
-**Rol en la historia (función):** El obstáculo interno del entorno de Axill. Su envidia y su
-sospecha crean presión dentro de la compañía; en un momento clave, su decisión de callar o delatar
-a Axill cambia el ritmo de la investigación.
+**Rol en la historia (función):** El obstáculo interno del entorno del protagonista. Su envidia y su
+sospecha crean presión dentro del taller; en un momento clave, su decisión de callar o delatar
+al protagonista cambia el ritmo de la investigación.
 
-**Mini-arc (opcional, un giro, no 3 actos):** Cuando Axill lo salva de un error que habría costado
+**Mini-arc (opcional, un giro, no 3 actos):** Cuando el protagonista lo salva de un error que habría costado
 su puesto, Denin elige protegerlo en lugar de delatarlo — su envidia no desaparece, pero se queda
 del lado del protagonista.
 
-**Trasfondo (mínimo):** Cresció en los talleres, heredó el puesto de su padre y nunca salió de ahí.
+**Trasfondo (mínimo):** Creció en los talleres, heredó el puesto de su padre y nunca salió de ahí.
 Cree que la vida es una escalera donde él ya perdió la carrera, y por eso mide su valor comparándose.
 
 ---

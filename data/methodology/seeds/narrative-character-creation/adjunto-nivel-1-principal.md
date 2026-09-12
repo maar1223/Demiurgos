@@ -1,9 +1,9 @@
-# Ficha de Personaje: Korrane Vael
+# Ficha de Personaje: <rol genérico>
 
 > **Referencia de formato de salida de la SKILL FUNDACIONAL — VILLANO (1º nivel, 3 arquetipos).**
-> Ejemplo **agnóstico al mundo**: no contiene vocabulario específico de ningún mundo (ni Stal, ni lugares,
+> Ejemplo **agnóstico al mundo**: no contiene vocabulario específico de ningún mundo (ni sistemas de poder de mundo, ni lugares,
 > ni razas de mundo, ni poderes de mundo). Todos los campos son universales de personaje.
-> El enriquecimiento por mundo (p. ej. el Stal del mundo Vibrantes, sus lugares, sus razas) entra en una
+> El enriquecimiento por mundo (p. ej. los sistemas de poder de mundo, sus lugares, sus razas) entra en una
 > capa aparte, provista por la **Skill Personalizada de Mundo** creada desde el Taller de Herramientas.
 > Formato acotado (no inflado), encabezados markdown según la convención del repo.
 >
@@ -155,7 +155,7 @@ propio ancla, y ya no distingue proteger de controlar.
   ocultando su vulnerabilidad tras la eficacia. Confunde "lograrlo" con "estar bien"
 - **Alineamiento Legal Moral.** **Arquetipo:** tríada Viejo Soldado / Arquero / Anarquista.
 
-> **Guardrail de la skill fundacional:** NO usa vocabulario de ningún mundo (ni Stal, ni lugares, ni razas,
+> **Guardrail de la skill fundacional:** NO usa vocabulario de ningún mundo (ni sistemas de poder de mundo, ni lugares, ni razas,
 > ni poderes de mundo). Todo eso lo aporta la **Skill Personalizada de Mundo** (creada desde el Taller de
 > Herramientas). El Eneatipo/Subtipo/Arquetipo/Alineamiento son universales y sí van en
 > la skill base. La distinción fóbico/contrafóbico NO pertenece a este sistema, no se usa.
