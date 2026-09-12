@@ -7,11 +7,13 @@ import type {
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
-import {
-  OPERATIONAL_TALLER_LABELS,
-  type OperationalTaller,
-} from "@/lib/constants";
+import { Tooltip } from "@/components/atoms/Tooltip";
 import type { GroupedSkills, SkillState } from "@/lib/tallerStates";
+import {
+  activationChip,
+  companionChip,
+  conflictExplanation,
+} from "@/lib/vocabularyAxes";
 
 interface TallerTreeProps {
   groups: GroupedSkills;
@@ -45,7 +47,9 @@ interface GroupDef {
 }
 
 /** TW3 group order (spec REQ-TRE-3) + the separate "Sin taller" bucket
- *  (REQ-TRE-1 S3). The 5th "Bloqueadas" group is Author-approved Option B. */
+ *  (REQ-TRE-1 S3). The 5th "Bloqueadas" group is Author-approved Option B.
+ *  Group labels are byte-frozen (spec R7) — they carry the scope/conflict
+ *  vocabulary at group level. */
 const GROUP_ORDER: GroupDef[] = [
   { key: "activas", label: "En uso · funciona solo en este taller", state: "activa" },
   {
@@ -63,32 +67,15 @@ const GROUP_ORDER: GroupDef[] = [
   { key: "sinTaller", label: "Sin taller", state: "sin-taller" },
 ];
 
-const BADGE_META: Record<
-  SkillState,
-  { label: string; variant: "default" | "success" | "error" | "info" }
-> = {
-  activa: { label: "Activa", variant: "success" },
-  "transversal-activa": { label: "Transversal", variant: "info" },
-  inactiva: { label: "Inactiva", variant: "default" },
-  "transversal-inactiva": { label: "Transversal", variant: "info" },
-  bloqueada: { label: "Bloqueada", variant: "error" },
-};
-
-/** Display label for a Taller key (short key → OPERATIONAL_TALLER_LABELS
- *  label, raw value fallback for unknown keys — e.g. imported free-form
- *  talleres). */
-function tallerLabel(taller: string | null | undefined): string {
-  if (taller == null) return "";
-  return OPERATIONAL_TALLER_LABELS[taller as OperationalTaller] ?? taller;
-}
-
-/** Exact conflict copy from spec REQ-TRE-6 S1, taller names interpolated via
- *  OPERATIONAL_TALLER_LABELS. */
-function blockedExplanation(
-  activeTaller: string,
-  skillTaller: string | null | undefined,
-): string {
-  return `Esta skill es transversal de ${tallerLabel(activeTaller)} pero su taller primario (${tallerLabel(skillTaller)}) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.`;
+/** One attributed row chip (spec R1): the registry term plus its axis
+ *  attribution, surfaced as a `data-axis` marker for tests and assistive
+ *  tooling. Axes 1+2 only — scope/conflict live in tooltips/panel (R3). */
+function AxisBadge({ chip }: { chip: ReturnType<typeof activationChip> }) {
+  return (
+    <span data-axis={chip.axis} className="inline-flex">
+      <Badge variant={chip.variant}>{chip.term}</Badge>
+    </span>
+  );
 }
 
 interface SkillRowProps {
@@ -97,6 +84,10 @@ interface SkillRowProps {
   world: string | undefined;
   activeTaller: string;
   isActive: boolean;
+  /** True when the world has an activation for the displayed flow — the
+   *  no-activation slot renders a neutral placeholder, never "Inactiva"
+   *  (spec R4). */
+  hasActivation: boolean;
   /** Read-only companion marker (R-UI): true when this row's skill@version
    *  is an active companion in the current world. */
   isCompanion: boolean;
@@ -112,15 +103,17 @@ function SkillRow({
   world,
   activeTaller,
   isActive,
+  hasActivation,
   isCompanion,
   busy,
   onActivate,
   onSelect,
   selected,
 }: SkillRowProps) {
-  const badge = BADGE_META[state];
   const isSelected =
     selected?.skill_id === skill.skill_id && selected?.version === skill.version;
+  const slotChip = activationChip({ state, hasActivation });
+  const companion = isCompanion ? companionChip() : null;
   return (
     <li
       className={[
@@ -141,15 +134,22 @@ function SkillRow({
             <span className="ml-2 text-action">• Activa en {world}</span>
           )}
         </p>
-        {state === "bloqueada" && (
-          <p className="mt-2 max-w-prose text-small text-status-error">
-            {blockedExplanation(activeTaller, skill.taller)}
-          </p>
-        )}
       </button>
       <div className="flex shrink-0 items-center gap-2">
-        <Badge variant={badge.variant}>{badge.label}</Badge>
-        {isCompanion && <Badge variant="info">Compañera</Badge>}
+        <AxisBadge chip={slotChip} />
+        {companion && <AxisBadge chip={companion} />}
+        {state === "bloqueada" && (
+          <Tooltip
+            id={`conflict-${skill.skill_id}@${skill.version}`}
+            content={conflictExplanation(activeTaller, skill.taller)}
+          >
+            <Icon
+              name="error"
+              size={16}
+              className="cursor-help text-status-error"
+            />
+          </Tooltip>
+        )}
         {state === "bloqueada" ? (
           <Button
             variant="secondary"
@@ -178,9 +178,10 @@ function SkillRow({
  * Contextual tree of published methodologies for the active Taller (spec
  * REQ-TRE-3/4/6): five collapsible groups in TW3 order plus the "Sin taller"
  * bucket (REQ-TRE-1 S3). Empty groups are hidden (REQ-TRE-3 S3). Each row
- * shows the name, `skill_id@version`, a state Badge (REQ-TRE-4) and the
- * world-gated Activar/Activada/Sin mundo button; blocked rows show the
- * conflict copy and a disabled Adaptar action (REQ-TRE-6).
+ * shows the name, `skill_id@version`, attributed axis-1/2 chips (REQ-TRE-4,
+ * axis-binding-ui R1) and the world-gated Activar/Activada/Sin mundo button;
+ * blocked rows show the conflict copy in a row tooltip (R3) and a disabled
+ * Adaptar action (REQ-TRE-6 S2).
  */
 export function TallerTree({
   groups,
@@ -250,6 +251,7 @@ export function TallerTree({
                       world={world}
                       activeTaller={activeTaller}
                       isActive={isActive}
+                      hasActivation={active != null}
                       isCompanion={isCompanion}
                       busy={busy}
                       onActivate={onActivate}

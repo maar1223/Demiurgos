@@ -185,14 +185,18 @@ describe("MethodologyLibrary", () => {
     // (REQ-TRE-5 S8 / OC-4 S3).
     expect(screen.getByText("Skill heredada herramientas")).toBeInTheDocument();
 
-    // Badge variants (spec REQ-TRE-4 S1): Activa → success, Inactiva →
-    // default, Transversal → info.
+    // Attributed axis-1 chips (spec REQ-TRE-4 S1 + axis-binding-ui R1):
+    // Activa → success, Inactiva → default. Scope vocabulary is no longer a
+    // primary badge (R3) — the group label carries the scope.
     const activaRow = screen.getByText("Skill activa").closest(
       "li",
     ) as HTMLElement;
     expect(within(activaRow).getByText("Activa")).toHaveClass(
       "text-status-success",
     );
+    expect(
+      within(activaRow).getByText("Activa").closest("[data-axis]"),
+    ).toHaveAttribute("data-axis", "activation");
 
     const inactivaRow = screen.getByText("Skill otra inactiva").closest(
       "li",
@@ -200,13 +204,20 @@ describe("MethodologyLibrary", () => {
     expect(within(inactivaRow).getByText("Inactiva")).toHaveClass(
       "text-primary",
     );
+    expect(
+      within(inactivaRow).getByText("Inactiva").closest("[data-axis]"),
+    ).toHaveAttribute("data-axis", "activation");
 
     const transRow = screen.getByText("Skill transversal inactiva").closest(
       "li",
     ) as HTMLElement;
-    expect(within(transRow).getByText("Transversal")).toHaveClass(
-      "text-icon-muted",
+    expect(within(transRow).getByText("Inactiva")).toHaveClass(
+      "text-primary",
     );
+    expect(
+      within(transRow).getByText("Inactiva").closest("[data-axis]"),
+    ).toHaveAttribute("data-axis", "activation");
+    expect(within(transRow).queryByText("Transversal")).not.toBeInTheDocument();
   });
 
   it("shows the blocked explanation and a disabled Adaptar action", async () => {
@@ -260,19 +271,24 @@ describe("MethodologyLibrary", () => {
     ]);
 
     // Exact conflict copy from spec REQ-TRE-6 S1, taller names interpolated
-    // via OPERATIONAL_TALLER_LABELS (display labels, not short keys).
+    // via OPERATIONAL_TALLER_LABELS (display labels, not short keys) — now
+    // rendered ONLY inside the row tooltip (axis-binding-ui R3).
+    const blockedRow = screen.getByText("Skill ideas bloqueada").closest(
+      "li",
+    ) as HTMLElement;
+    const blockedTooltip = blockedRow.querySelector(
+      '[role="tooltip"]',
+    ) as HTMLElement | null;
+    expect(blockedTooltip).not.toBeNull();
     expect(
-      screen.getByText(
+      within(blockedTooltip as HTMLElement).getByText(
         "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.",
       ),
     ).toBeInTheDocument();
 
-    const blockedRow = screen.getByText("Skill ideas bloqueada").closest(
-      "li",
-    ) as HTMLElement;
-    expect(within(blockedRow).getByText("Bloqueada")).toHaveClass(
-      "text-status-error",
-    );
+    // No "Bloqueada" primary badge (R3): conflict vocabulary lives in the
+    // tooltip only.
+    expect(within(blockedRow).queryByText("Bloqueada")).not.toBeInTheDocument();
 
     // Adaptar is disabled with the future-phase tooltip (REQ-TRE-6 S2).
     const adaptar = screen.getByRole("button", { name: "Adaptar" });
