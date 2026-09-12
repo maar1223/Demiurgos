@@ -1,15 +1,15 @@
 """Skill router: map a user intent to a skill_id.
 
-The router is LLM-first (a single bounded Hermes classification run) with a
-deterministic keyword fallback and a final fail-open to the generic assistant.
-It deliberately never raises on routing: every path returns a
-``SkillRouteResult``, so the conversational surface stays available even when
-the provider is absent or the model is uncertain.
+The router is LLM-first (a single bounded Hermes classification run) and fails
+open to the generic assistant. It deliberately never raises on routing: every
+path returns a ``SkillRouteResult``, so the conversational surface stays
+available even when the provider is absent or the model is uncertain.
 
 All seams (``methodology_library``, ``provider``) are injectable and optional.
-With no provider, the LLM step is skipped and routing degrades to keyword or
-fallback (fail-open). The router is a pure decision layer: it performs no
-state mutation and persists nothing.
+With no provider, the LLM step is skipped and routing fails open directly
+(degraded mode is pure fail-open; the keyword fallback layer is retired). The
+router is a pure decision layer: it performs no state mutation and persists
+nothing.
 """
 
 from __future__ import annotations
@@ -20,17 +20,15 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 
 from assistant_activity import HermesActivityRequest
-from guided_character_domain import route_new_character_intent
 from methodology_library import FOUNDATIONAL_CHARACTER_SKILL_ID, GUIDED_CHARACTER_FLOW
 
+# Audit-derived transversal pool (SR2): the methodology library publishes exactly
+# one foundational transversal today — narrative-character-creation (1 recoverable
+# of the 20 audited skills; 19 are legacy). The six legacy transversal slugs and
+# the keyword fallback layer were retired in PR ② so every routing candidate
+# traces to a foundational / companion / flow-slot class (pool traceability).
 TRANSVERSAL_SKILLS: frozenset[str] = frozenset({
     FOUNDATIONAL_CHARACTER_SKILL_ID,
-    "narrative-world-spec",
-    "narrative-idea",
-    "narrative-outline",
-    "narrative-draft",
-    "narrative-revise",
-    "narrative-explore",
 })
 
 CONFIDENCE_THRESHOLD = 0.7
@@ -40,21 +38,6 @@ CONFIDENCE_THRESHOLD = 0.7
 # the total classification prompt stays within the bounded token budget (DD2).
 _DESCRIPTION_MAX_CHARS = 160
 
-# Deterministic keyword fallback: map simple terms to the transversal skills.
-# ``narrative-character-creation`` is handled by the domain classifier
-# (route_new_character_intent) which understands character intent precisely;
-# the rest use lightweight substring maps.
-_KEYWORD_SKILLS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("narrative-world-spec", ("world", "mundo", "setting", "escenario", "realm", "reino")),
-    ("narrative-idea", ("idea", "concept", "concepto", "premise", "premisa", "inspiration", "inspiración")),
-    ("narrative-outline", ("outline", "esquema", "structure", "estructura", "plot", "argumento")),
-    ("narrative-draft", ("draft", "borrador", "write", "escribir", "prose", "escena")),
-    ("narrative-revise", ("revise", "revisar", "rewrite", "reescribir", "edit", "editar")),
-    ("narrative-explore", ("explore", "explorar", "brainstorm", "lluvia de ideas", "develop", "desarrollar")),
-)
-
-_KEYWORD_CONFIDENCE = 0.5
-
 
 @dataclass(frozen=True)
 class SkillRouteResult:
@@ -62,7 +45,7 @@ class SkillRouteResult:
 
     ``skill_id`` is None for a non-guided generic response. ``routed`` is True
     exactly when ``skill_id`` is not None. ``source`` records how the decision
-    was reached: ``"llm"``, ``"keyword"`` or ``"fallback"``.
+    was reached: ``"llm"`` or ``"fallback"``.
     """
 
     skill_id: str | None
@@ -72,13 +55,13 @@ class SkillRouteResult:
 
 
 class SkillRouter:
-    """Route an author prompt to a skill using LLM-first + keyword fallback.
+    """Route an author prompt to a skill using LLM-first + fail-open.
 
     ``methodology_library`` supplies the world's activated skill (via
     ``active_for``); ``provider`` is the Hermes runs adapter used for the LLM
     classification step. ``semantic_provider`` is retained as an injectable
     seam for symmetry with the design; the LLM step itself uses ``provider``.
-    Both may be None (fail-open to keyword/fallback).
+    Both may be None (fail-open directly to the generic assistant).
     """
 
     def __init__(
@@ -102,33 +85,6 @@ class SkillRouter:
             if activation is not None and getattr(activation, "skill_id", None):
                 skills.add(activation.skill_id)
         return sorted(skills)
-
-    def _route_keyword(self, prompt: str) -> SkillRouteResult:
-        """Deterministic keyword fallback. Never raises; never returns None.
-
-        Degraded-mode rule (Rule A): the keyword layer MAY claim TRANSVERSAL
-        candidates only — companions are NEVER reachable through keywords. When
-        the LLM classification gateway is unavailable, routing degrades exactly
-        as today (a transversal or fail-open); a companion is never selected
-        without a >= threshold LLM verdict over the full candidate set.
-        """
-        # Character creation is classified by the domain's intent classifier,
-        # which understands new-character vs edit-character precisely.
-        try:
-            turn = route_new_character_intent(prompt)
-        except Exception:
-            turn = None
-        if turn is not None and getattr(turn, "is_new_character", False):
-            return SkillRouteResult(
-                FOUNDATIONAL_CHARACTER_SKILL_ID, _KEYWORD_CONFIDENCE, "keyword", True,
-            )
-        lowered = prompt.casefold()
-        for skill_id, keywords in _KEYWORD_SKILLS:
-            if any(keyword in lowered for keyword in keywords):
-                return SkillRouteResult(
-                    skill_id, _KEYWORD_CONFIDENCE, "keyword", True,
-                )
-        return SkillRouteResult(None, 0.0, "fallback", False)
 
     async def _collect_output(self, run_id: str) -> object:
         output: object = None
@@ -304,13 +260,15 @@ class SkillRouter:
     ) -> SkillRouteResult:
         """Route ``prompt`` for world ``mundo`` to a skill.
 
-        Order: LLM classification → threshold check → keyword fallback →
-        fail-open to generic. ``distilled_state`` is accepted for interface
-        symmetry with the memory layer but is not required for routing.
+        Order: LLM classification → threshold check → fail-open to generic.
+        ``distilled_state`` is accepted for interface symmetry with the memory
+        layer but is not required for routing.
 
         Companion worlds (≥1 companion) classify over the description-aware
         ordered candidate set (DD2); companion-free worlds keep the byte-identical
-        legacy bare-id prompt. The keyword layer never claims a companion.
+        legacy bare-id prompt. The keyword layer is retired, so degraded mode
+        (provider absent/failed, or a below-threshold verdict) fails open to the
+        generic assistant with zero skill injection.
         """
         companion_candidates = self._companion_candidates(mundo)
         if companion_candidates is not None:
@@ -331,8 +289,9 @@ class SkillRouter:
                 confidence = 0.0
             if skill_id in candidate_ids and confidence >= CONFIDENCE_THRESHOLD:
                 return SkillRouteResult(skill_id, confidence, "llm", True)
-            # Low confidence or an invalid skill: fall through to keyword.
-            return self._route_keyword(prompt)
+            # Low confidence or an invalid skill: fail open directly.
+            return SkillRouteResult(None, 0.0, "fallback", False)
 
-        # Provider absent or failed: deterministic fallback (fail-open).
-        return self._route_keyword(prompt)
+        # Provider absent or failed: fail open directly (degraded mode = pure
+        # fail-open; the retired keyword layer would never inject here).
+        return SkillRouteResult(None, 0.0, "fallback", False)

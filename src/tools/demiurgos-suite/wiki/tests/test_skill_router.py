@@ -1,4 +1,4 @@
-"""Unit tests for the skill router (LLM-first + keyword fallback + fail-open)."""
+"""Unit tests for the skill router (LLM-first + fail-open)."""
 
 from __future__ import annotations
 
@@ -94,19 +94,19 @@ def _result(router: SkillRouter, prompt: str, mundo: str = "vibrantes") -> Skill
 # --------------------------------------------------------------------------- #
 
 def test_llm_routing_returns_skill_when_above_threshold() -> None:
-    runs = _Runs({"skill_id": "narrative-world-spec", "confidence": 0.9})
+    runs = _Runs({"skill_id": "narrative-character-creation", "confidence": 0.9})
     router = SkillRouter(methodology_library=None, provider=runs)
     result = _result(router, "Describe the kingdom of Rhyz")
-    assert result.skill_id == "narrative-world-spec"
+    assert result.skill_id == "narrative-character-creation"
     assert result.confidence == 0.9
     assert result.source == "llm"
     assert result.routed is True
     # Candidates must be listed in the classification prompt.
-    assert "narrative-world-spec" in runs.prompts[0]
+    assert "narrative-character-creation" in runs.prompts[0]
 
 
 def test_llm_prompt_lists_only_candidates_and_asks_for_strict_json() -> None:
-    runs = _Runs({"skill_id": "narrative-draft", "confidence": 0.95})
+    runs = _Runs({"skill_id": "narrative-character-creation", "confidence": 0.95})
     router = SkillRouter(methodology_library=None, provider=runs)
     _result(router, "write a scene")
     prompt = runs.prompts[0]
@@ -121,27 +121,27 @@ def test_llm_prompt_lists_only_candidates_and_asks_for_strict_json() -> None:
 # --------------------------------------------------------------------------- #
 
 def test_confidence_at_threshold_is_admitted() -> None:
-    runs = _Runs({"skill_id": "narrative-idea", "confidence": CONFIDENCE_THRESHOLD})
+    runs = _Runs({"skill_id": "narrative-character-creation", "confidence": CONFIDENCE_THRESHOLD})
     router = SkillRouter(methodology_library=None, provider=runs)
     result = _result(router, "I have an idea")
     assert result.source == "llm"
     assert result.routed is True
-    assert result.skill_id == "narrative-idea"
+    assert result.skill_id == "narrative-character-creation"
 
 
-def test_confidence_below_threshold_falls_back_to_keyword() -> None:
-    runs = _Runs({"skill_id": "narrative-idea", "confidence": 0.3})
+def test_confidence_below_threshold_fails_open() -> None:
+    runs = _Runs({"skill_id": "narrative-character-creation", "confidence": 0.3})
     router = SkillRouter(methodology_library=None, provider=runs)
     result = _result(router, "I have an idea for a plot")
-    # Keyword fallback detects the "idea"/"plot" term.
-    assert result.source == "keyword"
-    assert result.routed is True
-    assert result.skill_id == "narrative-idea"
-    assert result.confidence == 0.5
+    # Keyword layer retired: a below-threshold verdict fails open directly.
+    assert result.source == "fallback"
+    assert result.routed is False
+    assert result.skill_id is None
+    assert result.confidence == 0.0
 
 
 def test_low_confidence_with_no_keyword_fails_open() -> None:
-    runs = _Runs({"skill_id": "narrative-idea", "confidence": 0.2})
+    runs = _Runs({"skill_id": "narrative-character-creation", "confidence": 0.2})
     router = SkillRouter(methodology_library=None, provider=runs)
     result = _result(router, "hello there random text")
     assert result.source == "fallback"
@@ -151,30 +151,31 @@ def test_low_confidence_with_no_keyword_fails_open() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Keyword fallback
+# Fail-open (degraded mode is pure fail-open; keyword layer retired)
 # --------------------------------------------------------------------------- #
 
-def test_keyword_fallback_for_character_creation_uses_domain_classifier() -> None:
+def test_provider_absent_with_character_intent_fails_open() -> None:
     router = SkillRouter(methodology_library=None, provider=None)
     result = _result(router, "I want to create a new character")
-    assert result.skill_id == "narrative-character-creation"
-    assert result.source == "keyword"
-    assert result.confidence == 0.5
-    assert result.routed is True
+    assert result.skill_id is None
+    assert result.routed is False
+    assert result.source == "fallback"
 
 
-def test_keyword_fallback_for_other_transversal_skill() -> None:
+def test_provider_absent_with_other_transversal_intent_fails_open() -> None:
     router = SkillRouter(methodology_library=None, provider=None)
     result = _result(router, "give me an outline for my novel")
-    assert result.skill_id == "narrative-outline"
-    assert result.source == "keyword"
+    assert result.skill_id is None
+    assert result.routed is False
+    assert result.source == "fallback"
 
 
-def test_spanish_keyword_fallback() -> None:
+def test_provider_absent_spanish_intent_fails_open() -> None:
     router = SkillRouter(methodology_library=None, provider=None)
     result = _result(router, "quiero un borrador de la escena")
-    assert result.skill_id == "narrative-draft"
-    assert result.source == "keyword"
+    assert result.skill_id is None
+    assert result.routed is False
+    assert result.source == "fallback"
 
 
 # --------------------------------------------------------------------------- #
@@ -194,6 +195,11 @@ def test_available_skills_without_activation_are_just_transversal() -> None:
     router = SkillRouter(methodology_library=_Library(None), provider=None)
     skills = router._available_skills("vibrantes")
     assert set(skills) == set(TRANSVERSAL_SKILLS)
+
+
+def test_transversal_pool_is_audit_derived() -> None:
+    """The transversal pool is exactly the foundational skill (audit-derived)."""
+    assert set(TRANSVERSAL_SKILLS) == {"narrative-character-creation"}
 
 
 # --------------------------------------------------------------------------- #
@@ -259,7 +265,7 @@ def test_companion_candidates_order_and_descriptions() -> None:
     # Descriptions present for companions; transversals stay bare ids.
     assert "- alpha: Alpha methodology" in prompt
     assert "- omega: Omega methodology" in prompt
-    assert "- narrative-world-spec" in prompt
+    assert "- narrative-character-creation" in prompt
     # World-specific-over-transversal tie instruction is present.
     assert "prefer the world-specific (non-transversal) skill listed first" in prompt
     # The world's companions are read from the library.
@@ -270,7 +276,7 @@ def test_companion_free_world_prompt_byte_identical() -> None:
     """A world with a library but ZERO companions keeps the legacy bare-id
     comma-separated prompt byte-for-byte (spec R-CLASSIFY invariance)."""
     library = _Library(companions=[], published={})
-    runs = _Runs({"skill_id": "narrative-draft", "confidence": 0.95})
+    runs = _Runs({"skill_id": "narrative-character-creation", "confidence": 0.95})
     router = SkillRouter(methodology_library=library, provider=runs)
     _result(router, "write a scene")
     legacy = router._build_classification_prompt(
@@ -279,7 +285,7 @@ def test_companion_free_world_prompt_byte_identical() -> None:
     assert runs.prompts[0] == legacy
     # The companion prompt format (bullets / tie sentence) is absent.
     assert "prefer the world-specific" not in runs.prompts[0]
-    assert "- narrative-world-spec" not in runs.prompts[0]
+    assert "- narrative-character-creation" not in runs.prompts[0]
 
 
 def test_description_clipped_at_160() -> None:
@@ -298,17 +304,16 @@ def test_description_clipped_at_160() -> None:
 
 
 def test_gateway_down_companions_unreachable() -> None:
-    """Rule A degraded mode: with the classification gateway unavailable the
-    keyword layer claims TRANSVERSAL candidates only — a companion is NEVER
-    keyword-reachable."""
+    """Degraded mode is pure fail-open: with the classification gateway down, a
+    companion is NEVER routed and the turn receives zero skill injection."""
     library = _Library(
         companions=[_Activation(skill_id="alpha", version="1.0")],
         published={("alpha", "1.0"): _Published(description="Alpha methodology")},
     )
     router = SkillRouter(methodology_library=library, provider=_FailingRuns())
     result = _result(router, "give me an outline for my novel")
-    assert result.source == "keyword"
-    assert result.skill_id == "narrative-outline"
+    assert result.skill_id is None
+    assert result.routed is False
     assert result.skill_id != "alpha"
 
 
