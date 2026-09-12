@@ -24,14 +24,14 @@ categoria_funcional: Creación
 taller: Mundo
 adjuntos:
   - path: adjunto-nivel-1-principal.md
-    sha256: 97a81983723f9639e2d00d782ee2e034bb7558f6f5f6abda145c0f2ae392c5d7
-    bytes: 9802
+    sha256: 0963ccd4d4fffc76c46f05054de6f922766466c06b0e4fcb4435dd56b7b59f48
+    bytes: 9852
     nivel: "1º"
   - path: adjunto-nivel-2-secundario.md
-    sha256: 40d913a14b3a1ce40692c12ea17131e28aa15f4bcfe0b70011158772ca07194c
-    bytes: 3674
+    sha256: 03c34fa740efabd2f427b5c42be3ff806f0cc25649454cd3bcaf9dcf719503bf
+    bytes: 3638
     nivel: "2º"
   - path: adjunto-nivel-3-relleno.md
-    sha256: 91e35d5201406a9a32b56cc1989d551214779424b31b70c7f5b19c60d4bd8d63
-    bytes: 1946
+    sha256: b8adb0615efbe524dc749de32f7a3c19fe0fb95f2ff75b53745f97b3e4c93133
+    bytes: 1938
     nivel: "3º"

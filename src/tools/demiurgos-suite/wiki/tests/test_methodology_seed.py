@@ -541,3 +541,35 @@ class TestSeedCarriersB2:
             "adjunto-nivel-2-secundario.md",
             "adjunto-nivel-3-relleno.md",
         }
+
+    def test_install_upsert_moves_at1_pins_to_rewritten_carriers(self, tmp_path: Path) -> None:
+        """R-CARRIER-2 pin-move coherence: an existing ``@1.0`` record still
+        carrying pre-⑥ pins is upserted to the rewritten carriers on re-install
+        (desired ≠ existing), keeping the canonical digest and never conflicting;
+        the moved pins match the new on-disk bytes."""
+        seed_dir = SEED_ROOT / "narrative-character-creation"
+        library = MethodologyLibrary(tmp_path / "library.json")
+        install_seeds(library, SEED_ROOT)
+        path = tmp_path / "library.json"
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        record = next(iter(payload["published"].values()))
+        record["adjuntos"] = [
+            {"path": e["path"], "sha256": "0" * 64, "bytes": 1, "nivel": e["nivel"]}
+            for e in record["adjuntos"]
+        ]
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        library = MethodologyLibrary(path)
+        report = install_seeds(library, SEED_ROOT)
+        assert report.existing == 1 and report.conflict == 0 and report.installed == 0
+        published = library.get_published("narrative-character-creation", "1.0")
+        assert published is not None
+        assert published.digest == (
+            "2ae521a09bf014ccdefd7296f6ec94092aa6421703802f2d432d9eaf4f1bbe81"
+        )
+        for entry in published.adjuntos:
+            disk = (seed_dir / entry.path).read_bytes()
+            assert entry.sha256 == hashlib.sha256(disk).hexdigest()
+            assert entry.bytes == len(disk)
