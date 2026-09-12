@@ -13,7 +13,7 @@ import type { SkillState } from "@/lib/tallerStates";
  */
 export type VocabularyAxis =
   | "activation" // eje 1 — activación por flujo (slot)
-  | "companion" // eje 2 — compañero en chat
+  | "companion" // eje 2 — metodología en chat (método, nunca voz/persona)
   | "scope" // eje 3 — alcance de taller
   | "conflict"; // eje 4 — conflicto
 
@@ -27,14 +27,15 @@ export const AXIS_CONFLICT: VocabularyAxis = "conflict";
 export const AXIS_TERMS: Record<string, VocabularyAxis> = {
   Activa: AXIS_ACTIVATION,
   Inactiva: AXIS_ACTIVATION,
-  Compañera: AXIS_COMPANION,
+  "Metodología en chat": AXIS_COMPANION, // nombre canónico del eje-2
+  "Método en chat": AXIS_COMPANION, // forma corta del chip de fila
   Transversal: AXIS_SCOPE,
   Bloqueada: AXIS_CONFLICT,
 };
 
-/** Neutral placeholder for the no-activation slot (spec R4). Deliberately NOT
- *  final copy — the ⑥ wording pass owns the committed term. */
-export const NO_ACTIVATION_PLACEHOLDER = "—";
+/** Committed placeholder for the no-activation slot (spec R4/R-COPY-1):
+ *  never "Inactiva", never "—". */
+export const NO_ACTIVATION_PLACEHOLDER = "Sin activación en este flujo";
 
 /** A visible attributed chip; `variant` mirrors the Badge atom palette. */
 export interface AxisChip {
@@ -75,10 +76,15 @@ export function activationChip({
   }
 }
 
-/** Axis-2 (compañero en chat) row chip. "Compañera" is byte-frozen until the
- *  ⑥ rename pass (spec R7) — never renamed here. */
+/** Axis-2 (metodología en chat) row chip. Rendered term MUST equal the
+ *  `AXIS_TERMS` key verbatim (spec R1 "Registry-sourced chips").
+ *
+ *  Rename basis (R-COPY-4): the runtime mechanism injects ONLY the
+ *  ≤1000-token contract projection (the method), never the skill's voice or
+ *  persona content — so the term is a methodological descriptor, not a
+ *  re-romanticized companion figure. */
 export function companionChip(): AxisChip {
-  return { axis: AXIS_COMPANION, term: "Compañera", variant: "info" };
+  return { axis: AXIS_COMPANION, term: "Método en chat", variant: "info" };
 }
 
 /** Display label for a Taller key (short key → OPERATIONAL_TALLER_LABELS
@@ -92,10 +98,10 @@ function tallerLabel(taller: string | null | undefined): string {
 /** Axis-4 (conflicto) tooltip/panel copy — exact REQ-TRE-6 S1 copy, taller
  *  names interpolated via OPERATIONAL_TALLER_LABELS. Registry-sourced (R3):
  *  conflict vocabulary renders ONLY into tooltips / panel blocks, never a
- *  primary badge. */
+ *  primary badge. Neutral Spanish (R-COPY-3): no voseo. */
 export function conflictExplanation(
   activeTaller: string,
   skillTaller: string | null | undefined,
 ): string {
-  return `Esta skill es transversal de ${tallerLabel(activeTaller)} pero su taller primario (${tallerLabel(skillTaller)}) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.`;
+  return `Esta skill es transversal de ${tallerLabel(activeTaller)} pero su taller primario (${tallerLabel(skillTaller)}) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.`;
 }

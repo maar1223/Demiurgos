@@ -11,17 +11,18 @@ import {
   conflictExplanation,
 } from "@/lib/vocabularyAxes";
 
-describe("vocabularyAxes registry (axis-binding-ui R1)", () => {
+describe("vocabularyAxes registry (axis-binding-ui R1 — Term table pinned)", () => {
   it("maps every canonical term to exactly one axis", () => {
     expect(AXIS_TERMS["Activa"]).toBe(AXIS_ACTIVATION);
     expect(AXIS_TERMS["Inactiva"]).toBe(AXIS_ACTIVATION);
-    expect(AXIS_TERMS["Compañera"]).toBe(AXIS_COMPANION);
+    expect(AXIS_TERMS["Metodología en chat"]).toBe(AXIS_COMPANION);
+    expect(AXIS_TERMS["Método en chat"]).toBe(AXIS_COMPANION);
     expect(AXIS_TERMS["Transversal"]).toBe(AXIS_SCOPE);
     expect(AXIS_TERMS["Bloqueada"]).toBe(AXIS_CONFLICT);
   });
 
-  it("exports a neutral no-activation placeholder that is not final copy", () => {
-    expect(NO_ACTIVATION_PLACEHOLDER).toBeTruthy();
+  it("pins the committed no-activation placeholder (Term table pinned)", () => {
+    expect(NO_ACTIVATION_PLACEHOLDER).toBe("Sin activación en este flujo");
     expect(NO_ACTIVATION_PLACEHOLDER).not.toBe("Inactiva");
   });
 });
@@ -73,26 +74,26 @@ describe("activationChip — axis-1 (activación por flujo) row chip", () => {
   });
 });
 
-describe("companionChip — axis-2 (compañero en chat) row chip", () => {
-  it("attributes the frozen Compañera term to the companion axis (R7)", () => {
+describe("companionChip — axis-2 (metodología en chat) row chip", () => {
+  it("attributes the committed Método en chat term to the companion axis (R7)", () => {
     expect(companionChip()).toEqual({
       axis: AXIS_COMPANION,
-      term: "Compañera",
+      term: "Método en chat",
       variant: "info",
     });
   });
 });
 
-describe("conflictExplanation — axis-4 (conflicto) tooltip/panel copy (REQ-TRE-6 S1)", () => {
+describe("conflictExplanation — axis-4 (conflicto) tooltip/panel copy (Final sentence locked — REQ-TRE-6 S1)", () => {
   it("interpolates taller labels into the verbatim conflict copy", () => {
     expect(conflictExplanation("Mundo", "Ideas")).toBe(
-      "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.",
+      "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.",
     );
   });
 
   it("falls back to the raw taller value for unknown taller keys", () => {
     expect(conflictExplanation("Mundo", "Taller Custom")).toBe(
-      "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller Custom) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.",
+      "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller Custom) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.",
     );
   });
 });
