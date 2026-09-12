@@ -242,9 +242,9 @@ class TestSeedAdjuntosVerification:
             load_seed_catalog(tmp_path)
 
     def test_zero_attachment_seed_is_byte_identical(self, tmp_path: Path) -> None:
-        """S10/R6 + S8/R5: the real zero-adjunto seed validates identically,
-        keeps its canonical digest ``2ae521a0…``, and installs without ever
-        reporting a conflict."""
+        """S10/R6 + S8/R5: the canonical digest ``2ae521a0…`` is an identity
+        lock that holds with or without attachment pins (the canonical excludes
+        ``adjuntos``), and install never reports a conflict."""
         entry = load_seed_catalog(SEED_ROOT)[0]
         result = compile_methodology(entry.manifest, entry.source)
         assert result.ok, [issue.message for issue in result.issues]
@@ -464,3 +464,80 @@ class TestInstallUpsertR8:
         )
         assert len(published.adjuntos) == 1
         assert published.adjuntos[0].nivel == "1º"
+
+
+class TestSeedCarriersB2:
+    """R6 MODIFIED (④b): the wired seed ships three pinned carriers; the
+    existing ``_verify_entry`` path verifies them with ZERO seed-code change,
+    tampering fails the whole catalog, and the canonical digest stays locked."""
+
+    def test_carriers_green_three_pins_verified_by_existing_path(self) -> None:
+        """Scenario "carriers green": the wired seed loads with 3 carriers +
+        manifest entries + regenerated checksums; zero seed-code change."""
+        catalog = load_seed_catalog(SEED_ROOT)
+        assert len(catalog) == 1
+        entry = catalog[0]
+        adjuntos = entry.manifest.get("adjuntos") or []
+        assert len(adjuntos) == 3
+        assert {a["path"] for a in adjuntos} == {
+            "adjunto-nivel-1-principal.md",
+            "adjunto-nivel-2-secundario.md",
+            "adjunto-nivel-3-relleno.md",
+        }
+        assert {a["nivel"] for a in adjuntos} == {"1º", "2º", "3º"}
+        result = compile_methodology(entry.manifest, entry.source)
+        assert result.ok, [issue.message for issue in result.issues]
+        assert result.compiled is not None
+        assert len(result.compiled.adjuntos) == 3
+        assert result.compiled.adjuntos[0].path == "adjunto-nivel-1-principal.md"
+
+    def test_disk_vs_checksums_parity_for_wired_seed(self) -> None:
+        """Parity lock: every checksums.json entry matches the on-disk bytes."""
+        seed_dir = SEED_ROOT / "narrative-character-creation"
+        checksums = json.loads((seed_dir / "checksums.json").read_text(encoding="utf-8"))
+        assert set(checksums) == {
+            "manifest.yaml", "source.md",
+            "adjunto-nivel-1-principal.md",
+            "adjunto-nivel-2-secundario.md",
+            "adjunto-nivel-3-relleno.md",
+        }
+        for name, digest in checksums.items():
+            assert hashlib.sha256((seed_dir / name).read_bytes()).hexdigest() == digest
+
+    def test_tampered_real_carrier_fails_whole_catalog(self, tmp_path: Path) -> None:
+        """Scenario "tampered carrier": a modified carrier in the wired seed
+        raises SeedIntegrityError; no partial catalog is returned."""
+        seed_root = tmp_path / "seeds"
+        shutil.copytree(SEED_ROOT, seed_root)
+        (seed_root / "narrative-character-creation" / "adjunto-nivel-1-principal.md").write_bytes(
+            b"tampered bytes"
+        )
+        with pytest.raises(SeedIntegrityError):
+            load_seed_catalog(seed_root)
+
+    def test_absent_real_carrier_fails_whole_catalog(self, tmp_path: Path) -> None:
+        """Scenario "tampered carrier": an absent carrier fails the same way."""
+        seed_root = tmp_path / "seeds"
+        shutil.copytree(SEED_ROOT, seed_root)
+        (seed_root / "narrative-character-creation" / "adjunto-nivel-2-secundario.md").unlink()
+        with pytest.raises(SeedIntegrityError):
+            load_seed_catalog(seed_root)
+
+    def test_digest_lock_with_three_pins_installed(self, tmp_path: Path) -> None:
+        """Scenario "digest lock": installing the wired seed keeps the
+        canonical digest ``2ae521a0…`` and publishes all 3 pins."""
+        library = MethodologyLibrary(tmp_path / "library.json")
+        report = install_seeds(library, SEED_ROOT)
+        assert report.installed == 1 and report.conflict == 0
+        published = library.get_published("narrative-character-creation", "1.0")
+        assert published is not None
+        assert published.digest == (
+            "2ae521a09bf014ccdefd7296f6ec94092aa6421703802f2d432d9eaf4f1bbe81"
+        )
+        assert len(published.adjuntos) == 3
+        assert {entry.nivel for entry in published.adjuntos} == {"1º", "2º", "3º"}
+        assert {entry.path for entry in published.adjuntos} == {
+            "adjunto-nivel-1-principal.md",
+            "adjunto-nivel-2-secundario.md",
+            "adjunto-nivel-3-relleno.md",
+        }

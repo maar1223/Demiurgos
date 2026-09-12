@@ -22,3 +22,16 @@ phases:
 language: es
 categoria_funcional: Creación
 taller: Mundo
+adjuntos:
+  - path: adjunto-nivel-1-principal.md
+    sha256: 97a81983723f9639e2d00d782ee2e034bb7558f6f5f6abda145c0f2ae392c5d7
+    bytes: 9802
+    nivel: "1º"
+  - path: adjunto-nivel-2-secundario.md
+    sha256: 40d913a14b3a1ce40692c12ea17131e28aa15f4bcfe0b70011158772ca07194c
+    bytes: 3674
+    nivel: "2º"
+  - path: adjunto-nivel-3-relleno.md
+    sha256: 91e35d5201406a9a32b56cc1989d551214779424b31b70c7f5b19c60d4bd8d63
+    bytes: 1946
+    nivel: "3º"
