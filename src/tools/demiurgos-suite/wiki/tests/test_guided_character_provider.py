@@ -503,3 +503,114 @@ def test_conflicting_or_invalid_versions_remain_rejected(versions: dict[str, str
         assert result.error.code.value == "malformed_output"
 
     asyncio.run(scenario())
+
+
+class TestConvergenceSpecimenB4:
+    """R13 (④b): the convergence-specimen hint is additive — the provider
+    appends the block to ``methodology_context`` AFTER the contract block,
+    outside the ≤1000-token projection; the None path stays byte-identical;
+    a TypeError drops BOTH hints to the two-argument call (:427-433)."""
+
+    def _runs(self, prompts: list[str]):
+        class Runs:
+            async def start(self, request: object) -> str:
+                prompts.append(request.prompt)  # type: ignore[attr-defined]
+                return "run-1"
+
+            async def events(self, _run_id: str):
+                yield {"event": "run.completed", "run_id": "run-1", "output": {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "request_id": "request-1", "session_id": "session-1",
+                    "outcome": "question", "question": "What drives them?",
+                }}
+
+        return Runs()
+
+    def test_specimen_appended_after_contract_block_outside_projection(self) -> None:
+        """R13: the block lands in ``methodology_context`` after the contract
+        block — exactly one block per turn, never inside the projection."""
+        async def scenario() -> None:
+            prompts: list[str] = []
+            provider = HermesGuidedProvider(self._runs(prompts))
+            capabilities = Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+            specimen = "[Convergence specimen — nivel 1º]\n\n# Korrane\n\nEjemplo.\n\n"
+            await invoke_bounded(
+                provider, guided_request(), capabilities,
+                compiled_contract_markdown="## Methodology: Test\n**Phases**: a → b\n",
+                convergence_specimen_markdown=specimen,
+            )
+            prompt = prompts[0]
+            assert "[Active methodology contract" in prompt
+            assert prompt.index("[Convergence specimen — nivel 1º]") > prompt.index(
+                "Follow this methodology for the entire session."
+            )
+            assert prompt.count("[Convergence specimen — nivel 1º]") == 1
+            assert specimen in prompt
+
+        asyncio.run(scenario())
+
+    def test_specimen_none_prompt_is_byte_identical_to_pre_pr4(self, monkeypatch) -> None:
+        """R10/R13: with the hint ``None`` the prompt is byte-identical to the
+        pre-PR④ prompt — no specimen marker, no fragment drift."""
+        monkeypatch.setenv("DEMIURGOS_LANGUAGE", "en")
+
+        async def scenario() -> None:
+            prompts: list[str] = []
+            provider = HermesGuidedProvider(self._runs(prompts))
+            capabilities = Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+            await invoke_bounded(provider.invoke, guided_request(), capabilities)
+            await invoke_bounded(
+                provider.invoke, guided_request(), capabilities,
+                convergence_specimen_markdown=None,
+            )
+            assert prompts[0] == prompts[1]
+            assert "[Convergence specimen" not in prompts[0]
+            expected = (
+                "Act as the guided character provider. Return ONLY one JSON object — "
+                "no markdown fences, no code blocks — matching the "
+                f"{PROTOCOL_VERSION} response envelope. Use request_id "
+                '"request-1" and session_id "session-1". '
+                "The outcome must be question or delta; never claim author acceptance. "
+                "For a question, ask exactly one concise question at a time. Keep it to one or "
+                "two short sentences and provide no more than 5 useful options. "
+                "Do not add long explanations or recite the ficha; use the reference silently. "
+                "You have no filesystem, graph, or credential access. Use only the bounded "
+                "reference material below; do not expose internal paths or provenance. "
+                "Answer all questions and provide all deltas in the same language as the author's input (English). "
+                "Keep the response JSON-only, concise, bounded to the supplied context, and never write or claim approval. "
+                "Turn mode: creation. World: vibrantes. "
+                "Guided mode: full; question depth: standard. "
+                "Verified active ficha reference:\nRhyz is a patient tactician.\n"
+                "Author input: Create a character"
+            )
+            assert prompts[0] == expected
+
+        asyncio.run(scenario())
+
+    def test_type_error_fallback_drops_both_hints_to_two_arg_call(self) -> None:
+        """R13 (:427-433): a provider that rejects the keyword-only hints is
+        called with exactly two arguments — both hints dropped."""
+        async def scenario() -> None:
+            calls: list[tuple] = []
+
+            class TwoArgProvider:
+                async def invoke(self, request: GuidedRequest, token: CancellationToken) -> object:
+                    calls.append((request, token))
+                    return {
+                        "protocol_version": PROTOCOL_VERSION,
+                        "request_id": request.request_id,
+                        "session_id": request.session_id,
+                        "outcome": "question",
+                        "question": "What drives them?",
+                    }
+
+            result = await invoke_bounded(
+                TwoArgProvider(), guided_request(),
+                Capabilities(PROTOCOL_VERSION, True, True, True, 8_000),
+                compiled_contract_markdown="contract",
+                convergence_specimen_markdown="specimen",
+            )
+            assert result.outcome.value == "question"
+            assert len(calls) == 1
+
+        asyncio.run(scenario())

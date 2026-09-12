@@ -196,3 +196,36 @@ def test_timeout_and_cancellation_are_typed_and_never_committed() -> None:
         assert cancelled.error is not None or cancelled.outcome is Outcome.ERROR
 
     asyncio.run(scenario())
+
+
+def test_continue_session_forwards_convergence_specimen_hint_additively() -> None:
+    """R13 (④b): ``continue_session`` threads the additive convergence-specimen
+    hint to ``invoke_bounded`` beside the compiled contract; the None defaults
+    keep the legacy behavior byte-identical."""
+    async def scenario() -> None:
+        store = GuidedSessionStore()
+        store.create("session-1", "nec", "author-1")
+        received: dict[str, str | None] = {}
+
+        class CapturingProvider:
+            async def invoke(self, req: GuidedRequest, _token: CancellationToken, *,
+                             compiled_contract_markdown: str | None = None,
+                             convergence_specimen_markdown: str | None = None) -> object:
+                received["contract"] = compiled_contract_markdown
+                received["specimen"] = convergence_specimen_markdown
+                return await provider_response(req, _token)
+
+        response, state = await continue_session(
+            store, CapturingProvider(), request(), capabilities(),
+            compiled_contract_markdown="contract-md",
+            convergence_specimen_markdown="specimen-md",
+        )
+        assert response.outcome is Outcome.QUESTION
+        assert state is not None and state.revision == 1
+        assert received == {"contract": "contract-md", "specimen": "specimen-md"}
+
+        received.clear()
+        await continue_session(store, CapturingProvider(), request(1), capabilities())
+        assert received == {"contract": None, "specimen": None}
+
+    asyncio.run(scenario())

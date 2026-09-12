@@ -403,13 +403,15 @@ class GuidedSessionStore:
 
 async def invoke_bounded(provider: Provider | Callable[..., Awaitable[object]], request: GuidedRequest,
                          capabilities: Capabilities | None, cancellation: CancellationToken | None = None,
-                         *, compiled_contract_markdown: str | None = None) -> GuidedResponse:
+                         *, compiled_contract_markdown: str | None = None,
+                         convergence_specimen_markdown: str | None = None) -> GuidedResponse:
     """Invoke only an admitted provider; no parsed output is committed here.
 
-    ``compiled_contract_markdown`` is an ADDITIVE, optional keyword-only hint
-    forwarded to providers that accept it (e.g. ``HermesGuidedProvider.invoke``).
-    When ``None`` (the default) or when the provider does not accept the
-    keyword, the invocation behaves exactly as before — no protocol break.
+    ``compiled_contract_markdown`` and ``convergence_specimen_markdown`` are
+    ADDITIVE, optional keyword-only hints forwarded to providers that accept
+    them (e.g. ``HermesGuidedProvider.invoke``). When both are ``None`` (the
+    default) or when the provider does not accept the keywords, the invocation
+    behaves exactly as before — no protocol break (R13).
     """
     invalid = request.validate()
     if invalid:
@@ -424,12 +426,21 @@ async def invoke_bounded(provider: Provider | Callable[..., Awaitable[object]], 
         error = StructuredError(ErrorCode.CANCELLED, "The guided request was cancelled.", True)
         return GuidedResponse(PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision, Outcome.ERROR, error=error, retryable=True)
     try:
-        if compiled_contract_markdown is not None and hasattr(provider, "invoke"):
+        hints = {
+            name: value
+            for name, value in (
+                ("compiled_contract_markdown", compiled_contract_markdown),
+                ("convergence_specimen_markdown", convergence_specimen_markdown),
+            )
+            if value is not None
+        }
+        if hints and hasattr(provider, "invoke"):
             try:
-                call = provider.invoke(request, token, compiled_contract_markdown=compiled_contract_markdown)
+                call = provider.invoke(request, token, **hints)
             except TypeError:
-                # Provider does not accept the contract hint; fall back to the
-                # two-argument call so non-contract providers keep working.
+                # Provider does not accept the additive hints; fall back to the
+                # two-argument call so non-hint providers keep working — both
+                # hints are dropped together (:427-433 semantics, R13).
                 call = provider.invoke(request, token)
         else:
             call = provider.invoke(request, token) if hasattr(provider, "invoke") else provider(request, token)
@@ -458,7 +469,8 @@ async def invoke_bounded(provider: Provider | Callable[..., Awaitable[object]], 
 async def continue_session(store: GuidedSessionStore, provider: Provider | Callable[..., Awaitable[object]],
                            request: GuidedRequest, capabilities: Capabilities | None,
                            cancellation: CancellationToken | None = None,
-                           *, compiled_contract_markdown: str | None = None) -> tuple[GuidedResponse, SessionState | None]:
+                           *, compiled_contract_markdown: str | None = None,
+                           convergence_specimen_markdown: str | None = None) -> tuple[GuidedResponse, SessionState | None]:
     state = store.recover(request.session_id, request.authorization_binding)
     if state is None:
         error = StructuredError(ErrorCode.UNAUTHORIZED, "The session is unavailable.", False)
@@ -470,7 +482,8 @@ async def continue_session(store: GuidedSessionStore, provider: Provider | Calla
         error = StructuredError(ErrorCode.REVISION_CONFLICT, "The session revision is stale.", True)
         return GuidedResponse(PROTOCOL_VERSION, request.request_id, request.session_id, request.base_revision, Outcome.ERROR, error=error, retryable=True), None
     response = await invoke_bounded(provider, request, capabilities, cancellation,
-                                    compiled_contract_markdown=compiled_contract_markdown)
+                                    compiled_contract_markdown=compiled_contract_markdown,
+                                    convergence_specimen_markdown=convergence_specimen_markdown)
     if response.outcome in {Outcome.ERROR, Outcome.UNAVAILABLE}:
         return response, None
     if response.outcome is Outcome.DELTA:

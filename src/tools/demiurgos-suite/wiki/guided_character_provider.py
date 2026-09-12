@@ -73,6 +73,7 @@ class HermesGuidedProvider:
         cancellation: CancellationToken,
         *,
         compiled_contract_markdown: str | None = None,
+        convergence_specimen_markdown: str | None = None,
     ) -> object:
         reference = request.reference_context or "(No active ficha reference was provided.)"
         goal_instruction = ""
@@ -104,6 +105,11 @@ class HermesGuidedProvider:
                 "Follow this methodology and version for the entire session. "
                 if request.methodology else ""
             )
+        if convergence_specimen_markdown:
+            # The convergence specimen block (D7) is appended AFTER the contract
+            # block, outside the ≤1000-token projection (R12/R13): the block is
+            # already fully built and bounded by the serving seam.
+            methodology_context = f"{methodology_context}{convergence_specimen_markdown}"
         prompt = (
             "Act as the guided character provider. Return ONLY one JSON object — "
             f"no markdown fences, no code blocks — matching the "
