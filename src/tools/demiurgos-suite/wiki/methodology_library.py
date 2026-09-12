@@ -680,7 +680,9 @@ class MethodologyLibrary:
         Outcomes:
         - ``installed`` — the key was absent and no stored version is newer.
         - ``existing`` — the exact same version+digest is already published
-          (idempotent rerun; skipped, not re-written).
+          (idempotent rerun; skipped, not re-written — except the R8
+          ``adjuntos`` upsert: a digest-equal seed whose attachment pins are
+          non-empty and differ backfills them onto the stored record).
         - ``stale`` — a newer non-deleted version of the skill is already
           stored; insert-only reconciliation skips older seeds.
         - ``conflict`` — the same version is stored with a DIFFERENT digest:
@@ -696,6 +698,10 @@ class MethodologyLibrary:
             existing = self._published.get(key)
             if existing is not None:
                 if existing["digest"] == compiled.digest:
+                    desired = [entry.as_dict() for entry in compiled.adjuntos]
+                    if desired and list(existing.get("adjuntos") or []) != desired:
+                        existing["adjuntos"] = desired
+                        self._save_locked()
                     return "existing"
                 logger.warning(
                     "seed install conflict: %s@%s is already published with a "

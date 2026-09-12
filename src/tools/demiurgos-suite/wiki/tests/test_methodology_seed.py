@@ -363,3 +363,104 @@ class TestInstallSeeds:
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, tmp_path / "no-seeds")
         assert report.entries == 0 and report.installed == 0
+
+
+class TestInstallUpsertR8:
+    """R8 (④a): install upserts ``adjuntos`` pins onto the existing published
+    record; identity stays immutable, zero-adjunto records stay byte-identical,
+    and a digest-equal rerun never conflicts (D9)."""
+
+    def _adjunto(self, path: str = "ejemplos/Axill.md", sha256: str | None = None) -> dict:
+        return {"path": path, "sha256": sha256, "bytes": 1024, "nivel": "1º"}
+
+    def _seed_roots(self, tmp_path: Path) -> tuple[Path, Path]:
+        """Zero-adjunto and same-identity adjunto seed roots for one skill."""
+        zero_root = tmp_path / "seeds-zero"
+        _write_seed(zero_root, "demo-skill")
+        adj_root = tmp_path / "seeds-adj"
+        _write_seed(adj_root, "demo-skill", adjuntos=[self._adjunto()])
+        return zero_root, adj_root
+
+    def test_upsert_on_install_keeps_identity_fields(self, tmp_path: Path) -> None:
+        """Scenario "upsert on install": metadata upserted, identity unchanged."""
+        zero_root, adj_root = self._seed_roots(tmp_path)
+        library = MethodologyLibrary(tmp_path / "library.json")
+        install_seeds(library, zero_root)
+        before = library.get_published("demo-skill", "1.0")
+        assert before is not None and before.adjuntos == ()
+
+        report = install_seeds(library, adj_root)
+        assert report.existing == 1 and report.installed == 0 and report.conflict == 0
+
+        after = library.get_published("demo-skill", "1.0")
+        assert after is not None
+        assert len(after.adjuntos) == 1
+        assert after.adjuntos[0].path == "ejemplos/Axill.md"
+        assert after.adjuntos[0].nivel == "1º"
+        # Identity fields are immutable — only the pins moved.
+        assert after.digest == before.digest
+        assert after.skill_id == before.skill_id == "demo-skill"
+        assert after.version == before.version == "1.0"
+        assert after.name == before.name
+        assert after.description == before.description
+        assert after.phases == before.phases
+        assert after.language == before.language
+        assert after.source == before.source
+        assert after.published_at == before.published_at
+
+    def test_upsert_backfills_record_lacking_adjuntos_key(self, tmp_path: Path) -> None:
+        """Scenario "upsert on install" (pre-PR③ record): a record without an
+        ``adjuntos`` key decodes empty and gets the pins backfilled."""
+        zero_root, adj_root = self._seed_roots(tmp_path)
+        path = tmp_path / "library.json"
+        library = MethodologyLibrary(path)
+        install_seeds(library, zero_root)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        record = next(iter(payload["published"].values()))
+        record.pop("adjuntos", None)
+        path.write_text(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        library = MethodologyLibrary(path)
+        report = install_seeds(library, adj_root)
+        assert report.existing == 1 and report.conflict == 0
+        published = library.get_published("demo-skill", "1.0")
+        assert published is not None and len(published.adjuntos) == 1
+        assert published.adjuntos[0].path == "ejemplos/Axill.md"
+
+    def test_zero_adjunto_rerun_is_raw_json_byte_identical(self, tmp_path: Path) -> None:
+        """D9: zero-adjunto records are never rewritten — raw JSON byte-identical."""
+        path = tmp_path / "library.json"
+        library = MethodologyLibrary(path)
+        install_seeds(library, SEED_ROOT)
+        first_bytes = path.read_bytes()
+        assert b'"adjuntos"' in first_bytes  # PR③ record shape (empty list)
+        rerun = MethodologyLibrary(path)
+        report = install_seeds(rerun, SEED_ROOT)
+        assert report.existing == 1 and report.conflict == 0
+        assert path.read_bytes() == first_bytes
+
+    def test_digest_lock_2ae521a0_unmoved_after_upsert(self, tmp_path: Path) -> None:
+        """Scenario "digest lock": wiring adjuntos onto the real seed keeps the
+        canonical digest ``2ae521a0…`` and never reports a conflict."""
+        library = MethodologyLibrary(tmp_path / "library.json")
+        install_seeds(library, SEED_ROOT)
+        entry = load_seed_catalog(SEED_ROOT)[0]
+        manifest = dict(entry.manifest)
+        adj_root = tmp_path / "seeds-adj-real"
+        adj_root.mkdir()
+        _write_seed(
+            adj_root, "narrative-character-creation",
+            manifest=manifest, source=entry.source,
+            adjuntos=[self._adjunto()],
+        )
+        report = install_seeds(library, adj_root)
+        assert report.existing == 1 and report.conflict == 0 and report.installed == 0
+        published = library.get_published("narrative-character-creation", "1.0")
+        assert published is not None
+        assert published.digest == (
+            "2ae521a09bf014ccdefd7296f6ec94092aa6421703802f2d432d9eaf4f1bbe81"
+        )
+        assert len(published.adjuntos) == 1
+        assert published.adjuntos[0].nivel == "1º"
