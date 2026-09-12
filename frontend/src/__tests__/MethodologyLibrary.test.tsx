@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
+import { conflictExplanation } from "@/lib/vocabularyAxes";
 import type { MethodologyStatus } from "@/api/types";
 
 const status: MethodologyStatus = {
@@ -270,9 +271,10 @@ describe("MethodologyLibrary", () => {
       "En conflicto · su taller de origen ya tiene una activa",
     ]);
 
-    // Exact conflict copy from spec REQ-TRE-6 S1, taller names interpolated
-    // via OPERATIONAL_TALLER_LABELS (display labels, not short keys) — now
-    // rendered ONLY inside the row tooltip (axis-binding-ui R3).
+    // Conflict copy bound to the registry builder (the shared tooltip + panel
+    // source, REQ-TRE-6 S1 + axis-binding-ui R3): taller names interpolated
+    // via OPERATIONAL_TALLER_LABELS (display labels, not short keys) — this
+    // row-surface assertion breaks if the registry copy drifts from spec.
     const blockedRow = screen.getByText("Skill ideas bloqueada").closest(
       "li",
     ) as HTMLElement;
@@ -282,7 +284,7 @@ describe("MethodologyLibrary", () => {
     expect(blockedTooltip).not.toBeNull();
     expect(
       within(blockedTooltip as HTMLElement).getByText(
-        "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adaptá la skill para resolver el conflicto o activala en otro mundo.",
+        conflictExplanation("Mundo", "Ideas"),
       ),
     ).toBeInTheDocument();
 

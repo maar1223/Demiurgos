@@ -76,7 +76,10 @@ describe("TallerExplorerSidebar companion badge (R-UI chips)", () => {
     renderSidebar();
 
     expect(screen.getByText("Eneagrama")).toBeInTheDocument();
-    expect(screen.getByText("Compañera")).toBeInTheDocument();
+    // "Compañera" renders as an attributed axis-2 chip (axis-binding-ui R1) —
+    // copy byte-frozen (R7), the assertion targets the attributed surface.
+    const companionChip = screen.getByText("Compañera").closest("[data-axis]");
+    expect(companionChip).toHaveAttribute("data-axis", "companion");
   });
 
   it("leaves rows unmarked when the world has no companions", () => {
