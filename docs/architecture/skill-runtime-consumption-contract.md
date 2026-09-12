@@ -75,17 +75,17 @@
 
 **[DECISIÓN CERRADA — SR2, origen D2]** La política del **pool transversal** debe derivar de la **auditoría del corpus** (Apéndice A): cada entrada se clasifica como **recuperable / a rehacer / legado** y la composición del pool se fija **después** de la auditoría, no antes. `[DECISIÓN CERRADA]`
 
-- **Pool actual**: `TRANSVERSAL_SKILLS` hardcodea 7 slugs (`wiki/skill_router.py:26-34`); la biblioteca publica **solo** `narrative-character-creation@1.0` (`data/methodology/library.json`, `published`), así que 6 de esos slugs son **fantasma** (no tienen entrada publicada). `[ACTUAL]`
-- **Pool objetivo (consecuencia de la auditoría del Apéndice A)**: la auditoría clasifica 1 recuperable y 19 legado, así que el pool transversal derivado se reduce a **compañeros del mundo ∪ slots de activación por flujo ∪ el transversal fundacional `narrative-character-creation`** (`wiki/skill_router.py:94-104`, `:208-250`). Los 19 legado **no** son miembros del pool; los 6 slugs fantasma se retiran del pool en el PR ② (sección 9) — el retiro se ejecuta **allí**, no en este contrato. `[OBJETIVO]`
-- **Trazabilidad**: toda afirmación de membresía transversal debe **trazarse a una clase de auditoría** (Apéndice A); ningún slug fantasma queda en el pool sin clasificar. `[OBJETIVO]`
+- **Pool actual (tras PR ②)**: `TRANSVERSAL_SKILLS = {narrative-character-creation}` (`wiki/skill_router.py:30-32`) con comentario de trazabilidad de auditoría (1 recuperable / 19 legado, `:25-29`); los 6 slugs fantasma y la capa de keywords se retiraron en el PR ② (sección 9). `[ACTUAL]`
+- **Pool derivado (consecuencia de la auditoría del Apéndice A)**: la auditoría clasifica 1 recuperable y 19 legado; el pool transversal derivado se reduce a **compañeros del mundo ∪ slot activado (`GUIDED_CHARACTER_FLOW`) ∪ el transversal fundacional `narrative-character-creation`** (`wiki/skill_router.py:85-95`, `:189`). Los 19 legado **no** son miembros del pool. La unión de slots de **todos** los flujos (incluido `CO_CREATION_FLOW`) queda **diferida**. `[ACTUAL]`
+- **Trazabilidad**: toda afirmación de membresía transversal se **traza a una clase de auditoría** (Apéndice A); ningún slug fantasma queda en el pool (`wiki/skill_router.py:25-32`, comentario de auditoría). `[ACTUAL]`
 - **El dominio del orquestador no se retira**: los activos de flujo de trabajo (`src/prompts/narrative/`, `src/commands/narrative-*`, `Agente_Maestro.md`) **no se retiran ni se declaran muertos** por este contrato; siguen vivos como subsistema narrativo del orquestador (sección 0). Lo que este contrato declara es **solo** su **ausencia del pool del router** (Apéndice A). `[DECISIÓN CERRADA — D2]`
 
-**[DECISIÓN CERRADA — SR3, origen D3]** El enrutamiento de compañeros es **fail-open** ante ambigüedad. Ambigüedad ⇔ (confianza del ganador `< 0.7`) **O** (diferencia top-2 entre candidatos clase compañero `< NEAR_TIE_MARGIN = 0.15`). `[OBJETIVO]`
+**[DECISIÓN CERRADA — SR3, origen D3]** El enrutamiento de compañeros es **fail-open** ante ambigüedad. Ambigüedad ⇔ (confianza del ganador `< 0.7`) **O** (diferencia top-2 entre candidatos clase compañero `< NEAR_TIE_MARGIN = 0.15`). Implementado en el PR ② (`wiki/skill_router.py:327-338`). `[ACTUAL]`
 
-- **Ante ambigüedad**: **cero inyecciones**; respuesta genérica o preguntar al Autor. Esto **reemplaza** el actual "primer ganador silencioso" (`wiki/skill_router.py:208-250`, sesgo `:265-266` "prefer the world-specific (non-transversal) skill listed first", y el umbral único `:36`, `:332`). `[OBJETIVO]`
-- **El clasificador debe reportar top-2**: hoy el prompt de clasificación devuelve solo el ganador (`wiki/skill_router.py:260-270`); el objetivo exige que reporte las **dos primeras opciones** con su confianza para poder evaluar el margen. `[OBJETIVO]`
-- **La regla del margen aplica solo cuando ambos top-2 son de clase compañero**; con menos de 2 compañeros la regla es vacua (no hay empate posible). `[OBJETIVO]`
-- **Ruta de keywords exenta**: el fallback determinista (`wiki/skill_router.py:47-54`, confianza fija `0.5` en `:56`) solo reclama transversales y **nunca inyecta**; no participa de la regla del margen. `[ACTUAL]`
+- **Ante ambigüedad**: **cero inyecciones** (`skill_id=None`; `source="ambiguous"` para empate cercano de compañeros, `source="fallback"` para modo degradado; `wiki/skill_router.py:305-307`, `:338`). Reemplaza el antiguo "primer ganador silencioso" (umbral único). `[ACTUAL]`
+- **El clasificador reporta top-2**: el prompt con descripciones (mundos con compañeros) pide `runner_up_skill_id`/`runner_up_confidence` (`wiki/skill_router.py:257-260`); el parse tolera ausencia/malformación → `None` (`:143-156`). El prompt bare-id (sin compañeros) queda byte-idéntico (`:159`). `[ACTUAL]`
+- **La regla del margen aplica solo cuando ambos top-2 son de clase compañero**; con menos de 2 compañeros la regla es vacua (no hay empate posible) (`wiki/skill_router.py:332-338`). `[ACTUAL]`
+- **Ruta de keywords retirada (PR ②)**: la capa de keywords (incluida la rama `route_new_character_intent`) se eliminó; el modo degradado es fail-open puro, `source="fallback"` (`wiki/skill_router.py:305-307`). `[ACTUAL]`
 - **Ganador claro (status quo)**: un compañero por encima del umbral y con margen sobre el segundo sigue inyectando. `[ACTUAL]`
 
 **Escenarios cubiertos (spec, skill-routing-policy):** inventario completo (`Inventory complete`), trazabilidad del pool (`Pool traceability`), ganador claro (`Clear winner`), empate cercano (`Near-tie`).
@@ -147,10 +147,11 @@ Estado verificado en el repositorio contra HEAD en el momento de redactar (todas
 
 | Capacidad | Evidencia |
 |---|---|
-| Pool transversal hardcodeado (7 slugs, 6 fantasma) | `wiki/skill_router.py:26-34` — `TRANSVERSAL_SKILLS` |
-| Umbral de confianza 0.7 y fallback de keywords (solo transversales, confianza 0.5) | `wiki/skill_router.py:36`, `:47-54`, `:56`, `:332` |
-| Candidatos del pool: transversales ∪ slot ∪ compañeros; sesgo al mundo-específico primero | `wiki/skill_router.py:94-104`, `:102-103`, `:208-250`, `:236-245`, `:265-266` |
-| Clasificador LLM devuelve solo el ganador (sin top-2) | `wiki/skill_router.py:260-270` |
+| Pool transversal audit-derivado (1 transversal fundacional) | `wiki/skill_router.py:25-32` — `TRANSVERSAL_SKILLS = {narrative-character-creation}` con comentario de trazabilidad de auditoría (1 recuperable / 19 legado); los 6 slugs fantasma se retiraron en el PR ② |
+| Umbral de confianza 0.7 y margen de empate `NEAR_TIE_MARGIN = 0.15`; capa de keywords retirada (PR ②), modo degradado = fail-open puro | `wiki/skill_router.py:34` (umbral), `:41` (margen), `:305-307` (fail-open `source="fallback"`) |
+| Candidatos del pool: transversal fundacional ∪ slot activado (`GUIDED_CHARACTER_FLOW`) ∪ compañeros | `wiki/skill_router.py:85-95`, `:189` (`_companion_candidates` devuelve `(orden, companion_ids)`) |
+| Clasificador LLM reporta top-2 en prompts con descripciones; prompt bare-id (sin compañeros) byte-idéntico | `wiki/skill_router.py:241`, `:257-260` (`runner_up_*`), `:143-156` (parse tolerante → None), `:159` (bare-id sin top-2) |
+| `CO_CREATION_FLOW` documentado como reservado (no enlazado; PR ② WARNING-1) | `wiki/methodology_library.py:55-64` |
 | Slot único de activación por mundo | `wiki/methodology_library.py:739` `active_for` |
 | Compañeros independientes del slot; tope 8; un slot por skill_id | `wiki/methodology_library.py:187-189`, `:768-772` |
 | Pinning `skill@version` en creación de sesión guiada y en continuaciones | `wiki/api_server.py:2183`, `:5904` (snapshot), `:2081` (inyección) |
@@ -165,7 +166,7 @@ Estado verificado en el repositorio contra HEAD en el momento de redactar (todas
 | Ejemplos canónicos de salida (5, solo en docs; runtime no los referencia) | `docs/architecture/character-creation/examples/` (`Axill_Garner.md`, `Kae_Turant.md`, `Secundario_Ejemplo.md`, `Relleno_Ejemplo.md`, `Villano_Korrane.md` = 9802 B), `docs/architecture/character-creation/README.md:13-17`, `:113-119` |
 | Ejemplos de técnica en dominio de skill | `skills/narrative-character-creation/references/conversation-examples.md`, citado en `docs/architecture/character-creation/README.md:146-148` |
 
-**No implementado (objetivo):** el slot por tipo de flujo guiado (§2), la derivación del pool transversal desde la auditoría (§3), el reporte top-2 del clasificador (§3), el fail-open por margen (§3), el campo de adjuntos con digest (§4), la inyección de convergencia (§4) y los ejes de vocabulario atribuidos (§5). Todo ello es `[OBJETIVO]`/`[DECISIÓN CERRADA]`, no `[ACTUAL]`.
+**No implementado (objetivo):** el slot por tipo de flujo guiado (§2), el campo de adjuntos con digest (§4), la inyección de convergencia (§4) y los ejes de vocabulario atribuidos (§5). Todo ello es `[OBJETIVO]`/`[DECISIÓN CERRADA]`, no `[ACTUAL]`.
 
 > Regla de etiquetas: todo lo listado como `[ACTUAL]` está verificado contra el código; las superficies objetivo de las secciones 2–5 llevan su propia etiqueta y **no se presentan como implementadas**.
 
@@ -180,8 +181,8 @@ Estado verificado en el repositorio contra HEAD en el momento de redactar (todas
 | ID | Decisión | Etiqueta |
 |---|---|---|
 | **SR1** | *(origen: D1, ledger #3149)* Un slot de activación **por tipo de flujo guiado** por mundo (extiende el `active_for` único); el slot **nunca inyecta** en chat libre; la intención de chat abre el flujo guiado con su Skill; los compañeros siguen moldeando el chat (§2) | `[OBJETIVO]` |
-| **SR2** | *(origen: D2, ledger #3149)* La política del pool transversal **deriva de la auditoría** (Apéndice A): 1 recuperable + 19 legado → pool = compañeros ∪ slots por flujo ∪ `narrative-character-creation`; los fantasma se retiran en el PR ②; el dominio del orquestador no se retira (§3) | `[DECISIÓN CERRADA]` |
-| **SR3** | *(origen: D3, ledger #3149)* Enrutamiento de compañeros **fail-open**: ambigüedad ⇔ confianza `< 0.7` **o** top-2 de clase compañero `< NEAR_TIE_MARGIN = 0.15` → **cero inyecciones** (genérico o preguntar); reemplaza el "primer ganador silencioso"; el clasificador reporta top-2 (§3) | `[OBJETIVO]` |
+| **SR2** | *(origen: D2, ledger #3149)* La política del pool transversal **deriva de la auditoría** (Apéndice A): 1 recuperable + 19 legado → pool = compañeros ∪ slot activado (`GUIDED_CHARACTER_FLOW`) ∪ `narrative-character-creation`; los fantasma se retiraron en el PR ②; la unión de slots de todos los flujos queda diferida; el dominio del orquestador no se retira (§3) | `[ACTUAL]` |
+| **SR3** | *(origen: D3, ledger #3149)* Enrutamiento de compañeros **fail-open**: ambigüedad ⇔ confianza `< 0.7` **o** top-2 de clase compañero `< NEAR_TIE_MARGIN = 0.15` → **cero inyecciones** (genérico o preguntar); reemplaza el "primer ganador silencioso"; el clasificador reporta top-2 (§3). Implementado en el PR ② | `[ACTUAL]` |
 | **SR4** | *(origen: D6, ledger #3149)* Campo **adjuntos** por `skill@version` en manifest/compilador/registro publicado, **digest-pinned** por SHA-256; ≤ 8 adjuntos/skill, ≤ 12288 B; desajuste de digest falla build/publish; nunca bajo `mundos/**/referencias/**` (§4) | `[OBJETIVO]` |
 | **SR5** | *(origen: D4, ledger #3149)* **Cuatro ejes canónicos** de vocabulario (activación por flujo, compañero en chat, alcance de taller, conflicto); la fila muestra solo los dos primeros con **atribución de eje**; alcance/conflicto a tooltip/panel; prohibida la contradicción entre ejes sin atribución; rename "Compañera" registrado para el pase de copy (§5) | `[OBJETIVO]` |
 | **SR6** | *(origen: D5, ledger #3149)* Ejemplo de espécimen terminado se inyecta en la **fase de propuesta/convergencia** (nunca turno uno), dentro de su presupuesto (1 adjunto/turno ≤ 3072 tokens estimados, fuera de la proyección ≤ 1000); estructura de salida llega vía la proyección (§4/§6) | `[OBJETIVO]` |
@@ -204,7 +205,7 @@ Un SDD de este dominio **solo** puede comenzar cuando se cumplan todos:
 - [ ] El SDD declara explícitamente qué NO toca (copy visible, ejemplos en `mundos/{world}/referencias/`, corpus del orquestador).
 - [ ] Las pruebas cubren las invariantes afectadas (fail-open §3, digest-pinning §4, ejes §5) y las ramas de fallo relevantes.
 
-**Seguimiento (PRs encadenados, fuera de este cambio):** ① slot por tipo de flujo guiado (SR1); ② derivación del pool + retiro de fantasma + `NEAR_TIE_MARGIN` + top-2 (SR2/SR3); ③ adjuntos del manifest/compilador + digest (SR4); ④ inyección de convergencia (SR6); ⑤ binding de ejes en la UI (SR5); ⑥ pase de copy incl. rename "Compañera". Todos encadenados, stacked-to-main, presupuesto ~400 líneas cada uno.
+**Seguimiento (PRs encadenados, fuera de este cambio):** ① slot por tipo de flujo guiado (SR1); ~~② derivación del pool + retiro de fantasma + `NEAR_TIE_MARGIN` + top-2 (SR2/SR3)~~ — ✅ **completado en el PR ②** (`pool-router-derivation`; §3 y §7 pasan a `[ACTUAL]`); ③ adjuntos del manifest/compilador + digest (SR4); ④ inyección de convergencia (SR6); ⑤ binding de ejes en la UI (SR5); ⑥ pase de copy incl. rename "Compañera". Todos encadenados, stacked-to-main, presupuesto ~400 líneas cada uno.
 
 ---
 
