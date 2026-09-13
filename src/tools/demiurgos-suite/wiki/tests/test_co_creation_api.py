@@ -11,6 +11,7 @@ compatibility (REQ-CC-9).
 
 from __future__ import annotations
 
+import hashlib
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -31,6 +32,7 @@ from co_creation_protocol import (  # noqa: E402
 )
 from co_creation_session_store import CoCreationSessionStore  # noqa: E402
 from co_creation_materializer import CoCreationMaterializer  # noqa: E402
+from methodology_compiler import MAX_ADJUNTO_BYTES, MAX_ADJUNTOS  # noqa: E402
 
 _MILESTONES = (
     "proposito", "alcance", "flujo_principal", "ramas_reglas",
@@ -51,6 +53,7 @@ ROUTES = {
     ("POST", "/api/co-creation/sessions/{session_id}/history/restore"),
     ("POST", "/api/co-creation/sessions/{session_id}/warnings/{idx}/status"),
     ("POST", "/api/co-creation/sessions/{session_id}/pending-questions/{idx}/status"),
+    ("POST", "/api/co-creation/sessions/{session_id}/adjuntos"),
     ("POST", "/api/co-creation/derive"),
 }
 
@@ -1079,3 +1082,164 @@ def test_draft_request_rejects_claimed_trust_fields(client: TestClient, monkeypa
     assert response.json()["code"] == "client_trust_claim_not_allowed"
     drafts = api_server._methodology_library().list_drafts()
     assert drafts == []
+
+
+# ---------------------------------------------------------------------------
+# S2 — session staging upload (AE-1 / AE-2)
+# ---------------------------------------------------------------------------
+
+
+def _upload(client: TestClient, session_id: str, filename: str, data: bytes,
+            nivel: str = "1º"):
+    return client.post(
+        f"/api/co-creation/sessions/{session_id}/adjuntos",
+        files={"file": (filename, data, "text/markdown")},
+        data={"nivel": nivel},
+    )
+
+
+def _staging_dir(tmp_path: Path, session_id: str) -> Path:
+    return tmp_path / "data" / "methodology" / "staging" / session_id
+
+
+def test_upload_stages_bytes_and_returns_server_computed_pin(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """AE-1 happy path: the pin is server-computed and bytes stay staged."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    data = b"# Ejemplar\n\nContenido.\n"
+
+    response = _upload(client, session_id, "ejemplo.md", data)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"adjunto": {
+        "path": "ejemplo.md",
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+        "nivel": "1º",
+    }}
+    staged = _staging_dir(tmp_path, session_id)
+    assert (staged / "ejemplo.md").read_bytes() == data
+    # Nothing moved: attachments/ is untouched by staging.
+    assert not (tmp_path / "data" / "methodology" / "attachments").exists()
+
+
+@pytest.mark.parametrize("filename", [
+    "../escape.md", "/abs/x.md", "mundos/x.md", "x.txt",
+])
+def test_upload_rejects_path_escape_with_zero_mutation(
+    client: TestClient, monkeypatch, tmp_path: Path, filename: str,
+) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+
+    response = _upload(client, session_id, filename, b"# x\n")
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "invalid_input"
+    assert not _staging_dir(tmp_path, session_id).exists()
+
+
+def test_upload_rejects_oversize_with_zero_mutation(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+
+    response = _upload(client, session_id, "big.md", b"x" * (MAX_ADJUNTO_BYTES + 1))
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "attachment_limit_reached"
+    assert not _staging_dir(tmp_path, session_id).exists()
+
+
+def test_upload_rejects_invalid_nivel(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+
+    response = _upload(client, session_id, "a.md", b"# x\n", nivel="   ")
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "invalid_input"
+    assert not _staging_dir(tmp_path, session_id).exists()
+
+
+def test_upload_rejects_empty_file(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+
+    response = _upload(client, session_id, "empty.md", b"")
+
+    assert response.status_code == 400, response.text
+    assert response.json()["code"] == "invalid_input"
+
+
+def test_upload_rejects_ninth_attachment(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    staged = _staging_dir(tmp_path, session_id)
+    staged.mkdir(parents=True)
+    for index in range(MAX_ADJUNTOS):
+        (staged / f"f{index}.md").write_bytes(b"# staged\n")
+
+    response = _upload(client, session_id, "one-more.md", b"# x\n")
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "attachment_limit_reached"
+    assert len(list(staged.glob("*.md"))) == MAX_ADJUNTOS
+
+
+def test_upload_rejects_duplicate_basename_as_conflict(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    first = _upload(client, session_id, "a.md", b"# original\n")
+    assert first.status_code == 200, first.text
+
+    conflict = _upload(client, session_id, "a.md", b"# other\n")
+
+    assert conflict.status_code == 409, conflict.text
+    assert conflict.json()["code"] == "attachment_conflict"
+    assert (_staging_dir(tmp_path, session_id) / "a.md").read_bytes() == b"# original\n"
+
+
+def test_upload_foreign_principal_fails_closed_with_403(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    holder = _bind_principal(monkeypatch, "author-1")
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    holder.principal_id = "author-2"
+
+    response = _upload(client, session_id, "a.md", b"# x\n")
+
+    assert response.status_code == 403, response.text
+    assert response.json()["code"] == "unauthorized"
+    assert not _staging_dir(tmp_path, session_id).exists()
+    # The owning principal's session is untouched.
+    assert set(_staging_dir(tmp_path, session_id).glob("*.md")) == set()
+
+
+def test_upload_without_principal_is_401(client: TestClient, tmp_path: Path) -> None:
+    session_id = "co-creation-ghost"
+
+    response = _upload(client, session_id, "a.md", b"# x\n")
+
+    assert response.status_code == 401, response.text
+    assert response.json()["code"] == "unauthorized"
+    assert not _staging_dir(tmp_path, session_id).exists()

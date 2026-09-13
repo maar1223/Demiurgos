@@ -111,3 +111,7 @@ data/methodology/quarantine/
 # forma perezosa en materialize/trust; nunca se versionan (el directorio
 # seeds/ sigue siendo la autoridad de bytes de los skills bundled).
 data/methodology/attachments/
+
+# Staging de uploads por sesión (canvas → materialize): efímero, ligado al
+# principal de la sesión; se limpia con sweep y nunca se versiona.
+data/methodology/staging/

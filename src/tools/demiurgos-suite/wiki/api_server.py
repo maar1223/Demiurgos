@@ -90,6 +90,12 @@ from co_creation_protocol import (
     continue_co_creation_session,
 )
 from co_creation_session_store import CoCreationSessionStore
+from co_creation_attachments import (
+    AttachmentUploadError,
+    staging_dir_for,
+    store_staged,
+    validate_staged_upload,
+)
 from co_creation_materializer import CoCreationMaterializer
 from hermes_co_creation_provider import HermesCoCreationProvider, co_creation_capabilities
 from demiurgos_language import (
@@ -3372,6 +3378,54 @@ def co_creation_pending_question_status(
             "The pending-question transition is not allowed.", False,
         ))
     return {"pending_questions": updated.draft_payload.get("pending_questions", [])}
+
+
+def _attachment_upload_error_response(error: AttachmentUploadError) -> JSONResponse:
+    """Structured error for a rejected exemplar upload (stable wire code)."""
+    return JSONResponse(status_code=error.status, content={
+        "detail": error.message,
+        "code": error.code,
+        "message": error.message,
+        "retryable": False,
+    })
+
+
+@app.post("/api/co-creation/sessions/{session_id}/adjuntos")
+async def upload_co_creation_adjunto(
+    session_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    nivel: str = Form(...),
+):
+    """Stage ONE exemplar for a principal-owned session (AE-1).
+
+    Multipart ``file`` + ``nivel``. Guards run in order — principal (401),
+    session ownership (403/404), then the staging guards 3–8 — and every check
+    happens BEFORE the first write, so a rejection mutates nothing. ``sha256``
+    and ``bytes`` are always computed server-side (client values are never
+    trusted); the response carries the pin ``{path, sha256, bytes, nivel}``
+    with ``path`` as the basename under the final skill dir. Bytes stay in the
+    per-session staging dir; only materialize moves them.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    data = await file.read()
+    staging_dir = staging_dir_for(PROJECT_ROOT, state.session_id)
+    try:
+        basename = validate_staged_upload(staging_dir, file.filename or "", data, nivel)
+    except AttachmentUploadError as exc:
+        return _attachment_upload_error_response(exc)
+    store_staged(staging_dir, basename, data)
+    return {"adjunto": {
+        "path": basename,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+        "nivel": nivel,
+    }}
 
 
 # ---------------------------------------------------------------------------
