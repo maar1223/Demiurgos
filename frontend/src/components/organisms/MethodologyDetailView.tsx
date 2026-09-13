@@ -13,6 +13,12 @@ interface MethodologySelection {
   version: string;
 }
 
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 interface MethodologyDetailViewProps {
   /** Page-level selection (REQ-SB-5). Null renders the empty state. */
   selected: MethodologySelection | null;
@@ -21,8 +27,9 @@ interface MethodologyDetailViewProps {
 /**
  * Shared read-only center body for the "Taller" EditorLayout (SC-SB-3).
  *
- * Renders a metadata header card plus the published `source` via
- * `MarkdownViewer`, both from `getPublishedDetail(skillId, version)`. The
+ * Renders a metadata header card, an optional metadata-only attachments
+ * block (R23), and the published `source` via `MarkdownViewer`, all from
+ * `getPublishedDetail(skillId, version)`. The
  * detail route is auth-required (it exposes the author `source`), so a 401
  * degrades gracefully to a metadata-only card — no source section, no error
  * (SC-SB-3.2). Any other failure shows an error banner with retry. Both
@@ -128,6 +135,7 @@ export function MethodologyDetailView({
   }
 
   const etiquetas = detail.etiquetas ?? [];
+  const adjuntos = detail.adjuntos ?? [];
 
   return (
     <section aria-label="Detalle de metodología" className="space-y-6">
@@ -153,6 +161,35 @@ export function MethodologyDetailView({
           <p className="mt-3 text-body text-muted">{detail.description}</p>
         )}
       </header>
+
+      {adjuntos.length > 0 && (
+        <section
+          aria-label="Adjuntos"
+          className="rounded-lg border border-edge bg-surface-raised p-4"
+        >
+          <h3 className="font-heading text-h4 text-primary">Adjuntos</h3>
+          {/* Metadata only: path + nivel + bytes. Carrier bytes are served
+              by the backend and never fetched or rendered here. */}
+          <ul className="mt-3 space-y-2">
+            {adjuntos.map((adjunto) => (
+              <li
+                key={adjunto.path}
+                className="flex flex-wrap items-baseline justify-between gap-2"
+              >
+                <span className="min-w-0 break-all text-small text-primary">
+                  {adjunto.path}
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5">
+                  <Badge variant="info">{adjunto.nivel}</Badge>
+                  <span className="text-small text-muted">
+                    {formatBytes(adjunto.bytes)}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <MarkdownViewer content={detail.source} />
     </section>

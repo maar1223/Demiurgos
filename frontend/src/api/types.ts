@@ -1510,6 +1510,19 @@ export interface EmptyTrashResponse {
 // Methodology library (Taller de Herramientas)
 // ---------------------------------------------------------------------------
 
+/**
+ * A pinned attachment (adjunto) shipped with a published methodology version.
+ *
+ * Metadata only: the server exposes `path`, `sha256`, `bytes`, and the OKF
+ * `nivel` it belongs to — carrier bytes are never returned by the API.
+ */
+export interface MethodologyAdjunto {
+  path: string;
+  sha256: string;
+  bytes: number;
+  nivel: string;
+}
+
 /** A published, immutable methodology version. */
 export interface PublishedMethodology {
   skill_id: string;
@@ -1530,6 +1543,10 @@ export interface PublishedMethodology {
    *  endpoints may omit them (the detail route always exposes them). */
   parent_skill_id?: string | null;
   parent_version?: string | null;
+  /** Pinned attachments (additive, ⑤b). Absent on pre-⑤b payloads and on
+   *  versions without adjuntos; every entry is metadata only — the client
+   *  never fetches carrier bytes. `PublishedMethodologyDetail` inherits it. */
+  adjuntos?: MethodologyAdjunto[];
 }
 
 /** Full published version + source from

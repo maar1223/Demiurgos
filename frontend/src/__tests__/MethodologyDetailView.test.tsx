@@ -26,6 +26,24 @@ const detail: PublishedMethodologyDetail = {
   parent_version: null,
 };
 
+const detailWithAdjuntos: PublishedMethodologyDetail = {
+  ...detail,
+  adjuntos: [
+    {
+      path: "ejemplos/Axill.md",
+      sha256: "a".repeat(64),
+      bytes: 2048,
+      nivel: "ejemplo",
+    },
+    {
+      path: "referencias/Fuente.md",
+      sha256: "b".repeat(64),
+      bytes: 512,
+      nivel: "referencia",
+    },
+  ],
+};
+
 const selected = { skill_id: "eneagrama", version: "1.2.0" };
 
 describe("MethodologyDetailView (SC-SB-3)", () => {
@@ -71,5 +89,47 @@ describe("MethodologyDetailView (SC-SB-3)", () => {
       screen.getByText(/Seleccioná una metodología en el explorador/),
     ).toBeInTheDocument();
     expect(mockGetPublishedDetail).not.toHaveBeenCalled();
+  });
+
+  it("renders the metadata-only attachments block when adjuntos are present (R23)", async () => {
+    mockGetPublishedDetail.mockResolvedValue(detailWithAdjuntos);
+    render(<MethodologyDetailView selected={selected} />);
+
+    expect(
+      await screen.findByRole("heading", { level: 3, name: "Adjuntos" }),
+    ).toBeInTheDocument();
+    // Path + nivel + bytes are listed per entry.
+    expect(screen.getByText("ejemplos/Axill.md")).toBeInTheDocument();
+    expect(screen.getByText("ejemplo")).toBeInTheDocument();
+    expect(screen.getByText("2.0 KB")).toBeInTheDocument();
+    expect(screen.getByText("referencias/Fuente.md")).toBeInTheDocument();
+    expect(screen.getByText("referencia")).toBeInTheDocument();
+    expect(screen.getByText("512 B")).toBeInTheDocument();
+    // Metadata only: the sha256 is never rendered, and no bytes are fetched.
+    expect(screen.queryByText("a".repeat(64))).not.toBeInTheDocument();
+  });
+
+  it("hides the attachments block when adjuntos is empty (R23)", async () => {
+    mockGetPublishedDetail.mockResolvedValue({ ...detail, adjuntos: [] });
+    render(<MethodologyDetailView selected={selected} />);
+
+    expect(
+      await screen.findByText(/Modelar los nueve eneatipos/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { level: 3, name: "Adjuntos" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders no attachments block when adjuntos is absent (R22 old payload)", async () => {
+    mockGetPublishedDetail.mockResolvedValue(detail);
+    render(<MethodologyDetailView selected={selected} />);
+
+    expect(
+      await screen.findByText(/Modelar los nueve eneatipos/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { level: 3, name: "Adjuntos" }),
+    ).not.toBeInTheDocument();
   });
 });
