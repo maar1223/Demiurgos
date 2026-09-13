@@ -8,6 +8,7 @@ library mutation, no canon write).
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import sys
@@ -74,9 +75,29 @@ def _verifier(payload: str, signature: str) -> bool:
     return signature == _signer(payload)
 
 
+def _carrier(path: str, text: str, nivel: str = "1º") -> tuple[dict, bytes]:
+    """Build a manifest adjunto entry whose pin matches ``text`` + its bytes."""
+    data = text.encode("utf-8")
+    return (
+        {
+            "path": path,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": len(data),
+            "nivel": nivel,
+        },
+        data,
+    )
+
+
+def _manifest_with_adjuntos(entries: list[dict]) -> dict:
+    return dict(_valid_manifest(), adjuntos=entries)
+
+
 class TestZipAttachmentFailClosed:
-    """S11/R7 (locked D4): the trust boundary keeps rejecting
-    attachment-carrying packages; ``_ALLOWED_ENTRIES`` is NOT extended in PR ③.
+    """R21/R18 (locked D1): the static base allowlist is NOT extended; the
+    effective allowlist is derived per-package from the manifest's declared
+    carriers. Any zip entry that is neither a base entry nor a declared carrier
+    is rejected as unexpected.
     """
 
     def test_zip_with_attachment_entry_is_rejected(self) -> None:
@@ -99,10 +120,155 @@ class TestZipAttachmentFailClosed:
         assert any("unexpected entries" in issue for issue in verdict.issues)
 
     def test_allowed_entries_never_extended(self) -> None:
-        """Assertion-only lock: PR ③ ships zero attachment zip entries."""
+        """Assertion-only lock: the static base allowlist stays fixed; declared
+        carriers join it only at inspect time, per package."""
         assert methodology_trust._ALLOWED_ENTRIES == frozenset({
             "manifest.yaml", "source.md", "checksums.json", "signature",
         })
+
+
+class TestAttachmentPackage:
+    """R16/R18/R21: carriers are embedded at their package-relative path, bound
+    in ``checksums.json``, and re-verified on inspect against their declared
+    ``sha256``/``bytes`` pins. ``None``/``{}`` reproduce the old package bytes."""
+
+    def test_build_package_embeds_carriers_and_binds_checksums(self) -> None:
+        """R16 scenario "round-trip fidelity": the zip holds the carrier at its
+        path, checksums.json binds it, and re-inspect populates the pins."""
+        entry, data = _carrier("adjunto-nivel-1.md", "# Principal\n\nContenido.\n")
+        package = build_package(
+            _manifest_with_adjuntos([entry]), _valid_source(),
+            attachments={entry["path"]: data},
+        )
+        archive = zipfile.ZipFile(io.BytesIO(package))
+        assert set(archive.namelist()) == {
+            "manifest.yaml", "source.md", "checksums.json", "adjunto-nivel-1.md",
+        }
+        checksums = json.loads(archive.read("checksums.json"))
+        assert checksums["adjunto-nivel-1.md"] == hashlib.sha256(data).hexdigest()
+        verdict = inspect_package(package)
+        assert verdict.ok, verdict.issues
+        assert verdict.compiled is not None
+        assert [entry_.as_dict() for entry_ in verdict.compiled.adjuntos] == [entry]
+
+    def test_build_package_without_attachments_is_byte_identical(self) -> None:
+        """D4: omitting attachments (``None`` or ``{}``) reproduces the old
+        package byte-for-byte, so every existing caller is source-compatible."""
+        baseline = build_package(_valid_manifest(), _valid_source())
+        assert build_package(_valid_manifest(), _valid_source(), attachments=None) == baseline
+        assert build_package(_valid_manifest(), _valid_source(), attachments={}) == baseline
+
+    def test_signed_package_signature_covers_carriers(self) -> None:
+        """D4: the signature is taken over the extended checksum text, so a
+        carrier-aware signature still verifies on inspect."""
+        entry, data = _carrier("adjunto-nivel-1.md", "# Principal\n\nContenido.\n")
+        package = build_package(
+            _manifest_with_adjuntos([entry]), _valid_source(),
+            signer=_signer, attachments={entry["path"]: data},
+        )
+        verdict = inspect_package(package, verifier=_verifier)
+        assert verdict.ok, verdict.issues
+        assert verdict.signature_valid is True
+
+    def test_mismatched_carrier_rejected(self) -> None:
+        """R18 scenario "mismatched carrier rejected": drifted carrier bytes
+        fail closed with a digest/size issue."""
+        entry, _ = _carrier("adjunto-nivel-1.md", "# Principal\n\nContenido.\n")
+        package = build_package(
+            _manifest_with_adjuntos([entry]), _valid_source(),
+            attachments={entry["path"]: b"# Drifted\n"},
+        )
+        verdict = inspect_package(package)
+        assert not verdict.ok
+        assert any(
+            "does not match its declared sha256/bytes" in issue
+            for issue in verdict.issues
+        )
+
+    def test_missing_declared_carrier_rejected(self) -> None:
+        """R18 scenario "missing declared carrier rejected": a manifest that
+        declares a carrier absent from the zip fails closed."""
+        entry, _ = _carrier("adjunto-nivel-1.md", "# Principal\n\nContenido.\n")
+        # Build WITHOUT the carrier: the manifest declares it, the zip omits it.
+        package = build_package(_manifest_with_adjuntos([entry]), _valid_source())
+        verdict = inspect_package(package)
+        assert not verdict.ok
+        assert any(
+            "which is missing from the archive" in issue for issue in verdict.issues
+        )
+
+    def test_undeclared_carrier_rejected(self) -> None:
+        """R18: a carrier present in the zip but not declared is unexpected."""
+        package = build_package(
+            _valid_manifest(), _valid_source(), attachments={"extra.md": b"# Extra\n"},
+        )
+        verdict = inspect_package(package)
+        assert not verdict.ok
+        assert any("unexpected entries" in issue for issue in verdict.issues)
+
+    def test_absolute_path_rejected(self) -> None:
+        package = build_package(
+            _manifest_with_adjuntos([
+                {"path": "/abs.md", "sha256": "0" * 64, "bytes": 1, "nivel": "1º"},
+            ]),
+            _valid_source(), attachments={"/abs.md": b"x"},
+        )
+        verdict = inspect_package(package)
+        assert not verdict.ok
+        assert any("invalid attachment path" in issue for issue in verdict.issues)
+
+    def test_traversal_path_rejected(self) -> None:
+        package = build_package(
+            _manifest_with_adjuntos([
+                {"path": "../escape.md", "sha256": "0" * 64, "bytes": 1, "nivel": "1º"},
+            ]),
+            _valid_source(), attachments={"../escape.md": b"x"},
+        )
+        verdict = inspect_package(package)
+        assert not verdict.ok
+        assert any("invalid attachment path" in issue for issue in verdict.issues)
+
+    def test_reserved_prefix_rejected(self) -> None:
+        package = build_package(
+            _manifest_with_adjuntos([
+                {"path": "mundos/canon.md", "sha256": "0" * 64, "bytes": 1, "nivel": "1º"},
+            ]),
+            _valid_source(), attachments={"mundos/canon.md": b"x"},
+        )
+        verdict = inspect_package(package)
+        assert not verdict.ok
+        assert any("invalid attachment path" in issue for issue in verdict.issues)
+
+    def test_source_md_collision_rejected(self) -> None:
+        """R18: the only reachable base-name collision (``source.md``) is
+        rejected so a carrier can never shadow the source entry."""
+        package = build_package(
+            _manifest_with_adjuntos([
+                {"path": "source.md", "sha256": "0" * 64, "bytes": 1, "nivel": "1º"},
+            ]),
+            _valid_source(),
+        )
+        verdict = inspect_package(package)
+        assert not verdict.ok
+        assert any("invalid attachment path" in issue for issue in verdict.issues)
+
+    def test_trust_threads_adjuntos_into_draft(self, tmp_path: Path) -> None:
+        """R19: import→trust preserves the pins on the promoted draft (without
+        threading, draft promotion silently dropped them)."""
+        entry, data = _carrier("adjunto-nivel-1.md", "# Principal\n\nContenido.\n")
+        package = build_package(
+            _manifest_with_adjuntos([entry]), _valid_source(),
+            attachments={entry["path"]: data},
+        )
+        store = QuarantineStore(tmp_path / "quarantine")
+        library = _library(tmp_path)
+        record = store.quarantine(package, library=library)
+        assert record.verdict.ok, record.verdict.issues
+        trusted = store.trust(record.package_id, library=library)
+        assert trusted is not None
+        drafts = library.list_drafts()
+        assert len(drafts) == 1
+        assert [entry_.as_dict() for entry_ in drafts[0].adjuntos] == [entry]
 
 
 class TestChecksumIntegrity:

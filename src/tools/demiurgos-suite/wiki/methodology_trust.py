@@ -4,8 +4,12 @@ A methodology package is a `.zip` archive with a bounded layout:
 
 - ``manifest.yaml`` — the bounded manifest.
 - ``source.md`` — the methodology Markdown source.
-- ``checksums.json`` — declared SHA-256 checksums of ``manifest.yaml`` and
-  ``source.md`` (the integrity layer, always required).
+- ``checksums.json`` — declared SHA-256 checksums of ``manifest.yaml``,
+  ``source.md``, and every attached carrier (the integrity layer, always
+  required).
+- zero or more **carrier** entries — pinned attachment Markdown files declared
+  by the manifest's ``adjuntos``, stored at their package-relative paths. The
+  allowed entry set is the static base set plus these declared carriers.
 - ``signature`` — an optional *official* digital signature over the checksum
   manifest. It is an **additive** trust layer: when present it is verified
   against the official verifier and fails closed on mismatch; when absent the
@@ -36,7 +40,11 @@ from typing import Callable, Mapping
 
 import yaml
 
-from methodology_compiler import CompiledMethodology, compile_methodology
+from methodology_compiler import (
+    CompiledMethodology,
+    _RESERVED_ATTACHMENT_PREFIXES,
+    compile_methodology,
+)
 
 _MANIFEST_NAME = "manifest.yaml"
 _SOURCE_NAME = "source.md"
@@ -160,21 +168,32 @@ def build_package(
     manifest: Mapping,
     source: str,
     signer: Callable[[str], str] | None = None,
+    attachments: Mapping[str, bytes] | None = None,
 ) -> bytes:
     """Build a `.zip` methodology package from a manifest + Markdown source.
 
     ``signer`` is an optional official-signature callback: given the canonical
     checksum manifest text it returns a signature string stored as the
     ``signature`` entry (additive layer).
+
+    ``attachments`` optionally embeds pinned carrier bytes at their
+    package-relative paths (D4). Each carrier joins ``checksums.json``
+    alongside the manifest and source, so an optional signature covers the
+    carriers too. ``None`` (the default) reproduces the pre-attachment package
+    byte-for-byte, keeping every existing caller source-compatible.
     """
     manifest_bytes = yaml.safe_dump(
         dict(manifest), sort_keys=False, allow_unicode=True,
     ).encode("utf-8")
     source_bytes = source.encode("utf-8")
+    carriers = {
+        str(path): bytes(data) for path, data in (attachments or {}).items()
+    }
 
     checksums = {
         _MANIFEST_NAME: _sha256(manifest_bytes),
         _SOURCE_NAME: _sha256(source_bytes),
+        **{path: _sha256(data) for path, data in carriers.items()},
     }
     checksum_text = json.dumps(checksums, sort_keys=True, separators=(",", ":"))
 
@@ -182,6 +201,8 @@ def build_package(
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr(_MANIFEST_NAME, manifest_bytes)
         archive.writestr(_SOURCE_NAME, source_bytes)
+        for path, data in carriers.items():
+            archive.writestr(path, data)
         archive.writestr(_CHECKSUMS_NAME, checksum_text)
         if signer is not None:
             archive.writestr(_SIGNATURE_NAME, signer(checksum_text))
@@ -193,6 +214,39 @@ def build_package(
 # ---------------------------------------------------------------------------
 
 
+def _derived_adjunto_entries(
+    manifest: Mapping,
+) -> tuple[tuple[Mapping, ...] | None, str | None]:
+    """Derive the strictly-valid declared adjunto entries from a manifest (D1).
+
+    Returns ``(entries, None)`` on success — an empty tuple when the manifest
+    declares no attachments — or ``(None, issue)`` when the declaration shape
+    or any declared path is invalid. Every path must be a non-empty
+    package-relative ``.md`` that stays inside the package: no absolute path,
+    no ``..`` component, no reserved ``mundos/``/``referencias/`` prefix, and
+    no collision with a base package entry (``source.md`` is the only reachable
+    one). The allowlist is derived from this declaration, never assumed.
+    """
+    raw = manifest.get("adjuntos")
+    if raw is None:
+        return (), None
+    if not isinstance(raw, list) or not all(isinstance(entry, Mapping) for entry in raw):
+        return None, "Manifest adjuntos is malformed."
+    for entry in raw:
+        path = entry.get("path")
+        if (
+            not isinstance(path, str)
+            or not path
+            or path.startswith("/")
+            or not path.endswith(".md")
+            or ".." in Path(path).parts
+            or path.startswith(_RESERVED_ATTACHMENT_PREFIXES)
+            or path in _ALLOWED_ENTRIES
+        ):
+            return None, f"Package declares an invalid attachment path {path!r}."
+    return tuple(raw), None
+
+
 def inspect_package(
     data: bytes,
     verifier: Callable[[str, str], bool] | None = None,
@@ -202,6 +256,12 @@ def inspect_package(
     ``verifier(payload, signature)`` verifies the *official* signature
     (additive). When a signature is present and no verifier is supplied the
     package fails closed. Absent signature is accepted.
+
+    Validation order (D1): the manifest is parsed FIRST so the allowed entry set
+    can be derived from its declared ``adjuntos`` — the static base set plus
+    every strictly-valid declared carrier. Each declared carrier must then exist
+    and re-verify against its ``sha256``/``bytes`` pin (and its ``checksums.json``
+    binding when present). Packages without adjuntos behave as before.
     """
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
@@ -209,7 +269,7 @@ def inspect_package(
         return PackageVerdict(False, False, False, None, ("Not a valid zip archive.",))
 
     names = set(archive.namelist())
-    if not names or not names.issubset(_ALLOWED_ENTRIES):
+    if not names:
         return PackageVerdict(
             False, False, False, None,
             (f"Package contains unexpected entries: {sorted(names)}.",),
@@ -217,6 +277,42 @@ def inspect_package(
 
     try:
         manifest_text = archive.read(_MANIFEST_NAME).decode("utf-8")
+    except (KeyError, UnicodeDecodeError):
+        return PackageVerdict(
+            False, False, False, None,
+            ("Package is missing required entries or is not valid UTF-8.",),
+        )
+
+    try:
+        parsed_manifest = yaml.safe_load(manifest_text)
+    except yaml.YAMLError:
+        parsed_manifest = None
+    manifest = parsed_manifest if isinstance(parsed_manifest, dict) else None
+    if manifest is None:
+        return PackageVerdict(
+            False, False, False, None, ("Manifest is missing or malformed.",),
+        )
+
+    adjunto_entries, declared_issue = _derived_adjunto_entries(manifest)
+    if declared_issue is not None:
+        return PackageVerdict(False, False, False, None, (declared_issue,))
+    assert adjunto_entries is not None  # declared_issue is None
+    declared_paths = tuple(str(entry["path"]) for entry in adjunto_entries)
+
+    allowed = _ALLOWED_ENTRIES | set(declared_paths)
+    if not names.issubset(allowed):
+        return PackageVerdict(
+            False, False, False, None,
+            (f"Package contains unexpected entries: {sorted(names)}.",),
+        )
+    for path in declared_paths:
+        if path not in names:
+            return PackageVerdict(
+                False, False, False, None,
+                (f"Package declares attachment {path!r}, which is missing from the archive.",),
+            )
+
+    try:
         source_text = archive.read(_SOURCE_NAME).decode("utf-8")
         checksum_text = archive.read(_CHECKSUMS_NAME).decode("utf-8")
     except (KeyError, UnicodeDecodeError):
@@ -268,13 +364,25 @@ def inspect_package(
             signature_valid = False
             issues.append("Official signature verification failed.")
 
-    manifest = None
-    if _MANIFEST_NAME in names:
-        try:
-            parsed = yaml.safe_load(manifest_text)
-        except yaml.YAMLError:
-            parsed = None
-        manifest = parsed if isinstance(parsed, dict) else None
+    # Per-carrier verification (R18): every declared carrier must match its
+    # declared sha256/bytes, and its checksums.json binding when one exists.
+    adjuntos_verified = True
+    checksum_entries = declared if isinstance(declared, dict) else {}
+    for entry in adjunto_entries:
+        path = str(entry["path"])
+        carrier_bytes = archive.read(path)
+        digest = _sha256(carrier_bytes)
+        if digest != entry.get("sha256") or len(carrier_bytes) != entry.get("bytes"):
+            issues.append(
+                f"Attachment {path!r} does not match its declared sha256/bytes."
+            )
+            adjuntos_verified = False
+            continue
+        if path in checksum_entries and checksum_entries[path] != digest:
+            issues.append(
+                f"Attachment {path!r} does not match its declared sha256/bytes."
+            )
+            adjuntos_verified = False
 
     compiled = None
     compiler_issues: list[str] = []
@@ -290,9 +398,8 @@ def inspect_package(
         and signature_valid is not False
         and manifest is not None
         and compiled is not None
+        and adjuntos_verified
     )
-    if manifest is None and not issues:
-        issues.append("Manifest is missing or malformed.")
     issues.extend(compiler_issues)
     return PackageVerdict(
         ok=ok,
@@ -450,6 +557,7 @@ class QuarantineStore:
                 etiquetas=tuple(compiled.etiquetas),
                 clasificacion=clasificacion,
                 trust_attributes=trust_attributes,
+                adjuntos=tuple(compiled.adjuntos),
             )
         meta["trusted"] = True
         meta["draft_id"] = draft_id
