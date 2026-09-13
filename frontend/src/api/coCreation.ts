@@ -1,4 +1,5 @@
 import { apiFetch } from "@/api/client";
+import { ApiError } from "@/api/types";
 import type {
   CoCreationActivateResult,
   CoCreationCanvasResult,
@@ -14,6 +15,7 @@ import type {
   CoCreationValidationResult,
   CoCreationWarningList,
   DraftPayload,
+  MethodologyAdjunto,
   PublishedMethodologyDetail,
   WarningState,
 } from "@/api/types";
@@ -281,4 +283,55 @@ export function deriveDraft(
     }),
     timeout: CO_CREATION_TIMEOUT_MS,
   });
+}
+
+// ---------------------------------------------------------------------------
+// S3 — exemplar staging (AE-1 / REQ-CC-25)
+// ---------------------------------------------------------------------------
+
+/** POST /api/co-creation/sessions/{id}/adjuntos — stage ONE exemplar for a
+ *  principal-owned session. Multipart `file` + `nivel`; the server computes
+ *  `sha256`/`bytes` and returns the pin `{path, sha256, bytes, nivel}`. Bytes
+ *  stay in the per-session staging dir until materialize moves them.
+ *
+ *  Uses raw `fetch` on purpose: `apiFetch` sets a JSON content-type that
+ *  breaks the multipart boundary (same pattern as `attachIdeaMedia` in
+ *  `@/api/ideas`). Error semantics mirror `apiFetch`: 4xx/5xx parse
+ *  `{detail, code}` into an `ApiError`. */
+export async function uploadCoCreationAdjunto(
+  sessionId: string,
+  file: File,
+  nivel: string,
+): Promise<MethodologyAdjunto> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("nivel", nivel);
+
+  const response = await fetch(
+    url(`/sessions/${encodeURIComponent(sessionId)}/adjuntos`),
+    { method: "POST", body: form, credentials: "same-origin" },
+  );
+
+  if (!response.ok) {
+    let detail: string | undefined;
+    let code: string | undefined;
+    try {
+      const body = await response.json();
+      detail = body.detail;
+      if (typeof body.code === "string") {
+        code = body.code;
+      }
+    } catch {
+      // ignore parse errors on error responses
+    }
+    throw new ApiError(
+      response.status,
+      detail ?? `HTTP ${response.status}`,
+      detail,
+      code,
+    );
+  }
+
+  const body = (await response.json()) as { adjunto: MethodologyAdjunto };
+  return body.adjunto;
 }

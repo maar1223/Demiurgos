@@ -631,6 +631,10 @@ export interface CoCreationMaterializeMetadata {
   categoria_funcional?: string;
   etiquetas?: string[];
   language?: string;
+  /** Author exemplar pins (REQ-CC-25, additive). When present the backend
+   *  moves the staged bytes into `attachments/{skill_id}/` and persists the
+   *  pins on the draft; omitted/undefined leaves the canvas pins untouched. */
+  adjuntos?: MethodologyAdjunto[];
 }
 
 /** Result of POST .../sessions/{id}/materialize. On success the full session
@@ -724,7 +728,8 @@ export interface DerivedFrom {
 /** The typed, Author-editable structured draft sections exposed by the canvas
  *  (REQ-CC-11). `branches`/`rules`/`pending_questions` are lists; the rest are
  *  plain strings. `pending_questions` is chat-owned (REQ-CC-14): the canvas
- *  may display it but never authors it. */
+ *  may display it but never authors it. `adjuntos` (REQ-CC-25, additive) are
+ *  the Author exemplar pins — optional so legacy payloads still parse. */
 export interface DraftPayload {
   name: string;
   description: string;
@@ -735,6 +740,7 @@ export interface DraftPayload {
   rules: string[];
   pending_questions: PendingQuestion[];
   world: string | null;
+  adjuntos?: MethodologyAdjunto[];
 }
 
 /** TW13 per-section compare classification (REQ-CC-18). */
