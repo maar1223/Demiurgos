@@ -7,21 +7,25 @@ materializer NEVER publishes without explicit Author approval.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import sys
+
+import pytest
 
 _WIKI = Path(__file__).resolve().parents[1]
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
-from methodology_library import MethodologyLibrary  # noqa: E402
 from co_creation_materializer import (  # noqa: E402
     DEFAULT_SOURCE_TEMPLATE,
+    AttachmentMaterializationError,
     CoCreationMaterializer,
     MaterializationResult,
     ValidateResult,
     parse_rendered_source,
 )
+from methodology_library import MethodologyLibrary  # noqa: E402
 
 
 def _library(tmp_path: Path) -> MethodologyLibrary:
@@ -322,3 +326,173 @@ def test_seed_payload_builds_adaptation_canvas_from_published_original(
         source, name="Skill base", description="Descripción base.", world="otro",
     )
     assert override["world"] == "otro"
+
+
+# ---------------------------------------------------------------------------
+# S3 — exemplar pins thread through validate + materialize (REQ-CC-25 / AE-3)
+# ---------------------------------------------------------------------------
+
+
+def _pin(path: str, data: bytes, nivel: str = "1º") -> dict:
+    return {
+        "path": path,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "bytes": len(data),
+        "nivel": nivel,
+    }
+
+
+def _staged(tmp_path: Path, files: list[tuple[str, bytes]]) -> Path:
+    staging = tmp_path / "data" / "methodology" / "staging" / "s-1"
+    staging.mkdir(parents=True, exist_ok=True)
+    for name, data in files:
+        (staging / name).write_bytes(data)
+    return staging
+
+
+def test_validate_payload_manifest_synthesizes_adjuntos_without_draft(
+    tmp_path: Path,
+) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    data = b"# Ejemplar\n"
+    result = materializer.validate_payload(_payload(adjuntos=[_pin("ejemplo.md", data)]))
+    assert isinstance(result, ValidateResult)
+    assert result.ok is True
+    assert result.issues == ()
+    # REQ-CC-25: preview compiles the pins but never creates a draft.
+    assert library.list_drafts() == []
+
+
+def test_validate_payload_surfaces_bad_adjunto_issue_without_draft(
+    tmp_path: Path,
+) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    bad = {"path": "ejemplo.md", "sha256": "not-hex", "bytes": 4, "nivel": "1º"}
+    result = materializer.validate_payload(_payload(adjuntos=[bad]))
+    assert result.ok is False
+    assert any(issue.field == "adjuntos" for issue in result.issues)
+    assert library.list_drafts() == []
+
+
+def test_materialize_moves_staged_bytes_and_pins_the_draft(tmp_path: Path) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    first = b"# Uno\n"
+    second = b"# Dos\n"
+    staging = _staged(tmp_path, [("uno.md", first), ("dos.md", second)])
+    attachments = tmp_path / "data" / "methodology" / "attachments"
+
+    result = materializer.materialize(
+        _payload(adjuntos=[_pin("uno.md", first), _pin("dos.md", second, "2º")]),
+        skill_id="mi-skill",
+        version="0.1.0",
+        name="Mi skill",
+        staging_dir=staging,
+        attachments_root=attachments,
+    )
+
+    assert result.ok is True
+    assert not staging.exists()  # the consumed staging dir is removed
+    dest = attachments / "mi-skill"
+    assert (dest / "uno.md").read_bytes() == first
+    assert (dest / "dos.md").read_bytes() == second
+    draft = library.get_draft(result.draft_id)
+    assert draft is not None
+    assert [entry.as_dict() for entry in draft.adjuntos] == [
+        _pin("uno.md", first), _pin("dos.md", second, "2º"),
+    ]
+
+
+def test_materialize_missing_staged_file_fails_closed_without_draft(
+    tmp_path: Path,
+) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    staging = _staged(tmp_path, [])  # declared pin, no staged bytes
+    attachments = tmp_path / "data" / "methodology" / "attachments"
+
+    with pytest.raises(AttachmentMaterializationError) as excinfo:
+        materializer.materialize(
+            _payload(adjuntos=[_pin("falta.md", b"# x\n")]),
+            skill_id="mi-skill", version="0.1.0", name="Mi skill",
+            staging_dir=staging, attachments_root=attachments,
+        )
+
+    assert excinfo.value.code == "attachment_unavailable"
+    assert library.list_drafts() == []
+    assert not (attachments / "mi-skill").exists()
+
+
+def test_materialize_drifted_staged_file_fails_closed_without_draft(
+    tmp_path: Path,
+) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    staging = _staged(tmp_path, [("drift.md", b"# changed\n")])
+    attachments = tmp_path / "data" / "methodology" / "attachments"
+    pin = _pin("drift.md", b"# original\n")
+
+    with pytest.raises(AttachmentMaterializationError) as excinfo:
+        materializer.materialize(
+            _payload(adjuntos=[pin]),
+            skill_id="mi-skill", version="0.1.0", name="Mi skill",
+            staging_dir=staging, attachments_root=attachments,
+        )
+
+    assert excinfo.value.code == "attachment_unavailable"
+    assert library.list_drafts() == []
+    assert not (attachments / "mi-skill").exists()
+
+
+def test_materialize_rolls_back_moved_bytes_when_draft_creation_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    data = b"# Uno\n"
+    staging = _staged(tmp_path, [("uno.md", data)])
+    attachments = tmp_path / "data" / "methodology" / "attachments"
+
+    def _boom(**_kwargs: object) -> str:
+        raise RuntimeError("draft store unavailable")
+
+    monkeypatch.setattr(library, "create_draft", _boom)
+
+    with pytest.raises(RuntimeError):
+        materializer.materialize(
+            _payload(adjuntos=[_pin("uno.md", data)]),
+            skill_id="mi-skill", version="0.1.0", name="Mi skill",
+            staging_dir=staging, attachments_root=attachments,
+        )
+
+    # No partial attachments tree and no draft; staged bytes survive for retry.
+    assert not (attachments / "mi-skill").exists()
+    assert (staging / "uno.md").read_bytes() == data
+    assert library.list_drafts() == []
+
+
+def test_materialize_with_pins_requires_staging_and_attachments_root(
+    tmp_path: Path,
+) -> None:
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    with pytest.raises(AttachmentMaterializationError):
+        materializer.materialize(
+            _payload(adjuntos=[_pin("uno.md", b"# Uno\n")]),
+            skill_id="mi-skill", version="0.1.0", name="Mi skill",
+        )
+    assert library.list_drafts() == []
+
+
+def test_materialize_without_adjuntos_creates_empty_pins(tmp_path: Path) -> None:
+    """Backward compatible: a payload without adjuntos still materializes and
+    the draft carries no pins."""
+    library = _library(tmp_path)
+    materializer = CoCreationMaterializer(library)
+    result = materializer.materialize(
+        _payload(), skill_id="mi-skill", version="0.1.0", name="Mi skill",
+    )
+    assert result.ok is True
+    assert library.get_draft(result.draft_id).adjuntos == ()

@@ -11,12 +11,17 @@ layer in a later slice.
 
 from __future__ import annotations
 
+import hashlib
+import os
+import shutil
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Mapping
 
+from co_creation_attachments import move_staged
 from co_creation_protocol import DerivedFrom
-from methodology_compiler import MethodologyIssue, compile_methodology
+from methodology_compiler import AttachmentEntry, MethodologyIssue, compile_methodology
 from methodology_library import MethodologyLibrary
 
 
@@ -54,6 +59,122 @@ _SECTION_HEADERS = (
     "## Flujo principal",
     "## Ramas y reglas",
 )
+
+
+class AttachmentMaterializationError(Exception):
+    """A staged-carrier failure at materialize time (missing/drifted bytes).
+
+    The API maps this to a structured JSON error WITHOUT creating a draft and
+    WITHOUT leaving a partial ``attachments/`` tree: a failed move is rolled
+    back before this surfaces.
+    """
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.message = message
+
+
+def _coerce_bytes(value: object) -> int:
+    """Lenient ``bytes`` coercion.
+
+    A malformed value becomes 0 so the compiler — not an exception — owns the
+    failure accounting (it flags ``bytes`` below 1 as an invalid value).
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return value
+
+
+def _payload_adjuntos(payload: Mapping[str, Any]) -> tuple[AttachmentEntry, ...]:
+    """Read the canvas ``adjuntos`` pins into typed entries (REQ-CC-25).
+
+    Shape validation happens at the canvas boundary (``canvas_payload_issues``)
+    and again in the compiler; this parser only normalizes mappings so the SAME
+    pins flow through ``validate_payload`` and ``materialize``. Non-mapping
+    entries are skipped and malformed fields coerce to empty values, so a bad
+    payload surfaces compiler issues instead of raising here.
+    """
+    raw = payload.get("adjuntos")
+    if not isinstance(raw, list):
+        return ()
+    entries: list[AttachmentEntry] = []
+    for item in raw:
+        if not isinstance(item, Mapping):
+            continue
+        entries.append(AttachmentEntry(
+            path=str(item.get("path") or "").strip(),
+            sha256=str(item.get("sha256") or "").strip(),
+            bytes=_coerce_bytes(item.get("bytes")),
+            nivel=str(item.get("nivel") or "").strip(),
+        ))
+    return tuple(entries)
+
+
+def _validate_staged_pins(
+    staging_dir: Path,
+    entries: tuple[AttachmentEntry, ...],
+) -> None:
+    """Verify every staged file exists and matches its pin (D3).
+
+    Fails closed with ``attachment_unavailable`` on an unsafe basename, a
+    missing file, or a sha256/bytes mismatch — every check runs BEFORE the
+    first byte is moved, so a rejection never leaves a partial tree.
+    """
+    for entry in entries:
+        name = entry.path
+        if (
+            not name
+            or name != os.path.basename(name)
+            or "/" in name
+            or "\\" in name
+            or ".." in name
+        ):
+            raise AttachmentMaterializationError(
+                422, "attachment_unavailable",
+                f"The staged attachment {name!r} is invalid.",
+            )
+        staged = staging_dir / name
+        try:
+            if not staged.is_file():
+                raise AttachmentMaterializationError(
+                    422, "attachment_unavailable",
+                    f"The staged attachment {name!r} is unavailable.",
+                )
+            data = staged.read_bytes()
+        except AttachmentMaterializationError:
+            raise
+        except OSError:
+            raise AttachmentMaterializationError(
+                422, "attachment_unavailable",
+                f"The staged attachment {name!r} is unavailable.",
+            ) from None
+        if hashlib.sha256(data).hexdigest() != entry.sha256 or len(data) != entry.bytes:
+            raise AttachmentMaterializationError(
+                422, "attachment_unavailable",
+                f"The staged attachment {name!r} does not match its pin.",
+            )
+
+
+def _rollback_moved(moved: list[Path], dest_dir: Path) -> None:
+    """Remove the files this call already moved and drop the skill dir when it
+    was left empty. Pre-existing carrier files are never touched."""
+    for path in moved:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    try:
+        if dest_dir.is_dir() and not any(dest_dir.iterdir()):
+            dest_dir.rmdir()
+    except OSError:
+        pass
+
+
+def _remove_staging_dir(staging_dir: Path) -> None:
+    """Best-effort removal of the now-consumed session staging dir (AE-3)."""
+    shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 def parse_rendered_source(source: str) -> dict[str, Any]:
@@ -208,6 +329,7 @@ class CoCreationMaterializer:
             "talleres_compatibles": list(payload.get("talleres_compatibles") or ()),
             "categoria_funcional": payload.get("categoria_funcional"),
             "etiquetas": list(payload.get("etiquetas") or ()),
+            "adjuntos": [entry.as_dict() for entry in _payload_adjuntos(payload)],
         }
         compiled = compile_methodology(manifest, source)
         return ValidateResult(
@@ -272,25 +394,49 @@ class CoCreationMaterializer:
         etiquetas: tuple[str, ...] = (),
         categoria_funcional: str | None = None,
         language: str | None = None,
+        staging_dir: Path | None = None,
+        attachments_root: Path | None = None,
     ) -> MaterializationResult:
         """Create the draft and surface compiler issues.
 
         Returns the ``draft_id`` plus ``CompileResult.issues`` so the
         validation panel can list each code+message (REQ-CC-5). The draft is
         stored but never published or activated here.
+
+        When the payload pins exemplars (REQ-CC-25/AE-3), the staged bytes are
+        validated against their pins and MOVED into
+        ``attachments/{skill_id}/`` BEFORE ``create_draft`` (D3), so the draft
+        never carries a pin whose bytes are absent. A failed move — or a
+        ``create_draft`` failure after a successful move — rolls every moved
+        file back, leaving no partial tree and no draft. The consumed staging
+        dir is removed only after the draft exists.
         """
         source = self.render_source(payload)
-        draft_id = self._library.create_draft(
-            skill_id=skill_id,
-            version=version,
-            name=name,
-            source=source,
-            description=description,
-            taller=taller,
-            etiquetas=tuple(etiquetas),
-            categoria_funcional=categoria_funcional,
-            language=language,
-        )
+        entries = _payload_adjuntos(payload)
+        draft_kwargs = {
+            "skill_id": skill_id, "version": version, "name": name,
+            "source": source, "description": description, "taller": taller,
+            "etiquetas": tuple(etiquetas),
+            "categoria_funcional": categoria_funcional, "language": language,
+        }
+        if entries:
+            if staging_dir is None or attachments_root is None:
+                raise AttachmentMaterializationError(
+                    422, "attachment_unavailable",
+                    "Staged attachments require a staging and attachments root.",
+                )
+            staging = Path(staging_dir)
+            dest_dir = Path(attachments_root) / skill_id
+            _validate_staged_pins(staging, entries)
+            moved = move_staged(staging, Path(attachments_root), skill_id, entries)
+            try:
+                draft_id = self._library.create_draft(**draft_kwargs, adjuntos=entries)
+            except Exception:
+                _rollback_moved(moved, dest_dir)
+                raise
+            _remove_staging_dir(staging)
+        else:
+            draft_id = self._library.create_draft(**draft_kwargs)
         compiled = self._library.compile_draft(draft_id)
         return MaterializationResult(
             draft_id=draft_id,
