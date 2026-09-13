@@ -85,7 +85,7 @@ Demiurgos/
 - Tailwind CSS
 - Vitest + React Testing Library
 - Run tests: `cd frontend && npm test`
-- Type check: `cd frontend && npm run type-check`
+- Type check: `cd frontend && npm run typecheck`
 - Build: `cd frontend && npm run build`
 
 **Backend:**
@@ -123,7 +123,7 @@ cd frontend && npm test -- --run     # run once (no watch)
 
 ### Code Quality
 
-- **TypeScript**: Always run `npm run type-check` before committing frontend changes
+- **TypeScript**: Always run `npm run typecheck` before committing frontend changes
 - **Python**: Tests must pass before committing backend changes
 - **No breaking changes**: Verify API contracts when modifying endpoints
 
