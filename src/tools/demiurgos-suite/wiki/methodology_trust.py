@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -412,6 +413,74 @@ def inspect_package(
 
 
 # ---------------------------------------------------------------------------
+# Trust-time carrier extraction (Slice 5, AE-4)
+# ---------------------------------------------------------------------------
+
+
+def _write_verified_carriers(
+    data: bytes,
+    compiled: CompiledMethodology,
+    attachments_root: Path,
+) -> bool:
+    """Materialize a trusted package's verified carrier bytes (AE-4).
+
+    Every declared carrier is read from the package zip and re-verified against
+    its ``sha256``/``bytes`` pin BEFORE anything is written. Extraction is
+    all-or-nothing: any unreadable carrier, digest mismatch, or OSError writes
+    nothing (no partial ``attachments/{skill_id}/`` tree) and returns ``False``.
+    On success each file lands atomically (temp + ``os.replace``) reusing the
+    author-carrier storage convention, and the skill dir is left intact.
+    """
+    if not compiled.adjuntos:
+        return True
+    dest_dir = Path(attachments_root) / compiled.skill_id
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except (zipfile.BadZipFile, OSError):
+        return False
+
+    verified: list[tuple[str, bytes]] = []
+    try:
+        for pin in compiled.adjuntos:
+            try:
+                carrier_bytes = archive.read(pin.path)
+            except (KeyError, OSError):
+                return False
+            if (
+                _sha256(carrier_bytes) != pin.sha256
+                or len(carrier_bytes) != pin.bytes
+            ):
+                return False
+            verified.append((pin.path, carrier_bytes))
+    finally:
+        archive.close()
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
+    try:
+        for path, carrier_bytes in verified:
+            dest = dest_dir / path
+            tmp = dest.with_name(dest.name + ".tmp")
+            tmp.write_bytes(carrier_bytes)
+            os.replace(tmp, dest)
+            written.append(dest)
+    except OSError:
+        # Roll back every file this call wrote; never leave partial bytes.
+        for dest in written:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+        try:
+            if dest_dir.is_dir() and not any(dest_dir.iterdir()):
+                dest_dir.rmdir()
+        except OSError:
+            pass
+        return False
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Quarantine store
 # ---------------------------------------------------------------------------
 
@@ -520,13 +589,27 @@ class QuarantineStore:
             ))
         return records
 
-    def trust(self, package_id: str, library=None, verifier: Callable[[str, str], bool] | None = None):
+    def trust(
+        self,
+        package_id: str,
+        library=None,
+        verifier: Callable[[str, str], bool] | None = None,
+        *,
+        attachments_root: Path | None = None,
+    ):
         """Manually trust a quarantined package.
 
         Only a package that re-validates (checksum + optional official
         signature + compiler) is surfaced as an **editable draft**. Returns a
         ``QuarantineRecord`` on success (or ``None`` on failure); never
         publishes or activates automatically.
+
+        When ``attachments_root`` is provided, each declared carrier's verified
+        bytes are materialized to ``attachments/{skill_id}/`` (AE-4) before the
+        draft is created, so a trusted import's export round-trips. Extraction
+        is fail-closed: an unverifiable carrier writes no bytes at all and
+        yields no draft. ``None`` (the default) preserves the legacy behavior —
+        extraction is skipped and only the draft is created.
         """
         record_path = self._root / f"{package_id}.json"
         package_path = self._root / f"{package_id}.zip"
@@ -535,6 +618,10 @@ class QuarantineStore:
         data = package_path.read_bytes()
         verdict = inspect_package(data, verifier=verifier)
         if not verdict.ok or verdict.compiled is None:
+            return None
+        if attachments_root is not None and not _write_verified_carriers(
+            data, verdict.compiled, Path(attachments_root),
+        ):
             return None
         meta = json.loads(record_path.read_text(encoding="utf-8"))
         origin = meta.get("origin", "community")

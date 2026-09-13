@@ -8287,7 +8287,11 @@ def methodologies_quarantine_trust(package_id: str, request: Request):
         return JSONResponse(status_code=409, content={
             "detail": "reserved_skill_id", "code": "reserved_skill_id",
         })
-    trusted = store.trust(package_id, library=_methodology_library())
+    trusted = store.trust(
+        package_id,
+        library=_methodology_library(),
+        attachments_root=PROJECT_ROOT / ATTACHMENTS_SUBDIR,
+    )
     if trusted is None:
         return JSONResponse(status_code=422, content={
             "detail": "La metodología no pasó la validación de integridad.",

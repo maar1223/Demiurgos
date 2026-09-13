@@ -13,6 +13,7 @@ import io
 import json
 import sys
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -91,6 +92,14 @@ def _carrier(path: str, text: str, nivel: str = "1º") -> tuple[dict, bytes]:
 
 def _manifest_with_adjuntos(entries: list[dict]) -> dict:
     return dict(_valid_manifest(), adjuntos=entries)
+
+
+@dataclass(frozen=True)
+class _CompiledStub:
+    """Minimal ``CompiledMethodology``-shaped carrier holder for extraction tests."""
+
+    skill_id: str
+    adjuntos: tuple
 
 
 class TestZipAttachmentFailClosed:
@@ -269,6 +278,150 @@ class TestAttachmentPackage:
         drafts = library.list_drafts()
         assert len(drafts) == 1
         assert [entry_.as_dict() for entry_ in drafts[0].adjuntos] == [entry]
+
+
+class TestTrustCarrierExtraction:
+    """AE-4 (Slice 5): a trusted import materializes its verified carriers to
+    ``attachments/{skill_id}/`` so its export round-trips instead of 422ing.
+
+    A declared carrier whose bytes cannot be read from the package zip — or
+    that fails its ``sha256``/``bytes`` pin — fails the whole trust closed: no
+    bytes are written (not even the carriers that did verify) and no draft is
+    created.
+    """
+
+    def _carrier_skill_id(self) -> str:
+        return "guided-character-v1"
+
+    def _carrier_package(self, text: str = "# Principal\n\nContenido.\n") -> tuple[bytes, dict]:
+        entry, data = _carrier("adjunto-nivel-1.md", text)
+        package = build_package(
+            _manifest_with_adjuntos([entry]), _valid_source(),
+            attachments={entry["path"]: data},
+        )
+        return package, entry
+
+    def test_trust_extracts_verified_carriers_to_attachments(self, tmp_path: Path) -> None:
+        """AE-4 scenario "trusted import round-trips": verified zip carriers are
+        written under ``attachments/{skill_id}/`` at their package path."""
+        package, entry = self._carrier_package()
+        store = QuarantineStore(tmp_path / "quarantine")
+        library = _library(tmp_path)
+        attachments_root = tmp_path / "data" / "methodology" / "attachments"
+        record = store.quarantine(package, library=library)
+        assert record.verdict.ok, record.verdict.issues
+
+        trusted = store.trust(
+            record.package_id, library=library, attachments_root=attachments_root,
+        )
+
+        assert trusted is not None
+        extracted = attachments_root / self._carrier_skill_id() / entry["path"]
+        assert extracted.read_bytes() == "# Principal\n\nContenido.\n".encode("utf-8")
+        assert hashlib.sha256(extracted.read_bytes()).hexdigest() == entry["sha256"]
+
+    def test_trust_extracted_carrier_exports_round_trip(self, tmp_path: Path) -> None:
+        """AE-4: once materialized, the publish-time serving seam re-reads the
+        pinned bytes from the author root — the trusted import no longer fails
+        closed 422 on export (mirrors ``methodologies_export``)."""
+        from convergence_injection import carrier_root_for, read_adjunto_bytes
+
+        package, _entry = self._carrier_package()
+        store = QuarantineStore(tmp_path / "quarantine")
+        library = _library(tmp_path)
+        attachments_root = tmp_path / "data" / "methodology" / "attachments"
+        record = store.quarantine(package, library=library)
+        trusted = store.trust(
+            record.package_id, library=library, attachments_root=attachments_root,
+        )
+        assert trusted is not None
+
+        carrier_root = carrier_root_for(
+            self._carrier_skill_id(), project_root=tmp_path,
+        )
+        assert carrier_root == attachments_root / self._carrier_skill_id()
+        pin = trusted.verdict.compiled.adjuntos[0]
+        assert read_adjunto_bytes(carrier_root, pin) == b"# Principal\n\nContenido.\n"
+
+    def test_trust_without_attachments_root_skips_extraction(self, tmp_path: Path) -> None:
+        """Backward compatible: ``attachments_root=None`` (the default) keeps
+        the legacy behavior — draft promoted, no bytes extracted."""
+        package, entry = self._carrier_package()
+        store = QuarantineStore(tmp_path / "quarantine")
+        library = _library(tmp_path)
+        record = store.quarantine(package, library=library)
+
+        trusted = store.trust(record.package_id, library=library)
+
+        assert trusted is not None
+        assert len(library.list_drafts()) == 1
+        # No attachments tree materialized anywhere under the project root.
+        assert not (tmp_path / "data" / "methodology" / "attachments").exists()
+
+    def test_write_verified_carriers_rejects_unreadable_pin(self, tmp_path: Path) -> None:
+        """The extraction helper is fail-closed: a pin absent from the archive
+        writes nothing and reports failure (no partial tree)."""
+        from methodology_compiler import AttachmentEntry
+
+        package, entry = self._carrier_package()
+        good = AttachmentEntry(**entry)
+        missing = AttachmentEntry(
+            path="missing.md", sha256="0" * 64, bytes=3, nivel="1º",
+        )
+        compiled = _CompiledStub(
+            skill_id=self._carrier_skill_id(), adjuntos=(good, missing),
+        )
+        root = tmp_path / "data" / "methodology" / "attachments"
+
+        written = methodology_trust._write_verified_carriers(package, compiled, root)
+
+        assert written is False
+        skill_dir = root / self._carrier_skill_id()
+        assert not skill_dir.exists() or list(skill_dir.iterdir()) == []
+
+    def test_write_verified_carriers_rejects_drifted_pin(self, tmp_path: Path) -> None:
+        """A carrier whose bytes fail the sha256/bytes pin writes nothing."""
+        from methodology_compiler import AttachmentEntry
+
+        entry, _ = _carrier("adjunto-nivel-1.md", "# Principal\n\nContenido.\n")
+        package = _zip_with_drifted_carrier(entry, b"# Drifted\n")
+        compiled = _CompiledStub(
+            skill_id=self._carrier_skill_id(), adjuntos=(AttachmentEntry(**entry),),
+        )
+        root = tmp_path / "data" / "methodology" / "attachments"
+
+        assert methodology_trust._write_verified_carriers(package, compiled, root) is False
+        assert not root.exists()
+
+    def test_write_verified_carriers_no_pins_writes_nothing(self, tmp_path: Path) -> None:
+        """A package with no declared carriers extracts nothing (no-op)."""
+        package, _ = self._carrier_package()
+        compiled = _CompiledStub(skill_id=self._carrier_skill_id(), adjuntos=())
+        root = tmp_path / "data" / "methodology" / "attachments"
+
+        assert methodology_trust._write_verified_carriers(package, compiled, root) is True
+        assert not root.exists()
+
+
+def _zip_with_drifted_carrier(entry: dict, drifted: bytes) -> bytes:
+    """Build a package whose ``checksums.json`` matches the manifest pin but
+    whose carrier entry bytes are drifted from that pin."""
+    manifest_bytes = yaml.safe_dump(
+        _manifest_with_adjuntos([entry]), sort_keys=False, allow_unicode=True,
+    ).encode("utf-8")
+    source_bytes = _valid_source().encode("utf-8")
+    checksums = {
+        "manifest.yaml": hashlib.sha256(manifest_bytes).hexdigest(),
+        "source.md": hashlib.sha256(source_bytes).hexdigest(),
+        entry["path"]: entry["sha256"],
+    }
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.yaml", manifest_bytes)
+        archive.writestr("source.md", source_bytes)
+        archive.writestr(entry["path"], drifted)
+        archive.writestr("checksums.json", json.dumps(checksums))
+    return buffer.getvalue()
 
 
 class TestChecksumIntegrity:

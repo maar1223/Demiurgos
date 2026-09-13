@@ -2928,6 +2928,117 @@ class TestMethodologyApi:
         response = client.post("/api/methodologies/quarantine/ghost/trust")
         assert response.status_code == 404
 
+    # ------------------------------------------------------------------ #
+    # S5 — trust-time carrier extraction: the trust route materializes the
+    # verified zip carriers under attachments/{skill_id}/ so the exported
+    # package round-trips instead of failing closed 422 (AE-4).
+    # ------------------------------------------------------------------ #
+
+    def test_trust_extracts_carriers_and_export_round_trips(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """AE-4 scenario "trusted import round-trips": after trusting a package
+        with carriers, its export embeds them (no ``attachment_unavailable``)."""
+        _principal(monkeypatch, "author-1")
+        path = "adjunto-nivel-1.md"
+        data = "# Principal\n\nContenido.\n".encode("utf-8")
+        entry = {
+            "path": path,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": len(data),
+            "nivel": "1º",
+        }
+        package = build_package(
+            {
+                "skill_id": "guided-character-v1",
+                "version": "1.2.0",
+                "name": "Guided character methodology",
+                "description": "A safe construction methodology.",
+                "phases": ["conversation", "review", "complete"],
+                "language": "es",
+                "adjuntos": [entry],
+            },
+            "## Construcción segura\n\nHaz preguntas de a una.\n",
+            attachments={path: data},
+        )
+        imported = self._upload(client, package, filename="with-carrier.zip").json()
+        assert imported["verdict"]["ok"] is True, imported["verdict"]["issues"]
+
+        trusted = client.post(
+            f"/api/methodologies/quarantine/{imported['package_id']}/trust",
+        )
+        assert trusted.status_code == 200, trusted.text
+
+        # The verified carrier landed under the patched PROJECT_ROOT.
+        extracted = (
+            tmp_path / "data" / "methodology" / "attachments" / "guided-character-v1" / path
+        )
+        assert extracted.read_bytes() == data
+
+        # Publish the trusted draft, then export: the carriers ship.
+        draft_id = trusted.json()["draft_id"]
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 200, published.text
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 200, exported.text
+        archive = zipfile.ZipFile(io.BytesIO(exported.content))
+        assert archive.read(path) == data
+        verdict = inspect_package(exported.content)
+        assert verdict.ok, verdict.issues
+
+    def test_publish_before_trust_extraction_would_fail_closed(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """The pre-existing broken round-trip: without a trusted extraction the
+        author export fails closed 422 (the bug S5 fixes)."""
+        _principal(monkeypatch, "author-1")
+        path = "adjunto-nivel-1.md"
+        data = "# Principal\n\nContenido.\n".encode("utf-8")
+        entry = {
+            "path": path,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": len(data),
+            "nivel": "1º",
+        }
+        package = build_package(
+            {
+                "skill_id": "guided-character-v1",
+                "version": "1.2.0",
+                "name": "Guided character methodology",
+                "description": "A safe construction methodology.",
+                "phases": ["conversation", "review", "complete"],
+                "language": "es",
+                "adjuntos": [entry],
+            },
+            "## Construcción segura\n\nHaz preguntas de a una.\n",
+            attachments={path: data},
+        )
+        imported = self._upload(client, package, filename="with-carrier.zip").json()
+        assert imported["verdict"]["ok"] is True, imported["verdict"]["issues"]
+        # Publish the imported draft WITHOUT trusting (the buggy path): no bytes
+        # are materialized, so export fails closed.
+        record = api_server._methodology_quarantine().get(imported["package_id"])
+        assert record is not None
+        draft_id = api_server._methodology_library().create_draft(
+            skill_id=record.verdict.compiled.skill_id,
+            version=record.verdict.compiled.version,
+            name=record.verdict.compiled.name,
+            source=record.verdict.compiled.source,
+            description=record.verdict.compiled.description,
+            phases=tuple(record.verdict.compiled.phases),
+            language=record.verdict.compiled.language,
+            adjuntos=tuple(record.verdict.compiled.adjuntos),
+        )
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 200, published.text
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 422
+        assert exported.json()["code"] == "attachment_unavailable"
+
     def test_reserved_skill_id_rejected_at_trust(self, client: TestClient, monkeypatch):
         """REQ-IMP-6 scenario: trusting a package with the foundational
         character-skill id is rejected with 409 and no draft is created."""
