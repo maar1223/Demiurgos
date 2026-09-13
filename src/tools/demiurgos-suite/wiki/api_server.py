@@ -75,7 +75,7 @@ from guided_character_domain import (
     has_finished_exchange,
     resolve_candidate_nivel,
 )
-from convergence_injection import build_specimen_block, read_adjunto_bytes
+from convergence_injection import build_specimen_block, carrier_root_for, read_adjunto_bytes
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
@@ -1948,7 +1948,7 @@ def _convergence_specimen_markdown(
             return None
         nivel = resolve_candidate_nivel(state.candidate)
         return build_specimen_block(
-            PROJECT_ROOT / "data" / "methodology" / "seeds" / published.skill_id,
+            carrier_root_for(published.skill_id, project_root=PROJECT_ROOT),
             published.adjuntos,
             nivel,
         )
@@ -8092,10 +8092,11 @@ def methodologies_export(skill_id: str, version: str, request: Request):
     checksum manifest, and the official signature when one was recorded. When
     the version pins adjuntos, each carrier is embedded at its package-relative
     path with exactly the pinned bytes and declared in the manifest (R16). A
-    pinned carrier that is missing under the seed dir or has drifted from its
-    ``sha256``/``bytes`` pin fails closed with 422 ``attachment_unavailable`` —
-    the export never emits a partial package its own import would reject (R17),
-    and the error never leaks the path, hash, or seed dir.
+    pinned carrier that is missing under the resolved carrier root or has
+    drifted from its ``sha256``/``bytes`` pin fails closed with 422
+    ``attachment_unavailable`` — the export never emits a partial package its
+    own import would reject (R17), and the error never leaks the path, hash, or
+    carrier root.
     """
     principal = _resolve_principal(request)
     if principal is None:
@@ -8119,7 +8120,7 @@ def methodologies_export(skill_id: str, version: str, request: Request):
     attachments: dict[str, bytes] = {}
     if published.adjuntos:
         manifest["adjuntos"] = [entry.as_dict() for entry in published.adjuntos]
-        seed_dir = PROJECT_ROOT / "data" / "methodology" / "seeds" / published.skill_id
+        seed_dir = carrier_root_for(published.skill_id, project_root=PROJECT_ROOT)
         for pin in published.adjuntos:
             carrier = read_adjunto_bytes(seed_dir, pin)
             if carrier is None or len(carrier) != pin.bytes:

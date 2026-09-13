@@ -1,11 +1,10 @@
 """Convergence specimen serving seam (④a, R9).
 
-The convergence specimen is a pinned carrier Markdown file from the seed
-directory, served ONLY when its bytes still match the SHA-256 pin recorded
-at publish time. The seed directory is the byte authority (R8); the seam
-re-verifies every serve (D10, no cache) and never truncates an over-budget
-carrier — it skips instead (D6), so a drifted or oversized specimen can
-never teach a broken format.
+The convergence specimen is a pinned carrier Markdown file, served ONLY when
+its bytes still match the SHA-256 pin recorded at publish time. The carrier
+root is the byte authority (R8); the seam re-verifies every serve (D10, no
+cache) and never truncates an over-budget carrier — it skips instead (D6), so
+a drifted or oversized specimen can never teach a broken format.
 """
 
 from __future__ import annotations
@@ -19,13 +18,36 @@ from methodology_compiler import AttachmentEntry
 MAX_SPECIMEN_TOKENS = 3072
 """Token budget for one injected convergence specimen (R12; ④b consumes it)."""
 
+_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+"""Repository root, resolved identically to ``api_server.PROJECT_ROOT``."""
+
+
+def carrier_root_for(skill_id: str, *, project_root: Path | None = None) -> Path:
+    """Resolve the carrier root for ``skill_id`` (R9/R24).
+
+    Bundled seeds are the byte authority and win whenever
+    ``data/methodology/seeds/{skill_id}`` exists; otherwise author-provided
+    carriers live under ``data/methodology/attachments/{skill_id}``. Storage
+    location IS the authorship marker, so no manifest change is needed.
+
+    The directory is never created here: callers that write materialize it
+    lazily, so resolving a path has no filesystem side effect. ``project_root``
+    is injectable for tests; production call sites pass
+    ``api_server.PROJECT_ROOT`` so monkeypatched isolation holds.
+    """
+    root = project_root if project_root is not None else _PROJECT_ROOT
+    seed_dir = root / "data" / "methodology" / "seeds" / skill_id
+    if seed_dir.is_dir():
+        return seed_dir
+    return root / "data" / "methodology" / "attachments" / skill_id
+
 
 def read_adjunto_bytes(seed_dir: Path, pin: AttachmentEntry) -> bytes | None:
     """Return the pinned carrier bytes, or ``None`` on any guard failure.
 
-    Shared byte seam (D2): the resolved path must stay inside the seed
-    directory (containment), the file must exist, and its SHA-256 must equal
-    the pin. Decoding and the token budget are deliberately NOT applied here —
+    Shared byte seam (D2): the resolved path must stay inside the carrier
+    root (containment), the file must exist, and its SHA-256 must equal the
+    pin. Decoding and the token budget are deliberately NOT applied here —
     ``serve_adjunto`` layers them for text injection, while the package export
     path consumes the raw bytes verbatim.
     """

@@ -2630,11 +2630,14 @@ class TestMethodologyApi:
     def _publish_with_adjuntos(
         self, client: TestClient, tmp_path: Path, *,
         drift: bool = False, omit_carrier: bool = False,
+        carrier_root: str = "seeds",
     ) -> dict:
-        """Publish the draft with one pinned carrier written under the seed dir.
+        """Publish the draft with one pinned carrier written under ``carrier_root``.
 
-        ``tmp_path`` is the patched PROJECT_ROOT, so the seed directory the
-        export route resolves is the one this helper populates.
+        ``tmp_path`` is the patched PROJECT_ROOT, so the directory the export
+        route resolves is the one this helper populates. ``carrier_root`` is
+        ``seeds`` for bundled skills (whose dir exists → resolver returns it)
+        and ``attachments`` for author skills (no seed dir → fallback).
         """
         path = "adjunto-nivel-1.md"
         data = "# Principal\n\nContenido.\n".encode("utf-8")
@@ -2644,10 +2647,10 @@ class TestMethodologyApi:
             "bytes": len(data),
             "nivel": "1º",
         }
-        seed_dir = tmp_path / "data" / "methodology" / "seeds" / "guided-character-v1"
-        seed_dir.mkdir(parents=True, exist_ok=True)
+        root_dir = tmp_path / "data" / "methodology" / carrier_root / "guided-character-v1"
+        root_dir.mkdir(parents=True, exist_ok=True)
         if not omit_carrier:
-            (seed_dir / path).write_bytes(b"# Drifted\n" if drift else data)
+            (root_dir / path).write_bytes(b"# Drifted\n" if drift else data)
         draft = client.post("/api/methodologies/drafts", json={
             **self._draft_payload(),
             "adjuntos": [entry],
@@ -2762,6 +2765,103 @@ class TestMethodologyApi:
         )
         assert exported.status_code == 422
         assert exported.json()["code"] == "attachment_unavailable"
+
+    # ------------------------------------------------------------------ #
+    # S1 — author carrier root: the resolver picks seeds/ when it exists,
+    # else attachments/ (R9/R24). Seed export stays byte-identical.
+    # ------------------------------------------------------------------ #
+
+    def test_export_author_carriers_embed_from_attachments_root(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """R24 scenario "author export embeds carriers": a skill with no seed
+        dir resolves to ``attachments/`` and its verified carriers ship."""
+        _principal(monkeypatch, "author-1")
+        entry = self._publish_with_adjuntos(client, tmp_path, carrier_root="attachments")
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 200, exported.text
+        archive = zipfile.ZipFile(io.BytesIO(exported.content))
+        assert "adjunto-nivel-1.md" in archive.namelist()
+        assert archive.read("adjunto-nivel-1.md") == "# Principal\n\nContenido.\n".encode("utf-8")
+        verdict = inspect_package(exported.content)
+        assert verdict.ok, verdict.issues
+        assert verdict.compiled is not None
+        assert [e.as_dict() for e in verdict.compiled.adjuntos] == [entry]
+        # The exported package re-imports and verifies (never self-rejecting).
+        uploaded = self._upload(client, exported.content, filename="author.zip")
+        assert uploaded.status_code == 200, uploaded.text
+        assert uploaded.json()["verdict"]["ok"] is True
+
+    def test_export_missing_author_carrier_is_422(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """R24 scenario "missing author carrier fails closed": absent bytes
+        under ``attachments/`` yield 422 and no partial package."""
+        _principal(monkeypatch, "author-1")
+        self._publish_with_adjuntos(
+            client, tmp_path, carrier_root="attachments", omit_carrier=True,
+        )
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 422
+        assert exported.json()["code"] == "attachment_unavailable"
+        assert "adjunto-nivel-1.md" not in exported.text
+
+    def test_export_drifted_author_carrier_is_422(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """R24: bytes changed under ``attachments/`` fail closed too."""
+        _principal(monkeypatch, "author-1")
+        self._publish_with_adjuntos(
+            client, tmp_path, carrier_root="attachments", drift=True,
+        )
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 422
+        assert exported.json()["code"] == "attachment_unavailable"
+
+    def test_seed_carrier_wins_when_author_dir_also_exists(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """R24 scenario "seed export unchanged": an existing seed dir keeps
+        winning even if an author dir of the same name exists, so the bundled
+        bytes — not the author bytes — are embedded (byte-identical export)."""
+        _principal(monkeypatch, "author-1")
+        path = "adjunto-nivel-1.md"
+        seed_data = "# Seed\n\nContenido semilla.\n".encode("utf-8")
+        author_data = "# Author\n\nContenido autor.\n".encode("utf-8")
+        entry = {
+            "path": path,
+            "sha256": hashlib.sha256(seed_data).hexdigest(),
+            "bytes": len(seed_data),
+            "nivel": "1º",
+        }
+        seed_dir = tmp_path / "data" / "methodology" / "seeds" / "guided-character-v1"
+        seed_dir.mkdir(parents=True, exist_ok=True)
+        (seed_dir / path).write_bytes(seed_data)
+        author_dir = tmp_path / "data" / "methodology" / "attachments" / "guided-character-v1"
+        author_dir.mkdir(parents=True, exist_ok=True)
+        (author_dir / path).write_bytes(author_data)
+        draft = client.post("/api/methodologies/drafts", json={
+            **self._draft_payload(),
+            "adjuntos": [entry],
+        })
+        assert draft.status_code == 200, draft.text
+        published = client.post(
+            f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish",
+        )
+        assert published.status_code == 200, published.text
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 200, exported.text
+        archive = zipfile.ZipFile(io.BytesIO(exported.content))
+        assert archive.read(path) == seed_data
+        assert archive.read(path) != author_data
 
     def test_import_quarantines_and_does_not_mutate_library(self, client: TestClient, monkeypatch):
         """REQ-IMP-2/3: import isolates the package; the library stays intact."""

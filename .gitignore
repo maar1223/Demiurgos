@@ -106,3 +106,8 @@ data/world-trash/
 # ============================================================
 data/methodology/library.json
 data/methodology/quarantine/
+
+# Carriers aportados por el Autor: dato runtime, no código. Se crean de
+# forma perezosa en materialize/trust; nunca se versionan (el directorio
+# seeds/ sigue siendo la autoridad de bytes de los skills bundled).
+data/methodology/attachments/

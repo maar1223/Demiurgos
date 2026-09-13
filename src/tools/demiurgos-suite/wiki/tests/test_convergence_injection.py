@@ -19,6 +19,7 @@ if str(_WIKI) not in sys.path:
 from convergence_injection import (  # noqa: E402
     MAX_SPECIMEN_TOKENS,
     build_specimen_block,
+    carrier_root_for,
     read_adjunto_bytes,
     serve_adjunto,
 )
@@ -87,6 +88,49 @@ class TestServeAdjunto:
         (tmp_path / "ejemplos").mkdir()
         (tmp_path / "ejemplos" / "ejemplo.md").write_bytes(data)
         assert serve_adjunto(tmp_path, pin) is None
+
+
+class TestCarrierRootFor:
+    """R9/R24: one resolver picks the carrier root — the bundled seed
+    directory when it exists, else the author ``attachments/`` directory."""
+
+    def test_seed_dir_wins_when_present(self, tmp_path: Path) -> None:
+        """Scenario "seed serving unchanged": an existing seed dir is the root."""
+        seed_dir = tmp_path / "data" / "methodology" / "seeds" / "demo-skill"
+        seed_dir.mkdir(parents=True)
+        assert carrier_root_for("demo-skill", project_root=tmp_path) == seed_dir
+
+    def test_falls_back_to_attachments_when_seed_absent(self, tmp_path: Path) -> None:
+        """Scenario "author carrier served": no seed dir → author root."""
+        expected = (
+            tmp_path / "data" / "methodology" / "attachments" / "author-skill"
+        )
+        assert carrier_root_for("author-skill", project_root=tmp_path) == expected
+
+    def test_seed_wins_over_author_carriers(self, tmp_path: Path) -> None:
+        """Seed precedence: author bytes never shadow a bundled seed skill."""
+        seed_dir = tmp_path / "data" / "methodology" / "seeds" / "demo-skill"
+        seed_dir.mkdir(parents=True)
+        author_dir = (
+            tmp_path / "data" / "methodology" / "attachments" / "demo-skill"
+        )
+        author_dir.mkdir(parents=True)
+        assert carrier_root_for("demo-skill", project_root=tmp_path) == seed_dir
+
+    def test_resolution_has_no_filesystem_side_effect(self, tmp_path: Path) -> None:
+        """Lazy creation: resolving an author path never creates the dir."""
+        resolved = carrier_root_for("author-skill", project_root=tmp_path)
+        assert not resolved.exists()
+
+    def test_defaults_to_repo_project_root(self) -> None:
+        """No ``project_root`` → the module-level repo root is used."""
+        seed_dir = SEED_ROOT / "narrative-character-creation"
+        assert carrier_root_for("narrative-character-creation") == seed_dir
+        absent = (
+            REPO_ROOT / "data" / "methodology" / "attachments"
+            / "__no_such_author_skill__"
+        )
+        assert carrier_root_for("__no_such_author_skill__") == absent
 
 
 def _three_pins(tmp_path: Path):
