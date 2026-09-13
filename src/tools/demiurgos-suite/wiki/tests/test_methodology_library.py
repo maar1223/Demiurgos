@@ -709,6 +709,41 @@ class TestAdjuntosRegistry:
         published = library.publish(_draft(library))
         assert published.adjuntos == ()
 
+    def test_update_draft_persists_adjuntos_round_trip(self, tmp_path: Path) -> None:
+        """S2: ``update_draft(adjuntos=...)`` writes the pins, the draft response
+        echoes them, and they survive a reload from disk. The pre-update state
+        is captured in the per-draft history snapshot."""
+        store = tmp_path / "library.json"
+        library = MethodologyLibrary(store)
+        draft_id = _draft(library)
+        assert library.get_draft(draft_id).adjuntos == ()
+
+        updated = library.update_draft(draft_id, adjuntos=self._entries())
+
+        expected = [entry.as_dict() for entry in self._entries()]
+        assert [entry.as_dict() for entry in updated.adjuntos] == expected
+        assert [entry.as_dict() for entry in library.get_draft(draft_id).adjuntos] == expected
+        reloaded = MethodologyLibrary(store)
+        assert reloaded.get_draft(draft_id).adjuntos == self._entries()
+        # History snapshot holds the PRE-update record (no pins yet).
+        history = library.list_draft_history(draft_id)
+        assert history[-1]["record"].get("adjuntos") == []
+
+    def test_update_draft_without_adjuntos_preserves_pins(self, tmp_path: Path) -> None:
+        """A metadata-only edit must never silently drop existing pins."""
+        library = _library(tmp_path)
+        draft_id = library.create_draft(
+            skill_id=_valid_manifest()["skill_id"],
+            version=_valid_manifest()["version"],
+            name=_valid_manifest()["name"],
+            source=_valid_source(),
+            description=_valid_manifest()["description"],
+            adjuntos=self._entries(),
+        )
+        updated = library.update_draft(draft_id, name="Renamed")
+        assert updated.name == "Renamed"
+        assert updated.adjuntos == self._entries()
+
     def test_pre_pr3_record_without_adjuntos_decodes_empty(self, tmp_path: Path) -> None:
         """S6: a hand-written pre-PR③ record (no ``adjuntos``) decodes with
         an empty default — additive back-compat, nothing dropped."""

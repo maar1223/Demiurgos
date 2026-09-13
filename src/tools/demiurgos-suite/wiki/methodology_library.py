@@ -424,6 +424,7 @@ class MethodologyLibrary:
         clasificacion: str | None = None,
         trust_attributes: tuple[str, ...] | None = None,
         provenance: tuple[str, str] | None = None,
+        adjuntos: tuple[AttachmentEntry, ...] | None = None,
     ) -> Draft:
         """Update a draft, snapshotting the previous state (TW13/TW14).
 
@@ -438,6 +439,11 @@ class MethodologyLibrary:
         version)`` and is never wired to any client route (REQ-CC-20 —
         provenance is server-injected; a client can never forge or mutate it).
         ``skill_id``/``version`` themselves are immutable after creation.
+
+        ``adjuntos`` (S2) writes the metadata-only attachment pins when
+        provided; ``None`` (the default) leaves the existing pins untouched so
+        a metadata edit can never silently drop carriers. The pre-update pins
+        are captured in the history snapshot for free.
         """
         with self._lock:
             record = self._drafts.get(draft_id)
@@ -468,6 +474,8 @@ class MethodologyLibrary:
                 record["trust_attributes"] = list(trust_attributes)
             if provenance is not None:
                 record["parent_skill_id"], record["parent_version"] = provenance
+            if adjuntos is not None:
+                record["adjuntos"] = [entry.as_dict() for entry in adjuntos]
             now = _utcnow()
             history = self._draft_history.setdefault(draft_id, [])
             history.append({"ts": now, "record": before})
