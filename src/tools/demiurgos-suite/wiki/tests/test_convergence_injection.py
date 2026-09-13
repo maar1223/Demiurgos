@@ -75,8 +75,13 @@ class TestServeAdjunto:
         pin, data = _pin("../outside.md", text=outside.read_text())
         assert serve_adjunto(tmp_path, pin) is None
 
-    def test_malformed_pin_skips(self, tmp_path: Path) -> None:
-        """Threat guard: a pin whose sha256 is not the carrier digest skips."""
+    def test_sha256_mismatch_skips(self, tmp_path: Path) -> None:
+        """Threat guard: a pin whose sha256 is not the carrier digest skips.
+
+        Structural malformation is unreachable here: ``AttachmentEntry`` is
+        frozen and the pin is built from it, so only a digest mismatch is
+        exercisable from this seam.
+        """
         pin, data = _pin("ejemplos/ejemplo.md", sha256="0" * 64)
         (tmp_path / "ejemplos").mkdir()
         (tmp_path / "ejemplos" / "ejemplo.md").write_bytes(data)
