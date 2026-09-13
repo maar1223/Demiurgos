@@ -91,12 +91,16 @@ from co_creation_protocol import (
 )
 from co_creation_session_store import CoCreationSessionStore
 from co_creation_attachments import (
+    ATTACHMENTS_SUBDIR,
     AttachmentUploadError,
     staging_dir_for,
     store_staged,
     validate_staged_upload,
 )
-from co_creation_materializer import CoCreationMaterializer
+from co_creation_materializer import (
+    AttachmentMaterializationError,
+    CoCreationMaterializer,
+)
 from hermes_co_creation_provider import HermesCoCreationProvider, co_creation_capabilities
 from demiurgos_language import (
     LocaleSettings,
@@ -2461,6 +2465,20 @@ class CoCreationPublishRequest(BaseModel):
     base_revision: int
 
 
+class CoCreationAdjunto(BaseModel):
+    """One Author exemplar pin on the materialize request (REQ-CC-25).
+
+    Same dir-independent shape the staging upload returns: ``path`` is a plain
+    ``.md`` basename under the final skill dir, ``sha256``/``bytes`` pin the
+    bytes, and ``nivel`` is the bounded narrative-density label.
+    """
+
+    path: str
+    sha256: str
+    bytes: int
+    nivel: str
+
+
 class CoCreationMaterializeRequest(BaseModel):
     base_revision: int
     skill_id: str | None = None
@@ -2471,6 +2489,10 @@ class CoCreationMaterializeRequest(BaseModel):
     categoria_funcional: str | None = None
     etiquetas: list[str] = []
     language: str | None = None
+    # REQ-CC-25: Author exemplar pins. ``None`` leaves the session's canvas
+    # pins untouched; a list folds the confirmed pins into the draft payload so
+    # materialize moves the staged bytes and persists them on the draft.
+    adjuntos: list[CoCreationAdjunto] | None = None
 
 
 class CoCreationActivateRequest(BaseModel):
@@ -2860,6 +2882,10 @@ def materialize_co_creation(session_id: str, body: CoCreationMaterializeRequest,
         }.items()
         if value not in (None, [], "")
     }
+    if body.adjuntos is not None:
+        # REQ-CC-25: the Author-confirmed pins ride into the session payload so
+        # materialize persists them on the draft (never silently dropped).
+        confirmed["adjuntos"] = [entry.model_dump() for entry in body.adjuntos]
     if confirmed:
         merged = _CO_CREATION_SESSIONS.merge_draft_payload(
             session_id, principal.id, body.base_revision, confirmed,
@@ -2872,17 +2898,25 @@ def materialize_co_creation(session_id: str, body: CoCreationMaterializeRequest,
         base_revision = merged.revision
     else:
         base_revision = body.base_revision
-    result = materializer.materialize(
-        payload,
-        skill_id=body.skill_id or f"co-created-{session_id.removeprefix('co-creation-')[:10]}",
-        version=body.version or "0.1.0",
-        name=body.name or payload.get("name") or "Co-created skill",
-        description=body.description or payload.get("description") or "",
-        taller=body.taller or payload.get("taller"),
-        etiquetas=tuple(body.etiquetas or payload.get("etiquetas") or ()),
-        categoria_funcional=body.categoria_funcional or payload.get("categoria_funcional"),
-        language=body.language or payload.get("language"),
-    )
+    try:
+        result = materializer.materialize(
+            payload,
+            skill_id=body.skill_id or f"co-created-{session_id.removeprefix('co-creation-')[:10]}",
+            version=body.version or "0.1.0",
+            name=body.name or payload.get("name") or "Co-created skill",
+            description=body.description or payload.get("description") or "",
+            taller=body.taller or payload.get("taller"),
+            etiquetas=tuple(body.etiquetas or payload.get("etiquetas") or ()),
+            categoria_funcional=body.categoria_funcional or payload.get("categoria_funcional"),
+            language=body.language or payload.get("language"),
+            staging_dir=staging_dir_for(PROJECT_ROOT, session_id),
+            attachments_root=PROJECT_ROOT / ATTACHMENTS_SUBDIR,
+        )
+    except AttachmentMaterializationError as exc:
+        # A missing/drifted staged carrier fails closed: no draft, no partial
+        # ``attachments/`` tree (the move already rolled back). ``None`` pins
+        # keep the legacy behavior for payloads without exemplars.
+        return _attachment_upload_error_response(exc)
     issues = [issue.to_dict() for issue in result.issues]
     if not result.ok:
         # REQ-CC-5: issues surface in the validation panel; the session stays
@@ -3380,8 +3414,11 @@ def co_creation_pending_question_status(
     return {"pending_questions": updated.draft_payload.get("pending_questions", [])}
 
 
-def _attachment_upload_error_response(error: AttachmentUploadError) -> JSONResponse:
-    """Structured error for a rejected exemplar upload (stable wire code)."""
+def _attachment_upload_error_response(
+    error: AttachmentUploadError | AttachmentMaterializationError,
+) -> JSONResponse:
+    """Structured error for a rejected exemplar upload or materialize move
+    (stable wire code)."""
     return JSONResponse(status_code=error.status, content={
         "detail": error.message,
         "code": error.code,

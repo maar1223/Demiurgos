@@ -1243,3 +1243,176 @@ def test_upload_without_principal_is_401(client: TestClient, tmp_path: Path) -> 
     assert response.status_code == 401, response.text
     assert response.json()["code"] == "unauthorized"
     assert not _staging_dir(tmp_path, session_id).exists()
+
+
+# ---------------------------------------------------------------------------
+# S3 — materialize threads adjuntos + moves staged bytes (REQ-CC-25 / AE-3)
+# ---------------------------------------------------------------------------
+
+
+def _attachments_dir(tmp_path: Path, skill_id: str) -> Path:
+    return tmp_path / "data" / "methodology" / "attachments" / skill_id
+
+
+def test_materialize_threads_adjuntos_and_moves_staged_bytes(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """AE-3: materialize moves pinned bytes and persists the pins on the draft."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch, milestone="borrador_listo")
+    session_id = _create_session(client)
+    data = b"# Ejemplar\n\nContenido.\n"
+    uploaded = _upload(client, session_id, "ejemplo.md", data, nivel="1º")
+    assert uploaded.status_code == 200, uploaded.text
+    pin = uploaded.json()["adjunto"]
+
+    materialized = client.post(
+        f"/api/co-creation/sessions/{session_id}/materialize",
+        json={
+            "base_revision": 1,
+            "name": "Batallas Épicas",
+            "skill_id": "batallas-epicas",
+            "version": "0.1.0",
+            "adjuntos": [pin],
+        },
+    )
+
+    assert materialized.status_code == 200, materialized.text
+    body = materialized.json()
+    assert body["ok"] is True
+    assert (_attachments_dir(tmp_path, "batallas-epicas")
+            / "ejemplo.md").read_bytes() == data
+    assert not _staging_dir(tmp_path, session_id).exists()
+    draft = api_server._methodology_library().get_draft(body["draft_id"])
+    assert [entry.as_dict() for entry in draft.adjuntos] == [pin]
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}").json()
+    assert recovered["draft_payload"]["adjuntos"] == [pin]
+
+
+def test_materialize_adjuntos_survive_publish(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """REQ-CC-25: the published record carries the same pins and echoes them."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch, milestone="borrador_listo")
+    session_id = _create_session(client)
+    data = b"# Ejemplar\n"
+    pin = _upload(client, session_id, "ejemplo.md", data).json()["adjunto"]
+
+    materialized = client.post(
+        f"/api/co-creation/sessions/{session_id}/materialize",
+        json={
+            "base_revision": 1, "name": "Batallas Épicas",
+            "skill_id": "batallas-epicas", "version": "0.1.0", "adjuntos": [pin],
+        },
+    ).json()
+    published = client.post(
+        f"/api/co-creation/sessions/{session_id}/publish",
+        json={"base_revision": materialized["revision"]},
+    )
+    assert published.status_code == 200, published.text
+
+    detail = client.get("/api/methodologies/published/batallas-epicas/0.1.0")
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["adjuntos"] == [pin]
+
+
+def test_materialize_adjuntos_missing_bytes_fails_closed(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """AE-3: a pin without staged bytes fails closed — no draft, no tree."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch, milestone="borrador_listo")
+    session_id = _create_session(client)
+    phantom = {"path": "fantasma.md", "sha256": "a" * 64, "bytes": 10, "nivel": "1º"}
+
+    response = client.post(
+        f"/api/co-creation/sessions/{session_id}/materialize",
+        json={
+            "base_revision": 1, "name": "Sin bytes",
+            "skill_id": "sin-bytes", "adjuntos": [phantom],
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "attachment_unavailable"
+    assert api_server._methodology_library().list_drafts() == []
+    assert not (tmp_path / "data" / "methodology" / "attachments").exists()
+
+
+def test_materialize_without_adjuntos_is_unchanged(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """Backward compatible: no pins -> no attachments dir, empty draft pins."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch, milestone="borrador_listo")
+    session_id = _create_session(client)
+
+    materialized = client.post(
+        f"/api/co-creation/sessions/{session_id}/materialize",
+        json={"base_revision": 1, "name": "Sin ejemplares", "skill_id": "sin-ejemplares"},
+    )
+
+    assert materialized.status_code == 200, materialized.text
+    draft = api_server._methodology_library().get_draft(materialized.json()["draft_id"])
+    assert draft.adjuntos == ()
+    assert not (tmp_path / "data" / "methodology" / "attachments").exists()
+
+
+def test_validate_preview_threads_adjuntos_without_draft_or_move(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """REQ-CC-25 pre-materialize preview: pins compile, nothing moves/creates."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    data = b"# Ejemplar\n"
+    pin = _upload(client, session_id, "ejemplo.md", data).json()["adjunto"]
+
+    response = client.post(
+        f"/api/co-creation/sessions/{session_id}/validate",
+        json={"payload": {"name": "Vista previa", "adjuntos": [pin]}},
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["ok"] is True
+    assert body["issues"] == []
+    assert api_server._methodology_library().list_drafts() == []
+    assert (_staging_dir(tmp_path, session_id) / "ejemplo.md").read_bytes() == data
+
+
+def test_canvas_put_accepts_and_persists_adjuntos(
+    client: TestClient, monkeypatch,
+) -> None:
+    """REQ-CC-11: the additive adjuntos section merges through the canvas."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+    pin = {"path": "ejemplo.md", "sha256": "b" * 64, "bytes": 9, "nivel": "1º"}
+
+    response = client.put(
+        f"/api/co-creation/sessions/{session_id}/canvas",
+        json={"base_revision": 1, "payload": {"adjuntos": [pin]}},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["ok"] is True
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}").json()
+    assert recovered["draft_payload"]["adjuntos"] == [pin]
+
+
+def test_canvas_put_rejects_bad_adjuntos_shape(
+    client: TestClient, monkeypatch,
+) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch)
+    session_id = _create_session(client)
+
+    response = client.put(
+        f"/api/co-creation/sessions/{session_id}/canvas",
+        json={"base_revision": 1, "payload": {"adjuntos": "not-a-list"}},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["code"] == "invalid_input"
