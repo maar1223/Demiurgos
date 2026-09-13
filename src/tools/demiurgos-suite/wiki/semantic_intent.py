@@ -27,6 +27,12 @@ SemanticState = Literal[
 
 ContinuationOutcome = Literal["question", "delta"]
 
+# Bounded explicitness of a guided intent. ``imperative`` is a direct command to
+# create/start a character; ``musing`` (the conservative default) is everything
+# else. Only ``imperative`` may auto-open the guided surface; ``musing``/absent
+# yields a consent suggestion and creates nothing.
+GuidedExplicitness = Literal["imperative", "musing"]
+
 MAX_SEMANTIC_ATTEMPTS = 3
 MAX_RESPONSE_CHARS = 4096
 MAX_CONTINUATION_QUESTION_CHARS = 2_000
@@ -180,6 +186,7 @@ class SemanticDecision:
     reference: str | None = None
     guided: bool = False
     continuation: SemanticContinuation | None = None
+    guided_explicitness: GuidedExplicitness = "musing"
 
 
 @dataclass(frozen=True)
@@ -297,6 +304,16 @@ def validate_semantic_decision(value: Any) -> SemanticValidation:
     if not isinstance(guided, bool):
         return SemanticValidation(False, INVALID_ENVELOPE_REASON)
 
+    # Bounded explicitness degrades to the conservative default instead of
+    # failing the envelope: an absent or out-of-enum value resolves to
+    # ``musing`` (suggest, never auto-open) and never blocks admission.
+    raw_explicitness = value.get("guided_explicitness", "musing")
+    guided_explicitness: GuidedExplicitness = (
+        raw_explicitness
+        if raw_explicitness in ("imperative", "musing")
+        else "musing"
+    )
+
     reference = value.get("reference")
     if reference is not None:
         return SemanticValidation(False, INVALID_ENVELOPE_REASON)
@@ -315,6 +332,7 @@ def validate_semantic_decision(value: Any) -> SemanticValidation:
             session_id=session_id,
             guided=guided,
             continuation=continuation,
+            guided_explicitness=guided_explicitness,
         ),
     )
 
@@ -365,6 +383,9 @@ class SemanticResult:
                 result["session_id"] = self.decision.session_id
             if self.decision.reference is not None:
                 result["reference"] = self.decision.reference
+            if self.decision.guided and self.state in CONTINUATION_STATES:
+                # Explicitness is only meaningful for a guided continuation.
+                result["guided_explicitness"] = self.decision.guided_explicitness
         return result
 
 
@@ -427,7 +448,10 @@ class SemanticIntentProvider:
             "blocked), response (a single concise sentence under 240 characters "
             "stating the interpretation — not an explanation of world lore), "
             "request_id "
-            f"{json.dumps(request_id)}{session_instruction}, and guided (boolean). "
+            f"{json.dumps(request_id)}{session_instruction}, guided (boolean), and "
+            "guided_explicitness (one of imperative or musing: use imperative only "
+            "when the author directly commands creating or starting a character, "
+            "for example \"creá un personaje\"; otherwise use musing). "
             "When state is require_confirmation include continuation "
             "{\"outcome\": \"question\", \"question\": \"<one concise confirmation "
             "question>\"}. When state is proposal_ready include continuation "

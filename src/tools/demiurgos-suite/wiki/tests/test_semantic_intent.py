@@ -25,6 +25,7 @@ from semantic_intent import (  # noqa: E402
     SemanticContinuation,
     SemanticDecision,
     SemanticIntentProvider,
+    SemanticResult,
     SemanticState,
     action_for_state,
     normalize_context,
@@ -516,3 +517,76 @@ def test_provider_prompt_documents_the_single_run_continuation_contract() -> Non
     assert "require_confirmation" in prompt and "proposal_ready" in prompt
     assert "target" in prompt and "digest" in prompt and "revision" in prompt
     assert "never write or claim approval" in prompt.lower()
+
+
+# ---------------------------------------------------------------------------
+# Guided-explicitness contract (REQ-GFC-01): an additive bounded field splits
+# an explicit imperative (auto-open) from musing/absent (suggest only). It is
+# emitted only for a guided continuation state and NEVER fails the envelope.
+# ---------------------------------------------------------------------------
+
+
+def test_valid_imperative_guided_explicitness_is_preserved() -> None:
+    result = validate_semantic_decision(
+        _continuation_payload("require_confirmation", guided_explicitness="imperative")
+    )
+    assert result.admitted
+    assert result.decision is not None
+    assert result.decision.guided_explicitness == "imperative"
+
+
+def test_absent_or_invalid_guided_explicitness_defaults_to_musing() -> None:
+    absent = validate_semantic_decision(_continuation_payload("proposal_ready"))
+    assert absent.admitted
+    assert absent.decision is not None
+    assert absent.decision.guided_explicitness == "musing"
+
+    for invalid in ("shout", "", None, 1, ["imperative"]):
+        result = validate_semantic_decision(
+            _continuation_payload("proposal_ready", guided_explicitness=invalid)
+        )
+        assert result.admitted, invalid  # degradation never blocks the envelope
+        assert result.decision is not None
+        assert result.decision.guided_explicitness == "musing"
+
+
+def test_guided_explicitness_is_emitted_only_for_guided_continuation_states() -> None:
+    imperative = validate_semantic_decision(
+        _continuation_payload("proposal_ready", guided_explicitness="imperative")
+    )
+    assert imperative.decision is not None
+    payload = SemanticResult(
+        decision=imperative.decision, attempts=1, request_id="request-1"
+    ).as_dict()
+    assert payload["guided_explicitness"] == "imperative"
+
+    musing = validate_semantic_decision(_continuation_payload("require_confirmation"))
+    assert musing.decision is not None
+    payload = SemanticResult(
+        decision=musing.decision, attempts=1, request_id="request-1"
+    ).as_dict()
+    assert payload["guided_explicitness"] == "musing"
+
+    for state in ("allow", "clarify", "blocked"):
+        plain = validate_semantic_decision(valid_payload(state, guided=True))
+        assert plain.decision is not None
+        assert "guided_explicitness" not in SemanticResult(
+            decision=plain.decision, attempts=1, request_id="request-1"
+        ).as_dict()
+
+
+def test_guided_explicitness_is_absent_when_not_guided() -> None:
+    decision = validate_semantic_decision(valid_payload("proposal_ready", guided=False))
+    assert decision.admitted
+    assert decision.decision is not None
+    payload = SemanticResult(
+        decision=decision.decision, attempts=1, request_id="request-1"
+    ).as_dict()
+    assert "guided_explicitness" not in payload
+
+
+def test_provider_prompt_documents_the_guided_explicitness_contract() -> None:
+    provider = SemanticIntentProvider(Runs())
+    prompt = provider._build_prompt("Create a character", "request-1", "session-1")
+    assert "guided_explicitness" in prompt
+    assert "imperative" in prompt and "musing" in prompt
