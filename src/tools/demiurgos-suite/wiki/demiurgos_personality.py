@@ -129,8 +129,12 @@ def build_fichas_context(
                 content = md_file.read_text(encoding="utf-8", errors="replace")
                 if content.strip():
                     rel = md_file.relative_to(mundo_path)
+                    # Canonical display format is POSIX-separated on every
+                    # platform (as_posix): the ``--- path ---`` header is the
+                    # user-visible ficha path and must not carry Windows
+                    # backslashes into the prompt.
                     parts.append(
-                        f"\n--- {rel} ---\n{content[:max_ficha_chars]}"
+                        f"\n--- {rel.as_posix()} ---\n{content[:max_ficha_chars]}"
                     )
             except Exception:
                 continue
@@ -152,8 +156,10 @@ def build_fichas_context(
                 content = md_file.read_text(encoding="utf-8", errors="replace")
                 if content.strip():
                     rel = md_file.relative_to(mundo_path)
+                    # POSIX-separated display path (as_posix), same contract
+                    # as the _context/ branch above.
                     parts.append(
-                        f"\n--- {rel} ---\n{content[:max_ficha_chars]}"
+                        f"\n--- {rel.as_posix()} ---\n{content[:max_ficha_chars]}"
                     )
             except Exception:
                 continue

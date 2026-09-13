@@ -114,7 +114,10 @@ def _preprocess_markdown(
         resolved = resolve_image(_strip_image_suffixes(src))
         if resolved is None:
             return IMAGE_PLACEHOLDER
-        return f"![{alt}](<{resolved}>)"
+        # POSIX-separated disk path: the rewritten reference is markdown fed
+        # to pandoc, and GFM/pandoc treat backslashes literally on every
+        # platform (a WindowsPath str() would break the image on Windows).
+        return f"![{alt}](<{resolved.as_posix()}>)"
 
     return _degrade_wikilinks(_IMAGE_RE.sub(_replace_image, markdown))
 
@@ -147,7 +150,10 @@ def _convert_markdown_to_docx(
     preprocessed = _preprocess_markdown(markdown, resolve_image)
     cmd = ["pandoc", "-f", "gfm", "-t", "docx"]
     for rp in resource_paths or []:
-        cmd += ["--resource-path", str(rp)]
+        # POSIX-separated resource path (as_posix): pandoc parses
+        # --resource-path as a path list and backslashes are not separators
+        # for it, so WindowsPath str() would produce a broken path on Windows.
+        cmd += ["--resource-path", rp.as_posix()]
     cmd += ["-o", "-"]
     try:
         proc = subprocess.run(
