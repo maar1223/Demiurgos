@@ -192,7 +192,7 @@ def test_internal_guided_turn_reuses_verified_reference_across_turns(monkeypatch
     normal.assert_not_awaited()
 
 
-def test_authenticated_adapter_commits_delta_and_accepts_one_proposal(monkeypatch) -> None:
+def test_authenticated_adapter_commits_delta_and_accepts_one_proposal(monkeypatch, tmp_path) -> None:
     async def provider(request, _token):
         return {
             "protocol_version": request.protocol_version,
@@ -203,6 +203,8 @@ def test_authenticated_adapter_commits_delta_and_accepts_one_proposal(monkeypatc
             "provenance": ["provider:run-1"],
         }
 
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
@@ -261,7 +263,7 @@ def test_fast_guided_start_exposes_server_owned_mode_and_keeps_proposal_diskless
     assert accepted.json()["candidate"]["accepted_canon"]["desire"]["certainty"] == "accepted"
 
 
-def test_guided_start_accepts_descriptive_character_seeds(monkeypatch) -> None:
+def test_guided_start_accepts_descriptive_character_seeds(monkeypatch, tmp_path) -> None:
     async def provider(request, _token):
         return {
             "protocol_version": request.protocol_version,
@@ -271,6 +273,8 @@ def test_guided_start_accepts_descriptive_character_seeds(monkeypatch) -> None:
             "question": "What drives them?",
         }
 
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
@@ -283,7 +287,7 @@ def test_guided_start_accepts_descriptive_character_seeds(monkeypatch) -> None:
         assert response.json()["revision"] == 1
 
 
-def test_vague_backstory_delta_keeps_asking_one_focused_question(monkeypatch) -> None:
+def test_vague_backstory_delta_keeps_asking_one_focused_question(monkeypatch, tmp_path) -> None:
     """A rough backstory/scene must NOT become a proposal in full guided mode.
 
     The provider returns a delta after a vague description; the server-owned
@@ -303,6 +307,8 @@ def test_vague_backstory_delta_keeps_asking_one_focused_question(monkeypatch) ->
         }
 
     monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
@@ -335,7 +341,7 @@ def test_vague_backstory_delta_keeps_asking_one_focused_question(monkeypatch) ->
     assert len(calls) == 1
 
 
-def test_vague_backstory_turn_never_produces_diff_after_rough_description(monkeypatch) -> None:
+def test_vague_backstory_turn_never_produces_diff_after_rough_description(monkeypatch, tmp_path) -> None:
     """Multi-turn regression: after a vague scene the server keeps asking, so the
     frontend never receives a proposal/diff to review."""
     calls = []
@@ -350,6 +356,8 @@ def test_vague_backstory_turn_never_produces_diff_after_rough_description(monkey
             "delta": {"backstory": "raised in the storm"},
         }
 
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
@@ -374,7 +382,7 @@ def test_vague_backstory_turn_never_produces_diff_after_rough_description(monkey
     assert len(calls) == 2
 
 
-def test_complete_candidate_still_reaches_proposal_across_turns(monkeypatch) -> None:
+def test_complete_candidate_still_reaches_proposal_across_turns(monkeypatch, tmp_path) -> None:
     """Once identity + desire are present, a later delta is admitted as a proposal."""
     calls = []
 
@@ -392,6 +400,8 @@ def test_complete_candidate_still_reaches_proposal_across_turns(monkeypatch) -> 
             "delta": delta,
         }
 
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
@@ -415,7 +425,7 @@ def test_complete_candidate_still_reaches_proposal_across_turns(monkeypatch) -> 
     assert len(calls) == 2
 
 
-def test_relationship_start_requires_confirmation_and_acceptance_enters_provider(monkeypatch) -> None:
+def test_relationship_start_requires_confirmation_and_acceptance_enters_provider(monkeypatch, tmp_path) -> None:
     calls = []
 
     async def provider(request, _token):
@@ -426,6 +436,8 @@ def test_relationship_start_requires_confirmation_and_acceptance_enters_provider
         }
 
     monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
@@ -462,10 +474,12 @@ def test_relationship_start_requires_confirmation_and_acceptance_enters_provider
     assert calls == ["Quiero crear la esposa de Rhyz"]
 
 
-def test_relationship_confirmation_decline_is_terminal_and_non_mutating(monkeypatch) -> None:
+def test_relationship_confirmation_decline_is_terminal_and_non_mutating(monkeypatch, tmp_path) -> None:
     async def provider(*_args):
         raise AssertionError("provider must not run after decline")
 
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
@@ -489,7 +503,7 @@ def test_relationship_confirmation_decline_is_terminal_and_non_mutating(monkeypa
     assert repeated.json() == declined.json()
 
 
-def test_relationship_goal_survives_confirmation_and_multi_turn(monkeypatch) -> None:
+def test_relationship_goal_survives_confirmation_and_multi_turn(monkeypatch, tmp_path) -> None:
     requests = []
 
     async def provider(request, _token):
@@ -499,6 +513,8 @@ def test_relationship_goal_survives_confirmation_and_multi_turn(monkeypatch) -> 
             "session_id": request.session_id, "outcome": "question", "question": "What drives them?",
         }
 
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
@@ -538,7 +554,7 @@ def test_relationship_goal_survives_confirmation_and_multi_turn(monkeypatch) -> 
     assert turned.json()["reference"]["goal"] == "Nuevo personaje: hermano de Rhyz"
 
 
-def test_english_relation_goal_follows_configured_language(monkeypatch) -> None:
+def test_english_relation_goal_follows_configured_language(monkeypatch, tmp_path) -> None:
     requests = []
 
     async def provider(request, _token):
@@ -548,6 +564,8 @@ def test_english_relation_goal_follows_configured_language(monkeypatch) -> None:
             "session_id": request.session_id, "outcome": "question", "question": "What drives them?",
         }
 
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setenv("DEMIURGOS_LANGUAGE", "en")
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
@@ -574,7 +592,7 @@ def test_english_relation_goal_follows_configured_language(monkeypatch) -> None:
     assert requests and requests[0].relation_goal == "New character: brother of Rhyz"
 
 
-def test_plain_character_start_never_invents_a_relation(monkeypatch) -> None:
+def test_plain_character_start_never_invents_a_relation(monkeypatch, tmp_path) -> None:
     requests = []
 
     async def provider(request, _token):
@@ -584,6 +602,8 @@ def test_plain_character_start_never_invents_a_relation(monkeypatch) -> None:
             "session_id": request.session_id, "outcome": "question", "question": "What drives them?",
         }
 
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
@@ -602,11 +622,13 @@ def test_plain_character_start_never_invents_a_relation(monkeypatch) -> None:
     assert requests[0].relation_goal == ""
 
 
-def test_relationship_prompt_on_ai_ask_does_not_fall_through_to_prose(monkeypatch) -> None:
+def test_relationship_prompt_on_ai_ask_does_not_fall_through_to_prose(monkeypatch, tmp_path) -> None:
     async def provider(*_args):
         raise AssertionError("the guided provider must wait for confirmation")
 
     prose = AsyncMock(return_value="Invented character prose")
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
@@ -629,9 +651,12 @@ def test_relationship_prompt_on_ai_ask_does_not_fall_through_to_prose(monkeypatc
     prose.assert_not_awaited()
 
 
-def test_confirmation_text_follows_configured_language_in_both_entry_paths(monkeypatch) -> None:
+def test_confirmation_text_follows_configured_language_in_both_entry_paths(monkeypatch, tmp_path) -> None:
     async def provider(*_args):
         raise AssertionError("provider must not run before confirmation")
+
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
 
     def setup():
         monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
@@ -694,7 +719,7 @@ def test_confirmation_text_follows_configured_language_in_both_entry_paths(monke
     assert english_declined["response"] == "No character proposal was started."
 
 
-def test_guided_start_normalizes_structured_question_for_public_state(monkeypatch) -> None:
+def test_guided_start_normalizes_structured_question_for_public_state(monkeypatch, tmp_path) -> None:
     class Runs:
         async def start(self, request):
             self.request = request
@@ -716,6 +741,8 @@ def test_guided_start_normalizes_structured_question_for_public_state(monkeypatc
             }
             yield {"event": "run.completed", "run_id": "run-1", "output": json.dumps(payload)}
 
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
     monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", HermesGuidedProvider(Runs()))
@@ -731,7 +758,9 @@ def test_guided_start_normalizes_structured_question_for_public_state(monkeypatc
     assert "private" not in response.text
 
 
-def test_guided_start_rejects_explicit_edit_requests(monkeypatch) -> None:
+def test_guided_start_rejects_explicit_edit_requests(monkeypatch, tmp_path) -> None:
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
     monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
     sessions = GuidedSessionStore()
     monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
