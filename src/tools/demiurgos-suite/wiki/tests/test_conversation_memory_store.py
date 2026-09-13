@@ -22,6 +22,7 @@ if str(_WIKI) not in sys.path:
 
 import conversation_memory_store  # noqa: E402
 from conversation_memory_store import (  # noqa: E402
+    CONSENT_FLAG_TTL,
     DISTILL_REFRESH_INTERVAL,
     MEMORY_WINDOW,
     TURN_TTL,
@@ -176,6 +177,46 @@ class TestDistilledState:
 
     def test_get_distilled_state_for_unknown_session(self, store: ConversationMemoryStore) -> None:
         assert store.get_distilled_state("missing") is None
+
+
+class TestGuidedConsentFlags:
+    """REQ-GFC-06: a decline is durable, per session+world, and TTL-scoped."""
+
+    def test_decline_flag_is_scoped_per_session_and_mundo(self, store: ConversationMemoryStore) -> None:
+        store.record_guided_consent_decline("s-1", "nec")
+        assert store.guided_consent_declined("s-1", "nec") is True
+        assert store.guided_consent_declined("s-1", "other") is False
+        assert store.guided_consent_declined("s-2", "nec") is False
+
+    def test_decline_flag_expires_after_ttl(self, monkeypatch, store: ConversationMemoryStore) -> None:
+        clock = _clock(monkeypatch)
+        store.record_guided_consent_decline("s-1", "nec")
+        clock["now"] += CONSENT_FLAG_TTL - timedelta(seconds=1)
+        assert store.guided_consent_declined("s-1", "nec") is True
+        clock["now"] += timedelta(seconds=2)
+        assert store.guided_consent_declined("s-1", "nec") is False
+
+    def test_redecline_upserts_and_refreshes_the_window(self, monkeypatch, store: ConversationMemoryStore) -> None:
+        clock = _clock(monkeypatch)
+        store.record_guided_consent_decline("s-1", "nec")
+        clock["now"] += CONSENT_FLAG_TTL - timedelta(seconds=1)
+        store.record_guided_consent_decline("s-1", "nec")
+        clock["now"] += timedelta(seconds=2)
+        assert store.guided_consent_declined("s-1", "nec") is True
+
+    def test_expired_flags_are_swept_on_write(self, monkeypatch, store: ConversationMemoryStore) -> None:
+        clock = _clock(monkeypatch)
+        store.record_guided_consent_decline("s-1", "nec")
+        clock["now"] += CONSENT_FLAG_TTL + timedelta(seconds=1)
+        store.record_guided_consent_decline("s-2", "nec")
+        rows = store._conn.execute(  # noqa: SLF001 - asserts physical cleanup
+            "SELECT COUNT(*) AS n FROM guided_consent_flags"
+        ).fetchone()
+        assert int(rows["n"]) == 1
+
+    def test_empty_session_never_declines(self, store: ConversationMemoryStore) -> None:
+        store.record_guided_consent_decline("", "nec")
+        assert store.guided_consent_declined("", "nec") is False
 
 
 class TestConcurrency:

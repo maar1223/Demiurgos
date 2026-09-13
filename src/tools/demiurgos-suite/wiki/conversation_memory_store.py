@@ -40,6 +40,9 @@ DISTILL_REFRESH_INTERVAL = 5
 DISTILL_MAX_TOKENS = 500
 """Token budget the caller must respect when generating a distilled summary."""
 
+CONSENT_FLAG_TTL = timedelta(hours=24)
+"""Guided-flow consent declines older than this are forgotten (re-nagging window)."""
+
 _VALID_ROLES = frozenset({"user", "assistant"})
 
 # SQLite's stdlib driver (Python 3.12+) executes one statement per call, so
@@ -67,6 +70,14 @@ _SCHEMA_STATEMENTS = (
         summary TEXT NOT NULL,
         turn_count INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS guided_consent_flags (
+        session_id TEXT NOT NULL,
+        mundo TEXT NOT NULL,
+        declined_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, mundo)
     )
     """,
 )
@@ -226,6 +237,44 @@ class ConversationMemoryStore:
             )
             self._conn.commit()
 
+    def record_guided_consent_decline(self, session_id: str, mundo: str) -> None:
+        """Upsert a TTL-scoped consent decline for ``(session_id, mundo)``.
+
+        The flag is server-authoritative consent memory (REQ-GFC-06): a declined
+        session never receives another guided suggestion until the flag expires
+        or is overwritten. The empty-string session never names a real
+        conversation, so it is a deliberate no-op (fricción 4).
+        """
+        if not session_id:
+            return
+        now = _utcnow()
+        cutoff = (now - CONSENT_FLAG_TTL).isoformat()
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM guided_consent_flags WHERE declined_at < ?", (cutoff,),
+            )
+            self._conn.execute(
+                "INSERT INTO guided_consent_flags (session_id, mundo, declined_at) "
+                "VALUES (?, ?, ?) "
+                "ON CONFLICT(session_id, mundo) DO UPDATE SET "
+                "declined_at = excluded.declined_at",
+                (session_id, mundo, now.isoformat()),
+            )
+            self._conn.commit()
+
+    def guided_consent_declined(self, session_id: str, mundo: str) -> bool:
+        """True when a non-expired decline exists for ``(session_id, mundo)``."""
+        if not session_id:
+            return False
+        cutoff = (_utcnow() - CONSENT_FLAG_TTL).isoformat()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM guided_consent_flags "
+                "WHERE session_id = ? AND mundo = ? AND declined_at >= ?",
+                (session_id, mundo, cutoff),
+            ).fetchone()
+        return row is not None
+
     def discard_expired(self) -> int:
         """Delete turns older than ``TURN_TTL``; returns the number removed.
 
@@ -253,6 +302,12 @@ class ConversationMemoryStore:
                 "DELETE FROM distilled_states WHERE session_id NOT IN "
                 "(SELECT DISTINCT session_id FROM conversation_turns)",
             )
+        # Consent declines have their own TTL; sweep them independently so a
+        # retired flag never suppresses a future guided suggestion.
+        self._conn.execute(
+            "DELETE FROM guided_consent_flags WHERE declined_at < ?",
+            ((now - CONSENT_FLAG_TTL).isoformat(),),
+        )
         self._conn.commit()
         return removed
 
