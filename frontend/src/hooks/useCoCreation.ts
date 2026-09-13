@@ -13,6 +13,7 @@ import {
   setWarningStatus as setWarningStatusApi,
   turnCoCreationSession,
   updateCanvas as updateCanvasApi,
+  uploadCoCreationAdjunto,
   validatePayload as validatePayloadApi,
 } from "@/api/coCreation";
 import { ApiError } from "@/api/types";
@@ -28,6 +29,7 @@ import type {
   DerivedFrom,
   DraftHistoryEntry,
   DraftPayload,
+  MethodologyAdjunto,
   PublishedMethodologyDetail,
   WarningState,
 } from "@/api/types";
@@ -143,6 +145,22 @@ export interface UseCoCreationReturn {
     state: WarningState,
   ) => Promise<void>;
 
+  // -- TW16 exemplar authoring (REQ-CC-24) --------------------------------
+
+  /** Stage ONE exemplar through the upload route and fold its pin into the
+   *  canvas payload via the shared edit path, so `adjuntos` is attributed as
+   *  Author-touched (TW16) and autosaved. Returns the pin, or null on failure
+   *  (the error is surfaced in `canvasError`). */
+  uploadAdjunto: (
+    file: File,
+    nivel: string,
+  ) => Promise<MethodologyAdjunto | null>;
+  /** Remove a pinned exemplar by its basename path through the canvas-payload
+   *  edit path (the route map exposes no dedicated remove endpoint). */
+  removeAdjunto: (path: string) => void;
+  /** An exemplar upload is in flight (disables the canvas add controls). */
+  isUploadingAdjunto: boolean;
+
   // -- TW13/TW14 adaptation + provenance -----------------------------------
 
   /** Derive an adaptation draft from a PUBLISHED skill and load the new
@@ -188,6 +206,7 @@ export function useCoCreation(
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [isUploadingAdjunto, setIsUploadingAdjunto] = useState(false);
   /** TW16 attribution (REQ-TW16-3): coarse `DraftPayload` section keys the
    *  Author touched in the canvas during THIS session. Session-scoped — a
    *  different session or a reset starts a fresh set. */
@@ -397,6 +416,55 @@ export function useCoCreation(
       scheduleAutosave();
     },
     [scheduleAutosave],
+  );
+
+  /** Stage ONE exemplar (REQ-CC-24): the upload route computes the pin
+   *  server-side and leaves the bytes in the per-session staging dir; we fold
+   *  the returned pin through `editCanvas` so the payload autosaves and the
+   *  `adjuntos` section is attributed as Author-touched (TW16). Failure is
+   *  surfaced in `canvasError` and leaves the payload untouched. */
+  const uploadAdjunto = useCallback(
+    async (file: File, nivel: string) => {
+      const current = sessionRef.current;
+      if (!current) return null;
+      setIsUploadingAdjunto(true);
+      setCanvasError(null);
+      try {
+        const pin = await uploadCoCreationAdjunto(
+          current.session_id,
+          file,
+          nivel,
+        );
+        const existing = payloadRef.current?.adjuntos ?? [];
+        editCanvas({ adjuntos: [...existing, pin] });
+        return pin;
+      } catch (cause) {
+        setCanvasError(
+          cause instanceof Error
+            ? cause.message
+            : "No se pudo cargar el ejemplar.",
+        );
+        return null;
+      } finally {
+        setIsUploadingAdjunto(false);
+      }
+    },
+    [editCanvas],
+  );
+
+  /** Remove a pinned exemplar by its basename path (REQ-CC-24). The route map
+   *  has no remove endpoint, so removal is a canvas-payload edit — the staged
+   *  bytes are abandoned to the best-effort staging sweep, never served. */
+  const removeAdjunto = useCallback(
+    (path: string) => {
+      const current = payloadRef.current;
+      if (!current) return;
+      const next = (current.adjuntos ?? []).filter(
+        (adjunto) => adjunto.path !== path,
+      );
+      editCanvas({ adjuntos: next });
+    },
+    [editCanvas],
   );
 
   const undo = useCallback(() => {
@@ -791,6 +859,7 @@ export function useCoCreation(
     setValidation(null);
     setHistoryEntries([]);
     setRestoreError(null);
+    setIsUploadingAdjunto(false);
     setTouchedSections(new Set());
   }, [resetStacks]);
 
@@ -829,6 +898,11 @@ export function useCoCreation(
     restoreError,
     setWarningStatus,
     setPendingQuestionStatus,
+
+    // TW16 exemplar authoring
+    uploadAdjunto,
+    removeAdjunto,
+    isUploadingAdjunto,
 
     // TW13/TW14
     derive,

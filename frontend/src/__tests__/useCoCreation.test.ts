@@ -12,12 +12,14 @@ import {
   setWarningStatus,
   turnCoCreationSession,
   updateCanvas,
+  uploadCoCreationAdjunto,
   validatePayload,
 } from "@/api/coCreation";
 import { useCoCreation } from "@/hooks/useCoCreation";
 import type {
   CoCreationSession,
   DraftPayload,
+  MethodologyAdjunto,
   PendingQuestion,
 } from "@/api/types";
 
@@ -34,6 +36,7 @@ vi.mock("@/api/coCreation", () => ({
   setWarningStatus: vi.fn(),
   turnCoCreationSession: vi.fn(),
   updateCanvas: vi.fn(),
+  uploadCoCreationAdjunto: vi.fn(),
   validatePayload: vi.fn(),
   getPublishedDetail: vi.fn(),
 }));
@@ -786,5 +789,143 @@ describe("useCoCreation", () => {
       await result.current.recover();
     });
     expect(result.current.session?.draft_payload).toEqual(reviewed.draft_payload);
+  });
+
+  // -- TW16 exemplar authoring (REQ-CC-24 / AE-1) ---------------------------
+
+  const pinFixture = (
+    overrides: Partial<MethodologyAdjunto> = {},
+  ): MethodologyAdjunto => ({
+    path: "mapa.md",
+    sha256: "a".repeat(64),
+    bytes: 1024,
+    nivel: "mundo",
+    ...overrides,
+  });
+
+  it("uploads an exemplar, folds the pin into the payload and marks adjuntos touched (REQ-CC-24)", async () => {
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({ revision: 5, draft_payload: canvasPayload }),
+    );
+    const pin = pinFixture();
+    vi.mocked(uploadCoCreationAdjunto).mockResolvedValue(pin);
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+
+    const file = new File(["# Mapa"], "mapa.md", { type: "text/markdown" });
+    let returned: MethodologyAdjunto | null = null;
+    await act(async () => {
+      returned = await result.current.uploadAdjunto(file, "mundo");
+    });
+
+    expect(uploadCoCreationAdjunto).toHaveBeenCalledWith(
+      "server-session",
+      file,
+      "mundo",
+    );
+    expect(returned).toEqual(pin);
+    expect(result.current.draftPayload?.adjuntos).toEqual([pin]);
+    expect(result.current.touchedSections.has("adjuntos")).toBe(true);
+    expect(result.current.isUploadingAdjunto).toBe(false);
+  });
+
+  it("appends an uploaded exemplar to the existing pins (REQ-CC-24)", async () => {
+    const existing = pinFixture({ path: "previo.md" });
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({
+        revision: 5,
+        draft_payload: { ...canvasPayload, adjuntos: [existing] },
+      }),
+    );
+    const pin = pinFixture({ path: "nuevo.md" });
+    vi.mocked(uploadCoCreationAdjunto).mockResolvedValue(pin);
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+
+    await act(async () => {
+      await result.current.uploadAdjunto(new File(["x"], "nuevo.md"), "mundo");
+    });
+
+    expect(result.current.draftPayload?.adjuntos).toEqual([existing, pin]);
+  });
+
+  it("removes a pinned exemplar by path through the canvas edit path (REQ-CC-24)", async () => {
+    const primero = pinFixture({ path: "primero.md" });
+    const segundo = pinFixture({ path: "segundo.md" });
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({
+        revision: 5,
+        draft_payload: { ...canvasPayload, adjuntos: [primero, segundo] },
+      }),
+    );
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+
+    act(() => result.current.removeAdjunto("primero.md"));
+
+    expect(result.current.draftPayload?.adjuntos).toEqual([segundo]);
+    expect(result.current.touchedSections.has("adjuntos")).toBe(true);
+  });
+
+  it("keeps the payload untouched and surfaces canvasError when the upload fails (REQ-CC-24)", async () => {
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({ revision: 5, draft_payload: canvasPayload }),
+    );
+    vi.mocked(uploadCoCreationAdjunto).mockRejectedValue(
+      new Error("El ejemplar supera el tamaño máximo."),
+    );
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+
+    let returned: MethodologyAdjunto | null = pinFixture();
+    await act(async () => {
+      returned = await result.current.uploadAdjunto(
+        new File(["x"], "grande.md"),
+        "mundo",
+      );
+    });
+
+    expect(returned).toBeNull();
+    expect(result.current.canvasError).toBe(
+      "El ejemplar supera el tamaño máximo.",
+    );
+    expect(result.current.draftPayload).toEqual(canvasPayload);
+    expect(result.current.isUploadingAdjunto).toBe(false);
+  });
+
+  it("does not call the upload route without a session (REQ-CC-24)", async () => {
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    let returned: MethodologyAdjunto | null = pinFixture();
+    await act(async () => {
+      returned = await result.current.uploadAdjunto(
+        new File(["x"], "x.md"),
+        "mundo",
+      );
+    });
+
+    expect(returned).toBeNull();
+    expect(uploadCoCreationAdjunto).not.toHaveBeenCalled();
   });
 });

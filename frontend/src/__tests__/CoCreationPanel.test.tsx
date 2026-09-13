@@ -94,6 +94,10 @@ const baseState = (): UseCoCreationReturn => ({
   restoreError: null,
   setWarningStatus: vi.fn(),
   setPendingQuestionStatus: vi.fn(),
+  // TW16 exemplar authoring
+  uploadAdjunto: vi.fn(),
+  removeAdjunto: vi.fn(),
+  isUploadingAdjunto: false,
   // TW13/TW14
   derive: vi.fn(),
   getPublishedDetail: vi.fn(),
