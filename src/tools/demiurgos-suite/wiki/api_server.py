@@ -75,7 +75,7 @@ from guided_character_domain import (
     has_finished_exchange,
     resolve_candidate_nivel,
 )
-from convergence_injection import build_specimen_block
+from convergence_injection import build_specimen_block, read_adjunto_bytes
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
@@ -7635,7 +7635,9 @@ def methodology_published_detail(skill_id: str, version: str, request: Request):
     adaptation compare view and the derive flow can read the original
     published source. Also exposes the server-injected TW14 provenance
     (``parent_skill_id``/``parent_version``) when the version is itself a
-    derived publish (REQ-CC-21). Read-only GET; never mutates state.
+    derived publish (REQ-CC-21). ``adjuntos`` is exposed as additive
+    metadata-only pins (``path``/``sha256``/``bytes``/``nivel``, R14) — carrier
+    bytes are never served here. Read-only GET; never mutates state.
     """
     principal = _resolve_principal(request)
     if principal is None:
@@ -7662,6 +7664,8 @@ def methodology_published_detail(skill_id: str, version: str, request: Request):
         "trust_attributes": list(published.trust_attributes),
         "parent_skill_id": published.parent_skill_id,
         "parent_version": published.parent_version,
+        # Additive metadata-only pins (R14): absent/empty -> [].
+        "adjuntos": [entry.as_dict() for entry in published.adjuntos],
     }
 
 
@@ -7690,6 +7694,8 @@ def methodologies_status(request: Request):
             # read from the stored published record, never from client input.
             "parent_skill_id": item.parent_skill_id,
             "parent_version": item.parent_version,
+            # Additive metadata-only pins (R15): absent/empty -> [].
+            "adjuntos": [entry.as_dict() for entry in item.adjuntos],
         }
         for item in library.list_published()
     ]
@@ -8083,7 +8089,13 @@ def methodologies_export(skill_id: str, version: str, request: Request):
     """Export a published version as a `.zip` methodology package (REQ-IMP-1).
 
     The package contains the bounded manifest, the author source, the integrity
-    checksum manifest, and the official signature when one was recorded.
+    checksum manifest, and the official signature when one was recorded. When
+    the version pins adjuntos, each carrier is embedded at its package-relative
+    path with exactly the pinned bytes and declared in the manifest (R16). A
+    pinned carrier that is missing under the seed dir or has drifted from its
+    ``sha256``/``bytes`` pin fails closed with 422 ``attachment_unavailable`` —
+    the export never emits a partial package its own import would reject (R17),
+    and the error never leaks the path, hash, or seed dir.
     """
     principal = _resolve_principal(request)
     if principal is None:
@@ -8104,7 +8116,19 @@ def methodologies_export(skill_id: str, version: str, request: Request):
         "categoria_funcional": published.categoria_funcional,
         "etiquetas": list(published.etiquetas),
     }
-    package = build_package(manifest, published.source)
+    attachments: dict[str, bytes] = {}
+    if published.adjuntos:
+        manifest["adjuntos"] = [entry.as_dict() for entry in published.adjuntos]
+        seed_dir = PROJECT_ROOT / "data" / "methodology" / "seeds" / published.skill_id
+        for pin in published.adjuntos:
+            carrier = read_adjunto_bytes(seed_dir, pin)
+            if carrier is None or len(carrier) != pin.bytes:
+                return JSONResponse(status_code=422, content={
+                    "detail": "A pinned attachment is unavailable or has drifted.",
+                    "code": "attachment_unavailable",
+                })
+            attachments[pin.path] = carrier
+    package = build_package(manifest, published.source, attachments=attachments or None)
     return Response(
         content=package,
         media_type="application/zip",

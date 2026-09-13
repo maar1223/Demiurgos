@@ -2622,6 +2622,147 @@ class TestMethodologyApi:
         missing = client.post("/api/methodologies/published/ghost/9.9.9/export")
         assert missing.status_code == 404
 
+    # ------------------------------------------------------------------ #
+    # PR ⑤a (SR4/SR5): published/status expose additive adjuntos metadata
+    # (R14/R15) and export embeds pinned carriers / fails closed (R16/R17).
+    # ------------------------------------------------------------------ #
+
+    def _publish_with_adjuntos(
+        self, client: TestClient, tmp_path: Path, *,
+        drift: bool = False, omit_carrier: bool = False,
+    ) -> dict:
+        """Publish the draft with one pinned carrier written under the seed dir.
+
+        ``tmp_path`` is the patched PROJECT_ROOT, so the seed directory the
+        export route resolves is the one this helper populates.
+        """
+        path = "adjunto-nivel-1.md"
+        data = "# Principal\n\nContenido.\n".encode("utf-8")
+        entry = {
+            "path": path,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": len(data),
+            "nivel": "1º",
+        }
+        seed_dir = tmp_path / "data" / "methodology" / "seeds" / "guided-character-v1"
+        seed_dir.mkdir(parents=True, exist_ok=True)
+        if not omit_carrier:
+            (seed_dir / path).write_bytes(b"# Drifted\n" if drift else data)
+        draft = client.post("/api/methodologies/drafts", json={
+            **self._draft_payload(),
+            "adjuntos": [entry],
+        })
+        assert draft.status_code == 200, draft.text
+        published = client.post(
+            f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish",
+        )
+        assert published.status_code == 200, published.text
+        return entry
+
+    def _publish_plain(self, client: TestClient) -> None:
+        draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
+        assert draft.status_code == 200, draft.text
+        published = client.post(
+            f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish",
+        )
+        assert published.status_code == 200, published.text
+
+    def test_published_detail_exposes_adjuntos_metadata(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """R14 scenario "pinned detail": metadata-only pins, no bytes."""
+        _principal(monkeypatch, "author-1")
+        entry = self._publish_with_adjuntos(client, tmp_path)
+        detail = client.get("/api/methodologies/published/guided-character-v1/1.2.0")
+        assert detail.status_code == 200
+        body = detail.json()
+        assert body["adjuntos"] == [entry]
+        # Byte content is never exposed on this surface.
+        assert set(body["adjuntos"][0]) == {"path", "sha256", "bytes", "nivel"}
+
+    def test_published_detail_adjuntos_empty_when_absent(self, client: TestClient, monkeypatch):
+        """R14 scenario "empty adjuntos": absent pins project to ``[]``."""
+        _principal(monkeypatch, "author-1")
+        self._publish_plain(client)
+        detail = client.get("/api/methodologies/published/guided-character-v1/1.2.0")
+        assert detail.json()["adjuntos"] == []
+
+    def test_status_exposes_adjuntos_metadata(self, client: TestClient, monkeypatch, tmp_path):
+        """R15: each published item carries the additive metadata."""
+        _principal(monkeypatch, "author-1")
+        entry = self._publish_with_adjuntos(client, tmp_path)
+        status = client.get("/api/methodologies/status")
+        assert status.status_code == 200
+        assert status.json()["published"][0]["adjuntos"] == [entry]
+
+    def test_status_adjuntos_empty_when_absent(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch, "author-1")
+        self._publish_plain(client)
+        status = client.get("/api/methodologies/status")
+        assert status.json()["published"][0]["adjuntos"] == []
+
+    def test_export_embeds_adjuntos_and_round_trips(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """R16 scenario "round-trip fidelity": carriers ship at their path,
+        checksums bind them, inspection succeeds and the pins are reproduced."""
+        _principal(monkeypatch, "author-1")
+        entry = self._publish_with_adjuntos(client, tmp_path)
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 200, exported.text
+        archive = zipfile.ZipFile(io.BytesIO(exported.content))
+        assert set(archive.namelist()) == {
+            "manifest.yaml", "source.md", "checksums.json", "adjunto-nivel-1.md",
+        }
+        verdict = inspect_package(exported.content)
+        assert verdict.ok, verdict.issues
+        assert verdict.compiled is not None
+        assert [e.as_dict() for e in verdict.compiled.adjuntos] == [entry]
+        # The exported package re-imports and verifies (never self-rejecting).
+        uploaded = self._upload(client, exported.content, filename="roundtrip.zip")
+        assert uploaded.status_code == 200, uploaded.text
+        assert uploaded.json()["verdict"]["ok"] is True
+
+    def test_export_without_adjuntos_omits_manifest_key_and_carriers(
+        self, client: TestClient, monkeypatch,
+    ):
+        """R21: a zero-attachment export stays byte-shape compatible with the
+        pre-PR⑤ package (base entries only, no ``adjuntos`` key)."""
+        _principal(monkeypatch, "author-1")
+        self._publish_plain(client)
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 200, exported.text
+        archive = zipfile.ZipFile(io.BytesIO(exported.content))
+        assert set(archive.namelist()) == {"manifest.yaml", "source.md", "checksums.json"}
+        manifest = yaml.safe_load(archive.read("manifest.yaml"))
+        assert "adjuntos" not in manifest
+
+    def test_export_missing_carrier_is_422(self, client: TestClient, monkeypatch, tmp_path):
+        """R17 scenario "missing carrier": fail closed, no partial package."""
+        _principal(monkeypatch, "author-1")
+        self._publish_with_adjuntos(client, tmp_path, omit_carrier=True)
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 422
+        assert exported.json()["code"] == "attachment_unavailable"
+        # Non-leaking: the carrier path is never surfaced.
+        assert "adjunto-nivel-1.md" not in exported.text
+
+    def test_export_drifted_carrier_is_422(self, client: TestClient, monkeypatch, tmp_path):
+        """R17 scenario "drifted carrier": fail closed with no package."""
+        _principal(monkeypatch, "author-1")
+        self._publish_with_adjuntos(client, tmp_path, drift=True)
+        exported = client.post(
+            "/api/methodologies/published/guided-character-v1/1.2.0/export",
+        )
+        assert exported.status_code == 422
+        assert exported.json()["code"] == "attachment_unavailable"
+
     def test_import_quarantines_and_does_not_mutate_library(self, client: TestClient, monkeypatch):
         """REQ-IMP-2/3: import isolates the package; the library stays intact."""
         _principal(monkeypatch, "author-1")
