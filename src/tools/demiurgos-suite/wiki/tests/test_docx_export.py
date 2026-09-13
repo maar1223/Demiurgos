@@ -317,7 +317,8 @@ def test_export_ficha_docx_happy_path(client, monkeypatch) -> None:
     # Image resolved to the absolute disk path; suffix stripped; wikilinks
     # degraded to plain text.
     resolved = api_server.MUNDOS_DIR / "test_mundo" / "wiki" / "media" / "foto.png"
-    assert f"![foto](<{resolved}>)" in markdown
+    # Canonical markdown format is POSIX-separated on every platform.
+    assert f"![foto](<{resolved.as_posix()}>)" in markdown
     assert "#left" not in markdown
     assert "[[Entidad]]" not in markdown
     assert "Entidad" in markdown
@@ -396,7 +397,8 @@ def test_export_idea_docx_happy_path(client, monkeypatch, ideas, tmp_path) -> No
     assert 'filename="arquero.docx"' in response.headers["content-disposition"]
     markdown = _pandoc_input(run)
     assert "/api/ideas/media/arquero.png" not in markdown
-    assert str((tmp_path / "ideas" / "media" / "arquero.png")) in markdown
+    # Canonical markdown format is POSIX-separated on every platform.
+    assert (tmp_path / "ideas" / "media" / "arquero.png").as_posix() in markdown
 
 
 def test_export_idea_docx_requires_auth_401(client) -> None:
