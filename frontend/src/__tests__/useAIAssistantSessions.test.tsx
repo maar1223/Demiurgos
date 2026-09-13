@@ -5,8 +5,10 @@ import {
   GLOBAL_ASSISTANT_CONTEXT,
   type Session,
 } from "@/hooks/useAIAssistantSessions";
-import { streamAssistantActivity } from "@/api/assistantActivity";
+import { AssistantActivityUnavailable, streamAssistantActivity } from "@/api/assistantActivity";
+import { acceptGuidedConsent, declineGuidedConsent } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
+import type { GuidedCharacterSession, SemanticDecisionEnvelope } from "@/api/types";
 
 vi.mock("@/hooks/useAppLanguage", () => ({
   useAppLanguage: vi.fn(() => "es"),
@@ -20,6 +22,11 @@ vi.mock("@/api/assistantActivity", async (importOriginal) => {
 vi.mock("@/api/wiki", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/wiki")>();
   return { ...actual, askAssistant: vi.fn() };
+});
+
+vi.mock("@/api/guidedCharacter", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/guidedCharacter")>();
+  return { ...actual, acceptGuidedConsent: vi.fn(), declineGuidedConsent: vi.fn() };
 });
 
 const SESSIONS_KEY = "demiurgos-ai-sessions";
@@ -245,5 +252,131 @@ describe("useAIAssistantSessions null-mundo (global context)", () => {
       result.current.deleteSession("s1");
     });
     expect(result.current.activeSessionId).toBeNull();
+  });
+});
+
+describe("useAIAssistantSessions guided consent wiring", () => {
+  const streamMock = vi.mocked(streamAssistantActivity);
+  const askMock = vi.mocked(askAssistant);
+  const acceptMock = vi.mocked(acceptGuidedConsent);
+  const declineMock = vi.mocked(declineGuidedConsent);
+
+  const suggestionEnvelope: SemanticDecisionEnvelope = {
+    state: "require_confirmation",
+    action: "request_confirmation",
+    response: "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?",
+    request_id: "r1",
+    attempts: 1,
+    guided: true,
+    consent: "required",
+    consent_token: "ct-1",
+  };
+
+  const guidedSession: GuidedCharacterSession = {
+    protocol_version: "guided-character-v1",
+    session_id: "guided-42",
+    world: "Vibrantes",
+    phase: "confirmation",
+    mode: "full",
+    depth: "standard",
+    revision: 1,
+    pending_question: "¿Creo este personaje?",
+    messages: [],
+    candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+    proposal: null,
+  };
+
+  beforeEach(() => {
+    streamMock.mockReset();
+    askMock.mockReset();
+    acceptMock.mockReset();
+    declineMock.mockReset();
+    window.localStorage.clear();
+  });
+
+  it("persists the consent token from a musing suggestion", async () => {
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue(suggestionEnvelope);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Quiero crear un personaje");
+    });
+
+    expect(result.current.activeSession?.consentToken).toBe("ct-1");
+    expect(result.current.activeSession?.guided).toBeUndefined();
+  });
+
+  it("opens the guided flow on accept and clears the suggestion", async () => {
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue(suggestionEnvelope);
+    acceptMock.mockResolvedValue(guidedSession);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Quiero crear un personaje");
+    });
+    await act(async () => {
+      await result.current.resolveGuidedConsent(true);
+    });
+
+    expect(acceptMock).toHaveBeenCalledWith("Vibrantes", "ct-1");
+    expect(result.current.activeSession?.guided).toEqual(guidedSession);
+    expect(result.current.activeSession?.consentToken).toBeUndefined();
+  });
+
+  it("dismisses the suggestion on decline without opening the flow", async () => {
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue(suggestionEnvelope);
+    declineMock.mockResolvedValue({ consent: "declined" });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Quiero crear un personaje");
+    });
+    await act(async () => {
+      await result.current.resolveGuidedConsent(false);
+    });
+
+    expect(declineMock).toHaveBeenCalledWith("Vibrantes", "ct-1");
+    expect(result.current.activeSession?.consentToken).toBeUndefined();
+    expect(result.current.activeSession?.guided).toBeUndefined();
+  });
+
+  it("dismisses a pending suggestion when the user keeps chatting", async () => {
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue(suggestionEnvelope);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Quiero crear un personaje");
+    });
+    expect(result.current.activeSession?.consentToken).toBe("ct-1");
+
+    // The next turn is a plain answer: the stale suggestion is dismissed.
+    streamMock.mockResolvedValue({
+      accepted: true,
+      events: [],
+      answer: "Seguimos charlando",
+      terminalStatus: "succeeded" as const,
+      semanticDecision: {
+        kind: "semantic_decision" as const,
+        request_id: "r2",
+        state: "allow" as const,
+        action: "answer" as const,
+        unavailable: false,
+        continuation: null,
+      },
+    });
+
+    await act(async () => {
+      await result.current.sendMessage("Mejor hablemos de otra cosa");
+    });
+
+    expect(result.current.activeSession?.consentToken).toBeUndefined();
   });
 });

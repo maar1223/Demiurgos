@@ -15,6 +15,8 @@ import type {
 } from "@/api/types";
 import {
   acceptGuidedCharacterProposal,
+  acceptGuidedConsent,
+  declineGuidedConsent,
   rejectGuidedCharacterProposal,
   serializeGuidedCharacter,
 } from "@/api/guidedCharacter";
@@ -34,6 +36,12 @@ export interface Session {
   createdAt: number;
   guided?: GuidedCharacterSession;
   pendingReview?: EditProposal;
+  /**
+   * One-shot token for a musing consent suggestion (REQ-GFC-08). Present only
+   * while the user has neither accepted nor declined; sending another message
+   * counts as "keep chatting" and dismisses it.
+   */
+  consentToken?: string;
 }
 
 const STORAGE_KEY = "demiurgos-ai-sessions";
@@ -72,6 +80,7 @@ export interface AIAssistantSessionsResult {
   deleteSession: (id: string) => void;
   sendMessage: (prompt: string) => Promise<void>;
   resolveGuidedProposal: (accept: boolean) => Promise<void>;
+  resolveGuidedConsent: (accept: boolean) => Promise<void>;
   requestGuidedReview?: () => Promise<EditProposal | null>;
   cancelSend: () => void;
 }
@@ -310,9 +319,12 @@ export function useAIAssistantSessions(
                 ...s,
                 messages: [...s.messages, userMessage],
                 title:
-                  s.title === "Nueva sesi├│n"
+                  s.title === "Nueva sesión"
                     ? truncateTitle(trimmed)
                     : s.title,
+                // Sending another message counts as "keep chatting": the
+                // pending suggestion is dismissed (REQ-GFC-06).
+                consentToken: undefined,
               }
             : s,
         ),
@@ -376,6 +388,17 @@ export function useAIAssistantSessions(
         }
         if (outcome.kind === "confirmation") {
           appendAssistantMessage(outcome.text, outcome.guided);
+          return;
+        }
+        if (outcome.kind === "suggestion") {
+          // Musing guided intent: no session is created server-side. Persist
+          // the consent token so the chat renders the in-chat consent card;
+          // the composer stays enabled (no guided session yet).
+          setSessions((prev) =>
+            prev.map((s) =>
+              s.id === sessionId ? { ...s, consentToken: outcome.consentToken } : s,
+            ),
+          );
           return;
         }
         if (outcome.kind === "blocked") {
@@ -492,6 +515,38 @@ export function useAIAssistantSessions(
     )));
   }, [activeSession, activeSessionId, contextMundo]);
 
+  const resolveGuidedConsent = useCallback(async (accept: boolean) => {
+    const token = activeSession?.consentToken;
+    if (!token || !activeSessionId) return;
+    try {
+      if (accept) {
+        // Accepting IS the imperative: the server opens the deferred guided
+        // continuation with no second Hermes run.
+        const guided = await acceptGuidedConsent(contextMundo, token);
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === activeSessionId
+              ? { ...session, guided, consentToken: undefined }
+              : session,
+          ),
+        );
+      } else {
+        await declineGuidedConsent(contextMundo, token);
+        setSessions((prev) =>
+          prev.map((session) =>
+            session.id === activeSessionId
+              ? { ...session, consentToken: undefined }
+              : session,
+          ),
+        );
+      }
+      setError(null);
+    } catch {
+      // Fail closed: keep the suggestion and surface the safe copy.
+      setError(semanticBlockedText(language));
+    }
+  }, [activeSession, activeSessionId, contextMundo, language]);
+
   const requestGuidedReview = useCallback(async () => {
     const guided = activeSession?.guided;
     if (!guided || !activeSessionId) return null;
@@ -517,6 +572,7 @@ export function useAIAssistantSessions(
     deleteSession,
     sendMessage,
     resolveGuidedProposal,
+    resolveGuidedConsent,
     requestGuidedReview,
     cancelSend,
   };

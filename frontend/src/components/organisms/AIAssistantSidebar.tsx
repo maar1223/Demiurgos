@@ -132,6 +132,7 @@ interface ChatScreenProps {
   onNewChat: () => void;
   onProposeEdit?: (request: AssistantEditRequest) => void | Promise<void>;
   resolveGuidedProposal: (accept: boolean) => Promise<void>;
+  resolveGuidedConsent: (accept: boolean) => Promise<void>;
   requestGuidedReview?: () => Promise<EditProposal | null>;
   onGuidedReview?: (proposal: EditProposal) => void | Promise<void>;
 }
@@ -249,6 +250,7 @@ function ChatScreen({
   onProposeEdit,
   onGuidedReview,
   resolveGuidedProposal,
+  resolveGuidedConsent,
   requestGuidedReview,
 }: ChatScreenProps) {
   const [input, setInput] = useState("");
@@ -517,6 +519,40 @@ function ChatScreen({
                    className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
                  >
                    {isSpanish ? "No, cancelar" : "No, cancel"}
+                 </button>
+               </div>
+             </section>
+           )}
+
+           {activeSession?.consentToken && (
+             <section
+               aria-labelledby="guided-consent-title"
+               className="rounded-lg border border-action/40 bg-action/10 px-3 py-3 text-sm text-primary"
+             >
+               <h3 id="guided-consent-title" className="font-medium">
+                 {isSpanish ? "Flujo guiado" : "Guided flow"}
+               </h3>
+               <p className="mt-1 text-xs leading-relaxed text-muted">
+                 {isSpanish
+                   ? "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?"
+                   : "It looks like you want to create a character. Shall we open the guided flow?"}
+               </p>
+               <div className="mt-3 flex flex-wrap gap-2">
+                 <button
+                   type="button"
+                   onClick={() => void resolveGuidedConsent(true)}
+                   disabled={isSending}
+                   className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+                 >
+                   {isSpanish ? "Sí, empecemos" : "Yes, let's start"}
+                 </button>
+                 <button
+                   type="button"
+                   onClick={() => void resolveGuidedConsent(false)}
+                   disabled={isSending}
+                   className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                 >
+                   {isSpanish ? "Seguir charlando" : "Keep chatting"}
                  </button>
                </div>
              </section>
@@ -833,6 +869,7 @@ export function AIAssistantSidebar({
           onProposeEdit={onProposeEdit}
           onGuidedReview={onGuidedReview}
           resolveGuidedProposal={sessions.resolveGuidedProposal}
+          resolveGuidedConsent={sessions.resolveGuidedConsent}
           requestGuidedReview={sessions.requestGuidedReview}
         />
       ) : (

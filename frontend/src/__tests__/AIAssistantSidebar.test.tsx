@@ -60,6 +60,7 @@ const createSessionsState = (
   sendMessage: vi.fn(),
   cancelSend: vi.fn(),
   resolveGuidedProposal: vi.fn(),
+  resolveGuidedConsent: vi.fn(),
   ...overrides,
 });
 
@@ -717,5 +718,64 @@ describe("AIAssistantSidebar new conversation", () => {
     expect(
       screen.getByRole("button", { name: "Nueva conversación" }),
     ).toBeDisabled();
+  });
+});
+
+describe("AIAssistantSidebar guided consent suggestion", () => {
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue("es");
+  });
+
+  it("renders the in-chat consent card with the composer enabled", () => {
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        messages: [{ role: "user", content: "Quiero crear un personaje" }],
+        createdAt: 1,
+        consentToken: "ct-1",
+      },
+    }));
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(
+      screen.getByText("Parece que querés crear un personaje. ¿Abrimos el flujo guiado?"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sí, empecemos" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Seguir charlando" })).toBeEnabled();
+    // The suggestion creates no guided session: the composer stays enabled.
+    expect(screen.getByPlaceholderText("Escribí tu pregunta...")).toBeEnabled();
+  });
+
+  it("wires accept and decline through the sessions hook", async () => {
+    const resolveGuidedConsent = vi.fn();
+    useSessionsMock.mockReturnValue(createSessionsState({
+      resolveGuidedConsent,
+      activeSession: {
+        id: "session-42",
+        title: "Crear personaje",
+        messages: [{ role: "user", content: "Quiero crear un personaje" }],
+        createdAt: 1,
+        consentToken: "ct-1",
+      },
+    }));
+
+    const user = userEvent.setup();
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    await user.click(screen.getByRole("button", { name: "Sí, empecemos" }));
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(true);
+    await user.click(screen.getByRole("button", { name: "Seguir charlando" }));
+    expect(resolveGuidedConsent).toHaveBeenCalledWith(false);
+  });
+
+  it("renders no consent card without a pending token", () => {
+    useSessionsMock.mockReturnValue(createSessionsState());
+
+    render(<AIAssistantSidebar mundo="Vibrantes" />);
+
+    expect(screen.queryByRole("button", { name: "Sí, empecemos" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Seguir charlando" })).not.toBeInTheDocument();
   });
 });
