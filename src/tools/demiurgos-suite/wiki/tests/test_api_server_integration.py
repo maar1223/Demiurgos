@@ -196,6 +196,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     api_server._graph_indices.clear()
     api_server._confirmation_store.clear()
     api_server._GUIDED_PENDING_PROPOSALS.clear()
+    api_server._GUIDED_CONSENT_TOKENS.clear()
     api_server._GUIDED_INDEX_REQUESTS.clear()
     api_server._METHODOLOGY_LIBRARY = None
     api_server._METHODOLOGY_QUARANTINE = None

@@ -154,6 +154,8 @@ from semantic_intent import (
     CONTINUATION_STATES,
     SELF_CONTAINED_SEMANTIC_STATES,
     SemanticContext,
+    SemanticContinuation,
+    SemanticDecision,
     SemanticIntentProvider,
     SemanticResult,
     action_for_state,
@@ -5880,6 +5882,9 @@ async def ai_ask_endpoint(mundo: str, body: AskRequest, request: Request):
             result.unavailable, result.attempts,
         )
         return result.as_dict()
+    # Consent memory (REQ-GFC-06): a suggestion left unaccepted becomes a
+    # session decline once the next same-session turn arrives ("keeps chatting").
+    _mark_kept_chatting_decline(body.session_id, mundo)
     # Demiurgos policy against the validated decision:
     # 1. Active guarded guided session -> continuation policy (typed
     #    confirmation, next turn) applied only after Hermes interpretation.
@@ -6045,6 +6050,148 @@ def _semantic_blocked_result(result: SemanticResult) -> dict:
     ).as_dict()
 
 
+# ---------------------------------------------------------------------------
+# Guided consent: suggestion tokens + session decline memory (REQ-GFC-03/04/06)
+# ---------------------------------------------------------------------------
+
+GUIDED_CONSENT_SUGGESTION_TEXT = (
+    "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?"
+)
+"""Approved in-chat suggestion copy (REQ-GFC-04)."""
+
+CONSENT_TOKEN_TTL = timedelta(minutes=30)
+"""A consent suggestion token stays valid for this long after issuance."""
+
+# In-memory, TTL-bounded, principal/session/world-bound consent tokens. Mirrors
+# ``_GUIDED_PENDING_PROPOSALS``: no durable migration and no new dependency.
+# Issued ONLY for a musing guided suggestion; the accept route (PR2) consumes
+# one exactly once and fails closed on replay/expiry/foreign binding.
+_GUIDED_CONSENT_TOKENS: dict[str, dict[str, object]] = {}
+
+
+def _sweep_guided_consent_tokens(now: datetime) -> None:
+    """Drop expired consent tokens (lazy sweep on issue and session lookup)."""
+    cutoff = now - CONSENT_TOKEN_TTL
+    for token, record in list(_GUIDED_CONSENT_TOKENS.items()):
+        created_at = record.get("created_at")
+        if not isinstance(created_at, datetime) or created_at < cutoff:
+            _GUIDED_CONSENT_TOKENS.pop(token, None)
+
+
+def _issue_guided_consent_token(
+    *, principal_id: str, session_id: str, mundo: str, prompt: str,
+    continuation: SemanticContinuation, reference_context: str,
+    reference_name: str | None,
+) -> str:
+    """Issue a one-shot consent token bound to principal + session + world."""
+    now = datetime.now(timezone.utc)
+    _sweep_guided_consent_tokens(now)
+    token = f"ct-{uuid.uuid4().hex}"
+    _GUIDED_CONSENT_TOKENS[token] = {
+        "principal_id": principal_id,
+        "session_id": session_id,
+        "mundo": mundo,
+        "prompt": prompt,
+        "continuation": continuation,
+        "reference_context": reference_context,
+        "reference_name": reference_name,
+        "created_at": now,
+    }
+    return token
+
+
+def _guided_consent_pending_for_session(session_id: str, mundo: str) -> bool:
+    """True when an unconsumed suggestion token exists for the session."""
+    if not session_id:
+        return False
+    _sweep_guided_consent_tokens(datetime.now(timezone.utc))
+    return any(
+        record.get("session_id") == session_id and record.get("mundo") == mundo
+        for record in _GUIDED_CONSENT_TOKENS.values()
+    )
+
+
+def _discard_guided_consent_tokens(session_id: str, mundo: str) -> None:
+    """Invalidate every pending suggestion token for a session/world."""
+    for token, record in list(_GUIDED_CONSENT_TOKENS.items()):
+        if record.get("session_id") == session_id and record.get("mundo") == mundo:
+            _GUIDED_CONSENT_TOKENS.pop(token, None)
+
+
+def _mark_kept_chatting_decline(session_id: str, mundo: str) -> None:
+    """Treat an unaccepted suggestion as a session decline (REQ-GFC-06).
+
+    Once a suggestion was emitted, the next same-session turn that arrives
+    without an accept means the Author kept chatting; that counts as a decline.
+    The pending token is invalidated so the stale suggestion cannot be accepted
+    later.
+    """
+    if not session_id or _CONVERSATION_MEMORY is None:
+        return
+    if not _guided_consent_pending_for_session(session_id, mundo):
+        return
+    try:
+        _CONVERSATION_MEMORY.record_guided_consent_decline(session_id, mundo)
+    except Exception:
+        logger.warning("guided consent decline persist failed", exc_info=True)
+        return
+    _discard_guided_consent_tokens(session_id, mundo)
+
+
+def _guided_consent_declined(session_id: str, mundo: str) -> bool:
+    """Read the server-authoritative decline flag; never raises."""
+    if not session_id or _CONVERSATION_MEMORY is None:
+        return False
+    try:
+        return bool(_CONVERSATION_MEMORY.guided_consent_declined(session_id, mundo))
+    except Exception:
+        logger.warning("guided consent decline read failed", exc_info=True)
+        return False
+
+
+def _declined_guided_answer(result: SemanticResult) -> dict:
+    """Answer self-contained when a session already declined the guided flow.
+
+    No session is opened and no suggestion is re-emitted: the turn is answered
+    as a plain assistant response so a declined session is never re-nagged.
+    """
+    payload = result.as_dict()
+    payload["state"] = "allow"
+    payload["action"] = action_for_state("allow")
+    payload["guided"] = False
+    payload.pop("guided_explicitness", None)
+    return payload
+
+
+def _guided_consent_suggestion(
+    mundo: str, body: AskRequest, principal, result: SemanticResult,
+    *, decision: SemanticDecision, reference_context: str,
+    reference_name: str | None,
+) -> dict:
+    """Return a token-bound consent suggestion without creating anything."""
+    if _guided_consent_declined(body.session_id, mundo):
+        return _declined_guided_answer(result)
+    token = _issue_guided_consent_token(
+        principal_id=principal.id,
+        session_id=body.session_id,
+        mundo=mundo,
+        prompt=body.prompt,
+        continuation=decision.continuation,
+        reference_context=reference_context,
+        reference_name=reference_name,
+    )
+    return {
+        "state": result.state,
+        "action": result.action,
+        "response": GUIDED_CONSENT_SUGGESTION_TEXT,
+        "request_id": result.request_id,
+        "attempts": result.attempts,
+        "guided_explicitness": decision.guided_explicitness,
+        "consent": "required",
+        "consent_token": token,
+    }
+
+
 async def _semantic_guided_continuation(
     mundo: str, body: AskRequest, request: Request, result: SemanticResult,
     *, reference_context: str = "", reference_name: str | None = None,
@@ -6077,6 +6224,35 @@ async def _semantic_guided_continuation(
     if graph_unavailable:
         logger.info("ai_ask: semantic guided continuation graph unavailable; fail closed to blocked")
         return _semantic_blocked_result(result)
+    # Consent policy: only an explicit imperative auto-opens the guided
+    # surface. Musing/absent explicitness yields a token-bound suggestion and
+    # creates nothing (REQ-GFC-02/03).
+    if decision.guided_explicitness != "imperative":
+        return _guided_consent_suggestion(
+            mundo, body, principal, result,
+            decision=decision,
+            reference_context=reference_context,
+            reference_name=reference_name,
+        )
+    return await _open_guided_continuation(
+        mundo, body, result, principal, decision=decision,
+        reference_context=reference_context, reference_name=reference_name,
+    )
+
+
+async def _open_guided_continuation(
+    mundo: str, body: AskRequest, result: SemanticResult, principal,
+    *, decision: SemanticDecision, reference_context: str = "",
+    reference_name: str | None = None,
+) -> dict:
+    """Create the guarded session and expose the run's continuation.
+
+    Shared by the imperative auto-open and the deferred consent accept (PR2):
+    the click IS the imperative, so no second Hermes run starts. The session is
+    created through ``_GUIDED_SESSIONS`` and the continuation is serialized
+    server-side with a server-owned slug, target, and digest. Every failure path
+    returns a fail-closed blocked envelope.
+    """
     session_id = f"guided-{uuid.uuid4().hex}"
     relation_goal = extract_related_goal(body.prompt, reference_name=reference_name).summary
     try:
@@ -6118,6 +6294,7 @@ def _semantic_confirmation_continuation(
         "attempts": result.attempts,
         "fallback": False,
         "guided": True,
+        "guided_explicitness": decision.guided_explicitness,
         "session_id": session_id,
         "guided_session_id": session_id,
         "guided_revision": confirmed.revision,
@@ -6164,6 +6341,7 @@ async def _semantic_proposal_continuation(
             "attempts": result.attempts,
             "fallback": False,
             "guided": True,
+            "guided_explicitness": decision.guided_explicitness,
             "session_id": session_id,
             "guided_session_id": session_id,
             "guided_revision": state.revision,
@@ -6208,6 +6386,7 @@ async def _semantic_proposal_continuation(
         "attempts": result.attempts,
         "fallback": False,
         "guided": True,
+        "guided_explicitness": decision.guided_explicitness,
         "session_id": session_id,
         "proposal_id": edit_id,
         "target": proposal.target,

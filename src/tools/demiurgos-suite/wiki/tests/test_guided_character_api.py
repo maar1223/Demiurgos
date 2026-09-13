@@ -152,6 +152,7 @@ def test_internal_guided_turn_reuses_verified_reference_across_turns(monkeypatch
         {
             "state": "require_confirmation", "response": "¿Creo este personaje?",
             "request_id": "r-1", "session_id": "s-1", "guided": True,
+            "guided_explicitness": "imperative",
             "continuation": {"outcome": "question", "question": "¿Creo este personaje?"},
         },
         {"state": "allow", "response": "ok", "request_id": "r-2", "session_id": "s-1", "guided": False},
@@ -639,6 +640,7 @@ def test_relationship_prompt_on_ai_ask_does_not_fall_through_to_prose(monkeypatc
     semantic_runs = _SemanticRuns({
         "state": "require_confirmation", "response": "¿Creo este personaje?",
         "request_id": "r-1", "session_id": "s-1", "guided": True,
+        "guided_explicitness": "imperative",
         "continuation": {"outcome": "question", "question": "¿Creo este personaje?"},
     })
     monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(semantic_runs))
@@ -668,6 +670,7 @@ def test_confirmation_text_follows_configured_language_in_both_entry_paths(monke
             {
                 "state": "require_confirmation", "response": "¿Creo este personaje?",
                 "request_id": "r-1", "session_id": "s-1", "guided": True,
+                "guided_explicitness": "imperative",
                 "continuation": {"outcome": "question", "question": "¿Creo este personaje?"},
             },
             {"state": "allow", "response": "ok", "request_id": "r-2", "session_id": "s-1", "guided": False},
@@ -1013,6 +1016,7 @@ def test_semantic_single_run_continuation_uses_guarded_machinery_and_handoff(mon
         "request_id": "r-1",
         "session_id": "s-1",
         "guided": True,
+        "guided_explicitness": "imperative",
         "continuation": {"outcome": "delta", "delta": {"name": "Rhyz's Wife", "desire": "freedom"}},
     })
     (tmp_path / "vibrantes").mkdir()
@@ -1059,6 +1063,7 @@ def test_semantic_proposal_ready_with_incomplete_delta_asks_one_question(monkeyp
         "request_id": "r-1",
         "session_id": "s-1",
         "guided": True,
+        "guided_explicitness": "imperative",
         "continuation": {"outcome": "delta", "delta": {"relation": "brother of Rhyz", "scene": "a storm at sea"}},
     })
     (tmp_path / "vibrantes").mkdir()

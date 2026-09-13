@@ -121,6 +121,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     api_server._graph_indices.clear()
     api_server._confirmation_store.clear()
     api_server._GUIDED_PENDING_PROPOSALS.clear()
+    api_server._GUIDED_CONSENT_TOKENS.clear()
     api_server._GUIDED_INDEX_REQUESTS.clear()
     api_server._METHODOLOGY_LIBRARY = None
     api_server._METHODOLOGY_QUARANTINE = None
@@ -2205,13 +2206,18 @@ def _semantic_payload(state="allow", **overrides):
 
 
 def _continuation_semantic_payload(state="proposal_ready", **overrides):
-    """Single-run envelope: semantic decision + typed guided continuation."""
+    """Single-run envelope: semantic decision + typed guided continuation.
+
+    Defaults to ``imperative`` so the legacy auto-open machinery assertions
+    stay valid; musing/consent tests override ``guided_explicitness``.
+    """
     payload = {
         "state": state,
         "response": "Hermes semantic answer.",
         "request_id": "request-1",
         "session_id": "chat-1",
         "guided": True,
+        "guided_explicitness": "imperative",
         "continuation": {
             "outcome": "question" if state == "require_confirmation" else "delta",
             "question": "¿Creo este personaje?" if state == "require_confirmation" else None,
@@ -4090,6 +4096,96 @@ class TestSemanticSingleRunContinuation:
         assert handoff.json()["code"] == "guided_handoff"
         assert runs.starts == 1
 
+    def test_musing_guided_intent_suggests_without_creating_session(self, client: TestClient, monkeypatch):
+        """REQ-GFC-03: musing/absent intent yields a token-bound suggestion and
+        creates no session; the single Hermes run is not repeated."""
+        memory = api_server.ConversationMemoryStore(":memory:")
+        monkeypatch.setattr(api_server, "_CONVERSATION_MEMORY", memory)
+        sessions = api_server.GuidedSessionStore()
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
+        monkeypatch.setattr(api_server, "_GUIDED_PENDING_PROPOSALS", {})
+        monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
+        _principal(monkeypatch)
+        runs = _SemanticRuns(
+            _continuation_semantic_payload("require_confirmation", guided_explicitness="musing"),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+
+        response = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": self._CONFIRM_PROMPT, "session_id": "consent-1",
+        })
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["state"] == "require_confirmation"
+        assert envelope["consent"] == "required"
+        assert envelope["consent_token"].startswith("ct-")
+        assert envelope["guided_explicitness"] == "musing"
+        assert envelope["response"] == api_server.GUIDED_CONSENT_SUGGESTION_TEXT
+        assert "guided_session_id" not in envelope
+        assert "guided_revision" not in envelope
+        assert "guided_state" not in envelope
+        assert "proposal_id" not in envelope and "proposed_digest" not in envelope
+        assert runs.starts == 1
+        assert sessions._sessions == {}
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
+
+    def test_imperative_guided_intent_carries_explicitness_and_auto_opens(self, client: TestClient, monkeypatch):
+        """REQ-GFC-02: an explicit imperative keeps today's auto-open and the
+        envelope carries the server-derived explicitness."""
+        runs = self._wire_continuation(
+            client, monkeypatch,
+            _continuation_semantic_payload("require_confirmation", guided_explicitness="imperative"),
+        )
+        response = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": self._CONFIRM_PROMPT, "session_id": "chat-1",
+        })
+        assert response.status_code == 200
+        envelope = response.json()
+        assert envelope["guided_explicitness"] == "imperative"
+        assert envelope["guided_session_id"].startswith("guided-")
+        assert envelope["guided_state"]["phase"] == "confirmation"
+        assert "consent" not in envelope
+        assert runs.starts == 1
+
+    def test_keeps_chatting_after_suggestion_declines_and_suppresses_repeat(self, client: TestClient, monkeypatch):
+        """REQ-GFC-06: a suggestion left unaccepted is a session decline; later
+        musing turns neither re-suggest nor open a session."""
+        memory = api_server.ConversationMemoryStore(":memory:")
+        monkeypatch.setattr(api_server, "_CONVERSATION_MEMORY", memory)
+        sessions = api_server.GuidedSessionStore()
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
+        monkeypatch.setattr(api_server, "_GUIDED_PENDING_PROPOSALS", {})
+        monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
+        _principal(monkeypatch)
+        runs = _SemanticRuns(
+            _continuation_semantic_payload("require_confirmation", guided_explicitness="musing"),
+            _semantic_payload("allow"),
+            _continuation_semantic_payload("require_confirmation", guided_explicitness="musing"),
+        )
+        _wire_semantic_provider(monkeypatch, runs)
+
+        first = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": self._CONFIRM_PROMPT, "session_id": "consent-2",
+        }).json()
+        assert first["consent"] == "required"
+        assert memory.guided_consent_declined("consent-2", "test_mundo") is False
+
+        # Keeps chatting: the next same-session turn is not an accept.
+        second = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": "gracias", "session_id": "consent-2",
+        }).json()
+        assert second["state"] == "allow"
+        assert memory.guided_consent_declined("consent-2", "test_mundo") is True
+
+        third = client.post("/api/test_mundo/ai/ask", json={
+            "prompt": self._CONFIRM_PROMPT, "session_id": "consent-2",
+        }).json()
+        assert third["state"] == "allow"
+        assert "consent" not in third and "consent_token" not in third
+        assert "guided_session_id" not in third and "guided_state" not in third
+        assert runs.starts == 3
+        assert sessions._sessions == {}
+
 
 class TestMundoValidation:
     """Audit 07-30 (item 13): every endpoint taking {mundo} must reject
@@ -5631,6 +5727,7 @@ def empty_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     api_server._graph_indices.clear()
     api_server._confirmation_store.clear()
     api_server._GUIDED_PENDING_PROPOSALS.clear()
+    api_server._GUIDED_CONSENT_TOKENS.clear()
     api_server._GUIDED_INDEX_REQUESTS.clear()
     api_server._LOCAL_STATE = None
     with api_server._local_session_lock:
