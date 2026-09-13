@@ -158,6 +158,77 @@ describe("semantic intent client mapping", () => {
   });
 });
 
+describe("semantic intent consent suggestion mapping", () => {
+  it("maps a musing consent suggestion with no guided session", () => {
+    const result = mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      response: "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?",
+      consent: "required",
+      consent_token: "ct-1",
+    }));
+    expect(result).toEqual({
+      kind: "suggestion",
+      text: "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?",
+      consentToken: "ct-1",
+    });
+  });
+
+  it("maps a proposal_ready consent suggestion when no proposal is present", () => {
+    const result = mapSemanticDecision(envelope("proposal_ready", {
+      action: "show_proposal",
+      consent: "required",
+      consent_token: "ct-2",
+    }));
+    expect(result).toEqual({
+      kind: "suggestion",
+      text: "Hermes semantic answer.",
+      consentToken: "ct-2",
+    });
+  });
+
+  it("prefers the guided session over a consent marker", () => {
+    const result = mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      consent: "required",
+      consent_token: "ct-1",
+      guided_state: guidedConfirmation,
+    }));
+    expect(result.kind).toBe("confirmation");
+    if (result.kind !== "confirmation") return;
+    expect(result.guided).toEqual(guidedConfirmation);
+  });
+
+  it("fails a consent marker without a token closed to blocked", () => {
+    expect(mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      consent: "required",
+    }))).toEqual({ kind: "blocked", text: SEMANTIC_BLOCKED_TEXT });
+  });
+
+  it("fails an empty consent token closed to blocked", () => {
+    expect(mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      consent: "required",
+      consent_token: "",
+    }))).toEqual({ kind: "blocked", text: SEMANTIC_BLOCKED_TEXT });
+  });
+
+  it("fails a token without consent:required closed to blocked", () => {
+    expect(mapSemanticDecision(envelope("require_confirmation", {
+      action: "request_confirmation",
+      consent_token: "ct-1",
+    }))).toEqual({ kind: "blocked", text: SEMANTIC_BLOCKED_TEXT });
+  });
+
+  it("never infers a suggestion from an unknown state", () => {
+    expect(mapSemanticDecision(envelope("approve", {
+      action: "request_confirmation",
+      consent: "required",
+      consent_token: "ct-1",
+    }))).toEqual({ kind: "blocked", text: SEMANTIC_BLOCKED_TEXT });
+  });
+});
+
 describe("semantic intent localized unavailable copy", () => {
   it("localizes the blocked copy with a Spanish default", () => {
     expect(SEMANTIC_BLOCKED_BY_LANGUAGE.es).toBe(

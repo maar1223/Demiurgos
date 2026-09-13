@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acceptGuidedCharacterProposal,
+  acceptGuidedConsent,
   continueGuidedCharacter,
+  declineGuidedConsent,
   recoverGuidedCharacter,
   rejectGuidedCharacterProposal,
   retryGuidedCharacterIndex,
@@ -60,6 +62,21 @@ describe("guided character API compatibility", () => {
       JSON.stringify({ session_id: "s1", base_revision: 1 }),
     ]);
     expect(await startGuidedCharacter("nec", "x")).toEqual(session);
+  });
+
+  it("wires the one-shot consent accept/decline calls with the token body", async () => {
+    await acceptGuidedConsent("world with spaces", "ct-1");
+    await declineGuidedConsent("world with spaces", "ct-1");
+
+    const calls = mockApiFetch.mock.calls;
+    expect(calls.map(([url, options]) => [url, options?.method ?? "GET"])).toEqual([
+      ["/api/world%20with%20spaces/guided-character/consent/accept", "POST"],
+      ["/api/world%20with%20spaces/guided-character/consent/decline", "POST"],
+    ]);
+    expect(calls.map(([, options]) => options?.body)).toEqual([
+      JSON.stringify({ token: "ct-1" }),
+      JSON.stringify({ token: "ct-1" }),
+    ]);
   });
 
   it("preserves backend fail-closed error code and retryability", async () => {

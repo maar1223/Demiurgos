@@ -89,3 +89,28 @@ export function retryGuidedCharacterIndex(
     timeout: GUIDED_CHARACTER_TIMEOUT_MS,
   });
 }
+
+/**
+ * Consume a one-shot consent token and open the deferred guided flow. The
+ * click IS the imperative: the server replays the token-bound continuation
+ * with no second Hermes run. Expired/replayed/foreign tokens fail closed.
+ */
+export function acceptGuidedConsent(
+  world: string,
+  token: string,
+): Promise<GuidedCharacterSession> {
+  return apiFetch<GuidedCharacterSession>(url(world, "/consent/accept"), {
+    method: "POST",
+    body: JSON.stringify({ token }),
+    timeout: GUIDED_CHARACTER_TIMEOUT_MS,
+  });
+}
+
+/** Consume a consent token and persist a durable per-session decline. */
+export function declineGuidedConsent(world: string, token: string): Promise<{ consent: string }> {
+  return apiFetch<{ consent: string }>(url(world, "/consent/decline"), {
+    method: "POST",
+    body: JSON.stringify({ token }),
+    timeout: GUIDED_CHARACTER_TIMEOUT_MS,
+  });
+}

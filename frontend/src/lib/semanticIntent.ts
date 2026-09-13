@@ -30,6 +30,7 @@ export type SemanticClientOutcome =
   | { kind: "question"; text: string }
   | { kind: "confirmation"; text: string; guided: GuidedCharacterSession }
   | { kind: "review"; text: string; proposal: EditProposal; guided?: GuidedCharacterSession }
+  | { kind: "suggestion"; text: string; consentToken: string }
   | { kind: "blocked"; text: string };
 
 const KNOWN_STATES = new Set([
@@ -87,6 +88,24 @@ function toEditProposal(value: Record<string, unknown>): EditProposal | null {
   return proposal;
 }
 
+/**
+ * A consent suggestion is admitted ONLY when the server explicitly marks
+ * `consent: "required"` with a non-empty `consent_token` AND the envelope
+ * carries no guided session. The absence of `guided_state` is what
+ * discriminates a musing suggestion from an imperative auto-open; any other
+ * shape stays fail-closed, so a malformed or legacy envelope can never be
+ * read as permission to open the guided surface.
+ */
+function toConsentSuggestion(
+  value: Record<string, unknown>,
+): SemanticClientOutcome | null {
+  if (value.consent !== "required") return null;
+  if (isGuidedSession(value.guided_state)) return null;
+  if (typeof value.consent_token !== "string" || !value.consent_token) return null;
+  const text = typeof value.response === "string" ? value.response : "";
+  return { kind: "suggestion", text, consentToken: value.consent_token };
+}
+
 export function mapSemanticDecision(
   value: unknown,
   language: AppLanguage = "es",
@@ -113,14 +132,24 @@ export function mapSemanticDecision(
         return { kind: "blocked", text: response || semanticBlockedText(language) };
       case "require_confirmation": {
         const guided = isGuidedSession(value.guided_state) ? value.guided_state : null;
-        if (!guided) return { kind: "blocked", text: semanticBlockedText(language) };
-        return { kind: "confirmation", text: response, guided };
+        if (guided) return { kind: "confirmation", text: response, guided };
+        // No guided session: the server may have issued a musing consent
+        // suggestion instead of an imperative auto-open.
+        const suggestion = toConsentSuggestion(value);
+        if (suggestion) return suggestion;
+        return { kind: "blocked", text: semanticBlockedText(language) };
       }
       case "proposal_ready": {
         const proposal = toEditProposal(value);
-        if (!proposal) return { kind: "blocked", text: semanticBlockedText(language) };
-        const guided = isGuidedSession(value.guided_state) ? value.guided_state : undefined;
-        return { kind: "review", text: response, proposal, ...(guided ? { guided } : {}) };
+        if (proposal) {
+          const guided = isGuidedSession(value.guided_state) ? value.guided_state : undefined;
+          return { kind: "review", text: response, proposal, ...(guided ? { guided } : {}) };
+        }
+        // No server-owned proposal: a consent suggestion is the only other
+        // admitted shape; anything else fails closed.
+        const suggestion = toConsentSuggestion(value);
+        if (suggestion) return suggestion;
+        return { kind: "blocked", text: semanticBlockedText(language) };
       }
     }
   }

@@ -924,6 +924,15 @@ export interface SemanticDecisionEnvelope {
   guided_session_id?: string;
   guided_revision?: number;
   guided_state?: GuidedCharacterSession;
+  /**
+   * Musing consent suggestion: the server requires an explicit accept before
+   * any guided session is created. A suggestion carries `consent_token` and
+   * NO `guided_state`; legacy/malformed envelopes stay fail-closed.
+   */
+  consent?: "required";
+  consent_token?: string;
+  /** Bounded explicitness on guided continuations; only `imperative` auto-opens. */
+  guided_explicitness?: "imperative" | "musing";
   proposal_id?: string;
   target?: string;
   base_revision?: string;
