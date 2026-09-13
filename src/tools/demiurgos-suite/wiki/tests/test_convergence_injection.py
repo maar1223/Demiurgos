@@ -19,6 +19,7 @@ if str(_WIKI) not in sys.path:
 from convergence_injection import (  # noqa: E402
     MAX_SPECIMEN_TOKENS,
     build_specimen_block,
+    read_adjunto_bytes,
     serve_adjunto,
 )
 from contract_projection import _CHARS_PER_TOKEN, _estimate_tokens  # noqa: E402
@@ -100,6 +101,46 @@ def _three_pins(tmp_path: Path):
         (tmp_path / path).write_bytes(data)
         pins.append(pin)
     return tuple(pins)
+
+
+class TestReadAdjuntoBytes:
+    """D2 shared byte seam: raw pinned bytes guarded by containment, existence,
+    and the SHA-256 pin — with NO decode and NO token budget (those stay in
+    ``serve_adjunto``)."""
+
+    def test_returns_pinned_bytes(self, tmp_path: Path) -> None:
+        """The exact pinned bytes are returned verbatim."""
+        pin, data = _pin("ejemplos/ejemplo.md", text="# Ejemplo\n\nContenido fiel.\n")
+        (tmp_path / "ejemplos").mkdir()
+        (tmp_path / "ejemplos" / "ejemplo.md").write_bytes(data)
+        assert read_adjunto_bytes(tmp_path, pin) == data
+
+    def test_missing_carrier_returns_none(self, tmp_path: Path) -> None:
+        """Threat guard: an absent carrier file yields ``None``."""
+        pin, _ = _pin("ejemplos/ausente.md")
+        assert read_adjunto_bytes(tmp_path, pin) is None
+
+    def test_drift_returns_none(self, tmp_path: Path) -> None:
+        """Threat guard: bytes changed post-publish are never returned."""
+        pin, _ = _pin("ejemplos/ejemplo.md")
+        (tmp_path / "ejemplos").mkdir()
+        (tmp_path / "ejemplos" / "ejemplo.md").write_bytes(b"# Drifted\n")
+        assert read_adjunto_bytes(tmp_path, pin) is None
+
+    def test_traversal_returns_none(self, tmp_path: Path) -> None:
+        """Threat guard: ``../`` escaping the seed dir is contained away."""
+        outside = tmp_path.parent / "outside.md"
+        outside.write_text("# Fuera\n")
+        pin, _ = _pin("../outside.md", text=outside.read_text())
+        assert read_adjunto_bytes(tmp_path, pin) is None
+
+    def test_ignores_token_budget(self, tmp_path: Path) -> None:
+        """The byte seam never applies the text budget: an over-budget carrier
+        is still returned; ``serve_adjunto`` is the layer that skips it."""
+        over = "x" * (MAX_SPECIMEN_TOKENS * 4 + 1)
+        pin, data = _pin("grande.md", text=over)
+        (tmp_path / "grande.md").write_bytes(data)
+        assert read_adjunto_bytes(tmp_path, pin) == data
 
 
 class TestBuildSpecimenBlock:

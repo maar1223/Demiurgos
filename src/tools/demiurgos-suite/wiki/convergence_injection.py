@@ -20,13 +20,14 @@ MAX_SPECIMEN_TOKENS = 3072
 """Token budget for one injected convergence specimen (R12; ④b consumes it)."""
 
 
-def serve_adjunto(seed_dir: Path, pin: AttachmentEntry) -> str | None:
-    """Return the pinned carrier bytes as text, or ``None`` on any failure.
+def read_adjunto_bytes(seed_dir: Path, pin: AttachmentEntry) -> bytes | None:
+    """Return the pinned carrier bytes, or ``None`` on any guard failure.
 
-    Guards, in order (D6/D8/D10): the resolved path must stay inside the
-    seed directory (containment), the file must exist, its SHA-256 must
-    equal the pin, and its estimated token count must fit the budget.
-    Every failure is a silent skip; the carrier is never truncated.
+    Shared byte seam (D2): the resolved path must stay inside the seed
+    directory (containment), the file must exist, and its SHA-256 must equal
+    the pin. Decoding and the token budget are deliberately NOT applied here —
+    ``serve_adjunto`` layers them for text injection, while the package export
+    path consumes the raw bytes verbatim.
     """
     root = Path(seed_dir).resolve()
     try:
@@ -40,6 +41,20 @@ def serve_adjunto(seed_dir: Path, pin: AttachmentEntry) -> str | None:
     except OSError:
         return None
     if hashlib.sha256(data).hexdigest() != pin.sha256:
+        return None
+    return data
+
+
+def serve_adjunto(seed_dir: Path, pin: AttachmentEntry) -> str | None:
+    """Return the pinned carrier bytes as text, or ``None`` on any failure.
+
+    Guards, in order (D6/D8/D10): ``read_adjunto_bytes`` enforces containment,
+    existence, and the SHA-256 pin; this seam then requires valid UTF-8 and an
+    estimated token count within the budget. Every failure is a silent skip;
+    the carrier is never truncated.
+    """
+    data = read_adjunto_bytes(seed_dir, pin)
+    if data is None:
         return None
     try:
         text = data.decode("utf-8")
