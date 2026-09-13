@@ -1,0 +1,8 @@
+# Seed content is checksum-pinned byte-for-byte: loading verifies the SHA-256
+# of the exact bundled bytes (checksums.json + manifest sha256 pins). Disable
+# ALL git line-ending conversion for the seeds tree so checkout bytes are
+# identical on every platform — a Windows checkout must never rewrite LF to
+# CRLF, or every seed integrity check fails. `-text` guarantees raw stored
+# bytes both ways (no conversion on checkout, no normalization on commit) for
+# every current and future carrier under the seeds directory.
+data/methodology/seeds/** -text
