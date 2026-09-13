@@ -427,15 +427,16 @@ class TestLegacyLayoutDetection(unittest.TestCase):
         (legacy / "Lore").mkdir(parents=True)
         (legacy / "Personajes").mkdir()
         findings = detect_legacy_layout(mundos)
-        if (legacy / "lore").exists():
-            # case-insensitive FS: `Lore` IS the canonical `lore` — not legacy
-            # (R-CIM-05). The runtime operates on the canonical tree already.
-            self.assertEqual(findings, [])
-        else:
-            # case-sensitive FS: uppercase folders reported as legacy.
-            self.assertEqual(len(findings), 1)
-            self.assertEqual(findings[0]["world"], "legacy-x")
-            self.assertEqual(set(findings[0]["folders"]), {"Lore", "Personajes"})
+        # Detection is scandir-name-based (ONB-4.2): a top-level dir literally
+        # named `Lore`/`Personajes` is uppercase intent on EVERY filesystem
+        # and is always reported. No filesystem case-sensitivity probe is
+        # consulted — the Windows CI runner proved `(dir / "lore").exists()`
+        # disagrees with the detection loop's own probe (the test took the
+        # case-insensitive branch while detection still fired), so the
+        # contract is deterministic by scandir name, not by filesystem.
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["world"], "legacy-x")
+        self.assertEqual(set(findings[0]["folders"]), {"Lore", "Personajes"})
 
     def test_canonical_lowercase_worlds_are_not_reported(self) -> None:
         mundos = self._mundos()
@@ -457,36 +458,6 @@ class TestLegacyLayoutDetection(unittest.TestCase):
 
     def test_missing_mundos_dir_returns_empty(self) -> None:
         self.assertEqual(detect_legacy_layout(self._mundos()), [])
-
-    def test_case_insensitive_fs_does_not_report_legacy(self) -> None:
-        """R-CIM-05 — on a case-insensitive FS, `Lore` matches the canonical
-        `lore` case-insensitively (same physical directory), so it is NOT
-        reported as legacy: the runtime already operates on the canonical tree
-        through legacy-cased paths."""
-        mundos = self._mundos()
-        legacy = mundos / "legacy-x"
-        (legacy / "Lore").mkdir(parents=True)
-        (legacy / "Personajes").mkdir()
-        if not (legacy / "lore").exists():
-            self.skipTest("case-sensitive FS: not applicable")
-        findings = detect_legacy_layout(mundos)
-        self.assertEqual(findings, [],
-                         "case-insensitive FS: legacy-cased dirs are canonical")
-
-    def test_case_sensitive_fs_still_reports_legacy(self) -> None:
-        """R-CIM-05/R-CIM-06 — on a case-sensitive FS the existing detection
-        is preserved: `Lore`/`Personajes` ARE reported as legacy (no
-        regression on Linux)."""
-        mundos = self._mundos()
-        legacy = mundos / "legacy-x"
-        (legacy / "Lore").mkdir(parents=True)
-        (legacy / "Personajes").mkdir()
-        if (legacy / "lore").exists():
-            self.skipTest("case-insensitive FS: legacy aliases are canonical")
-        findings = detect_legacy_layout(mundos)
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["world"], "legacy-x")
-        self.assertEqual(set(findings[0]["folders"]), {"Lore", "Personajes"})
 
 
 class TestCanonicalIdentity(unittest.TestCase):

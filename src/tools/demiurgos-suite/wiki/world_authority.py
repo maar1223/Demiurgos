@@ -328,11 +328,17 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
     ``lore``/``personajes`` (OC7). Each finding is
     ``{"world": <name>, "folders": [folder, ...]}``.
 
-    FS-aware (R-CIM-05): on case-insensitive filesystems (macOS APFS,
-    Windows NTFS), a folder named ``Lore`` matches the canonical ``lore``
-    case-insensitively — the runtime already operates on the canonical tree
-    through legacy-cased paths — so it is NOT reported as legacy. On
-    case-sensitive filesystems the existing behavior is preserved.
+    Detection is scandir-name-based and platform-deterministic: a top-level
+    directory whose ACTUAL listed name is ``Lore`` or ``Personajes`` is
+    uppercase intent on every filesystem, so it is always reported — the
+    contract is "legacy = uppercase folder variants" by name, not by
+    filesystem case-sensitivity. No FS probe (``exists()`` of the lowercased
+    spelling, ``samefile``, ``sys.platform``) is consulted: the Windows CI
+    runner proved those probes disagree with themselves — the test's
+    ``(world / "lore").exists()`` resolved to the canonical entry while the
+    detection loop's own probe did not, so the case-insensitivity guard never
+    fired and the outcome differed from Linux/macOS. Name-based detection
+    returns the same finding on Linux, macOS, and Windows.
 
     Detection is STRICTLY read-only: it never renames, moves, deletes, or
     writes anything. Visibility rules mirror ``_list_worlds`` (hidden/``_``-
@@ -357,20 +363,7 @@ def detect_legacy_layout(mundos_dir: Path) -> list[dict]:
             }
         except OSError:
             continue
-        # FS-aware (R-CIM-05): on a case-insensitive FS a folder named ``Lore``
-        # IS the same physical directory as canonical ``lore``, so the runtime
-        # already operates on the canonical tree through it — do NOT report it
-        # as legacy. Detect per-world via samefile (immune to a global probe),
-        # so a case-insensitive alias is never misreported as legacy.
-        found = []
-        for folder in LEGACY_FOLDERS:
-            if folder not in top_dir_names:
-                continue
-            legacy_path = entry / folder
-            canonical_path = entry / folder.lower()
-            if canonical_path != legacy_path and canonical_path.exists():
-                continue
-            found.append(folder)
+        found = [folder for folder in LEGACY_FOLDERS if folder in top_dir_names]
         if found:
             findings.append({"world": entry.name, "folders": found})
     return findings

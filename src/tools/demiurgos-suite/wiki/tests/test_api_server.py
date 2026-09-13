@@ -5533,13 +5533,17 @@ class TestLegacyDetectionEndpoint:
         (legacy / "Lore" / "00_inicio.md").write_text("# X\n", encoding="utf-8")
         body = empty_client.get("/api/onboarding/readiness").json()
         finding = next((f for f in body["legacy"] if f["world"] == "legacy-x"), None)
-        if (legacy / "lore").exists():
-            # R-CIM-05: on a case-insensitive FS `Lore` matches canonical
-            # `lore` (same physical dir) — NOT reported as legacy.
-            assert finding is None
-        else:
-            assert finding is not None
-            assert set(finding["folders"]) == {"Lore", "Personajes"}
+        # Detection is scandir-name-based (ONB-4.2): a top-level dir literally
+        # named `Lore`/`Personajes` is uppercase intent on EVERY filesystem —
+        # Linux, macOS, and Windows all report it, so the expectation is
+        # unconditional. (Previously this branched on
+        # `(legacy / "lore").exists()` and asserted None on case-insensitive
+        # FSes; the Windows CI runner proved that probe disagrees with the
+        # detection loop's own probe — the test took the case-insensitive
+        # branch while detection still fired — so detection no longer consults
+        # filesystem case-sensitivity at all.)
+        assert finding is not None
+        assert set(finding["folders"]) == {"Lore", "Personajes"}
         # Detection is strictly read-only: the GET renamed nothing. On a
         # case-insensitive FS `lore` resolves to `Lore`, so assert the legacy
         # folder itself survived instead of the lowercased name.
