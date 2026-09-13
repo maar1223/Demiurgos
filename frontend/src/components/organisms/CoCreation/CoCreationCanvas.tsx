@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Badge } from "@/components/atoms/Badge";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import type {
   DraftPayload,
+  MethodologyAdjunto,
   PendingQuestion,
   WarningState,
 } from "@/api/types";
@@ -134,6 +135,15 @@ interface CoCreationCanvasProps {
   /** Author-only pending-question transition (REQ-CC-14); entries are
    *  read-only here — only state buttons are rendered. */
   onPendingQuestionStatus: (index: number, state: WarningState) => void;
+  /** Stage and pin one exemplar through the shared hook (REQ-CC-24). */
+  onUploadAdjunto: (
+    file: File,
+    nivel: string,
+  ) => Promise<MethodologyAdjunto | null>;
+  /** Remove a pinned exemplar by its basename path (REQ-CC-24). */
+  onRemoveAdjunto: (path: string) => void;
+  /** An exemplar upload is in flight (disables the add controls). */
+  isUploadingAdjunto?: boolean;
   /** Review/complete phases freeze the canvas (matching the disabled chat). */
   disabled?: boolean;
 }
@@ -158,8 +168,29 @@ export function CoCreationCanvas({
   isSaving,
   saveError,
   onPendingQuestionStatus,
+  onUploadAdjunto,
+  onRemoveAdjunto,
+  isUploadingAdjunto = false,
   disabled = false,
 }: CoCreationCanvasProps) {
+  // Exemplar add-form state (REQ-CC-24). Hooks stay before the early return
+  // below so the component keeps a stable hook order with no payload.
+  const [adjuntoFile, setAdjuntoFile] = useState<File | null>(null);
+  const [adjuntoNivel, setAdjuntoNivel] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  /** Upload ONE exemplar, then reset the form on success. The hook surfaces
+   *  upload errors in the toolbar, so a null pin simply keeps the form. */
+  const submitAdjunto = async () => {
+    if (!adjuntoFile || !adjuntoNivel.trim()) return;
+    const pin = await onUploadAdjunto(adjuntoFile, adjuntoNivel.trim());
+    if (pin) {
+      setAdjuntoFile(null);
+      setAdjuntoNivel("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   if (!payload) {
     return (
       <div className="flex h-full items-center justify-center p-6">
@@ -172,6 +203,7 @@ export function CoCreationCanvas({
   }
 
   const questions = payload.pending_questions.map(normalizePendingQuestion);
+  const adjuntos = payload.adjuntos ?? [];
 
   const textareaClass =
     "mt-1 w-full resize-none rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-action focus:outline-none disabled:opacity-60";
@@ -299,6 +331,87 @@ export function CoCreationCanvas({
               />
             </div>
           </div>
+        </div>
+
+        {/* Ejemplares — Author exemplar pins (REQ-CC-24). Metadata only: the
+            section renders path/nivel/bytes and NEVER fetches carrier bytes. */}
+        <div className="rounded-lg border border-edge bg-surface px-3 py-3">
+          <h3 className="text-xs font-medium text-muted">Ejemplares</h3>
+          {adjuntos.length === 0 ? (
+            <p className="mt-2 text-xs text-muted">
+              No hay ejemplares cargados. Cargá archivos .md para acompañar la
+              skill.
+            </p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {adjuntos.map((adjunto, index) => (
+                <li
+                  key={`${adjunto.path}-${index}`}
+                  className="flex items-center gap-2 rounded-md border border-edge bg-surface-raised px-3 py-2"
+                >
+                  <Icon name="markdown" size={14} className="text-icon-muted" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-primary">
+                      {adjunto.path}
+                    </p>
+                    <p className="text-xs text-muted">{adjunto.bytes} bytes</p>
+                  </div>
+                  <Badge variant="default">{adjunto.nivel}</Badge>
+                  {!disabled && (
+                    <button
+                      type="button"
+                      onClick={() => onRemoveAdjunto(adjunto.path)}
+                      aria-label={`Quitar ejemplar ${index + 1}`}
+                      className="shrink-0 rounded-md border border-edge p-1.5 text-icon-muted transition-colors hover:border-status-error/40 hover:text-status-error"
+                    >
+                      <Icon name="trash" size={14} />
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {!disabled && (
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+              <label className="min-w-40 flex-1 text-xs text-muted">
+                Ejemplar (.md)
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".md,text/markdown"
+                  onChange={(event) =>
+                    setAdjuntoFile(event.target.files?.[0] ?? null)
+                  }
+                  disabled={isUploadingAdjunto}
+                  className="mt-1 block w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary file:mr-2 file:rounded-md file:border-0 file:bg-surface-raised file:px-2 file:py-1 file:text-xs file:text-primary focus:border-action focus:outline-none disabled:opacity-60"
+                />
+              </label>
+              <label className="min-w-40 flex-1 text-xs text-muted">
+                Nivel del ejemplar
+                <input
+                  type="text"
+                  value={adjuntoNivel}
+                  onChange={(event) => setAdjuntoNivel(event.target.value)}
+                  disabled={isUploadingAdjunto}
+                  placeholder="Nivel del ejemplar…"
+                  className="mt-1 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-action focus:outline-none disabled:opacity-60"
+                />
+              </label>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => void submitAdjunto()}
+                disabled={
+                  !adjuntoFile || !adjuntoNivel.trim() || isUploadingAdjunto
+                }
+                aria-label="Subir ejemplar"
+              >
+                <Icon name="upload" size={14} />
+                Subir
+              </Button>
+            </div>
+          )}
         </div>
 
         {/* Pending questions — chat-appended, read-only, Author-only state

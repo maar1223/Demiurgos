@@ -363,6 +363,9 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
       onPendingQuestionStatus={(index, st) =>
         void state.setPendingQuestionStatus(index, st)
       }
+      onUploadAdjunto={state.uploadAdjunto}
+      onRemoveAdjunto={state.removeAdjunto}
+      isUploadingAdjunto={state.isUploadingAdjunto}
       disabled={canvasDisabled}
     />
   ) : null;
