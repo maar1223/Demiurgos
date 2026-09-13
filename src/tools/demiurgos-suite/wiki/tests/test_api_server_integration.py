@@ -101,17 +101,23 @@ def _semantic_payload(state="allow", **overrides):
 
 
 class _RecordingProvider:
-    """Wraps a real provider and records the distilled_state it receives."""
+    """Wraps a real provider and records the bounded context it receives."""
 
     def __init__(self, inner):
         self.inner = inner
         self.distilled = []
+        self.recent_turns = []
 
-    async def decide(self, author_input, *, request_id, session_id=None, context=None, distilled_state=None):
+    async def decide(
+        self, author_input, *, request_id, session_id=None, context=None,
+        distilled_state=None, recent_turns=None,
+    ):
         self.distilled.append(distilled_state)
+        self.recent_turns.append(recent_turns)
         return await self.inner.decide(
             author_input, request_id=request_id, session_id=session_id,
             context=context, distilled_state=distilled_state,
+            recent_turns=recent_turns,
         )
 
 
