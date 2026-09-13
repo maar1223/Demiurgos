@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import asyncio
+from datetime import datetime, timedelta, timezone
 import json
 import shutil
 import sys
@@ -60,6 +61,8 @@ ROUTES = {
     ("GET", "/api/{mundo}/guided-character/session/{session_id}"),
     ("POST", "/api/{mundo}/guided-character/session"),
     ("POST", "/api/{mundo}/guided-character/turn"),
+    ("POST", "/api/{mundo}/guided-character/consent/accept"),
+    ("POST", "/api/{mundo}/guided-character/consent/decline"),
     ("POST", "/api/{mundo}/guided-character/proposal/accept"),
     ("POST", "/api/{mundo}/guided-character/proposal/reject"),
     ("POST", "/api/{mundo}/guided-character/proposal/serialize"),
@@ -84,6 +87,8 @@ def test_routes_fail_closed_with_stable_auth_error(monkeypatch) -> None:
         ("get", "/api/nec/guided-character/session/session-1", None),
         ("post", "/api/nec/guided-character/session", {"author_input": "Create a character"}),
         ("post", "/api/nec/guided-character/turn", {"session_id": "s", "base_revision": 0, "author_input": "x"}),
+        ("post", "/api/nec/guided-character/consent/accept", {"token": "ct-deadbeef"}),
+        ("post", "/api/nec/guided-character/consent/decline", {"token": "ct-deadbeef"}),
         ("post", "/api/nec/guided-character/proposal/accept", {"session_id": "s", "base_revision": 0, "key": "x"}),
         ("post", "/api/nec/guided-character/proposal/reject", {"session_id": "s", "base_revision": 0, "key": "x"}),
         ("post", "/api/nec/guided-character/proposal/serialize", {"session_id": "s", "base_revision": 0}),
@@ -1086,6 +1091,176 @@ def test_semantic_proposal_ready_with_incomplete_delta_asks_one_question(monkeyp
     assert "proposal" not in envelope and "target" not in envelope and "digest" not in envelope
     assert semantic_runs.starts == 1
     assert not (tmp_path / "vibrantes" / "personajes").exists()
+
+
+# ---------------------------------------------------------------------------
+# PR2 consent lifecycle: token consume + accept/decline endpoints (REQ-GFC-05/07)
+# ---------------------------------------------------------------------------
+
+
+def _musing_continuation_payload(state: str = "require_confirmation") -> dict:
+    """A musing single-run envelope: semantic decision + typed continuation."""
+    return {
+        "state": state,
+        "response": "Hermes semantic answer.",
+        "request_id": "r-consent",
+        "session_id": "s-consent",
+        "guided": True,
+        "guided_explicitness": "musing",
+        "continuation": (
+            {"outcome": "question", "question": "¿Creo este personaje?"}
+            if state == "require_confirmation"
+            else {"outcome": "delta", "delta": {"name": "Rhyz's Wife", "desire": "freedom"}}
+        ),
+    }
+
+
+def _consent_harness(monkeypatch, tmp_path, *payloads):
+    """Wire a musing suggestion path with isolated memory, sessions, tokens."""
+    (tmp_path / "vibrantes").mkdir(exist_ok=True)
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", GuidedSessionStore())
+    monkeypatch.setattr(api_server, "_GUIDED_PENDING_PROPOSALS", {})
+    monkeypatch.setattr(api_server, "_GUIDED_CONSENT_TOKENS", {})
+    monkeypatch.setattr(api_server, "_named_reference_context", lambda _mundo, _prompt: ("", False, None))
+    memory = api_server.ConversationMemoryStore(":memory:")
+    monkeypatch.setattr(api_server, "_CONVERSATION_MEMORY", memory)
+    runs = _SemanticRuns(*payloads)
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(runs))
+    return memory, runs
+
+
+def _issue_consent_suggestion(client: TestClient, session_id: str = "consent-1") -> str:
+    """Drive one musing chat turn and return the issued consent token."""
+    response = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "Quisiera que me propongas un compañero para ese mundo",
+        "session_id": session_id,
+    })
+    assert response.status_code == 200, response.text
+    envelope = response.json()
+    assert envelope["consent"] == "required"
+    assert "guided_session_id" not in envelope
+    return envelope["consent_token"]
+
+
+def test_consent_accept_opens_deferred_flow_with_single_hermes_run(monkeypatch, tmp_path) -> None:
+    """REQ-GFC-05: accept consumes the token and opens the guided flow with NO
+    second Hermes run and WITHOUT route_new_character_intent."""
+    _memory, runs = _consent_harness(
+        monkeypatch, tmp_path, _musing_continuation_payload("require_confirmation"),
+    )
+    token = _issue_consent_suggestion(client)
+    assert runs.starts == 1
+
+    routed: list[str] = []
+    monkeypatch.setattr(
+        api_server, "route_new_character_intent",
+        lambda *args, **kwargs: routed.append("route") or None,
+    )
+    accepted = client.post(
+        "/api/vibrantes/guided-character/consent/accept", json={"token": token},
+    )
+    assert accepted.status_code == 200, accepted.text
+    envelope = accepted.json()
+    assert envelope["state"] == "require_confirmation"
+    assert envelope["guided_session_id"].startswith("guided-")
+    assert envelope["guided_state"]["phase"] == "confirmation"
+    assert "consent" not in envelope and "consent_token" not in envelope
+    assert runs.starts == 1          # the accept click starts no Hermes run
+    assert routed == []              # no lexical re-routing on accept
+
+
+def test_consent_accept_replayed_token_fails_closed(monkeypatch, tmp_path) -> None:
+    """REQ-GFC-07: a consumed token can never open a second session."""
+    _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload())
+    token = _issue_consent_suggestion(client)
+    sessions = api_server._GUIDED_SESSIONS
+    first = client.post("/api/vibrantes/guided-character/consent/accept", json={"token": token})
+    assert first.status_code == 200
+    replay = client.post("/api/vibrantes/guided-character/consent/accept", json={"token": token})
+    assert replay.status_code == 422
+    assert len(sessions._sessions) == 1
+
+
+def test_consent_accept_expired_token_fails_closed(monkeypatch, tmp_path) -> None:
+    """REQ-GFC-07: an expired token opens nothing and is discarded."""
+    _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload())
+    token = _issue_consent_suggestion(client)
+    record = api_server._GUIDED_CONSENT_TOKENS[token]
+    record["created_at"] = (
+        datetime.now(timezone.utc) - api_server.CONSENT_TOKEN_TTL - timedelta(minutes=1)
+    )
+    sessions = api_server._GUIDED_SESSIONS
+    response = client.post("/api/vibrantes/guided-character/consent/accept", json={"token": token})
+    assert response.status_code == 422
+    assert sessions._sessions == {}
+    assert token not in api_server._GUIDED_CONSENT_TOKENS
+
+
+def test_consent_accept_foreign_principal_fails_closed(monkeypatch, tmp_path) -> None:
+    """REQ-GFC-07: a foreign token opens nothing and does not destroy the
+    rightful owner's pending token."""
+    _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload())
+    token = _issue_consent_suggestion(client)
+    sessions = api_server._GUIDED_SESSIONS
+    monkeypatch.setattr(
+        api_server, "_resolve_principal",
+        lambda _request: api_server.EditPrincipal("intruder"),
+    )
+    response = client.post("/api/vibrantes/guided-character/consent/accept", json={"token": token})
+    assert response.status_code == 422
+    assert sessions._sessions == {}
+    assert token in api_server._GUIDED_CONSENT_TOKENS
+
+
+def test_consent_accept_malformed_token_fails_closed(monkeypatch, tmp_path) -> None:
+    """REQ-GFC-07: a malformed token opens nothing."""
+    _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload())
+    sessions = api_server._GUIDED_SESSIONS
+    response = client.post(
+        "/api/vibrantes/guided-character/consent/accept", json={"token": "not-a-token"},
+    )
+    assert response.status_code == 422
+    assert sessions._sessions == {}
+
+
+def test_consent_decline_discards_token_records_flag_and_blocks_accept(monkeypatch, tmp_path) -> None:
+    """REQ-GFC-06/07: decline persists the flag, creates no session, and the
+    discarded token can never be accepted afterwards."""
+    memory, runs = _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload())
+    token = _issue_consent_suggestion(client)
+    sessions = api_server._GUIDED_SESSIONS
+
+    declined = client.post(
+        "/api/vibrantes/guided-character/consent/decline", json={"token": token},
+    )
+    assert declined.status_code == 200
+    assert declined.json() == {"consent": "declined"}
+    assert memory.guided_consent_declined("consent-1", "vibrantes") is True
+    assert sessions._sessions == {}
+
+    accepted = client.post(
+        "/api/vibrantes/guided-character/consent/accept", json={"token": token},
+    )
+    assert accepted.status_code == 422
+    assert sessions._sessions == {}
+    assert runs.starts == 1
+
+
+def test_consent_decline_foreign_token_fails_closed_without_write(monkeypatch, tmp_path) -> None:
+    """REQ-GFC-07: a foreign decline writes no durable decline flag."""
+    memory, _runs = _consent_harness(monkeypatch, tmp_path, _musing_continuation_payload())
+    token = _issue_consent_suggestion(client)
+    monkeypatch.setattr(
+        api_server, "_resolve_principal",
+        lambda _request: api_server.EditPrincipal("intruder"),
+    )
+    response = client.post(
+        "/api/vibrantes/guided-character/consent/decline", json={"token": token},
+    )
+    assert response.status_code == 422
+    assert memory.guided_consent_declined("consent-1", "vibrantes") is False
 
 
 def test_guided_start_fails_closed_when_semantic_unavailable(monkeypatch, tmp_path) -> None:

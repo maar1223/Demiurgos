@@ -154,7 +154,6 @@ from semantic_intent import (
     CONTINUATION_STATES,
     SELF_CONTAINED_SEMANTIC_STATES,
     SemanticContext,
-    SemanticContinuation,
     SemanticDecision,
     SemanticIntentProvider,
     SemanticResult,
@@ -1735,6 +1734,12 @@ class GuidedSerializeRequest(BaseModel):
     title: str | None = None
 
 
+class GuidedConsentRequest(BaseModel):
+    """One-shot consent token issued with a musing guided suggestion (REQ-GFC-04)."""
+
+    token: str
+
+
 # ---------------------------------------------------------------------------
 # Methodology library contracts (Taller de Herramientas)
 # ---------------------------------------------------------------------------
@@ -2327,6 +2332,83 @@ async def continue_guided_character(mundo: str, body: GuidedTurnRequest, request
         )
         return result.as_dict()
     return await _guided_continue(mundo, body.session_id, body.base_revision, body.author_input, principal)
+
+
+@app.post("/api/{mundo}/guided-character/consent/accept")
+async def accept_guided_character_consent(
+    mundo: str, body: GuidedConsentRequest, request: Request,
+):
+    """Consume a musing consent token and open the deferred guided flow.
+
+    The click IS the imperative (REQ-GFC-05): the token-bound continuation is
+    replayed through the SAME guarded machinery as an explicit imperative, with
+    NO second Hermes run and WITHOUT ``route_new_character_intent``. A
+    malformed, missing, expired, replayed, foreign-principal, or foreign-world
+    token fails closed with zero session and zero write (REQ-GFC-07).
+    """
+    principal, error = _guided_principal(request)
+    if error:
+        return error
+    if _resolve_mundo_dir(mundo) is None:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT, "The world is unavailable.", False,
+        ))
+    record = _consume_guided_consent_token(
+        body.token, principal_id=principal.id, mundo=mundo,
+    )
+    if record is None:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT, "The consent request is invalid.", False,
+        ))
+    decision = record.get("decision")
+    if not isinstance(decision, SemanticDecision) or decision.continuation is None:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT, "The consent request is invalid.", False,
+        ))
+    ask_body = AskRequest(
+        prompt=str(record.get("prompt") or ""),
+        session_id=str(record.get("session_id") or ""),
+    )
+    result = SemanticResult(
+        decision=decision,
+        attempts=int(record.get("attempts") or 0),
+        request_id=decision.request_id,
+        session_id=decision.session_id,
+    )
+    return await _open_guided_continuation(
+        mundo, ask_body, result, principal, decision=decision,
+        reference_context=str(record.get("reference_context") or ""),
+        reference_name=record.get("reference_name") or None,
+    )
+
+
+@app.post("/api/{mundo}/guided-character/consent/decline")
+def decline_guided_character_consent(
+    mundo: str, body: GuidedConsentRequest, request: Request,
+):
+    """Consume/discard a consent token and persist a durable decline (REQ-GFC-06).
+
+    A malformed, missing, expired, replayed, foreign-principal, or foreign-world
+    token fails closed with zero write (REQ-GFC-07).
+    """
+    principal, error = _guided_principal(request)
+    if error:
+        return error
+    record = _consume_guided_consent_token(
+        body.token, principal_id=principal.id, mundo=mundo,
+    )
+    if record is None:
+        return _guided_error_response(StructuredError(
+            ErrorCode.INVALID_INPUT, "The consent request is invalid.", False,
+        ))
+    if _CONVERSATION_MEMORY is not None:
+        try:
+            _CONVERSATION_MEMORY.record_guided_consent_decline(
+                str(record.get("session_id") or ""), mundo,
+            )
+        except Exception:
+            logger.warning("guided consent decline persist failed", exc_info=True)
+    return {"consent": "declined"}
 
 
 @app.post("/api/{mundo}/guided-character/proposal/accept")
@@ -6080,10 +6162,14 @@ def _sweep_guided_consent_tokens(now: datetime) -> None:
 
 def _issue_guided_consent_token(
     *, principal_id: str, session_id: str, mundo: str, prompt: str,
-    continuation: SemanticContinuation, reference_context: str,
+    decision: SemanticDecision, attempts: int, reference_context: str,
     reference_name: str | None,
 ) -> str:
-    """Issue a one-shot consent token bound to principal + session + world."""
+    """Issue a one-shot consent token bound to principal + session + world.
+
+    The validated decision is stored whole so the deferred accept (PR2) reopens
+    the exact continuation with NO second Hermes run and no re-decision.
+    """
     now = datetime.now(timezone.utc)
     _sweep_guided_consent_tokens(now)
     token = f"ct-{uuid.uuid4().hex}"
@@ -6092,12 +6178,41 @@ def _issue_guided_consent_token(
         "session_id": session_id,
         "mundo": mundo,
         "prompt": prompt,
-        "continuation": continuation,
+        "decision": decision,
+        "attempts": attempts,
         "reference_context": reference_context,
         "reference_name": reference_name,
         "created_at": now,
     }
     return token
+
+
+def _consume_guided_consent_token(
+    token: object, *, principal_id: str, mundo: str,
+) -> dict[str, object] | None:
+    """One-shot pop of a consent token; fails closed on any mismatch.
+
+    Returns the bound record exactly once, or ``None`` for a malformed,
+    missing, expired, replayed, foreign-principal, or foreign-world token
+    (REQ-GFC-07). A foreign attempt never destroys the rightful principal's
+    token; an expired token is discarded so a stale suggestion cannot be
+    replayed. This runs synchronously (no await), so peek-then-pop is atomic.
+    """
+    now = datetime.now(timezone.utc)
+    _sweep_guided_consent_tokens(now)
+    if not isinstance(token, str) or not token.startswith("ct-"):
+        return None
+    record = _GUIDED_CONSENT_TOKENS.get(token)
+    if record is None:
+        return None
+    if record.get("principal_id") != principal_id or record.get("mundo") != mundo:
+        return None
+    created_at = record.get("created_at")
+    if not isinstance(created_at, datetime) or created_at < now - CONSENT_TOKEN_TTL:
+        _GUIDED_CONSENT_TOKENS.pop(token, None)
+        return None
+    _GUIDED_CONSENT_TOKENS.pop(token, None)
+    return record
 
 
 def _guided_consent_pending_for_session(session_id: str, mundo: str) -> bool:
@@ -6176,7 +6291,8 @@ def _guided_consent_suggestion(
         session_id=body.session_id,
         mundo=mundo,
         prompt=body.prompt,
-        continuation=decision.continuation,
+        decision=decision,
+        attempts=result.attempts,
         reference_context=reference_context,
         reference_name=reference_name,
     )
