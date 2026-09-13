@@ -11,10 +11,14 @@ closed with zero mutations.
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Awaitable, Callable, Literal, Mapping, Protocol
+
+from methodology_compiler import MAX_NIVEL_LEN
 
 
 PROTOCOL_VERSION = "co-creation-v1"
@@ -54,9 +58,11 @@ _MILESTONE_STATES = frozenset({"completado", "actual", "pendiente"})
 CANVAS_SYNC_ENVELOPE_KEYS = frozenset({"base_revision", "payload"})
 
 # The typed, Author-editable structured draft sections exposed by the canvas
-# (REQ-CC-11). ``branches``/``rules``/``pending_questions`` are lists; the rest
-# are plain strings. ``pending_questions`` is chat-owned (REQ-CC-14): the
-# canvas may display it but never authors it.
+# (REQ-CC-11). ``branches``/``rules``/``pending_questions``/``adjuntos`` are
+# lists; the rest are plain strings. ``pending_questions`` is chat-owned
+# (REQ-CC-14): the canvas may display it but never authors it. ``adjuntos`` is
+# the Author-owned exemplar pin list (``{path, sha256, bytes, nivel}``,
+# REQ-CC-25) and stays OUTSIDE the authority-key set by construction.
 CANVAS_PAYLOAD_KEYS = frozenset({
     "name",
     "description",
@@ -67,7 +73,54 @@ CANVAS_PAYLOAD_KEYS = frozenset({
     "rules",
     "pending_questions",
     "world",
+    "adjuntos",
 })
+
+# Canvas ``adjuntos`` entry shape: the same dir-independent pin contract the
+# upload route returns and the compiler validates (path basename + 64-hex
+# sha256 + positive bytes + bounded nivel). Shape-only here; count/size limits
+# stay with the compiler so the canvas and materialize can never disagree.
+_RE_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _adjuntos_shape_issues(value: object) -> list[str]:
+    """Shape-check the canvas ``adjuntos`` list (REQ-CC-11/REQ-CC-25).
+
+    ``None`` is valid (the section is simply absent). Any other value must be
+    a list of mapping entries; each entry must carry a plain ``.md`` basename
+    ``path``, a 64-hex ``sha256``, a positive ``bytes``, and a bounded
+    ``nivel``. Violations are returned as human-readable issue strings and
+    never raise, so the route can reject the payload with zero mutation.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list) or not all(isinstance(item, Mapping) for item in value):
+        return ["adjuntos must be a list of entries"]
+    issues: list[str] = []
+    for entry in value:
+        path = entry.get("path")
+        if (
+            not isinstance(path, str)
+            or not path.strip()
+            or path != os.path.basename(path)
+            or "/" in path
+            or "\\" in path
+            or ".." in path
+            or not path.endswith(".md")
+        ):
+            issues.append("adjuntos entry path must be a plain .md basename")
+        sha256 = entry.get("sha256")
+        if not isinstance(sha256, str) or not _RE_SHA256.match(sha256):
+            issues.append("adjuntos entry sha256 must be a 64-hex digest")
+        byte_count = entry.get("bytes")
+        if isinstance(byte_count, bool) or not isinstance(byte_count, int) or byte_count < 1:
+            issues.append("adjuntos entry bytes must be a positive integer")
+        nivel = entry.get("nivel")
+        if not isinstance(nivel, str) or not nivel.strip():
+            issues.append("adjuntos entry nivel must be a non-empty label")
+        elif len(nivel.strip()) > MAX_NIVEL_LEN:
+            issues.append(f"adjuntos entry nivel exceeds {MAX_NIVEL_LEN} characters")
+    return issues
 
 
 class WarningState(StrEnum):
@@ -112,7 +165,8 @@ def canvas_payload_issues(payload: Mapping[str, Any]) -> list[str]:
             continue
         if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
             issues.append(f"{key} must be a list of strings")
-    for key in CANVAS_PAYLOAD_KEYS - {"branches", "rules", "pending_questions"}:
+    issues.extend(_adjuntos_shape_issues(payload.get("adjuntos")))
+    for key in CANVAS_PAYLOAD_KEYS - {"branches", "rules", "pending_questions", "adjuntos"}:
         value = payload.get(key)
         if value is not None and not isinstance(value, str):
             issues.append(f"{key} must be a string")

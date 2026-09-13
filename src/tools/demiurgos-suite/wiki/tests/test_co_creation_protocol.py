@@ -288,7 +288,7 @@ def test_canvas_envelope_keys_stay_outside_authority_keys() -> None:
 def test_canvas_payload_typed_keys_are_editable_sections() -> None:
     assert CANVAS_PAYLOAD_KEYS == {
         "name", "description", "purpose", "scope", "main_flow",
-        "branches", "rules", "pending_questions", "world",
+        "branches", "rules", "pending_questions", "world", "adjuntos",
     }
     assert CANVAS_PAYLOAD_KEYS.isdisjoint(AUTHORITY_KEYS)
 
@@ -306,6 +306,50 @@ def test_canvas_payload_issues_accepts_typed_payload() -> None:
         "world": "nec",
     }
     assert canvas_payload_issues(payload) == []
+
+
+def test_canvas_payload_issues_accepts_well_formed_adjuntos() -> None:
+    """REQ-CC-25: the pin list is an editable canvas section, not an unknown key."""
+    payload = {
+        "name": "Skill",
+        "adjuntos": [{
+            "path": "ejemplo.md",
+            "sha256": "a" * 64,
+            "bytes": 128,
+            "nivel": "1º",
+        }],
+    }
+    assert canvas_payload_issues(payload) == []
+
+
+def test_canvas_payload_issues_rejects_bad_adjuntos_shape() -> None:
+    """A non-list, a non-mapping entry, or a missing field surfaces an issue."""
+    assert canvas_payload_issues({"adjuntos": "nope"}) != []
+    assert canvas_payload_issues({"adjuntos": ["nope"]}) != []
+    assert canvas_payload_issues({"adjuntos": [{}]}) != []
+
+
+def test_canvas_payload_issues_rejects_bad_adjuntos_entry_fields() -> None:
+    good = {"path": "a.md", "sha256": "b" * 64, "bytes": 12, "nivel": "1º"}
+    for field, bad in [
+        ("path", "../escape.md"),
+        ("path", "/abs/a.md"),
+        ("path", "a.txt"),
+        ("path", "mundos/a.md"),
+        ("sha256", "zz"),
+        ("bytes", 0),
+        ("bytes", True),
+        ("nivel", "   "),
+        ("nivel", "x" * 65),
+    ]:
+        payload = {"adjuntos": [{**good, field: bad}]}
+        assert canvas_payload_issues(payload) != [], f"{field}={bad!r} not rejected"
+
+
+def test_canvas_payload_adjuntos_key_stays_outside_authority_keys() -> None:
+    """REQ-CC-11: the additive key must not become an authority key."""
+    assert "adjuntos" not in AUTHORITY_KEYS
+    assert "adjuntos" in CANVAS_PAYLOAD_KEYS
 
 
 def test_canvas_payload_issues_rejects_authority_keys_flat_and_nested() -> None:
