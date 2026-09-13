@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 import re
-import sys
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
@@ -301,23 +300,6 @@ def _is_case_insensitive_fs(path: Path) -> bool:
             probe_file.unlink(missing_ok=True)
     except OSError:
         return False
-
-
-def _same_physical_dir(a: Path, b: Path) -> bool:
-    """True when *a* and a case-distinct *b* resolve to the same entry.
-
-    On a case-insensitive filesystem (NTFS/APFS) the swapped spelling
-    resolves to the same entry even though only one case was created; on a
-    case-sensitive FS (Linux) it does not. Windows is always NTFS
-    (case-insensitive), so trust the platform there — the existence/samefile
-    probes are not reliable on the Windows CI runner. For other platforms use
-    existence of the swapped spelling, which is deterministic.
-    """
-    if a == b or not a.exists():
-        return False
-    if sys.platform == "win32":
-        return True
-    return b.exists()
 
 
 def detect_legacy_layout(mundos_dir: Path) -> list[dict]:

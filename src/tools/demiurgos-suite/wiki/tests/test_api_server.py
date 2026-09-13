@@ -48,7 +48,6 @@ import telegram_settings  # noqa: E402
 from wiki import migration as migration_module  # noqa: E402
 from wiki.graph_indexer import EntityGraphIndex  # noqa: E402
 from wiki.world_authority import _is_case_insensitive_fs  # noqa: E402
-from wiki.world_authority import _same_physical_dir  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 
 REPO_ROOT = _WIKI.parents[3]

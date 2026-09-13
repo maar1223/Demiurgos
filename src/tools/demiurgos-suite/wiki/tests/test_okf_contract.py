@@ -35,7 +35,6 @@ from wiki.world_authority import (  # noqa: E402
     CANONICAL_DIRS,
     OC8_LORE_SKELETON,
     WorldResultKind,
-    _same_physical_dir,
     create_world,
     detect_legacy_layout,
     normalize_world_name,
