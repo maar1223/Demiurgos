@@ -20,6 +20,7 @@ import {
   activateCompanion,
   activateMethodology,
   deactivateCompanion,
+  deactivateMethodology,
   exportPublished,
   getMethodologyStatus,
 } from "@/api/methodologies";
@@ -76,7 +77,7 @@ function useActiveTaller(): string {
  * - 🟡 Loading (worlds): spinner centered in the EditorLayout body
  * - 🔴 Error (worlds): ErrorBanner with retry in the body
  * - 🟢 No world selected (or no worlds at all): the tree still shows
- *   publications, but activation stays disabled ("Sin mundo")
+ *   publications, but the right panel's Activar stays disabled
  * - 🟢 Data: sidebar explorer + detail body + state/actions panel
  */
 export default function ToolWorkshop() {
@@ -85,8 +86,8 @@ export default function ToolWorkshop() {
    *  world and kept in sync with it (same subscribe pattern as
    *  `useActiveTaller`): without this, the sidebar `WorldSelector` falls back
    *  to the Navbar world for DISPLAY while this state stayed `undefined`, so
-   *  the tree rendered a world-labeled selector next to a permanently
-   *  disabled "Sin mundo" activation button until a manual switch-confirm. */
+   *  the right panel's Activar stayed permanently disabled until a manual
+   *  switch-confirm. */
   const [world, setWorld] = useState<string | undefined>(
     () => getCurrentWorld() ?? undefined,
   );
@@ -164,6 +165,28 @@ export default function ToolWorkshop() {
     [world, loadStatus],
   );
 
+  /** World-scoped deactivation (mirrors handleActivate): clears the world's
+   *  activation slot so the selected version stops serving new sessions, then
+   *  refetches the shared status for the tree and the right panel. */
+  const handleDeactivate = useCallback(
+    async (_skillId: string, _version: string) => {
+      if (!world) {
+        return;
+      }
+      setBusy(true);
+      setStatusError(null);
+      try {
+        await deactivateMethodology(world);
+        await loadStatus();
+      } catch {
+        setStatusError("No se pudo desactivar la versión para este mundo.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [world, loadStatus],
+  );
+
   /** World-scoped companion toggle (R-UI chips): mirrors handleActivate — the
    *  client call is followed by the shared status refetch. The first-ever
    *  successful activation in a world surfaces the one-time latency notice
@@ -207,22 +230,18 @@ export default function ToolWorkshop() {
   }, []);
 
   /** Catalogo "Exportar" (SC-SB-4.2): downloads the published version as a
-   *  `.zip` package. Failures stay silent here — the catalog rows already
-   *  surface inline export errors (REQ-IMP-1). */
+   *  `.zip` package. Failures propagate to the right panel, which owns the
+   *  inline export error alert (REQ-IMP-1). */
   const handleExportar = useCallback(async (item: MethodologyInventoryItem) => {
-    try {
-      const blob = await exportPublished(item.skill_id, item.version);
-      const objectUrl = window.URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = `${item.skill_id}-${item.version}.zip`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.URL.revokeObjectURL(objectUrl);
-    } catch {
-      // Silent: the catalog row export already reports failures inline.
-    }
+    const blob = await exportPublished(item.skill_id, item.version);
+    const objectUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = `${item.skill_id}-${item.version}.zip`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(objectUrl);
   }, []);
 
   const handleWorldCreated = (created: string) => {
@@ -323,13 +342,7 @@ export default function ToolWorkshop() {
               onStatusRetry={() => void loadStatus()}
               selected={selected}
               onSelect={setSelected}
-              onActivate={(skillId, version) =>
-                void handleActivate(skillId, version)
-              }
-              onAdaptar={(item) => void handleAdaptar(item)}
-              busy={busy}
               compareSelection={compareSelection}
-              onCompareToggle={handleComparar}
               onGoToCoCrear={handleGoToCoCrear}
             />
           }
@@ -345,13 +358,16 @@ export default function ToolWorkshop() {
               onActivate={(skillId, version) =>
                 void handleActivate(skillId, version)
               }
+              onDeactivate={(skillId, version) =>
+                void handleDeactivate(skillId, version)
+              }
               onToggleCompanion={(skillId, version, on) =>
                 void handleToggleCompanion(skillId, version, on)
               }
               latencyNoticeWorld={latencyNoticeWorld}
               onAdaptar={(item) => void handleAdaptar(item)}
               onComparar={handleComparar}
-              onExportar={(item) => void handleExportar(item)}
+              onExportar={handleExportar}
               compareSelection={compareSelection}
               onCompareClear={() => setCompareSelection([])}
             />

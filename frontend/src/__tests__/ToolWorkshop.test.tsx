@@ -23,6 +23,7 @@ vi.mock("@/api/methodologies", () => ({
   activateMethodology: vi.fn(),
   activateCompanion: vi.fn(),
   deactivateCompanion: vi.fn(),
+  deactivateMethodology: vi.fn(),
   getMethodologyInventory: vi.fn(),
   exportPublished: vi.fn(),
 }));
@@ -41,6 +42,7 @@ import { useWorlds } from "@/hooks/useWorlds";
 import {
   activateCompanion,
   activateMethodology,
+  deactivateMethodology,
   getMethodologyInventory,
   getMethodologyStatus,
 } from "@/api/methodologies";
@@ -166,9 +168,16 @@ describe("ToolWorkshop", () => {
     const user = userEvent.setup();
     renderToolWorkshop();
 
-    // No world selected → the library shows publications but cannot activate.
+    // No world selected → selecting a row shows the right panel with a
+    // disabled Activar (the old inline "Sin mundo" tree button is gone).
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Sin mundo" })).toBeDisabled();
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Guided character methodology"));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Activar" })).toBeDisabled();
     });
 
     // The selectors now live in the EditorLayout sidebar header (SC-SB-1.1) —
@@ -196,11 +205,18 @@ describe("ToolWorkshop", () => {
     // The sidebar WorldSelector falls back to the persisted global world for
     // DISPLAY while the page-local activation target stayed undefined — the
     // tree showed "Vibrantes" yet every activation button remained disabled
-    // ("Sin mundo") until a manual switch+confirm.
+    // ("Sin mundo") until a manual switch+confirm. The right panel's Activar
+    // must now reflect the persisted world immediately, without a selection.
     window.localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
     const user = userEvent.setup();
     renderToolWorkshop();
 
+    await waitFor(() => {
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Guided character methodology"));
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "Activar" })).toBeEnabled();
     });
@@ -227,6 +243,50 @@ describe("ToolWorkshop", () => {
         "guided-character-v1",
         "1.2.0",
       );
+    });
+  });
+
+  it("deactivates the active version via Desactivar and refetches status", async () => {
+    window.localStorage.setItem(ACTIVE_WORLD_STORAGE_KEY, "Vibrantes");
+    (getMethodologyStatus as Mock).mockResolvedValue({
+      ...status,
+      activations: {
+        Vibrantes: {
+          world: "Vibrantes",
+          skill_id: "guided-character-v1",
+          version: "1.2.0",
+          digest: "abc",
+          activated_at: "2026-01-01",
+        },
+      },
+    });
+    (deactivateMethodology as Mock).mockResolvedValue({
+      world: "Vibrantes",
+      flow_type: "guided-character",
+    });
+    const user = userEvent.setup();
+    renderToolWorkshop();
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Guided character methodology"),
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Guided character methodology"));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Desactivar" }),
+      ).toBeEnabled();
+    });
+    (getMethodologyStatus as Mock).mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Desactivar" }));
+    await waitFor(() => {
+      expect(deactivateMethodology).toHaveBeenCalledWith("Vibrantes");
+    });
+    // The shared status refetch keeps the tree and the right panel in sync.
+    await waitFor(() => {
+      expect(getMethodologyStatus).toHaveBeenCalled();
     });
   });
 
@@ -267,6 +327,7 @@ describe("ToolWorkshop", () => {
       error: null,
       mutate: vi.fn(),
     });
+    const user = userEvent.setup();
 
     renderToolWorkshop();
 
@@ -275,7 +336,10 @@ describe("ToolWorkshop", () => {
         screen.getByText("Guided character methodology"),
       ).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Sin mundo" })).toBeDisabled();
+    await user.click(screen.getByText("Guided character methodology"));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Activar" })).toBeDisabled();
+    });
     expect(
       screen.getByText(/No hay mundos disponibles/),
     ).toBeInTheDocument();
@@ -574,26 +638,32 @@ describe("ToolWorkshop", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the Mundo/Taller/Lente control labels in the sidebar header (UL-1 S1 / SB-1 S1)", async () => {
+  it("renders the Mundo/Taller control labels and the self-labeling lens toggle (UL-1 S1 / SB-1 S1)", async () => {
     renderToolWorkshop();
 
     // Let the initial status fetch settle so the assertions run inside act().
     await screen.findByText("Guided character methodology");
 
-    // Each sidebar control carries a visible text label (spec UL-1 / SB-1).
+    // Mundo/Taller are dropdowns and keep a visible label; the lens toggle is
+    // self-labeling (its segments state the lens), so it carries no heading —
+    // only its accessible name.
     expect(screen.getByText("Mundo")).toBeInTheDocument();
     expect(screen.getByText("Taller")).toBeInTheDocument();
-    expect(screen.getByText("Lente")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tablist", { name: "Lente de la biblioteca" }),
+    ).toBeInTheDocument();
   });
 
   it("suppresses the World and Taller selectors in catalogo-total, keeping the lens toggle (UL-2 S1)", async () => {
     const user = userEvent.setup();
     renderToolWorkshop();
 
-    // mi-mundo: all three controls (Mundo, Taller, Lente) are present.
+    // mi-mundo: Mundo + Taller labels and the self-labeling lens toggle.
     expect(screen.getByText("Mundo")).toBeInTheDocument();
     expect(screen.getByText("Taller")).toBeInTheDocument();
-    expect(screen.getByText("Lente")).toBeInTheDocument();
+    expect(
+      screen.getByRole("tablist", { name: "Lente de la biblioteca" }),
+    ).toBeInTheDocument();
 
     // Switch to the read-only catalog lens (the empty inventory fixture).
     await user.click(screen.getByRole("tab", { name: "Catálogo total" }));
@@ -605,7 +675,6 @@ describe("ToolWorkshop", () => {
     // suppressed; the LensToggle escape hatch stays rendered (spec UL-2 S1).
     expect(screen.queryByText("Mundo")).not.toBeInTheDocument();
     expect(screen.queryByText("Taller")).not.toBeInTheDocument();
-    expect(screen.getByText("Lente")).toBeInTheDocument();
     expect(
       screen.getByRole("tablist", { name: "Lente de la biblioteca" }),
     ).toBeInTheDocument();

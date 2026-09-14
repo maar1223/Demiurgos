@@ -60,11 +60,7 @@ function renderSidebar(
     onStatusRetry: vi.fn(),
     selected: null,
     onSelect: vi.fn(),
-    onActivate: vi.fn(),
-    onAdaptar: vi.fn(),
-    busy: false,
     compareSelection: [],
-    onCompareToggle: vi.fn(),
     ...overrides,
   };
   render(<TallerExplorerSidebar {...props} />);
@@ -87,5 +83,27 @@ describe("TallerExplorerSidebar companion badge (R-UI chips)", () => {
 
     expect(screen.getByText("Eneagrama")).toBeInTheDocument();
     expect(screen.queryByText("Método en chat")).not.toBeInTheDocument();
+  });
+
+  it("renders the lens toggle above the world selector (header order)", () => {
+    renderSidebar();
+
+    // The toggle carries no visible heading (self-labeling), so anchor the
+    // order assertion on its accessible name.
+    const lens = screen.getByRole("tablist", { name: "Lente de la biblioteca" });
+    const mundo = screen.getByText("Mundo");
+    // The lens decides which context controls apply, so it leads the header.
+    expect(
+      lens.compareDocumentPosition(mundo) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("never truncates the skill name or its id line (full data stays visible)", () => {
+    renderSidebar();
+
+    const name = screen.getByText("Eneagrama");
+    expect(name).toHaveClass("break-words");
+    expect(name).not.toHaveClass("truncate");
+    expect(screen.getByText("eneagrama@1.2.0")).not.toHaveClass("truncate");
   });
 });

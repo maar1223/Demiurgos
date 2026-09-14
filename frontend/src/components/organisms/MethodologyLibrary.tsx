@@ -27,9 +27,6 @@ interface MethodologyLibraryProps {
   /** Selection setter; the filter contract calls it with `null` when the
    *  query filters the selected row out. */
   onSelect: (sel: MethodologySelection | null) => void;
-  /** World-scoped activation, owned by the page (it refetches status). */
-  onActivate: (skillId: string, version: string) => void;
-  busy: boolean;
   /** Fetch/activation error surfaced by the page; retry re-runs the page
    *  fetch. */
   error?: string | null;
@@ -45,10 +42,10 @@ interface MethodologyLibraryProps {
  * Slimmed to the mi-mundo explorer content (task 2.3): the heading now lives
  * in the EditorLayout sidebar shell, and `getMethodologyStatus` is lifted to
  * the page (shared with `MethodologyStatePanel`). This component lists
- * published methodology versions for the selected world, exposes a
- * client-side filter (SC-SB-1.1) and lets the Author activate a published
- * version. Activation is world-scoped: it governs NEW guided sessions in that
- * world only; already running sessions fail closed (server-enforced).
+ * published methodology versions for the selected world and exposes a
+ * client-side filter (SC-SB-1.1). Rows are selection + information only —
+ * activation actions live in the right MethodologyStatePanel (the page owns
+ * `activateMethodology` and refetches the shared status).
  */
 export function MethodologyLibrary({
   world,
@@ -56,8 +53,6 @@ export function MethodologyLibrary({
   status,
   selected,
   onSelect,
-  onActivate,
-  busy,
   error,
   onRetry,
   onGoToCoCrear,
@@ -169,8 +164,6 @@ export function MethodologyLibrary({
           activeTaller={activeTaller}
           active={active}
           companions={world ? status.companions?.[world] ?? [] : []}
-          onActivate={onActivate}
-          busy={busy}
           onSelect={(skillId, version) => onSelect({ skill_id: skillId, version })}
           selected={selected}
         />

@@ -63,8 +63,6 @@ function renderTree(
     groups,
     world: "nec",
     activeTaller: "Mundo",
-    onActivate: vi.fn(),
-    busy: false,
     ...overrides,
   };
   render(<TallerTree {...props} />);
@@ -236,7 +234,7 @@ describe("axis-attributed row chips (axis-binding-ui R1/R2/R3)", () => {
   });
 });
 
-describe("no-activation slot and blocked Adaptar (axis-binding-ui R4 / REQ-TRE-6 S2)", () => {
+describe("no-activation slot and row actions removed (axis-binding-ui R4 / actions live in the right panel)", () => {
   it("renders a neutral placeholder for the no-activation slot — never Inactiva (No-activation slot renders)", () => {
     renderTree();
 
@@ -249,8 +247,7 @@ describe("no-activation slot and blocked Adaptar (axis-binding-ui R4 / REQ-TRE-6
     expect(placeholder).toHaveAttribute("data-axis", "activation");
   });
 
-  it("keeps Adaptar disabled with the future-phase tooltip — click does nothing (S2 — Adaptar disabled)", () => {
-    const onActivate = vi.fn();
+  it("renders no action buttons on rows — Activar/Activada/Sin mundo/Adaptar live in the right panel", () => {
     renderTree({
       groups: { ...groups, activas: [], inactivas: [], bloqueadas: [skillC] },
       active: {
@@ -260,17 +257,25 @@ describe("no-activation slot and blocked Adaptar (axis-binding-ui R4 / REQ-TRE-6
         digest: "abc",
         activated_at: "2026-01-01",
       },
-      onActivate,
     });
 
-    const adaptar = screen.getByRole("button", { name: "Adaptar" });
-    expect(adaptar).toBeDisabled();
-    expect(adaptar).toHaveAttribute(
-      "title",
-      "Adaptación disponible en fase futura",
-    );
+    // Blocked rows keep the conflict tooltip but no Adaptar action...
+    const blockedRow = screen.getByText("Skill C").closest("li") as HTMLElement;
+    expect(blockedRow.querySelector('[role="tooltip"]')).not.toBeNull();
 
-    fireEvent.click(adaptar);
-    expect(onActivate).not.toHaveBeenCalled();
+    // ...and no row offers any activation/adapt action (single home: the
+    // right MethodologyStatePanel).
+    expect(
+      screen.queryByRole("button", { name: "Activar" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Activada" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Sin mundo" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Adaptar" }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -5,7 +5,6 @@ import type {
   PublishedMethodology,
 } from "@/api/types";
 import { Badge } from "@/components/atoms/Badge";
-import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Tooltip } from "@/components/atoms/Tooltip";
 import type { GroupedSkills, SkillState } from "@/lib/tallerStates";
@@ -22,14 +21,13 @@ interface TallerTreeProps {
    *  blocked-skill conflict copy (spec REQ-TRE-6 S1). */
   activeTaller: string;
   /** Current activation for the selected world — drives the version-aware
-   *  "Activada"/"Activa en {world}" state (REQ-TRE-7: one active version per
-   *  world) and the sin-taller bucket badges. */
+   *  "Activa en {world}" info line (REQ-TRE-7: one active version per world)
+   *  and the sin-taller bucket badges. Rows are selection + information only;
+   *  activation actions live in the right MethodologyStatePanel. */
   active?: MethodologyActivation;
   /** Companions of the current world (status-derived, R-UI): rows whose
    *  skill@version is ON render a read-only "Método en chat" badge. */
   companions?: MethodologyCompanion[];
-  onActivate: (skillId: string, version: string) => void;
-  busy: boolean;
   /** Optional sidebar selection contract (SC-SB-2.1): when provided, rows
    *  become clickable and report the clicked `skill_id`/`version`. */
   onSelect?: (skillId: string, version: string) => void;
@@ -91,8 +89,6 @@ interface SkillRowProps {
   /** Read-only companion marker (R-UI): true when this row's skill@version
    *  is an active companion in the current world. */
   isCompanion: boolean;
-  busy: boolean;
-  onActivate: (skillId: string, version: string) => void;
   onSelect?: (skillId: string, version: string) => void;
   selected?: { skill_id: string; version: string } | null;
 }
@@ -105,8 +101,6 @@ function SkillRow({
   isActive,
   hasActivation,
   isCompanion,
-  busy,
-  onActivate,
   onSelect,
   selected,
 }: SkillRowProps) {
@@ -117,7 +111,7 @@ function SkillRow({
   return (
     <li
       className={[
-        "flex items-center justify-between gap-4 rounded-lg border border-edge/20 bg-surface-raised/40 p-4 transition-colors",
+        "flex flex-wrap items-start justify-between gap-x-4 gap-y-2 rounded-lg border border-edge/20 bg-surface-raised/40 p-3 transition-colors",
         isSelected ? "border-action/50 bg-action/5" : "",
       ].join(" ")}
     >
@@ -125,17 +119,17 @@ function SkillRow({
         type="button"
         aria-pressed={isSelected}
         onClick={() => onSelect?.(skill.skill_id, skill.version)}
-        className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
+        className="min-w-[9rem] flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
       >
-        <p className="font-medium text-primary">{skill.name}</p>
-        <p className="text-small text-muted">
+        <p className="break-words font-medium text-primary">{skill.name}</p>
+        <p className="break-words text-small text-muted">
           {skill.skill_id}@{skill.version}
           {isActive && world && (
             <span className="ml-2 text-action">• Activa en {world}</span>
           )}
         </p>
       </button>
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
         <AxisBadge chip={slotChip} />
         {companion && <AxisBadge chip={companion} />}
         {state === "bloqueada" && (
@@ -150,25 +144,6 @@ function SkillRow({
             />
           </Tooltip>
         )}
-        {state === "bloqueada" ? (
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled
-            title="Adaptación disponible en fase futura"
-          >
-            Adaptar
-          </Button>
-        ) : (
-          <Button
-            variant={isActive ? "secondary" : "primary"}
-            size="sm"
-            disabled={!world || isActive || busy}
-            onClick={() => onActivate(skill.skill_id, skill.version)}
-          >
-            {isActive ? "Activada" : world ? "Activar" : "Sin mundo"}
-          </Button>
-        )}
       </div>
     </li>
   );
@@ -179,9 +154,10 @@ function SkillRow({
  * REQ-TRE-3/4/6): five collapsible groups in TW3 order plus the "Sin taller"
  * bucket (REQ-TRE-1 S3). Empty groups are hidden (REQ-TRE-3 S3). Each row
  * shows the name, `skill_id@version`, attributed axis-1/2 chips (REQ-TRE-4,
- * axis-binding-ui R1) and the world-gated Activar/Activada/Sin mundo button;
- * blocked rows show the conflict copy in a row tooltip (R3) and a disabled
- * Adaptar action (REQ-TRE-6 S2).
+ * axis-binding-ui R1) and the "Activa en {world}" info line for the active
+ * version; blocked rows show the conflict copy in a row tooltip (R3). Rows
+ * are selection + information only — activation/adaptation actions live in
+ * the right MethodologyStatePanel.
  */
 export function TallerTree({
   groups,
@@ -189,8 +165,6 @@ export function TallerTree({
   activeTaller,
   active,
   companions,
-  onActivate,
-  busy,
   onSelect,
   selected,
 }: TallerTreeProps) {
@@ -253,8 +227,6 @@ export function TallerTree({
                       isActive={isActive}
                       hasActivation={active != null}
                       isCompanion={isCompanion}
-                      busy={busy}
-                      onActivate={onActivate}
                       onSelect={onSelect}
                       selected={selected}
                     />

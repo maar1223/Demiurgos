@@ -34,16 +34,12 @@ interface TallerExplorerSidebarProps {
   status: MethodologyStatus | null;
   statusError: string | null;
   onStatusRetry: () => void;
-  // ── shared selection + actions ──────────────────────────────────────
+  // ── shared selection ────────────────────────────────────────────────
   /** Page-level selection; `null` clears it (filter contract SC-SB-2.3). */
   selected: MethodologySelection | null;
   onSelect: (sel: MethodologySelection | null) => void;
-  onActivate: (skillId: string, version: string) => void;
-  onAdaptar: (item: MethodologyInventoryItem) => void;
-  busy: boolean;
   // ── controlled compare selection (shared with the right panel) ──────
   compareSelection: MethodologyInventoryItem[];
-  onCompareToggle: (item: MethodologyInventoryItem) => void;
   /** UL-5: empty-state CTA of the mi-mundo library — switches the page to
    *  the "Crear skill" tab. Forwarded to MethodologyLibrary. */
   onGoToCoCrear?: () => void;
@@ -73,21 +69,21 @@ export function TallerExplorerSidebar({
   onStatusRetry,
   selected,
   onSelect,
-  onActivate,
-  onAdaptar,
-  busy,
   compareSelection,
-  onCompareToggle,
   onGoToCoCrear,
 }: TallerExplorerSidebarProps) {
   return (
     <div className="flex h-full flex-col">
       {/* Header block (SC-LEN-1.7): the lens toggle lives here, NOT as a
-       *  standalone flowing row. World first (broadest context), then the
-       *  taller it scopes, then the lens toggle. Each control carries a
-       *  visible text label (SB-1); the World/Taller selectors are suppressed
-       *  in the "catalogo-total" lens (UL-2) — only the lens toggle stays. */}
+       *  standalone flowing row. Lens first — it decides which context
+       *  controls apply — then the world it scopes and the taller below it.
+       *  The toggle is self-labeling (its segments state the lens), so it
+       *  carries no visible heading; `role="tablist"` + "Lente de la
+       *  biblioteca" keep its accessible name (SB-1). The World/Taller
+       *  selectors keep visible labels and are suppressed in the
+       *  "catalogo-total" lens (UL-2) — only the lens toggle stays. */}
       <div className="space-y-3 border-b border-edge px-4 py-3">
+        <LensToggle lens={lens} onChange={onLensChange} />
         {lens === "mi-mundo" && (
           <>
             <div className="space-y-1">
@@ -105,10 +101,6 @@ export function TallerExplorerSidebar({
             </div>
           </>
         )}
-        <div className="space-y-1">
-          <span className="text-xs font-medium text-muted">Lente</span>
-          <LensToggle lens={lens} onChange={onLensChange} />
-        </div>
       </div>
 
       {/* Explorer per lens */}
@@ -132,17 +124,13 @@ export function TallerExplorerSidebar({
               activeTaller={activeTaller}
               selected={selected}
               onSelect={onSelect}
-              onActivate={onActivate}
-              busy={busy}
               onGoToCoCrear={onGoToCoCrear}
             />
           </div>
         ) : (
           <GlobalMethodologyLibrary
-            onAdaptar={onAdaptar}
             onSelect={onSelect}
             compareSelection={compareSelection}
-            onCompareToggle={onCompareToggle}
           />
         )}
       </div>

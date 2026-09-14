@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import { TallerTree } from "@/components/organisms/TallerTree";
 import {
@@ -49,8 +49,6 @@ function renderTree(
       groups={allGroups}
       world="nec"
       activeTaller="Mundo"
-      onActivate={vi.fn()}
-      busy={false}
       {...overrides}
     />,
   );

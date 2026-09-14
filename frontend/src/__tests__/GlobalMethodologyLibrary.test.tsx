@@ -131,7 +131,7 @@ describe("GlobalMethodologyLibrary — list render (REQ-LIB-2)", () => {
     expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
   });
 
-  it("renders classification badges and trust chips, never hiding rows with missing clasificacion (REQ-LIB-5)", async () => {
+  it("shows the most specific origin label per row and never hides rows with missing clasificacion (REQ-LIB-5)", async () => {
     getInventoryMock.mockResolvedValue({
       items: [
         narrative,
@@ -145,7 +145,9 @@ describe("GlobalMethodologyLibrary — list render (REQ-LIB-2)", () => {
     // Scope to the list: the filter bar's clasificacion select also contains
     // the option labels (Oficiales/Personalizadas/Comunitarias).
     const list = screen.getByRole("list");
-    expect(within(list).getByText("Oficiales")).toBeInTheDocument();
+    // narrative is Oficiales WITH fundacional + verified → the implied
+    // "Oficiales" badge is suppressed; the trust chips carry the origin.
+    expect(within(list).queryByText("Oficiales")).not.toBeInTheDocument();
     expect(within(list).getByText("Fundacional")).toBeInTheDocument();
     expect(within(list).getByText("Verificado")).toBeInTheDocument();
     // Missing clasificacion → neutral badge, row still visible.
@@ -154,7 +156,7 @@ describe("GlobalMethodologyLibrary — list render (REQ-LIB-2)", () => {
 });
 
 describe("GlobalMethodologyLibrary — seeded foundational skill (foundational-skills-seeding)", () => {
-  it("renders a seeded-style item with Oficiales + Fundacional badges and its taller sub-line", async () => {
+  it("renders a seeded-style item with only the Fundacional chip (Oficiales is implied) and its taller sub-line", async () => {
     getInventoryMock.mockResolvedValue({ items: [seededNarrative] });
     render(<GlobalMethodologyLibrary />);
     await waitFor(() => {
@@ -166,8 +168,37 @@ describe("GlobalMethodologyLibrary — seeded foundational skill (foundational-s
     // Scope to the list: the filter bar's clasificacion select also contains
     // the option labels (Oficiales/Personalizadas/Comunitarias).
     const list = screen.getByRole("list");
-    expect(within(list).getByText("Oficiales")).toBeInTheDocument();
+    // The seed is Oficiales + fundacional → only the more specific chip shows.
+    expect(within(list).queryByText("Oficiales")).not.toBeInTheDocument();
     expect(within(list).getByText("Fundacional")).toBeInTheDocument();
+  });
+});
+
+describe("GlobalMethodologyLibrary — implied Oficiales badge is suppressed (REQ-LIB-5)", () => {
+  it("hides Oficiales when only the verified trust chip is present", async () => {
+    getInventoryMock.mockResolvedValue({
+      items: [{ ...narrative, trust_attributes: ["verified"] }],
+    });
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
+    const list = screen.getByRole("list");
+    expect(within(list).queryByText("Oficiales")).not.toBeInTheDocument();
+    expect(within(list).getByText("Verificado")).toBeInTheDocument();
+  });
+
+  it("keeps the badge for a non-Oficiales classification", async () => {
+    // worldbuilding is Personalizadas — no trust chip implies it.
+    getInventoryMock.mockResolvedValue({ items: [{ ...worldbuilding, trust_attributes: [] }] });
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Worldbuilding core")).toBeInTheDocument();
+    });
+
+    const list = screen.getByRole("list");
+    expect(within(list).getByText("Personalizadas")).toBeInTheDocument();
   });
 });
 
@@ -209,6 +240,26 @@ describe("GlobalMethodologyLibrary — client-side search (REQ-LIB-3)", () => {
     expect(screen.queryByText("Worldbuilding core")).not.toBeInTheDocument();
   });
 
+  it("matches etiquetas and categoría funcional through the single search field", async () => {
+    const user = userEvent.setup();
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
+    // "ideas" is only present as data on narrative (tag + categoría funcional),
+    // not in worldbuilding's name/id/description.
+    await user.type(screen.getByRole("searchbox"), "ideas");
+    expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    expect(screen.queryByText("Worldbuilding core")).not.toBeInTheDocument();
+
+    // "estructura" is worldbuilding's categoría funcional + tag, not its name.
+    await user.clear(screen.getByRole("searchbox"));
+    await user.type(screen.getByRole("searchbox"), "estructura");
+    expect(screen.getByText("Worldbuilding core")).toBeInTheDocument();
+    expect(screen.queryByText("Narrative Proposer")).not.toBeInTheDocument();
+  });
+
   it("shows 'Sin resultados' when the query matches nothing (REQ-LIB-3 S2)", async () => {
     const user = userEvent.setup();
     render(<GlobalMethodologyLibrary />);
@@ -223,7 +274,7 @@ describe("GlobalMethodologyLibrary — client-side search (REQ-LIB-3)", () => {
 });
 
 describe("GlobalMethodologyLibrary — server-side filters (REQ-LIB-4)", () => {
-  it("re-queries conjunctively when clasificacion and etiquetas are both set", async () => {
+  it("re-queries conjunctively when clasificacion and categoría funcional are both set", async () => {
     const user = userEvent.setup();
     render(<GlobalMethodologyLibrary />);
     await waitFor(() => {
@@ -238,17 +289,16 @@ describe("GlobalMethodologyLibrary — server-side filters (REQ-LIB-4)", () => {
       });
     });
 
-    // No taller filter in the catalog (the sidebar header carries the taller
-    // selector); etiquetas is a server-side conjunctive control alongside
-    // clasificacion. fireEvent.change sets the value in one shot (user.type
-    // is flaky here because each keystroke re-queries and re-renders).
-    fireEvent.change(screen.getByLabelText("Etiquetas"), {
-      target: { value: "plot" },
-    });
+    // Both facets are closed-set selects; there is no free-text tag filter —
+    // the single "Buscar" field covers tags client-side.
+    await user.selectOptions(
+      screen.getByLabelText("Categoría funcional"),
+      "Creación",
+    );
     await waitFor(() => {
       expect(getInventoryMock).toHaveBeenLastCalledWith({
         clasificacion: "Oficiales",
-        etiquetas: "plot",
+        categoria_funcional: "Creación",
       });
     });
   });
@@ -261,68 +311,153 @@ describe("GlobalMethodologyLibrary — server-side filters (REQ-LIB-4)", () => {
     });
 
     await user.selectOptions(screen.getByLabelText("Clasificación"), "Oficiales");
-    fireEvent.change(screen.getByLabelText("Etiquetas"), {
-      target: { value: "plot" },
-    });
+    await user.selectOptions(
+      screen.getByLabelText("Categoría funcional"),
+      "Creación",
+    );
     await waitFor(() => {
       expect(getInventoryMock).toHaveBeenLastCalledWith({
         clasificacion: "Oficiales",
-        etiquetas: "plot",
+        categoria_funcional: "Creación",
       });
     });
 
-    // Clear clasificacion → re-query without that key, etiquetas persists.
+    // Clear clasificacion → re-query without that key, categoría persists.
     await user.selectOptions(screen.getByLabelText("Clasificación"), "");
     await waitFor(() => {
-      expect(getInventoryMock).toHaveBeenLastCalledWith({ etiquetas: "plot" });
+      expect(getInventoryMock).toHaveBeenLastCalledWith({
+        categoria_funcional: "Creación",
+      });
     });
     expect(getInventoryMock).not.toHaveBeenLastCalledWith(
       expect.objectContaining({ clasificacion: expect.anything() }),
     );
   });
 
-  it("shows the categoría funcional placeholder drawn from the allowed set (UC-5 S1)", async () => {
+  it("renders Categoría funcional as a closed-set select, not a search box (UC-5 S1)", async () => {
     render(<GlobalMethodologyLibrary />);
     await waitFor(() => {
       expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
     });
 
-    // The placeholder must be an example from CATEGORIA_FUNCIONAL_ALLOWED
-    // (spec UC-5 S1), not the old "Ej. Generación de ideas".
-    expect(screen.getByPlaceholderText("Ej. Creación")).toBeInTheDocument();
+    // The field is an enum (methodology_compiler.CATEGORIA_FUNCIONAL_ALLOWED),
+    // so it filters through a select with every allowed value.
+    const categoria = screen.getByLabelText("Categoría funcional");
+    expect(categoria.tagName).toBe("SELECT");
+    for (const value of [
+      "Creación",
+      "Investigación",
+      "Diseño",
+      "Análisis",
+      "Organización",
+      "Visualización",
+    ]) {
+      expect(within(categoria).getByRole("option", { name: value })).toBeInTheDocument();
+    }
   });
-});
 
-describe("GlobalMethodologyLibrary — detail panel (REQ-LIB-6)", () => {
-  it("opens the detail panel with full metadata when a row is clicked", async () => {
+  it("offers 'Fundacional' in Clasificación and maps it to its own trust facet", async () => {
     const user = userEvent.setup();
     render(<GlobalMethodologyLibrary />);
     await waitFor(() => {
       expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByText("Narrative Proposer"));
-    // Scope to the panel: the filter bar shares some field labels
-    // (Categoría funcional) and the row keeps its own badges/chips.
-    const detailPanel = screen
-      .getByRole("heading", { name: "Narrative Proposer" })
-      .closest("section")!;
+    // The Clasificación select carries the origin enum plus the "Fundacional"
+    // trust facet (server-seeded skills) — a UI convenience mapping to its own
+    // `fundacional` query param, not to a `clasificacion` origin value.
+    const clasificacion = screen.getByLabelText("Clasificación");
     expect(
-      within(detailPanel).getByText(
-        "Genera propuestas narrativas coherentes con el mundo.",
-      ),
+      within(clasificacion).getByRole("option", { name: "Fundacional" }),
     ).toBeInTheDocument();
-    expect(
-      within(detailPanel).getByText("Categoría funcional"),
-    ).toBeInTheDocument();
-    expect(within(detailPanel).getByText("narrativa")).toBeInTheDocument();
-    expect(within(detailPanel).getByText("Oficiales")).toBeInTheDocument();
-    expect(within(detailPanel).getByText("Fundacional")).toBeInTheDocument();
 
-    // Closing hides the panel again.
-    await user.click(screen.getByRole("button", { name: "Cerrar" }));
+    // Selecting "Fundacional" sends { fundacional: true } with no clasificacion.
+    await user.selectOptions(clasificacion, "Fundacional");
+    await waitFor(() => {
+      expect(getInventoryMock).toHaveBeenLastCalledWith({ fundacional: true });
+    });
+    expect(getInventoryMock).not.toHaveBeenLastCalledWith(
+      expect.objectContaining({ clasificacion: expect.anything() }),
+    );
+
+    // Selecting "Oficiales" afterwards drops fundacional and restores the origin facet.
+    await user.selectOptions(clasificacion, "Oficiales");
+    await waitFor(() => {
+      expect(getInventoryMock).toHaveBeenLastCalledWith({
+        clasificacion: "Oficiales",
+      });
+    });
+    expect(getInventoryMock).not.toHaveBeenLastCalledWith(
+      expect.objectContaining({ fundacional: expect.anything() }),
+    );
+  });
+});
+
+describe("GlobalMethodologyLibrary — filter bar stays mounted during re-query (regression)", () => {
+  it("keeps the filter bar mounted and holds the selected filter while the debounced request is pending", async () => {
+    const user = userEvent.setup();
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
+    // Next request stays pending so we can observe the in-flight state.
+    let resolvePending: (value: {
+      items: MethodologyInventoryItem[];
+    }) => void = () => undefined;
+    getInventoryMock.mockReturnValueOnce(
+      new Promise<{ items: MethodologyInventoryItem[] }>((resolve) => {
+        resolvePending = resolve;
+      }),
+    );
+
+    await user.selectOptions(
+      screen.getByLabelText("Categoría funcional"),
+      "Creación",
+    );
+
+    // The debounced fetch fires; while it is pending the filter bar must stay
+    // mounted (no early return) and keep the selected value.
+    await waitFor(() => {
+      expect(
+        screen.getByRole("status", { name: "Cargando" }),
+      ).toBeInTheDocument();
+    });
+    const stillMounted = screen.getByLabelText("Categoría funcional");
+    expect(stillMounted).toBeInTheDocument();
+    expect(stillMounted).toHaveValue("Creación");
+
+    resolvePending({ items: [narrative] });
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+  });
+});
+
+describe("GlobalMethodologyLibrary — no inline detail (center view owns it)", () => {
+  it("reports the clicked row upward without rendering a detail panel inline", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    render(<GlobalMethodologyLibrary onSelect={onSelect} />);
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("Narrative Proposer"));
+
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skill_id: "narrative-proposer",
+        version: "1.2.0",
+      }),
+    );
+    // The full description/metadata lives in the center MethodologyDetailView;
+    // the catalog list must never repeat it inline.
     expect(
       screen.queryByText("Genera propuestas narrativas coherentes con el mundo."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Cerrar" }),
     ).not.toBeInTheDocument();
   });
 });
@@ -364,6 +499,7 @@ describe("Compare selection (REQ-LIB-7 / UL-4) — compare panel lives in the ri
         status={panelStatus}
         lens="catalogo-total"
         onActivate={vi.fn()}
+        onDeactivate={vi.fn()}
         onAdaptar={vi.fn()}
         onComparar={vi.fn()}
         onExportar={vi.fn()}
@@ -422,7 +558,6 @@ describe("Compare selection (REQ-LIB-7 / UL-4) — compare panel lives in the ri
     render(
       <GlobalMethodologyLibrary
         compareSelection={[narrative, worldbuilding]}
-        onCompareToggle={vi.fn()}
       />,
     );
     await waitFor(() => {
@@ -436,85 +571,8 @@ describe("Compare selection (REQ-LIB-7 / UL-4) — compare panel lives in the ri
   });
 });
 
-describe("GlobalMethodologyLibrary — export action (REQ-IMP-1)", () => {
-  /** jsdom lacks URL.createObjectURL; define it for the download path. */
-  function stubObjectUrl() {
-    const createObjectURL = vi.fn(() => "blob:mock");
-    const revokeObjectURL = vi.fn();
-    Object.defineProperty(URL, "createObjectURL", {
-      configurable: true,
-      value: createObjectURL,
-    });
-    Object.defineProperty(URL, "revokeObjectURL", {
-      configurable: true,
-      value: revokeObjectURL,
-    });
-    return { createObjectURL, revokeObjectURL };
-  }
-
-  function unstubObjectUrl() {
-    const urlApi = URL as unknown as {
-      createObjectURL?: unknown;
-      revokeObjectURL?: unknown;
-    };
-    delete urlApi.createObjectURL;
-    delete urlApi.revokeObjectURL;
-  }
-
-  it("downloads the published version as a zip when Exportar is clicked", async () => {
-    const user = userEvent.setup();
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(new Blob(["zip-bytes"], { type: "application/zip" }), {
-        status: 200,
-        headers: { "Content-Type": "application/zip" },
-      }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    const { createObjectURL, revokeObjectURL } = stubObjectUrl();
-
-    render(<GlobalMethodologyLibrary />);
-    await waitFor(() => {
-      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
-    });
-
-    await user.click(screen.getAllByRole("button", { name: "Exportar" })[0]);
-
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        "/api/methodologies/published/narrative-proposer/1.2.0/export",
-        expect.objectContaining({ method: "POST" }),
-      );
-    });
-    expect(createObjectURL).toHaveBeenCalled();
-    expect(revokeObjectURL).toHaveBeenCalledWith("blob:mock");
-
-    unstubObjectUrl();
-    vi.unstubAllGlobals();
-  });
-
-  it("shows an inline error when the export fails", async () => {
-    const user = userEvent.setup();
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(JSON.stringify({ detail: "boom" }), { status: 500 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<GlobalMethodologyLibrary />);
-    await waitFor(() => {
-      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
-    });
-
-    await user.click(screen.getAllByRole("button", { name: "Exportar" })[0]);
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(
-      "No se pudo exportar la metodología.",
-    );
-    vi.unstubAllGlobals();
-  });
-});
-
 describe("GlobalMethodologyLibrary — page-level selection (SC-SB-2.2)", () => {
-  it("reports the clicked row to onSelect alongside the internal detail panel", async () => {
+    it("reports the clicked row to onSelect (detail renders in the center view)", async () => {
     const user = userEvent.setup();
     const onSelect = vi.fn();
     render(<GlobalMethodologyLibrary onSelect={onSelect} />);

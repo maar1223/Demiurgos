@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { MethodologyInventoryItem, MethodologyStatus } from "@/api/types";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
@@ -42,9 +43,17 @@ interface MethodologyStatePanelProps {
    *  "Conflicto" panel blocks (axis-binding-ui R3, REQ-TRE-6). */
   activeTaller?: string;
   onActivate: (skillId: string, version: string) => void;
+  /** World-scoped deactivation (mi-mundo): clears the world's activation slot
+   *  for the selected version (the active state is shown by the Versiones
+   *  block and the sidebar chip, so the action slot carries this instead of
+   *  a disabled "Activada" button). */
+  onDeactivate: (skillId: string, version: string) => void;
   onAdaptar: (item: MethodologyInventoryItem) => void;
   onComparar: (item: MethodologyInventoryItem) => void;
-  onExportar: (item: MethodologyInventoryItem) => void;
+  /** Catalogo "Exportar" — resolves the `.zip` download; when it rejects the
+   *  panel surfaces the inline export error (REQ-IMP-1: feedback moved from
+   *  the catalog rows to this panel). */
+  onExportar: (item: MethodologyInventoryItem) => Promise<void> | void;
   /** Companion toggle, page-owned (mirrors onActivate; refetches status).
    *  `on` true activates the selected version, false deactivates the skill. */
   onToggleCompanion?: (skillId: string, version: string, on: boolean) => void;
@@ -66,9 +75,9 @@ interface MethodologyStatePanelProps {
  * Renders versions/activations derived from `getMethodologyStatus()` filtered
  * by `skill_id`, provenance via `ProvenanceBadge(parentSkillId/parentVersion)`
  * (SC-SB-4.3), talleres compatibles, etiquetas, and lens-appropriate actions:
- * mi-mundo → Activar + Adaptar (SC-SB-4.1); catalogo → Adaptar + Comparar +
- * Exportar with NO Activar (SC-SB-4.2). Null selection renders an empty state
- * (SC-SB-4.4).
+ * mi-mundo → Activar/Desactivar + Adaptar (SC-SB-4.1); catalogo → Adaptar +
+ * Comparar + Exportar with NO Activar (SC-SB-4.2). Null selection renders an
+ * empty state (SC-SB-4.4).
  */
 export function MethodologyStatePanel({
   selected,
@@ -77,6 +86,7 @@ export function MethodologyStatePanel({
   world,
   activeTaller,
   onActivate,
+  onDeactivate,
   onAdaptar,
   onComparar,
   onExportar,
@@ -87,6 +97,10 @@ export function MethodologyStatePanel({
   compareSelection,
   onCompareClear,
 }: MethodologyStatePanelProps) {
+  /** Export failure feedback (REQ-IMP-1): the right panel owns the inline
+   *  alert the catalog rows used to render. */
+  const [exportError, setExportError] = useState<string | null>(null);
+
   if (!selected) {
     return (
       <EmptyState
@@ -143,6 +157,26 @@ export function MethodologyStatePanel({
    *  world: it never gets companion chips and its slot Activar stays disabled
    *  (the companion routes 404 it). */
   const isIdeasGlobal = world === GLOBAL_ASSISTANT_CONTEXT;
+
+  /** The selected version is already the current world activation — the
+   *  mi-mundo action slot swaps Activar for the deactivate affordance (the
+   *  Versiones block and the sidebar chip already show the active state;
+   *  REQ-TRE-7: one active version per world). */
+  const isWorldActive =
+    world != null &&
+    activations[world]?.skill_id === selected.skill_id &&
+    activations[world]?.version === selected.version;
+
+  /** Wraps the download so a rejection surfaces the inline alert instead of
+   *  failing silently (REQ-IMP-1). */
+  const handleExport = async (item: MethodologyInventoryItem) => {
+    setExportError(null);
+    try {
+      await onExportar(item);
+    } catch {
+      setExportError("No se pudo exportar la metodología.");
+    }
+  };
 
   /** Axis-surface derivations (axis-binding-ui R3, REQ-TRE-6): the selected
    *  skill's scope and conflict state, driven by the same activeTaller/world
@@ -322,15 +356,27 @@ export function MethodologyStatePanel({
         <div className="mt-3 flex flex-wrap gap-2">
           {isMiMundo ? (
             <>
-              <Button
-                variant="primary"
-                size="sm"
-                disabled={!world || isIdeasGlobal}
-                onClick={() => onActivate(selected.skill_id, selected.version)}
-                title="Activa esta versión para nuevas sesiones en el mundo seleccionado."
-              >
-                Activar
-              </Button>
+              {isWorldActive ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={!world || isIdeasGlobal || busy}
+                  onClick={() => onDeactivate(selected.skill_id, selected.version)}
+                  title="Quita esta versión de las nuevas sesiones del mundo seleccionado."
+                >
+                  Desactivar
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={!world || isIdeasGlobal || busy}
+                  onClick={() => onActivate(selected.skill_id, selected.version)}
+                  title="Activa esta versión para nuevas sesiones en el mundo seleccionado."
+                >
+                  Activar
+                </Button>
+              )}
               <Button
                 variant="secondary"
                 size="sm"
@@ -353,12 +399,25 @@ export function MethodologyStatePanel({
               <Button variant="secondary" size="sm" onClick={() => onComparar(item)}>
                 Comparar
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => onExportar(item)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => void handleExport(item)}
+              >
                 Exportar
               </Button>
             </>
           )}
         </div>
+
+        {exportError && (
+          <p
+            role="alert"
+            className="mt-3 rounded-md border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error"
+          >
+            {exportError}
+          </p>
+        )}
 
         {/* Companion ON/OFF chips (R-UI): a world-scoped, multi-activation
          * control beside Activar — the single activation slot is never

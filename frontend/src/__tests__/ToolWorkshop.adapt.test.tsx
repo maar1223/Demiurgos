@@ -14,6 +14,7 @@ vi.mock("@/api/methodologies", () => ({
   createMethodologyDraft: vi.fn(),
   publishMethodologyDraft: vi.fn(),
   activateMethodology: vi.fn(),
+  deactivateMethodology: vi.fn(),
   getMethodologyInventory: vi.fn(),
 }));
 
@@ -42,6 +43,7 @@ import {
 } from "@/api/methodologies";
 import {
   deriveDraft,
+  getPublishedDetail,
   recoverCoCreationSession,
 } from "@/api/coCreation";
 import type { WorldInfo } from "@/api/types";
@@ -113,6 +115,24 @@ const derivedSession = {
   derived_from: { skill_id: "eneagrama", version: "1.2.0" },
 };
 
+/** Published detail served by the center `MethodologyDetailView` once a row
+ *  is selected (SC-SB-3.1). */
+const publishedDetail = {
+  skill_id: "eneagrama",
+  version: "1.2.0",
+  name: "Eneagrama oficial",
+  description: "Clasificación de personalidades",
+  digest: "abc",
+  published_at: "2026-01-01",
+  phases: [],
+  language: "es",
+  source: "# Eneagrama\n\nContenido publicado.",
+  taller: "Mundo",
+  etiquetas: [],
+  parent_skill_id: null,
+  parent_version: null,
+};
+
 function renderToolWorkshop() {
   return render(
     <MemoryRouter initialEntries={["/taller-herramientas"]}>
@@ -134,6 +154,7 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
     });
     (getMethodologyStatus as Mock).mockResolvedValue(status);
     (getMethodologyInventory as Mock).mockResolvedValue(inventory);
+    (getPublishedDetail as Mock).mockResolvedValue(publishedDetail);
   });
 
   afterEach(() => {
@@ -159,7 +180,9 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
       expect(screen.getByText("Eneagrama oficial")).toBeInTheDocument();
     });
 
-    // TW13 gate: Oficiales rows offer "Adaptar" (derivation, not in-place).
+    // TW13 gate: select the published row — the right state panel now owns
+    // the "Adaptar" action for the catalogo lens (derivation, not in-place).
+    await user.click(screen.getByText("Eneagrama oficial"));
     await user.click(screen.getByRole("button", { name: "Adaptar" }));
 
     await waitFor(() => {
@@ -194,6 +217,7 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
       expect(screen.getByText("Eneagrama oficial")).toBeInTheDocument();
     });
 
+    await user.click(screen.getByText("Eneagrama oficial"));
     await user.click(screen.getByRole("button", { name: "Adaptar" }));
 
     await waitFor(() => {

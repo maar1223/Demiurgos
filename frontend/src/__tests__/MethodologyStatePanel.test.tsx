@@ -151,6 +151,7 @@ function renderPanel(
     world: "nec",
     activeTaller: "Mundo",
     onActivate: vi.fn(),
+    onDeactivate: vi.fn(),
     onAdaptar: vi.fn(),
     onComparar: vi.fn(),
     onExportar: vi.fn(),
@@ -177,7 +178,10 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
   });
 
   it("shows Activar + Adaptar in mi-mundo (SC-SB-4.1)", () => {
-    const props = renderPanel();
+    // 1.3.0 is published but NOT the world activation — Activar stays enabled.
+    const props = renderPanel({
+      selected: { skill_id: "eneagrama", version: "1.3.0" },
+    });
 
     const activar = screen.getByRole("button", { name: "Activar" });
     const adaptar = screen.getByRole("button", { name: "Adaptar" });
@@ -186,7 +190,25 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     expect(activar).toBeEnabled();
 
     fireEvent.click(activar);
-    expect(props.onActivate).toHaveBeenCalledWith("eneagrama", "1.2.0");
+    expect(props.onActivate).toHaveBeenCalledWith("eneagrama", "1.3.0");
+  });
+
+  it("shows an enabled Desactivar button for the active version and fires onDeactivate (REQ-TRE-7)", () => {
+    // Default fixture: eneagrama@1.2.0 IS activations.nec — the action slot
+    // carries the real deactivate affordance instead of a dead-end "Activada".
+    const props = renderPanel();
+
+    const desactivar = screen.getByRole("button", { name: "Desactivar" });
+    expect(desactivar).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: "Activar" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Activada" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(desactivar);
+    expect(props.onDeactivate).toHaveBeenCalledWith("eneagrama", "1.2.0");
   });
 
   it("shows Adaptar + Comparar + Exportar and NO Activar in catalogo (SC-SB-4.2)", () => {
@@ -283,8 +305,19 @@ describe("MethodologyStatePanel (SC-SB-4)", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("surfaces an inline export error when onExportar rejects (REQ-IMP-1 feedback in the right panel)", async () => {
+    const onExportar = vi.fn().mockRejectedValue(new Error("boom"));
+    renderPanel({ lens: "catalogo-total" as const, onExportar });
+
+    fireEvent.click(screen.getByRole("button", { name: "Exportar" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "No se pudo exportar la metodología.",
+    );
+  });
+
   it("shows consequence tooltips on the Activar and Adaptar actions (UC-6)", () => {
-    renderPanel();
+    renderPanel({ selected: { skill_id: "eneagrama", version: "1.3.0" } });
 
     expect(screen.getByRole("button", { name: "Activar" })).toHaveAttribute(
       "title",

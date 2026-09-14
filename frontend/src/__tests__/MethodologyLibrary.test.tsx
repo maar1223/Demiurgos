@@ -31,8 +31,6 @@ function renderLibrary(
     status,
     selected: null,
     onSelect: vi.fn(),
-    onActivate: vi.fn(),
-    busy: false,
   };
   render(<MethodologyLibrary {...props} {...overrides} />);
   return props;
@@ -60,29 +58,7 @@ describe("MethodologyLibrary", () => {
     });
   });
 
-  it("activates a version for the selected world through the page handler", async () => {
-    const user = userEvent.setup();
-    const props = renderLibrary();
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Activar" })).toBeEnabled();
-    });
-
-    await user.click(screen.getByRole("button", { name: "Activar" }));
-    await waitFor(() => {
-      expect(props.onActivate).toHaveBeenCalledWith(
-        "guided-character-v1", "1.2.0",
-      );
-    });
-  });
-
-  it("disables activate without a selected world", async () => {
-    renderLibrary({ world: undefined });
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "Sin mundo" })).toBeDisabled();
-    });
-  });
-
-  it("shows the active badge once a version is active for the world", async () => {
+  it("shows the active info line once a version is active for the world", async () => {
     renderLibrary({
       status: {
         ...status,
@@ -97,7 +73,6 @@ describe("MethodologyLibrary", () => {
     await waitFor(() => {
       expect(screen.getByText(/Activa en nec/)).toBeInTheDocument();
     });
-    expect(screen.getByRole("button", { name: "Activada" })).toBeDisabled();
   });
 
   it("renders tree groups in TW3 order with the correct badge variants", async () => {
@@ -221,7 +196,7 @@ describe("MethodologyLibrary", () => {
     expect(within(transRow).queryByText("Transversal")).not.toBeInTheDocument();
   });
 
-  it("shows the blocked explanation and a disabled Adaptar action", async () => {
+  it("shows the blocked explanation tooltip — no row action renders (REQ-TRE-6 S1)", async () => {
     const blockedStatus: MethodologyStatus = {
       published: [
         {
@@ -292,13 +267,11 @@ describe("MethodologyLibrary", () => {
     // tooltip only.
     expect(within(blockedRow).queryByText("Bloqueada")).not.toBeInTheDocument();
 
-    // Adaptar is disabled with the future-phase tooltip (REQ-TRE-6 S2).
-    const adaptar = screen.getByRole("button", { name: "Adaptar" });
-    expect(adaptar).toBeDisabled();
-    expect(adaptar).toHaveAttribute(
-      "title",
-      "Adaptación disponible en fase futura",
-    );
+    // Rows are selection + information only: no disabled Adaptar action
+    // renders on the tree (actions live in the right MethodologyStatePanel).
+    expect(
+      within(blockedRow).queryByRole("button", { name: "Adaptar" }),
+    ).not.toBeInTheDocument();
   });
 
   it("preserves the selection while the filtered row stays visible (SC-SB-2.3)", async () => {
