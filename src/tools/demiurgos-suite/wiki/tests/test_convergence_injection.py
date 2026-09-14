@@ -4,6 +4,8 @@ Covers the serve seam guards: pinned carrier bytes are served exactly when
 the carrier's sha256 equals the pin (scenario "serve pinned bytes"); drifted
 bytes, missing carriers, over-budget text, ``../`` traversal, and malformed
 pins all skip silently (scenario "skip on drift" + threat guards, D6/D8/D10).
+Also covers the D1 viewing seam (``read_adjunto_text``), which shares the byte
+guards but serves the full carrier without the injection token budget.
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from convergence_injection import (  # noqa: E402
     build_specimen_block,
     carrier_root_for,
     read_adjunto_bytes,
+    read_adjunto_text,
     serve_adjunto,
 )
 from contract_projection import _CHARS_PER_TOKEN, _estimate_tokens  # noqa: E402
@@ -185,6 +188,62 @@ class TestReadAdjuntoBytes:
         pin, data = _pin("grande.md", text=over)
         (tmp_path / "grande.md").write_bytes(data)
         assert read_adjunto_bytes(tmp_path, pin) == data
+
+
+class TestReadAdjuntoText:
+    """D1 viewing seam: full pinned carrier text with the byte-length and UTF-8
+    guards, but WITHOUT the ``MAX_SPECIMEN_TOKENS`` injection budget — a viewer
+    must serve the whole exemplar even when it overflows the injection cap."""
+
+    def test_read_adjunto_text_returns_exact_text(self, tmp_path: Path) -> None:
+        """The pinned carrier is returned as its exact UTF-8 text."""
+        pin, data = _pin("ejemplos/ejemplo.md", text="# Ejemplo\n\nContenido fiel.\n")
+        (tmp_path / "ejemplos").mkdir()
+        (tmp_path / "ejemplos" / "ejemplo.md").write_bytes(data)
+        assert read_adjunto_text(tmp_path, pin) == "# Ejemplo\n\nContenido fiel.\n"
+
+    def test_read_adjunto_text_length_drift_returns_none(self, tmp_path: Path) -> None:
+        """Threat guard: a pin whose declared byte length no longer matches the
+        served bytes is refused, isolating the ``len(data) != pin.bytes`` guard
+        (the digest still matches here)."""
+        pin, data = _pin("ejemplos/ejemplo.md", text="# Ejemplo\n\nContenido fiel.\n")
+        (tmp_path / "ejemplos").mkdir()
+        (tmp_path / "ejemplos" / "ejemplo.md").write_bytes(data)
+        drifted = AttachmentEntry(
+            path=pin.path,
+            sha256=pin.sha256,
+            bytes=pin.bytes + 1,
+            nivel=pin.nivel,
+        )
+        assert read_adjunto_text(tmp_path, drifted) is None
+
+    def test_read_adjunto_text_sha_drift_returns_none(self, tmp_path: Path) -> None:
+        """Threat guard: bytes changed post-publish are never served."""
+        pin, _ = _pin("ejemplos/ejemplo.md")
+        (tmp_path / "ejemplos").mkdir()
+        (tmp_path / "ejemplos" / "ejemplo.md").write_bytes(b"# Drifted\n")
+        assert read_adjunto_text(tmp_path, pin) is None
+
+    def test_read_adjunto_text_non_utf8_returns_none(self, tmp_path: Path) -> None:
+        """Threat guard: a pinned carrier that is not valid UTF-8 is refused."""
+        binary = b"\xff\xfe\x00\x01"
+        pin = AttachmentEntry(
+            path="binario.md",
+            sha256=hashlib.sha256(binary).hexdigest(),
+            bytes=len(binary),
+            nivel="1º",
+        )
+        (tmp_path / "binario.md").write_bytes(binary)
+        assert read_adjunto_text(tmp_path, pin) is None
+
+    def test_read_adjunto_text_over_budget_untruncated(self, tmp_path: Path) -> None:
+        """Key differentiator from ``serve_adjunto``: an over-3072-token carrier
+        is returned in full, never skipped and never truncated."""
+        over = "x" * (MAX_SPECIMEN_TOKENS * 4 + 1)
+        pin, data = _pin("grande.md", text=over)
+        (tmp_path / "grande.md").write_bytes(data)
+        assert _estimate_tokens(over) > MAX_SPECIMEN_TOKENS
+        assert read_adjunto_text(tmp_path, pin) == over
 
 
 class TestBuildSpecimenBlock:

@@ -87,6 +87,25 @@ def serve_adjunto(seed_dir: Path, pin: AttachmentEntry) -> str | None:
     return text
 
 
+def read_adjunto_text(seed_dir: Path, pin: AttachmentEntry) -> str | None:
+    """Return the pinned carrier as full UTF-8 text, or ``None`` on any failure.
+
+    Viewing seam (D1): ``read_adjunto_bytes`` already enforces containment,
+    existence, and the SHA-256 pin; this seam additionally requires that the
+    served byte length still matches the pin and that the bytes decode as
+    UTF-8. The ``MAX_SPECIMEN_TOKENS`` budget is deliberately NOT applied here
+    — unlike ``serve_adjunto``, a viewer must present the complete exemplar, so
+    an oversized carrier is served whole rather than silently skipped.
+    """
+    data = read_adjunto_bytes(seed_dir, pin)
+    if data is None or len(data) != pin.bytes:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
 def build_specimen_block(
     seed_dir: Path, adjuntos: tuple[AttachmentEntry, ...], nivel: str,
 ) -> str | None:
