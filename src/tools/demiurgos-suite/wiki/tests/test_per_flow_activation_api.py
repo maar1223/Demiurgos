@@ -374,3 +374,70 @@ class TestPerFlowActivationApi:
             "/api/methodologies/rollback", json={"world": "no_such_world"}
         ).status_code == 404
         assert client.get("/api/methodologies/active/no_such_world").status_code == 404
+
+    def test_deactivate_clears_one_slot_keeps_others(self, client, monkeypatch):
+        """SR1: deactivate clears ONLY the requested flow slot; other flows
+        keep their pin and the cleared slot reads back as ``activation: null``."""
+        _principal(monkeypatch)
+        self._publish(client, "skill-a", "1.0.0", "Skill A")
+        self._publish(client, "skill-b", "2.0.0", "Skill B")
+        self._activate(client, "skill-a", "1.0.0")
+        self._activate(client, "skill-b", "2.0.0", flow_type="co-creation")
+        cleared = client.post("/api/methodologies/deactivate", json={
+            "world": "test_mundo", "flow_type": "co-creation",
+        })
+        assert cleared.status_code == 200
+        assert cleared.json() == {
+            "world": "test_mundo", "flow_type": "co-creation",
+            "skill_id": None, "version": None, "digest": None, "activated_at": None,
+        }
+        assert client.get(
+            "/api/methodologies/active/test_mundo?flow_type=co-creation"
+        ).json()["activation"] is None
+        # The guided-character slot is untouched.
+        assert client.get(
+            "/api/methodologies/active/test_mundo"
+        ).json()["activation"]["skill_id"] == "skill-a"
+
+    def test_deactivate_empty_slot_idempotent(self, client, monkeypatch):
+        """SR1: clearing an already-empty slot is a 200 no-op with the same
+        cleared echo (never an error)."""
+        _principal(monkeypatch)
+        self._publish(client, "skill-a", "1.0.0", "Skill A")
+        self._activate(client, "skill-a", "1.0.0")
+        first = client.post("/api/methodologies/deactivate", json={"world": "test_mundo"})
+        assert first.status_code == 200
+        assert first.json()["skill_id"] is None
+        again = client.post("/api/methodologies/deactivate", json={"world": "test_mundo"})
+        assert again.status_code == 200
+        assert again.json()["skill_id"] is None
+        assert again.json()["flow_type"] == "guided-character"
+
+    def test_deactivate_unknown_flow_422_zero_mutation(self, client, monkeypatch):
+        """SR1: bogus/empty flow -> 422 on deactivate BEFORE any library call;
+        the remaining slot keeps its pin (zero mutation)."""
+        _principal(monkeypatch)
+        self._publish(client, "skill-a", "1.0.0", "Skill A")
+        self._activate(client, "skill-a", "1.0.0")
+        for flow in ("bogus-flow", ""):
+            resp = client.post("/api/methodologies/deactivate", json={
+                "world": "test_mundo", "flow_type": flow,
+            })
+            assert resp.status_code == 422
+            assert resp.json()["code"] == "unsupported_flow_type"
+        # Zero mutation: the guided slot still holds skill-a.
+        assert client.get(
+            "/api/methodologies/active/test_mundo"
+        ).json()["activation"]["skill_id"] == "skill-a"
+
+    def test_deactivate_prelude_parity_401_404(self, client, monkeypatch):
+        """SR1: deactivate shares the slot routes' prelude — 401 unauth,
+        404 unknown world."""
+        monkeypatch.setattr(api_server, "_resolve_principal", lambda request: None)
+        assert client.post(
+            "/api/methodologies/deactivate", json={"world": "test_mundo"}
+        ).status_code == 401
+        _principal(monkeypatch)
+        assert client.post(
+            "/api/methodologies/deactivate", json={"world": "no_such_world"}
+        ).status_code == 404

@@ -1798,6 +1798,12 @@ class MethodologyRollbackRequest(BaseModel):
     flow_type: str = DEFAULT_FLOW_TYPE
 
 
+class MethodologyDeactivateRequest(BaseModel):
+    world: str
+    # The guided-flow slot to clear (SR1); absent/omitted = guided-character.
+    flow_type: str = DEFAULT_FLOW_TYPE
+
+
 class MethodologyCompanionActivateRequest(BaseModel):
     world: str
     skill_id: str
@@ -8405,6 +8411,30 @@ def methodologies_rollback(body: MethodologyRollbackRequest, request: Request):
         "digest": activation.digest,
         "activated_at": activation.activated_at,
     }
+
+
+@app.post("/api/methodologies/deactivate")
+def methodologies_deactivate(body: MethodologyDeactivateRequest, request: Request):
+    """Clear a world's flow slot (SR1), per-flow.
+
+    Mirrors the rollback prelude exactly (401 unauth / 404 unknown world /
+    422 unsupported flow type before any library call). Deactivating an
+    already-empty slot is idempotent: the cleared echo is returned either way.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if _resolve_mundo_dir(body.world) is None:
+        return JSONResponse(status_code=404, content={"detail": "Mundo no encontrado"})
+    if body.flow_type not in SUPPORTED_FLOW_TYPES:
+        return JSONResponse(status_code=422, content={
+            "detail": f"unsupported flow type {body.flow_type!r}",
+            "code": "unsupported_flow_type",
+        })
+    library = _methodology_library()
+    library.deactivate(body.world, body.flow_type)
+    return {"world": body.world, "flow_type": body.flow_type,
+            "skill_id": None, "version": None, "digest": None, "activated_at": None}
 
 
 @app.post("/api/methodologies/companions/activate")

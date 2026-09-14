@@ -103,6 +103,18 @@ export function rollbackMethodology(
   });
 }
 
+/** POST /api/methodologies/deactivate — clear the world's activation slot
+ *  (idempotent: an already-empty slot echoes the same cleared payload). */
+export function deactivateMethodology(
+  world: string,
+): Promise<{ world: string; flow_type: string }> {
+  return apiFetch<{ world: string; flow_type: string }>(url("/deactivate"), {
+    method: "POST",
+    body: JSON.stringify({ world }),
+    timeout: METHODOLOGIES_TIMEOUT_MS,
+  });
+}
+
 /** POST /api/methodologies/companions/activate — pin a published version as
  *  a companion of a world (several per world; the activation slot is
  *  untouched). */

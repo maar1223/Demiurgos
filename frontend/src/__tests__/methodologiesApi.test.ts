@@ -4,6 +4,7 @@ import {
   activateMethodology,
   createMethodologyDraft,
   deactivateCompanion,
+  deactivateMethodology,
   getMethodologyInventory,
   getMethodologyStatus,
   publishMethodologyDraft,
@@ -98,6 +99,18 @@ describe("methodologies API contract", () => {
       body: JSON.stringify({ world: "nec" }),
       timeout: 15_000,
     });
+  });
+
+  it("POST methodologies/deactivate clears the world's activation slot", async () => {
+    await deactivateMethodology("nec");
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/methodologies/deactivate",
+      {
+        method: "POST",
+        body: JSON.stringify({ world: "nec" }),
+        timeout: 15_000,
+      },
+    );
   });
 
   it("POST companions/activate pins a published version as a world companion", async () => {
