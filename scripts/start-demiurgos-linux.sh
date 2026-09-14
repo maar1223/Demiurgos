@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 # Demiurgos Linux launcher. Manages only processes started by this script.
+#
+# Two frontend modes, selected by DEMIURGOS_SKIP_FRONTEND:
+#   unset  -> dev frontend: `vite dev` on 5173 (HMR; no build needed).
+#   "1"    -> MVP: build the production bundle and serve it with `vite preview`
+#             on 4173. `restart` rebuilds too, so a UI-driven restart never
+#             leaves a stale bundle served.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -19,9 +25,11 @@ DESKTOP_DIR="$HOME/Desktop"
 API_PORT=8000
 FRONTEND_PORT=5173
 GATEWAY_PORT=8642
+PREVIEW_PORT=4173
 API_LOG="/tmp/demiurgos-api.log"
 FRONTEND_LOG="/tmp/demiurgos-frontend.log"
 GATEWAY_LOG="/tmp/demiurgos-gateway.log"
+PREVIEW_LOG="/tmp/demiurgos-mvp.log"
 
 mkdir -p "$STATE_DIR"
 
@@ -30,6 +38,15 @@ mkdir -p "$STATE_DIR"
 # serve the production build itself on the preview port.
 frontend_enabled() {
     [ "${DEMIURGOS_SKIP_FRONTEND:-}" != "1" ]
+}
+
+# Whether the MVP production preview should be managed instead of the dev
+# frontend. Same mode signal as `frontend_enabled` (DEMIURGOS_SKIP_FRONTEND),
+# deliberately: /api/system dispatches this script with the API's inherited
+# environment, so an in-app "Reiniciar Demiurgos" also rebuilds and restarts
+# the preview instead of leaving a stale `dist` served on the preview port.
+preview_enabled() {
+    [ "${DEMIURGOS_SKIP_FRONTEND:-}" = "1" ]
 }
 
 load_project_auth_mode() {
@@ -66,6 +83,7 @@ owned_pid() {
     case "$name" in
         api) [[ "$cmdline" == *"uvicorn api_server:app"* ]] ;;
         frontend) [[ ( "$cmdline" == *"vite"* || "$cmdline" == *"npm run dev"* ) && "$cmdline" == *"--host 127.0.0.1"* ]] ;;
+        preview) [[ ( "$cmdline" == *"vite preview"* || "$cmdline" == *"npm run preview"* ) && "$cmdline" == *"--host 127.0.0.1"* ]] ;;
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] ;;
         *) return 1 ;;
     esac
@@ -131,6 +149,7 @@ stop_component() {
     case "$name" in
         api) port="$API_PORT" ;;
         frontend) port="$FRONTEND_PORT" ;;
+        preview) port="$PREVIEW_PORT" ;;
         gateway) port="$GATEWAY_PORT" ;;
         *) remove_pid_file "$name"; return 1 ;;
     esac
@@ -152,15 +171,21 @@ stop_component() {
 }
 
 stop_all() {
-    stop_component frontend
-    stop_component api
-    stop_component gateway
-}
-
-port_is_loopback() {
-    local port="$1"
-    command -v ss >/dev/null 2>&1 || return 1
-    ss -Hln 2>/dev/null | grep -Eq "[[:space:]](127\\.0\\.0\\.1|\\[::1\\]):${port}[[:space:]]"
+    # `|| true`: a component whose port is held by a non-Demiurgos process
+    # must not abort the shutdown of the rest of the stack under `set -e`.
+    stop_component frontend || true
+    stop_component preview || true
+    stop_component api || true
+    stop_component gateway || true
+    # `restart` starts immediately after this; wait until every managed port
+    # is actually free so `start_component` never adopts a process that is
+    # still shutting down.
+    local port
+    for port in "$FRONTEND_PORT" "$PREVIEW_PORT" "$API_PORT" "$GATEWAY_PORT"; do
+        if ! wait_for_port_free "$port"; then
+            printf 'Port %s still busy after stop; continuing anyway\n' "$port" >&2
+        fi
+    done
 }
 
 port_is_listening() {
@@ -200,6 +225,7 @@ _validate_cmdline_for_name() {
         # never adopt/kill an arbitrary `uvicorn` from another project).
         api) [[ ( "$cmdline" == *"$PROJECT_ROOT/.venv/bin/python"* && "$cmdline" == *"uvicorn api_server:app"* ) || "$cmdline" == *"$API_DIR"* ]] || return 1 ;;
         frontend) [[ ( "$cmdline" == *"$FRONTEND_DIR"* && "$cmdline" == *"vite"* ) || "$cmdline" == *"npm run dev"* ]] || return 1 ;;
+        preview) [[ ( "$cmdline" == *"$FRONTEND_DIR"* && "$cmdline" == *"vite"* && "$cmdline" == *"preview"* ) || ( "$cmdline" == *"npm run preview"* && "$cmdline" == *"--host 127.0.0.1"* ) ]] || return 1 ;;
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] || return 1 ;;
         *) return 1 ;;
     esac
@@ -214,13 +240,33 @@ adopt_existing_component() {
     printf 'Adopted existing %s (pid %s)\n' "$name" "$pid"
 }
 
+# Wait until a port is listening (bounded). Once `start_component` has either
+# launched or adopted the component, "listening" is the readiness signal. The
+# old "listening but not loopback" -> error heuristic produced false negatives
+# when a service (hermes) briefly binds before settling on its final address,
+# aborting an otherwise-healthy start; port-squatting is already rejected by
+# `start_component` before we get here.
 wait_for_port() {
     local port="$1" seconds=0
     while [ "$seconds" -lt 20 ]; do
-        if port_is_loopback "$port"; then return 0; fi
-        if port_is_listening "$port"; then return 2; fi
+        if port_is_listening "$port"; then return 0; fi
         sleep 1
         seconds=$((seconds + 1))
+    done
+    return 1
+}
+
+# Wait until a port is no longer listening (bounded). `restart` starts right
+# after `stop_all`; without this, `start_component` can `adopt` a process that
+# is still inside its SIGTERM->exit window, record its (dying) pid, and leave
+# the component down. Waiting for the port to clear makes the restart settle
+# on a live process instead of racing a corpse.
+wait_for_port_free() {
+    local port="$1" tries=0
+    while [ "$tries" -lt 40 ]; do
+        port_is_listening "$port" || return 0
+        sleep 0.25
+        tries=$((tries + 1))
     done
     return 1
 }
@@ -236,6 +282,7 @@ start_component() {
     case "$name" in
         api) port="$API_PORT" ;;
         frontend) port="$FRONTEND_PORT" ;;
+        preview) port="$PREVIEW_PORT" ;;
         gateway) port="$GATEWAY_PORT" ;;
         *) printf 'Unknown component: %s\n' "$name" >&2; return 1 ;;
     esac
@@ -254,6 +301,9 @@ start_component() {
         frontend)
             (cd "$FRONTEND_DIR" && exec nohup npm run dev -- \
                 --host 127.0.0.1 --port "$FRONTEND_PORT" >>"$FRONTEND_LOG" 2>&1) & ;;
+        preview)
+            (cd "$FRONTEND_DIR" && exec nohup npm run preview -- \
+                --host 127.0.0.1 --port "$PREVIEW_PORT" >>"$PREVIEW_LOG" 2>&1) & ;;
         gateway)
             # CWD = repo root so Path.cwd()/.hermes/plugins resolves to the
             # project plugins; HERMES_ENABLE_PROJECT_PLUGINS=1 opts them in
@@ -269,6 +319,20 @@ start_component() {
     printf '%s\n' "$pid" > "$(pid_file "$name")"
 }
 
+# Rebuild the production bundle the MVP preview serves. Runs synchronously
+# BEFORE the preview server so a restart never serves a half-written bundle
+# (`vite build` empties `dist` at the start of the build). A build failure is
+# reported but does NOT abort the stack: the API still comes back and the
+# preview serves whatever bundle is on disk — which a mid-build `vite`
+# failure may have left incomplete, so check the log on failure.
+build_preview_bundle() {
+    printf 'Building production bundle (MVP)…\n' >&2
+    if ! (cd "$FRONTEND_DIR" && npm run build >>"$PREVIEW_LOG" 2>&1); then
+        printf 'Build failed; the preview may serve an incomplete bundle. See %s\n' "$PREVIEW_LOG" >&2
+        return 1
+    fi
+}
+
 start_all() {
     load_project_auth_mode
     if [ -z "$HERMES_BIN" ] || [ ! -x "$HERMES_BIN" ]; then
@@ -276,24 +340,35 @@ start_all() {
         return 1
     fi
     start_component gateway
+    # MVP: build + start the preview BEFORE the API. The already-open tab
+    # polls the API and reloads the moment it answers, so the preview must
+    # already be listening — otherwise the reload races a still-building
+    # `dist` and the browser shows a connection error.
+    if preview_enabled; then
+        build_preview_bundle || true
+        start_component preview
+    fi
     start_component api
     if frontend_enabled; then
         start_component frontend
     fi
-    for port in "$GATEWAY_PORT" "$API_PORT" "$FRONTEND_PORT"; do
+
+    local ports=("$GATEWAY_PORT" "$API_PORT")
+    if preview_enabled; then
+        ports+=("$PREVIEW_PORT")
+    elif frontend_enabled; then
+        ports+=("$FRONTEND_PORT")
+    fi
+    local port name
+    for port in "${ports[@]}"; do
         case "$port" in
             "$GATEWAY_PORT") name="Hermes Gateway" ;;
             "$API_PORT") name="API" ;;
+            "$PREVIEW_PORT") name="MVP preview" ;;
             *) name="Frontend" ;;
         esac
-        if [ "$port" = "$FRONTEND_PORT" ] && ! frontend_enabled; then
-            continue
-        fi
         if wait_for_port "$port"; then
             printf '%s ready on 127.0.0.1:%s\n' "$name" "$port"
-        elif [ "$?" -eq 2 ]; then
-            printf '%s refused: port %s is already used outside Demiurgos\n' "$name" "$port" >&2
-            return 1
         else
             printf '%s did not become ready; check its log\n' "$name" >&2
             return 1
@@ -302,19 +377,27 @@ start_all() {
 }
 
 open_frontend() {
+    local port="$FRONTEND_PORT"
+    if preview_enabled; then
+        port="$PREVIEW_PORT"
+    fi
     if ! command -v xdg-open >/dev/null 2>&1; then
-        printf 'Default browser opener not found; open http://127.0.0.1:%s manually\n' "$FRONTEND_PORT" >&2
+        printf 'Default browser opener not found; open http://127.0.0.1:%s manually\n' "$port" >&2
         return 0
     fi
-    nohup xdg-open "http://127.0.0.1:${FRONTEND_PORT}" >/dev/null 2>&1 &
+    nohup xdg-open "http://127.0.0.1:${port}" >/dev/null 2>&1 &
 }
 
 show_status() {
     printf '\nDemiurgos is running\n'
     printf 'API:     http://127.0.0.1:%s\n' "$API_PORT"
-    printf 'Frontend: http://127.0.0.1:%s\n' "$FRONTEND_PORT"
+    if preview_enabled; then
+        printf 'Preview: http://127.0.0.1:%s\n' "$PREVIEW_PORT"
+    else
+        printf 'Frontend: http://127.0.0.1:%s\n' "$FRONTEND_PORT"
+    fi
     printf 'Hermes:  127.0.0.1:%s\n' "$GATEWAY_PORT"
-    printf 'Logs: %s, %s, %s\n' "$API_LOG" "$FRONTEND_LOG" "$GATEWAY_LOG"
+    printf 'Logs: %s, %s, %s, %s\n' "$API_LOG" "$FRONTEND_LOG" "$GATEWAY_LOG" "$PREVIEW_LOG"
     printf '\nServices continue running in the background.\n'
     # Only block for Enter when there is a real interactive terminal (the
     # script was launched from a terminal by hand). When launched "as a
@@ -349,7 +432,7 @@ usage() {
 main() {
     local action="${1:-restart}"
     case "$action" in
-        start) start_all; if frontend_enabled; then open_frontend; fi; show_status ;;
+        start) start_all; if frontend_enabled || preview_enabled; then open_frontend; fi; show_status ;;
         # Restart does NOT reopen the browser: the already-open tab detects the
         # backend is back and reloads itself (auto-reload in the Navbar), so
         # opening a new tab would double-enter the app.
