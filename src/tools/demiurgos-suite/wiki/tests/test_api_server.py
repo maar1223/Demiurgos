@@ -2544,6 +2544,38 @@ class TestMethodologyApi:
         assert response.status_code == 200
         assert response.json()["items"] == []
 
+    def test_inventory_etiquetas_match_case_insensitive_substring(self, client, monkeypatch, tmp_path):
+        self._seed_inventory_library(monkeypatch, tmp_path)
+        # Partial input: "lor" is a substring of the stored "lore" tag, so both
+        # published skills match (no taller filter narrows them here).
+        response = client.get(
+            "/api/methodologies/inventory", params={"etiquetas": "lor"},
+        )
+        assert response.status_code == 200
+        assert {item["skill_id"] for item in response.json()["items"]} == {
+            "guided-character-v1", "community-skill",
+        }
+        # Case-insensitive: uppercase input still matches the stored tag.
+        response = client.get(
+            "/api/methodologies/inventory", params={"etiquetas": "LOR"},
+        )
+        assert response.status_code == 200
+        assert {item["skill_id"] for item in response.json()["items"]} == {
+            "guided-character-v1", "community-skill",
+        }
+
+    def test_inventory_categoria_funcional_matches_case_insensitive_substring(self, client, monkeypatch, tmp_path):
+        self._seed_inventory_library(monkeypatch, tmp_path)
+        # "investig" is a case-insensitive substring of "Investigación".
+        response = client.get(
+            "/api/methodologies/inventory",
+            params={"categoria_funcional": "investig"},
+        )
+        assert response.status_code == 200
+        assert [item["skill_id"] for item in response.json()["items"]] == [
+            "community-skill",
+        ]
+
     def test_inventory_no_matches_returns_empty_list(self, client, monkeypatch, tmp_path):
         self._seed_inventory_library(monkeypatch, tmp_path)
         response = client.get(
@@ -2551,6 +2583,53 @@ class TestMethodologyApi:
         )
         assert response.status_code == 200
         assert response.json() == {"items": []}
+
+    def test_inventory_filters_by_fundacional(self, client, monkeypatch, tmp_path):
+        library = self._seed_inventory_library(monkeypatch, tmp_path)
+        # G14 invariant: fundacional trust only accompanies Oficiales.
+        fundacional = library.create_draft(
+            skill_id="fundacional-skill", version="1.0.0",
+            name="Fundacional skill", source="## Fundacional\n\nTexto.\n",
+            taller="Creación",
+            categoria_funcional="Creación",
+            etiquetas=(),
+            clasificacion="Oficiales",
+            trust_attributes=("fundacional",),
+        )
+        library.publish(fundacional)
+
+        # `fundacional=true` restricts to server-seeded foundational skills
+        # (trust attribute), regardless of their origin classification.
+        response = client.get(
+            "/api/methodologies/inventory", params={"fundacional": "true"},
+        )
+        assert response.status_code == 200
+        assert [item["skill_id"] for item in response.json()["items"]] == [
+            "fundacional-skill",
+        ]
+
+        # Without the param the whole catalog is still returned.
+        response = client.get("/api/methodologies/inventory")
+        assert response.status_code == 200
+        assert {item["skill_id"] for item in response.json()["items"]} == {
+            "guided-character-v1", "community-skill", "fundacional-skill",
+        }
+
+        # Conjunctive with another facet: Oficiales keeps it, Personalizadas drops it.
+        response = client.get(
+            "/api/methodologies/inventory",
+            params={"fundacional": "true", "clasificacion": "Oficiales"},
+        )
+        assert response.status_code == 200
+        assert [item["skill_id"] for item in response.json()["items"]] == [
+            "fundacional-skill",
+        ]
+        response = client.get(
+            "/api/methodologies/inventory",
+            params={"fundacional": "true", "clasificacion": "Personalizadas"},
+        )
+        assert response.status_code == 200
+        assert response.json()["items"] == []
 
     def test_inventory_get_has_no_side_effects(self, client, monkeypatch, tmp_path):
         self._seed_inventory_library(monkeypatch, tmp_path)

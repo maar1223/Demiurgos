@@ -149,7 +149,7 @@ from methodology_library import (
 )
 from methodology_compiler import AttachmentEntry
 from methodology_seed import install_seeds
-from methodology_trust import QuarantineRecord, QuarantineStore, build_package
+from methodology_trust import FOUNDATIONAL, QuarantineRecord, QuarantineStore, build_package
 from semantic_intent import (
     CONTINUATION_STATES,
     SELF_CONTAINED_SEMANTIC_STATES,
@@ -8143,28 +8143,40 @@ def methodologies_inventory(
     categoria_funcional: str | None = None,
     taller: str | None = None,
     etiquetas: str | None = None,
+    fundacional: bool = False,
 ):
     """Read-only inventory of ALL loaded skills (activated or not).
 
     Taller de Herramientas TW7 catalog surface. Filters are conjunctive (AND):
-    ``clasificacion``, ``categoria_funcional`` and ``taller`` match exactly;
-    ``etiquetas`` is comma-separated and ALL tags must be present. No auth
-    required (public read, consistent with the read-only catalog policy) and
-    the GET never mutates state.
+    ``clasificacion`` and ``taller`` match exactly; ``categoria_funcional`` and
+    each comma-separated ``etiquetas`` token match case-insensitively by
+    substring; ``fundacional=true`` restricts to server-seeded foundational
+    skills (a trust attribute — by the G14 invariant these are always also
+    ``Oficiales``). No auth required (public read, consistent with the read-only
+    catalog policy) and the GET never mutates state.
     """
     library = _methodology_library()
     items = []
     for published in library.list_published():
         if clasificacion and published.clasificacion != clasificacion:
             continue
-        if categoria_funcional and published.categoria_funcional != categoria_funcional:
+        if (
+            categoria_funcional
+            and categoria_funcional.strip().lower()
+            not in (published.categoria_funcional or "").lower()
+        ):
             continue
         if taller and published.taller != taller:
             continue
         if etiquetas:
-            required = {tag.strip() for tag in etiquetas.split(",") if tag.strip()}
-            if not required.issubset(set(published.etiquetas)):
+            required = [
+                tag.strip().lower() for tag in etiquetas.split(",") if tag.strip()
+            ]
+            item_tags = [str(tag).lower() for tag in published.etiquetas]
+            if not all(any(req in tag for tag in item_tags) for req in required):
                 continue
+        if fundacional and FOUNDATIONAL not in published.trust_attributes:
+            continue
         items.append({
             "skill_id": published.skill_id,
             "version": published.version,

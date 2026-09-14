@@ -33,6 +33,8 @@ export interface InventoryFilters {
   taller?: string;
   /** Comma-separated tags; all of them must match. */
   etiquetas?: string;
+  /** Only server-seeded foundational skills (trust attribute). */
+  fundacional?: boolean;
 }
 
 /** GET /api/methodologies/inventory — read-only catalog of all loaded skills
@@ -45,6 +47,7 @@ export function getMethodologyInventory(
   if (filters?.categoria_funcional) params.set("categoria_funcional", filters.categoria_funcional);
   if (filters?.taller) params.set("taller", filters.taller);
   if (filters?.etiquetas) params.set("etiquetas", filters.etiquetas);
+  if (filters?.fundacional) params.set("fundacional", "true");
   const query = params.toString();
   return apiFetch<{ items: MethodologyInventoryItem[] }>(
     url(`/inventory${query ? `?${query}` : ""}`),
