@@ -222,6 +222,29 @@ export async function exportPublished(
   return response.blob();
 }
 
+/** GET /api/methodologies/published/{skillId}/{version}/adjunto/{path} — fetch
+ *  a single pinned carrier as raw markdown (text/markdown, not JSON).
+ *  Each path segment is encoded separately so the `/` separators survive:
+ *  whole-path `encodeURIComponent` would turn them into `%2F` and break the
+ *  backend `{path:path}` route for imported subpath carriers. */
+export async function getAdjuntoContent(
+  skillId: string,
+  version: string,
+  path: string,
+): Promise<string> {
+  const encodedPath = path
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  const response = await rawFetch(
+    url(
+      `/published/${encodeURIComponent(skillId)}/${encodeURIComponent(version)}/adjunto/${encodedPath}`,
+    ),
+    { timeout: METHODOLOGIES_TIMEOUT_MS },
+  );
+  return response.text();
+}
+
 /** POST /api/methodologies/import — upload a `.zip` package into mandatory
  *  quarantine (REQ-IMP-2). The library is never mutated by import; the
  *  Author must explicitly trust the package (REQ-IMP-4) to make it an

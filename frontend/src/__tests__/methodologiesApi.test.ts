@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activateCompanion,
   activateMethodology,
   createMethodologyDraft,
   deactivateCompanion,
   deactivateMethodology,
+  getAdjuntoContent,
   getMethodologyInventory,
   getMethodologyStatus,
   publishMethodologyDraft,
@@ -189,5 +190,76 @@ describe("methodologies API contract", () => {
       "/api/methodologies/inventory?clasificacion=Comunitarias&taller=Investigaci%C3%B3n",
       { timeout: 15_000 },
     );
+  });
+});
+
+describe("getAdjuntoContent", () => {
+  const fetchMock = vi.fn();
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("returns the raw text body of the pinned exemplar", async () => {
+    fetchMock.mockResolvedValue(new Response("# Guía\n", { status: 200 }));
+
+    await expect(
+      getAdjuntoContent("guided-character-v1", "1.2.0", "anexos/nivel-1.md"),
+    ).resolves.toBe("# Guía\n");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/methodologies/published/guided-character-v1/1.2.0/adjunto/anexos/nivel-1.md",
+      expect.objectContaining({ signal: expect.anything() }),
+    );
+  });
+
+  it("encodes each path segment separately without escaping the separators", async () => {
+    fetchMock.mockResolvedValue(new Response("ok", { status: 200 }));
+
+    await getAdjuntoContent("sk id", "1.0.0", "anexos/nivel 1.md");
+
+    const [calledUrl] = fetchMock.mock.calls[0] as [string];
+    expect(calledUrl).toBe(
+      "/api/methodologies/published/sk%20id/1.0.0/adjunto/anexos/nivel%201.md",
+    );
+    // A whole-path encodeURIComponent would corrupt the route with `%2F`.
+    expect(calledUrl).not.toContain("%2F");
+  });
+
+  it.each([401, 404, 422])(
+    "maps a %i response to ApiError with that status",
+    async (status) => {
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ detail: "denied" }), {
+          status,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      await expect(
+        getAdjuntoContent("guided-character-v1", "1.2.0", "guia.md"),
+      ).rejects.toMatchObject({ status });
+    },
+  );
+
+  it("preserves the attachment_unavailable code behind a 422", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          detail: "A pinned attachment is unavailable or has drifted.",
+          code: "attachment_unavailable",
+        }),
+        { status: 422, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    await expect(
+      getAdjuntoContent("guided-character-v1", "1.2.0", "guia.md"),
+    ).rejects.toMatchObject({ status: 422, code: "attachment_unavailable" });
   });
 });
