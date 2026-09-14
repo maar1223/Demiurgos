@@ -393,6 +393,12 @@ class MethodologyLibrary:
                 )),
                 "parent_skill_id": original.skill_id,
                 "parent_version": original.version,
+                # EP-1/DP-1: the derived fork preserves the parent's exemplar
+                # pins. Server-injected from the PUBLISHED record exactly like
+                # the provenance above (never a client parameter), so adapting
+                # an N-exemplar skill yields an N-exemplar draft. An original
+                # with no pins writes an empty list (no regression).
+                "adjuntos": [entry.as_dict() for entry in original.adjuntos],
                 "created_at": now,
                 "updated_at": now,
             }

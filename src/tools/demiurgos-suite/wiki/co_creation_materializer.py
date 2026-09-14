@@ -345,6 +345,7 @@ class CoCreationMaterializer:
         name: str,
         description: str,
         world: str | None = None,
+        adjuntos: tuple[AttachmentEntry, ...] = (),
     ) -> dict[str, Any]:
         """Build the adaptation session's initial canvas payload (TW13).
 
@@ -352,11 +353,18 @@ class CoCreationMaterializer:
         sections are best-effort parsed from the rendered source
         (``parse_rendered_source``) and the published metadata is folded in.
         The session's ``world`` binding overrides any parsed binding.
+
+        D2/DP-1: the parent's exemplar pins are seeded into the canvas so the
+        derived "Ejemplares" section is visible and removable. The key is
+        emitted ONLY when non-empty, keeping a zero-exemplar payload
+        byte-identical to the pre-change seed (EP-1 no-regression).
         """
         payload = parse_rendered_source(source)
         payload["name"] = name
         payload["description"] = description
         payload["world"] = world
+        if adjuntos:
+            payload["adjuntos"] = [entry.as_dict() for entry in adjuntos]
         return payload
 
     def inject_derived_from(

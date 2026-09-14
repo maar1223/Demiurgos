@@ -26,6 +26,7 @@ from co_creation_materializer import (  # noqa: E402
     parse_rendered_source,
 )
 from methodology_library import MethodologyLibrary  # noqa: E402
+from methodology_compiler import AttachmentEntry  # noqa: E402
 
 
 def _library(tmp_path: Path) -> MethodologyLibrary:
@@ -259,6 +260,22 @@ def test_inject_derived_from_preserves_the_rest_of_the_payload(tmp_path: Path) -
     assert (derived_from.skill_id, derived_from.version) == ("s", "1.2.0")
 
 
+def test_inject_derived_from_preserves_adjuntos(tmp_path: Path) -> None:
+    """DP-1: only ``derived_from`` is stripped — the seeded pins survive."""
+    materializer = CoCreationMaterializer(_library(tmp_path))
+    pin = _pin("ejemplo.md", b"# Ejemplo\n")
+    payload, _ = materializer.inject_derived_from(
+        {
+            "name": "A",
+            "adjuntos": [pin],
+            "derived_from": {"skill_id": "evil", "version": "9.9.9"},
+        },
+        "s", "1.0.0",
+    )
+    assert payload["adjuntos"] == [pin]
+    assert "derived_from" not in payload
+
+
 def test_parse_rendered_source_roundtrips_template_output(tmp_path: Path) -> None:
     materializer = CoCreationMaterializer(_library(tmp_path))
     payload = {
@@ -326,6 +343,37 @@ def test_seed_payload_builds_adaptation_canvas_from_published_original(
         source, name="Skill base", description="Descripción base.", world="otro",
     )
     assert override["world"] == "otro"
+
+
+def test_seed_payload_seeds_parent_exemplar_pins(tmp_path: Path) -> None:
+    """EP-1/DP-1: a parent with N pins seeds the same N pins into the canvas."""
+    materializer = CoCreationMaterializer(_library(tmp_path))
+    data = b"# Ejemplar\n"
+    pins = (
+        AttachmentEntry(
+            path="ejemplo.md", sha256=hashlib.sha256(data).hexdigest(),
+            bytes=len(data), nivel="1º",
+        ),
+    )
+    source = materializer.render_source(_payload())
+    seed = materializer.seed_payload(
+        source, name="Skill base", description="Descripción base.", adjuntos=pins,
+    )
+    assert seed["adjuntos"] == [_pin("ejemplo.md", data)]
+
+
+def test_seed_payload_omits_adjuntos_key_when_empty(tmp_path: Path) -> None:
+    """EP-1: a zero-exemplar seed stays byte-identical — no ``adjuntos`` key."""
+    materializer = CoCreationMaterializer(_library(tmp_path))
+    source = materializer.render_source(_payload())
+    without = materializer.seed_payload(
+        source, name="Skill base", description="Descripción base.",
+    )
+    with_empty = materializer.seed_payload(
+        source, name="Skill base", description="Descripción base.", adjuntos=(),
+    )
+    assert "adjuntos" not in without
+    assert without == with_empty
 
 
 # ---------------------------------------------------------------------------

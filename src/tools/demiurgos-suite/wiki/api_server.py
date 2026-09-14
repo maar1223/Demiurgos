@@ -3245,6 +3245,9 @@ def derive_co_creation(body: CoCreationDeriveRequest, request: Request):
         name=original.name,
         description=original.description,
         world=body.world,
+        # DP-1/EP-1: thread the parent's pins into the seeded canvas so the
+        # derived session shows the same exemplars as the published original.
+        adjuntos=original.adjuntos,
     )
     payload, derived_from = materializer.inject_derived_from(
         seed, original.skill_id, original.version,

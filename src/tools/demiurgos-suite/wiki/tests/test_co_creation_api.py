@@ -33,6 +33,7 @@ from co_creation_protocol import (  # noqa: E402
 from co_creation_session_store import CoCreationSessionStore  # noqa: E402
 from co_creation_materializer import CoCreationMaterializer  # noqa: E402
 from methodology_compiler import MAX_ADJUNTO_BYTES, MAX_ADJUNTOS  # noqa: E402
+from methodology_compiler import AttachmentEntry  # noqa: E402
 
 _MILESTONES = (
     "proposito", "alcance", "flujo_principal", "ramas_reglas",
@@ -715,6 +716,8 @@ def _publish_skill(
     name: str = "Skill Oficial",
     source: str | None = None,
     clasificacion: str | None = "Oficiales",
+    trust_attributes: tuple[str, ...] = ("verified",),
+    adjuntos: tuple[AttachmentEntry, ...] = (),
 ) -> None:
     library = api_server._methodology_library()
     draft_id = library.create_draft(
@@ -724,7 +727,8 @@ def _publish_skill(
         source=source or f"# {name}\n\n## Propósito\nPropósito base.\n",
         description="Descripción oficial.",
         clasificacion=clasificacion,
-        trust_attributes=("verified",),
+        trust_attributes=trust_attributes,
+        adjuntos=adjuntos,
     )
     library.publish(draft_id)
 
@@ -772,6 +776,64 @@ def test_derive_creates_derived_draft_with_server_injected_provenance(
     # REQ-CC-17: the canvas payload is seeded from the original's sections.
     assert state["draft_payload"]["purpose"] == "Propósito base."
     assert state["draft_payload"]["branches"] == ["rama base", "regla base"]
+
+
+def _pins() -> list[dict]:
+    """Two deterministic pins in the canvas ``adjuntos`` wire shape."""
+    first, second = b"# Ejemplar uno\n", b"# Ejemplar dos\n"
+    return [
+        {"path": "ej01.md", "sha256": hashlib.sha256(first).hexdigest(),
+         "bytes": len(first), "nivel": "1º"},
+        {"path": "ej02.md", "sha256": hashlib.sha256(second).hexdigest(),
+         "bytes": len(second), "nivel": "2º"},
+    ]
+
+
+def _pin_entries(pins: list[dict]) -> tuple[AttachmentEntry, ...]:
+    return tuple(AttachmentEntry(**pin) for pin in pins)
+
+
+def test_derive_preserves_author_exemplar_pins(client: TestClient, monkeypatch) -> None:
+    """EP-1/DP-1: an author original's N pins reach the derived draft + canvas."""
+    _bind_principal(monkeypatch)
+    pins = _pins()
+    _publish_skill(
+        source=_template_source("Skill Oficial"), adjuntos=_pin_entries(pins),
+    )
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial", "version": "1.0.0",
+    })
+    assert derived.status_code == 200, derived.text
+    body = derived.json()
+    draft = api_server._methodology_library().get_draft(body["draft_id"])
+    assert draft is not None
+    assert [entry.as_dict() for entry in draft.adjuntos] == pins
+    recovered = client.get(f"/api/co-creation/sessions/{body['session_id']}").json()
+    assert recovered["draft_payload"]["adjuntos"] == pins
+
+
+def test_derive_preserves_seeded_exemplar_pins(client: TestClient, monkeypatch) -> None:
+    """EP-1: a seeded (fundacional) original's pins are preserved too."""
+    _bind_principal(monkeypatch)
+    pins = _pins()
+    _publish_skill(
+        source=_template_source("Skill Oficial"),
+        trust_attributes=("fundacional", "verified"),
+        adjuntos=_pin_entries(pins),
+    )
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial", "version": "1.0.0",
+    })
+    assert derived.status_code == 200, derived.text
+    body = derived.json()
+    draft = api_server._methodology_library().get_draft(body["draft_id"])
+    assert draft is not None
+    assert [entry.as_dict() for entry in draft.adjuntos] == pins
+    # S9 still holds: the derived fork is demoted despite the preserved pins.
+    assert draft.clasificacion == "Personalizadas"
+    assert "fundacional" not in draft.trust_attributes
+    recovered = client.get(f"/api/co-creation/sessions/{body['session_id']}").json()
+    assert recovered["draft_payload"]["adjuntos"] == pins
 
 
 def test_derive_gate_oficiales_requires_derivation_and_blocks_in_place_edit(

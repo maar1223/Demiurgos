@@ -778,14 +778,29 @@ class TestDerivedDrafts:
     record, inject provenance server-side, auto-version +1, and never touch
     the original."""
 
+    def _pins(self) -> tuple[AttachmentEntry, ...]:
+        return (
+            AttachmentEntry(
+                path="ejemplos/Axill_Garner.md", sha256="a" * 64,
+                bytes=6115, nivel="1º",
+            ),
+            AttachmentEntry(
+                path="ejemplos/Villano_Korrane.md", sha256="b" * 64,
+                bytes=9802, nivel="3º",
+            ),
+        )
+
     def _published_original(self, library: MethodologyLibrary, *, version: str = "1.2.0",
-                            clasificacion: str | None = "Oficiales") -> None:
+                            clasificacion: str | None = "Oficiales",
+                            trust_attributes: tuple[str, ...] = ("verified",),
+                            adjuntos: tuple[AttachmentEntry, ...] = ()) -> None:
         draft_id = library.create_draft(
             skill_id="guided-character-v1", version=version,
             name="Guided character methodology", source=_valid_source(),
             description=_valid_manifest()["description"],
             clasificacion=clasificacion,
-            trust_attributes=("verified",),
+            trust_attributes=trust_attributes,
+            adjuntos=adjuntos,
         )
         library.publish(draft_id)
 
@@ -840,6 +855,83 @@ class TestDerivedDrafts:
         assert derived.trust_attributes == ("verified",)
         assert derived.parent_skill_id == "guided-character-v1"
         assert derived.parent_version == "1.2.0"
+
+    def test_derive_preserves_parent_exemplar_pins(self, tmp_path: Path) -> None:
+        """EP-1/DP-1: adapting an N-exemplar author skill yields N pins.
+
+        The pins are server-injected from the PUBLISHED parent (D1) — the
+        method signature still accepts no client-supplied ``adjuntos``.
+        """
+        library = _library(tmp_path)
+        self._published_original(library, adjuntos=self._pins())
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        derived = library.get_draft(derived_id)
+        assert derived is not None
+        assert [entry.as_dict() for entry in derived.adjuntos] == [
+            entry.as_dict() for entry in self._pins()
+        ]
+
+    def test_derive_preserves_seeded_original_pins(self, tmp_path: Path) -> None:
+        """EP-1: a seeded (fundacional) original's pins are preserved too."""
+        library = _library(tmp_path)
+        self._published_original(
+            library, clasificacion="Oficiales",
+            trust_attributes=("fundacional", "verified"),
+            adjuntos=self._pins(),
+        )
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        derived = library.get_draft(derived_id)
+        assert derived is not None
+        assert [entry.as_dict() for entry in derived.adjuntos] == [
+            entry.as_dict() for entry in self._pins()
+        ]
+        # S9 still holds: the fork is demoted even though its pins survive.
+        assert derived.clasificacion == "Personalizadas"
+        assert "fundacional" not in derived.trust_attributes
+
+    def test_derive_without_adjuntos_stays_empty(self, tmp_path: Path) -> None:
+        """EP-1: a zero-exemplar original yields a derived draft with none."""
+        library = _library(tmp_path)
+        self._published_original(library)
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        derived = library.get_draft(derived_id)
+        assert derived is not None
+        assert derived.adjuntos == ()
+
+    def test_derived_publish_keeps_pins_and_digest_unchanged(self, tmp_path: Path) -> None:
+        """EP-1: pins flow draft → published; adjuntos stay out of the digest."""
+        library = _library(tmp_path)
+        self._published_original(library, adjuntos=self._pins())
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        published = library.publish(derived_id)
+        assert [entry.as_dict() for entry in published.adjuntos] == [
+            entry.as_dict() for entry in self._pins()
+        ]
+        # The digest canonical excludes adjuntos (methodology_compiler.py), so
+        # the derived digest equals the same manifest compiled with no pins.
+        without_pins = compile_methodology(
+            {
+                "skill_id": "guided-character-v1", "version": "1.2.1",
+                "name": "Adaptada",
+                "description": _valid_manifest()["description"],
+                "phases": [], "language": None,
+            },
+            _valid_source(),
+        )
+        assert without_pins.compiled is not None
+        assert published.digest == without_pins.compiled.digest
 
     def test_create_derived_draft_requires_published_original(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
