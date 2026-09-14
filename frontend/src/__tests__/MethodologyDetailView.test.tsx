@@ -1,13 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MethodologyDetailView } from "@/components/organisms/MethodologyDetailView";
 import { ApiError } from "@/api/types";
 import type { PublishedMethodologyDetail } from "@/api/types";
 
 const mockGetPublishedDetail = vi.hoisted(() => vi.fn());
+const mockGetAdjuntoContent = vi.hoisted(() => vi.fn());
 
 vi.mock("@/api/coCreation", () => ({
   getPublishedDetail: mockGetPublishedDetail,
+}));
+
+vi.mock("@/api/methodologies", () => ({
+  getAdjuntoContent: mockGetAdjuntoContent,
 }));
 
 const detail: PublishedMethodologyDetail = {
@@ -46,9 +52,19 @@ const detailWithAdjuntos: PublishedMethodologyDetail = {
 
 const selected = { skill_id: "eneagrama", version: "1.2.0" };
 
+const otherDetail: PublishedMethodologyDetail = {
+  ...detail,
+  skill_id: "otro-taller",
+  version: "2.0.0",
+  name: "Otro taller",
+  source: "# Otro taller",
+  adjuntos: [],
+};
+
 describe("MethodologyDetailView (SC-SB-3)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGetAdjuntoContent.mockReset();
   });
 
   it("renders the metadata header card + source markdown (SC-SB-3.1)", async () => {
@@ -131,5 +147,71 @@ describe("MethodologyDetailView (SC-SB-3)", () => {
     expect(
       screen.queryByRole("heading", { level: 3, name: "Adjuntos" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("MethodologyDetailView → Adjunto viewer (PR5)", () => {
+  it("renders each adjunto as an actionable full-width button", async () => {
+    mockGetPublishedDetail.mockResolvedValue(detailWithAdjuntos);
+    render(<MethodologyDetailView selected={selected} />);
+
+    const axill = await screen.findByRole("button", {
+      name: /ejemplos\/Axill\.md/,
+    });
+    expect(axill).toHaveClass("w-full", "text-left");
+    expect(axill).toHaveAttribute("aria-haspopup", "dialog");
+
+    // Every row is a control; metadata (nivel + bytes) stays visible.
+    expect(
+      screen.getByRole("button", { name: /referencias\/Fuente\.md/ }),
+    ).toBeInTheDocument();
+
+    // Inert until activated: no dialog and no carrier fetched.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockGetAdjuntoContent).not.toHaveBeenCalled();
+  });
+
+  it("opens the viewer and fetches the activated exemplar", async () => {
+    mockGetPublishedDetail.mockResolvedValue(detailWithAdjuntos);
+    mockGetAdjuntoContent.mockResolvedValue("# Axill\n\nContenido del ejemplo.\n");
+    const user = userEvent.setup();
+    render(<MethodologyDetailView selected={selected} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: /ejemplos\/Axill\.md/ }),
+    );
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Axill" }),
+    ).toBeInTheDocument();
+    expect(mockGetAdjuntoContent).toHaveBeenCalledWith(
+      "eneagrama",
+      "1.2.0",
+      "ejemplos/Axill.md",
+    );
+  });
+
+  it("closes the viewer when the page selection changes", async () => {
+    mockGetPublishedDetail.mockResolvedValue(detailWithAdjuntos);
+    mockGetAdjuntoContent.mockResolvedValue("# Axill\n");
+    const user = userEvent.setup();
+    const { rerender } = render(<MethodologyDetailView selected={selected} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: /ejemplos\/Axill\.md/ }),
+    );
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    mockGetPublishedDetail.mockResolvedValue(otherDetail);
+    rerender(
+      <MethodologyDetailView
+        selected={{ skill_id: "otro-taller", version: "2.0.0" }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
   });
 });

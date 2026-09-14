@@ -1,9 +1,13 @@
 import { useEffect, useState } from "react";
 import { getPublishedDetail } from "@/api/coCreation";
 import { ApiError } from "@/api/types";
-import type { PublishedMethodologyDetail } from "@/api/types";
+import type {
+  MethodologyAdjunto,
+  PublishedMethodologyDetail,
+} from "@/api/types";
 import { Badge } from "@/components/atoms/Badge";
 import { Spinner } from "@/components/atoms/Spinner";
+import { AdjuntoViewerModal } from "@/components/organisms/AdjuntoViewerModal";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
@@ -27,9 +31,10 @@ interface MethodologyDetailViewProps {
 /**
  * Shared read-only center body for the "Taller" EditorLayout (SC-SB-3).
  *
- * Renders a metadata header card, an optional metadata-only attachments
- * block (R23), and the published `source` via `MarkdownViewer`, all from
- * `getPublishedDetail(skillId, version)`. The
+ * Renders a metadata header card, an optional attachments block (R23), and
+ * the published `source` via `MarkdownViewer`, all from
+ * `getPublishedDetail(skillId, version)`. Each attachment row is actionable
+ * and opens the read-only `AdjuntoViewerModal` for that pinned exemplar. The
  * detail route is auth-required (it exposes the author `source`), so a 401
  * degrades gracefully to a metadata-only card — no source section, no error
  * (SC-SB-3.2). Any other failure shows an error banner with retry. Both
@@ -44,8 +49,16 @@ export function MethodologyDetailView({
   const [unauthorized, setUnauthorized] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  /** The exemplar currently open in the viewer; `null` keeps it closed. */
+  const [selectedAdjunto, setSelectedAdjunto] = useState<MethodologyAdjunto | null>(
+    null,
+  );
 
   useEffect(() => {
+    // A new page selection invalidates any open viewer (spec: Selection
+    // change): the modal belongs to the skill/version it was opened from.
+    setSelectedAdjunto(null);
+
     if (!selected) {
       setDetail(null);
       setLoading(false);
@@ -168,23 +181,27 @@ export function MethodologyDetailView({
           className="rounded-lg border border-edge bg-surface-raised p-4"
         >
           <h3 className="font-heading text-h4 text-primary">Adjuntos</h3>
-          {/* Metadata only: path + nivel + bytes. Carrier bytes are served
-              by the backend and never fetched or rendered here. */}
+          {/* Metadata only here (path + nivel + bytes); activating a row opens
+              the viewer, which fetches and renders the carrier's markdown. */}
           <ul className="mt-3 space-y-2">
             {adjuntos.map((adjunto) => (
-              <li
-                key={adjunto.path}
-                className="flex flex-wrap items-baseline justify-between gap-2"
-              >
-                <span className="min-w-0 break-all text-small text-primary">
-                  {adjunto.path}
-                </span>
-                <span className="flex shrink-0 items-center gap-1.5">
-                  <Badge variant="info">{adjunto.nivel}</Badge>
-                  <span className="text-small text-muted">
-                    {formatBytes(adjunto.bytes)}
+              <li key={adjunto.path}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedAdjunto(adjunto)}
+                  aria-haspopup="dialog"
+                  className="flex w-full flex-wrap items-baseline justify-between gap-2 rounded-md px-2 py-1 text-left transition-colors hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
+                >
+                  <span className="min-w-0 break-all text-small text-primary">
+                    {adjunto.path}
                   </span>
-                </span>
+                  <span className="flex shrink-0 items-center gap-1.5">
+                    <Badge variant="info">{adjunto.nivel}</Badge>
+                    <span className="text-small text-muted">
+                      {formatBytes(adjunto.bytes)}
+                    </span>
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
@@ -192,6 +209,14 @@ export function MethodologyDetailView({
       )}
 
       <MarkdownViewer content={detail.source} />
+
+      <AdjuntoViewerModal
+        open={selectedAdjunto !== null}
+        skillId={selected.skill_id}
+        version={selected.version}
+        adjunto={selectedAdjunto}
+        onClose={() => setSelectedAdjunto(null)}
+      />
     </section>
   );
 }
