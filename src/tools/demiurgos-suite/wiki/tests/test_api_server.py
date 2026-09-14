@@ -7177,3 +7177,191 @@ class TestGlobalAssistantContext:
         })
         assert activity.status_code == 503
         assert activity.json()["code"] == "activity_unavailable"
+
+
+class TestPublishedAdjuntoRoute:
+    """PR2: ``GET .../published/{skill}/{version}/adjunto/{path:path}`` serves a
+    single pinned carrier as raw ``text/markdown`` (R14/R17; D1-D4)."""
+
+    _BASE = "/api/methodologies/published/guided-character-v1/1.2.0/adjunto"
+
+    def _publish_with_adjunto(
+        self, client: TestClient, tmp_path: Path, *,
+        path: str = "adjunto-nivel-1.md",
+        data: bytes = b"# Principal\n\nContenido.\n",
+        drift: bool = False,
+        omit_carrier: bool = False,
+        carrier_root: str = "seeds",
+    ) -> dict:
+        """Publish one pinned carrier written under ``carrier_root``.
+
+        ``tmp_path`` is the patched ``PROJECT_ROOT``, so the directory the route
+        resolves is the one this helper populates: ``seeds`` wins when its skill
+        dir exists, otherwise the resolver falls back to ``attachments`` (R9/R24).
+        The pin records ``data``; ``drift``/``omit_carrier`` make the bytes on
+        disk diverge from (or disappear under) that pin.
+        """
+        entry = {
+            "path": path,
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "bytes": len(data),
+            "nivel": "1º",
+        }
+        root_dir = tmp_path / "data" / "methodology" / carrier_root / "guided-character-v1"
+        carrier = root_dir / path
+        carrier.parent.mkdir(parents=True, exist_ok=True)
+        if not omit_carrier:
+            carrier.write_bytes(b"# Drifted\n" if drift else data)
+        draft = client.post("/api/methodologies/drafts", json={
+            "skill_id": "guided-character-v1",
+            "version": "1.2.0",
+            "name": "Guided character methodology",
+            "source": "## Construcción segura\n\nHaz preguntas de a una.\n",
+            "adjuntos": [entry],
+        })
+        assert draft.status_code == 200, draft.text
+        published = client.post(
+            f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish",
+        )
+        assert published.status_code == 200, published.text
+        return entry
+
+    def test_serves_known_pin_as_raw_markdown(self, client: TestClient, monkeypatch, tmp_path):
+        """R14 scenario "known pin": 200, markdown content type, inline
+        disposition, and the exact pinned bytes."""
+        _principal(monkeypatch, "author-1")
+        data = b"# Principal\n\nContenido.\n"
+        self._publish_with_adjunto(client, tmp_path, data=data)
+        response = client.get(f"{self._BASE}/adjunto-nivel-1.md")
+        assert response.status_code == 200, response.text
+        assert response.headers["content-type"] == "text/markdown; charset=utf-8"
+        assert response.headers["content-disposition"] == 'inline; filename="adjunto-nivel-1.md"'
+        assert response.content == data
+
+    def test_unauthenticated_is_401(self, client: TestClient):
+        """R14 scenario "unauthenticated": the auth gate runs before existence."""
+        response = client.get(f"{self._BASE}/adjunto-nivel-1.md")
+        assert response.status_code == 401
+        assert response.json() == {"detail": "Authentication required."}
+
+    def test_unknown_pin_is_404(self, client: TestClient, monkeypatch, tmp_path):
+        """R14 scenario "unknown target": an unlisted path is never resolved."""
+        _principal(monkeypatch, "author-1")
+        self._publish_with_adjunto(client, tmp_path)
+        response = client.get(f"{self._BASE}/otro.md")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Adjunto no encontrado"
+
+    def test_unpublished_skill_or_version_is_404(self, client: TestClient, monkeypatch):
+        """R14 scenario "unknown target": unpublished skill/version 404s."""
+        _principal(monkeypatch, "author-1")
+        response = client.get(
+            "/api/methodologies/published/ghost/9.9.9/adjunto/adjunto-nivel-1.md",
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Metodología no encontrada"
+
+    def test_missing_carrier_is_422(self, client: TestClient, monkeypatch, tmp_path):
+        """R17 scenario "unservable carrier": absent bytes fail closed."""
+        _principal(monkeypatch, "author-1")
+        self._publish_with_adjunto(client, tmp_path, omit_carrier=True)
+        response = client.get(f"{self._BASE}/adjunto-nivel-1.md")
+        assert response.status_code == 422
+        assert response.json()["code"] == "attachment_unavailable"
+        # Non-leaking: the carrier path is never surfaced.
+        assert "adjunto-nivel-1.md" not in response.text
+
+    def test_drifted_carrier_is_422(self, client: TestClient, monkeypatch, tmp_path):
+        """R17 scenario "drifted carrier": SHA mismatch fails closed."""
+        _principal(monkeypatch, "author-1")
+        self._publish_with_adjunto(client, tmp_path, drift=True)
+        response = client.get(f"{self._BASE}/adjunto-nivel-1.md")
+        assert response.status_code == 422
+        assert response.json()["code"] == "attachment_unavailable"
+
+    def test_non_utf8_carrier_is_422(self, client: TestClient, monkeypatch, tmp_path):
+        """R17: a byte-length/SHA-matching but non-UTF-8 carrier is unservable."""
+        _principal(monkeypatch, "author-1")
+        self._publish_with_adjunto(client, tmp_path, data=b"\xff\xfe\x00invalid")
+        response = client.get(f"{self._BASE}/adjunto-nivel-1.md")
+        assert response.status_code == 422
+        assert response.json()["code"] == "attachment_unavailable"
+
+    def test_traversal_path_is_404_without_reading_outside_root(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """R14 scenario "traversal attempt": a `..` path that is not an exact
+        pin 404s and never reads a file outside the carrier root.
+
+        ``%2E%2E`` is used so the dot segments reach the route instead of being
+        collapsed by client-side URL normalization; the route must still reject
+        it as "not a recorded pin" rather than resolving the filesystem.
+        """
+        _principal(monkeypatch, "author-1")
+        self._publish_with_adjunto(client, tmp_path)
+        secret = tmp_path / "data" / "methodology" / "secret.md"
+        secret.write_text("# SECRET-CANARY\n", encoding="utf-8")
+        # Sanity: the route is live and the legitimate pin still serves.
+        assert client.get(f"{self._BASE}/adjunto-nivel-1.md").status_code == 200
+        response = client.get(f"{self._BASE}/%2E%2E/secret.md")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Adjunto no encontrado"
+        assert "SECRET-CANARY" not in response.text
+
+    def test_over_budget_carrier_is_served_untruncated(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """R14 scenario "over-budget carrier": the 3072-token injection budget
+        does NOT apply; the complete exemplar is returned.
+
+        Publish caps carriers at ``MAX_ADJUNTO_BYTES`` (12288 B), which at the
+        compiler's ~4 chars/token heuristic is itself the 3072-token boundary.
+        An oversize exemplar therefore cannot enter through publish, so the
+        record is injected at the library seam while the request still crosses
+        the real HTTP boundary — proving the route ignores the budget.
+        """
+        from contract_projection import _estimate_tokens
+        from methodology_compiler import AttachmentEntry
+        from types import SimpleNamespace
+
+        _principal(monkeypatch, "author-1")
+        body = "# Exhaustivo\n\n" + ("palabra " * 3000) + "\n"
+        data = body.encode("utf-8")
+        assert _estimate_tokens(body) > 3072
+        assert len(data) > 12288
+        pin = AttachmentEntry(
+            path="grande.md",
+            sha256=hashlib.sha256(data).hexdigest(),
+            bytes=len(data),
+            nivel="1º",
+        )
+        carrier_root = tmp_path / "data" / "methodology" / "seeds" / "guided-character-v1"
+        carrier_root.mkdir(parents=True, exist_ok=True)
+        (carrier_root / "grande.md").write_bytes(data)
+
+        class _StubLibrary:
+            @staticmethod
+            def get_published(skill_id: str, version: str):
+                return SimpleNamespace(skill_id="guided-character-v1", adjuntos=(pin,))
+
+        monkeypatch.setattr(api_server, "_methodology_library", lambda: _StubLibrary())
+        response = client.get(f"{self._BASE}/grande.md")
+        assert response.status_code == 200, response.text
+        assert response.content == data
+        assert len(response.content) > 12288
+
+    def test_imported_subpath_pin_addressing_from_attachments_root(
+        self, client: TestClient, monkeypatch, tmp_path,
+    ):
+        """R14/R24: a nested pin under the attachments root resolves through
+        the ``:path`` route and serves its exact bytes."""
+        _principal(monkeypatch, "author-1")
+        data = "## Anexo importado\n\nTexto.\n".encode("utf-8")
+        self._publish_with_adjunto(
+            client, tmp_path, path="anexos/nivel-1.md", data=data,
+            carrier_root="attachments",
+        )
+        response = client.get(f"{self._BASE}/anexos/nivel-1.md")
+        assert response.status_code == 200, response.text
+        assert response.content == data
+        assert response.headers["content-disposition"] == 'inline; filename="nivel-1.md"'

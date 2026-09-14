@@ -75,7 +75,12 @@ from guided_character_domain import (
     has_finished_exchange,
     resolve_candidate_nivel,
 )
-from convergence_injection import build_specimen_block, carrier_root_for, read_adjunto_bytes
+from convergence_injection import (
+    build_specimen_block,
+    carrier_root_for,
+    read_adjunto_bytes,
+    read_adjunto_text,
+)
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
@@ -8059,6 +8064,46 @@ def methodology_published_detail(skill_id: str, version: str, request: Request):
         # Additive metadata-only pins (R14): absent/empty -> [].
         "adjuntos": [entry.as_dict() for entry in published.adjuntos],
     }
+
+
+@app.get("/api/methodologies/published/{skill_id}/{version}/adjunto/{path:path}")
+def methodology_published_adjunto(skill_id: str, version: str, path: str, request: Request):
+    """Serve one pinned carrier as raw markdown for the read-only viewer (R14).
+
+    The requested ``path`` is matched EXACTLY against the published record's
+    ``adjuntos`` pins — it is never used for direct filesystem resolution, so a
+    traversal or absolute prefix that is not a recorded pin simply 404s. A
+    known pin is re-verified on every serve through ``carrier_root_for`` +
+    ``read_adjunto_text`` (containment, existence, SHA-256, byte length, and
+    UTF-8); a missing, drifted, or undecodable carrier fails closed with 422
+    ``attachment_unavailable`` without leaking the path, hash, or carrier root.
+    Unlike the text-injection seam, the 3072-token budget is deliberately NOT
+    applied: the viewer must present the complete exemplar. Read-only GET;
+    never mutates state.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    library = _methodology_library()
+    published = library.get_published(skill_id, version)
+    if published is None:
+        return JSONResponse(status_code=404, content={"detail": "Metodología no encontrada"})
+    pin = next((entry for entry in published.adjuntos if entry.path == path), None)
+    if pin is None:
+        return JSONResponse(status_code=404, content={"detail": "Adjunto no encontrado"})
+    seed_dir = carrier_root_for(published.skill_id, project_root=PROJECT_ROOT)
+    text = read_adjunto_text(seed_dir, pin)
+    if text is None:
+        return JSONResponse(status_code=422, content={
+            "detail": "A pinned attachment is unavailable or has drifted.",
+            "code": "attachment_unavailable",
+        })
+    filename = Path(pin.path).name
+    return Response(
+        content=text,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'inline; filename="{filename}"'},
+    )
 
 
 @app.get("/api/methodologies/status")
