@@ -300,9 +300,9 @@ class TestBuildSpecimenBlock:
         """Scenario "combined bound": projection (≤1000-token cap) + the
         default real 1º carrier stay ≤ 4072 estimated tokens."""
         seed_dir = SEED_ROOT / "narrative-character-creation"
-        carrier = (seed_dir / "adjunto-nivel-1-unico.md").read_bytes()
+        carrier = (seed_dir / "adjunto-nivel-1-principal.md").read_bytes()
         pin = AttachmentEntry(
-            path="adjunto-nivel-1-unico.md",
+            path="adjunto-nivel-1-principal.md",
             sha256=hashlib.sha256(carrier).hexdigest(),
             bytes=len(carrier),
             nivel="1º",
@@ -314,19 +314,27 @@ class TestBuildSpecimenBlock:
         assert combined <= 4072
 
 
-class TestLegacyPinStillServes:
-    """v1.1 rollout: the 1.0-pinned carrier bytes stay on disk and servable
-    even though the 1.1 seed no longer lists them."""
+class TestLegacyPinRetired:
+    """v1.2 principal rename: the v1.0 1º pin path ``adjunto-nivel-1-principal.md``
+    now resolves to the v1.2 carrier, whose bytes/sha differ — sha-pin drift
+    protection fails closed (accepted cost: v1.0 serves no 1º specimen)."""
 
-    def test_legacy_1_0_principal_pin_still_serves(self) -> None:
-        """Scenario "1.0 remains servable": serving the legacy 1º pin returns
-        its exact bytes, byte-identical and independently verifiable."""
+    def test_legacy_1_0_principal_pin_retired_fails_closed(self) -> None:
+        """Scenario "1.0 pin retired": serving the legacy v1.0 1º pin (path
+        ``adjunto-nivel-1-principal.md``, sha ``0963ccd4…``, 9852 B, nivel "1º")
+        returns ``None``: the path resolves to the v1.2 carrier and fails the
+        sha-pin. The legacy bytes stay byte-identical under the new ``-v1.0``
+        name."""
         seed_dir = SEED_ROOT / "narrative-character-creation"
-        data = (seed_dir / "adjunto-nivel-1-principal.md").read_bytes()
         pin = AttachmentEntry(
             path="adjunto-nivel-1-principal.md",
-            sha256=hashlib.sha256(data).hexdigest(),
-            bytes=len(data),
+            sha256="0963ccd4d4fffc76c46f05054de6f922766466c06b0e4fcb4435dd56b7b59f48",
+            bytes=9852,
             nivel="1º",
         )
-        assert serve_adjunto(seed_dir, pin) == data.decode("utf-8")
+        assert serve_adjunto(seed_dir, pin) is None
+        legacy = (seed_dir / "adjunto-nivel-1-principal-v1.0.md").read_bytes()
+        assert len(legacy) == 9852
+        assert hashlib.sha256(legacy).hexdigest() == (
+            "0963ccd4d4fffc76c46f05054de6f922766466c06b0e4fcb4435dd56b7b59f48"
+        )
