@@ -1462,7 +1462,7 @@ class TestConvergenceSpecimenB5:
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, seed_root)
         assert report.installed == 1
-        library.activate("vibrantes", "narrative-character-creation", "1.1")
+        library.activate("vibrantes", "narrative-character-creation", "1.2")
         return library
 
     def _harness(self, monkeypatch, tmp_path: Path, *, mode: str = "full",
@@ -1535,7 +1535,7 @@ class TestConvergenceSpecimenB5:
         assert block is not None
         assert block.count("[Convergence specimen — nivel ") == 1
         assert block.startswith("[Convergence specimen — nivel 1º]")
-        assert "Teo Marren" in block
+        assert "Nara Veless" in block
 
     def test_pre_pr4_fail_open_record_without_adjuntos_stays_byte_identical(
         self, monkeypatch, tmp_path,
@@ -1552,7 +1552,7 @@ class TestConvergenceSpecimenB5:
             encoding="utf-8",
         )
         stripped = MethodologyLibrary(tmp_path / "library.json")
-        stripped.activate("vibrantes", "narrative-character-creation", "1.1")
+        stripped.activate("vibrantes", "narrative-character-creation", "1.2")
         provider, store = self._harness(monkeypatch, tmp_path, library=stripped)
         self._finish_exchange(store)
         asyncio.run(api_server._guided_continue(

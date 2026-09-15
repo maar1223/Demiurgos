@@ -300,9 +300,9 @@ class TestBuildSpecimenBlock:
         """Scenario "combined bound": projection (≤1000-token cap) + the
         default real 1º carrier stay ≤ 4072 estimated tokens."""
         seed_dir = SEED_ROOT / "narrative-character-creation"
-        carrier = (seed_dir / "adjunto-nivel-1-protagonista.md").read_bytes()
+        carrier = (seed_dir / "adjunto-nivel-1-unico.md").read_bytes()
         pin = AttachmentEntry(
-            path="adjunto-nivel-1-protagonista.md",
+            path="adjunto-nivel-1-unico.md",
             sha256=hashlib.sha256(carrier).hexdigest(),
             bytes=len(carrier),
             nivel="1º",
