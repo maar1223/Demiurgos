@@ -56,7 +56,9 @@ Rasgos básicos para darle cuerpo al personaje: rostro, complexión, vestimenta,
 
 Ofrecer lista completa del catálogo (ver Apéndice C).
 
-### P7: Alineamiento (filtrado: solo Relleno)
+### P7: Alineamiento (derivado al cierre — no se pregunta)
+
+El alineamiento no se pregunta: se deriva al cierre (`inicial → revelado`), igual que el Eneatipo. Ambos valores emergen de la descripción final y los razona el asistente a partir de la conducta (no de la autoimagen). La lista canónica del rango (solo Relleno) queda como referencia de derivación:
 
 | # | Alineamiento | Descripción |
 |---|---|---|
@@ -83,7 +85,8 @@ Ofrecer lista completa del catálogo (ver Apéndice C).
 - **Eneatipo:** [X] - [Nombre]
 - **Stal:** [XX] - [Nombre]
 - **Profesión:** [X]
-- **Alineamiento:** [X]
+- **Alineamiento inicial:** [X]
+- **Alineamiento revelado:** [X]
 ```
 
 ---
@@ -137,9 +140,9 @@ Cada Eneatipo tiene 3 subtipos. Mostrar según el Eneatipo elegido:
 
 Mostrar los 49 arquetipos (ver Apéndice B).
 
-### P10: Alineamiento (filtrado: Principal + Secundario)
+### P10: Alineamiento (derivado al cierre — no se pregunta)
 
-(ver Apéndice A - sección Principal/Secundario)
+El alineamiento no se pregunta: se deriva al cierre (`inicial → revelado`), igual que el Eneatipo. Ambos valores emergen de la descripción final y los razona el asistente a partir de la conducta (no de la autoimagen). La lista canónica del rango queda como referencia de derivación (ver Apéndice A - sección Principal/Secundario).
 
 ### P11: Miedo Arquetípico
 
@@ -168,7 +171,8 @@ Solo si el personaje cumple función de villano (antagonista moralmente activo, 
 - **Arquetipo:** [X] (Busca: X, Lo consigue: Y)
 
 ### Psicología y Carácter
-- **Alineamiento:** [X]
+- **Alineamiento inicial:** [X]
+- **Alineamiento revelado:** [X]
 - **Miedo:** [X]
 - **Teme:** [descripción del miedo]
 - **Fortalezas:** [derivadas de Eneatipo + Arquetipo]
@@ -224,8 +228,8 @@ Rasgos detallados para visualizar al personaje: rostro y expresión, complexión
 ### FASE 4: BRÚJULA MORAL (P10-P12)
 
 #### P10: Rango narrativo (ya es Principal, confirmar)
-#### P11: Alineamiento (completo: 25 opciones Principal/Secundario)
-(ver Apéndice A)
+#### P11: Alineamiento (derivado al cierre — no se pregunta)
+El alineamiento no se pregunta: se deriva al cierre (`inicial → revelado`); la lista canónica del rango (25 opciones Principal/Secundario) queda como referencia de derivación (ver Apéndice A).
 #### P12: Miedo Arquetípico (12 opciones)
 (ver Apéndice G)
 
@@ -361,7 +365,8 @@ Sí / No (si No, saltar directamente a la salida de ficha)
 - **Arquetipo:** [X] (Busca: X, Lo consigue: Y)
 
 ### Psicología y Carácter
-- **Alineamiento:** [X]
+- **Alineamiento inicial:** [X]
+- **Alineamiento revelado:** [X]
 - **Miedo:** [X]
 - **Teme:** [descripción]
 - **Fortalezas:** [según Eneatipo + Arquetipo]
@@ -399,7 +404,7 @@ Similar a PRINCIPAL pero con variaciones:
 ### P3: Sin profesión terrenal (preguntar: ¿Qué es? ¿Un dios, un espíritu, un Áyagar titánico?)
 ### P4: Arquetipo 7x7 (filtrado por escala divina)
 ### P5: Confirmar rango Inmortal
-### P6: Alineamiento (filtrado: solo Inmortales - 24 opciones)
+### P6: Alineamiento (derivado al cierre — no se pregunta; el asistente deriva `inicial → revelado` desde la lista canónica de Inmortales - 24 opciones)
 ### P7: Miedo (filtrado: existenciales + místicos)
 ### P8-P11: Trama, Conflicto, Dilema, Tema (los mismos, a escala cósmica)
 
@@ -417,7 +422,8 @@ Similar a PRINCIPAL pero con variaciones:
 - **Nación de dominio:** [X]
 
 ### Psicología Cósmica
-- **Alineamiento:** [X]
+- **Alineamiento inicial:** [X]
+- **Alineamiento revelado:** [X]
 - **Miedo:** [X]
 - **Motivación divina:** [X]
 - **Limitaciones:** [X]
@@ -431,8 +437,8 @@ La IA debe verificar antes de entregar el resultado:
 
 - [ ] Simetría Sagrada: Eneatipo [X] → Stal [XX] correcto
 - [ ] Compatibilidad Arquetipo ↔ Eneatipo (sin contradicciones obvias)
-- [ ] Alineamiento dentro del rango correcto (Relleno/Secundario/Principal/Inmortal)
-- [ ] Coherencia Miedo ↔ Alineamiento (no contradictorios)
+- [ ] Alineamiento inicial y revelado dentro de la lista canónica del rango (Relleno/Secundario/Principal/Inmortal)
+- [ ] Coherencia Miedo ↔ Alineamiento inicial/revelado (no contradictorios)
 - [ ] Si hay contradicción: preguntar al usuario si prefiere ajustar o mantener (puede ser una anomalía intencional)
 
 ---

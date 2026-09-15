@@ -72,8 +72,9 @@ Propósito: Validar cualquier contenido (personaje, relato, escenario, elemento 
 | Principal | 25 opciones | `plantillas/_catalog.json` — buscar "alineamiento" |
 | Inmortal | 24 opciones | - "Inmortales" |
 
-- [ ] El alineamiento pertenece al rango correcto
-- [ ] El alineamiento no contradice el miedo (sin asumir — marcar solo si hay evidencia clara)
+- [ ] `Alineamiento inicial` y `Alineamiento revelado` están presentes (si falta cualquiera, es violación)
+- [ ] Ambos valores pertenecen a la lista canónica del rango
+- [ ] Ninguno contradice el miedo (sin asumir — marcar solo si hay evidencia clara; la autoimagen no define el eje moral)
 
 ### 2b: Profesión
 

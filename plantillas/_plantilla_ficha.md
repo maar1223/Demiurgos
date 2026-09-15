@@ -3,9 +3,8 @@
 ## Identidad Base
 *   **Nombre:**
 *   **Apodo:**
-*   **Rol Narrativo:** [PRIN | SECU | ANTA | VILL]
+*   **Rol Narrativo:** [PRIN | COPRO | SECU | ANTA]
 *   **Arquetipo de Personalidad:** [Cruces de Ejes: Ej. Poder x Mística] (Ref: 02_arquetipos_personalidad.md)
-*   **Alineamiento Moral:** [F1-C1 | F7-C7: Ej. Axiomático Virtuoso] (Ref: 03_alineamientos_morales.md)
 *   **Edad:**
 *   **Raza (Stal/Inerte/etc):**
 *   **Género / Sexualidad:**
@@ -42,6 +41,7 @@
 ## Arco de Personaje (Estructura Snyder / Evolución Moral)
 > **Meta del Arco:** [¿Qué aprende o cómo cambia?]
 > **Alineamiento Inicial:** [Ej. C2-F3 | Legal Moral]
+> **Alineamiento Revelado:** [Ej. C5-F1 | Rebelde Virtuoso]
 
 ### Acto I (25% - Planteamiento)
 *   **Estado Inicial:** [Su vida antes del cambio]
