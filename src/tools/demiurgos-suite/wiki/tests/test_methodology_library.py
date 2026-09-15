@@ -1205,19 +1205,19 @@ class TestProvenanceManifestExclusion:
         assert published.parent_version == "1.2.0"
 
 
-class TestFoundationalSeedV11Channels:
-    """v1.1 rollout (both channels): the seeded foundational skill publishes at
-    1.1 and both the guided-character activation AND the companion pin it."""
+class TestFoundationalSeedV12Channels:
+    """v1.2 rollout (both channels): the seeded foundational skill publishes at
+    1.2 and both the guided-character activation AND the companion pin it."""
 
-    def test_seed_activates_and_companions_at_1_1(self, tmp_path: Path) -> None:
+    def test_seed_activates_and_companions_at_1_2(self, tmp_path: Path) -> None:
         seed_root = tmp_path / "seeds"
         shutil.copytree(SEED_ROOT, seed_root)
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, seed_root)
         assert report.installed == 1 and report.conflict == 0
         assert [v["version"] for v in
-                library.published_versions_for(FOUNDATIONAL_CHARACTER_SKILL_ID)] == ["1.1"]
-        library.activate("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.1")
-        library.add_companion("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.1")
-        assert library.active_for("Vibrantes").version == "1.1"
-        assert [c.version for c in library.list_companions("Vibrantes")] == ["1.1"]
+                library.published_versions_for(FOUNDATIONAL_CHARACTER_SKILL_ID)] == ["1.2"]
+        library.activate("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2")
+        library.add_companion("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2")
+        assert library.active_for("Vibrantes").version == "1.2"
+        assert [c.version for c in library.list_companions("Vibrantes")] == ["1.2"]
