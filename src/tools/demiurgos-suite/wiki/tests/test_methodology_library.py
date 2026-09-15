@@ -9,6 +9,7 @@ touch the kernel, canon files, or any path outside its own root.
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -18,6 +19,9 @@ import pytest
 _WIKI = Path(__file__).resolve().parents[1]
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
+
+REPO_ROOT = _WIKI.parents[3]
+SEED_ROOT = REPO_ROOT / "data" / "methodology" / "seeds"
 
 from methodology_library import (  # noqa: E402
     AlreadyPublishedError,
@@ -34,6 +38,7 @@ from methodology_library import (  # noqa: E402
     _version_key,
 )
 from methodology_compiler import AttachmentEntry, compile_methodology  # noqa: E402
+from methodology_seed import install_seeds  # noqa: E402
 from methodology_trust import OFFICIAL, PERSONALIZADAS  # noqa: E402
 
 
@@ -1198,3 +1203,21 @@ class TestProvenanceManifestExclusion:
         assert published is not None
         assert published.parent_skill_id == "guided-character-v1"
         assert published.parent_version == "1.2.0"
+
+
+class TestFoundationalSeedV11Channels:
+    """v1.1 rollout (both channels): the seeded foundational skill publishes at
+    1.1 and both the guided-character activation AND the companion pin it."""
+
+    def test_seed_activates_and_companions_at_1_1(self, tmp_path: Path) -> None:
+        seed_root = tmp_path / "seeds"
+        shutil.copytree(SEED_ROOT, seed_root)
+        library = MethodologyLibrary(tmp_path / "library.json")
+        report = install_seeds(library, seed_root)
+        assert report.installed == 1 and report.conflict == 0
+        assert [v["version"] for v in
+                library.published_versions_for(FOUNDATIONAL_CHARACTER_SKILL_ID)] == ["1.1"]
+        library.activate("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.1")
+        library.add_companion("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.1")
+        assert library.active_for("Vibrantes").version == "1.1"
+        assert [c.version for c in library.list_companions("Vibrantes")] == ["1.1"]

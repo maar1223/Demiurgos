@@ -3347,7 +3347,7 @@ class TestSeedFirstBoot:
         items = response.json()["items"]
         assert [item["skill_id"] for item in items] == ["narrative-character-creation"]
         item = items[0]
-        assert item["version"] == "1.0"
+        assert item["version"] == "1.1"
         assert item["clasificacion"] == "Oficiales"
         assert item["trust_attributes"] == ["fundacional"]
         entry = load_seed_catalog(SEED_ROOT)[0]
@@ -3406,7 +3406,7 @@ class TestSeedFirstBoot:
         assert len(versions) == 1
         reloaded = MethodologyLibrary(tmp_path / "data" / "methodology" / "library.json")
         assert [v["version"] for v in
-                reloaded.published_versions_for("narrative-character-creation")] == ["1.0"]
+                reloaded.published_versions_for("narrative-character-creation")] == ["1.1"]
         # Leave the module global clean for later tests.
         api_server._METHODOLOGY_LIBRARY = None
 

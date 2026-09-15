@@ -120,7 +120,8 @@ Un defecto o detalle físico pequeño suele bastar para hacerlo inolvidable.
 - **Subtipo:** uno por personaje, de los tres instintos (conservación, social,
   sexual/transmisor).
 - **Arquetipo:** según la profundidad del rol (3, 2 o 1 arquetipo).
-- **Alineamiento:** según el nivel del personaje (ver más abajo).
+- **Alineamiento inicial:** cómo se lee el personaje al inicio; se deriva al cierre.
+- **Alineamiento revelado:** qué revela su conducta final; se deriva al cierre.
 
 ### Motivaciones
 
@@ -139,6 +140,10 @@ Trayectoria **interna**, agnóstica a trama: no nombra eventos de una historia
 específica. Estructura en Actos (I, II1, II2, III) para personajes de 1º
 nivel; los demás niveles no llevan arco completo.
 
+En el 1º nivel el arco sostiene la trayectoria del Alineamiento acto a acto
+(`inicial` → `revelado`): la trayectoria vive en el arco, no se pregunta como
+campo.
+
 ## Densidad por nivel narrativo
 
 La profundidad NO es "más texto": es estructura que escala con el peso del
@@ -146,8 +151,8 @@ rol. Cada nivel tiene su propio recorte:
 
 | Nivel | Rol | Arquetipos | Qué se mantiene | Qué se omite |
 |---|---|---|---|---|
-| **1º** | Principal / Antagonista / Villano | 3 | Todo el formato fundacional completo | — |
-| **2º** | Secundario | 2 | Identidad mínima + rol narrativo + relación con el protagonista + aspecto con defecto + carácter 2×2 + función + mini-arc opcional | Conflicto profundo, arco 3 actos, trasfondo extenso, perfil de voz/villano |
+| **1º** | Principal / Antagonista / Coprotagonista | 3 | Todo el formato fundacional completo | — |
+| **2º** | Secundario | 2 | Identidad mínima + rol narrativo + relación con el protagonista + aspecto con defecto + carácter 2×2 + función + mini-arc opcional | Conflicto profundo, arco 3 actos, trasfondo extenso, perfil de voz |
 | **3º** | Relleno | 1 | Nombre + función en la escena + 1 rasgo distintivo | Todo lo narrativo |
 
 **Regla de oro:** si un personaje necesita más de "nombre + función + un
@@ -203,9 +208,19 @@ su propia lista:
 - **Inmortales:** 24 alineamientos (Axiomático/Legal/Social/Neutral/Rebelde/
   Caótico/Anárquico × Virtuoso/Benigno/Moral/Neutral/Mezquino/Maligno/Vil).
 
+**Regla de derivación:** el alineamiento **emerge de la descripción final**, no
+se pregunta en la fase 1. El razonamiento de derivación es del asistente, no
+del personaje: se lee la conducta final y se derivan los dos valores
+(`inicial` y `revelado`). El **eje moral** se lee de la CONDUCTA —lo que el
+personaje hace y lo que está dispuesto a sacrificar—, NO de su autoimagen; el
+**eje de orden** se lee de su relación con la autoridad y las estructuras.
+Ambos valores pertenecen a la lista canónica del nivel.
+
 Guardrails: no confundir los ejes ("Legal" es orden/autoridad, "Moral" es
 calidad). La lista de cada nivel es la fuente canónica; esta metodología cita
-la fuente, nunca la redefine.
+la fuente, nunca la redefine. El **eje moral** NO se deriva de la autoimagen:
+el desalineamiento entre autoimagen y conducta es material del arco (`inicial`
+vs `revelado`).
 
 ## Herramientas de diagnóstico (lente del asistente)
 
@@ -215,7 +230,8 @@ campos que el Autor rellena ni van en la ficha:
 - **11 creencias irracionales (Ellis):** alimentan el **conflicto interno**.
   Universal: aplica a cualquier personaje.
 - **15 puntos del villano arquetípico:** alimentan el **rol en la historia** y
-  la validación del personaje. Específico del rol villano.
+  la validación del personaje. Lente aplicable a antagonistas y a cualquier
+  personaje cuya conducta se revele como tal.
 
 ## Guardarraíles
 

@@ -1,5 +1,5 @@
 skill_id: narrative-character-creation
-version: "1.0"
+version: "1.1"
 name: Creación de Personajes
 description: >-
   Metodología fundacional para co-crear personajes narrativos nuevos, agnóstica
@@ -22,10 +22,20 @@ phases:
 language: es
 categoria_funcional: Creación
 taller: Mundo
+# Orden = prioridad. El primer adjunto con nivel "1º" es el espécimen por
+# defecto (fallback determinista de build_specimen_block).
 adjuntos:
-  - path: adjunto-nivel-1-principal.md
-    sha256: 0963ccd4d4fffc76c46f05054de6f922766466c06b0e4fcb4435dd56b7b59f48
-    bytes: 9852
+  - path: adjunto-nivel-1-protagonista.md
+    sha256: 17fdff0692e3aab53999a95508f2c32075b5dfe8b856e3fadf7ad81780a52cf9
+    bytes: 11473
+    nivel: "1º"
+  - path: adjunto-nivel-1-antagonista.md
+    sha256: 1bee5e3e3866a305cd44999fb749ee1391b8e954e6d35d4d799bc2f3fde32173
+    bytes: 11498
+    nivel: "1º"
+  - path: adjunto-nivel-1-coprotagonista.md
+    sha256: 971bd3f7d3d652c5947d17e1630b279f90955a1a83f21b1449cc8492a29857d5
+    bytes: 11451
     nivel: "1º"
   - path: adjunto-nivel-2-secundario.md
     sha256: 03c34fa740efabd2f427b5c42be3ff806f0cc25649454cd3bcaf9dcf719503bf

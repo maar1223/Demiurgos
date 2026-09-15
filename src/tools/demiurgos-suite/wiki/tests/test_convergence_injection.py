@@ -296,13 +296,13 @@ class TestBuildSpecimenBlock:
         """Zero-attachment skills never build a block."""
         assert build_specimen_block(tmp_path, (), "1º") is None
 
-    def test_combined_bound_projection_cap_plus_korrane_block(self) -> None:
+    def test_combined_bound_projection_cap_plus_default_1_block(self) -> None:
         """Scenario "combined bound": projection (≤1000-token cap) + the
-        largest real carrier (Korrane = 1º) stay ≤ 4072 estimated tokens."""
+        default real 1º carrier stay ≤ 4072 estimated tokens."""
         seed_dir = SEED_ROOT / "narrative-character-creation"
-        carrier = (seed_dir / "adjunto-nivel-1-principal.md").read_bytes()
+        carrier = (seed_dir / "adjunto-nivel-1-protagonista.md").read_bytes()
         pin = AttachmentEntry(
-            path="adjunto-nivel-1-principal.md",
+            path="adjunto-nivel-1-protagonista.md",
             sha256=hashlib.sha256(carrier).hexdigest(),
             bytes=len(carrier),
             nivel="1º",
@@ -312,3 +312,21 @@ class TestBuildSpecimenBlock:
         projection_at_cap = "x" * (1000 * _CHARS_PER_TOKEN)
         combined = _estimate_tokens(projection_at_cap) + _estimate_tokens(block)
         assert combined <= 4072
+
+
+class TestLegacyPinStillServes:
+    """v1.1 rollout: the 1.0-pinned carrier bytes stay on disk and servable
+    even though the 1.1 seed no longer lists them."""
+
+    def test_legacy_1_0_principal_pin_still_serves(self) -> None:
+        """Scenario "1.0 remains servable": serving the legacy 1º pin returns
+        its exact bytes, byte-identical and independently verifiable."""
+        seed_dir = SEED_ROOT / "narrative-character-creation"
+        data = (seed_dir / "adjunto-nivel-1-principal.md").read_bytes()
+        pin = AttachmentEntry(
+            path="adjunto-nivel-1-principal.md",
+            sha256=hashlib.sha256(data).hexdigest(),
+            bytes=len(data),
+            nivel="1º",
+        )
+        assert serve_adjunto(seed_dir, pin) == data.decode("utf-8")
