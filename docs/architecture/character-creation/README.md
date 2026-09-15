@@ -131,20 +131,21 @@
 > `Villano_Korrane.md` es además un documento **pre-cambio**: usa `VILLANO` como valor de rol y un
 > `Alineamiento Moral` único al inicio, ambos superados por la **taxonomía densidad-solo** (decisión
 > #14) y el **alineamiento emergente `inicial → revelado`**. El runtime ya no lo sirve: la semilla
-> v1.1 publica 5 carriers `adjunto-nivel-*` en `data/methodology/seeds/narrative-character-creation/`.
+> v1.2 publica 3 carriers `adjunto-nivel-*` en `data/methodology/seeds/narrative-character-creation/`.
 >
 > **Divergencia docs ↔ semilla (PR ⑥, intencional).** Las **3 copias fundacionales originales** que el
-> runtime servía como adjuntos (hoy **5 carriers** en la semilla v1.1) viven en `data/methodology/seeds/narrative-character-creation/` y fueron
+> runtime servía como adjuntos (hoy **3 carriers** en la semilla v1.2) viven en `data/methodology/seeds/narrative-character-creation/` y fueron
 > **reescritas agnósticas al mundo** en el PR ⑥: sin "Axill"/"Kae"/"Ciudad Mineral"/"Humano
 > Vibrante"/"escena del mercado"/"compañía de plataformas" (roles genéricos), errata
 > "Cresció"→"Creció" y títulos unificados. Los originales de `examples/` de este README **no** se
 > tocaron: son textos **pre-⑥** que conservan el color de mundo. El byte-mirror docs ↔ semilla queda
 > **intencionalmente roto** y se acepta (decisión D6, PR ⑥ `copy-polish-pass`).
 >
-> **Set de 5 (D5 — cierre del registro).** `Axill_Garner.md` y `Kae_Turant.md` **permanecen
-> docs-only**: el runtime sirve **un pin por nivel narrativo** (1º/2º/3º), por lo que un segundo
-> carrier de 1º nivel nunca se sirve; además ambos traen color de mundo Vibrantes, que contradice el
-> principio fundacional agnóstico (#10).
+> **Set de 3 (D5 — cierre del registro; aplicado en v1.2).** `Axill_Garner.md` y `Kae_Turant.md`
+> **permanecen docs-only**: el runtime sirve **un pin por nivel narrativo** (1º/2º/3º), por lo que un
+> segundo carrier de 1º nivel nunca se sirve; además ambos traen color de mundo Vibrantes, que contradice el
+> principio fundacional agnóstico (#10). La semilla v1.2 consolida ese argumento con un único pin `1º`
+> (`adjunto-nivel-1-unico.md`); los tres pins `1º` de 1.1 quedan en disco byte-idénticos y sin listar.
 
 ## Decisiones abiertas (para resolver en la skill)
 
