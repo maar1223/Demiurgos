@@ -14,7 +14,7 @@
 | [`examples/Kae_Turant.md`](examples/Kae_Turant.md) | Ejemplo canónico de ficha **1º nivel** (coprotagonista, formato estable) — confirma que el formato es estable por perfil |
 | [`examples/Secundario_Ejemplo.md`](examples/Secundario_Ejemplo.md) | Ejemplo de ficha **2º nivel** (secundario, 2 arquetipos) — con la regla de qué se mantiene/omite |
 | [`examples/Relleno_Ejemplo.md`](examples/Relleno_Ejemplo.md) | Ejemplo de ficha **3er nivel** (relleno, 1 arquetipo) — tarjeta mínima, sin peso narrativo |
-| [`examples/Villano_Korrane.md`](examples/Villano_Korrane.md) | Ejemplo de ficha **1º nivel** (villano, 3 arquetipos) — **agnóstica al mundo** (sin Stal/lugares/razas). El stack del sistema integrado (Eneatipo+Subtipo+Arquetipo+Alineamiento) + Eneatipo derivado al final |
+| [`examples/Villano_Korrane.md`](examples/Villano_Korrane.md) | Ejemplo **histórico pre-cambio** de ficha **1º nivel** (rol `VILLANO`, 3 arquetipos) — **agnóstica al mundo** (sin Stal/lugares/razas). El stack del sistema integrado (Eneatipo+Subtipo+Arquetipo+Alineamiento) + Eneatipo derivado al final. Ver nota de legacy más abajo |
 | [`systems/eneagrama-arquetipos-alineamientos.md`](systems/eneagrama-arquetipos-alineamientos.md) | **FUENTE CANÓNICA** (autor): Eneagrama completo + los 49 arquetipos numerados + alineamientos por nivel (Relleno/Principal-Secundario/Inmortales). Manda sobre las guías |
 | [`systems/alignment-system.md`](systems/alignment-system.md) | Guía de uso de alineamientos: 2 ejes (orden × moral) + alcance por nivel + guardrails (no es D&D). **No redefine valores — cita la fuente** |
 | [`systems/archetypes-7x7.md`](systems/archetypes-7x7.md) | Guía de uso de arquetipos: ejes (Qué busca × Lo consigue con) + lectura de la grieta + profundidad por rol (3/2/1). **No redefine descripciones — cita la fuente** |
@@ -25,7 +25,7 @@
 
 1. **Formato canónico de salida = Axill (acotado).** Bira es **contra-patrón** (sobre-generación; ver
    `examples/`). La skill debe escupir el formato Axill para personajes de primer nivel
-   (protagonista/antagonista/villano).
+   (protagonista/antagonista/coprotagonista).
 2. **El arco de personaje es caracterización (60% flexible) y ENTRA al MVP.** No se separa de la
    "entidad". El único mecanismo que queda FUERA del MVP es el motor de sagas/tramas del universo
    (timeline de eventos, generación de historia → Taller de Narrativa), conforme a D5.
@@ -47,7 +47,8 @@
    - **11 creencias irracionales (Ellis)** → **psicología interna** / motor de conflicto interno.
      Universal (cualquier personaje). Alimenta **Conflicto interno**.
    - **15 puntos del villano arquetípico** → **craft narrativo** / cómo se lee ante el lector.
-     Específico del rol villano. Alimenta **Rol en la historia** + validación.
+     No es un rol de la taxonomía: es una **lente** aplicable a antagonistas y a cualquier personaje
+     cuya conducta se revele como tal. Alimenta **Rol en la historia** + validación.
 6. **Subsistema de alineamientos**: custom, organizado **por nivel del personaje**
    (Relleno / Principal-Secundario / Inmortales), NO es D&D, y no confundir ejes ("Legal" es
    orden/autoridad, "Moral" es calidad). La lista de cada nivel está en la **fuente canónica**.
@@ -65,8 +66,8 @@
 
    | Nivel | Rol | Arquetipos | Qué se mantiene | Qué se omite |
    |---|---|---|---|---|
-   | **1º** | Principal / Antagonista / Villano | 3 | Todo el formato fundacional completo | — |
-   | **2º** | Secundario | 2 | Identidad mínima + **Rol narrativo + Relación con el protagonista** + aspecto con defecto + **carácter 2×2** + función + mini-arc opcional | Conflicto profundo, arco 3 actos, trasfondo extenso, perfil de voz/villano |
+   | **1º** | Principal / Antagonista / Coprotagonista | 3 | Todo el formato fundacional completo | — |
+   | **2º** | Secundario | 2 | Identidad mínima + **Rol narrativo + Relación con el protagonista** + aspecto con defecto + **carácter 2×2** + función + mini-arc opcional | Conflicto profundo, arco 3 actos, trasfondo extenso, perfil de voz |
    | **3º** | Relleno | 1 | Nombre + **Función** en la escena + 1 rasgo distintivo | Todo lo narrativo |
 
    **Regla de oro:** si un personaje necesita más de "nombre + función + un rasgo", **no es relleno** —
@@ -110,6 +111,15 @@
     Stal. Para que el grafo entienda el mundo "sin ambigüedad", la skill debe declarar qué campos de mundo
     se indexan y el índice debe aprenderlos. Ver `skill-personalizada-de-mundo.md` §4.
 
+14. **El alineamiento es una trayectoria emergente `inicial → revelado`, no un campo asignado al inicio.**
+    Se deriva al cierre, igual que el **Eneatipo** (precedente de derivación): no se pregunta en fase 1;
+    el razonamiento es del asistente. El **eje moral se lee de la CONDUCTA** (lo que el personaje hace y
+    está dispuesto a sacrificar), **NO de su autoimagen**; el **eje de orden** se lee de su relación con
+    la autoridad y las estructuras. Ambos valores pertenecen a la lista canónica del nivel. El **nivel
+    narrativo mide solo densidad** (1º/2º/3º) y no codifica moralidad; sí cambia con la densidad la
+    lista de la que se deriva. En 1º nivel la trayectoria vive en el arco acto a acto. Ver
+    `systems/alignment-system.md` § "Derivación emergente".
+
 > Los ejemplos de `examples/` se dividen en dos grupos:
 > - **`Axill_Garner.md` y `Kae_Turant.md`** = fichas reales del autor (mundo Vibrantes). Traen color de
 >   mundo porque son del mundo. Sirven como fieles del formato de salida de **1º nivel**.
@@ -118,8 +128,13 @@
 >   sin Stal, sin lugares, sin razas de mundo. El color de mundo lo aporta la Skill Personalizada
 >   por Mundo (decisión #10).
 >
-> **Divergencia docs ↔ semilla (PR ⑥, intencional).** Las 3 copias fundacionales que el runtime sirve
-> como adjuntos viven en `data/methodology/seeds/narrative-character-creation/` y fueron
+> `Villano_Korrane.md` es además un documento **pre-cambio**: usa `VILLANO` como valor de rol y un
+> `Alineamiento Moral` único al inicio, ambos superados por la **taxonomía densidad-solo** (decisión
+> #14) y el **alineamiento emergente `inicial → revelado`**. El runtime ya no lo sirve: la semilla
+> v1.1 publica 5 carriers `adjunto-nivel-*` en `data/methodology/seeds/narrative-character-creation/`.
+>
+> **Divergencia docs ↔ semilla (PR ⑥, intencional).** Las **3 copias fundacionales originales** que el
+> runtime servía como adjuntos (hoy **5 carriers** en la semilla v1.1) viven en `data/methodology/seeds/narrative-character-creation/` y fueron
 > **reescritas agnósticas al mundo** en el PR ⑥: sin "Axill"/"Kae"/"Ciudad Mineral"/"Humano
 > Vibrante"/"escena del mercado"/"compañía de plataformas" (roles genéricos), errata
 > "Cresció"→"Creció" y títulos unificados. Los originales de `examples/` de este README **no** se

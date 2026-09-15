@@ -41,7 +41,7 @@ debe hacer la pregunta de fricción.
 
 | Nivel | Rol | Nº de arquetipos |
 |---|---|---|
-| **1º** | Principal / Antagonista / Villano | **3** |
+| **1º** | Principal / Antagonista / Coprotagonista | **3** |
 | **2º** | Secundario | **2** |
 | **3º** | Relleno | **1** |
 
@@ -55,14 +55,17 @@ debe hacer la pregunta de fricción.
 **La mecánica del proto (a replicar en la skill, pero conversacional):**
 
 1. **Elegir el nivel** del personaje → determina la cantidad de arquetipos
-   (Relleno=1 / Secundario=2 / Principal, Villano, Inmortal=3).
+   (Relleno=1 / Secundario=2 / Principal, Antagonista, Coprotagonista=3).
 2. **Elegir/randomizar cada arquetipo** usando un par `Fila × Columna` del grid 7×7. Cada intersección
    da un arquetipo distinto (ej. `3×7` = "El Viejo Soldado", `1×1` = "El Anarquista", `6×5` = "El Arquero").
    En el proto se randomizaban; en la skill el asistente los **propone** al autor (o randomiza si el autor
    lo pide) — el autor confirma.
-3. **Asignar alineamiento** según el nivel (Relleno=3×3/9 · Principal-Secundario=5×5/25 · Inmortal=24).
-4. **El 40/60 aplica acá de lleno:** los arquetipos + alineamiento son las **ANCLAS deterministas**
-   (el 40% — no negociables). El **60% flexible** es que el creador **rellené los huecos y haga que todo
+3. **Derivar el alineamiento** al cierre según el nivel (lista del nivel: Relleno=9 ·
+   Principal-Secundario=25 · Inmortal=24); es una **trayectoria emergente `inicial → revelado`**, no un
+   campo de la fase 1 (ver `alignment-system.md` § "Derivación emergente").
+4. **El 40/60 aplica acá de lleno:** los **arquetipos** son las **ANCLAS deterministas** (el 40% — no
+   negociables); el alineamiento se **deriva** al cierre. El **60% flexible** es que el creador
+   **rellené los huecos y haga que todo
    calce** (aspecto, carácter, conflicto, trasfondo, arco) — haciendo que los moldes convivan.
 
 **Por qué funciona:** al randomizar/combinar arquetipos de forma impredecible, el creador **no siempre
