@@ -151,7 +151,7 @@ rol. Cada nivel tiene su propio recorte:
 
 | Nivel | Rol | Arquetipos | Qué se mantiene | Qué se omite |
 |---|---|---|---|---|
-| **1º** | Principal / Antagonista / Coprotagonista | 3 | Todo el formato fundacional completo | — |
+| **1º** | Principal / Coprotagonista / Antagonista / Villano | 3 | Todo el formato fundacional completo | — |
 | **2º** | Secundario | 2 | Identidad mínima + rol narrativo + relación con el protagonista + aspecto con defecto + carácter 2×2 + función + mini-arc opcional | Conflicto profundo, arco 3 actos, trasfondo extenso, perfil de voz |
 | **3º** | Relleno | 1 | Nombre + función en la escena + 1 rasgo distintivo | Todo lo narrativo |
 
@@ -221,6 +221,11 @@ calidad). La lista de cada nivel es la fuente canónica; esta metodología cita
 la fuente, nunca la redefine. El **eje moral** NO se deriva de la autoimagen:
 el desalineamiento entre autoimagen y conducta es material del arco (`inicial`
 vs `revelado`).
+
+El **espécimen de 1º nivel** enseña la regla con personajes de moralidad
+**AMBIGUA**: ningún ejemplo muestra un giro moral inequívoco —ni héroe ni
+villano claros—, porque la ambigüedad es el material del arco, no su excepción.
+Las etiquetas morales describen CONDUCTA, nunca el formato ni el rol.
 
 ## Herramientas de diagnóstico (lente del asistente)
 
