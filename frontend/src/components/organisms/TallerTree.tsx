@@ -104,8 +104,11 @@ function SkillRow({
   onSelect,
   selected,
 }: SkillRowProps) {
-  const isSelected =
-    selected?.skill_id === skill.skill_id && selected?.version === skill.version;
+  /** Selection highlight is skill-level (REQ-TRE-12): a version picked in the
+   *  right-panel "Versiones" block highlights this skill's single explorer row
+   *  even when it is not the rendered representative. Version-exact meaning
+   *  stays in `isActive`/`isCompanion`. */
+  const isSelected = selected?.skill_id === skill.skill_id;
   const slotChip = activationChip({ state, hasActivation });
   const companion = isCompanion ? companionChip() : null;
   return (
@@ -219,7 +222,7 @@ export function TallerTree({
                       : group.state;
                   return (
                     <SkillRow
-                      key={`${skill.skill_id}@${skill.version}`}
+                      key={skill.skill_id}
                       skill={skill}
                       state={rowState}
                       world={world}

@@ -20,6 +20,53 @@ const status: MethodologyStatus = {
   drafts: [],
 };
 
+/** Multi-version fixture (REQ-TRE-9/10): one skill published at 1.0/1.1/1.2
+ *  with 1.2 active in "nec" — the explorer must render a single row @1.2. */
+const multiVersionStatus: MethodologyStatus = {
+  published: [
+    {
+      skill_id: "multi-skill",
+      version: "1.0",
+      name: "Multi skill",
+      description: "",
+      digest: "a",
+      published_at: "2026-01-01",
+      taller: "Mundo",
+      talleres_compatibles: [],
+    },
+    {
+      skill_id: "multi-skill",
+      version: "1.1",
+      name: "Multi skill",
+      description: "",
+      digest: "b",
+      published_at: "2026-01-01",
+      taller: "Mundo",
+      talleres_compatibles: [],
+    },
+    {
+      skill_id: "multi-skill",
+      version: "1.2",
+      name: "Multi skill",
+      description: "",
+      digest: "c",
+      published_at: "2026-01-01",
+      taller: "Mundo",
+      talleres_compatibles: [],
+    },
+  ],
+  activations: {
+    nec: {
+      world: "nec",
+      skill_id: "multi-skill",
+      version: "1.2",
+      digest: "c",
+      activated_at: "2026-01-01",
+    },
+  },
+  drafts: [],
+};
+
 /** Slimmed contract (task 2.3): the component no longer fetches — status and
  *  the selection/activation handlers come from the page. */
 function renderLibrary(
@@ -304,6 +351,73 @@ describe("MethodologyLibrary", () => {
     await waitFor(() => {
       expect(props.onSelect).toHaveBeenCalledWith(null);
     });
+  });
+
+  it("renders exactly one row per skill_id with the representative version (REQ-TRE-9/10)", async () => {
+    renderLibrary({ status: multiVersionStatus });
+
+    await waitFor(() => {
+      expect(screen.getByText("Multi skill")).toBeInTheDocument();
+    });
+
+    // One row, not one per published version.
+    expect(screen.getAllByText("Multi skill")).toHaveLength(1);
+    const row = screen.getByText("Multi skill").closest("li") as HTMLElement;
+    expect(within(row).getByText(/multi-skill@1\.2/)).toBeInTheDocument();
+    expect(screen.getAllByText("Activa")).toHaveLength(1);
+    expect(within(row).getByText(/Activa en nec/)).toBeInTheDocument();
+  });
+
+  it("keeps a non-representative selection and its row highlight while filtered in (REQ-TRE-12 S8)", async () => {
+    const user = userEvent.setup();
+    const props = renderLibrary({
+      status: multiVersionStatus,
+      selected: { skill_id: "multi-skill", version: "1.0" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Multi skill")).toBeInTheDocument();
+    });
+
+    // A query that keeps the selected skill visible must NOT reset selection,
+    // and the single representative row stays highlighted (skill-level match).
+    await user.type(screen.getByRole("searchbox"), "Multi");
+    const row = screen.getByText("Multi skill").closest("li") as HTMLElement;
+    expect(row).toHaveClass("border-action/50");
+    expect(props.onSelect).not.toHaveBeenCalled();
+  });
+
+  it("clears a filtered-out multi-version selection (REQ-TRE-12 S9)", async () => {
+    const user = userEvent.setup();
+    const props = renderLibrary({
+      status: multiVersionStatus,
+      selected: { skill_id: "multi-skill", version: "1.0" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Multi skill")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByRole("searchbox"), "zzz");
+    expect(await screen.findByText("Sin resultados")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(props.onSelect).toHaveBeenCalledWith(null);
+    });
+  });
+
+  it("keeps the single-version selection behavior unchanged (REQ-TRE-12 S10)", async () => {
+    const user = userEvent.setup();
+    const props = renderLibrary({
+      selected: { skill_id: "guided-character-v1", version: "1.2.0" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText("Guided character methodology")).toBeInTheDocument();
+    });
+
+    await user.type(screen.getByRole("searchbox"), "Guided");
+    const row = screen.getByText("Guided character methodology").closest(
+      "li",
+    ) as HTMLElement;
+    expect(row).toHaveClass("border-action/50");
+    expect(props.onSelect).not.toHaveBeenCalled();
   });
 
   it("renders the empty-state CTA wired to onGoToCoCrear (UL-5)", async () => {

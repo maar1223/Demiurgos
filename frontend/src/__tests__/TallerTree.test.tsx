@@ -98,6 +98,35 @@ describe("TallerTree selection (SC-SB-2.1)", () => {
     const otherRow = screen.getByText("Skill B").closest("li");
     expect(otherRow).not.toHaveClass("border-action/50");
   });
+
+  it("highlights the row when the selected version is not the rendered one (REQ-TRE-12)", () => {
+    renderTree({
+      onSelect: vi.fn(),
+      selected: { skill_id: "skill-a", version: "9.9.9" },
+    });
+
+    const selectedRow = screen.getByText("Skill A").closest("li");
+    expect(selectedRow).toHaveClass("border-action/50");
+
+    const otherRow = screen.getByText("Skill B").closest("li");
+    expect(otherRow).not.toHaveClass("border-action/50");
+  });
+
+  it("omits the active info line when the activation version is stale (REQ-TRE-10 S5)", () => {
+    renderTree({
+      active: {
+        world: "nec",
+        skill_id: "skill-a",
+        version: "9.9.9",
+        digest: "abc",
+        activated_at: "2026-01-01",
+      },
+    });
+
+    // `isActive` stays version-exact: a stale activation never renders
+    // "• Activa en nec" on the representative row.
+    expect(screen.queryByText(/Activa en nec/)).not.toBeInTheDocument();
+  });
 });
 
 describe("axis-attributed row chips (axis-binding-ui R1/R2/R3)", () => {

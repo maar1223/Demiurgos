@@ -92,24 +92,28 @@ export function MethodologyLibrary({
     };
   }, [groups, query]);
 
+  /** The filter-selection contract (SC-SB-2.3, REQ-TRE-12) needs the VISIBLE
+   *  skill set after the query — one row per `skill_id`, so visibility is
+   *  keyed by `skill_id` (version is navigation state, not row identity). */
   const visibleKeys = useMemo(() => {
     if (!filteredGroups) return new Set<string>();
     const keys = new Set<string>();
     for (const group of Object.values(filteredGroups)) {
       for (const skill of group) {
-        keys.add(`${skill.skill_id}@${skill.version}`);
+        keys.add(skill.skill_id);
       }
     }
     return keys;
   }, [filteredGroups]);
 
-  /** Filter-selection contract (SC-SB-2.3): applying a filter preserves
-   *  `selected` while the row stays visible; when the selected row is
-   *  filtered out, the selection is cleared. The sidebar must NOT reset
-   *  selection on filter changes where the row is still present. */
+  /** Filter-selection contract (SC-SB-2.3, REQ-TRE-12): applying a filter
+   *  preserves `selected` while its `skill_id` stays visible; when the
+   *  selected skill is filtered out, the selection is cleared. The sidebar
+   *  must NOT reset selection on filter changes where the skill (any version)
+   *  is still present. */
   useEffect(() => {
     if (!selected) return;
-    if (!visibleKeys.has(`${selected.skill_id}@${selected.version}`)) {
+    if (!visibleKeys.has(selected.skill_id)) {
       onSelect(null);
     }
   }, [visibleKeys, selected, onSelect]);
