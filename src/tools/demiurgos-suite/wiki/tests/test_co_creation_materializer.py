@@ -23,6 +23,7 @@ from co_creation_materializer import (  # noqa: E402
     CoCreationMaterializer,
     MaterializationResult,
     ValidateResult,
+    move_publish_pins,
     parse_rendered_source,
 )
 from methodology_library import MethodologyLibrary  # noqa: E402
@@ -544,3 +545,100 @@ def test_materialize_without_adjuntos_creates_empty_pins(tmp_path: Path) -> None
     )
     assert result.ok is True
     assert library.get_draft(result.draft_id).adjuntos == ()
+
+
+# ---------------------------------------------------------------------------
+# U2 — selective publish move: move_publish_pins (EP-3..EP-7 / DP-2)
+# ---------------------------------------------------------------------------
+
+
+def _entry(name: str, data: bytes, nivel: str = "1º") -> AttachmentEntry:
+    return AttachmentEntry(
+        path=name, sha256=hashlib.sha256(data).hexdigest(),
+        bytes=len(data), nivel=nivel,
+    )
+
+
+def test_move_publish_pins_is_selective(tmp_path: Path) -> None:
+    """EP-3/EP-4: a verifiable pin is skipped (no mutation) while a pending
+    staged pin is validated and moved; no pending pin is a pure preserve."""
+    published, new = b"# Publicado\n", b"# Nuevo\n"
+    attachments = tmp_path / "data" / "methodology" / "attachments"
+    dest = attachments / "mi-skill"
+    dest.mkdir(parents=True)
+    (dest / "viejo.md").write_bytes(published)
+    staging = _staged(tmp_path, [("nuevo.md", new)])
+
+    assert move_publish_pins(
+        (_entry("viejo.md", published),), skill_id="mi-skill",
+        staging_dir=staging, attachments_root=attachments, project_root=tmp_path,
+    ) == []
+    assert (staging / "nuevo.md").read_bytes() == new  # nothing was consumed
+
+    moved = move_publish_pins(
+        (_entry("viejo.md", published), _entry("nuevo.md", new)),
+        skill_id="mi-skill", staging_dir=staging,
+        attachments_root=attachments, project_root=tmp_path,
+    )
+    assert [path.name for path in moved] == ["nuevo.md"]
+    assert (dest / "nuevo.md").read_bytes() == new
+    assert (dest / "viejo.md").read_bytes() == published
+
+
+def test_move_publish_pins_refuses_byte_drift_with_zero_mutation(tmp_path: Path) -> None:
+    """EP-5: an existing destination with different bytes is refused 422 and
+    the original carrier bytes survive (zero mutation)."""
+    original, incoming = b"# Original\n", b"# Cambiado\n"
+    attachments = tmp_path / "data" / "methodology" / "attachments"
+    dest = attachments / "mi-skill"
+    dest.mkdir(parents=True)
+    (dest / "ejemplo.md").write_bytes(original)
+    staging = _staged(tmp_path, [("ejemplo.md", incoming)])
+
+    with pytest.raises(AttachmentMaterializationError) as excinfo:
+        move_publish_pins(
+            (_entry("ejemplo.md", incoming),), skill_id="mi-skill",
+            staging_dir=staging, attachments_root=attachments, project_root=tmp_path,
+        )
+
+    assert (excinfo.value.status, excinfo.value.code) == (
+        422, "attachment_overwrite_refused",
+    )
+    assert (dest / "ejemplo.md").read_bytes() == original
+
+
+def test_move_publish_pins_refuses_a_seeded_skill(tmp_path: Path) -> None:
+    """EP-6/D5: a seeded carrier refuses any pending pin (preserve-only)."""
+    attachments = tmp_path / "data" / "methodology" / "attachments"
+    (tmp_path / "data" / "methodology" / "seeds" / "mi-skill").mkdir(parents=True)
+    staging = _staged(tmp_path, [("nuevo.md", b"# Nuevo\n")])
+
+    with pytest.raises(AttachmentMaterializationError) as excinfo:
+        move_publish_pins(
+            (_entry("nuevo.md", b"# Nuevo\n"),), skill_id="mi-skill",
+            staging_dir=staging, attachments_root=attachments, project_root=tmp_path,
+        )
+
+    assert (excinfo.value.status, excinfo.value.code) == (
+        422, "attachment_seed_immutable",
+    )
+    assert not (attachments / "mi-skill").exists()
+
+
+def test_move_publish_pins_missing_staged_bytes_leaves_no_partial_tree(
+    tmp_path: Path,
+) -> None:
+    """EP-4: a pending pin without staged bytes fails closed before any move."""
+    attachments = tmp_path / "data" / "methodology" / "attachments"
+    staging = _staged(tmp_path, [("uno.md", b"# Uno\n")])  # dos.md is absent
+
+    with pytest.raises(AttachmentMaterializationError) as excinfo:
+        move_publish_pins(
+            (_entry("uno.md", b"# Uno\n"), _entry("dos.md", b"# Dos\n")),
+            skill_id="mi-skill", staging_dir=staging,
+            attachments_root=attachments, project_root=tmp_path,
+        )
+
+    assert excinfo.value.code == "attachment_unavailable"
+    assert not (attachments / "mi-skill").exists()
+    assert (staging / "uno.md").read_bytes() == b"# Uno\n"  # staged bytes survive

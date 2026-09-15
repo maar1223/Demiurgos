@@ -32,6 +32,7 @@ from co_creation_protocol import (  # noqa: E402
 )
 from co_creation_session_store import CoCreationSessionStore  # noqa: E402
 from co_creation_materializer import CoCreationMaterializer  # noqa: E402
+from convergence_injection import carrier_root_for, read_adjunto_bytes  # noqa: E402
 from methodology_compiler import MAX_ADJUNTO_BYTES, MAX_ADJUNTOS  # noqa: E402
 from methodology_compiler import AttachmentEntry  # noqa: E402
 
@@ -1478,3 +1479,173 @@ def test_canvas_put_rejects_bad_adjuntos_shape(
 
     assert response.status_code == 422, response.text
     assert response.json()["code"] == "invalid_input"
+
+
+# ---------------------------------------------------------------------------
+# U2 — source-independent publish sync (EP-3..EP-7 / DP-2)
+# ---------------------------------------------------------------------------
+
+
+def _materialized_session(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, skill_id: str,
+) -> tuple[str, int, str]:
+    """Start a ``borrador_listo`` session and materialize an empty draft."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch, milestone="borrador_listo")
+    session_id = _create_session(client)
+    materialized = client.post(
+        f"/api/co-creation/sessions/{session_id}/materialize",
+        json={"base_revision": 1, "name": "Batallas Épicas", "skill_id": skill_id},
+    )
+    assert materialized.status_code == 200, materialized.text
+    assert materialized.json()["ok"] is True
+    return session_id, materialized.json()["revision"], materialized.json()["draft_id"]
+
+
+def _publish_pins(client: TestClient, session_id: str, revision: int, adjuntos: list[dict]):
+    """PUT the canvas ``adjuntos`` then publish at the resulting revision."""
+    canvas = client.put(
+        f"/api/co-creation/sessions/{session_id}/canvas",
+        json={"base_revision": revision, "payload": {"adjuntos": adjuntos}},
+    )
+    assert canvas.status_code == 200, canvas.text
+    return client.post(
+        f"/api/co-creation/sessions/{session_id}/publish",
+        json={"base_revision": canvas.json()["revision"]},
+    )
+
+
+def _write_carrier(tmp_path: Path, skill_id: str, name: str, data: bytes) -> None:
+    carrier = _attachments_dir(tmp_path, skill_id)
+    carrier.mkdir(parents=True, exist_ok=True)
+    (carrier / name).write_bytes(data)
+
+
+def test_publish_syncs_exemplars_when_source_is_unchanged(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """DP-2/EP-3: an exemplar-only edit publishes the reduced pins with the
+    derived source unchanged."""
+    _bind_principal(monkeypatch)
+    pins = _pins()
+    for pin, raw in zip(pins, (b"# Ejemplar uno\n", b"# Ejemplar dos\n")):
+        _write_carrier(tmp_path, "skill-oficial", pin["path"], raw)
+    _publish_skill(source=_template_source("Skill Oficial"), adjuntos=_pin_entries(pins))
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial", "version": "1.0.0",
+    })
+    assert derived.status_code == 200, derived.text
+    session_id, draft_id = derived.json()["session_id"], derived.json()["draft_id"]
+    library = api_server._methodology_library()
+    source_before = library.get_draft(draft_id).source
+    published = _publish_pins(client, session_id, 0, [pins[0]])
+    assert published.status_code == 200, published.text
+    record = library.get_published("skill-oficial", "1.0.1")
+    assert [entry.as_dict() for entry in record.adjuntos] == [pins[0]]
+    assert record.source == source_before
+
+
+def test_publish_without_adjuntos_key_leaves_pins_untouched(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """EP-3: a payload without the key never touches the draft's pins."""
+    session_id, revision, draft_id = _materialized_session(client, monkeypatch, "sin-key")
+    library = api_server._methodology_library()
+    library.update_draft(draft_id, adjuntos=_pin_entries(_pins()))
+    published = client.post(f"/api/co-creation/sessions/{session_id}/publish",
+                            json={"base_revision": revision})
+    assert published.status_code == 200, published.text
+    record = library.get_published("sin-key", published.json()["published"]["version"])
+    assert [entry.as_dict() for entry in record.adjuntos] == _pins()
+
+
+def test_publish_materializes_a_new_basename_verifiable(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """EP-4: a pending pinned exemplar moves into the carrier root and verifies."""
+    session_id, revision, _ = _materialized_session(client, monkeypatch, "nuevo-skill")
+    data = b"# Nuevo ejemplar\n"
+    pin = _upload(client, session_id, "nuevo.md", data).json()["adjunto"]
+    published = _publish_pins(client, session_id, revision, [pin])
+    assert published.status_code == 200, published.text
+    assert (_attachments_dir(tmp_path, "nuevo-skill") / "nuevo.md").read_bytes() == data
+    root = carrier_root_for("nuevo-skill", project_root=tmp_path)
+    assert read_adjunto_bytes(root, AttachmentEntry(**pin)) == data
+
+
+def test_publish_refuses_same_basename_byte_drift(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """EP-5: same-basename byte drift is 422; the parent's pin still resolves."""
+    _bind_principal(monkeypatch)
+    pin = _pins()[0]
+    raw = b"# Ejemplar uno\n"
+    _write_carrier(tmp_path, "skill-oficial", pin["path"], raw)
+    _publish_skill(source=_template_source("Skill Oficial"), adjuntos=_pin_entries([pin]))
+    derived = client.post("/api/co-creation/derive", json={
+        "skill_id": "skill-oficial", "version": "1.0.0",
+    })
+    session_id = derived.json()["session_id"]
+    drift = _upload(client, session_id, pin["path"], b"# Drift\n").json()["adjunto"]
+    published = _publish_pins(client, session_id, 0, [drift])
+    assert published.status_code == 422, published.text
+    assert published.json()["code"] == "attachment_overwrite_refused"
+    root = carrier_root_for("skill-oficial", project_root=tmp_path)
+    assert read_adjunto_bytes(root, AttachmentEntry(**pin)) == raw
+
+
+def test_publish_refuses_replacement_on_a_seeded_skill(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """EP-6/D5: a seeded skill refuses a replacement pin (preserve-only)."""
+    session_id, revision, _ = _materialized_session(client, monkeypatch, "seed-skill")
+    (tmp_path / "data" / "methodology" / "seeds" / "seed-skill").mkdir(parents=True)
+    pin = _upload(client, session_id, "nuevo.md", b"# Nuevo\n").json()["adjunto"]
+    published = _publish_pins(client, session_id, revision, [pin])
+    assert published.status_code == 422, published.text
+    assert published.json()["code"] == "attachment_seed_immutable"
+    assert not _attachments_dir(tmp_path, "seed-skill").exists()
+
+
+def test_publish_maps_adjuntos_overflow_to_422_limit(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """EP-7: > MAX_ADJUNTOS maps to 422 attachment_limit_reached, not validation."""
+    session_id, revision, _ = _materialized_session(client, monkeypatch, "overflow-skill")
+    overflow = []
+    for index in range(MAX_ADJUNTOS + 1):
+        data = f"# Ejemplar {index}\n".encode()
+        _write_carrier(tmp_path, "overflow-skill", f"e{index}.md", data)
+        overflow.append({"path": f"e{index}.md", "sha256": hashlib.sha256(data).hexdigest(),
+                         "bytes": len(data), "nivel": "1º"})
+    published = _publish_pins(client, session_id, revision, overflow)
+    assert published.status_code == 422, published.text
+    assert published.json()["code"] == "attachment_limit_reached"
+
+
+def test_publish_rolls_back_moved_pins_when_update_fails(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """EP-4: a post-move update failure rolls the moved bytes back (no tree)."""
+    session_id, revision, _ = _materialized_session(client, monkeypatch, "rollback-skill")
+    pin = _upload(client, session_id, "nuevo.md", b"# Nuevo\n").json()["adjunto"]
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("draft store unavailable")
+
+    monkeypatch.setattr(api_server._methodology_library(), "update_draft", _boom)
+    with pytest.raises(RuntimeError):
+        _publish_pins(client, session_id, revision, [pin])
+    assert not _attachments_dir(tmp_path, "rollback-skill").exists()
+
+
+def test_publish_rejects_pending_pin_without_staged_bytes(
+    client: TestClient, monkeypatch, tmp_path: Path,
+) -> None:
+    """EP-4: a pending pin whose staged bytes are absent is 422 with no tree."""
+    session_id, revision, _ = _materialized_session(client, monkeypatch, "missing-skill")
+    phantom = {"path": "fantasma.md", "sha256": "a" * 64, "bytes": 10, "nivel": "1º"}
+    published = _publish_pins(client, session_id, revision, [phantom])
+    assert published.status_code == 422, published.text
+    assert published.json()["code"] == "attachment_unavailable"
+    assert not _attachments_dir(tmp_path, "missing-skill").exists()

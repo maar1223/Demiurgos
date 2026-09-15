@@ -105,6 +105,9 @@ from co_creation_attachments import (
 from co_creation_materializer import (
     AttachmentMaterializationError,
     CoCreationMaterializer,
+    _payload_adjuntos,
+    _rollback_moved,
+    move_publish_pins,
 )
 from hermes_co_creation_provider import HermesCoCreationProvider, co_creation_capabilities
 from demiurgos_language import (
@@ -3098,8 +3101,38 @@ def publish_co_creation(session_id: str, body: CoCreationPublishRequest, request
                     if isinstance(value, str) and value:
                         updates[key] = value
                 library.update_draft(state.draft_id, **updates)
+    # DP-2/EP-3: sync the canvas ``adjuntos`` OUTSIDE the structured/source
+    # gate — an exemplar-only edit leaves ``source`` unchanged. Presence-keyed:
+    # an absent key leaves the draft's pins untouched. EP-4/EP-6: only pins not
+    # yet verifiable are moved (after the guards); a failed update rolls back.
+    if state.draft_payload and "adjuntos" in state.draft_payload:
+        entries = _payload_adjuntos(state.draft_payload)
+        try:
+            moved = move_publish_pins(
+                entries,
+                skill_id=draft.skill_id,
+                staging_dir=staging_dir_for(PROJECT_ROOT, session_id),
+                attachments_root=PROJECT_ROOT / ATTACHMENTS_SUBDIR,
+                project_root=PROJECT_ROOT,
+            )
+        except AttachmentMaterializationError as exc:
+            return _attachment_upload_error_response(exc)
+        try:
+            library.update_draft(state.draft_id, adjuntos=entries)
+        except Exception:
+            _rollback_moved(
+                moved, PROJECT_ROOT / ATTACHMENTS_SUBDIR / draft.skill_id,
+            )
+            raise
     try:
         published = library.publish(state.draft_id)
+    except AttachmentLimitError as exc:
+        # EP-7/R2: an adjuntos overflow is 422 ``attachment_limit_reached``
+        # BEFORE the generic ValidationError handler (same mapping as the
+        # generic draft publish route).
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "attachment_limit_reached",
+        })
     except ValidationError as exc:
         return JSONResponse(status_code=422, content={
             "detail": str(exc), "code": "validation_error",

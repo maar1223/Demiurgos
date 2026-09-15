@@ -21,6 +21,7 @@ from typing import Any, Mapping
 
 from co_creation_attachments import move_staged
 from co_creation_protocol import DerivedFrom
+from convergence_injection import carrier_root_for, read_adjunto_bytes
 from methodology_compiler import AttachmentEntry, MethodologyIssue, compile_methodology
 from methodology_library import MethodologyLibrary
 
@@ -175,6 +176,64 @@ def _rollback_moved(moved: list[Path], dest_dir: Path) -> None:
 def _remove_staging_dir(staging_dir: Path) -> None:
     """Best-effort removal of the now-consumed session staging dir (AE-3)."""
     shutil.rmtree(staging_dir, ignore_errors=True)
+
+
+def move_publish_pins(
+    entries: tuple[AttachmentEntry, ...],
+    *,
+    skill_id: str,
+    staging_dir: Path,
+    attachments_root: Path,
+    project_root: Path,
+) -> list[Path]:
+    """Materialize ONLY the canvas pins still pending at the carrier root (D4).
+
+    A pin whose bytes already resolve at ``carrier_root_for(skill_id)`` is
+    already published and is skipped, so a preserve-only publish mutates
+    nothing. Guards run BEFORE any move: a seeded carrier refuses a pending pin
+    with 422 ``attachment_seed_immutable`` (EP-6/D5); an existing destination
+    with differing bytes is refused with 422 ``attachment_overwrite_refused``
+    (EP-5). ``_validate_staged_pins`` then verifies and ``move_staged`` moves
+    the pending bytes. Returns the moved paths so the caller can roll them back
+    if a later ``update_draft`` fails; ``[]`` means nothing was mutated.
+    """
+    carrier_root = carrier_root_for(skill_id, project_root=project_root)
+    pending = [
+        entry for entry in entries
+        if read_adjunto_bytes(carrier_root, entry) is None
+    ]
+    if not pending:
+        return []
+    seed_dir = Path(project_root) / "data" / "methodology" / "seeds" / skill_id
+    if seed_dir.is_dir():
+        raise AttachmentMaterializationError(
+            422, "attachment_seed_immutable",
+            f"The skill {skill_id!r} is a seeded skill; its exemplars cannot "
+            "be replaced, only preserved.",
+        )
+    dest_dir = Path(attachments_root) / skill_id
+    for entry in pending:
+        dest = dest_dir / entry.path
+        if not dest.is_file():
+            continue
+        try:
+            existing = dest.read_bytes()
+        except OSError:
+            existing = None
+        if existing is None or hashlib.sha256(existing).hexdigest() != entry.sha256:
+            raise AttachmentMaterializationError(
+                422, "attachment_overwrite_refused",
+                f"The attachment {entry.path!r} already exists with different bytes.",
+            )
+    staging = Path(staging_dir)
+    _validate_staged_pins(staging, tuple(pending))
+    moved: list[Path] = []
+    try:
+        moved = move_staged(staging, Path(attachments_root), skill_id, tuple(pending))
+    except Exception:
+        _rollback_moved(moved, dest_dir)
+        raise
+    return moved
 
 
 def parse_rendered_source(source: str) -> dict[str, Any]:

@@ -243,3 +243,37 @@ def test_sweep_staging_no_root_is_noop(tmp_path: Path) -> None:
     from co_creation_attachments import sweep_staging  # noqa: E402
 
     assert sweep_staging(tmp_path, older_than_days=0) == 0
+
+
+# ---------------------------------------------------------------------------
+# U2 — publish move overwrite guard (EP-5) with zero mutation
+# ---------------------------------------------------------------------------
+
+
+def test_move_publish_pins_refuses_byte_drift_with_zero_mutation(tmp_path: Path) -> None:
+    """A same-basename pin with different bytes is refused 422; the carrier
+    and the staged bytes are both left untouched (fail closed)."""
+    from co_creation_materializer import (  # noqa: E402
+        AttachmentMaterializationError,
+        move_publish_pins,
+    )
+
+    staging = staging_dir_for(tmp_path, "s-1")
+    attachments = tmp_path / ATTACHMENTS_SUBDIR
+    dest = attachments / "demo-skill"
+    dest.mkdir(parents=True)
+    (dest / "a.md").write_bytes(b"# carrier\n")
+    store_staged(staging, "a.md", b"# replacement\n")
+    incoming = _pin("a.md", b"# replacement\n")
+
+    with pytest.raises(AttachmentMaterializationError) as excinfo:
+        move_publish_pins(
+            (incoming,), skill_id="demo-skill", staging_dir=staging,
+            attachments_root=attachments, project_root=tmp_path,
+        )
+
+    assert (excinfo.value.status, excinfo.value.code) == (
+        422, "attachment_overwrite_refused",
+    )
+    assert (dest / "a.md").read_bytes() == b"# carrier\n"
+    assert (staging / "a.md").read_bytes() == b"# replacement\n"
