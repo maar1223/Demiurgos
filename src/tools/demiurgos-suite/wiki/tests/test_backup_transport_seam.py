@@ -17,6 +17,7 @@ is deliberately not faked here.
 from __future__ import annotations
 
 import inspect
+import os
 import sys
 from dataclasses import fields, is_dataclass
 from pathlib import Path
@@ -39,6 +40,10 @@ from backup.transport.base import (  # noqa: E402
     SnapshotRef,
     TargetCapabilities,
     TransportError,
+)
+from backup.transport.folder import (  # noqa: E402
+    LOCK_RETRY_DELAYS,
+    FolderTransport,
 )
 
 # The contract's nine verbs, in design order (REQ-BE-8): exactly these, no others.
@@ -220,3 +225,164 @@ def test_seam_dataclasses_are_frozen_with_exact_fields() -> None:
 def test_error_hierarchy() -> None:
     assert issubclass(TransportError, RuntimeError)
     assert issubclass(SnapshotIncompleteError, TransportError)
+
+
+# --- FolderTransport write side (WU-5) --------------------------------------
+#
+# WU-5 implements the WRITE half only. The three history verbs
+# (``publish_snapshot``, ``prune``, ``fetch``) land in WU-6, so nothing below
+# asserts full protocol conformance — the honest non-conformance is asserted.
+
+
+def _folder(tmp_path: Path, *, data_root: Path | None = None) -> FolderTransport:
+    """A transport whose retry backoff never actually sleeps."""
+    return FolderTransport(tmp_path, data_root=data_root, sleep=lambda _seconds: None)
+
+
+def _current(tmp_path: Path) -> Path:
+    return tmp_path / "Demiurgos" / "current"
+
+
+def test_folder_transport_ensure_layout_creates_the_req_be_1_tree(tmp_path: Path) -> None:
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    transport.ensure_layout()  # idempotent on a second call
+    backup_root = tmp_path / "Demiurgos"
+    assert {entry.name for entry in backup_root.iterdir()} == {
+        "current", "snapshots", "meta", "world-trash-index"
+    }
+
+
+def test_folder_transport_probe_reports_capabilities_without_writing(tmp_path: Path) -> None:
+    capabilities = _folder(tmp_path).probe()
+    assert (capabilities.kind, capabilities.path) == ("folder", str(tmp_path))
+    assert capabilities.writable is True
+    assert capabilities.mode_hint == "unknown"
+    assert capabilities.same_volume_as_data_root is False  # no data root injected
+    assert not (tmp_path / "Demiurgos").exists()  # probe writes no bytes
+    data_root = tmp_path / "data-root"
+    data_root.mkdir()
+    assert _folder(tmp_path, data_root=data_root).probe().same_volume_as_data_root is True
+
+
+def test_folder_transport_publishes_files_meta_and_nothing_is_deleted(
+    tmp_path: Path,
+) -> None:
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    result = transport.publish_current(
+        {"entry.md": b"hello", "nested/deep.md": b"world"},
+        manifest={"schema_version": 1},
+    )
+    assert result == PublishResult(published=2, skipped=0, bytes=10)
+    assert (_current(tmp_path) / "entry.md").read_bytes() == b"hello"
+    assert (_current(tmp_path) / "nested" / "deep.md").read_bytes() == b"world"
+    transport.publish_current({"second.md": b"!"}, manifest={})
+    assert (_current(tmp_path) / "entry.md").exists()  # no delete pass (SC-BE-3.2)
+    assert transport.read_meta("manifest.json") is None
+    transport.write_meta("manifest.json", {"schema_version": 1, "complete": True})
+    assert transport.read_meta("manifest.json") == {"schema_version": 1, "complete": True}
+
+
+def test_folder_transport_temp_name_is_never_a_final_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    real_replace = os.replace
+    seen: list[tuple[str, str]] = []
+
+    def _recording_replace(src: Any, dst: Any) -> None:
+        seen.append((Path(src).name, Path(dst).name))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", _recording_replace)
+    transport.publish_current({"entry.md": b"x"}, manifest={})
+    assert len(seen) == 1
+    source, final = seen[0]
+    assert final == "entry.md"
+    assert source.startswith("entry.md.tmp-")
+
+
+@pytest.mark.parametrize("winerror", [None, 32])
+def test_folder_transport_retries_a_locked_destination_then_fails_naming_the_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, winerror: int | None
+) -> None:
+    sleeps: list[float] = []
+    transport = FolderTransport(tmp_path, sleep=sleeps.append)
+    transport.ensure_layout()
+    dest = _current(tmp_path) / "entry.md"
+    calls = {"n": 0}
+
+    def _locked(src: Any, dst: Any) -> None:
+        calls["n"] += 1
+        exc = OSError(13, "held by a sync client", str(dst))  # errno 13 -> PermissionError
+        if winerror is not None:
+            exc.winerror = winerror  # Windows ERROR_SHARING_VIOLATION shape
+        raise exc
+
+    monkeypatch.setattr(os, "replace", _locked)
+    with pytest.raises(TransportError) as excinfo:
+        transport.publish_current({"entry.md": b"x"}, manifest={})
+    assert calls["n"] == len(LOCK_RETRY_DELAYS) + 1  # first attempt + 3 retries
+    assert sleeps == list(LOCK_RETRY_DELAYS)  # injected: no real waiting
+    assert str(dest) in str(excinfo.value)  # the failure names the exact path
+    assert not dest.exists()  # no half-written final name survives
+    assert list(_current(tmp_path).glob("*.tmp-*")) == []  # no temp residue either
+
+
+def test_folder_transport_recovers_when_the_lock_clears(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sleeps: list[float] = []
+    transport = FolderTransport(tmp_path, sleep=sleeps.append)
+    transport.ensure_layout()
+    real_replace = os.replace
+    failures = {"left": 2}
+
+    def _flaky(src: Any, dst: Any) -> None:
+        if failures["left"]:
+            failures["left"] -= 1
+            raise PermissionError(13, "held by a sync client", str(dst))
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", _flaky)
+    assert transport.publish_current({"entry.md": b"x"}, manifest={}).published == 1
+    assert sleeps == [0.2, 0.5]
+    assert (_current(tmp_path) / "entry.md").read_bytes() == b"x"
+
+
+def test_folder_transport_list_snapshots_hides_temp_and_unparsable_names(
+    tmp_path: Path,
+) -> None:
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    snapshots = tmp_path / "Demiurgos" / "snapshots"
+    valid = snapshots / "2026-09-16T120530Z"
+    (valid / "meta").mkdir(parents=True)
+    (valid / "meta" / "manifest.json").write_text("{}", encoding="utf-8")
+    (valid / "entry.md").write_bytes(b"x")
+    (snapshots / ".2026-09-16T120530Z.tmp-deadbeef").mkdir()
+    (snapshots / "not-a-snapshot").mkdir()
+    (snapshots / "2026-9-16T120530Z").mkdir()  # unparsable: month is not 2 digits
+    infos = transport.list_snapshots()
+    assert [info.snapshot_id for info in infos] == ["2026-09-16T120530Z"]
+    assert (infos[0].complete, infos[0].entries, infos[0].bytes) == (True, 2, 3)
+    (snapshots / "2026-09-17T000000Z").mkdir()  # valid name, no manifest
+    infos = transport.list_snapshots()
+    assert [info.snapshot_id for info in infos] == [
+        "2026-09-16T120530Z", "2026-09-17T000000Z"
+    ]
+    assert infos[1].complete is False
+
+
+def test_folder_transport_defines_only_the_write_side_until_wu6(tmp_path: Path) -> None:
+    transport = _folder(tmp_path)
+    for verb in ("probe", "ensure_layout", "publish_current",
+                 "read_meta", "write_meta", "list_snapshots"):
+        assert callable(getattr(transport, verb)), verb
+    for history_verb in ("publish_snapshot", "prune", "fetch"):
+        assert not hasattr(transport, history_verb), history_verb
+    # The protocol declares nine verbs and the history half is WU-6, so this
+    # honest non-conformance is the truth at this slice — do not stub it green.
+    assert not isinstance(transport, BackupTransport)
