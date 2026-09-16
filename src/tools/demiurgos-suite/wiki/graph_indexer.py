@@ -25,6 +25,7 @@ import yaml
 # exist) makes first-call latency ~0s. See mcp-tool-call-hang investigation.
 from rank_bm25 import BM25Okapi  # noqa: E402
 
+from . import data_root
 from .graph_models import EntityDetail, EntityHit
 from .okf_contract import is_canonical_id, validate as okf_validate
 
@@ -99,10 +100,11 @@ class EntityGraphIndex:
 
     def __init__(self, mundos_path: Path | None = None) -> None:
         if mundos_path is None:
-            # Auto-detect from file location:
-            # graph_indexer.py â†’ wiki/ â†’ demiurgos-suite/ â†’ tools/ â†’ src/ â†’ project/
-            _project_root = Path(__file__).resolve().parents[5]
-            mundos_path = _project_root / "mundos"
+            # Auto-detect through the data-root resolver (WU-2). The previous
+            # ``Path(__file__).resolve().parents[5]`` literal pointed one level
+            # ABOVE the repo, so the auto-detected corpus was always a missing
+            # directory and the index silently came up empty.
+            mundos_path = data_root.resolve_data_root() / "mundos"
 
         self._mundos_path: Path = mundos_path
         self._lock: threading.RLock = threading.RLock()

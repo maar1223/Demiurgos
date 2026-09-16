@@ -24,10 +24,20 @@ import os
 import sys
 from pathlib import Path
 
-# Project root: wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> project/
+from data_root import resolve_data_root
+
+# Code-path anchor: locates ``graph_mcp_server.py`` (a sibling code file, NOT
+# author data) and keeps the wiki package importable. Deliberately not migrated.
 _SCRIPT_DIR = Path(__file__).resolve().parent
-_SUITE_DIR = _SCRIPT_DIR.parent
-_PROJECT_ROOT = _SCRIPT_DIR.parents[3]  # wiki -> demiurgos-suite -> tools -> src -> root
+
+
+def _project_root() -> Path:
+    """Data root, resolved through the resolver on every call (WU-2).
+
+    Not an import-time constant: the resolver fails loudly when no root is
+    configured, and this module must stay importable without one.
+    """
+    return resolve_data_root()
 
 
 def _resolve_mundo() -> str:
@@ -43,7 +53,7 @@ def _resolve_mundo() -> str:
     if env_val:
         return env_val
 
-    env_file = _PROJECT_ROOT / ".env"
+    env_file = _project_root() / ".env"
     if env_file.is_file():
         try:
             for line in env_file.read_text(encoding="utf-8").splitlines():
@@ -55,7 +65,7 @@ def _resolve_mundo() -> str:
         except OSError:
             pass
 
-    mundos_dir = _PROJECT_ROOT / "mundos"
+    mundos_dir = _project_root() / "mundos"
     if mundos_dir.is_dir():
         candidates = [
             d.name
@@ -85,7 +95,7 @@ def main() -> int:
     sys.argv = [
         str(server),
         f"--mundo={mundo}",
-        f"--mundos-path={_PROJECT_ROOT / 'mundos'}",
+        f"--mundos-path={_project_root() / 'mundos'}",
     ]
     runpy.run_path(str(server), run_name="__main__")
     return 0  # unreachable — server runs until shutdown

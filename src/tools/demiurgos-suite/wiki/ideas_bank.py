@@ -27,6 +27,11 @@ from typing import Any
 
 import yaml
 
+try:  # imported as ``wiki.ideas_bank`` (package) …
+    from . import data_root
+except ImportError:  # … and flat, with ``wiki/`` anchored on sys.path
+    import data_root
+
 # --- OKF idea model contract (R-IB-01) --------------------------------------
 IDEA_TYPES: tuple[str, ...] = (
     "personaje",
@@ -65,8 +70,13 @@ def utcnow_iso() -> str:
 
 
 def _project_root() -> Path:
-    """Auto-detect the project root from this file's location."""
-    return Path(__file__).resolve().parents[4]
+    """Resolve the data root, lazily on every call (WU-2).
+
+    Never resolved at import time: the resolver fails loudly when no root is
+    configured, which would break pytest collection. Tests keep replacing this
+    function (``monkeypatch.setattr(module, "_project_root", ...)``).
+    """
+    return data_root.resolve_data_root()
 
 
 def _valid_slug(slug: Any) -> bool:
@@ -122,9 +132,11 @@ class Idea:
 class IdeasBank:
     """CRUD + materialization seam over the top-level ``ideas/`` bank.
 
-    ``ideas_root`` defaults to ``<project>/ideas``; ``mundos_root`` defaults to
-    ``<project>/mundos`` and is only used by ``materialize`` to record the
-    inert ``based_on`` link on a canon ficha.
+    ``ideas_root`` defaults to ``<data root>/ideas``; ``mundos_root`` defaults to
+    ``<data root>/mundos`` and is only used by ``materialize`` to record the
+    inert ``based_on`` link on a canon ficha. Both defaults are resolved LAZILY
+    on first access (WU-2): the API module builds one of these at import time,
+    and resolving the data root there would break pytest collection.
     """
 
     def __init__(
@@ -132,14 +144,29 @@ class IdeasBank:
         ideas_root: Path | None = None,
         mundos_root: Path | None = None,
     ) -> None:
-        # Default ideas_root is ``<project>/ideas`` (the global Taller de Ideas
-        # bank), NOT ``<project>`` — scanning the repo root only finds *.md
+        # Default ideas_root is ``<data root>/ideas`` (the global Taller de Ideas
+        # bank), NOT the data root itself — scanning the root only finds *.md
         # docs with no idea frontmatter and the bank appears empty.
-        root = (_project_root() / "ideas" if ideas_root is None else Path(ideas_root))
-        self._ideas_root: Path = root
-        self._mundos_root: Path = (
-            _project_root() / "mundos" if mundos_root is None else Path(mundos_root)
+        self._ideas_root_value: Path | None = (
+            Path(ideas_root) if ideas_root is not None else None
         )
+        self._mundos_root_value: Path | None = (
+            Path(mundos_root) if mundos_root is not None else None
+        )
+
+    @property
+    def _ideas_root(self) -> Path:
+        """``<data root>/ideas``, resolved on first access (WU-2)."""
+        if self._ideas_root_value is None:
+            self._ideas_root_value = _project_root() / "ideas"
+        return self._ideas_root_value
+
+    @property
+    def _mundos_root(self) -> Path:
+        """``<data root>/mundos``, resolved on first access (WU-2)."""
+        if self._mundos_root_value is None:
+            self._mundos_root_value = _project_root() / "mundos"
+        return self._mundos_root_value
 
     # ------------------------------------------------------------------
     # Paths

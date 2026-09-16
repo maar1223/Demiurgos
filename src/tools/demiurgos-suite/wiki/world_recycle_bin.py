@@ -15,11 +15,12 @@ Cleaning the in-process associations of a purged world (graph cache, guided
 sessions, idea-capture rows) is the API server's responsibility, so this
 module stays importable standalone (tests never pull ``api_server``).
 
-Injection seams: ``TRASH_ROOT`` and ``MUNDOS_DIR`` are module-level constants
-(defaults resolve from the repo root, same ``parents[4]`` depth as
-``api_server``); every function accepts optional ``trash_root``/``mundos_dir``
-keyword arguments that override them, so pytest can point them at ``tmp_path``
-either by monkeypatching the constants or by passing explicit paths.
+Injection seams: ``TRASH_ROOT`` and ``MUNDOS_DIR`` are module-level attributes
+resolved lazily from the data root (WU-2) — never at import time, because the
+resolver fails loudly when no root is configured. Every function accepts
+optional ``trash_root``/``mundos_dir`` keyword arguments that override them, so
+pytest can point them at ``tmp_path`` either by monkeypatching the constants
+(they stay plain writable module attributes) or by passing explicit paths.
 """
 
 import json
@@ -28,11 +29,31 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
+from data_root import resolve_data_root
 
-TRASH_ROOT: Path = _PROJECT_ROOT / "data" / "world-trash"
-MUNDOS_DIR: Path = _PROJECT_ROOT / "mundos"
+# Fallback seam: ``None`` means "resolve from the data root on use". Tests keep
+# replacing these attributes directly; the accessors below read them at call time.
+TRASH_ROOT: Path | None = None
+MUNDOS_DIR: Path | None = None
 RETENTION_DAYS = 30
+
+
+def default_world_trash_root() -> Path:
+    """``<data root>/data/world-trash`` (WU-2); never resolved at import time."""
+    return resolve_data_root() / "data" / "world-trash"
+
+
+def default_mundos_dir() -> Path:
+    """``<data root>/mundos`` (WU-2); never resolved at import time."""
+    return resolve_data_root() / "mundos"
+
+
+def _trash_root() -> Path:
+    return TRASH_ROOT if TRASH_ROOT is not None else default_world_trash_root()
+
+
+def _mundos_dir() -> Path:
+    return MUNDOS_DIR if MUNDOS_DIR is not None else default_mundos_dir()
 
 _META_NOTE = "associated data hidden; cleaned on purge"
 _ENTITY_SECTIONS = ("lore", "personajes")
@@ -128,8 +149,8 @@ def move_to_trash(
     the name is invalid. Returns the created ``TrashEntry``.
     """
     _validate_world_name(world_name)
-    root = Path(trash_root) if trash_root is not None else TRASH_ROOT
-    mundos = Path(mundos_dir) if mundos_dir is not None else MUNDOS_DIR
+    root = Path(trash_root) if trash_root is not None else _trash_root()
+    mundos = Path(mundos_dir) if mundos_dir is not None else _mundos_dir()
     source = mundos / world_name
     if not source.is_dir():
         raise ValueError(f"world not found: {world_name}")
@@ -194,8 +215,8 @@ def restore_from_trash(
     ``new_name`` collides (the caller asked for an exact name).
     """
     _validate_world_name(world_name)
-    root = Path(trash_root) if trash_root is not None else TRASH_ROOT
-    mundos = Path(mundos_dir) if mundos_dir is not None else MUNDOS_DIR
+    root = Path(trash_root) if trash_root is not None else _trash_root()
+    mundos = Path(mundos_dir) if mundos_dir is not None else _mundos_dir()
     entries = _world_entries(root, world_name)
     if not entries:
         raise FileNotFoundError(world_name)
@@ -219,7 +240,7 @@ def list_trash(*, trash_root: Path | None = None) -> list[TrashEntry]:
     corrupt entry never crashes the listing nor gets silently destroyed
     (same policy as the per-ficha ``.papelera`` TTL purge).
     """
-    root = Path(trash_root) if trash_root is not None else TRASH_ROOT
+    root = Path(trash_root) if trash_root is not None else _trash_root()
     if not root.is_dir():
         return []
     now = _now_utc()
@@ -291,7 +312,7 @@ def purge_expired(
     associated-data cleanup (graph cache, guided sessions) without this
     filesystem module ever touching server state.
     """
-    root = Path(trash_root) if trash_root is not None else TRASH_ROOT
+    root = Path(trash_root) if trash_root is not None else _trash_root()
     if not root.is_dir():
         return 0
     threshold = _now_utc() - timedelta(days=RETENTION_DAYS)
@@ -320,7 +341,7 @@ def purge_world(world_name: str, *, trash_root: Path | None = None) -> None:
     Raises ``FileNotFoundError`` when the world has no trash entry.
     """
     _validate_world_name(world_name)
-    root = Path(trash_root) if trash_root is not None else TRASH_ROOT
+    root = Path(trash_root) if trash_root is not None else _trash_root()
     world_dir = root / world_name
     if not world_dir.is_dir() or not _world_entries(root, world_name):
         raise FileNotFoundError(world_name)

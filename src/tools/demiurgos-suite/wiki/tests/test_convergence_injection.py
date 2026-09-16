@@ -125,12 +125,18 @@ class TestCarrierRootFor:
         resolved = carrier_root_for("author-skill", project_root=tmp_path)
         assert not resolved.exists()
 
-    def test_defaults_to_repo_project_root(self) -> None:
-        """No ``project_root`` → the module-level repo root is used."""
-        seed_dir = SEED_ROOT / "narrative-character-creation"
-        assert carrier_root_for("narrative-character-creation") == seed_dir
+    def test_defaults_to_the_data_root(self, tmp_path: Path, monkeypatch) -> None:
+        """No ``project_root`` → the data-root resolver is consulted (WU-2).
+
+        The seam must never fall back to a code-relative path; pointing
+        ``DEMIURGOS_DATA_ROOT`` at a throwaway root moves both carrier roots.
+        """
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path))
+        seed_dir = tmp_path / "data" / "methodology" / "seeds" / "demo-skill"
+        seed_dir.mkdir(parents=True)
+        assert carrier_root_for("demo-skill") == seed_dir
         absent = (
-            REPO_ROOT / "data" / "methodology" / "attachments"
+            tmp_path / "data" / "methodology" / "attachments"
             / "__no_such_author_skill__"
         )
         assert carrier_root_for("__no_such_author_skill__") == absent

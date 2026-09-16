@@ -32,6 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from data_root import resolve_data_root
 from guided_character_domain import (
     accept_proposal as domain_accept_proposal,
     apply_delta,
@@ -80,14 +81,13 @@ def _utcnow() -> datetime:
 
 
 def default_db_path() -> Path:
-    """Durable repo-local default for the guided-sessions database.
+    """Durable default for the guided-sessions database.
 
-    Follows the project convention of storing local SQLite state under the
-    repository ``data/`` directory (see ``data/idea-capture.sqlite3``). This is
-    the store's default so sessions recover across a restart without requiring
-    the optional ``DEMIURGOS_GUIDED_SESSIONS_DB`` override.
+    Resolved from the data root on every call (WU-2), never at import time, so
+    the store recovers across a restart without requiring the optional
+    ``DEMIURGOS_GUIDED_SESSIONS_DB`` override while the suite stays hermetic.
     """
-    return Path(__file__).resolve().parents[4] / "data" / "guided-sessions.sqlite3"
+    return resolve_data_root() / "data" / "guided-sessions.sqlite3"
 
 
 class GuidedSessionStore:
