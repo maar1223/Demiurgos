@@ -24,10 +24,12 @@ checkout root. Each entry carries its reason so a reviewer sees every exemption
 instead of an unexplained skip. The rule that would fire is consulted against
 this map, so the known code paths cannot false-positive.
 
-Scope: every ``*.py`` file under ``src/tools/demiurgos-suite/`` except
-``data_root.py`` (the resolver itself) and ``tests/`` (tests may legitimately
-name the repository). WU-3 extends the scan to ``src/tools/idea_capture/`` and
-``.hermes/plugins/`` once those migrate.
+Scope: every ``*.py`` file under ``src/tools/demiurgos-suite/``, plus (WU-3)
+``src/tools/idea_capture/`` and ``.hermes/plugins/``, except ``data_root.py``
+(the resolver itself) and ``tests/`` (tests may legitimately name the
+repository). Each scanned tree keeps its own code locator — the ``sys.path``
+bootstraps that make sibling packages importable — and those entries sit in the
+allowlist below with their reason.
 """
 
 from __future__ import annotations
@@ -41,6 +43,10 @@ if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
 SUITE_ROOT = _WIKI.parent
+REPO_ROOT = _WIKI.parents[3]
+IDEA_CAPTURE_ROOT = REPO_ROOT / "src" / "tools" / "idea_capture"
+HERMES_PLUGINS_ROOT = REPO_ROOT / ".hermes" / "plugins"
+SCAN_ROOTS = (SUITE_ROOT, IDEA_CAPTURE_ROOT, HERMES_PLUGINS_ROOT)
 DATA_NAME_LITERALS = frozenset(
     {"mundos", "ideas", "data", "config", "plantillas", "skills", "taller", "estado"}
 )
@@ -48,6 +54,8 @@ MIN_PARENTS_DEPTH = 3
 MAX_PARENTS_DEPTH = 6
 
 # (source file, symbol) -> why this file-relative path is CODE, not author data.
+# The guard keys the allowlist on the ASSIGNMENT TARGET it reports, which is the
+# local variable inside a sys.path bootstrap function, not that function's name.
 CODE_PATH_ALLOWLIST: dict[tuple[str, str], str] = {
     ("api_server.py", "_HERE"): "sys.path bootstrap — locates sibling code modules",
     ("api_server.py", "_CODE_ROOT"): "locates the launcher script, a checkout artifact",
@@ -56,6 +64,9 @@ CODE_PATH_ALLOWLIST: dict[tuple[str, str], str] = {
     ("mcp_launcher.py", "_SCRIPT_DIR"): "locates the sibling graph_mcp_server.py code file",
     ("retirement_gate.py", "_WIKI"): "sys.path bootstrap for local_state/readiness modules",
     ("retirement_gate.py", "PROJECT_ROOT"): "the gate inspects install.sh/docs/src of the checkout",
+    ("hermes_handler.py", "wiki"): "sys.path bootstrap in _ensure_wiki_on_path — locates the wiki code package",
+    ("runtime.py", "wiki"): "sys.path bootstrap in _ensure_wiki_on_path — locates the wiki code package",
+    ("__init__.py", "_CODE_ROOT"): "demiurgos-idea-capture plugin checkout root for its sys.path bootstrap",
 }
 
 
@@ -212,7 +223,7 @@ def scan_tree(
 
 def test_runtime_sources_have_no_code_relative_data_paths() -> None:
     """The real tree is clean: every author-data path goes through the resolver."""
-    violations = scan_tree(SUITE_ROOT)
+    violations = [v for root in SCAN_ROOTS for v in scan_tree(root)]
     assert violations == [], "code-relative data paths: " + "; ".join(
         str(v) for v in violations
     )
