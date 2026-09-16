@@ -36,6 +36,11 @@ interface InventoryRowProps {
   onSelect?: (item: MethodologyInventoryItem) => void;
   /** Marks the row as part of the compare selection. */
   selected?: boolean;
+  /** "full" renders the name plus the version · taller · skill_id sub-line
+   *  (the flat catalog row); "version" renders only the version · taller line
+   *  for rows nested under a skill group header that already shows the name
+   *  and skill_id. Defaults to "full" (byte-identical current output). */
+  variant?: "full" | "version";
 }
 
 /**
@@ -46,11 +51,17 @@ interface InventoryRowProps {
  *
  * The clasificacion badge is suppressed when a trust chip already implies it
  * (`fundacional`/`verified` ⇒ `Oficiales`), so each row shows one origin label.
+ *
+ * `variant="version"` drops the name/skill_id line for rows nested under a
+ * skill group header in the grouped catalog (TW7) — the header already
+ * carries that identity. Every per-version behavior (onSelect, compare
+ * highlight, badges) is unchanged.
  */
 export function InventoryRow({
   item,
   onSelect,
   selected = false,
+  variant = "full",
 }: InventoryRowProps) {
   const clasificacion = item.clasificacion ?? null;
   const clasificacionVariant = clasificacion
@@ -79,12 +90,20 @@ export function InventoryRow({
           onClick={() => onSelect?.(item)}
           className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
         >
-          <span className="block break-words text-small font-medium text-primary">
-            {item.name}
-          </span>
-          <span className="block break-words text-xs text-muted">
-            v{item.version} · {item.taller ?? "Sin taller"} · {item.skill_id}
-          </span>
+          {variant === "full" ? (
+            <>
+              <span className="block break-words text-small font-medium text-primary">
+                {item.name}
+              </span>
+              <span className="block break-words text-xs text-muted">
+                v{item.version} · {item.taller ?? "Sin taller"} · {item.skill_id}
+              </span>
+            </>
+          ) : (
+            <span className="block break-words text-small font-medium text-primary">
+              v{item.version} · {item.taller ?? "Sin taller"}
+            </span>
+          )}
         </button>
       </div>
 

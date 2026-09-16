@@ -78,6 +78,23 @@ const seededNarrative: MethodologyInventoryItem = {
   trust_attributes: ["fundacional"],
 };
 
+/** Two more published versions of the same seeded skill: the multi-version
+ *  group case in the catalog (TW7). Each description is unique so client-side
+ *  search can discriminate between the versions. */
+const personajesV11: MethodologyInventoryItem = {
+  ...seededNarrative,
+  version: "1.1",
+  digest: "seed-digest-11",
+  description: "Revisión de la metodología base.",
+};
+
+const personajesV20: MethodologyInventoryItem = {
+  ...seededNarrative,
+  version: "2.0",
+  digest: "seed-digest-20",
+  description: "Expansión de la metodología base.",
+};
+
 beforeEach(() => {
   getInventoryMock.mockReset();
   getInventoryMock.mockResolvedValue({ items: [narrative, worldbuilding] });
@@ -171,6 +188,159 @@ describe("GlobalMethodologyLibrary — seeded foundational skill (foundational-s
     // The seed is Oficiales + fundacional → only the more specific chip shows.
     expect(within(list).queryByText("Oficiales")).not.toBeInTheDocument();
     expect(within(list).getByText("Fundacional")).toBeInTheDocument();
+  });
+});
+
+describe("GlobalMethodologyLibrary — catalog grouped by skill (TW7 presentation)", () => {
+  const multiVersionItems = [seededNarrative, personajesV11, personajesV20];
+
+  it("renders exactly ONE group header per multi-version skill with all versions nested, expanded by default", async () => {
+    getInventoryMock.mockResolvedValue({ items: multiVersionItems });
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Creación de Personajes")).toBeInTheDocument();
+    });
+
+    // Exactly one disclosure header: the only button whose accessible name
+    // carries the skill_id (nested version rows omit it by design).
+    const headers = screen.getAllByRole("button", {
+      name: /narrative-character-creation/,
+    });
+    expect(headers).toHaveLength(1);
+    expect(headers[0]).toHaveAttribute("aria-expanded", "true");
+
+    // The skill name lives in the header only — never repeated per version.
+    expect(screen.getAllByText("Creación de Personajes")).toHaveLength(1);
+
+    // Expanded by default: every version row is visible on mount, nested
+    // without repeating the name/skill_id (version · taller only).
+    expect(screen.getByText("v1.0 · Mundo")).toBeInTheDocument();
+    expect(screen.getByText("v1.1 · Mundo")).toBeInTheDocument();
+    expect(screen.getByText("v2.0 · Mundo")).toBeInTheDocument();
+  });
+
+  it("renders a plain row without any disclosure control for a single-version skill", async () => {
+    getInventoryMock.mockResolvedValue({ items: [narrative] });
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("Narrative Proposer")).toBeInTheDocument();
+    });
+
+    // No disclosure control anywhere: nothing exposes aria-expanded.
+    expect(
+      screen.queryByRole("button", { expanded: true }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { expanded: false }),
+    ).not.toBeInTheDocument();
+    // Plain full row: the sub-line still carries the skill_id.
+    expect(
+      screen.getByText("v1.2.0 · Mundo · narrative-proposer"),
+    ).toBeInTheDocument();
+  });
+
+  it("collapses and expands the group through the disclosure header", async () => {
+    const user = userEvent.setup();
+    getInventoryMock.mockResolvedValue({ items: multiVersionItems });
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("v1.0 · Mundo")).toBeInTheDocument();
+    });
+
+    const header = screen.getByRole("button", {
+      name: /narrative-character-creation/,
+    });
+    await user.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("v1.0 · Mundo")).not.toBeInTheDocument();
+    expect(screen.queryByText("v1.1 · Mundo")).not.toBeInTheDocument();
+    expect(screen.queryByText("v2.0 · Mundo")).not.toBeInTheDocument();
+
+    await user.click(header);
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("v1.0 · Mundo")).toBeInTheDocument();
+    expect(screen.getByText("v1.1 · Mundo")).toBeInTheDocument();
+    expect(screen.getByText("v2.0 · Mundo")).toBeInTheDocument();
+  });
+
+  it("reports the exact nested version to onSelect and highlights only the selected version in the compare queue", async () => {
+    const user = userEvent.setup();
+    const onSelect = vi.fn();
+    getInventoryMock.mockResolvedValue({ items: multiVersionItems });
+    render(
+      <GlobalMethodologyLibrary
+        onSelect={onSelect}
+        compareSelection={[personajesV11]}
+      />,
+    );
+    await waitFor(() => {
+      expect(screen.getByText("v1.1 · Mundo")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByText("v1.1 · Mundo"));
+    expect(onSelect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        skill_id: "narrative-character-creation",
+        version: "1.1",
+      }),
+    );
+
+    // The compare highlight marks exactly that version's row (nearest card).
+    const v11Row = screen
+      .getByText("v1.1 · Mundo")
+      .closest("div.border-edge")!;
+    expect(v11Row).toHaveClass("border-action/50");
+    const v10Row = screen
+      .getByText("v1.0 · Mundo")
+      .closest("div.border-edge")!;
+    expect(v10Row).not.toHaveClass("border-action/50");
+  });
+
+  it("keeps a multi-version group coherent under a query: only surviving versions render", async () => {
+    const user = userEvent.setup();
+    getInventoryMock.mockResolvedValue({ items: multiVersionItems });
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("v1.0 · Mundo")).toBeInTheDocument();
+    });
+
+    // "base" matches only the v1.1 and v2.0 descriptions — v1.0 drops out.
+    await user.type(screen.getByRole("searchbox"), "base");
+    expect(screen.getByText("v1.1 · Mundo")).toBeInTheDocument();
+    expect(screen.getByText("v2.0 · Mundo")).toBeInTheDocument();
+    expect(screen.queryByText("v1.0 · Mundo")).not.toBeInTheDocument();
+
+    // The group header survives with the surviving count, client-side only.
+    const header = screen.getByRole("button", {
+      name: /narrative-character-creation/,
+    });
+    expect(header).toHaveAttribute("aria-expanded", "true");
+    expect(
+      screen.getByText("narrative-character-creation · Mundo · 2 versiones"),
+    ).toBeInTheDocument();
+    expect(getInventoryMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("degrades a multi-version skill to a plain row when only one version survives the query", async () => {
+    const user = userEvent.setup();
+    getInventoryMock.mockResolvedValue({ items: multiVersionItems });
+    render(<GlobalMethodologyLibrary />);
+    await waitFor(() => {
+      expect(screen.getByText("v1.0 · Mundo")).toBeInTheDocument();
+    });
+
+    // "Revisión" matches only v1.1 — the skill now has exactly one survivor.
+    await user.type(screen.getByRole("searchbox"), "Revisión");
+    expect(
+      screen.queryByRole("button", { expanded: true }),
+    ).not.toBeInTheDocument();
+    // Plain full row again: name plus version · taller · skill_id sub-line.
+    expect(screen.getByText("Creación de Personajes")).toBeInTheDocument();
+    expect(
+      screen.getByText("v1.1 · Mundo · narrative-character-creation"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("v1.0 · Mundo")).not.toBeInTheDocument();
+    expect(screen.queryByText("v2.0 · Mundo")).not.toBeInTheDocument();
   });
 });
 

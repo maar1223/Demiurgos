@@ -5,6 +5,7 @@ import {
 } from "@/api/methodologies";
 import type { MethodologyInventoryItem } from "@/api/types";
 import { Spinner } from "@/components/atoms/Spinner";
+import { Icon } from "@/components/atoms/Icon";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { InventoryRow } from "@/components/molecules/InventoryRow";
@@ -24,6 +25,11 @@ function sameVersion(
   b: MethodologyInventoryItem,
 ): boolean {
   return a.skill_id === b.skill_id && a.version === b.version;
+}
+
+/** Spanish pluralized version count for the group header (TW7). */
+function versionCountLabel(count: number): string {
+  return count === 1 ? "1 versión" : `${count} versiones`;
 }
 
 /** Compare-selection reducer shared with the page (the right panel's
@@ -75,6 +81,21 @@ export function GlobalMethodologyLibrary({
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<InventoryFilters>({});
+  /** skill_ids whose multi-version disclosure group is collapsed. Absent ⇒
+   *  expanded by default so nothing is hidden on arrival (TW7). */
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+
+  const toggleGroup = useCallback((skillId: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(skillId)) {
+        next.delete(skillId);
+      } else {
+        next.add(skillId);
+      }
+      return next;
+    });
+  }, []);
 
   const load = useCallback(async (activeFilters: InventoryFilters) => {
     setLoading(true);
@@ -120,6 +141,23 @@ export function GlobalMethodologyLibrary({
     });
   }, [items, query]);
 
+  // Presentation-only grouping (TW7): filter first, THEN group the survivors by
+  // skill_id, preserving the incoming order for both the groups and the
+  // versions inside each group. The inventory stays complete and per-version —
+  // TW7/TW18's "comparar" still needs version-level entries (REQ-LIB-7).
+  const groups = useMemo(() => {
+    const ordered = new Map<string, MethodologyInventoryItem[]>();
+    for (const item of visibleItems) {
+      const versions = ordered.get(item.skill_id);
+      if (versions) {
+        versions.push(item);
+      } else {
+        ordered.set(item.skill_id, [item]);
+      }
+    }
+    return ordered;
+  }, [visibleItems]);
+
   return (
     <section
       aria-label="Biblioteca global de metodologías"
@@ -153,17 +191,74 @@ export function GlobalMethodologyLibrary({
         <EmptyState icon="search" message={NO_RESULTS_MESSAGE} />
       ) : (
         <ul className="space-y-2">
-          {visibleItems.map((item) => (
-            <li key={`${item.skill_id}@${item.version}`}>
-              <InventoryRow
-                item={item}
-                onSelect={(clicked) => onSelect?.(clicked)}
-                selected={compareSelection.some((candidate) =>
-                  sameVersion(candidate, item),
-                )}
-              />
-            </li>
-          ))}
+          {Array.from(groups.entries()).map(([skillId, versions]) =>
+            versions.length === 1 ? (
+              // Exactly one surviving version → the plain flat row, exactly as
+              // before (no group chrome, no disclosure control).
+              <li key={`${skillId}@${versions[0].version}`}>
+                <InventoryRow
+                  item={versions[0]}
+                  onSelect={(clicked) => onSelect?.(clicked)}
+                  selected={compareSelection.some((candidate) =>
+                    sameVersion(candidate, versions[0]),
+                  )}
+                />
+              </li>
+            ) : (
+              // Two or more surviving versions → a group: a disclosure header
+              // followed by its version rows (TW7).
+              <li key={skillId}>
+                <div className="rounded-lg border border-edge bg-surface-raised p-3">
+                  <button
+                    type="button"
+                    aria-expanded={!collapsed.has(skillId)}
+                    aria-controls={`catalog-group-${skillId}`}
+                    onClick={() => toggleGroup(skillId)}
+                    className="flex w-full items-start gap-2 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
+                  >
+                    <Icon
+                      name={
+                        collapsed.has(skillId)
+                          ? "chevron-right"
+                          : "chevron-down"
+                      }
+                      size={16}
+                      className="mt-0.5 shrink-0 text-muted"
+                      aria-hidden="true"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block break-words text-small font-medium text-primary">
+                        {versions[0].name}
+                      </span>
+                      <span className="block break-words text-xs text-muted">
+                        {versions[0].skill_id} ·{" "}
+                        {versions[0].taller ?? "Sin taller"} ·{" "}
+                        {versionCountLabel(versions.length)}
+                      </span>
+                    </span>
+                  </button>
+                  {!collapsed.has(skillId) && (
+                    <div
+                      id={`catalog-group-${skillId}`}
+                      className="mt-2 space-y-2"
+                    >
+                      {versions.map((item) => (
+                        <InventoryRow
+                          key={`${item.skill_id}@${item.version}`}
+                          item={item}
+                          variant="version"
+                          onSelect={(clicked) => onSelect?.(clicked)}
+                          selected={compareSelection.some((candidate) =>
+                            sameVersion(candidate, item),
+                          )}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </li>
+            ),
+          )}
         </ul>
       )}
     </section>
