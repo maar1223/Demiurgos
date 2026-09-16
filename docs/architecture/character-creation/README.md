@@ -145,7 +145,9 @@
 > **permanecen docs-only**: el runtime sirve **un pin por nivel narrativo** (1º/2º/3º), por lo que un
 > segundo carrier de 1º nivel nunca se sirve; además ambos traen color de mundo Vibrantes, que contradice el
 > principio fundacional agnóstico (#10). La semilla v1.2 consolida ese argumento con un único pin `1º`
-> (`adjunto-nivel-1-unico.md`); los tres pins `1º` de 1.1 quedan en disco byte-idénticos y sin listar.
+> (`adjunto-nivel-1-principal.md`); los carriers `1º` retirados de 1.0/1.1
+> (`adjunto-nivel-1-principal-v1.0.md`, protagonista, antagonista, coprotagonista) quedan en disco
+> byte-idénticos y sin listar.
 
 ## Decisiones abiertas (para resolver en la skill)
 

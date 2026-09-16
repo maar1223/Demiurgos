@@ -481,7 +481,7 @@ class TestSeedCarriersB2:
         adjuntos = entry.manifest.get("adjuntos") or []
         assert len(adjuntos) == 3
         assert {a["path"] for a in adjuntos} == {
-            "adjunto-nivel-1-unico.md",
+            "adjunto-nivel-1-principal.md",
             "adjunto-nivel-2-secundario.md",
             "adjunto-nivel-3-relleno.md",
         }
@@ -490,7 +490,7 @@ class TestSeedCarriersB2:
         assert result.ok, [issue.message for issue in result.issues]
         assert result.compiled is not None
         assert len(result.compiled.adjuntos) == 3
-        assert result.compiled.adjuntos[0].path == "adjunto-nivel-1-unico.md"
+        assert result.compiled.adjuntos[0].path == "adjunto-nivel-1-principal.md"
 
     def test_disk_vs_checksums_parity_for_wired_seed(self) -> None:
         """Parity lock: every checksums.json entry matches the on-disk bytes."""
@@ -498,7 +498,7 @@ class TestSeedCarriersB2:
         checksums = json.loads((seed_dir / "checksums.json").read_text(encoding="utf-8"))
         assert set(checksums) == {
             "manifest.yaml", "source.md",
-            "adjunto-nivel-1-unico.md",
+            "adjunto-nivel-1-principal.md",
             "adjunto-nivel-2-secundario.md",
             "adjunto-nivel-3-relleno.md",
         }
@@ -510,7 +510,7 @@ class TestSeedCarriersB2:
         raises SeedIntegrityError; no partial catalog is returned."""
         seed_root = tmp_path / "seeds"
         shutil.copytree(SEED_ROOT, seed_root)
-        (seed_root / "narrative-character-creation" / "adjunto-nivel-1-unico.md").write_bytes(
+        (seed_root / "narrative-character-creation" / "adjunto-nivel-1-principal.md").write_bytes(
             b"tampered bytes"
         )
         with pytest.raises(SeedIntegrityError):
@@ -538,7 +538,7 @@ class TestSeedCarriersB2:
         assert len(published.adjuntos) == 3
         assert {entry.nivel for entry in published.adjuntos} == {"1º", "2º", "3º"}
         assert {entry.path for entry in published.adjuntos} == {
-            "adjunto-nivel-1-unico.md",
+            "adjunto-nivel-1-principal.md",
             "adjunto-nivel-2-secundario.md",
             "adjunto-nivel-3-relleno.md",
         }
@@ -620,7 +620,7 @@ class TestDensityOnlyTaxonomy:
             pin["path"].removeprefix("adjunto-nivel-1-").removesuffix(".md")
             for pin in pins_1
         }
-        assert labels == {"unico"}
+        assert labels == {"principal"}
         for pin in pins_1:
             header_block = "\n".join(
                 (seed_dir / pin["path"]).read_text(encoding="utf-8").splitlines()[2:10]
@@ -653,21 +653,24 @@ class TestDensityOnlyTaxonomy:
         # The 1º exemplar must demonstrate BOTH emergent-trajectory values.
         assert checked >= 2
 
-    def test_legacy_1_0_principal_carrier_stays_byte_identical_and_unlisted(self) -> None:
-        """Scenario "1.0 remains servable": the read-only legacy 1º carrier keeps
-        its exact bytes and is NOT declared by the 1.2 manifest or checksums."""
+    def test_legacy_1_0_principal_carrier_renamed_byte_identical_and_unlisted(self) -> None:
+        """Scenario "1.0 pin retired": the read-only legacy 1º carrier of v1.0
+        was renamed to ``adjunto-nivel-1-principal-v1.0.md``, keeps its exact
+        bytes, and is NOT declared by the 1.2 manifest or checksums; the v1.0
+        pin path ``adjunto-nivel-1-principal.md`` now resolves to the v1.2
+        carrier and fails the sha-pin (accepted, documented degradation)."""
         seed_dir = SEED_ROOT / "narrative-character-creation"
-        legacy = seed_dir / "adjunto-nivel-1-principal.md"
+        legacy = seed_dir / "adjunto-nivel-1-principal-v1.0.md"
         data = legacy.read_bytes()
         assert len(data) == 9852
         assert hashlib.sha256(data).hexdigest() == (
             "0963ccd4d4fffc76c46f05054de6f922766466c06b0e4fcb4435dd56b7b59f48"
         )
         entry = load_seed_catalog(SEED_ROOT)[0]
-        assert "adjunto-nivel-1-principal.md" not in {
+        assert "adjunto-nivel-1-principal-v1.0.md" not in {
             a["path"] for a in entry.manifest["adjuntos"]
         }
         checksums = json.loads(
             (seed_dir / "checksums.json").read_text(encoding="utf-8")
         )
-        assert "adjunto-nivel-1-principal.md" not in checksums
+        assert "adjunto-nivel-1-principal-v1.0.md" not in checksums
