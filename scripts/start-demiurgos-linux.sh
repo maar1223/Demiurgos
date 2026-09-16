@@ -10,6 +10,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd -P)"
+# Author data root (WU-3 / SC-DR-3.4). Exported ONCE so every child launched
+# by start_component inherits it: the API and the Hermes gateway are both
+# subshells of this shell, so this single export reaches both. The resolver
+# reads DEMIURGOS_DATA_ROOT first (then the user-config pointer, else raises),
+# so this alone satisfies the launcher path. Kept separate from DEMIURGOS_ROOT,
+# which Hermes may still read.
+export DEMIURGOS_DATA_ROOT="$PROJECT_ROOT"
 API_DIR="$PROJECT_ROOT/src/tools/demiurgos-suite/wiki"
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
 PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"

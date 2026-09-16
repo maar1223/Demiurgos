@@ -308,7 +308,7 @@ def _project_dirs(tmp_path: Path) -> None:
 class TestProductionWiring:
     def test_ai_mode_wires_media_enrich_provider(self, tmp_path, monkeypatch):
         """R-5: in ai mode register() injects the full provider into the runtime."""
-        monkeypatch.setenv("DEMIURGOS_ROOT", str(tmp_path))
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path))
         monkeypatch.setenv("DEMIURGOS_IDEA_CAPTURE_MODE", "ai")
         # Opt out of vision so the test isolates the non-vision wiring.
         monkeypatch.setenv("DEMIURGOS_IDEA_CAPTURE_IMAGE_VISION", "0")
@@ -328,7 +328,7 @@ class TestProductionWiring:
 
     def test_ai_mode_wires_vision_when_enabled(self, tmp_path, monkeypatch):
         """R-5: with vision ON (default) the provider attempts real vision wiring."""
-        monkeypatch.setenv("DEMIURGOS_ROOT", str(tmp_path))
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path))
         monkeypatch.setenv("DEMIURGOS_IDEA_CAPTURE_MODE", "ai")
         monkeypatch.delenv("DEMIURGOS_IDEA_CAPTURE_IMAGE_VISION", raising=False)
         _project_dirs(tmp_path)
@@ -345,7 +345,7 @@ class TestProductionWiring:
 
     def test_strict_mode_keeps_runtime_default_enrich(self, tmp_path, monkeypatch):
         """R-5: in strict mode the text-only _default_enrich fallback remains."""
-        monkeypatch.setenv("DEMIURGOS_ROOT", str(tmp_path))
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path))
         monkeypatch.setenv("DEMIURGOS_IDEA_CAPTURE_MODE", "strict")
         _project_dirs(tmp_path)
 

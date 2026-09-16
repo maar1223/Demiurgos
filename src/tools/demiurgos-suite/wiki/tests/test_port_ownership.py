@@ -21,9 +21,14 @@ for _p in (str(_WIKI), str(_SUITE)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-import api_server  # noqa: E402
+import api_server  # noqa: E402  (imported for its side effects: wiki/ on sys.path)
 
-DOC = api_server.PROJECT_ROOT / "docs" / "architecture" / "onboarding-and-configuration.md"
+# The audited files are CODE artifacts of the checkout, not author data, so they
+# are located from this file — NOT from ``api_server.PROJECT_ROOT``, which is the
+# data root since WU-2 (portable-data-root-drive-backup).
+REPO_ROOT = _WIKI.parents[3]  # wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> repo
+
+DOC = REPO_ROOT / "docs" / "architecture" / "onboarding-and-configuration.md"
 
 
 def test_port_8000_ownership_audit_and_resolution_are_documented():
@@ -44,6 +49,6 @@ def test_legacy_wizard_reference_removed_at_retirement_slice():
     # canonical owner of port 8000.
     assert "WU-5" in text
     assert "eliminado en WU-5b" in text
-    install = (api_server.PROJECT_ROOT / "install.sh").read_text(encoding="utf-8")
+    install = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
     assert "web-config-ui" not in install
     assert "uvicorn main:app" not in install

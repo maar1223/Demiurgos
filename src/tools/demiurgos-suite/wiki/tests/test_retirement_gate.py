@@ -141,8 +141,11 @@ def test_migration_rollback_evidence_passes_on_real_root():
     assert gate.check_migration_rollback_evidence(PROJECT_ROOT).passed
 
 
-def test_migration_rollback_evidence_fails_on_invalid_record():
+def test_migration_rollback_evidence_fails_on_invalid_record(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
+        # The evidence is author data: it lives under the DATA root, so the
+        # check reads it from the resolver (WU-2), not from ``project_root``.
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", tmp)
         root = Path(tmp)
         evidence = root / "data" / "migration-evidence"
         evidence.mkdir(parents=True)

@@ -13,12 +13,22 @@ import time
 import urllib.request
 from pathlib import Path
 
+from data_root import resolve_data_root
+
 GATEWAY_URL = "http://127.0.0.1:8642/v1/chat/completions"
 SESSION_ID = "warmup-session"
 MAX_WAIT = 240  # seconds to wait for the gateway to come up
 WARMUP_TIMEOUT = 300  # seconds for the warm-up request itself
 
-_HERE = Path(__file__).resolve().parent
+
+def _project_root() -> Path:
+    """Data root, resolved through the resolver on every call (WU-2).
+
+    The previous ``_HERE.parents[3]`` literal resolved to the same folder, but
+    as an import-time constant it would have made this module unimportable
+    without a configured data root.
+    """
+    return resolve_data_root()
 
 
 def resolve_gateway_key() -> str:
@@ -27,7 +37,7 @@ def resolve_gateway_key() -> str:
     if env_val:
         return env_val
 
-    project_root = _HERE.parents[3]  # wiki -> demiurgos-suite -> tools -> src -> root
+    project_root = _project_root()
     env_file = project_root / ".env"
     if env_file.is_file():
         try:
@@ -42,7 +52,13 @@ def resolve_gateway_key() -> str:
     return ""
 
 
-GATEWAY_KEY = resolve_gateway_key()
+def gateway_key() -> str:
+    """Resolve the gateway key on demand — never while this module is imported.
+
+    The ``.env`` fallback lives in the data root since WU-2, and resolving it at
+    import time would make this module unimportable without a configured root.
+    """
+    return resolve_gateway_key()
 
 
 def resolve_mundo() -> str:
@@ -51,7 +67,7 @@ def resolve_mundo() -> str:
     if env_val:
         return env_val
 
-    project_root = _HERE.parents[3]  # wiki -> demiurgos-suite -> tools -> src -> root
+    project_root = _project_root()
 
     env_file = project_root / ".env"
     if env_file.is_file():
@@ -122,7 +138,7 @@ def warm_up() -> None:
         data=payload,
         headers={
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {GATEWAY_KEY}",
+            "Authorization": f"Bearer {gateway_key()}",
             "X-Hermes-Session-Id": SESSION_ID,
         },
         method="POST",

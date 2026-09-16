@@ -231,9 +231,9 @@ class TestHermesClassifier:
 
 class TestClassifierWiring:
     def test_production_provider_builds_real_classifier(self, tmp_path, monkeypatch):
-        # Hermetic: no profile and no .env under DEMIURGOS_ROOT, so vision
+        # Hermetic: no profile and no .env under DEMIURGOS_DATA_ROOT, so vision
         # and the gateway both resolve to nothing and fail open.
-        monkeypatch.setenv("DEMIURGOS_ROOT", str(tmp_path))
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path))
         monkeypatch.setenv("HERMES_HOME", str(tmp_path / "no-such-profile"))
         monkeypatch.delenv("HERMES_GATEWAY_URL", raising=False)
         monkeypatch.delenv("HERMES_GATEWAY_KEY", raising=False)

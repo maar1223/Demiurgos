@@ -12,14 +12,12 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+from data_root import resolve_data_root
 from contract_projection import _estimate_tokens
 from methodology_compiler import AttachmentEntry
 
 MAX_SPECIMEN_TOKENS = 3072
 """Token budget for one injected convergence specimen (R12; ④b consumes it)."""
-
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
-"""Repository root, resolved identically to ``api_server.PROJECT_ROOT``."""
 
 
 def carrier_root_for(skill_id: str, *, project_root: Path | None = None) -> Path:
@@ -33,9 +31,11 @@ def carrier_root_for(skill_id: str, *, project_root: Path | None = None) -> Path
     The directory is never created here: callers that write materialize it
     lazily, so resolving a path has no filesystem side effect. ``project_root``
     is injectable for tests; production call sites pass
-    ``api_server.PROJECT_ROOT`` so monkeypatched isolation holds.
+    ``api_server._project_root()`` so monkeypatched isolation holds. When it is
+    omitted the data-root resolver is consulted (WU-2) — never a code-relative
+    fallback.
     """
-    root = project_root if project_root is not None else _PROJECT_ROOT
+    root = project_root if project_root is not None else resolve_data_root()
     seed_dir = root / "data" / "methodology" / "seeds" / skill_id
     if seed_dir.is_dir():
         return seed_dir

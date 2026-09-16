@@ -19,17 +19,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 
-from .runtime import CONFIG_PATH, run_serve, run_smoke
+from .runtime import run_serve, run_smoke
 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m idea_capture",
         description="Native Hermes/Telegram idea capture runtime.")
-    parser.add_argument("--config", default=str(CONFIG_PATH),
-                        help="config/idea-capture.yaml to load (default repo path)")
+    parser.add_argument("--config", default=None,
+                        help="config/idea-capture.yaml to load "
+                             "(default: the configured data root's config/)")
     sub = parser.add_subparsers(dest="command")
     sub.required = False
 

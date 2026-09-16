@@ -58,7 +58,7 @@ class RecordingCtx:
 def _register(monkeypatch, mode_env):
     plugin = _load_plugin()
     with tempfile.TemporaryDirectory() as directory:
-        monkeypatch.setenv("DEMIURGOS_ROOT", directory)
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", directory)
         if mode_env is None:
             monkeypatch.delenv("DEMIURGOS_IDEA_CAPTURE_MODE", raising=False)
         else:
@@ -104,7 +104,7 @@ def test_mode_is_cached_immutably(monkeypatch):
     assert plugin._CAPTURE_MODE == "strict"
     monkeypatch.setenv("DEMIURGOS_IDEA_CAPTURE_MODE", "ai")
     with tempfile.TemporaryDirectory() as directory:
-        monkeypatch.setenv("DEMIURGOS_ROOT", directory)
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", directory)
         ctx = RecordingCtx()
         plugin.register(ctx)
     assert plugin._CAPTURE_MODE == "strict"  # unchanged, cached

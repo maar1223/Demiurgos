@@ -5,6 +5,9 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $authMode = Set-DemiurgosAuthModeFromDotEnv -ProjectRoot $root
 
 $env:PYTHONPATH = "src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite"
+# Author data root for the resolver (WU-3 / SC-DR-3.4). Set alongside the
+# PYTHONPATH so this standalone launcher also resolves author data.
+$env:DEMIURGOS_DATA_ROOT = $root
 Set-Location $root
 Write-Host "Demiurgos API auth mode: $authMode"
 

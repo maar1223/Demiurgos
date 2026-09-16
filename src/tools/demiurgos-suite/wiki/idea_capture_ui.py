@@ -38,10 +38,24 @@ import yaml
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
+from data_root import resolve_data_root
+
 log = logging.getLogger("demiurgos-idea-capture")
 
-# Overridable in tests (monkeypatch REPO_ROOT; derived paths resolve lazily).
-REPO_ROOT = Path(__file__).resolve().parents[4]
+# Data-root seam (WU-2). ``None`` means "resolve from the data root on use";
+# tests keep monkeypatching ``REPO_ROOT`` directly, exactly as before.
+REPO_ROOT: Path | None = None
+
+
+def _repo_root() -> Path:
+    """Resolve the data root lazily; never at import time (WU-2).
+
+    An import-time resolution would raise ``DataRootNotConfigured`` during
+    pytest collection, before the suite's hermetic root exists.
+    """
+    if REPO_ROOT is not None:
+        return REPO_ROOT
+    return resolve_data_root()
 
 _ENV_TOKEN_NAME = "TELEGRAM_BOT_TOKEN"
 _TOKEN_MAX_LENGTH = 200
@@ -53,15 +67,15 @@ _LIMIT_KEYS = tuple(_LIMIT_DEFAULTS)
 
 
 def _config_path() -> Path:
-    return REPO_ROOT / "config" / "idea-capture.yaml"
+    return _repo_root() / "config" / "idea-capture.yaml"
 
 
 def _env_path() -> Path:
-    return REPO_ROOT / ".env"
+    return _repo_root() / ".env"
 
 
 def _mundos_root() -> Path:
-    return REPO_ROOT / "mundos"
+    return _repo_root() / "mundos"
 
 
 # ---------------------------------------------------------------------------
@@ -465,7 +479,7 @@ class TelegramDiscoveryError(RuntimeError):
 
 def owner_lock_path() -> Path:
     """The exact lock file the serve entrypoint uses (runtime OwnershipLock)."""
-    return REPO_ROOT / _OWNER_LOCK_REL
+    return _repo_root() / _OWNER_LOCK_REL
 
 
 def _default_pid_alive(pid: int) -> bool:
@@ -750,7 +764,7 @@ _pending_runtimes_lock = threading.Lock()
 
 def _pending_state_path() -> Path:
     """SQLite state file shared with the Hermes idea-capture runtime."""
-    return REPO_ROOT / "data" / "idea-capture.sqlite3"
+    return _repo_root() / "data" / "idea-capture.sqlite3"
 
 
 def _build_pending_runtime() -> Any:
@@ -771,7 +785,7 @@ def _build_pending_runtime() -> Any:
         state_path=_pending_state_path(),
         mundos_root=_mundos_root(),
         active_world=load_active_world(_config_path()),
-        global_ideas_root=REPO_ROOT / "ideas",
+        global_ideas_root=_repo_root() / "ideas",
         busy_timeout_seconds=10.0,
     )
 

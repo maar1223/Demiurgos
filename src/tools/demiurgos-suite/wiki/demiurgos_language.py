@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from data_root import resolve_data_root
+
 ENV_NAME = "DEMIURGOS_LANGUAGE"
 DEFAULT_LANGUAGE = "es"
 
@@ -29,9 +31,6 @@ SUPPORTED_UI_LANGUAGES = frozenset({"es", "en"})
 
 # Independent language domains (OC3): each is configured separately.
 LOCALE_DOMAINS = ("ui", "conversation", "content")
-
-# Demiurgos/ (wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> root)
-_PROJECT_ROOT = Path(__file__).resolve().parents[4]
 
 
 def normalize_language(raw: str | None) -> str:
@@ -161,10 +160,17 @@ def read_dotenv_value(env_file: Path, name: str) -> str:
 
 def resolve_ui_language(
     *,
-    env_file: Path = _PROJECT_ROOT / ".env",
+    env_file: Path | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> str:
-    """Resolve the normalized UI language with a safe default on failure."""
+    """Resolve the normalized UI language with a safe default on failure.
+
+    ``env_file`` defaults to the ``.env`` of the data root, resolved lazily
+    here (WU-2) — never at import time, because the resolver fails loudly when
+    no data root is configured.
+    """
     env = os.environ if environ is None else environ
+    if env_file is None:
+        env_file = resolve_data_root() / ".env"
     raw = env.get(ENV_NAME) or read_dotenv_value(env_file, ENV_NAME)
     return normalize_language(raw)

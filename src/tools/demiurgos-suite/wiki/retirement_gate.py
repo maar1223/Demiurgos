@@ -27,12 +27,18 @@ for _p in (str(_WIKI), str(_SUITE)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from data_root import resolve_data_root  # noqa: E402
 from local_state import LocalState  # noqa: E402
 from readiness import project_cards, probe_local_storage  # noqa: E402
 from wiki.world_authority import (WorldResultKind,  # noqa: E402
                                   canonical_dirs, create_world,
                                   detect_legacy_layout)
 
+# CODE root, deliberately NOT the data root (WU-2). Every gate below inspects
+# the checkout itself — ``install.sh``, ``docs/``, ``src/tools/web-config-ui/``,
+# the wiki modules — and ``main()`` defaults to it, so migrating it to the
+# resolver would make the barrier inspect the author's data folder instead of
+# the code it guards. Recorded in the guard test's CODE_PATH_ALLOWLIST.
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 INSTALL_SH = "install.sh"
 ARCH_DOC = Path("docs") / "architecture" / "onboarding-and-configuration.md"
@@ -169,7 +175,23 @@ def check_canonical_tree(project_root: Path) -> GateCheck:
     return _verdict("canonical_tree", True, "lowercase canonical tree; idempotent")
 
 
+def evidence_dir() -> Path:
+    """``<data root>/data/migration-evidence`` (WU-2), resolved on every call.
+
+    The migration engine persists its evidence under the DATA root (see the
+    ``create_migration_settings_router`` wiring in ``api_server``), so the gate
+    reads it from the resolver while its code checks stay on ``PROJECT_ROOT``.
+    """
+    return resolve_data_root() / "data" / "migration-evidence"
+
+
 def check_migration_rollback_evidence(project_root: Path) -> GateCheck:
+    """Engine contract + persisted evidence.
+
+    ``project_root`` is accepted for the uniform ``CHECKS`` signature but is
+    intentionally unused: the evidence it reads is author data and therefore
+    comes from the data-root resolver (WU-2), not from the checkout.
+    """
     try:
         from wiki import migration as mig
     except Exception as exc:
@@ -177,10 +199,10 @@ def check_migration_rollback_evidence(project_root: Path) -> GateCheck:
     outcomes = {member.value for member in mig.MigrationOutcome}
     if mig.EVIDENCE_SCHEMA_VERSION != 1 or not {"completed", "rolled_back"} <= outcomes:
         return _verdict("migration_rollback_evidence", False, "engine contract drifted")
-    evidence_dir = Path(project_root) / "data" / "migration-evidence"
     invalid = []
-    if evidence_dir.is_dir():
-        for record in sorted(evidence_dir.glob("*.json")):
+    evidence = evidence_dir()
+    if evidence.is_dir():
+        for record in sorted(evidence.glob("*.json")):
             try:
                 data = json.loads(record.read_text(encoding="utf-8"))
                 ok = (data.get("outcome") in ("completed", "rolled_back")

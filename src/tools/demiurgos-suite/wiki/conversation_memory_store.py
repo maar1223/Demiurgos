@@ -47,6 +47,8 @@ _VALID_ROLES = frozenset({"user", "assistant"})
 
 # SQLite's stdlib driver (Python 3.12+) executes one statement per call, so
 # the schema is a tuple of standalone DDL statements run in order.
+from data_root import resolve_data_root
+
 _SCHEMA_STATEMENTS = (
     """
     CREATE TABLE IF NOT EXISTS conversation_turns (
@@ -88,12 +90,13 @@ def _utcnow() -> datetime:
 
 
 def default_db_path() -> Path:
-    """Durable repo-local default for the conversation-memory database.
+    """Durable default for the conversation-memory database.
 
-    Follows the project convention of storing local SQLite state under the
-    repository ``data/`` directory (see ``data/guided-sessions.sqlite3``).
+    Resolved from the data root on every call (WU-2), never at import time, so
+    the suite can point ``DEMIURGOS_DATA_ROOT`` at a throwaway root instead of
+    the repo ``data/`` directory.
     """
-    return Path(__file__).resolve().parents[4] / "data" / "conversation-memory.sqlite3"
+    return resolve_data_root() / "data" / "conversation-memory.sqlite3"
 
 
 # --------------------------------------------------------------------------- #

@@ -1,6 +1,7 @@
 # Demiurgos Narrative Engine - Installer for Windows
 # Overlay installation: adds narrative agents/skills/commands alongside Gentle-AI
 # NON-DESTRUCTIVE: never overwrites existing Gentle-AI files
+# Also prepares the checkout Python environment (.venv) and the data-root pointer
 
 param(
     [switch]$Force,
@@ -296,6 +297,124 @@ if (Test-Path $TuiJsonSource) {
     }
 } else {
     skip "No tui.json (optional)"
+}
+
+# ============================================================
+# 7.5. PREPARE THE CHECKOUT PYTHON ENVIRONMENT
+# ============================================================
+# The launchers run the API with the checkout's own interpreter. Everything
+# here is best-effort: a missing interpreter warns and the installer continues.
+
+step "7.5/8 Preparing the checkout Python environment..."
+$ProjectRoot = $ScriptDir
+$VenvDir = Join-Path $ProjectRoot ".venv"
+$VenvPython = Join-Path $VenvDir "Scripts\python.exe"
+$RequirementsFile = Join-Path $ProjectRoot "src\tools\demiurgos-suite\requirements.txt"
+
+$SystemPython = Get-Command python -ErrorAction SilentlyContinue
+if (-not $SystemPython) {
+    warn "Python was not found on PATH. Skipping the virtual environment and the Python dependencies."
+    warn "Install Python 3.11+ from https://www.python.org/downloads/ and re-run this script."
+    warn "Without it the launchers cannot start: they expect $VenvPython."
+} elseif (-not (Test-Path $RequirementsFile)) {
+    warn "Requirements file not found: $RequirementsFile. Skipping the Python dependencies."
+} elseif ($DryRun) {
+    warn "DRY RUN: would create or refresh $VenvDir and install $RequirementsFile"
+} else {
+    try {
+        # Idempotent: an existing environment is reused as-is, never recreated,
+        # so re-running the installer cannot break a working venv.
+        if (Test-Path $VenvPython) {
+            ok "Virtual environment already present: $VenvDir"
+        } else {
+            & python -m venv $VenvDir
+            if ($LASTEXITCODE -ne 0) { throw "python -m venv exited with code $LASTEXITCODE" }
+            ok "Virtual environment created: $VenvDir"
+        }
+
+        & $VenvPython -m pip install -r $RequirementsFile
+        if ($LASTEXITCODE -ne 0) { throw "pip install exited with code $LASTEXITCODE" }
+        ok "Python dependencies installed"
+    } catch {
+        warn "Python environment setup failed: $_"
+        warn "The remaining install steps are unaffected. Retry manually with:"
+        warn "  $VenvPython -m pip install -r $RequirementsFile"
+    }
+}
+
+# ============================================================
+# 7.6. WRITE THE DATA-ROOT BOOTSTRAP POINTER
+# ============================================================
+# The launchers export DEMIURGOS_DATA_ROOT, but a process started by hand
+# (hermes, a scheduled task, a directly started API) has no launcher and
+# resolves the data root from the bootstrap pointer written here. The project's
+# own write_pointer() owns the record schema and its location
+# (platformdirs.user_config_dir("demiurgos")), so it is the single source of
+# truth; the record is read back to prove the resolver accepts it.
+
+step "7.6/8 Configuring the data root pointer..."
+$WikiDir = Join-Path $ProjectRoot "src\tools\demiurgos-suite\wiki"
+
+if (-not (Test-Path $VenvPython)) {
+    warn "No usable interpreter at $VenvPython. Skipping the data-root pointer."
+    warn "Processes started outside a launcher resolve the data root from that pointer only."
+} elseif (-not (Test-Path (Join-Path $WikiDir "data_root.py"))) {
+    warn "Resolver module not found at $WikiDir\data_root.py. Skipping the data-root pointer."
+} elseif ($DryRun) {
+    warn "DRY RUN: would write the data-root pointer for $ProjectRoot"
+} else {
+    try {
+        # Single-quoted here-string: the payload is Python and must not be
+        # expanded by PowerShell. argv carries both paths, so quoting is safe.
+        $PointerScript = @'
+import sys
+from pathlib import Path
+
+# Import the project's own resolver: one source of truth for the pointer path
+# (platformdirs.user_config_dir("demiurgos")) and the record schema.
+sys.path.insert(0, sys.argv[1])
+from data_root import pointer_path, read_pointer, write_pointer
+
+checkout = Path(sys.argv[2]).resolve()
+existing = read_pointer()
+
+# Bootstrap only: never silently repoint a data root the user already chose.
+if existing is not None and existing != checkout:
+    print(
+        f"data root already configured at {existing}; left untouched "
+        f"(bootstrap only). Repoint it by editing {pointer_path()}."
+    )
+    raise SystemExit(3)
+
+write_pointer(checkout)
+
+# Read the file back so the installer proves the resolver accepts the record.
+recorded = read_pointer()
+if recorded != checkout:
+    raise SystemExit(f"read-back mismatch: wrote {checkout} but read {recorded}")
+print(pointer_path())
+'@
+
+        $PointerScriptPath = Join-Path ([System.IO.Path]::GetTempPath()) "demiurgos-data-root-bootstrap.py"
+        Set-Content -Path $PointerScriptPath -Value $PointerScript -Encoding UTF8
+
+        $PointerOutput = & $VenvPython $PointerScriptPath $WikiDir $ProjectRoot
+        $PointerStatus = $LASTEXITCODE
+        Remove-Item $PointerScriptPath -ErrorAction SilentlyContinue
+
+        if ($PointerStatus -eq 0) {
+            ok "Data root pointer written and verified: $($PointerOutput -join ' ')"
+            ok "Data root: $ProjectRoot"
+        } elseif ($PointerStatus -eq 3) {
+            warn "$($PointerOutput -join ' ')"
+        } else {
+            warn "Could not write the data-root pointer through the resolver's write_pointer()."
+            warn "Processes started outside a launcher will not resolve a data root until it is written."
+        }
+    } catch {
+        warn "Could not write the data-root pointer: $_"
+        warn "Processes started outside a launcher will not resolve a data root until it is written."
+    }
 }
 
 # ============================================================

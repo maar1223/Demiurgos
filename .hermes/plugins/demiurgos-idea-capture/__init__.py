@@ -117,6 +117,50 @@ from types import SimpleNamespace
 
 log = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Code and data roots (WU-3, portable-data-root-drive-backup)
+# ---------------------------------------------------------------------------
+# ``_CODE_ROOT`` locates the checkout that ships ``src/tools``. It is CODE, so
+# it stays file-relative on purpose (and is exempt in the code-relative-path
+# guard). The AUTHOR-DATA root is a different thing: it resolves through the
+# shared data-root resolver, so the plugin, the idea-capture handler and the
+# wiki API all read one user-configured folder instead of the checkout.
+_CODE_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _ensure_code_on_path() -> None:
+    """Make the checkout's ``src/tools`` roots importable (code bootstrap).
+
+    ``register()`` imports ``idea_capture`` and the flat wiki modules, and the
+    data-root resolver lives under the wiki package — all of that must be
+    importable BEFORE the data root is resolved, so this runs first and needs
+    nothing but ``__file__``. ``demiurgos-suite`` backs the lazy ``from
+    wiki.ideas_bank import ...`` in the ``update_idea`` tool handler; ``wiki``
+    backs the flat ``data_root``/``demiurgos_language`` imports.
+    """
+    for entry in (
+        _CODE_ROOT / "src" / "tools",
+        _CODE_ROOT / "src" / "tools" / "demiurgos-suite",
+        _CODE_ROOT / "src" / "tools" / "demiurgos-suite" / "wiki",
+    ):
+        if str(entry) not in sys.path:
+            sys.path.insert(0, str(entry))
+
+
+def _data_root() -> Path:
+    """Author data root, resolved through the shared resolver (WU-3).
+
+    Raises ``DataRootNotConfigured`` when neither ``DEMIURGOS_DATA_ROOT`` nor
+    the bootstrap pointer is set. Callers choose the failure mode:
+    ``register()`` lets it abort registration, while the advisory helpers
+    (language, capture mode) fail safe.
+    """
+    _ensure_code_on_path()
+    from data_root import resolve_data_root  # noqa: PLC0415 — needs the path above
+
+    return resolve_data_root()
+
+
 _handler = None
 
 # PR idea-capture-confirm-queue (WU2, R-4): the tool handler never receives the
@@ -221,9 +265,8 @@ def _demiurgos_language() -> str:
     so the bot responds in whatever language Demiurgos is set to, never a
     hardcoded one. Falls back to ``es`` on error or when unavailable.
     """
-    repo_root = os.environ.get("DEMIURGOS_ROOT") or str(Path.cwd())
     try:
-        sys.path.insert(0, str(Path(repo_root) / "src" / "tools" / "demiurgos-suite" / "wiki"))
+        _ensure_code_on_path()
         from demiurgos_language import resolve_ui_language  # noqa: PLC0415
 
         return resolve_ui_language()
@@ -326,16 +369,12 @@ _UPDATE_IDEA_SCHEMA = {
 
 def register(ctx) -> None:
     global _handler
-    root = Path(os.environ.get("DEMIURGOS_ROOT", Path.cwd())).resolve()
-    tools = root / "src" / "tools"
-    if str(tools) not in sys.path:
-        sys.path.insert(0, str(tools))
-    # The wiki package (IdeasBank for update_idea) lives under
-    # src/tools/demiurgos-suite/wiki — put the suite dir on the path so the
-    # lazy ``from wiki.ideas_bank import ...`` in the tool handler resolves.
-    suite = tools / "demiurgos-suite"
-    if str(suite) not in sys.path:
-        sys.path.insert(0, str(suite))
+    # Ordering matters: the checkout paths go on ``sys.path`` FIRST so the
+    # data-root resolver is importable, and only THEN is the author-data root
+    # resolved. An unconfigured root raises here and aborts registration
+    # loudly — the plugin never half-registers against a guessed folder.
+    _ensure_code_on_path()
+    root = _data_root()
     # PR idea-capture-ai-gate Phase 4: mode resolution delegates to the config
     # module (env > yaml > ai), so ``src/tools`` must be on the path first.
     _resolve_capture_mode()
@@ -780,9 +819,9 @@ def _resolve_capture_mode() -> str:
     if _CAPTURE_MODE is not None:
         return _CAPTURE_MODE
     try:
+        _ensure_code_on_path()
         from idea_capture.config import resolve_capture_mode as _resolve_mode
-        root = Path(os.environ.get("DEMIURGOS_ROOT", Path.cwd())).resolve()
-        _CAPTURE_MODE = _resolve_mode(root / "config" / "idea-capture.yaml")
+        _CAPTURE_MODE = _resolve_mode(_data_root() / "config" / "idea-capture.yaml")
     except Exception as exc:  # noqa: BLE001 — fail closed to env-only, then ai
         log.warning("idea-capture config mode resolution failed; "
                     "falling back to env: %s", exc)

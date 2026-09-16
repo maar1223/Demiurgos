@@ -112,7 +112,7 @@ if (Test-PortListening $gatewayPort) {
         Write-Host "  [!!]  Hermes escucha pero no esta saludable; no se inicia una segunda instancia." -ForegroundColor Red
     }
 } else {
-    Start-ServiceWindow "Gateway" "Set-Location '$root'; `$env:DEMIURGOS_ROOT='$root'; `$env:HERMES_ENABLE_PROJECT_PLUGINS='1'; & '$hermes' plugins enable demiurgos-idea-capture *> `$null; if (`$LASTEXITCODE -ne 0) { throw 'Could not enable the Demiurgos Hermes project plugin.' }; & '$hermes' gateway run -v"
+    Start-ServiceWindow "Gateway" "Set-Location '$root'; `$env:DEMIURGOS_ROOT='$root'; `$env:DEMIURGOS_DATA_ROOT='$root'; `$env:HERMES_ENABLE_PROJECT_PLUGINS='1'; & '$hermes' plugins enable demiurgos-idea-capture *> `$null; if (`$LASTEXITCODE -ne 0) { throw 'Could not enable the Demiurgos Hermes project plugin.' }; & '$hermes' gateway run -v"
 }
 
 # --- 2. Wiki API -----------------------------------------------------------------
@@ -121,14 +121,14 @@ if (Test-PortListening $apiPort) {
     if ($RestartApi -and (Stop-ApiForExplicitRestart)) {
         Write-Host "  [OK]  API anterior detenida de forma explicita; se inicia con el modo $authMode." -ForegroundColor Green
         $env:PYTHONPATH = "src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite"
-        Start-ServiceWindow "API" "Set-Location '$root'; `$env:PYTHONPATH='src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite'; python -m uvicorn api_server:app --host 127.0.0.1 --port 8000 --log-level info"
+        Start-ServiceWindow "API" "Set-Location '$root'; `$env:PYTHONPATH='src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite'; `$env:DEMIURGOS_DATA_ROOT='$root'; python -m uvicorn api_server:app --host 127.0.0.1 --port 8000 --log-level info"
     } else {
         Write-Host "  [OK]  Ya esta escuchando en el puerto $apiPort - sin cambios; conserva su entorno anterior." -ForegroundColor Green
         Write-Host "        Usa -RestartApi y confirma RESTART para aplicar el .env actual." -ForegroundColor DarkYellow
     }
 } else {
     $env:PYTHONPATH = "src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite"
-    Start-ServiceWindow "API" "Set-Location '$root'; `$env:PYTHONPATH='src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite'; python -m uvicorn api_server:app --host 127.0.0.1 --port 8000 --log-level info"
+    Start-ServiceWindow "API" "Set-Location '$root'; `$env:PYTHONPATH='src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite'; `$env:DEMIURGOS_DATA_ROOT='$root'; python -m uvicorn api_server:app --host 127.0.0.1 --port 8000 --log-level info"
 }
 
 # --- 3. Graph warm-up (background, does not block) --------------------------------
