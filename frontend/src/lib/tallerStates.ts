@@ -46,6 +46,59 @@ export function publishedHasActiveInWorld(
   );
 }
 
+/** Numeric, specificity-aware version ordering (REQ-TRE-11): dot-separated
+ *  segments compared segment-wise up to the longer length, missing segments
+ *  treated as 0. Ordering is numeric, never lexicographic (`"1.10" > "1.9"`),
+ *  and a numeric tie is broken by segment count so `"1.2.0" > "1.2"`. */
+export function compareVersions(a: string, b: string): number {
+  const aSegments = a.split(".");
+  const bSegments = b.split(".");
+  const length = Math.max(aSegments.length, bSegments.length);
+  for (let i = 0; i < length; i += 1) {
+    const aValue = parseInt(aSegments[i] ?? "0", 10) || 0;
+    const bValue = parseInt(bSegments[i] ?? "0", 10) || 0;
+    if (aValue !== bValue) return aValue - bValue;
+  }
+  return aSegments.length - bSegments.length;
+}
+
+/** Collapses `published` (one record per skill@version) to ONE representative
+ *  record per `skill_id` (REQ-TRE-9/10): the published version equal to the
+ *  world activation's version when the activation belongs to that skill, else
+ *  the latest version per REQ-TRE-11. A stale activation (active version not
+ *  published) falls back to latest; with no world, latest applies to every
+ *  skill. The representative's own `taller`/`talleres_compatibles` drive the
+ *  state routing in `groupSkillsByState`. */
+function dedupeBySkill(
+  published: PublishedMethodology[],
+  world: string | undefined,
+  activations: Activations,
+): PublishedMethodology[] {
+  const active = world == null ? undefined : activations[world];
+  const isActiveVersion = (skill: PublishedMethodology): boolean =>
+    active?.skill_id === skill.skill_id && active.version === skill.version;
+
+  const bySkill = new Map<string, PublishedMethodology>();
+  for (const skill of published) {
+    const current = bySkill.get(skill.skill_id);
+    if (!current) {
+      bySkill.set(skill.skill_id, skill);
+      continue;
+    }
+    // The world-active version always wins, regardless of iteration order.
+    if (isActiveVersion(skill)) {
+      bySkill.set(skill.skill_id, skill);
+      continue;
+    }
+    if (isActiveVersion(current)) continue;
+    // Latest wins; ties keep the current candidate (REQ-TRE-11).
+    if (compareVersions(skill.version, current.version) > 0) {
+      bySkill.set(skill.skill_id, skill);
+    }
+  }
+  return [...bySkill.values()];
+}
+
 /** First-match-wins state derivation — exact design algorithm (design
  *  §State Derivation Algorithm, spec REQ-TRE-5 table):
  *  Activa → Transversal activa → Bloqueada → Inactiva → Transversal
@@ -101,13 +154,16 @@ const byName = (a: PublishedMethodology, b: PublishedMethodology): number =>
   a.name.localeCompare(b.name);
 
 /** Routes every published skill into its state bucket (hidden skills are
- *  dropped) and sorts each group alphabetically by name (REQ-TRE-3 S2). */
+ *  dropped) and sorts each group alphabetically by name (REQ-TRE-3 S2).
+ *  `published` is first collapsed to one representative per `skill_id`
+ *  (REQ-TRE-9/10) so the explorer renders a single row per skill. */
 export function groupSkillsByState(
   published: PublishedMethodology[],
   activeTaller: string,
   world: string | undefined,
   activations: Activations,
 ): GroupedSkills {
+  const representatives = dedupeBySkill(published, world, activations);
   const groups: GroupedSkills = {
     activas: [],
     transversalesActivas: [],
@@ -117,13 +173,19 @@ export function groupSkillsByState(
     sinTaller: [],
   };
 
-  for (const skill of published) {
+  for (const skill of representatives) {
     if (!isOperationalTaller(skill.taller)) {
       groups.sinTaller.push(skill);
       continue;
     }
     switch (
-      computeSkillState(skill, activeTaller, world, activations, published)
+      computeSkillState(
+        skill,
+        activeTaller,
+        world,
+        activations,
+        representatives,
+      )
     ) {
       case "activa":
         groups.activas.push(skill);

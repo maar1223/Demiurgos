@@ -4,6 +4,7 @@ import type {
   PublishedMethodology,
 } from "@/api/types";
 import {
+  compareVersions,
   computeSkillState,
   groupSkillsByState,
   publishedHasActiveInWorld,
@@ -462,5 +463,196 @@ describe("groupSkillsByState", () => {
 
     expect(groups.inactivas.map((s) => s.name)).toEqual(["Alfa", "Media", "Zeta"]);
     expect(groups.sinTaller.map((s) => s.name)).toEqual(["Alfa Sin", "Zeta Sin"]);
+  });
+});
+
+describe("compareVersions (REQ-TRE-11 S7)", () => {
+  it("orders numeric segments, never lexicographically", () => {
+    expect(compareVersions("1.10", "1.9")).toBeGreaterThan(0);
+    expect(compareVersions("1.9", "1.10")).toBeLessThan(0);
+  });
+
+  it("breaks a numeric tie by segment specificity", () => {
+    expect(compareVersions("1.2.0", "1.2")).toBeGreaterThan(0);
+    expect(compareVersions("1.2", "1.2.0")).toBeLessThan(0);
+  });
+
+  it("returns 0 for equal versions", () => {
+    expect(compareVersions("1.2", "1.2")).toBe(0);
+  });
+});
+
+describe("groupSkillsByState — one row per skill (REQ-TRE-9/10)", () => {
+  it("renders the world-active version as the single row (S1)", () => {
+    const published = [
+      skill({ skill_id: "s1", version: "1.0", name: "Skill S1" }),
+      skill({ skill_id: "s1", version: "1.1", name: "Skill S1" }),
+      skill({ skill_id: "s1", version: "1.2", name: "Skill S1" }),
+    ];
+
+    const groups = groupSkillsByState(published, MUNDO, WORLD, {
+      [WORLD]: activation("s1", "1.2"),
+    });
+
+    expect(groups.activas).toHaveLength(1);
+    expect(groups.activas[0]).toMatchObject({ skill_id: "s1", version: "1.2" });
+    expect([
+      ...groups.transversalesActivas,
+      ...groups.inactivas,
+      ...groups.transversalesInactivas,
+      ...groups.bloqueadas,
+      ...groups.sinTaller,
+    ]).toHaveLength(0);
+  });
+
+  it("falls back to the latest published version with no activation (S2)", () => {
+    const published = [
+      skill({ skill_id: "s2", version: "1.0", name: "Skill S2" }),
+      skill({ skill_id: "s2", version: "1.9", name: "Skill S2" }),
+      skill({ skill_id: "s2", version: "1.10", name: "Skill S2" }),
+    ];
+
+    const groups = groupSkillsByState(published, MUNDO, WORLD, {});
+
+    expect(groups.inactivas).toHaveLength(1);
+    expect(groups.inactivas[0]).toMatchObject({
+      skill_id: "s2",
+      version: "1.10",
+    });
+  });
+
+  it("prefers the world-active version over a newer published one (S4)", () => {
+    const published = [
+      skill({ skill_id: "s4", version: "1.0", name: "Skill S4" }),
+      skill({ skill_id: "s4", version: "1.1", name: "Skill S4" }),
+      skill({ skill_id: "s4", version: "1.2", name: "Skill S4" }),
+    ];
+
+    const groups = groupSkillsByState(published, MUNDO, WORLD, {
+      [WORLD]: activation("s4", "1.1"),
+    });
+
+    expect(groups.activas).toHaveLength(1);
+    expect(groups.activas[0]).toMatchObject({ skill_id: "s4", version: "1.1" });
+  });
+
+  it("falls back to the latest version when the active version is stale (S5)", () => {
+    const published = [
+      skill({ skill_id: "s5", version: "1.0", name: "Skill S5" }),
+      skill({ skill_id: "s5", version: "1.1", name: "Skill S5" }),
+    ];
+
+    const groups = groupSkillsByState(published, MUNDO, WORLD, {
+      [WORLD]: activation("s5", "9.9"),
+    });
+
+    const rows = [...groups.activas, ...groups.inactivas];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ skill_id: "s5", version: "1.1" });
+    // The version-exact "• Activa en {world}" line is suppressed at the
+    // TallerTree layer (active.version !== representative.version) — covered
+    // in TallerTree.test.tsx. State routing itself stays skill-level
+    // (REQ-TRE-5 activeInWorld is skill_id-based, computeSkillState unchanged).
+  });
+
+  it("uses the latest version for every skill with no world selected (S6)", () => {
+    const published = [
+      skill({ skill_id: "s6", version: "1.0", name: "Skill S6" }),
+      skill({ skill_id: "s6", version: "1.1", name: "Skill S6" }),
+    ];
+
+    const groups = groupSkillsByState(published, MUNDO, undefined, {
+      [WORLD]: activation("s6", "1.1"),
+    });
+
+    expect(groups.inactivas).toHaveLength(1);
+    expect(groups.inactivas[0]).toMatchObject({ skill_id: "s6", version: "1.1" });
+  });
+
+  it("breaks a published-version tie by specificity (REQ-TRE-11)", () => {
+    const published = [
+      skill({ skill_id: "tie", version: "1.2", name: "Skill Tie" }),
+      skill({ skill_id: "tie", version: "1.2.0", name: "Skill Tie" }),
+    ];
+
+    const groups = groupSkillsByState(published, MUNDO, WORLD, {});
+
+    expect(groups.inactivas).toHaveLength(1);
+    expect(groups.inactivas[0]).toMatchObject({
+      skill_id: "tie",
+      version: "1.2.0",
+    });
+  });
+
+  it("routes the representative's own taller/compatibles (REQ-TRE-10)", () => {
+    const published = [
+      skill({
+        skill_id: "tv",
+        version: "1.0",
+        name: "Transversal",
+        taller: IDEAS,
+        talleres_compatibles: [MUNDO],
+      }),
+      skill({
+        skill_id: "tv",
+        version: "1.1",
+        name: "Transversal",
+        taller: IDEAS,
+        talleres_compatibles: [MUNDO],
+      }),
+    ];
+
+    const groups = groupSkillsByState(published, MUNDO, WORLD, {
+      [WORLD]: activation("tv", "1.0"),
+    });
+
+    expect(groups.transversalesActivas).toHaveLength(1);
+    expect(groups.transversalesActivas[0]).toMatchObject({
+      skill_id: "tv",
+      version: "1.0",
+    });
+    expect(groups.transversalesInactivas).toEqual([]);
+  });
+
+  it("keeps one row per skill_id across every bucket (S3)", () => {
+    const published = [
+      skill({ skill_id: "s3a", version: "1.0", name: "Alfa" }),
+      skill({ skill_id: "s3a", version: "1.2", name: "Alfa" }),
+      skill({
+        skill_id: "s3b",
+        version: "1.0",
+        name: "Beta",
+        taller: IDEAS,
+        talleres_compatibles: [MUNDO],
+      }),
+      skill({
+        skill_id: "s3b",
+        version: "2.0",
+        name: "Beta",
+        taller: IDEAS,
+        talleres_compatibles: [MUNDO],
+      }),
+      skill({ skill_id: "s3c", version: "1.0", name: "Gamma", taller: null }),
+      skill({ skill_id: "s3c", version: "1.1", name: "Gamma", taller: null }),
+    ];
+
+    const groups = groupSkillsByState(published, MUNDO, WORLD, {
+      [WORLD]: activation("s3a", "1.2"),
+    });
+
+    const all = [
+      ...groups.activas,
+      ...groups.transversalesActivas,
+      ...groups.inactivas,
+      ...groups.transversalesInactivas,
+      ...groups.bloqueadas,
+      ...groups.sinTaller,
+    ];
+    expect(all).toHaveLength(3);
+    expect(all.map((s) => s.skill_id).sort()).toEqual(["s3a", "s3b", "s3c"]);
+    expect(new Set(all.map((s) => s.skill_id)).size).toBe(all.length);
+    expect(groups.activas.map((s) => s.version)).toEqual(["1.2"]);
+    expect(groups.transversalesInactivas.map((s) => s.version)).toEqual(["2.0"]);
+    expect(groups.sinTaller.map((s) => s.version)).toEqual(["1.1"]);
   });
 });
