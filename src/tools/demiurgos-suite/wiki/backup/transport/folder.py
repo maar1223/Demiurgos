@@ -18,8 +18,13 @@ exist, immutability is enforced by the filesystem, not by a caller's promise
 overwrites, so a locally deleted file stays recoverable in ``current/`` (SC-BE-3.2);
 the only unlink is cleanup of this module's OWN failed temp file, and ``prune`` —
 the one allowed deletion verb — removes only the snapshot ids it is given.
-**Deferred to WU-6b**: NFC normalization, collision detection, and Windows
-reserved-name/length rejection (no name validation here).
+**Name safety (REQ-BE-9, WU-6b).** Every caller-supplied relative path is
+NFC-normalized and validated BEFORE anything is published: a traversal
+component, an absolute path, a Windows reserved name (with or without an
+extension), a trailing dot/space, an over-long component (>200) or path (>240),
+and a collision between two distinct sources that normalize to one path are all
+rejected with :class:`TransportError` naming the offender — so a rejected batch
+publishes nothing and never leaves a partial tree.
 **Payload typing.** ``publish_current``/``publish_snapshot`` take
 ``Mapping[str, bytes]``; WU-8 may tighten the seam's opaque ``Any``.
 """
@@ -32,6 +37,7 @@ import os
 import re
 import shutil
 import time
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -52,6 +58,87 @@ SNAPSHOT_ID_PATTERN = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z$")
 LOCK_RETRY_DELAYS: tuple[float, ...] = (0.2, 0.5, 1.0)
 _BACKUP_DIR = "Demiurgos"
 _SUBDIRS = ("current", "snapshots", "meta", "world-trash-index")
+
+#: Windows device names reserved in every directory, case-insensitively and with
+#: or without an extension (REQ-BE-9).
+_WINDOWS_RESERVED_NAMES = frozenset(
+    ("CON", "PRN", "AUX", "NUL")
+    + tuple(f"COM{n}" for n in range(1, 10))
+    + tuple(f"LPT{n}" for n in range(1, 10))
+)
+#: A Windows drive-qualified path ("C:", "C:\\x") — an absolute staged path.
+_WINDOWS_ABSOLUTE_PATTERN = re.compile(r"^[A-Za-z]:")
+#: Name-safety bounds (REQ-BE-9).
+_MAX_COMPONENT_LENGTH = 200
+_MAX_RELATIVE_PATH_LENGTH = 240
+
+
+def _normalize_staged_path(source: Any) -> str:
+    """NFC-normalize one staged relative path, rejecting an unsafe name.
+
+    Raises :class:`TransportError` here, BEFORE any byte is written, so a
+    rejected name can never leave a partial tree behind. Rejections cover an
+    absolute path, a ``..``/``.``/empty component (path traversal that would
+    escape the target root), a Windows reserved name with or without an
+    extension, a trailing dot or space, a component over
+    :data:`_MAX_COMPONENT_LENGTH`, and a full path over
+    :data:`_MAX_RELATIVE_PATH_LENGTH`.
+    """
+    if not isinstance(source, str) or not source:
+        raise TransportError(f"staged path {source!r} is empty or not a string")
+    if source.startswith(("/", "\\")) or _WINDOWS_ABSOLUTE_PATTERN.match(source):
+        raise TransportError(
+            f"staged path {source!r} is absolute; only relative paths are allowed"
+        )
+    normalized = unicodedata.normalize("NFC", source)
+    for component in re.split(r"[\\/]", normalized):
+        if component in ("", ".", ".."):
+            raise TransportError(
+                f"staged path {source!r} has an unsafe path component {component!r}"
+            )
+        if len(component) > _MAX_COMPONENT_LENGTH:
+            raise TransportError(
+                f"staged path {source!r} has a component longer than "
+                f"{_MAX_COMPONENT_LENGTH} characters: {component!r}"
+            )
+        if component.endswith((".", " ")):
+            raise TransportError(
+                f"staged path {source!r} has a component ending in a dot or "
+                f"space: {component!r}"
+            )
+        if component.split(".", 1)[0].upper() in _WINDOWS_RESERVED_NAMES:
+            raise TransportError(
+                f"staged path {source!r} uses the Windows reserved name "
+                f"{component!r}"
+            )
+    if len(normalized) > _MAX_RELATIVE_PATH_LENGTH:
+        raise TransportError(
+            f"staged path {source!r} is longer than "
+            f"{_MAX_RELATIVE_PATH_LENGTH} characters"
+        )
+    return normalized
+
+
+def _nfc_staged_set(staged: Mapping[str, Any]) -> dict[str, Any]:
+    """NFC-normalize every staged path and reject collisions BEFORE any write.
+
+    A collision is two DISTINCT source paths that normalize to the SAME NFC
+    path: the run fails loudly naming BOTH original sources, so no entry is ever
+    silently dropped or overwritten (SC-BE-9.1). The whole set is validated
+    before the first write, so a collision never produces a half-published tree.
+    """
+    normalized: dict[str, Any] = {}
+    origin: dict[str, str] = {}
+    for source, payload in staged.items():
+        name = _normalize_staged_path(source)
+        if name in origin and origin[name] != source:
+            raise TransportError(
+                f"staged paths {origin[name]!r} and {source!r} collide after NFC "
+                f"normalization to {name!r}"
+            )
+        origin[name] = source
+        normalized[name] = payload
+    return normalized
 
 
 def _temp_path(dest: Path) -> Path:
@@ -139,16 +226,23 @@ class FolderTransport:
     ) -> PublishResult:
         """Add or overwrite ``current/`` entries. Never deletes, never mirrors.
 
+        Name safety runs FIRST over the WHOLE staged set (REQ-BE-9): every path
+        is NFC-normalized, a collision between two distinct sources fails loudly
+        naming both, and an unsafe name is rejected BEFORE the destination is
+        touched — a rejected batch publishes nothing and cannot leave a partial
+        tree.
+
         ``manifest`` is part of the seam shape but is not consulted yet; the
         incremental "changed files only" decision belongs to the caller (WU-9),
         so ``skipped`` stays 0 and the transport never drops an entry.
         """
+        normalized = _nfc_staged_set(staged)
         current_dir = self._tree / "current"
         current_dir.mkdir(parents=True, exist_ok=True)
         published = total = 0
-        for name, payload in staged.items():
+        for name, payload in normalized.items():
             data = payload if isinstance(payload, bytes) else bytes(payload)
-            dest = current_dir / name
+            dest = self._destination_under(current_dir, name)
             dest.parent.mkdir(parents=True, exist_ok=True)
             self._write_atomic(dest, data)
             published += 1
@@ -164,22 +258,29 @@ class FolderTransport:
         publish of the same id raises :class:`TransportError` and leaves the
         existing snapshot byte-identical (REQ-BE-4, SC-BE-4.1). On any failure the
         temp directory is removed, so no partial snapshot is ever visible.
+
+        The caller-supplied ``snapshot_id`` and every staged path pass the same
+        NFC/name-safety gate as ``publish_current`` BEFORE the destination is
+        touched, so a traversal id or an unsafe entry publishes nothing
+        (REQ-BE-9).
         """
+        safe_id = _normalize_staged_path(snapshot_id)
+        normalized = _nfc_staged_set(staged)
         snapshots_dir = self._tree / "snapshots"
         snapshots_dir.mkdir(parents=True, exist_ok=True)
-        target = snapshots_dir / snapshot_id
+        target = snapshots_dir / safe_id
         if target.exists():
             raise TransportError(
-                f"snapshot {snapshot_id} already exists at {target}; "
+                f"snapshot {safe_id} already exists at {target}; "
                 "snapshots are immutable"
             )
-        temp = snapshots_dir / f".{snapshot_id}.tmp-{uuid.uuid4().hex}"
+        temp = snapshots_dir / f".{safe_id}.tmp-{uuid.uuid4().hex}"
         published = total = 0
         try:
             temp.mkdir()
-            for name, payload in staged.items():
+            for name, payload in normalized.items():
                 data = payload if isinstance(payload, bytes) else bytes(payload)
-                dest = temp / name
+                dest = self._destination_under(temp, name)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 self._write_atomic(dest, data)
                 published += 1
@@ -218,8 +319,13 @@ class FolderTransport:
         return PruneResult(deleted=tuple(deleted), failed=tuple(failed))
 
     def read_meta(self, name: str) -> Mapping[str, Any] | None:
-        """Read a ``meta/`` JSON document, or ``None`` when it does not exist yet."""
-        path = self._tree / "meta" / name
+        """Read a ``meta/`` JSON document, or ``None`` when it does not exist yet.
+
+        A caller-supplied ``name`` is NFC-normalized and gated by the same
+        name-safety rules as a staged path (REQ-BE-9), so a traversal read is
+        refused instead of reached.
+        """
+        path = self._tree / "meta" / _normalize_staged_path(name)
         if not path.is_file():
             return None
         try:
@@ -231,11 +337,16 @@ class FolderTransport:
         return document
 
     def write_meta(self, name: str, payload: Mapping[str, Any]) -> None:
-        """Write a ``meta/`` document atomically (temp name then ``os.replace``)."""
+        """Write a ``meta/`` document atomically (temp name then ``os.replace``).
+
+        The caller-supplied ``name`` is NFC-normalized and rejected when unsafe
+        BEFORE the destination is touched (REQ-BE-9).
+        """
+        safe_name = _normalize_staged_path(name)
         meta_dir = self._tree / "meta"
         meta_dir.mkdir(parents=True, exist_ok=True)
         data = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
-        self._write_atomic(meta_dir / name, data)
+        self._write_atomic(self._destination_under(meta_dir, safe_name), data)
 
     def list_snapshots(self) -> list[SnapshotInfo]:
         """List the snapshots actually present under ``snapshots/``.
@@ -292,6 +403,21 @@ class FolderTransport:
         while not path.exists() and path.parent != path:
             path = path.parent
         return os.access(path, os.W_OK)
+
+    def _destination_under(self, base: Path, name: str) -> Path:
+        """Join *name* under *base*, proving the result cannot escape *base*.
+
+        Belt-and-suspenders alongside the ``..`` component rejection in
+        :func:`_normalize_staged_path`: even if a normalized path somehow
+        contained a traversal, the resolved destination must still sit under
+        *base* or the publish is refused (REQ-BE-9, SC-BE-9.2).
+        """
+        destination = base / name
+        if not Path(os.path.normpath(destination)).is_relative_to(
+            Path(os.path.normpath(base))
+        ):
+            raise TransportError(f"staged path {name!r} escapes {base}")
+        return destination
 
     def _write_atomic(self, dest: Path, data: bytes) -> None:
         """Write *data* to *dest* via a same-directory temp file and ``os.replace``."""
