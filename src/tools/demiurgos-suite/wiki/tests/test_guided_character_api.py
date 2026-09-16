@@ -1456,9 +1456,15 @@ class TestConvergenceSpecimenB5:
 
     def _wired_library(self, tmp_path: Path) -> MethodologyLibrary:
         """Library with the REAL wired seed published and activated for
-        ``vibrantes``; the serving seam reads the real repo seed dir."""
+        ``vibrantes``; the seed is copied under the patched DATA root (WU-2),
+        so the serving seam is hermetic instead of reading the real repo."""
         seed_root = tmp_path / "seeds"
         shutil.copytree(SEED_ROOT, seed_root)
+        # The serving seam resolves ``<data root>/data/methodology/seeds``; the
+        # harness patches PROJECT_ROOT to ``tmp_path``, so mirror the seed there.
+        served = tmp_path / "data" / "methodology" / "seeds"
+        served.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(SEED_ROOT, served, dirs_exist_ok=True)
         library = MethodologyLibrary(tmp_path / "library.json")
         report = install_seeds(library, seed_root)
         assert report.installed == 1
@@ -1468,6 +1474,7 @@ class TestConvergenceSpecimenB5:
     def _harness(self, monkeypatch, tmp_path: Path, *, mode: str = "full",
                  library: MethodologyLibrary | None = None):
         (tmp_path / "vibrantes").mkdir()
+        monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
         monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
         provider = _SpecimenCapturingProvider()
         store = GuidedSessionStore()

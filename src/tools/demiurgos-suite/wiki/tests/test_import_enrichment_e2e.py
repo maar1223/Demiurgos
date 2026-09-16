@@ -627,6 +627,11 @@ class TestSyncHermesBridge:
                 f"http://127.0.0.1:{server.server_port}/v1/chat/completions",
             )
             monkeypatch.setattr(api_server, "_GATEWAY_KEY", "test-key")
+            # The client builds its Authorization header at construction time,
+            # so a client leaked by an earlier test would keep ITS key — and the
+            # suite no longer reads the developer's repo-root .env (WU-2: it
+            # reads the data root, which the autouse conftest keeps hermetic).
+            api_server._hermes_client = None
 
             # Use the REAL async path on loop A so the module-level singleton
             # holds a live keep-alive connection whose asyncio primitives are

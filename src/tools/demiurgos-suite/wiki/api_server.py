@@ -19,7 +19,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import httpx
 
@@ -173,6 +173,7 @@ from skill_router import SkillRouter, SkillRouteResult
 from contract_projection import project_contract_markdown
 from order_manifest import read_order, remove_from_order
 
+import data_root  # flat sibling module (data-root resolver, WU-2)
 import world_recycle_bin  # flat sibling module (world-level recycle bin)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
@@ -180,15 +181,32 @@ logger = logging.getLogger("demiurgos-api")
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
-    # Startup sweep: reclaim dead import spool data once, before serving any
-    # request. Failures are logged and never crash startup.
+    global _GATEWAY_KEY, _hermes_client
+    # Resolve the gateway key from the DATA root's .env when the environment does
+    # not carry it (WU-2: an import-time read would resolve the data root while
+    # this module is imported). The module-level adapter singleton captured the
+    # key at import, so it is rebound here, and any client already built without
+    # a key is dropped so the next request rebuilds it with the headers.
+    if not _GATEWAY_KEY:
+        _GATEWAY_KEY = _load_project_env("HERMES_GATEWAY_KEY")
+        if _GATEWAY_KEY:
+            ACTIVITY_ADAPTER.api_key = _GATEWAY_KEY
+            _hermes_client = None
+    # Startup: restore sessions persisted by a previous run (see the note at the
+    # former ``_load_persisted_sessions()`` call site), then reclaim dead import
+    # spool data once, before serving any request. Failures are logged and never
+    # crash startup.
+    try:
+        _load_persisted_sessions()
+    except Exception as exc:  # noqa: BLE001 — never crash startup
+        logger.warning("session restore failed: %s", exc)
     if gc_enabled():
         try:
             counts = reap_dead_spools(
                 _import_store(),
-                PROJECT_ROOT / "data" / "import-spool",
+                _project_root() / "data" / "import-spool",
                 gc_ttl_days(),
-                mundos_dir=MUNDOS_DIR,
+                mundos_dir=_mundos_dir(),
             )
             if any(counts.values()):
                 logger.info("Spool GC startup sweep: %s", counts)
@@ -236,9 +254,82 @@ app.add_middleware(
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parents[4]  # Demiurgos/ (wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> root)
-MUNDOS_DIR = PROJECT_ROOT / "mundos"
-TRASH_ROOT = world_recycle_bin.TRASH_ROOT  # data/world-trash — monkeypatchable seam
+# Data-root seams (WU-2, portable-data-root-drive-backup). Author data
+# (``mundos``, ``data``, ``config``, ``.env``) is resolved through the
+# data-root resolver instead of this file's location.
+#
+# Resolution is LAZY and must stay that way: an import-time call would raise
+# ``DataRootNotConfigured`` while pytest collects the suite, before the
+# hermetic test root exists. These three names stay plain writable module
+# attributes — existing fixtures monkeypatch them — and every internal read
+# goes through the accessors below so a patched value always wins.
+PROJECT_ROOT: Path | None = None
+MUNDOS_DIR: Path | None = None
+TRASH_ROOT: Path | None = None
+
+
+class _LazyBinding:
+    """Defer a construction that needs the data root to its first use.
+
+    Module-level bindings that used to be built while this module was imported
+    (the durable session stores, the guided reindex coordinator) resolve the
+    data root on construction, which must not happen at import time. Attribute
+    access builds the real object once; tests keep replacing the module
+    attribute itself, exactly as before.
+    """
+
+    def __init__(self, factory: Callable[[], Any]) -> None:
+        self._factory = factory
+        self._value: Any = None
+
+    def _resolve(self) -> Any:
+        if self._value is None:
+            self._value = self._factory()
+        return self._value
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._resolve(), name)
+
+
+def _project_root() -> Path:
+    """Data root, resolved on first use and rebound onto ``PROJECT_ROOT``.
+
+    Never resolved at import time (see the note above). A monkeypatched
+    ``PROJECT_ROOT`` always wins and is never overwritten.
+    """
+    global PROJECT_ROOT
+    if PROJECT_ROOT is None:
+        PROJECT_ROOT = data_root.resolve_data_root()
+    return PROJECT_ROOT
+
+
+def _mundos_dir() -> Path:
+    """``<data root>/mundos``, honouring the ``MUNDOS_DIR`` patch seam.
+
+    Derived on every call rather than cached: caching would leak one test's
+    patched ``PROJECT_ROOT`` into the next test's ``MUNDOS_DIR``.
+    """
+    if MUNDOS_DIR is not None:
+        return MUNDOS_DIR
+    return _project_root() / "mundos"
+
+
+def _world_trash_root() -> Path:
+    """``<data root>/data/world-trash``, honouring the ``TRASH_ROOT`` seam.
+
+    The default is delegated to ``world_recycle_bin`` so the literal lives in
+    one place — the same relationship as the pre-WU-2
+    ``TRASH_ROOT = world_recycle_bin.TRASH_ROOT`` copy, now resolved on demand.
+    """
+    if TRASH_ROOT is not None:
+        return TRASH_ROOT
+    return world_recycle_bin.default_world_trash_root()
+
+
+# Code checkout root — NOT the data root. Runtime wiring that points at code
+# artifacts (the launcher script) must keep following the checkout, wherever
+# the author data root happens to live. Derived from the sys.path anchors above.
+_CODE_ROOT = _TOOLS.parent.parent
 
 # Names that can never be treated as worlds. ``trash`` is reserved so a world
 # literally named "trash" can never collide with the world recycle-bin routes
@@ -264,16 +355,16 @@ def _local_state() -> LocalState:
     """
     global _LOCAL_STATE
     if _LOCAL_STATE is None:
-        _LOCAL_STATE = LocalState(PROJECT_ROOT / "data" / "local-state.json")
+        _LOCAL_STATE = LocalState(_project_root() / "data" / "local-state.json")
     return _LOCAL_STATE
 
 
 def _list_worlds() -> list[dict]:
     """List available worlds in mundos/ (skip reserved names, hidden dirs)."""
     worlds = []
-    if not MUNDOS_DIR.is_dir():
+    if not _mundos_dir().is_dir():
         return worlds
-    for entry in sorted(MUNDOS_DIR.iterdir()):
+    for entry in sorted(_mundos_dir().iterdir()):
         if not entry.is_dir():
             continue
         if entry.name.startswith(".") or entry.name.startswith("_"):
@@ -297,7 +388,7 @@ def _list_worlds() -> list[dict]:
 def _resolve_mundo_dir(mundo: str) -> Path | None:
     """Resolve *mundo* to its root directory under ``mundos/``.
 
-    A valid world is a direct child of ``MUNDOS_DIR`` that exists and
+    A valid world is a direct child of ``_mundos_dir()`` that exists and
     passes the same visibility rules as ``_list_worlds`` (not hidden,
     not ``_``-prefixed, not ``Ideas``). Returns None when *mundo* is
     missing, a traversal attempt (``..``, separators, absolute paths,
@@ -315,10 +406,10 @@ def _resolve_mundo_dir(mundo: str) -> Path | None:
         return None
     if mundo.startswith((".", "_")) or mundo in _RESERVED_WORLD_NAMES:
         return None
-    mundo_dir = (MUNDOS_DIR / mundo).resolve()
+    mundo_dir = (_mundos_dir() / mundo).resolve()
     if not mundo_dir.is_dir():
         return None
-    if mundo_dir.parent != MUNDOS_DIR.resolve():
+    if mundo_dir.parent != _mundos_dir().resolve():
         return None
     return mundo_dir
 
@@ -467,7 +558,7 @@ def create_world(body: WorldCreateRequest, request: Request):
         principal = _resolve_principal(request)
         if principal is None:
             return JSONResponse(status_code=401, content={"detail": "Authentication required."})
-    result = _create_world(MUNDOS_DIR, body.name, lore_skeleton=body.lore_skeleton)
+    result = _create_world(_mundos_dir(), body.name, lore_skeleton=body.lore_skeleton)
     if result.kind == WorldResultKind.CREATED:
         registry = _local_state()
         registry.atomic_commit(_commit_world_created(registry.snapshot()))
@@ -512,7 +603,7 @@ def onboarding_readiness():
     ``legacy`` list (ONB-4.2) reports worlds using uppercase ``Lore``/
     ``Personajes`` folders — read-only detection; nothing is ever renamed.
     """
-    probe = probe_local_storage(PROJECT_ROOT)
+    probe = probe_local_storage(_project_root())
     state = _local_state().snapshot()
     cards = project_cards(
         state,
@@ -524,7 +615,7 @@ def onboarding_readiness():
         "local_editor": probe,
         "cards": cards,
         "offline": project_offline(cards),
-        "legacy": detect_legacy_layout(MUNDOS_DIR),
+        "legacy": detect_legacy_layout(_mundos_dir()),
     }
 
 
@@ -590,9 +681,9 @@ def _maybe_reap_spool() -> None:
     try:
         counts = reap_dead_spools(
             _import_store(),
-            PROJECT_ROOT / "data" / "import-spool",
+            _project_root() / "data" / "import-spool",
             gc_ttl_days(),
-            mundos_dir=MUNDOS_DIR,
+            mundos_dir=_mundos_dir(),
         )
         if any(counts.values()):
             logger.info("Spool GC lazy sweep: %s", counts)
@@ -616,7 +707,9 @@ def _active_world() -> str:
         return ""
 
 
-_WORLD_ALIASES_PATH = PROJECT_ROOT / "data" / "world-aliases.json"
+def _world_aliases_path() -> Path:
+    """``<data root>/data/world-aliases.json``, resolved on every call (WU-2)."""
+    return _project_root() / "data" / "world-aliases.json"
 
 
 def _set_active_world(world: str) -> None:
@@ -633,7 +726,7 @@ def _set_active_world(world: str) -> None:
 def read_world_aliases() -> dict[str, str]:
     """Return the rename-alias map ``{old_name: new_name}`` (may be empty)."""
     try:
-        data = json.loads(_WORLD_ALIASES_PATH.read_text(encoding="utf-8"))
+        data = json.loads(_world_aliases_path().read_text(encoding="utf-8"))
         return {str(k): str(v) for k, v in data.items()}
     except (OSError, ValueError):
         return {}
@@ -644,8 +737,8 @@ def add_world_alias(old_name: str, new_name: str) -> None:
     aliases = read_world_aliases()
     aliases[old_name] = new_name
     try:
-        _WORLD_ALIASES_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _WORLD_ALIASES_PATH.write_text(
+        _world_aliases_path().parent.mkdir(parents=True, exist_ok=True)
+        _world_aliases_path().write_text(
             json.dumps(aliases, indent=2), encoding="utf-8")
     except OSError as exc:  # noqa: BLE001 — alias failure never breaks the rename
         logger.warning("could not persist world alias %s->%s: %s",
@@ -694,7 +787,7 @@ def _purge_world_associated_data(world_name: str) -> None:
         )
     else:
         try:
-            store = CaptureStore(PROJECT_ROOT / "data" / "idea-capture.sqlite3")
+            store = CaptureStore(_project_root() / "data" / "idea-capture.sqlite3")
             cleaned = store.delete_for_world(world_name)
             store.close()
             logger.info("World purge: cleaned %d idea-capture rows for '%s'", cleaned, world_name)
@@ -714,11 +807,11 @@ def _maybe_purge_expired() -> None:
     with _purge_lock:
         if _last_purge_at is not None and (now - _last_purge_at) < timedelta(hours=24):
             return
-        if not world_recycle_bin.list_trash(trash_root=TRASH_ROOT):
+        if not world_recycle_bin.list_trash(trash_root=_world_trash_root()):
             _last_purge_at = now
             return
         purged = world_recycle_bin.purge_expired(
-            trash_root=TRASH_ROOT,
+            trash_root=_world_trash_root(),
             on_purge=_purge_world_associated_data,
         )
         _last_purge_at = now
@@ -749,7 +842,7 @@ def delete_world(name: str, body: WorldDeleteRequest, request: Request):
             detail={"code": "only_world", "message": "Debe existir al menos un mundo"},
         )
     try:
-        entry = world_recycle_bin.move_to_trash(name, trash_root=TRASH_ROOT, mundos_dir=MUNDOS_DIR)
+        entry = world_recycle_bin.move_to_trash(name, trash_root=_world_trash_root(), mundos_dir=_mundos_dir())
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Mundo no encontrado") from exc
     _hide_world_data(name)
@@ -763,7 +856,7 @@ def get_world_trash(request: Request):
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Autenticación requerida")
     _maybe_purge_expired()
-    entries = world_recycle_bin.list_trash(trash_root=TRASH_ROOT)
+    entries = world_recycle_bin.list_trash(trash_root=_world_trash_root())
     return [entry.as_dict() for entry in entries]
 
 
@@ -779,7 +872,7 @@ def restore_world(name: str, request: Request, body: WorldRestoreRequest | None 
     try:
         restored_name = world_recycle_bin.restore_from_trash(
             name, new_name=(body.new_name if body else None),
-            trash_root=TRASH_ROOT, mundos_dir=MUNDOS_DIR)
+            trash_root=_world_trash_root(), mundos_dir=_mundos_dir())
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Mundo no encontrado en la papelera") from exc
     except ValueError as exc:
@@ -800,7 +893,7 @@ def rename_world(name: str, request: Request, body: WorldRenameRequest):
     """
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Autenticación requerida")
-    result = _rename_world(MUNDOS_DIR, name, body.new_name)
+    result = _rename_world(_mundos_dir(), name, body.new_name)
     if result.kind == WorldResultKind.INVALID_NAME:
         raise HTTPException(status_code=400, detail=result.message)
     if result.kind == WorldResultKind.NOT_FOUND:
@@ -826,7 +919,7 @@ def purge_trash_world(name: str, request: Request):
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Autenticación requerida")
     try:
-        world_recycle_bin.purge_world(name, trash_root=TRASH_ROOT)
+        world_recycle_bin.purge_world(name, trash_root=_world_trash_root())
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Mundo no encontrado en la papelera") from exc
     _purge_world_associated_data(name)
@@ -964,7 +1057,7 @@ def _sessions_file() -> Path:
     Lives alongside the other local state under ``<project>/data/``. Not
     gitignored paths would leak tokens, so ``data/sessions.json`` is ignored.
     """
-    return PROJECT_ROOT / "data" / "sessions.json"
+    return _project_root() / "data" / "sessions.json"
 
 
 def _load_persisted_sessions() -> None:
@@ -1029,9 +1122,10 @@ def _persist_sessions() -> None:
         pass
 
 
-# Restore sessions persisted by a previous run (single-user local app:
-# survives server restarts so the author is not re-prompted each time).
-_load_persisted_sessions()
+# Sessions persisted by a previous run (single-user local app: survives server
+# restarts so the author is not re-prompted each time) are restored at STARTUP,
+# from ``_lifespan``. Restoring them here would resolve the data root while this
+# module is imported (WU-2), which must not happen.
 
 # Independent in-memory rate limiters for password and recovery-words
 # verification (R-ERK-02): exhausting one auth factor never locks out the
@@ -1825,13 +1919,17 @@ class MethodologyCompanionDeactivateRequest(BaseModel):
 
 # The provider is capability-admitted and separate from the legacy chat route.
 # The durable SQLite store is the default: without ``DEMIURGOS_GUIDED_SESSIONS_DB``
-# it resolves to the stable repo-local ``<repo>/data/guided-sessions.sqlite3``
-# (see ``default_db_path``), so sessions survive a restart for the 30-day TTL.
+# it resolves to ``<data root>/data/guided-sessions.sqlite3`` (see
+# ``default_db_path``), so sessions survive a restart for the 30-day TTL.
 # The env var remains an explicit override; ``:memory:`` is only reachable by
 # passing it directly. Every session pins the active methodology/version
 # snapshot at creation.
+# Bound lazily (WU-2): constructing it here would resolve the data root while
+# this module is imported, which fails during pytest collection.
 _GUIDED_SESSIONS_DB = os.environ.get("DEMIURGOS_GUIDED_SESSIONS_DB")
-_GUIDED_SESSIONS = DurableGuidedSessionStore(db_path=_GUIDED_SESSIONS_DB)
+_GUIDED_SESSIONS: Any = _LazyBinding(
+    lambda: DurableGuidedSessionStore(db_path=_GUIDED_SESSIONS_DB)
+)
 _GUIDED_PROVIDER = None
 _GUIDED_CAPABILITIES: Capabilities | None = None
 _GUIDED_PROBE_LOCK = asyncio.Lock()
@@ -1872,11 +1970,11 @@ def _methodology_library() -> MethodologyLibrary:
         with _METHODOLOGY_INIT_LOCK:
             if _METHODOLOGY_LIBRARY is None:
                 library = MethodologyLibrary(
-                    PROJECT_ROOT / "data" / "methodology" / "library.json"
+                    _project_root() / "data" / "methodology" / "library.json"
                 )
                 _seed_foundational_skills(
                     library,
-                    PROJECT_ROOT / "data" / "methodology" / "seeds",
+                    _project_root() / "data" / "methodology" / "seeds",
                 )
                 _METHODOLOGY_LIBRARY = library
     return _METHODOLOGY_LIBRARY
@@ -1886,7 +1984,7 @@ def _methodology_quarantine() -> QuarantineStore:
     global _METHODOLOGY_QUARANTINE
     if _METHODOLOGY_QUARANTINE is None:
         _METHODOLOGY_QUARANTINE = QuarantineStore(
-            PROJECT_ROOT / "data" / "methodology" / "quarantine"
+            _project_root() / "data" / "methodology" / "quarantine"
         )
     return _METHODOLOGY_QUARANTINE
 
@@ -1979,7 +2077,7 @@ def _convergence_specimen_markdown(
             return None
         nivel = resolve_candidate_nivel(state.candidate)
         return build_specimen_block(
-            carrier_root_for(published.skill_id, project_root=PROJECT_ROOT),
+            carrier_root_for(published.skill_id, project_root=_project_root()),
             published.adjuntos,
             nivel,
         )
@@ -1995,9 +2093,13 @@ _SEMANTIC_PROVIDER: SemanticIntentProvider | None = None
 # Conversation memory + skill routing singletons for the non-guided assistant
 # path. Declared Optional here and initialized after the runs adapter exists so
 # tests can replace the seams with fakes (same pattern as _SEMANTIC_PROVIDER).
-_CONVERSATION_MEMORY: ConversationMemoryStore | None = None
+_CONVERSATION_MEMORY: Any = None
 _SKILL_ROUTER: SkillRouter | None = None
-_GUIDED_REINDEX = ReindexCoordinator(MUNDOS_DIR, lambda world: _get_graph(world))
+# Bound lazily (WU-2) for the same reason as _GUIDED_SESSIONS: building the
+# coordinator here would capture the data root while this module is imported.
+_GUIDED_REINDEX: Any = _LazyBinding(
+    lambda: ReindexCoordinator(_mundos_dir(), lambda world: _get_graph(world))
+)
 _GUIDED_INDEX_REQUESTS: dict[str, tuple[str, str, str]] = {}
 # Review records are diskless until the existing confirmed create route succeeds.
 _GUIDED_PENDING_PROPOSALS: dict[str, dict[str, str | int]] = {}
@@ -2652,10 +2754,12 @@ class CoCreationDeriveRequest(BaseModel):
 
 # Durable session store + Skill Madre provider seams (mirror the
 # _GUIDED_SESSIONS / _GUIDED_PROVIDER pattern). Tests replace these module
-# seams after import; the default store path is the gitignored repo-local
-# ``data/`` directory (``DEMIURGOS_CO_CREATION_SESSIONS_DB`` overrides it).
+# seams after import; the default store path is ``<data root>/data/``
+# (``DEMIURGOS_CO_CREATION_SESSIONS_DB`` overrides it). Bound lazily (WU-2).
 _CO_CREATION_SESSIONS_DB = os.environ.get("DEMIURGOS_CO_CREATION_SESSIONS_DB")
-_CO_CREATION_SESSIONS = CoCreationSessionStore(db_path=_CO_CREATION_SESSIONS_DB)
+_CO_CREATION_SESSIONS: Any = _LazyBinding(
+    lambda: CoCreationSessionStore(db_path=_CO_CREATION_SESSIONS_DB)
+)
 _CO_CREATION_PROVIDER: HermesCoCreationProvider | None = None
 _CO_CREATION_CAPABILITIES: CoCreationCapabilities | None = None
 _CO_CREATION_PROBE_LOCK = asyncio.Lock()
@@ -3007,8 +3111,8 @@ def materialize_co_creation(session_id: str, body: CoCreationMaterializeRequest,
             etiquetas=tuple(body.etiquetas or payload.get("etiquetas") or ()),
             categoria_funcional=body.categoria_funcional or payload.get("categoria_funcional"),
             language=body.language or payload.get("language"),
-            staging_dir=staging_dir_for(PROJECT_ROOT, session_id),
-            attachments_root=PROJECT_ROOT / ATTACHMENTS_SUBDIR,
+            staging_dir=staging_dir_for(_project_root(), session_id),
+            attachments_root=_project_root() / ATTACHMENTS_SUBDIR,
         )
     except AttachmentMaterializationError as exc:
         # A missing/drifted staged carrier fails closed: no draft, no partial
@@ -3111,9 +3215,9 @@ def publish_co_creation(session_id: str, body: CoCreationPublishRequest, request
             moved = move_publish_pins(
                 entries,
                 skill_id=draft.skill_id,
-                staging_dir=staging_dir_for(PROJECT_ROOT, session_id),
-                attachments_root=PROJECT_ROOT / ATTACHMENTS_SUBDIR,
-                project_root=PROJECT_ROOT,
+                staging_dir=staging_dir_for(_project_root(), session_id),
+                attachments_root=_project_root() / ATTACHMENTS_SUBDIR,
+                project_root=_project_root(),
             )
         except AttachmentMaterializationError as exc:
             return _attachment_upload_error_response(exc)
@@ -3121,7 +3225,7 @@ def publish_co_creation(session_id: str, body: CoCreationPublishRequest, request
             library.update_draft(state.draft_id, adjuntos=entries)
         except Exception:
             _rollback_moved(
-                moved, PROJECT_ROOT / ATTACHMENTS_SUBDIR / draft.skill_id,
+                moved, _project_root() / ATTACHMENTS_SUBDIR / draft.skill_id,
             )
             raise
     try:
@@ -3582,7 +3686,7 @@ async def upload_co_creation_adjunto(
     if error:
         return error
     data = await file.read()
-    staging_dir = staging_dir_for(PROJECT_ROOT, state.session_id)
+    staging_dir = staging_dir_for(_project_root(), state.session_id)
     try:
         basename = validate_staged_upload(staging_dir, file.filename or "", data, nivel)
     except AttachmentUploadError as exc:
@@ -4010,7 +4114,7 @@ _HISTORY_FIELDS = frozenset({
 def _history_world_and_target(full: Path) -> tuple[Path, str]:
     """Return the authorized world root and canonical mundo-relative target."""
     resolved = full.resolve()
-    mundos_root = MUNDOS_DIR.resolve()
+    mundos_root = _mundos_dir().resolve()
     if not mundos_root.is_dir():
         raise ValueError("history root is unavailable")
     for mundo_dir in mundos_root.iterdir():
@@ -4996,7 +5100,7 @@ def _get_graph(mundo: str) -> "EntityGraphIndex | None":
         # Lazy import to avoid relative-import issues when running as __main__
         from wiki.graph_indexer import EntityGraphIndex  # type: ignore[import-untyped]
 
-        idx = EntityGraphIndex(MUNDOS_DIR)
+        idx = EntityGraphIndex(_mundos_dir())
         count = idx.build(mundo)
         logger.info("Graph built for '%s': %d entities", mundo, count)
         _graph_indices[mundo] = idx
@@ -5343,7 +5447,7 @@ class UploadResponse(BaseModel):
 
 def _get_media_bases(mundo: str) -> list[Path]:
     """Return the two allowed media base directories for *mundo*."""
-    mundo_base = MUNDOS_DIR / mundo
+    mundo_base = _mundos_dir() / mundo
     return [
         mundo_base / "wiki" / "media",
         mundo_base / "referencias" / "visuales" / "imagenes",
@@ -5413,7 +5517,7 @@ def _resolve_media_path(mundo: str, path: str) -> Path | None:
 
 def _rel_path(full_path: Path, mundo: str) -> str:
     """Return a forward-slash path relative to mundos/{mundo}/."""
-    mundo_base = MUNDOS_DIR / mundo
+    mundo_base = _mundos_dir() / mundo
     return str(full_path.relative_to(mundo_base)).replace("\\", "/")
 
 
@@ -5526,7 +5630,7 @@ async def upload_media(
     thumb_name = f"{stem}_thumb{compressed_ext}"  # e.g. photo_thumb.jpg
 
     # 6. Build target paths
-    save_dir = MUNDOS_DIR / mundo / "wiki" / "media"
+    save_dir = _mundos_dir() / mundo / "wiki" / "media"
     save_path = save_dir / compressed_name
     thumb_path = save_dir / thumb_name
 
@@ -5663,7 +5767,7 @@ def delete_media(
 
 def _load_project_env(name: str) -> str:
     """Read a value from the project .env (gitignored) — secrets never live in code."""
-    env_file = PROJECT_ROOT / ".env"
+    env_file = _project_root() / ".env"
     if not env_file.is_file():
         return ""
     try:
@@ -5678,12 +5782,25 @@ def _load_project_env(name: str) -> str:
 
 def _configured_language() -> str:
     """Normalized global UI language (``DEMIURGOS_LANGUAGE``), safe fallback."""
-    return resolve_ui_language(env_file=PROJECT_ROOT / ".env", environ=os.environ)
+    return resolve_ui_language(env_file=_project_root() / ".env", environ=os.environ)
 
 
 _GATEWAY_URL = os.getenv("HERMES_GATEWAY_URL", "http://127.0.0.1:8642/v1/chat/completions")
-_GATEWAY_KEY = os.getenv("HERMES_GATEWAY_KEY") or _load_project_env("HERMES_GATEWAY_KEY")
+# Gateway API key: the environment is read here; the DATA root's ``.env``
+# fallback is loaded at STARTUP (``_lifespan``) — reading it here would resolve
+# the data root while this module is imported (WU-2).
+_GATEWAY_KEY = os.getenv("HERMES_GATEWAY_KEY", "")
 _GATEWAY_TIMEOUT = int(os.getenv("HERMES_GATEWAY_TIMEOUT", "300"))
+
+
+def _gateway_headers() -> dict[str, str]:
+    """Gateway request headers.
+
+    No ``Authorization`` header at all when no key is configured: ``Bearer ``
+    with an empty key is rejected LOCALLY by httpx, which hides the real
+    (unconfigured) state behind a transport error.
+    """
+    return {"Authorization": f"Bearer {_GATEWAY_KEY}"} if _GATEWAY_KEY else {}
 
 # The adapter probes Hermes before the first activity request. Tests replace
 # this seam with a fake adapter; unsupported or unreachable providers remain a
@@ -5706,10 +5823,7 @@ def _get_hermes_client() -> httpx.AsyncClient:
     global _hermes_client
     if _hermes_client is None:
         _hermes_client = httpx.AsyncClient(
-            headers={
-                "Authorization": f"Bearer {_GATEWAY_KEY}",
-                "Content-Type": "application/json",
-            },
+            headers={"Content-Type": "application/json", **_gateway_headers()},
             timeout=httpx.Timeout(_GATEWAY_TIMEOUT, connect=10.0),
         )
     return _hermes_client
@@ -5739,15 +5853,15 @@ _SEMANTIC_PROVIDER = SemanticIntentProvider(ACTIVITY_ADAPTER)
 # Conversation memory + skill routing (non-guided assistant path). The router
 # resolves the world's activated skill via the methodology library and runs its
 # LLM classification over the same runs adapter. Both are module seams that
-# tests may replace after import.
-_CONVERSATION_MEMORY = ConversationMemoryStore()
+# tests may replace after import. Bound lazily (WU-2).
+_CONVERSATION_MEMORY = _LazyBinding(ConversationMemoryStore)
 
 
 class _DeferredMethodologyLibrary:
     """Lazy binding for the module-level ``_SKILL_ROUTER`` seam.
 
     The router is wired at import time, but the library must NOT be
-    constructed — or seeded — before ``PROJECT_ROOT`` reaches its final
+    constructed — or seeded — before ``_project_root()`` reaches its final
     (possibly test-swapped) state: an import-time construction would write
     seed records into the real repo store from test processes. Resolving
     ``_methodology_library()`` on first attribute access keeps the import
@@ -7222,10 +7336,7 @@ def _run_hermes_sync(prompt: str, session_id: str = "",
     owns_client = client is None
     if owns_client:
         client = httpx.Client(
-            headers={
-                "Authorization": f"Bearer {_GATEWAY_KEY}",
-                "Content-Type": "application/json",
-            },
+            headers={"Content-Type": "application/json", **_gateway_headers()},
             timeout=httpx.Timeout(_GATEWAY_TIMEOUT, connect=10.0),
         )
     try:
@@ -7496,14 +7607,14 @@ from import_store import ImportJobStore  # noqa: E402
 from import_service import ImportService  # noqa: E402
 from import_spool_gc import gc_enabled, gc_guard_hours, gc_ttl_days, reap_dead_spools  # noqa: E402
 
-# Lazy world-importer store: reads current PROJECT_ROOT so tests can relocate it.
+# Lazy world-importer store: reads the current data root so tests can relocate it.
 _IMPORT_STORE: ImportJobStore | None = None
 
 
 def _import_store() -> ImportJobStore:
     global _IMPORT_STORE
     if _IMPORT_STORE is None:
-        _IMPORT_STORE = ImportJobStore(PROJECT_ROOT / "data" / "import-jobs.sqlite3")
+        _IMPORT_STORE = ImportJobStore(_project_root() / "data" / "import-jobs.sqlite3")
     return _IMPORT_STORE
 
 
@@ -7511,7 +7622,7 @@ def _reconcile_import_graph(rel: str, mundo: str) -> None:
     """Reconcile the canonical graph for a written ficha before success (2.9)."""
     idx = _get_graph(mundo)
     if idx is not None:
-        full = MUNDOS_DIR / mundo / rel
+        full = _mundos_dir() / mundo / rel
         idx.update(str(full), mundo)
 
 
@@ -7529,7 +7640,7 @@ def _reconcile_import_graph_many(
     idx = _get_graph(mundo)
     if idx is None:
         return GraphReconcileResult(processed=0, failed=list(paths), batches=0)
-    full_paths = [str(MUNDOS_DIR / mundo / rel) for rel in paths]
+    full_paths = [str(_mundos_dir() / mundo / rel) for rel in paths]
     return idx.update_many(full_paths, mundo)
 
 
@@ -7564,7 +7675,7 @@ def _register_import_gallery(world: str, src: Path, rel: str) -> None:
     the existing media contract (list/upload/serve via ``getMediaUrl``) sees it
     as a first-class asset; the ficha references it via relative Markdown.
     """
-    save_dir = MUNDOS_DIR / world / "wiki" / "media"
+    save_dir = _mundos_dir() / world / "wiki" / "media"
     if not src.is_file():
         return
     name = Path(rel).name
@@ -7766,8 +7877,8 @@ app.include_router(
 app.include_router(
     create_migration_settings_router(
         require_principal=lambda request: _resolve_principal(request),
-        mundos_dir=lambda: MUNDOS_DIR,
-        evidence_dir=lambda: PROJECT_ROOT / "data" / "migration-evidence",
+        mundos_dir=lambda: _mundos_dir(),
+        evidence_dir=lambda: _project_root() / "data" / "migration-evidence",
     ),
 )
 
@@ -7780,7 +7891,7 @@ app.include_router(
 app.include_router(
     create_system_control_router(
         require_principal=lambda request: _resolve_principal(request),
-        launcher_path=PROJECT_ROOT / "scripts" / "start-demiurgos-linux.sh",
+        launcher_path=_CODE_ROOT / "scripts" / "start-demiurgos-linux.sh",
     ),
 )
 
@@ -7819,10 +7930,7 @@ def _sync_hermes_enricher(prompt: str, session_id: str) -> str:
     import concurrent.futures
     from import_enrichment import DEFAULT_TIMEOUT_SECONDS
     client = httpx.Client(
-        headers={
-            "Authorization": f"Bearer {_GATEWAY_KEY}",
-            "Content-Type": "application/json",
-        },
+        headers={"Content-Type": "application/json", **_gateway_headers()},
         timeout=httpx.Timeout(_GATEWAY_TIMEOUT, connect=10.0),
     )
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -8020,8 +8128,8 @@ def _make_vision_callable():
 app.include_router(
     create_import_router(
         require_principal=lambda request: _resolve_principal(request),
-        mundos_dir=lambda: MUNDOS_DIR,
-        spool_dir=lambda: PROJECT_ROOT / "data" / "import-spool",
+        mundos_dir=lambda: _mundos_dir(),
+        spool_dir=lambda: _project_root() / "data" / "import-spool",
         store=_import_store,
         on_list=_maybe_reap_spool,
         enricher=_make_import_enricher(),
@@ -8034,12 +8142,19 @@ app.include_router(
             _get_graph(mundo)._resolve_link_candidates
             if _get_graph(mundo) else None
         ),
+        # NOTE (WU-2): ``store=_import_store`` and the service below are
+        # materialized while this module is imported, because
+        # ``import_router.create_import_router`` calls the store factory itself
+        # (``_store = ... else store()``). Deferring it would require rewriting
+        # that router's ~20 store call sites, which is outside this work unit.
+        # The suite is safe because ``tests/conftest.py`` exports a hermetic
+        # DEMIURGOS_DATA_ROOT before any test module is imported.
         service=ImportService(
             store=_import_store(),
-            mundos_dir=MUNDOS_DIR,
-            spool_dir=PROJECT_ROOT / "data" / "import-spool",
+            mundos_dir=_mundos_dir(),
+            spool_dir=_project_root() / "data" / "import-spool",
             read_file=lambda rel: (
-                (PROJECT_ROOT / "data" / "import-spool" / rel).read_text(
+                (_project_root() / "data" / "import-spool" / rel).read_text(
                     encoding="utf-8") if rel else ""),
             graph_reconcile=lambda rel, mundo: _reconcile_import_graph(rel, mundo),
             graph_reconcile_many=_reconcile_import_graph_many,
@@ -8127,7 +8242,7 @@ def methodology_published_adjunto(skill_id: str, version: str, path: str, reques
     pin = next((entry for entry in published.adjuntos if entry.path == path), None)
     if pin is None:
         return JSONResponse(status_code=404, content={"detail": "Adjunto no encontrado"})
-    seed_dir = carrier_root_for(published.skill_id, project_root=PROJECT_ROOT)
+    seed_dir = carrier_root_for(published.skill_id, project_root=_project_root())
     text = read_adjunto_text(seed_dir, pin)
     if text is None:
         return JSONResponse(status_code=422, content={
@@ -8286,7 +8401,7 @@ def methodologies_inventory(
 
 
 def _known_worlds() -> list[str]:
-    return [entry.name for entry in sorted(MUNDOS_DIR.iterdir()) if entry.is_dir()
+    return [entry.name for entry in sorted(_mundos_dir().iterdir()) if entry.is_dir()
             and not entry.name.startswith((".", "_")) and entry.name != "Ideas"]
 
 
@@ -8629,7 +8744,7 @@ def methodologies_export(skill_id: str, version: str, request: Request):
     attachments: dict[str, bytes] = {}
     if published.adjuntos:
         manifest["adjuntos"] = [entry.as_dict() for entry in published.adjuntos]
-        seed_dir = carrier_root_for(published.skill_id, project_root=PROJECT_ROOT)
+        seed_dir = carrier_root_for(published.skill_id, project_root=_project_root())
         for pin in published.adjuntos:
             carrier = read_adjunto_bytes(seed_dir, pin)
             if carrier is None or len(carrier) != pin.bytes:
@@ -8708,7 +8823,7 @@ def methodologies_quarantine_trust(package_id: str, request: Request):
     trusted = store.trust(
         package_id,
         library=_methodology_library(),
-        attachments_root=PROJECT_ROOT / ATTACHMENTS_SUBDIR,
+        attachments_root=_project_root() / ATTACHMENTS_SUBDIR,
     )
     if trusted is None:
         return JSONResponse(status_code=422, content={
@@ -8731,5 +8846,5 @@ def methodologies_quarantine_trust(package_id: str, request: Request):
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
     logger.info("Starting Demiurgos Wiki API on port %d", port)
-    logger.info("Mundos dir: %s (exists=%s)", MUNDOS_DIR, MUNDOS_DIR.is_dir())
+    logger.info("Mundos dir: %s (exists=%s)", _mundos_dir(), _mundos_dir().is_dir())
     uvicorn.run(app, host="127.0.0.1", port=port, log_level="info")
