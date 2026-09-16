@@ -1,5 +1,7 @@
 ﻿Set-Location "<local-path>\Proyectos\Demiurgos"
 $env:DEMIURGOS_ROOT = (Get-Location).Path
+# Author data root for the resolver (WU-3 / SC-DR-3.4).
+$env:DEMIURGOS_DATA_ROOT = (Get-Location).Path
 $env:HERMES_ENABLE_PROJECT_PLUGINS = "1"
 & "C:\Users\Miguel Angel\AppData\Local\hermes\hermes-agent\venv\Scripts\hermes.exe" plugins enable demiurgos-idea-capture *> $null
 if ($LASTEXITCODE -ne 0) { throw "Could not enable the Demiurgos Hermes project plugin." }
