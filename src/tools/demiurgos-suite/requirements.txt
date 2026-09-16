@@ -19,6 +19,9 @@ mcp>=1.0.0,<2.0.0
 rank_bm25>=0.2.2,<0.3.0
 # File watching for live index updates
 watchdog>=4.0.0
+# OS-correct per-user config dir (XDG_CONFIG_HOME/APPDATA/Application Support)
+# for the data-root bootstrap pointer (data_root.py)
+platformdirs>=4.0
 # Image processing for media uploads (JPEG compression + thumbnails)
 Pillow>=10.0.0
 # Document conversion for importer (.docx, .pdf, .pptx → markdown)
