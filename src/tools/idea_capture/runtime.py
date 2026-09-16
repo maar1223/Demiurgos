@@ -44,8 +44,44 @@ from .worker import CaptureWorker
 
 log = logging.getLogger(__name__)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-CONFIG_PATH = REPO_ROOT / "config" / "idea-capture.yaml"
+# Data-root seam (WU-3, portable-data-root-drive-backup). Author data
+# (``config``, ``mundos``, ``data``) resolves through the shared data-root
+# resolver instead of this module's location. Resolution is LAZY and must stay
+# that way: an import-time call would raise ``DataRootNotConfigured`` while
+# pytest collects the suite. ``REPO_ROOT`` stays a plain writable module
+# attribute so the seam stays patchable, and the derived values are never
+# cached — a cached root would leak one test's environment into the next.
+REPO_ROOT: Path | None = None
+
+
+def _ensure_wiki_on_path() -> None:
+    """Make ``src/tools/demiurgos-suite/wiki`` importable for the resolver.
+
+    ``data_root`` is a flat sibling of the wiki modules, so the lazy import
+    below only resolves once that directory is on ``sys.path``. A
+    ``python -m idea_capture`` process does not guarantee it, so this code
+    locator inserts it from the module's own location: ``idea_capture/ ->
+    tools/ -> src/ -> repo root``. It locates CODE, never author data.
+    """
+    wiki = (Path(__file__).resolve().parents[3]
+            / "src" / "tools" / "demiurgos-suite" / "wiki")
+    if str(wiki) not in sys.path:
+        sys.path.insert(0, str(wiki))
+
+
+def _project_root() -> Path:
+    """Resolve the data root lazily; a ``REPO_ROOT`` patch always wins."""
+    if REPO_ROOT is not None:
+        return REPO_ROOT
+    _ensure_wiki_on_path()
+    from data_root import resolve_data_root  # noqa: PLC0415 — needs the path above
+
+    return resolve_data_root()
+
+
+def _config_path() -> Path:
+    """``<data root>/config/idea-capture.yaml``, resolved on every call."""
+    return _project_root() / "config" / "idea-capture.yaml"
 
 # Callback data is opaque and content-free: it never carries idea text, the bot
 # token, or chat ids — only the capture id, the action, and (for world
@@ -515,8 +551,16 @@ def _build_test_policy() -> CaptureConfig:
     return CaptureConfig(IngressPolicy(frozenset({7}), {}), CaptureLimits())
 
 
-def run_smoke(config_path: str | Path = CONFIG_PATH) -> dict:
-    """Offline dry-run: temporary root, in-memory publisher, no credentials."""
+def run_smoke(config_path: str | Path | None = None) -> dict:
+    """Offline dry-run: temporary root, in-memory publisher, no credentials.
+
+    ``config_path`` defaults to the data root's ``config/idea-capture.yaml``,
+    so the smoke run is hermetic only when a data root is configured (env
+    override or bootstrap pointer). Pass an explicit path to bypass the
+    resolver entirely.
+    """
+    if config_path is None:
+        config_path = _config_path()
     report: dict = {"config_path": str(config_path), "steps": []}
 
     loaded = load_policy(config_path)  # missing/empty -> empty policy (fail closed)
@@ -616,7 +660,7 @@ def run_serve(args) -> int:
     if not token:
         print("serve requires TELEGRAM_BOT_TOKEN (fail closed)", file=sys.stderr)
         return 2
-    config_path = Path(args.config or CONFIG_PATH)
+    config_path = Path(args.config or _config_path())
     config = load_policy(config_path)
     if not config.policy.private_chat_ids and not config.policy.approved_group_senders:
         print(f"serve refuses to start: {config_path} authorizes nobody (fail closed)",
@@ -626,12 +670,12 @@ def run_serve(args) -> int:
     if not world:
         print("serve requires a world (--world or DEMIURGOS_WORLD)", file=sys.stderr)
         return 2
-    mundos_root = Path(args.mundos or REPO_ROOT / "mundos")
+    mundos_root = Path(args.mundos or _project_root() / "mundos")
     if not (mundos_root / world).is_dir():
         print(f"serve refuses to start: {mundos_root / world} does not exist", file=sys.stderr)
         return 2
 
-    lock_path = Path(args.state or REPO_ROOT / "data" / "idea-capture.sqlite3")
+    lock_path = Path(args.state or _project_root() / "data" / "idea-capture.sqlite3")
     state_path = lock_path
     lock_file = lock_path.with_suffix(".lock")
     health_check = None

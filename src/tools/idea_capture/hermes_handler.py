@@ -294,16 +294,16 @@ def build_audio_transcriber(
 
 
 def _default_locale_state_path() -> Path:
-    """Project local-state registry: ``$DEMIURGOS_ROOT/data/local-state.json``.
+    """Project local-state registry: ``<data root>/data/local-state.json``.
 
-    The plugin resolves its repo root from ``DEMIURGOS_ROOT``; honoring it
-    here keeps the locale source consistent with the production root while
-    falling back to the module-derived repo root for direct callers.
+    Resolved through the shared data-root resolver (WU-3): the registry lives
+    with the author data, never with this module's checkout, so the wiki
+    locale reader and idea capture always agree on one file.
     """
-    env_root = os.environ.get("DEMIURGOS_ROOT")
-    if env_root:
-        return Path(env_root).expanduser().resolve() / "data" / "local-state.json"
-    return Path(__file__).resolve().parents[3] / "data" / "local-state.json"
+    _ensure_wiki_on_path()
+    from data_root import resolve_data_root  # noqa: PLC0415 — needs the path above
+
+    return resolve_data_root() / "data" / "local-state.json"
 
 
 def build_language_resolver(
@@ -339,18 +339,17 @@ def build_language_resolver(
 
 
 def _default_vision_cache_db_path() -> Path:
-    """Shared SHA-256 vision cache database: ``$DEMIURGOS_ROOT/data/import-jobs.sqlite3``.
+    """Shared SHA-256 vision cache database: ``<data root>/data/import-jobs.sqlite3``.
 
     The wiki import router backs its vision content cache with the SAME file
     (``api_server._import_store``), so an image analyzed once — by an import
-    or by idea capture — is never analyzed twice. ``DEMIURGOS_ROOT`` keeps
-    the cache consistent with the production root, falling back to the
-    module-derived repo root for direct callers.
+    or by idea capture — is never analyzed twice. Both sides now resolve the
+    file through the data-root resolver (WU-3), so they cannot drift.
     """
-    env_root = os.environ.get("DEMIURGOS_ROOT")
-    if env_root:
-        return Path(env_root).expanduser().resolve() / "data" / "import-jobs.sqlite3"
-    return Path(__file__).resolve().parents[3] / "data" / "import-jobs.sqlite3"
+    _ensure_wiki_on_path()
+    from data_root import resolve_data_root  # noqa: PLC0415 — needs the path above
+
+    return resolve_data_root() / "data" / "import-jobs.sqlite3"
 
 
 def _build_thumbnail_generator() -> Callable[[bytes, int], bytes] | None:
@@ -448,11 +447,18 @@ CLASSIFY_PROMPT = (
 
 
 def _project_root() -> Path:
-    """Repo root: ``$DEMIURGOS_ROOT`` when set, else the module-derived root."""
-    env_root = os.environ.get("DEMIURGOS_ROOT")
-    if env_root:
-        return Path(env_root).expanduser().resolve()
-    return Path(__file__).resolve().parents[3]
+    """Author data root, resolved through the shared resolver (WU-3).
+
+    Sharing one root with the wiki API (``api_server._project_root``) means
+    ``.env``, ``data`` and ``config`` come from the same folder the user
+    configured. The gateway-config chain reaches this accessor without passing
+    through ``_ensure_wiki_on_path``, so it bootstraps the path itself before
+    the lazy resolver import.
+    """
+    _ensure_wiki_on_path()
+    from data_root import resolve_data_root  # noqa: PLC0415 — needs the path above
+
+    return resolve_data_root()
 
 
 def _project_env(name: str) -> str:

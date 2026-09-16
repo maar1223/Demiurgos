@@ -17,7 +17,7 @@ recording-ctx smoke is the runtime-equivalent proof that the plugin will
 register when the gateway loads it — the same ``register(ctx)`` call the
 loader invokes (``hermes_cli/plugins.py:_load_plugin`` -> ``register_fn(ctx)``).
 
-``DEMIURGOS_ROOT`` is pointed at a temp dir so registration never touches
+``DEMIURGOS_DATA_ROOT`` is pointed at a temp dir so registration never touches
 repo data (``IdeaCaptureHandler`` default state path).
 """
 
@@ -86,7 +86,7 @@ def test_plugin_registers_hook_and_platform(monkeypatch):
     """
     plugin = _load_plugin()
     with tempfile.TemporaryDirectory() as directory:
-        monkeypatch.setenv("DEMIURGOS_ROOT", directory)
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", directory)
         monkeypatch.setenv("DEMIURGOS_IDEA_CAPTURE_MODE", "ai")
         ctx = RecordingCtx()
         plugin.register(ctx)

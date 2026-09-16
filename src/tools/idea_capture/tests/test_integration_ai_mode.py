@@ -413,7 +413,7 @@ def _register_plugin(tmp_path, monkeypatch, *, yaml_mode, env_mode=None):
         f"capture_mode: {yaml_mode}\n", encoding="utf-8")
     (tmp_path / "mundos").mkdir()
     (tmp_path / "data").mkdir()
-    monkeypatch.setenv("DEMIURGOS_ROOT", str(tmp_path))
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path))
     if env_mode is None:
         monkeypatch.delenv("DEMIURGOS_IDEA_CAPTURE_MODE", raising=False)
     else:

@@ -356,7 +356,7 @@ def test_register_registers_pre_gateway_dispatch_hook(monkeypatch):
     """1.1: register() wires the sync hook and makes no fictional API calls."""
     plugin = _load_plugin()
     with tempfile.TemporaryDirectory() as directory:
-        monkeypatch.setenv("DEMIURGOS_ROOT", directory)
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", directory)
         monkeypatch.setenv("DEMIURGOS_IDEA_CAPTURE_MODE", "ai")
         calls = []
 
@@ -396,7 +396,7 @@ def test_register_platform_factory_builds_capture_adapter(monkeypatch):
     """2.8: the registered factory returns a CaptureTelegramAdapter subclass."""
     plugin = _load_plugin()
     with tempfile.TemporaryDirectory() as directory:
-        monkeypatch.setenv("DEMIURGOS_ROOT", directory)
+        monkeypatch.setenv("DEMIURGOS_DATA_ROOT", directory)
         captured = {}
 
         def _register_platform(**kwargs):

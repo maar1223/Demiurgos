@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from idea_capture import runtime
 from idea_capture.adapter import InvalidUpdate, update_from_telegram
 from idea_capture.config import CaptureConfig, CaptureLimits, load_policy
 from idea_capture.models import CaptureState, MediaInput, MediaKind, WorldAction
@@ -20,6 +21,39 @@ from idea_capture.runtime import (IdeaCaptureRuntime, OwnershipLock,
                                   encode_capture_callback, handle_confirmation_command,
                                   parse_capture_callback, poll_once)
 from idea_capture.telegram import IngressPolicy, UnauthorizedUpdate
+
+
+def test_smoke_default_config_resolves_from_the_configured_data_root(
+        tmp_path: Path, monkeypatch) -> None:
+    """WU-3: the smoke default config path comes from the data root.
+
+    ``python -m idea_capture smoke`` used to work from anywhere because the
+    config path was code-relative; it now requires a configured data root and
+    reads ``<data root>/config/idea-capture.yaml``. An explicit path still
+    bypasses the resolver, so only the DEFAULT is affected.
+    """
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "idea-capture.yaml").write_text(
+        "private_chat_ids: [7]\n", encoding="utf-8")
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(runtime, "REPO_ROOT", None)
+
+    report = runtime.run_smoke()
+
+    assert Path(report["config_path"]) == (
+        tmp_path / "config" / "idea-capture.yaml").resolve()
+    assert report["config"]["authorized_private_chats"] == 1
+    assert report["ok"] is True
+
+
+def test_config_path_honours_the_repo_root_patch_seam(tmp_path: Path,
+                                                      monkeypatch) -> None:
+    """A patched ``REPO_ROOT`` wins over the resolver, like every WU-2 seam."""
+    monkeypatch.setenv("DEMIURGOS_DATA_ROOT", str(tmp_path / "ignored"))
+    monkeypatch.setattr(runtime, "REPO_ROOT", tmp_path / "patched")
+
+    assert runtime._config_path() == (
+        tmp_path / "patched" / "config" / "idea-capture.yaml")
 
 
 def policy_for(*chats: int, groups: dict[int, tuple[int, ...]] | None = None) -> CaptureConfig:
