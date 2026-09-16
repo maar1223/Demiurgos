@@ -7,6 +7,9 @@
 # (Docker, Windows, Linux) está EN DESARROLLO y aún no está
 # disponible. La app web se arranca desde el repositorio con
 # los launchers (scripts/start-demiurgos-linux.sh, start-demiurgos.ps1).
+# Also prepares the checkout Python environment (.venv) and bootstraps the
+# data-root pointer, so processes started outside a launcher can resolve the
+# author-data folder (see src/tools/demiurgos-suite/wiki/data_root.py).
 # ============================================================
 set -euo pipefail
 
@@ -26,6 +29,10 @@ ENGRAM_REPO="Gentleman-Programming/engram"
 HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
 HERMES_CONFIG="$HOME/.hermes/config.yaml"
 
+# Checkout-relative paths used by the Python environment and data-root stages.
+REQUIREMENTS_REL="src/tools/demiurgos-suite/requirements.txt"
+WIKI_REL="src/tools/demiurgos-suite/wiki"
+
 # ── Helpers ───────────────────────────────────────────────
 header()  { echo -e "\n${CYAN}${BOLD}╔══════════════════════════════════════╗${NC}"; echo -e "${CYAN}${BOLD}║${NC}  $1"; echo -e "${CYAN}${BOLD}╚══════════════════════════════════════╝${NC}\n"; }
 step()    { echo -e "${YELLOW}→${NC} $1"; }
@@ -33,6 +40,21 @@ ok()      { echo -e "  ${GREEN}✓${NC} $1"; }
 warn()    { echo -e "  ${YELLOW}⚠${NC} $1"; }
 fail()    { echo -e "  ${RED}✗${NC} $1"; exit 1; }
 ask()     { echo -ne "${CYAN}?${NC} $1 "; }
+
+# Root of the checkout that owns the Python environment and the data root.
+# The script's own directory wins when it looks like the Demiurgos repo;
+# otherwise fall back to the clone performed by install_demiurgos.
+checkout_root() {
+    local here
+    here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    if [ -f "$here/$REQUIREMENTS_REL" ]; then
+        printf '%s' "$here"
+    elif [ -f "$DEMIURGOS_HOME/repo/$REQUIREMENTS_REL" ]; then
+        printf '%s' "$DEMIURGOS_HOME/repo"
+    else
+        printf '%s' "$here"
+    fi
+}
 
 # ── Stage 1: Prerequisites ────────────────────────────────
 check_prerequisites() {
@@ -244,6 +266,123 @@ configure_mcp_profile() {
     fi
 }
 
+# ── Stage 6: Python environment + dependencies ────────────
+# The launchers run the API with "$PROJECT_ROOT/.venv/bin/python", so the
+# checkout needs its own virtual environment. Everything here is best-effort:
+# a missing interpreter warns and returns instead of aborting the installer.
+prepare_python_env() {
+    step "Preparing the checkout Python environment..."
+
+    local root requirements venv_python
+    root="$(checkout_root)"
+    requirements="$root/$REQUIREMENTS_REL"
+    venv_python="$root/.venv/bin/python"
+
+    if ! command -v python3 &>/dev/null; then
+        warn "python3 was not found on PATH. Skipping the virtual environment and the Python dependencies."
+        warn "Install Python 3.11+ (for example: apt install python3 python3-venv) and re-run this script."
+        warn "Without it the launchers cannot start: they expect $venv_python."
+        return 0
+    fi
+
+    if [ ! -f "$requirements" ]; then
+        warn "Requirements file not found: $requirements. Skipping the Python dependencies."
+        warn "Run this script from the Demiurgos checkout root to install them."
+        return 0
+    fi
+
+    # Idempotent: an existing environment is reused as-is, never recreated, so
+    # re-running the installer cannot break a working venv.
+    if [ -x "$venv_python" ]; then
+        ok "Virtual environment already present: $root/.venv"
+    elif ! python3 -m venv "$root/.venv"; then
+        warn "Could not create the virtual environment at $root/.venv (is python3-venv installed?)."
+        warn "Install it, then re-run this script. The remaining install steps are unaffected."
+        return 0
+    else
+        ok "Virtual environment created: $root/.venv"
+    fi
+
+    if "$venv_python" -m pip install -r "$requirements"; then
+        ok "Python dependencies installed"
+    else
+        warn "pip install failed. The remaining install steps are unaffected."
+        warn "Retry manually with: $venv_python -m pip install -r $requirements"
+        return 0
+    fi
+}
+
+# ── Stage 7: Data-root pointer bootstrap ──────────────────
+# The launchers export DEMIURGOS_DATA_ROOT, but a process started by hand
+# (hermes, cron, a directly started API) has no launcher and resolves the data
+# root from the bootstrap pointer written here. The project's own write_pointer()
+# owns both the record schema and its location, so it is the single source of
+# truth; the record is read back to prove the resolver accepts it.
+configure_data_root() {
+    step "Configuring the data root pointer..."
+
+    local root wiki_dir venv_python
+    root="$(checkout_root)"
+    wiki_dir="$root/$WIKI_REL"
+    venv_python="$root/.venv/bin/python"
+
+    if [ ! -x "$venv_python" ]; then
+        warn "No usable interpreter at $venv_python. Skipping the data-root pointer."
+        warn "Processes started outside a launcher resolve the data root from that pointer only."
+        return 0
+    fi
+
+    if [ ! -f "$wiki_dir/data_root.py" ]; then
+        warn "Resolver module not found at $wiki_dir/data_root.py. Skipping the data-root pointer."
+        return 0
+    fi
+
+    local status=0 detail
+    detail="$("$venv_python" - "$wiki_dir" "$root" <<'PY'
+import sys
+from pathlib import Path
+
+# Import the project's own resolver: one source of truth for the pointer path
+# (platformdirs.user_config_dir("demiurgos")) and the record schema.
+sys.path.insert(0, sys.argv[1])
+from data_root import pointer_path, read_pointer, write_pointer
+
+checkout = Path(sys.argv[2]).resolve()
+existing = read_pointer()
+
+# Bootstrap only: never silently repoint a data root the user already chose.
+if existing is not None and existing != checkout:
+    print(
+        f"data root already configured at {existing}; left untouched "
+        f"(bootstrap only). Repoint it by editing {pointer_path()}."
+    )
+    raise SystemExit(3)
+
+write_pointer(checkout)
+
+# Read the file back so the installer proves the resolver accepts the record.
+recorded = read_pointer()
+if recorded != checkout:
+    raise SystemExit(f"read-back mismatch: wrote {checkout} but read {recorded}")
+print(pointer_path())
+PY
+)" || status=$?
+
+    case "$status" in
+        0)
+            ok "Data root pointer written and verified: $detail"
+            ok "Data root: $root"
+            ;;
+        3)
+            warn "$detail"
+            ;;
+        *)
+            warn "Could not write the data-root pointer through the resolver's write_pointer()."
+            warn "Processes started outside a launcher will not resolve a data root until it is written."
+            ;;
+    esac
+}
+
 # ── Main ───────────────────────────────────────────────────
 main() {
     check_prerequisites
@@ -252,6 +391,8 @@ main() {
     configure_engram "$DEMIURGOS_HOME/bin/engram"
     install_demiurgos
     configure_mcp_profile
+    prepare_python_env
+    configure_data_root
 }
 
 main "$@"
