@@ -175,9 +175,47 @@ from order_manifest import read_order, remove_from_order
 
 import data_root  # flat sibling module (data-root resolver, WU-2)
 import world_recycle_bin  # flat sibling module (world-level recycle bin)
+from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
+from backup.middleware import DataChangeNotifierMiddleware  # write signal + quiesce gate
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
+
+# ---------------------------------------------------------------------------
+# Backup engine lifecycle (WU-11, portable-data-root-drive-backup)
+# ---------------------------------------------------------------------------
+# ONE engine per process, started and stopped by ``_lifespan``. The runner
+# performs a single run on the engine's worker thread; until the destination
+# slice (WU-14) supplies a configured folder it records the request and returns
+# ``None``, so the trigger is observable without publishing anything.
+_BACKUP_ENGINE: BackupEngine | None = None
+_BACKUP_ENGINE_LOCK = threading.Lock()
+
+
+def _run_backup_once() -> Any:
+    """One backup run. Returns ``None`` until a destination is configured."""
+    logger.debug("backup run requested (no destination configured yet)")
+    return None
+
+
+def _backup_engine() -> BackupEngine:
+    """The process engine, built once with the data root resolved lazily.
+
+    A data root that cannot be resolved degrades to an engine without a
+    filesystem watcher — the engine still starts and still serves notifications,
+    so a misconfigured root can never take the API down at startup.
+    """
+    global _BACKUP_ENGINE
+    with _BACKUP_ENGINE_LOCK:
+        if _BACKUP_ENGINE is None:
+            try:
+                root: Path | None = _project_root()
+            except Exception as exc:  # noqa: BLE001 — startup must not depend on it
+                logger.warning("backup engine starts without a data root: %s", exc)
+                root = None
+            _BACKUP_ENGINE = BackupEngine(_run_backup_once, data_root=root)
+        return _BACKUP_ENGINE
+
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
@@ -212,7 +250,15 @@ async def _lifespan(app: FastAPI):
                 logger.info("Spool GC startup sweep: %s", counts)
         except Exception as exc:  # noqa: BLE001 — never crash startup
             logger.warning("Spool GC startup sweep failed: %s", exc)
-    yield
+    # The backup engine starts once the startup sweep is done, then stops on the
+    # way out. A debounce deadline still pending is DROPPED, not flushed: the
+    # next start's reconciliation pass catches whatever changed (SC-BE-6.3).
+    engine = _backup_engine()
+    engine.start()
+    try:
+        yield
+    finally:
+        engine.stop(timeout=5)
 
 
 app = FastAPI(title="Demiurgos Wiki API", lifespan=_lifespan)
@@ -250,6 +296,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# One generic hook on the write path (REQ-BE-6): any successful mutating
+# ``/api/*`` request signals the backup engine, so a future endpoint is covered
+# with zero per-route work. The same middleware is the quiesce gate that answers
+# mutating ``/api/*`` with 503 while a restore owns the data root (REQ-RS-3).
+app.add_middleware(DataChangeNotifierMiddleware)
 
 # ---------------------------------------------------------------------------
 # Configuration
