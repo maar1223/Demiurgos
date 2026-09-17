@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import inspect
 import os
+import shutil
 import sys
 from dataclasses import fields, is_dataclass
 from pathlib import Path
@@ -227,11 +228,12 @@ def test_error_hierarchy() -> None:
     assert issubclass(SnapshotIncompleteError, TransportError)
 
 
-# --- FolderTransport write side (WU-5) --------------------------------------
+# --- FolderTransport (WU-5 write side, WU-6 history verbs) -------------------
 #
-# WU-5 implements the WRITE half only. The three history verbs
-# (``publish_snapshot``, ``prune``, ``fetch``) land in WU-6, so nothing below
-# asserts full protocol conformance — the honest non-conformance is asserted.
+# WU-5 implemented the WRITE half; WU-6 added the three HISTORY verbs
+# (``publish_snapshot``, ``prune``, ``fetch``), so ``FolderTransport`` now
+# satisfies the nine-verb protocol in full. Name safety (NFC, collisions,
+# Windows reserved names, length limits) is WU-6b and is NOT covered here.
 
 
 def _folder(tmp_path: Path, *, data_root: Path | None = None) -> FolderTransport:
@@ -376,13 +378,119 @@ def test_folder_transport_list_snapshots_hides_temp_and_unparsable_names(
     assert infos[1].complete is False
 
 
-def test_folder_transport_defines_only_the_write_side_until_wu6(tmp_path: Path) -> None:
+def test_folder_transport_satisfies_the_protocol_in_full(tmp_path: Path) -> None:
+    """All nine verbs exist, so the concrete transport conforms (WU-6)."""
     transport = _folder(tmp_path)
-    for verb in ("probe", "ensure_layout", "publish_current",
-                 "read_meta", "write_meta", "list_snapshots"):
+    for verb in VERBS:
         assert callable(getattr(transport, verb)), verb
-    for history_verb in ("publish_snapshot", "prune", "fetch"):
-        assert not hasattr(transport, history_verb), history_verb
-    # The protocol declares nine verbs and the history half is WU-6, so this
-    # honest non-conformance is the truth at this slice — do not stub it green.
-    assert not isinstance(transport, BackupTransport)
+    assert isinstance(transport, BackupTransport)
+
+
+def test_folder_transport_publish_snapshot_is_one_rename_into_a_missing_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A snapshot is filled beside the destination then moved in with ONE rename."""
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    renames: list[tuple[str, str]] = []
+    real_rename = os.rename
+
+    def _recording_rename(src: Any, dst: Any) -> None:
+        assert not Path(dst).exists()  # immutability rests on the target being absent
+        renames.append((Path(src).name, Path(dst).name))
+        real_rename(src, dst)
+
+    monkeypatch.setattr(os, "rename", _recording_rename)
+    result = transport.publish_snapshot(
+        "2026-09-16T120530Z", {"entry.md": b"hello", "nested/deep.md": b"world"}
+    )
+    assert result == PublishResult(published=2, skipped=0, bytes=10)
+    assert len(renames) == 1  # exactly one directory rename, no per-file move
+    source, final = renames[0]
+    assert final == "2026-09-16T120530Z"
+    assert source.startswith(".2026-09-16T120530Z.tmp-")
+    snapshot = tmp_path / "Demiurgos" / "snapshots" / "2026-09-16T120530Z"
+    assert (snapshot / "entry.md").read_bytes() == b"hello"
+    assert (snapshot / "nested" / "deep.md").read_bytes() == b"world"
+
+
+def test_folder_transport_snapshot_immutability_is_enforced_by_the_filesystem(
+    tmp_path: Path,
+) -> None:
+    """Publishing an existing id fails and never clobbers the first snapshot."""
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    assert transport.publish_snapshot(
+        "2026-09-16T120530Z", {"entry.md": b"first"}
+    ).published == 1
+    snapshot = tmp_path / "Demiurgos" / "snapshots" / "2026-09-16T120530Z"
+    with pytest.raises(TransportError):
+        transport.publish_snapshot("2026-09-16T120530Z", {"entry.md": b"second"})
+    assert (snapshot / "entry.md").read_bytes() == b"first"  # byte-identical
+    assert [p.name for p in snapshot.parent.iterdir() if ".tmp-" in p.name] == []
+
+
+def test_folder_transport_temp_snapshot_directory_is_never_listed(
+    tmp_path: Path,
+) -> None:
+    """A ``.<id>.tmp-*`` staging directory stays invisible to ``list_snapshots()``."""
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    snapshots = tmp_path / "Demiurgos" / "snapshots"
+    (snapshots / ".2026-09-16T120530Z.tmp-deadbeef").mkdir()
+    transport.publish_snapshot("2026-09-17T000000Z", {"entry.md": b"x"})
+    assert [info.snapshot_id for info in transport.list_snapshots()] == [
+        "2026-09-17T000000Z"
+    ]
+    # The publish leaves no temp of its own behind beside the final snapshot.
+    assert [
+        p.name for p in snapshots.iterdir()
+        if p.name.startswith(".2026-09-17T000000Z.tmp-")
+    ] == []
+
+
+def test_folder_transport_prune_never_claims_a_failed_id_as_deleted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``prune`` deletes what it can, records the rest, and leaves them present."""
+    transport = FolderTransport(tmp_path, sleep=lambda _seconds: None)
+    transport.ensure_layout()
+    snapshots = tmp_path / "Demiurgos" / "snapshots"
+    good = snapshots / "2026-09-16T120530Z"
+    bad = snapshots / "2026-09-17T120530Z"
+    (good / "meta").mkdir(parents=True)
+    (good / "entry.md").write_bytes(b"a")
+    (bad / "meta").mkdir(parents=True)
+    (bad / "entry.md").write_bytes(b"b")
+    real_rmtree = shutil.rmtree
+
+    def _stubborn(path: Any, *args: Any, **kwargs: Any) -> None:
+        if Path(path).name == bad.name:
+            raise PermissionError(13, "held by a sync client", str(path))
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", _stubborn)
+    result = transport.prune([good.name, bad.name])
+    assert result.deleted == (good.name,)  # only the successful id is "deleted"
+    assert [snapshot_id for snapshot_id, _error in result.failed] == [bad.name]
+    assert bad.is_dir()  # a failed id leaves its snapshot present
+    assert not good.exists()
+    assert [info.snapshot_id for info in transport.list_snapshots()] == [bad.name]
+
+
+def test_folder_transport_fetch_copies_the_snapshot_tree_into_dest_dir(
+    tmp_path: Path,
+) -> None:
+    """``fetch`` stages one snapshot into a destination, creating it as needed."""
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    transport.publish_snapshot(
+        "2026-09-16T120530Z", {"entry.md": b"hello", "nested/deep.md": b"world"}
+    )
+    dest = tmp_path / "staging" / "restore"
+    result = transport.fetch(SnapshotRef("2026-09-16T120530Z"), dest)
+    assert result.dest_dir == dest
+    assert (result.entries, result.bytes) == (2, 10)
+    assert (dest / "entry.md").read_bytes() == b"hello"
+    assert (dest / "nested" / "deep.md").read_bytes() == b"world"
+

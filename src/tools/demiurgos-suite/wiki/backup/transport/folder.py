@@ -1,24 +1,27 @@
 # -*- coding: utf-8 -*-
-"""``FolderTransport`` — the MVP local-folder transport, WRITE side only (WU-5).
+"""``FolderTransport`` — the MVP local-folder transport (WU-5 write, WU-6 history).
 
-Implements the write half of :class:`backup.transport.base.BackupTransport`: the
-REQ-BE-1 tree layout, the non-destructive ``current/`` publisher (REQ-BE-3,
-REQ-BE-10.1), the ``meta/`` store (REQ-BE-8) and the name-exact listing (SC-BE-1.2).
+Implements :class:`backup.transport.base.BackupTransport`: the REQ-BE-1 tree
+layout, the non-destructive ``current/`` publisher (REQ-BE-3, REQ-BE-10.1), the
+``meta/`` store (REQ-BE-8), the name-exact listing (SC-BE-1.2) and the three
+HISTORY verbs — the immutable ``publish_snapshot`` (REQ-BE-4), the policy
+``prune`` (REQ-BE-7) and the restore ``fetch`` (REQ-RS-1) — so all nine verbs
+exist and ``isinstance(transport, BackupTransport)`` is ``True``.
 
-**Slice honesty.** The protocol declares nine verbs; this module defines six.
-``publish_snapshot``/``prune``/``fetch`` are the HISTORY half and land in WU-6, so
-they are deliberately NOT defined here — ``isinstance(transport, BackupTransport)``
-reports ``False``, the truth at this slice. Never stub them as no-ops.
-
-**Non-destructiveness (REQ-BE-10.1).** ``publish_current`` only writes or
-overwrites, so a locally deleted file stays recoverable in ``current/`` (SC-BE-3.2);
-the only unlink is cleanup of this module's OWN failed temp file.
 **Atomicity (SC-BE-3.3).** Every document is written to ``<name>.tmp-<uuid>`` in
 its own destination directory then ``os.replace``, so a temp name is never a final
-name. **Deferred to WU-6**: the three history verbs, NFC normalization, collision
-detection, and Windows reserved-name/length rejection (no name validation here).
-**Payload typing.** ``publish_current`` takes ``Mapping[str, bytes]``; WU-8 may
-tighten the seam's opaque ``Any``.
+name. A snapshot is filled in a sibling ``snapshots/.<id>.tmp-<uuid>/`` directory
+and moved in with a SINGLE ``os.rename``; because the final name must not already
+exist, immutability is enforced by the filesystem, not by a caller's promise
+(REQ-BE-4, SC-BE-4.1).
+**Non-destructiveness (REQ-BE-10.1).** ``publish_current`` only writes or
+overwrites, so a locally deleted file stays recoverable in ``current/`` (SC-BE-3.2);
+the only unlink is cleanup of this module's OWN failed temp file, and ``prune`` —
+the one allowed deletion verb — removes only the snapshot ids it is given.
+**Deferred to WU-6b**: NFC normalization, collision detection, and Windows
+reserved-name/length rejection (no name validation here).
+**Payload typing.** ``publish_current``/``publish_snapshot`` take
+``Mapping[str, bytes]``; WU-8 may tighten the seam's opaque ``Any``.
 """
 
 from __future__ import annotations
@@ -27,14 +30,18 @@ import errno
 import json
 import os
 import re
+import shutil
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 
 from backup.transport.base import (
+    FetchResult,
+    PruneResult,
     PublishResult,
     SnapshotInfo,
+    SnapshotRef,
     TargetCapabilities,
     TransportError,
 )
@@ -148,6 +155,68 @@ class FolderTransport:
             total += len(data)
         return PublishResult(published=published, skipped=0, bytes=total)
 
+    def publish_snapshot(self, snapshot_id: str, staged: Any) -> PublishResult:
+        """Publish an immutable snapshot atomically, or fail if the id exists.
+
+        The staged payload is filled into ``snapshots/.<id>.tmp-<uuid>/`` and then
+        moved into place with ONE ``os.rename``. The final directory must not
+        already exist, so immutability is enforced by the filesystem — a second
+        publish of the same id raises :class:`TransportError` and leaves the
+        existing snapshot byte-identical (REQ-BE-4, SC-BE-4.1). On any failure the
+        temp directory is removed, so no partial snapshot is ever visible.
+        """
+        snapshots_dir = self._tree / "snapshots"
+        snapshots_dir.mkdir(parents=True, exist_ok=True)
+        target = snapshots_dir / snapshot_id
+        if target.exists():
+            raise TransportError(
+                f"snapshot {snapshot_id} already exists at {target}; "
+                "snapshots are immutable"
+            )
+        temp = snapshots_dir / f".{snapshot_id}.tmp-{uuid.uuid4().hex}"
+        published = total = 0
+        try:
+            temp.mkdir()
+            for name, payload in staged.items():
+                data = payload if isinstance(payload, bytes) else bytes(payload)
+                dest = temp / name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                self._write_atomic(dest, data)
+                published += 1
+                total += len(data)
+            os.rename(temp, target)
+        except BaseException:
+            shutil.rmtree(temp, ignore_errors=True)
+            raise
+        return PublishResult(published=published, skipped=0, bytes=total)
+
+    def prune(self, snapshot_ids: Sequence[str]) -> PruneResult:
+        """Delete the given snapshots, collecting failures instead of raising.
+
+        Each id is removed with ``shutil.rmtree`` under the shared 3x backoff retry
+        (a sync client can hold a handle). A failed id is recorded as an
+        ``(id, error)`` pair in :attr:`PruneResult.failed`, NEVER reported as
+        deleted, and its snapshot is left on the destination (REQ-BE-7). The
+        candidates come only from *snapshot_ids* — this verb invents no retention
+        policy (that is WU-10) and never touches ``current/``.
+        """
+        snapshots_dir = self._tree / "snapshots"
+        deleted: list[str] = []
+        failed: list[tuple[str, str]] = []
+        for snapshot_id in snapshot_ids:
+            target = snapshots_dir / snapshot_id
+
+            def attempt(target: Path = target) -> None:
+                shutil.rmtree(target)
+
+            try:
+                self._with_lock_retry(target, attempt)
+            except (TransportError, OSError) as exc:
+                failed.append((snapshot_id, str(exc)))
+            else:
+                deleted.append(snapshot_id)
+        return PruneResult(deleted=tuple(deleted), failed=tuple(failed))
+
     def read_meta(self, name: str) -> Mapping[str, Any] | None:
         """Read a ``meta/`` JSON document, or ``None`` when it does not exist yet."""
         path = self._tree / "meta" / name
@@ -190,6 +259,30 @@ class FolderTransport:
                 bytes=size,
             ))
         return infos
+
+    def fetch(self, snapshot_ref: SnapshotRef, dest_dir: Path) -> FetchResult:
+        """Copy a snapshot's tree into *dest_dir*, creating it as needed.
+
+        Restaging a snapshot out to a destination for restore (REQ-RS-1). The
+        data root is never touched here — whole-root restore is WU-13; this verb
+        only copies one snapshot out and reports what it copied.
+        """
+        source = self._tree / "snapshots" / snapshot_ref.snapshot_id
+        if not source.is_dir():
+            raise TransportError(
+                f"snapshot {snapshot_ref.snapshot_id} not found under {source.parent}"
+            )
+        destination = Path(dest_dir)
+        destination.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.copytree(source, destination, dirs_exist_ok=True)
+        except OSError as exc:
+            raise TransportError(
+                f"cannot fetch snapshot {snapshot_ref.snapshot_id} into "
+                f"{destination}: {exc}"
+            ) from exc
+        entries, size = _measure(destination)
+        return FetchResult(dest_dir=destination, entries=entries, bytes=size)
 
     def _target_is_writable(self) -> bool:
         """Writability of the destination, tolerating a not-yet-created root."""
