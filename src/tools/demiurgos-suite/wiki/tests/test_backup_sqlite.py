@@ -87,7 +87,7 @@ def test_snapshot_under_a_concurrent_writer_matches_the_committed_state(
     tmp_path: Path,
 ) -> None:
     """SC-BE-5.1: the snapshot is ``ok`` and holds every COMMITTED row."""
-    src = tmp_path / "estado" / "idea-capture.sqlite3"
+    src = tmp_path / "data" / "idea-capture.sqlite3"
     writer = _wal_database(src)
     writer.execute("CREATE TABLE marks (id INTEGER PRIMARY KEY, note TEXT)")
     writer.executemany("INSERT INTO marks (note) VALUES (?)", [("a",), ("b",)])
@@ -124,7 +124,7 @@ def test_snapshot_under_a_concurrent_writer_matches_the_committed_state(
         )
 
         snapshot = snapshot_db(
-            src, tmp_path / "staging" / "estado" / "idea-capture.sqlite3"
+            src, tmp_path / "staging" / "data" / "idea-capture.sqlite3"
         )
 
         assert snapshot.integrity == "ok"
@@ -157,7 +157,7 @@ def test_included_databases_are_staged_and_excluded_ones_are_not(tmp_path: Path)
         path.relative_to(dest).as_posix() for path in dest.rglob("*") if path.is_file()
     )
     assert staged_files == sorted(staged_relative_path(name) for name in INCLUDED_DATABASES)
-    assert staged_relative_path("idea-capture") == "estado/idea-capture.sqlite3"
+    assert staged_relative_path("idea-capture") == "data/idea-capture.sqlite3"
 
 
 def test_no_sidecar_is_staged_and_no_plain_file_copy_runs(
@@ -184,13 +184,13 @@ def test_no_sidecar_is_staged_and_no_plain_file_copy_runs(
     )
     assert sidecars == []
     # The live database keeps its WAL: the snapshot neither copied nor consumed it.
-    assert (root / "estado" / "idea-capture.sqlite3-wal").is_file()
+    assert (root / "data" / "idea-capture.sqlite3-wal").is_file()
     writer.close()
 
 
 def test_uncommitted_rows_are_not_included(tmp_path: Path) -> None:
     """SC-BE-5.2: an open write transaction's rows are not part of the committed cut."""
-    src = tmp_path / "estado" / "guided-sessions.sqlite3"
+    src = tmp_path / "data" / "guided-sessions.sqlite3"
     writer = _wal_database(src)
     _insert(writer, 0, 5)
     writer.execute("BEGIN")
@@ -218,4 +218,4 @@ def test_absent_included_database_is_recorded_and_a_missing_source_raises(
     assert result.absent == ("world-checkpoints", "co-creation-sessions", "guided-sessions")
     assert result.findings() == ((ABSENT_FINDING_KIND, result.absent),)
     with pytest.raises(MissingDatabaseError):
-        snapshot_db(root / "estado" / "gone.sqlite3", tmp_path / "staged.sqlite3")
+        snapshot_db(root / "data" / "gone.sqlite3", tmp_path / "staged.sqlite3")

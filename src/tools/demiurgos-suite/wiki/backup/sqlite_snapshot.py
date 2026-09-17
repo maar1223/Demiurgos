@@ -12,7 +12,7 @@ ever staged.
 The destination must pass ``PRAGMA integrity_check`` (``ok``) before its
 per-table row counts are recorded. Included/excluded databases live in ONE
 place, and each snapshot is staged at the SAME relative path it has in the data
-root (``estado/<name>.sqlite3``), so a restore is a plain copy-back. An absent
+root (``data/<name>.sqlite3``), so a restore is a plain copy-back. An absent
 INCLUDED database is recorded on :attr:`SnapshotSet.absent` and never dropped
 silently — a fresh install legitimately lacks databases never opened.
 """
@@ -25,7 +25,9 @@ from pathlib import Path
 from typing import Mapping
 
 #: The data-root member that holds the operational SQLite databases (REQ-BE-2).
-DATABASE_DIRNAME = "estado"
+#: The live layout is ``data/`` (``estado/`` does not exist): every durable store
+#: resolves ``resolve_data_root() / "data" / "<name>.sqlite3"``.
+DATABASE_DIRNAME = "data"
 
 #: Every operational database carries this suffix (REQ-BE-1).
 DATABASE_SUFFIX = ".sqlite3"
