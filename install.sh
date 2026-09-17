@@ -7,21 +7,22 @@
 # (Docker, Windows, Linux) está EN DESARROLLO y aún no está
 # disponible. La app web se arranca desde el repositorio con
 # los launchers (scripts/start-demiurgos-linux.sh, start-demiurgos.ps1).
-# Also prepares the checkout Python environment (.venv) and bootstraps the
-# data-root pointer, so processes started outside a launcher can resolve the
-# author-data folder (see src/tools/demiurgos-suite/wiki/data_root.py).
+# También prepara el entorno Python del checkout (.venv) y crea el puntero
+# inicial del data-root, para que los procesos iniciados fuera de un launcher
+# puedan resolver la carpeta de datos de autor (ver
+# src/tools/demiurgos-suite/wiki/data_root.py).
 # ============================================================
 set -euo pipefail
 
-# ── Colors ────────────────────────────────────────────────
+# ── Colores ───────────────────────────────────────────────
 BOLD='\033[1m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 RED='\033[0;31m'
-NC='\033[0m' # No Color
+NC='\033[0m' # Sin color
 
-# ── Paths ─────────────────────────────────────────────────
+# ── Rutas ─────────────────────────────────────────────────
 DEMIURGOS_HOME="${DEMIURGOS_HOME:-$HOME/.demiurgos}"
 DEMIURGOS_REPO="https://github.com/maar1223/Demiurgos.git"
 ENGRAM_VERSION="1.17.0"
@@ -29,11 +30,11 @@ ENGRAM_REPO="Gentleman-Programming/engram"
 HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
 HERMES_CONFIG="$HOME/.hermes/config.yaml"
 
-# Checkout-relative paths used by the Python environment and data-root stages.
+# Rutas relativas al checkout que usan las etapas de entorno Python y data-root.
 REQUIREMENTS_REL="src/tools/demiurgos-suite/requirements.txt"
 WIKI_REL="src/tools/demiurgos-suite/wiki"
 
-# ── Helpers ───────────────────────────────────────────────
+# ── Utilidades ────────────────────────────────────────────
 header()  { echo -e "\n${CYAN}${BOLD}╔══════════════════════════════════════╗${NC}"; echo -e "${CYAN}${BOLD}║${NC}  $1"; echo -e "${CYAN}${BOLD}╚══════════════════════════════════════╝${NC}\n"; }
 step()    { echo -e "${YELLOW}→${NC} $1"; }
 ok()      { echo -e "  ${GREEN}✓${NC} $1"; }
@@ -41,9 +42,9 @@ warn()    { echo -e "  ${YELLOW}⚠${NC} $1"; }
 fail()    { echo -e "  ${RED}✗${NC} $1"; exit 1; }
 ask()     { echo -ne "${CYAN}?${NC} $1 "; }
 
-# Root of the checkout that owns the Python environment and the data root.
-# The script's own directory wins when it looks like the Demiurgos repo;
-# otherwise fall back to the clone performed by install_demiurgos.
+# Raíz del checkout que contiene el entorno Python y el data-root.
+# Gana el propio directorio del script cuando parece el repositorio de Demiurgos;
+# en caso contrario se usa el clon creado por install_demiurgos.
 checkout_root() {
     local here
     here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -56,18 +57,18 @@ checkout_root() {
     fi
 }
 
-# ── Stage 1: Prerequisites ────────────────────────────────
+# ── Etapa 1: Requisitos previos ───────────────────────────
 check_prerequisites() {
     header "Demiurgos — Preparación del entorno CLI de desarrollo"
     
-    # Detect OS
+    # Detectar el sistema operativo
     case "$(uname -s)" in
         Linux)  OS="linux";;
         Darwin) OS="darwin";;
         *)      fail "Sistema operativo no soportado: $(uname -s). Se requiere Linux o macOS.";;
     esac
     
-    # Detect architecture
+    # Detectar la arquitectura
     case "$(uname -m)" in
         x86_64)  ARCH="amd64";;
         aarch64|arm64) ARCH="arm64";;
@@ -76,7 +77,7 @@ check_prerequisites() {
     
     ok "Sistema detectado: $OS/$ARCH"
     
-    # Check required tools
+    # Verificar las herramientas requeridas
     for cmd in curl git; do
         if ! command -v "$cmd" &>/dev/null; then
             fail "'$cmd' no está instalado. Instálalo primero (apt install $cmd / brew install $cmd)."
@@ -85,7 +86,7 @@ check_prerequisites() {
     ok "Herramientas base: curl, git disponibles"
 }
 
-# ── Stage 2: Install Hermes Agent ─────────────────────────
+# ── Etapa 2: Instalar Hermes Agent ────────────────────────
 install_hermes() {
     step "Instalando Hermes Agent..."
     
@@ -96,7 +97,7 @@ install_hermes() {
     
     curl -fsSL "$HERMES_INSTALL_URL" | bash || fail "No se pudo instalar Hermes Agent."
     
-    # Ensure hermes is in PATH
+    # Asegurar que hermes esté en el PATH
     if ! command -v hermes &>/dev/null; then
         export PATH="$HOME/.hermes/bin:$PATH"
         if ! command -v hermes &>/dev/null; then
@@ -107,7 +108,7 @@ install_hermes() {
     ok "Hermes Agent instalado"
 }
 
-# ── Stage 3: Install Engram ───────────────────────────────
+# ── Etapa 3: Instalar Engram ──────────────────────────────
 install_engram() {
     step "Instalando Engram (memoria persistente)..."
     
@@ -119,7 +120,7 @@ install_engram() {
         return 0
     fi
     
-    # Try global install first
+    # Intentar primero la instalación global
     if command -v engram &>/dev/null; then
         ok "Engram encontrado en PATH ($(command -v engram))"
         return 0
@@ -139,19 +140,19 @@ install_engram() {
     ok "Engram $ENGRAM_VERSION instalado"
 }
 
-# ── Stage 4: Configure Engram MCP in Hermes ───────────────
+# ── Etapa 4: Configurar Engram MCP en Hermes ──────────────
 configure_engram() {
     step "Conectando Engram a Hermes..."
     
     local engram_path="${1:-$DEMIURGOS_HOME/bin/engram}"
     
-    # Check if already configured
+    # Verificar si ya está configurado
     if [ -f "$HERMES_CONFIG" ] && grep -q "engram" "$HERMES_CONFIG" 2>/dev/null; then
         ok "Engram ya configurado en Hermes"
         return 0
     fi
     
-    # Try hermes CLI first
+    # Intentar primero con la CLI de hermes
     if command -v hermes &>/dev/null; then
         hermes mcp add engram --command "$engram_path" --args mcp --args --tools=agent 2>/dev/null && {
             ok "Engram conectado a Hermes (vía CLI)"
@@ -159,7 +160,7 @@ configure_engram() {
         }
     fi
     
-    # Fallback: inject into config.yaml
+    # Alternativa: inyectar en config.yaml
     if [ ! -f "$HERMES_CONFIG" ]; then
         mkdir -p "$(dirname "$HERMES_CONFIG")"
         echo "---" > "$HERMES_CONFIG"
@@ -192,7 +193,7 @@ fi
     ok "Engram conectado a Hermes"
 }
 
-# ── Stage 5: Install Demiurgos Skills ─────────────────────
+# ── Etapa 5: Instalar las skills de Demiurgos ─────────────
 install_demiurgos() {
     step "Instalando Demiurgos skills..."
     
@@ -204,7 +205,7 @@ install_demiurgos() {
         ok "Demiurgos clonado"
     fi
     
-    # Add skills to Hermes external dirs
+    # Agregar las skills a los directorios externos de Hermes
     local skills_path="$DEMIURGOS_HOME/repo/skills"
     
     if [ -f "$HERMES_CONFIG" ] && grep -q "$skills_path" "$HERMES_CONFIG" 2>/dev/null; then
@@ -212,10 +213,10 @@ install_demiurgos() {
         return 0
     fi
     
-    # Inject external_dirs into Hermes config.yaml
+    # Inyectar external_dirs en el config.yaml de Hermes
     if grep -q "external_dirs:" "$HERMES_CONFIG" 2>/dev/null; then
         if ! grep -q "$skills_path" "$HERMES_CONFIG" 2>/dev/null; then
-            # Add path under existing external_dirs list
+            # Agregar la ruta bajo la lista external_dirs existente
             sed -i "/external_dirs:/a\\    - $skills_path" "$HERMES_CONFIG"
         fi
     else
@@ -229,7 +230,7 @@ EOF
     ok "Skills registradas (13 fases narrativas)"
 }
 
-# ── Stage 5.5: Configure demiurgos-mcp profile ─────────────
+# ── Etapa 5.5: Configurar el perfil demiurgos-mcp ─────────
 configure_mcp_profile() {
     step "Configurando perfil demiurgos-mcp (MCP serve)..."
     
@@ -238,7 +239,7 @@ configure_mcp_profile() {
         return 0
     fi
     
-    # Create profile cloning defaults (or from demiurgos-core if available)
+    # Crear el perfil clonando los valores por defecto (o desde demiurgos-core si está disponible)
     local clone_source=""
     if hermes profile list 2>/dev/null | grep -q "demiurgos-core"; then
         clone_source="--clone-from demiurgos-core"
@@ -253,10 +254,10 @@ configure_mcp_profile() {
     
     ok "Perfil demiurgos-mcp creado"
     
-    # Ensure toolsets are correct for MCP serve
+    # Asegurar que los toolsets sean correctos para MCP serve
     local profile_config="$HOME/.hermes/profiles/demiurgos-mcp/config.yaml"
     if [ -f "$profile_config" ]; then
-        # Add terminal, skills, mcp to toolsets if missing
+        # Agregar terminal, skills y mcp a los toolsets si faltan
         for toolset in terminal skills mcp; do
             if ! grep -q "  - $toolset" "$profile_config" 2>/dev/null; then
                 sed -i "/^toolsets:/a\\  - $toolset" "$profile_config" 2>/dev/null || true
@@ -266,12 +267,12 @@ configure_mcp_profile() {
     fi
 }
 
-# ── Stage 6: Python environment + dependencies ────────────
-# The launchers run the API with "$PROJECT_ROOT/.venv/bin/python", so the
-# checkout needs its own virtual environment. Everything here is best-effort:
-# a missing interpreter warns and returns instead of aborting the installer.
+# ── Etapa 6: Entorno Python + dependencias ────────────────
+# Los launchers ejecutan la API con "$PROJECT_ROOT/.venv/bin/python", así que
+# el checkout necesita su propio entorno virtual. Todo aquí es de mejor esfuerzo:
+# un intérprete ausente avisa y retorna en vez de abortar el instalador.
 prepare_python_env() {
-    step "Preparing the checkout Python environment..."
+    step "Preparando el entorno Python del checkout..."
 
     local root requirements venv_python
     root="$(checkout_root)"
@@ -279,47 +280,47 @@ prepare_python_env() {
     venv_python="$root/.venv/bin/python"
 
     if ! command -v python3 &>/dev/null; then
-        warn "python3 was not found on PATH. Skipping the virtual environment and the Python dependencies."
-        warn "Install Python 3.11+ (for example: apt install python3 python3-venv) and re-run this script."
-        warn "Without it the launchers cannot start: they expect $venv_python."
+        warn "No se encontró python3 en el PATH. Se omiten el entorno virtual y las dependencias de Python."
+        warn "Instala Python 3.11+ (por ejemplo: apt install python3 python3-venv) y vuelve a ejecutar este script."
+        warn "Sin él los launchers no pueden arrancar: esperan $venv_python."
         return 0
     fi
 
     if [ ! -f "$requirements" ]; then
-        warn "Requirements file not found: $requirements. Skipping the Python dependencies."
-        warn "Run this script from the Demiurgos checkout root to install them."
+        warn "No se encontró el archivo de requisitos: $requirements. Se omiten las dependencias de Python."
+        warn "Ejecuta este script desde la raíz del checkout de Demiurgos para instalarlas."
         return 0
     fi
 
-    # Idempotent: an existing environment is reused as-is, never recreated, so
-    # re-running the installer cannot break a working venv.
+    # Idempotente: un entorno existente se reutiliza tal cual, nunca se recrea,
+    # así que volver a ejecutar el instalador no puede romper un venv que funciona.
     if [ -x "$venv_python" ]; then
-        ok "Virtual environment already present: $root/.venv"
+        ok "El entorno virtual ya existe: $root/.venv"
     elif ! python3 -m venv "$root/.venv"; then
-        warn "Could not create the virtual environment at $root/.venv (is python3-venv installed?)."
-        warn "Install it, then re-run this script. The remaining install steps are unaffected."
+        warn "No se pudo crear el entorno virtual en $root/.venv (¿está instalado python3-venv?)."
+        warn "Instálalo y vuelve a ejecutar este script. El resto de los pasos de instalación no se ven afectados."
         return 0
     else
-        ok "Virtual environment created: $root/.venv"
+        ok "Entorno virtual creado: $root/.venv"
     fi
 
     if "$venv_python" -m pip install -r "$requirements"; then
-        ok "Python dependencies installed"
+        ok "Dependencias de Python instaladas"
     else
-        warn "pip install failed. The remaining install steps are unaffected."
-        warn "Retry manually with: $venv_python -m pip install -r $requirements"
+        warn "Falló pip install. El resto de los pasos de instalación no se ven afectados."
+        warn "Reintenta manualmente con: $venv_python -m pip install -r $requirements"
         return 0
     fi
 }
 
-# ── Stage 7: Data-root pointer bootstrap ──────────────────
-# The launchers export DEMIURGOS_DATA_ROOT, but a process started by hand
-# (hermes, cron, a directly started API) has no launcher and resolves the data
-# root from the bootstrap pointer written here. The project's own write_pointer()
-# owns both the record schema and its location, so it is the single source of
-# truth; the record is read back to prove the resolver accepts it.
+# ── Etapa 7: Creación del puntero del data-root ───────────
+# Los launchers exportan DEMIURGOS_DATA_ROOT, pero un proceso iniciado a mano
+# (hermes, cron, una API arrancada directamente) no tiene launcher y resuelve el
+# data-root a partir del puntero inicial escrito aquí. El propio write_pointer()
+# del proyecto define tanto el esquema del registro como su ubicación, así que es
+# la única fuente de verdad; el registro se relee para demostrar que el resolver lo acepta.
 configure_data_root() {
-    step "Configuring the data root pointer..."
+    step "Configurando el puntero del data-root..."
 
     local root wiki_dir venv_python
     root="$(checkout_root)"
@@ -327,13 +328,13 @@ configure_data_root() {
     venv_python="$root/.venv/bin/python"
 
     if [ ! -x "$venv_python" ]; then
-        warn "No usable interpreter at $venv_python. Skipping the data-root pointer."
-        warn "Processes started outside a launcher resolve the data root from that pointer only."
+        warn "No hay un intérprete utilizable en $venv_python. Se omite el puntero del data-root."
+        warn "Los procesos iniciados fuera de un launcher resuelven el data-root solo a partir de ese puntero."
         return 0
     fi
 
     if [ ! -f "$wiki_dir/data_root.py" ]; then
-        warn "Resolver module not found at $wiki_dir/data_root.py. Skipping the data-root pointer."
+        warn "No se encontró el módulo del resolver en $wiki_dir/data_root.py. Se omite el puntero del data-root."
         return 0
     fi
 
@@ -342,48 +343,48 @@ configure_data_root() {
 import sys
 from pathlib import Path
 
-# Import the project's own resolver: one source of truth for the pointer path
-# (platformdirs.user_config_dir("demiurgos")) and the record schema.
+# Importar el resolver propio del proyecto: una única fuente de verdad para la
+# ruta del puntero (platformdirs.user_config_dir("demiurgos")) y el esquema del registro.
 sys.path.insert(0, sys.argv[1])
 from data_root import pointer_path, read_pointer, write_pointer
 
 checkout = Path(sys.argv[2]).resolve()
 existing = read_pointer()
 
-# Bootstrap only: never silently repoint a data root the user already chose.
+# Solo bootstrap: nunca se reorienta en silencio un data-root que el usuario ya eligió.
 if existing is not None and existing != checkout:
     print(
-        f"data root already configured at {existing}; left untouched "
-        f"(bootstrap only). Repoint it by editing {pointer_path()}."
+        f"el data-root ya está configurado en {existing}; se deja intacto "
+        f"(solo bootstrap). Reoriéntalo editando {pointer_path()}."
     )
     raise SystemExit(3)
 
 write_pointer(checkout)
 
-# Read the file back so the installer proves the resolver accepts the record.
+# Releer el archivo para que el instalador demuestre que el resolver acepta el registro.
 recorded = read_pointer()
 if recorded != checkout:
-    raise SystemExit(f"read-back mismatch: wrote {checkout} but read {recorded}")
+    raise SystemExit(f"discrepancia al releer: se escribió {checkout} pero se leyó {recorded}")
 print(pointer_path())
 PY
 )" || status=$?
 
     case "$status" in
         0)
-            ok "Data root pointer written and verified: $detail"
-            ok "Data root: $root"
+            ok "Puntero del data-root escrito y verificado: $detail"
+            ok "Data-root: $root"
             ;;
         3)
             warn "$detail"
             ;;
         *)
-            warn "Could not write the data-root pointer through the resolver's write_pointer()."
-            warn "Processes started outside a launcher will not resolve a data root until it is written."
+            warn "No se pudo escribir el puntero del data-root mediante write_pointer() del resolver."
+            warn "Los procesos iniciados fuera de un launcher no resolverán un data-root hasta que se escriba."
             ;;
     esac
 }
 
-# ── Main ───────────────────────────────────────────────────
+# ── Principal ──────────────────────────────────────────────
 main() {
     check_prerequisites
     install_hermes
