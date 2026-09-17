@@ -24,7 +24,9 @@ component, an absolute path, a Windows reserved name (with or without an
 extension), a trailing dot/space, an over-long component (>200) or path (>240),
 and a collision between two distinct sources that normalize to one path are all
 rejected with :class:`TransportError` naming the offender — so a rejected batch
-publishes nothing and never leaves a partial tree.
+publishes nothing and never leaves a partial tree. The same gate guards every
+caller-supplied SNAPSHOT ID in ``prune`` and ``fetch`` (plus the single-name
+rule), so a traversal id is refused before a delete or a read.
 **Payload typing.** ``publish_current``/``publish_snapshot`` take
 ``Mapping[str, bytes]``; WU-8 may tighten the seam's opaque ``Any``.
 """
@@ -117,6 +119,28 @@ def _normalize_staged_path(source: Any) -> str:
             f"{_MAX_RELATIVE_PATH_LENGTH} characters"
         )
     return normalized
+
+
+def _normalize_snapshot_id(snapshot_id: Any) -> str:
+    """Gate a caller-supplied snapshot id: the WU-6b name rules, as ONE name.
+
+    A snapshot id is a *directory name* under ``snapshots/``, not a relative
+    path: :func:`_normalize_staged_path` supplies every WU-6b rejection
+    (traversal, absolute, Windows reserved, trailing dot/space, length, NFC)
+    unchanged, and the single-component rule is added on top because
+    ``list_snapshots()`` recognises one name per snapshot (SC-BE-1.2). A
+    separator would make ``snapshots/<id>`` reach a nested directory — for
+    example ``prune(["a/b"])`` would delete ``snapshots/a/b`` — so it is
+    refused here, BEFORE any deletion or read. Inspecting the gate rather than
+    re-implementing it keeps exactly one validation scheme in this module.
+    """
+    safe_id = _normalize_staged_path(snapshot_id)
+    if "/" in safe_id or "\\" in safe_id:
+        raise TransportError(
+            f"snapshot id {snapshot_id!r} must be a single path component; "
+            "snapshot names never contain a separator"
+        )
+    return safe_id
 
 
 def _nfc_staged_set(staged: Mapping[str, Any]) -> dict[str, Any]:
@@ -300,12 +324,19 @@ class FolderTransport:
         deleted, and its snapshot is left on the destination (REQ-BE-7). The
         candidates come only from *snapshot_ids* — this verb invents no retention
         policy (that is WU-10) and never touches ``current/``.
+
+        **An unsafe id refuses the WHOLE call (REQ-BE-9).** Every id passes
+        :func:`_normalize_snapshot_id` BEFORE the first ``rmtree``, so a caller
+        that supplies ``"../current"``, an absolute path or ``"a/b"`` deletes
+        nothing — not even the safe ids beside it. The traversal hole this closes
+        was real: prune reached ``snapshots/<caller-supplied id>`` unguarded.
         """
         snapshots_dir = self._tree / "snapshots"
+        safe_ids = [_normalize_snapshot_id(snapshot_id) for snapshot_id in snapshot_ids]
         deleted: list[str] = []
         failed: list[tuple[str, str]] = []
-        for snapshot_id in snapshot_ids:
-            target = snapshots_dir / snapshot_id
+        for safe_id in safe_ids:
+            target = snapshots_dir / safe_id
 
             def attempt(target: Path = target) -> None:
                 shutil.rmtree(target)
@@ -313,9 +344,9 @@ class FolderTransport:
             try:
                 self._with_lock_retry(target, attempt)
             except (TransportError, OSError) as exc:
-                failed.append((snapshot_id, str(exc)))
+                failed.append((safe_id, str(exc)))
             else:
-                deleted.append(snapshot_id)
+                deleted.append(safe_id)
         return PruneResult(deleted=tuple(deleted), failed=tuple(failed))
 
     def read_meta(self, name: str) -> Mapping[str, Any] | None:
@@ -377,11 +408,16 @@ class FolderTransport:
         Restaging a snapshot out to a destination for restore (REQ-RS-1). The
         data root is never touched here — whole-root restore is WU-13; this verb
         only copies one snapshot out and reports what it copied.
+
+        ``snapshot_ref.snapshot_id`` passes :func:`_normalize_snapshot_id` before
+        the source is joined, so a caller-supplied ``"../current"``, an absolute
+        path or ``"a/b"`` is refused instead of read (REQ-BE-9).
         """
-        source = self._tree / "snapshots" / snapshot_ref.snapshot_id
+        safe_id = _normalize_snapshot_id(snapshot_ref.snapshot_id)
+        source = self._tree / "snapshots" / safe_id
         if not source.is_dir():
             raise TransportError(
-                f"snapshot {snapshot_ref.snapshot_id} not found under {source.parent}"
+                f"snapshot {safe_id} not found under {source.parent}"
             )
         destination = Path(dest_dir)
         destination.mkdir(parents=True, exist_ok=True)
@@ -389,7 +425,7 @@ class FolderTransport:
             shutil.copytree(source, destination, dirs_exist_ok=True)
         except OSError as exc:
             raise TransportError(
-                f"cannot fetch snapshot {snapshot_ref.snapshot_id} into "
+                f"cannot fetch snapshot {safe_id} into "
                 f"{destination}: {exc}"
             ) from exc
         entries, size = _measure(destination)

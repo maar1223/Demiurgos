@@ -494,3 +494,72 @@ def test_folder_transport_fetch_copies_the_snapshot_tree_into_dest_dir(
     assert (dest / "entry.md").read_bytes() == b"hello"
     assert (dest / "nested" / "deep.md").read_bytes() == b"world"
 
+
+# --- WU-10 PART 0: the prune/fetch traversal hole is closed ------------------
+#
+# ``prune`` used to call ``shutil.rmtree(snapshots/<caller-supplied id>)`` and
+# ``fetch`` used to join ``snapshot_ref.snapshot_id`` with NO validation at all,
+# so ``"../current"`` reached outside ``snapshots/``. Both now pass the WU-6b
+# gate (``_normalize_staged_path``) plus the single-name rule (a snapshot id is
+# one directory name, never a relative path), BEFORE deleting or reading.
+
+# Ids that must be refused: traversal, absolute, drive-qualified, and a
+# separator (which would make ``snapshots/<id>`` reach a nested directory).
+UNSAFE_SNAPSHOT_IDS = (
+    "..",
+    "../current",
+    "nested/../../escape",
+    "/absolute/escape",
+    "C:\\escape",
+    "a/b",
+    "a\\b",
+)
+
+
+def _tree_state(root: Path) -> dict[str, bytes | None]:
+    """Every path under *root* (directories as ``None``) plus file bytes."""
+    state: dict[str, bytes | None] = {}
+    if not root.exists():
+        return state
+    for path in sorted(root.rglob("*")):
+        state[str(path.relative_to(root))] = (
+            path.read_bytes() if path.is_file() else None
+        )
+    return state
+
+
+@pytest.mark.parametrize("unsafe", UNSAFE_SNAPSHOT_IDS)
+def test_folder_transport_prune_refuses_unsafe_ids_and_deletes_nothing(
+    tmp_path: Path, unsafe: str
+) -> None:
+    """An unsafe id refuses the WHOLE call — the safe ids beside it survive too."""
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    for snapshot_id in ("2026-09-16T120530Z", "2026-09-17T120530Z"):
+        transport.publish_snapshot(snapshot_id, {"entry.md": b"keep"})
+    backup_root = tmp_path / "Demiurgos"
+    before = _tree_state(backup_root)
+    with pytest.raises(TransportError):
+        transport.prune(["2026-09-16T120530Z", unsafe])  # safe id listed FIRST
+    assert _tree_state(backup_root) == before  # byte-identical, no partial delete
+    assert [info.snapshot_id for info in transport.list_snapshots()] == [
+        "2026-09-16T120530Z", "2026-09-17T120530Z"
+    ]
+
+
+@pytest.mark.parametrize("unsafe", UNSAFE_SNAPSHOT_IDS)
+def test_folder_transport_fetch_refuses_unsafe_ids_and_copies_nothing(
+    tmp_path: Path, unsafe: str
+) -> None:
+    """An unsafe ``snapshot_id`` is refused before the source is joined or read."""
+    transport = _folder(tmp_path)
+    transport.ensure_layout()
+    transport.publish_snapshot("2026-09-16T120530Z", {"entry.md": b"keep"})
+    backup_root = tmp_path / "Demiurgos"
+    before = _tree_state(backup_root)
+    dest = tmp_path / "staging" / "restore"
+    with pytest.raises(TransportError):
+        transport.fetch(SnapshotRef(unsafe), dest)
+    assert _tree_state(backup_root) == before  # tree byte-identical after refusal
+    assert not dest.exists()  # and nothing was copied out
+
