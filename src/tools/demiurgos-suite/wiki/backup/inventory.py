@@ -20,10 +20,17 @@ tables decide what is taken:
   :attr:`Inventory.excluded` with a reason string, and the match is made HERE by
   rule — no call site special-cases a path (REQ-BE-1, SC-BE-1.3).
 
-Case-collision detection (two siblings whose NFC + ``casefold()`` forms match)
-is deliberately NOT here: that is WU-7b, and this module must not resolve a
-spelling on its own (REQ-CDL-2.1). ``canonical_case`` is therefore the
-NFC-normalized name exactly as discovered — the inventory never invents one.
+Case-collision detection (WU-7b) lives here: :func:`detect_case_collisions`
+compares TOP-LEVEL members by their NFC + ``casefold()`` key, and
+:func:`build_inventory` ABORTS with :class:`CaseCollisionError` when any two
+would collapse to one name on a case-insensitive destination (REQ-CDL-2,
+SC-CDL-2.1). The scope is the top level, exactly as the spec words it ("one
+canonical case per top-level name"); the motivating ``ideas/`` vs
+``mundos/Ideas/`` pair sits at DIFFERENT levels, so it is not a top-level
+collision and is not detected here. A same-level nested collision is caught
+later by the transport's staged-path check (REQ-BE-9, SC-BE-9.1).
+``canonical_case`` is still the NFC-normalized name exactly as discovered — the
+inventory never invents a spelling.
 """
 
 from __future__ import annotations
@@ -104,14 +111,17 @@ EXCLUSION_RULES: tuple[ExclusionRule, ...] = (
 class TopLevelMember:
     """One discovered top-level member, with the rule that matched it, if any.
 
-    ``canonical_case`` is the NFC-normalized name as discovered; case collision
-    detection (WU-7b) is the only place a spelling is ever questioned.
+    ``canonical_case`` is the NFC-normalized name as discovered; ``raw_name``
+    keeps the on-disk spelling so a collision abort can name BOTH sources even
+    when they normalize to the same string. Case collision detection (WU-7b) is
+    the only place a spelling is ever questioned.
     """
 
     name: str
     canonical_case: str
     kind: str
     rule: SubtreeRule | None
+    raw_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -128,6 +138,87 @@ class Finding:
 
     kind: str
     paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CaseCollision:
+    """Top-level members that collapse to one name on a case-insensitive target.
+
+    ``key`` is the shared NFC + ``casefold()`` form; ``members`` names the
+    colliding members as they exist on disk (raw, never normalized), so an abort
+    message points at BOTH sources instead of silently choosing one spelling
+    (REQ-CDL-2, SC-CDL-2.1).
+    """
+
+    key: str
+    members: tuple[str, ...]
+
+    def finding(self) -> Finding:
+        """The ``findings: case_collision`` view a manifest can record."""
+        return Finding("case_collision", self.members)
+
+
+class CaseCollisionError(RuntimeError):
+    """Abort: top-level members would collapse on a case-insensitive target.
+
+    Raised by :func:`build_inventory` before any member is included, so a lossy
+    staged set can never be produced (REQ-CDL-2). The collisions ride on
+    :attr:`collisions` and are exposed as findings, so a caller can record and
+    report them even though there is no inventory to return — the abort is not
+    a finding a caller may ignore.
+    """
+
+    def __init__(self, collisions: tuple[CaseCollision, ...]) -> None:
+        self.collisions = collisions
+        super().__init__(_collision_message(collisions))
+
+    @property
+    def findings(self) -> tuple[Finding, ...]:
+        """Every collision as ``findings: case_collision``, naming both members."""
+        return tuple(collision.finding() for collision in self.collisions)
+
+
+def _case_key(name: str) -> str:
+    """The canonical-destination key: NFC-normalize, then ``casefold()``."""
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def _collision_message(collisions: tuple[CaseCollision, ...]) -> str:
+    """A message naming both members of every collision."""
+    named = "; ".join(
+        " and ".join(repr(name) for name in collision.members)
+        for collision in collisions
+    )
+    return (
+        "case collision across top-level members after NFC + casefold "
+        f"normalization: {named} would collapse to one name on a "
+        "case-insensitive destination"
+    )
+
+
+def detect_case_collisions(
+    members: tuple[TopLevelMember, ...],
+) -> tuple[CaseCollision, ...]:
+    """Top-level members whose NFC + ``casefold()`` keys match (REQ-CDL-2).
+
+    The comparison is deliberately TOP-LEVEL only. The spec asks for "one
+    canonical case per top-level name" and SC-CDL-2.1 gives "top-level members
+    differing only by case". The motivating ``ideas/`` vs ``mundos/Ideas/`` pair
+    sits at different levels (root vs inside ``mundos/``), so it is NOT a
+    top-level collision and is not detected here; a same-level nested collision
+    is caught by the transport's staged-path check (REQ-BE-9, SC-BE-9.1).
+    """
+    grouped: dict[str, list[str]] = {}
+    for member in members:
+        grouped.setdefault(_case_key(member.name), []).append(
+            member.raw_name or member.name
+        )
+    collisions = [
+        CaseCollision(key, tuple(sorted(grouped[key])))
+        for key in sorted(grouped)
+        if len(grouped[key]) > 1
+    ]
+    return tuple(collisions)
 
 
 @dataclass(frozen=True)
@@ -180,14 +271,23 @@ def discover_top_level(data_root: Path) -> tuple[TopLevelMember, ...]:
             canonical_case=name,
             kind="dir" if is_dir else "file",
             rule=classify_member(name),
+            raw_name=raw_name,
         ))
     return tuple(members)
 
 
 def build_inventory(data_root: Path) -> Inventory:
-    """Build the inventory of *data_root* from its real contents (WU-7)."""
+    """Build the inventory of *data_root* from its real contents (WU-7).
+
+    Aborts with :class:`CaseCollisionError` when two top-level members would
+    collapse to one name on a case-insensitive destination; a lossy set is never
+    returned (REQ-CDL-2, SC-CDL-2.1).
+    """
     root = Path(data_root)
     top_level = discover_top_level(root)
+    collisions = detect_case_collisions(top_level)
+    if collisions:
+        raise CaseCollisionError(collisions)
     included: list[str] = []
     excluded: list[ExcludedPath] = []
     findings: list[Finding] = []
