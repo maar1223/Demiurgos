@@ -1694,6 +1694,178 @@ export interface MethodologyDraftInput {
   language?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Backup (portable-data-root-drive-backup — Profile → Centro de Configuración)
+//
+// Mirrors `/api/backup/*` (WU-14 router + `backup/state.py`). The payload is
+// deliberately LOCAL-WRITE ONLY: the backend asserts the shape contains no
+// `upload*`/`cloud*`/`sync_state` key, so the client never renders quota,
+// account or connection state (REQ-SF-4, REQ-BUI-1).
+// ---------------------------------------------------------------------------
+
+/** Provenance of a discovered destination suggestion (mirror of sync_folder). */
+export type BackupCandidateSource = "env" | "registry" | "heuristic" | "user";
+
+/** Whether a suggestion is platform-verified or a heuristic guess. */
+export type BackupCandidateConfidence = "verified" | "heuristic";
+
+/** Sync-folder mode verdict (REQ-SF-3); `unknown` never blocks a run. */
+export type BackupMode = "mirrored" | "streaming" | "unknown";
+
+/** One suggested destination folder from GET /api/backup/candidates. */
+export interface BackupCandidate {
+  path: string;
+  provider: string;
+  source: BackupCandidateSource;
+  confidence: BackupCandidateConfidence;
+  /** A suggestion is never auto-selected — the user confirms it or picks another. */
+  confirmed: boolean;
+}
+
+/** GET /api/backup/candidates response — suggestions plus the always-offered picker. */
+export interface BackupCandidatesResponse {
+  candidates: BackupCandidate[];
+  /** Always true: the folder picker is offered on every platform (REQ-SF-1). */
+  picker: boolean;
+}
+
+/**
+ * The chosen folder plus the provenance of the choice (author config, no
+ * secrets, no delivery claim). `mode_hint` is the sync-folder verdict.
+ */
+export interface BackupDestination {
+  schema_version: number;
+  path: string;
+  provider: string;
+  source: BackupCandidateSource;
+  confidence: BackupCandidateConfidence;
+  mode_hint: BackupMode;
+  updated_at: string | null;
+}
+
+/** The LOCAL write record (`meta/last-write.json`) — never an upload/sync field. */
+export interface BackupLastWrite {
+  destination: string;
+  written_at: string; // ISO 8601 UTC
+  status: "ok" | "ok_with_warnings" | "failed";
+  current_entries: number;
+}
+
+/** Honest local-write copy built server-side for both UI languages. */
+export type BackupLocalWriteCopy = Record<AppLanguage, string>;
+
+/**
+ * GET /api/backup/status — the honest card state. `state` is derived from real
+ * evidence only (folder persisted AND a recorded successful local write).
+ */
+export interface BackupStatus {
+  state: CardState;
+  destination: BackupDestination | null;
+  mode: BackupMode | null;
+  /** True when a verified streaming target blocks every run (REQ-SF-3). */
+  blocked: boolean;
+  /** The signal-appropriate remedy, rendered verbatim — never hardcoded. */
+  warning: string | null;
+  last_write: BackupLastWrite | null;
+  copy: BackupLocalWriteCopy | null;
+  /** POST /destination only: whether the chosen folder was accepted. */
+  accepted?: boolean;
+  /** POST /destination only: the classifier's rejection/streaming remedy. */
+  remedy?: string | null;
+}
+
+/** POST /api/backup/destination request body. */
+export interface BackupDestinationInput {
+  path: string;
+}
+
+/** One snapshot entry from GET /api/backup/snapshots (incomplete ones included). */
+export interface BackupSnapshot {
+  snapshot_id: string;
+  complete: boolean;
+  entries: number;
+  bytes: number;
+}
+
+/** GET /api/backup/snapshots response. */
+export interface BackupSnapshotList {
+  snapshots: BackupSnapshot[];
+}
+
+/** One path a restore would add, modify or remove. */
+export interface BackupConflictExample {
+  path: string;
+  change: string;
+}
+
+/** How many paths each restore conflict kind covers. */
+export interface BackupConflictCounts {
+  added: number;
+  modified: number;
+  removed: number;
+}
+
+/** The diff a restore would apply, plus the blockers that forbid it. */
+export interface BackupConflictReport {
+  snapshot_id: string;
+  counts: BackupConflictCounts;
+  examples: BackupConflictExample[];
+  blockers: string[];
+}
+
+/** Validation summary of a staged snapshot (never bytes). */
+export interface BackupRestoreValidation {
+  snapshot_id: string;
+  schema_version: number;
+  complete: boolean;
+  entries: number;
+  bytes: number;
+  databases: string[];
+  okf_documents: number;
+  worlds: string[];
+}
+
+/**
+ * POST /api/backup/restore/preview response. The router nests the report under
+ * `conflicts`; an injected preview may return the report shape directly, so the
+ * top-level keys are tolerated too.
+ */
+export interface BackupRestorePreview {
+  snapshot_id?: string;
+  validation?: BackupRestoreValidation;
+  conflicts?: BackupConflictReport;
+  /** True when a blocker disables the confirm action. */
+  blocked?: boolean;
+  counts?: BackupConflictCounts;
+  examples?: BackupConflictExample[];
+  blockers?: string[];
+}
+
+/** POST /api/backup/restore request body — explicit confirmation required. */
+export interface BackupRestoreInput {
+  snapshot_id: string;
+  confirm: boolean;
+}
+
+/** POST /api/backup/restore response — what the restore actually did. */
+export interface BackupRestoreResult {
+  snapshot_id: string;
+  status: string;
+  swapped: string[];
+  databases: string[];
+  worlds: string[];
+  config_files: string[];
+  conflicts: BackupConflictReport;
+  warnings: string[];
+}
+
+/** GET /api/backup/restore/status — unresolved marker plus leftover park dirs. */
+export interface BackupRestoreStatus {
+  pending: boolean;
+  leftovers: string[];
+  last_write: BackupLastWrite | null;
+}
+
 /** Structured API error. `code` (when present) is a stable machine-readable
  *  remediation key from the backend (e.g. `webhook_conflict` for the
  *  Telegram webhook/getUpdates conflict) so the UI can render specific

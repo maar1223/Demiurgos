@@ -30,8 +30,6 @@ export const STATE_META: Record<CardState, { label: string; badge: "default" | "
  * reports "configured" for one of these keys, the UI forces the honest
  * pending state instead of overstating readiness.
  *
- * - backup: remote capability whose dedicated contract does not exist in
- *   this change (Drive consent stays separate from identity).
  * - import (ONB-3.5): the importer is a separate SDD; its card exposes
  *   entry/pending only and must never claim an import happened.
  *
@@ -45,8 +43,14 @@ export const STATE_META: Record<CardState, { label: string; badge: "default" | "
  * gave it a dedicated backend contract whose `configured` state is proven by
  * a real server-side getMe check, so its card may truthfully render
  * configured.
+ *
+ * NOTE (portable-data-root-drive-backup, REQ-CC-2/SC-CC-2.2): `backup` left
+ * this set — the modern backup/restore flow is delivered by this change and
+ * `backup_state()` derives the card from REAL local evidence (a persisted
+ * folder AND a recorded successful local write). The BackupSection still
+ * refuses to render "Configurado" without that evidence.
  */
-export const DEFERRED_CARD_KEYS: ReadonlySet<string> = new Set(["backup", "import"]);
+export const DEFERRED_CARD_KEYS: ReadonlySet<string> = new Set(["import"]);
 
 /** Essential local readiness badges (OC11/OC21): World + local editor. */
 export const ESSENTIAL_BADGES: { key: string; title: string }[] = [
@@ -78,7 +82,7 @@ export const CARD_DEFS: CardDef[] = [
   { key: "identity", title: "Identidad", description: "Cuenta local: contraseña o palabras claves para recuperación autorizada.", action: { label: "Ir a Perfil", to: "/perfil" } },
   { key: "assistant", title: "IA texto y visión", description: "Modelo principal del Asistente (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
   { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: null },
-  { key: "backup", title: "Respaldo y restauración", description: "Google Drive / rclone: respaldo y restauración, con consentimiento separado de la identidad.", action: null },
+  { key: "backup", title: "Respaldo y restauración", description: "Guardá una copia de tus datos en la carpeta local que elijas. Demiurgos escribe los archivos localmente y no afirma ningún envío remoto.", action: { label: "Configurar respaldo", to: "/perfil?tab=configuracion" } },
   { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/onboarding?step=step0" } },
   { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },
   { key: "offline", title: "Offline / dispositivo", description: "Núcleo local (editor, ideas, grafo) sin conexión.", action: null },
@@ -86,11 +90,18 @@ export const CARD_DEFS: CardDef[] = [
 ];
 
 /**
- * Honest per-card state (ONB-3.1/ONB-3.5): capabilities without a dedicated
- * contract can never be "configured" in this slice — their dedicated
+ * Honest per-card state (ONB-3.1/ONB-3.5). Only the keys still in
+ * {@link DEFERRED_CARD_KEYS} are forced to `pending`: their dedicated
  * contracts are the only path to configured, and none exists yet. Even if
  * the backend reports "configured" for such a key (stale/buggy state), the
  * UI renders the truthful pending state.
+ *
+ * A key that left the deferred set — `backup` after
+ * portable-data-root-drive-backup — is no longer forced: its dedicated
+ * contract (`backup_state()` in readiness.py) proves configured from real
+ * local evidence, so the gate must not downgrade a truthful claim. The
+ * BackupSection independently re-checks that evidence before showing
+ * "Configurado".
  *
  * Exported (pure) so the Profile page's configuration tab reuses the exact
  * same anti-overstatement guard instead of duplicating it.

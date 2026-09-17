@@ -57,6 +57,30 @@ vi.mock("@/components/organisms/MigrationPanel", () => ({
   MigrationPanel: () => <div>migration panel</div>,
 }));
 
+// The configuration tab now mounts the real BackupSection (WU-15); keep the
+// page test hermetic by resolving its read-only status calls locally.
+vi.mock("@/api/backup", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/backup")>();
+  return {
+    ...actual,
+    getBackupStatus: vi.fn().mockResolvedValue({
+      state: "pending",
+      destination: null,
+      mode: null,
+      blocked: false,
+      warning: null,
+      last_write: null,
+      copy: null,
+    }),
+    getBackupCandidates: vi.fn().mockResolvedValue({ candidates: [], picker: true }),
+    getBackupRestoreStatus: vi.fn().mockResolvedValue({
+      pending: false,
+      leftovers: [],
+      last_write: null,
+    }),
+  };
+});
+
 describe("ProfilePage", () => {
   beforeEach(() => {
     // Default readiness: no legacy folders. The Mundos tab's migration panel

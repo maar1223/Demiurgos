@@ -7,6 +7,7 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
+import { BackupSection } from "@/components/organisms/BackupSection";
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
 import { WorldPickerDialog } from "@/components/organisms/WorldPickerDialog";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
@@ -1142,29 +1143,7 @@ function ConfigurationSection() {
             </div>
             <p className="mt-1 text-small text-muted">{card.description}</p>
 
-            {card.key === "backup" && (
-              <>
-                <p className="mt-3 text-small text-muted">
-                  Pendiente — contrato dedicado en definición
-                </p>
-                {/* ONB-4.5 (WU-4d) — Backup/restore card: entry only.
-                    Google Drive / rclone backup is not implemented in
-                    this change; the card stays pending and is only an
-                    entry for its dedicated contract. Drive consent is
-                    separate from the identity consent, and backup
-                    and restore are distinct flows (OC10/OC24). */}
-                <div className="mt-4 border-t border-edge pt-4">
-                  <p className="text-small text-muted">
-                    El respaldo y la restauración (Google Drive / rclone) no están
-                    implementados en esta versión: la tarjeta queda pendiente y es solo la
-                    entrada para su contrato dedicado. El consentimiento de Drive es
-                    independiente del consentimiento de identidad, y respaldo y
-                    restauración son flujos distintos. Nunca se afirma configurado sin ese
-                    contrato.
-                  </p>
-                </div>
-              </>
-            )}
+            {card.key === "backup" && <BackupSection />}
 
             {card.key === "locale" && card.action && (
               <div className="mt-3">
