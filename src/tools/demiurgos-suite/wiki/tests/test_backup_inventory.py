@@ -26,10 +26,31 @@ from backup.inventory import (  # noqa: E402
     classify_member,
     detect_case_collisions,
     discover_top_level,
+    match_exclusion,
 )
+from backup.staging import stage_inventory  # noqa: E402
 
 #: A folder no rule knows and no test helper creates by name elsewhere.
 EXOTIC = "zzq-lumen-grotto-9f3"
+
+#: Tooling / dependency / cache names that must be refused by basename ANYWHERE.
+TOOLING_NAMES = (
+    "node_modules",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".nox",
+    "demo.egg-info",
+    "venv",
+    ".DS_Store",
+    "Thumbs.db",
+)
+
+#: Generic directory names that must stay INCLUDED: each can legitimately hold
+#: author content, so refusing one would be a silent loss.
+GENERIC_NAMES = ("dist", "build", "target", "out", "output", "cache")
 
 
 def test_discovery_is_not_driven_by_a_hardcoded_list(tmp_path: Path) -> None:
@@ -287,4 +308,119 @@ def test_data_secret_class_catches_an_equivalent_new_file(tmp_path: Path) -> Non
     assert recorded["data/world-checkpoints.lock"] == "excluded:process-lock-file"
     # The class is scoped to data/: a same-named file elsewhere is untouched.
     assert "config/sessions.json" in inventory.included
+
+
+def test_tooling_directories_are_excluded_anywhere_and_never_staged(
+    tmp_path: Path,
+) -> None:
+    """An installed dependency tree stays out of the staged set (REQ-BE-1).
+
+    The real deployment's data root IS the checkout, so ``frontend/node_modules``
+    (and any nested ``node_modules`` deeper in the tree) was being staged into
+    the synced backup folder — thousands of files and hundreds of MB of tool
+    output. The class refuses such a directory by its unambiguous NAME anywhere
+    in the tree. This asserts on the STAGED set, not merely on the rule table:
+    a rule that matched but was not consulted by the walk would still let the
+    files through.
+    """
+    _make(tmp_path / "frontend" / "node_modules" / "pkg" / "index.js")
+    _make(tmp_path / "frontend" / "packages" / "app" / "node_modules" / "dep" / "index.js")
+    _make(tmp_path / "frontend" / "src" / "app.ts")
+    _make(tmp_path / "ideas" / "nota.md")
+
+    inventory = build_inventory(tmp_path)
+    recorded = {entry.path: entry.reason for entry in inventory.excluded}
+
+    for dependency_dir in (
+        "frontend/node_modules",
+        "frontend/packages/app/node_modules",  # nested, not only top-level
+    ):
+        assert dependency_dir in recorded, f"{dependency_dir} is not excluded"
+        assert recorded[dependency_dir].strip(), f"{dependency_dir} has no reason"
+        assert dependency_dir not in inventory.included
+
+    staged = set(stage_inventory(inventory).paths())
+    assert not any("node_modules" in path.split("/") for path in staged), (
+        "a node_modules file reached the staged set"
+    )
+    # Author data and the surrounding frontend source are untouched.
+    assert "ideas/nota.md" in staged
+    assert "frontend/src/app.ts" in staged
+
+
+def test_every_tooling_exclusion_carries_a_non_empty_reason() -> None:
+    """Every tooling name is refused, anywhere, with a non-empty reason."""
+    for name in TOOLING_NAMES:
+        reason = match_exclusion(f"deep/nested/{name}")
+        assert reason is not None, f"{name} is not excluded anywhere in the tree"
+        assert reason.strip(), f"{name} has an empty exclusion reason"
+
+    # And no row in the whole table is allowed to carry an empty reason.
+    for rule in inventory_module.EXCLUSION_RULES:
+        assert rule.reason.strip(), f"rule {rule.pattern!r} has an empty reason"
+
+
+def test_generic_tooling_names_stay_included(tmp_path: Path) -> None:
+    """``dist``/``build``/``output``/... are NOT excluded (no silent loss).
+
+    A folder with a generic name can legitimately hold author content. Refusing
+    it by name would silently drop a world from the backup, which the design
+    forbids, so the guarantee is locked here by a test.
+    """
+    for name in GENERIC_NAMES:
+        _make(tmp_path / name / "author-content.md")
+
+    inventory = build_inventory(tmp_path)
+    excluded = {entry.path for entry in inventory.excluded}
+    staged = set(stage_inventory(inventory).paths())
+
+    for name in GENERIC_NAMES:
+        relative = f"{name}/author-content.md"
+        assert relative in inventory.included, f"{relative} was dropped"
+        assert relative in staged, f"{relative} was not staged"
+        assert name not in excluded, f"{name} was excluded by a rule"
+
+
+def test_author_folder_merely_containing_a_cache_entry_is_unaffected(
+    tmp_path: Path,
+) -> None:
+    """A legitimate author folder is not dropped because it nests a cache entry.
+
+    The refusal matches the tooling DIRECTORY (and OS metadata files) by exact
+    basename. An author world that happens to contain a ``__pycache__`` or a file
+    whose name merely RESEMBLES a tooling name keeps every other file: only the
+    cache entry itself is left out, and the folder survives.
+    """
+    _make(tmp_path / "mundos" / "MyWorld" / "ficha.md")
+    _make(tmp_path / "mundos" / "MyWorld" / "node_modules-notes.md")  # near-miss
+    _make(tmp_path / "mundos" / "MyWorld" / "cache")  # generic file name
+    _make(tmp_path / "mundos" / "MyWorld" / "__pycache__" / "world.pyc")
+
+    inventory = build_inventory(tmp_path)
+    staged = set(stage_inventory(inventory).paths())
+
+    assert "mundos/MyWorld/ficha.md" in staged
+    assert "mundos/MyWorld/node_modules-notes.md" in staged
+    assert "mundos/MyWorld/cache" in staged
+    assert "mundos/MyWorld/__pycache__/world.pyc" not in staged
+    assert "mundos/MyWorld" in inventory.included
+
+
+def test_inventory_surfaces_the_excluded_listing_and_count(tmp_path: Path) -> None:
+    """What was left out is recorded with its reason AND summarizable.
+
+    The manifest copies ``Inventory.excluded`` verbatim, so the author can SEE
+    what the run left out instead of trusting it; ``excluded_count`` is the
+    one-number summary a report or UI can show. No I/O and no new document.
+    """
+    _make(tmp_path / "frontend" / "node_modules" / "pkg" / "index.js")
+    _make(tmp_path / "ideas" / "nota.md")
+
+    inventory = build_inventory(tmp_path)
+
+    assert inventory.excluded_count == len(inventory.excluded)
+    assert inventory.excluded_count == 1
+    entry = inventory.excluded[0]
+    assert entry.path == "frontend/node_modules"
+    assert entry.reason == "excluded:dependency-tree"
 
