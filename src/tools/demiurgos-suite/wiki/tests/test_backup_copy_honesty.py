@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 """Honest-delivery copy gate tests (WU-12, task 12.8).
 
-Covers REQ-SF-4 / SC-SF-4.1 and the testable half of SC-SF-4.2: the status/copy
-payload builder exposes no upload/sync/cloud field, and the forbidden
-cloud-delivery vocabulary (es-ES AND en) is rejected from copy strings.
+Covers REQ-SF-4 / SC-SF-4.1 and the shared-builder half of SC-SF-4.2: the
+status/copy payload builder exposes no upload/sync/cloud field, and the
+forbidden cloud-delivery vocabulary (es-ES AND en) is rejected from copy
+strings.
 
-**Scope honesty — half of SC-SF-4.2 is deferred on purpose.** SC-SF-4.2 also
-requires scanning the LIVE ``/api/backup/status`` response. That route is WU-14's
-router and does not exist yet, so it cannot be asserted here and is NOT faked.
-What IS proved now: the vocabulary constants, :func:`assert_honest_copy`,
-:func:`find_dishonest_status_keys`, the local-write builder WU-14 will consume,
-and the candidate persistence record. The deferred half is the router slice.
+**The WU-12 deferral is CLOSED (WU-14).** WU-12 could only prove the shared
+builder, because ``/api/backup/status`` did not exist yet. WU-14 shipped the
+router, and ``test_backup_router.py::test_live_status_payload_is_honest_end_to_end``
+now asserts the LIVE response payload is cloud-free at any nesting depth and
+vocabulary-clean in both languages. What remains here is the builder contract
+those routes consume; the live half lives with the routes that serve it.
 """
 
 from __future__ import annotations
@@ -116,12 +117,12 @@ def test_dishonest_status_keys_are_detected_recursively() -> None:
     assert set(found) == {"upload_state", "cloud_provider", "sync_state"}
 
 
-def test_live_route_half_of_sc_sf_4_2_is_deferred() -> None:
-    """Documents the deferral so a reader cannot mistake this for full coverage.
+def test_shared_builder_half_of_sc_sf_4_2_stays_closed() -> None:
+    """The builder the routes consume stays closed on its own.
 
-    The router that serves ``/api/backup/status`` is WU-14. Until it exists the
-    only honest assertion is on the shared builder, which this suite proves
-    closed. This test exists to make that boundary explicit rather than implied.
+    The LIVE half of SC-SF-4.2 is asserted by
+    ``test_backup_router.py::test_live_status_payload_is_honest_end_to_end``;
+    this test keeps the shared-builder contract from regressing underneath it.
     """
     payload = build_local_write_status(
         destination="/mnt/sync",

@@ -84,8 +84,19 @@ def _verdict(name: str, passed: bool, detail: str) -> GateCheck:
     return GateCheck(name, passed, detail)
 
 
-def _cards(claims: dict) -> dict:
-    return project_cards(claims, worlds=["gate-world"], probe_ok=True)
+def _cards(claims: dict, *, backup_state: str | None = None) -> dict:
+    """Project cards for a claims dict, forwarding the backup evidence seam.
+
+    ``backup_state`` is the dedicated-contract state the backup backend derives
+    from a persisted folder plus a recorded successful local write (REQ-CC-1).
+    Omitting it models a bare claim with no evidence.
+    """
+    return project_cards(
+        claims,
+        worlds=["gate-world"],
+        probe_ok=True,
+        backup_state=backup_state,
+    )
 
 
 def check_legacy_wiring_removed(project_root: Path) -> GateCheck:
@@ -238,13 +249,30 @@ def check_readiness_truthfulness(project_root: Path) -> GateCheck:
 
 
 def check_deferred_handoff(project_root: Path) -> GateCheck:
-    cards = _cards({"identity": "configured", "backup": "configured"})
+    """The deferred-handoff gate stays honest in BOTH directions (REQ-CC-3).
+
+    Forward: a bare ``{"identity":"configured","backup":"configured"}`` claim
+    with no evidence MUST still leave the cards pending, so a stale registry
+    claim can never fake readiness. Reverse: a genuinely evidenced
+    ``backup: configured`` (the dedicated contract's derived state) MUST
+    actually configure the card, so the gate cannot pass by silently ignoring
+    the backend's real evidence.
+    """
+    bare = _cards({"identity": "configured", "backup": "configured"})
     stale = [key for key in ("identity", "backup", "import")
-             if cards.get(key) != "pending"]
+             if bare.get(key) != "pending"]
     if stale:
         return _verdict("deferred_handoff", False,
                         "stale claims configured: " + ", ".join(stale))
-    return _verdict("deferred_handoff", True, "deferred cards stay pending")
+    evidenced = _cards(
+        {"identity": "configured", "backup": "configured"},
+        backup_state="configured",
+    )
+    if evidenced.get("backup") != "configured":
+        return _verdict("deferred_handoff", False,
+                        "evidenced backup card did not configure")
+    return _verdict("deferred_handoff", True,
+                    "deferred cards stay pending; evidenced backup configures")
 
 
 def check_zero_legacy_mutation(project_root: Path) -> GateCheck:

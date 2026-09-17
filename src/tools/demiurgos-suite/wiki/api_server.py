@@ -177,6 +177,8 @@ import data_root  # flat sibling module (data-root resolver, WU-2)
 import world_recycle_bin  # flat sibling module (world-level recycle bin)
 from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
 from backup.middleware import DataChangeNotifierMiddleware  # write signal + quiesce gate
+from backup.router import create_backup_router  # /api/backup/* (WU-14)
+from backup.state import backup_state  # backup card dedicated contract (WU-14)
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 logger = logging.getLogger("demiurgos-api")
@@ -662,6 +664,7 @@ def onboarding_readiness():
         _world_names(),
         bool(probe["ok"]),
         telegram_state=telegram_state(state, telegram_has_token()),
+        backup_state=backup_state(state),
     )
     return {
         "local_editor": probe,
@@ -7751,6 +7754,18 @@ app.include_router(
 app.include_router(
     create_ideas_bank_router(
         require_principal=lambda request: _resolve_principal(request),
+    ),
+)
+
+# Backup destination, runs, snapshots and restore (/api/backup/*). Every route
+# is behind require_principal and fails closed (401) on an unauthenticated call;
+# the status payload carries local-write fields only and is asserted
+# cloud-free and vocabulary-clean before it leaves (REQ-BUI-1, REQ-SF-4).
+app.include_router(
+    create_backup_router(
+        require_principal=lambda request: _resolve_principal(request),
+        data_root=lambda: _project_root(),
+        engine=lambda: _backup_engine(),
     ),
 )
 
