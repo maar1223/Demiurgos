@@ -19,6 +19,7 @@ import {
   backupCardConfigured,
   backupCardState,
   backupWriteCopy,
+  isSessionRequiredError,
   normalizeConflicts,
 } from "@/components/organisms/BackupSection";
 import type {
@@ -27,6 +28,7 @@ import type {
   BackupRestorePreview,
   BackupSnapshot,
 } from "@/api/types";
+import { ApiError } from "@/api/types";
 // Raw source of the organism under test — used by the honest-copy scan
 // (REQ-BUI-3) so a literal that no rendered state reaches is still caught.
 import backupSectionSource from "@/components/organisms/BackupSection.tsx?raw";
@@ -348,6 +350,57 @@ describe("BackupSection", () => {
 
     expect(await screen.findByText(/quedó sin resolver/i)).toBeInTheDocument();
     expect(screen.getByText(/residuos: ideas/i)).toBeInTheDocument();
+  });
+
+  // WU-15's suite mocked the read as a resolved payload and never exercised the
+  // unauthorised path, which is exactly how the raw "Autenticación requerida"
+  // red line shipped. These tests pin the real 401 behavior.
+  it("shows an actionable session-required state on a 401, not a generic error", async () => {
+    const user = userEvent.setup();
+    const onRequestSignIn = vi.fn();
+    const unauthorised = new ApiError(401, "Autenticación requerida");
+    mocked.getBackupStatus.mockRejectedValue(unauthorised);
+    mocked.getBackupCandidates.mockRejectedValue(unauthorised);
+
+    render(<BackupSection onRequestSignIn={onRequestSignIn} />);
+
+    const state = await screen.findByTestId("backup-session-required");
+    // Actionable copy and a concrete way forward — not the machine-ish detail.
+    expect(
+      within(state).getByText(/Necesitás iniciar sesión para configurar el respaldo/i),
+    ).toBeInTheDocument();
+    expect(within(state).getByText(/Iniciá sesión y volvé a esta tarjeta/i)).toBeInTheDocument();
+    expect(within(state).queryByText("Autenticación requerida")).not.toBeInTheDocument();
+    expect(findForbiddenVocabulary(state.textContent ?? "")).toEqual([]);
+
+    await user.click(within(state).getByRole("button", { name: "Iniciar sesión" }));
+    expect(onRequestSignIn).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats the API's Autenticación requerida detail as session-required", async () => {
+    const unauthorised = new Error("Autenticación requerida");
+    mocked.getBackupStatus.mockRejectedValue(unauthorised);
+    mocked.getBackupCandidates.mockRejectedValue(unauthorised);
+
+    render(<BackupSection />);
+
+    // No navigation callback here: the copy still states what to do.
+    expect(await screen.findByTestId("backup-session-required")).toBeInTheDocument();
+    expect(screen.getByText(/Iniciá sesión y volvé a esta tarjeta/i)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Iniciar sesión" }),
+    ).not.toBeInTheDocument();
+    expect(isSessionRequiredError(unauthorised)).toBe(true);
+    expect(isSessionRequiredError(new ApiError(500, "Fallo interno"))).toBe(false);
+  });
+
+  it("keeps the honest error path for a non-session failure", async () => {
+    mocked.getBackupStatus.mockRejectedValue(new ApiError(500, "Fallo interno del servidor"));
+
+    render(<BackupSection />);
+
+    expect(await screen.findByText("Fallo interno del servidor")).toBeInTheDocument();
+    expect(screen.queryByTestId("backup-session-required")).not.toBeInTheDocument();
   });
 
   it("renders no forbidden delivery vocabulary in the component source", () => {

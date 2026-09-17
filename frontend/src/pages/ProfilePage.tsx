@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
@@ -1044,8 +1044,9 @@ function AssistantSection() {
  * are reused from ConfigurationCenter.tsx so the Profile tabs and the shared
  * module never drift.
  */
-function ConfigurationSection() {
+function ConfigurationSection({ onRequestSignIn }: { onRequestSignIn?: () => void }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [readiness, setReadiness] = useState<ReadinessSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -1060,6 +1061,30 @@ function ConfigurationSection() {
   };
 
   useEffect(load, []);
+
+  /**
+   * Every declared card action is the card's real entry point, so the renderer
+   * below draws `card.action` for ANY card that declares one — never a growing
+   * allowlist of keys. When the target is the page you are already on (backup →
+   * `/perfil?tab=configuracion`), navigating would be an invisible no-op, so the
+   * control performs an in-page move instead: scroll the card section into view
+   * and focus it, the same landing guarantee an anchor/skip-link gives keyboard
+   * and assistive-technology users.
+   */
+  const runCardAction = (card: (typeof CARD_DEFS)[number]) => {
+    const action = card.action;
+    if (!action) return;
+    const targetPath = action.to.split("?")[0];
+    if (targetPath === location.pathname) {
+      const section = document.getElementById(`config-card-${card.key}`);
+      if (section) {
+        section.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        section.focus();
+      }
+      return;
+    }
+    navigate(action.to);
+  };
 
   if (loading) {
     return (
@@ -1126,6 +1151,8 @@ function ConfigurationSection() {
         return (
           <section
             key={card.key}
+            id={`config-card-${card.key}`}
+            tabIndex={-1}
             aria-labelledby={`config-card-title-${card.key}`}
             className="rounded-lg border border-edge bg-surface-raised p-4"
           >
@@ -1143,19 +1170,19 @@ function ConfigurationSection() {
             </div>
             <p className="mt-1 text-small text-muted">{card.description}</p>
 
-            {card.key === "backup" && <BackupSection />}
-
-            {card.key === "locale" && card.action && (
+            {card.action && (
               <div className="mt-3">
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => navigate(card.action!.to)}
+                  onClick={() => runCardAction(card)}
                 >
                   {card.action.label}
                 </Button>
               </div>
             )}
+
+            {card.key === "backup" && <BackupSection onRequestSignIn={onRequestSignIn} />}
 
             {card.key === "offline" && (
               <dl className="mt-4 space-y-3 border-t border-edge pt-4">
@@ -1509,7 +1536,7 @@ export default function ProfilePage() {
             ) : section === "seguridad" ? (
               <VaultSection />
             ) : section === "configuracion" ? (
-              <ConfigurationSection />
+              <ConfigurationSection onRequestSignIn={() => setSection("sesion")} />
             ) : section === "integraciones" ? (
               <IntegrationsSection />
             ) : section === "mundos" ? (
