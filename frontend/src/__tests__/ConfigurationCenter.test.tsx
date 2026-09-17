@@ -48,16 +48,34 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     // The import card keeps the operational copy (world-importer slice 2).
     const importCard = CARD_DEFS.find((card) => card.key === "import");
     expect(importCard?.description).toMatch(/El importador está operativo/i);
+
+    // WU-15: the backup card leaves the deferred entry-only state — it now
+    // links to its real configuration surface and its description is
+    // provider-neutral and local-write-only (no provider, no rclone).
+    const backupCard = CARD_DEFS.find((card) => card.key === "backup");
+    expect(backupCard?.action).toEqual({
+      label: "Configurar respaldo",
+      to: "/perfil?tab=configuracion",
+    });
+    expect(backupCard?.description).toMatch(/carpeta local/i);
+    expect(backupCard?.description).not.toMatch(/rclone/i);
+    expect(backupCard?.description).not.toMatch(/Google Drive/i);
   });
 
   it("cardState never overstates deferred capabilities (ONB-3.1/ONB-3.5)", () => {
     const stale: Record<string, CardState> = Object.fromEntries(
       CARD_DEFS.map((card) => [card.key, "configured"]),
     );
-    // backup and import lack dedicated contracts → forced pending.
+    // import lacks a dedicated contract → forced pending.
     for (const key of DEFERRED_CARD_KEYS) {
       expect(cardState(stale, key)).toBe("pending");
     }
+    // SC-CC-2.2 — backup left the forced-pending set; its own dedicated
+    // contract (backup_state) is the authority, so a stale claim is no longer
+    // downgraded here. The BackupSection still gates "Configurado" on evidence.
+    expect(DEFERRED_CARD_KEYS.has("backup")).toBe(false);
+    expect([...DEFERRED_CARD_KEYS]).toEqual(["import"]);
+    expect(cardState(stale, "backup")).toBe("configured");
     // identity (auth-vault-credentials R-ID1 backend contract), telegram (WU-3b1,
     // ONB-3.3), assistant, locale, world and offline may truthfully render
     // configured.
