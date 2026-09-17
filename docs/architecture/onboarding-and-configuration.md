@@ -29,7 +29,7 @@
 ## 0. Relación con la constitución y los contratos existentes
 
 - La **definición global del producto** (principios, conceptos canónicos, fronteras de dominio y decisiones G1–G15) vive en `docs/architecture/demiurgos-platform.md`. **Este documento no la duplica.**
-- La **decisión global G11** (`[DECISIÓN CERRADA]`) ya acordó que el onboarding configura **idioma, modelos LLM e importar/crear mundo**, que **Google+rclone es no bloqueante**, que rclone crea el **árbol espejo por taller**, que hay **sync 30 s tras editar** y **restauración Google→Demiurgos**. Este contrato **consolida y ordena** esa decisión en el orden MVP de la sección 2 sin reabrirla.
+- La **decisión global G11** (`[DECISIÓN CERRADA]`) ya acordó que el onboarding configura **idioma, modelos LLM e importar/crear mundo**, que la **carpeta sincronizada de Google Drive es no bloqueante**, que el **árbol espejo por taller** se escribe en esa carpeta, que hay **sync 30 s tras editar** y **restauración Google→Demiurgos**. Este contrato **consolida y ordena** esa decisión en el orden MVP de la sección 2 sin reabrirla. El cliente de sincronización queda fuera de la arquitectura y lo elige el operador.
 - El **importador de mundo** (producto y arquitectura en `docs/architecture/world-importer.md`; superficie en `docs/architecture/world-importer-ui.md`) es el contrato del flujo "importar mundo existente"; la **restauración desde respaldo** es un flujo distinto (IM9) y este contrato no la convierte en una modalidad de importación.
 - El **Taller de Mundo** gobierna el **árbol físico del mundo propiedad del Autor**, las **vistas semánticas** (W9, W10) y el **gobierno de canon** Borrador vs Canon (W3–W5, W11). La estructura Lore recomendada de la sección 8 opera **dentro** de esas reglas y no las redefine.
 - El **Taller de Herramientas** fija el vocabulario **Metodologías / Plantillas / Catálogos / Referencias** (`docs/architecture/tool-workshop.md`, sección 1.1); este contrato lo referencia sin duplicarlo (sección 9).
@@ -63,7 +63,7 @@
 | **1** | IA texto y visión | **Bloqueante para las capacidades de IA**, no para el núcleo local | Con soporte de **configuración local/offline** desde el MVP (secciones 5–6); puede omitirse temporalmente sin bloquear pasos posteriores no-IA |
 | **2** | Telegram | **Opcional** | **Único servicio de mensajería inicial**, usando las capacidades internas de Hermes (proveedor conversacional); la captura de ideas por Telegram ya existe como ingesta (`[ACTUAL]` — constitución, sección 4, captura de ideas) |
 | **3** | Mundo: crear desde cero o importar | **Bloqueante para entrar al Taller de Mundo** | **Último paso operativo** del onboarding; detalle en secciones 7–8 |
-| **4** | Respaldo (Google Drive/rclone) | **Opcional, posterior al mundo** | Detalle en sección 10 |
+| **4** | Respaldo (carpeta sincronizada) | **Opcional, posterior al mundo** | Detalle en sección 10 |
 | **5** | Listo para Trabajar / resumen | — | Punto de salida; detalle en sección 11 |
 
 - La **generación/regeneración profunda de imágenes queda fuera del MVP**: el paso 1 incluye **visión como análisis** (texto y visión), no la generación de imágenes de personaje, cuyo alcance sigue siendo decisión global abierta (constitución, G5). `[DECISIÓN CERRADA — OC2]`
@@ -236,8 +236,8 @@ Reglas de la estructura recomendada:
 |---|---|
 | **Momento** | Posterior al paso 3; nunca antes de existir un mundo |
 | **Opcionalidad** | Omitir deja la tarjeta respaldo en **pendiente**; se retoma desde el Centro |
-| **Medio inicial** | **Google Drive / rclone** (coherente con G11: árbol espejo por taller, sync tras editar, restauración Google→Demiurgos) |
-| **Backup ≠ Restore** | Son **flujos distintos**: **backup** guarda estado hacia Drive/rclone; **restore** recupera estado y configuración no secreta hacia la instalación (IM9) |
+| **Medio inicial** | **Carpeta sincronizada** (coherente con G11: árbol espejo por taller, sync tras editar, restauración Google→Demiurgos). El cliente de sincronización es externo y lo elige el operador |
+| **Backup ≠ Restore** | Son **flujos distintos**: **backup** guarda estado en la carpeta sincronizada; **restore** recupera estado y configuración no secreta hacia la instalación (IM9) |
 | **Restore** | Recupera **estado no secreto**, **reconstruye el grafo** y **revalida servicios** |
 | **Reconfiguración tras restore** | **Secretos, proveedores, Telegram, dominio y TLS pueden requerir reconfiguración** en la máquina destino; el restore no los transporta en claro |
 
@@ -259,7 +259,7 @@ Reglas de la estructura recomendada:
 - **Editor local**: el almacenamiento local permite leer y guardar correctamente.
 - **Asistente**: existe un modelo principal multimodal que supera las pruebas de texto y visión.
 - **Telegram**: la conexión fue validada con éxito.
-- **Respaldo**: Drive/rclone tiene consentimiento y una prueba de acceso funciona.
+- **Respaldo**: la carpeta sincronizada tiene consentimiento y una prueba de acceso funciona.
 - **Identidad**: la identidad local o Google está validada según el modo disponible.
 - **Offline/dispositivo**: el núcleo local funciona sin conexión.
 - Solo **Mundo** y **Editor local** son esenciales para `Listo para Trabajar`; Telegram, Respaldo, Identidad y Asistente pueden quedar pendientes sin afirmar que están configurados. `[DECISIÓN CERRADA — OC21]`
@@ -279,7 +279,7 @@ Reglas de la estructura recomendada:
 | Identidad | Cuenta Google, revalidación, recuperación autorizada (sección 4) |
 | IA texto/visión | Modelos/proveedores locales y remotos, credenciales, modelo principal del Asistente (sección 6 y 6.1) |
 | Telegram | Canal de mensajería (paso 2) |
-| Respaldo/Restauración | Backup y restore Google Drive/rclone (sección 10) |
+| Respaldo/Restauración | Backup y restore hacia la carpeta sincronizada (sección 10) |
 | Idioma, región y zona horaria | Localización del paso 0 (sección 3) |
 | Mundos | Crear, importar o restaurar (secciones 7–8) |
 | Offline/dispositivo | Estado de conexión y capacidades locales (sección 5) |
@@ -335,7 +335,7 @@ Estado verificado ANTES del retiro (WU-5a/WU-5b, 2026-08-18). Se conserva como e
 | **OC7** | **Mundo como último paso**: crear desde cero (identidad + árbol mínimo + estructura Lore recomendada opcional) o **importar delegando en el contrato del importador** (análisis semántico LLM + aclaraciones interactivas); **restaurar respaldo es flujo separado** (sección 7) |
 | **OC8** | **Estructura Lore recomendada solo para mundos nuevos**: `lore/reglas, lugares, culturas, criaturas, facciones, artefactos, historia`; explicada en términos humanos; **sin contenido inventado**; sin carpetas físicas relaciones/canon/conflictos/propuestas (vistas transversales); mundos importados **conservan su árbol físico** con **mapeo semántico confirmable y con confianza**, sin reorganización forzada (sección 8) |
 | **OC9** | Vocabulario **Metodologías/Plantillas/Catálogos/Referencias** referenciado a `tool-workshop.md` 1.1 **sin duplicarlo**; el onboarding solo explica lo necesario (sección 9) |
-| **OC10** | **Respaldo** después del mundo, **opcional y omitible**; Google Drive/rclone; **backup y restore son flujos distintos**; restore recupera estado no secreto, **reconstruye el grafo** y **revalida servicios**; secretos/proveedores/Telegram/dominio/TLS pueden requerir reconfiguración (sección 10) |
+| **OC10** | **Respaldo** después del mundo, **opcional y omitible**; carpeta sincronizada; **backup y restore son flujos distintos**; restore recupera estado no secreto, **reconstruye el grafo** y **revalida servicios**; secretos/proveedores/Telegram/dominio/TLS pueden requerir reconfiguración (sección 10) |
 | **OC11** | **Listo para Trabajar** = estado de mundo/workspace, **no** OKF `stable`; posible con **insignias de capacidad** (editor local listo, asistente pendiente, respaldo pendiente); **no afirma capacidades cloud listas** (sección 11) |
 | **OC12** | **Centro de Configuración permanente**: ajustes globales + entrada contextual; tarjetas identidad, IA texto/visión, Telegram, respaldo/restauración, idioma/región/zona, mundos, offline/dispositivo; estados **pendiente/configurado/requiere conexión/error**; reanudación **por sección independiente** (sección 12) |
 | **OC13** | **Retiro del wizard legacy `web-config-ui`** tras validar el nuevo onboarding: histórico/solo referencia; fuera del camino soportado; marcado no usable; sin referencias activas en docs/arranque; solo se conservan las ideas aprovechables (sección 13) |
