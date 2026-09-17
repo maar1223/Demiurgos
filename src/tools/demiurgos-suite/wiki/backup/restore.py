@@ -81,6 +81,7 @@ from backup.transport.base import (
     SnapshotRef,
     TransportError,
 )
+from backup.transport.folder import _normalize_staged_path
 
 #: The snapshot's own metadata member; reserved, never restored into the root.
 SNAPSHOT_META_DIRNAME = "meta"
@@ -546,6 +547,49 @@ def _first_missing_or_sized(manifest: Manifest, staged: Path) -> str | None:
     return None
 
 
+def _gate_manifest_path(path: Any) -> str:
+    """Run ONE manifest-supplied path through the transport's own name gate.
+
+    A snapshot's manifest is attacker-influenced input: it lives in the user's
+    chosen sync folder and a tampered one can name ``../../evil.sqlite3``. The
+    transport already refuses exactly that shape for every path it writes
+    (:func:`backup.transport.folder._normalize_staged_path`, the SAME gate the
+    publish path uses), so restore reuses that gate instead of inventing a
+    second validation scheme. The gate runs BEFORE any read or write, and a
+    rejection is surfaced as a :class:`SnapshotValidationError` naming the
+    offending path.
+    """
+    try:
+        return _normalize_staged_path(path)
+    except TransportError as exc:
+        raise SnapshotValidationError(path, f"unsafe manifest path: {exc}") from exc
+
+
+def _contained_path(root: Path, relative: str) -> Path:
+    """Resolve *relative* under *root*, refusing anything that escapes it.
+
+    Defence in depth beside :func:`_gate_manifest_path`: even though the name
+    gate already rejects ``..`` and absolute components, the resolved path is
+    proved to stay under *root* before it is ever used, so a future gate
+    relaxation cannot silently re-open the hole. ``resolve()`` collapses symlinks
+    too, so a symlinked escape is refused as well.
+    """
+    resolved_root = Path(root).resolve()
+    resolved = (resolved_root / relative).resolve()
+    if resolved != resolved_root and resolved_root not in resolved.parents:
+        raise SnapshotValidationError(
+            relative, f"path escapes the expected root {resolved_root}"
+        )
+    return resolved
+
+
+def _gated_and_contained(root: Path, relative: Any) -> str:
+    """Gate a manifest path with the transport's rules, then prove containment."""
+    safe = _gate_manifest_path(relative)
+    _contained_path(root, safe)
+    return safe
+
+
 def sqlite_integrity(path: Path) -> str:
     """``PRAGMA integrity_check`` of *path*, read-only, refusing a missing file.
 
@@ -630,6 +674,18 @@ def validate_staged_snapshot(
             "requires a COMPLETE snapshot"
         )
 
+    # WARNING-1 fix: every manifest-supplied path is gated FIRST, before any read
+    # or write. The manifest is attacker-influenced input; a crafted
+    # ``sqlite[].path = "../../evil.sqlite3"`` used to pass validation, be read
+    # from outside staging and written outside the data root. Both entry paths
+    # (read by ``_first_missing_or_sized``/``verify_manifest`` and by the SQLite
+    # copy-back) and sqlite paths are gated with the transport's own name rules,
+    # then proved contained. Nothing outside the staging root is ever touched.
+    for entry in manifest.entries:
+        _gated_and_contained(staged, entry.path)
+    for record in manifest.sqlite:
+        _gated_and_contained(staged, record.path)
+
     broken = _first_missing_or_sized(manifest, staged)
     if broken is not None:
         raise SnapshotValidationError(
@@ -652,7 +708,7 @@ def validate_staged_snapshot(
                 f"manifest records integrity {record.integrity!r}, not "
                 f"{INTEGRITY_OK!r}",
             )
-        integrity = sqlite_integrity(staged / record.path)
+        integrity = sqlite_integrity(_contained_path(staged, record.path))
         if integrity != INTEGRITY_OK:
             raise SnapshotValidationError(
                 record.path, f"PRAGMA integrity_check returned {integrity!r}"
@@ -997,7 +1053,11 @@ def capture_staged_databases(
     staged = Path(staged_dir)
     payloads: dict[str, bytes] = {}
     for record in manifest.sqlite:
-        source = staged / record.path
+        # Defence in depth: re-gate and re-prove containment on the read path,
+        # even though ``validate_staged_snapshot`` already did so — this function
+        # is also reachable directly, and nothing outside staging may be read.
+        relative = _gated_and_contained(staged, record.path)
+        source = _contained_path(staged, relative)
         if not source.is_file():
             raise SnapshotValidationError(
                 record.path, "staged SQLite database disappeared before the swap"
@@ -1037,7 +1097,11 @@ def restore_databases(
     root = Path(data_root)
     restored: list[str] = []
     for relative in sorted(payloads):
-        target = root / relative
+        # Defence in depth: the write path is gated with the transport's own
+        # rules and proved contained under the data root BEFORE anything is
+        # written, so a payload keyed by an escaping path can never write outside.
+        safe_relative = _gated_and_contained(root, relative)
+        target = _contained_path(root, safe_relative)
         target.parent.mkdir(parents=True, exist_ok=True)
         remove_sqlite_sidecars(target)
         temp = target.with_name(f"{target.name}.tmp-{uuid.uuid4().hex}")

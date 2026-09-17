@@ -94,7 +94,7 @@ def test_exclusions_hold_and_are_recorded(tmp_path: Path) -> None:
     (
         ("ideas", "ideas/*", False),
         ("mundos", "mundos/<World>/*", False),
-        ("estado", "data/*.sqlite3", True),
+        ("data", "data/*", False),
         ("config", "config/* (no secrets)", False),
     ),
 )
@@ -113,18 +113,18 @@ def test_unruled_member_has_no_rule() -> None:
 
 
 def test_ruled_subtree_is_included_and_sqlite_scope_is_narrow(tmp_path: Path) -> None:
-    """A ruled subtree is taken recursively; ``estado/`` takes only SQLite files."""
+    """A ruled subtree is taken recursively; ``data/`` takes its databases too."""
     _make(tmp_path / "ideas" / "nota.md")
-    _make(tmp_path / "estado" / "idea-capture.sqlite3")
-    _make(tmp_path / "estado" / "scratch.txt")
+    _make(tmp_path / "data" / "idea-capture.sqlite3")
+    _make(tmp_path / "data" / "methodology" / "library.json")
 
     inventory = build_inventory(tmp_path)
 
     assert "ideas/nota.md" in inventory.included
-    assert "estado/idea-capture.sqlite3" in inventory.included
-    assert "estado/scratch.txt" not in inventory.included
-    recorded = {entry.path: entry.reason for entry in inventory.excluded}
-    assert recorded.get("estado/scratch.txt")
+    assert "data/idea-capture.sqlite3" in inventory.included
+    # ``data/methodology/`` is author content and is NOT a sqlite file, so a
+    # narrow sqlite-only walk would have dropped it. It must survive.
+    assert "data/methodology/library.json" in inventory.included
 
 
 def test_case_collision_is_detected_names_both_and_aborts(tmp_path: Path) -> None:
@@ -206,3 +206,85 @@ def _make(path: Path) -> None:
     """Create *path* (and parents) as a small text file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("x", encoding="utf-8")
+
+
+def test_data_secrets_are_excluded_by_rule_and_the_databases_survive(
+    tmp_path: Path,
+) -> None:
+    """WARNING-2 fix: ``data/`` keeps its databases and refuses its secrets.
+
+    ``data/`` mixes the four databases the backup owns with auth/session
+    material, local machine state and lock files. The old ``estado`` rule never
+    matched, so ``data/`` was walked in full and ``data/sessions.json`` (auth
+    session hashes), ``data/local-state.json`` and ``data/idea-capture.lock``
+    were staged into the cloud-synced folder. Each is now refused BY RULE with a
+    recorded reason, while all four owned databases are still staged and the two
+    operational ones stay out.
+
+    NOTE for the archive phase: spec #3350 / design #3351 / tasks #3352 describe
+    the stores as living in ``estado/``. The real layout is ``data/`` and this
+    test locks the corrected behavior; the artifacts must be updated to match.
+    """
+    owned = (
+        "idea-capture",
+        "world-checkpoints",
+        "co-creation-sessions",
+        "guided-sessions",
+    )
+    for name in owned:
+        _make(tmp_path / "data" / f"{name}.sqlite3")
+    for name in ("conversation-memory", "import-jobs"):
+        _make(tmp_path / "data" / f"{name}.sqlite3")
+    _make(tmp_path / "data" / "sessions.json")
+    _make(tmp_path / "data" / "local-state.json")
+    _make(tmp_path / "data" / "idea-capture.lock")
+    _make(tmp_path / "data" / "methodology" / "library.json")
+
+    inventory = build_inventory(tmp_path)
+
+    recorded = {entry.path: entry.reason for entry in inventory.excluded}
+    for secret in (
+        "data/sessions.json",
+        "data/local-state.json",
+        "data/idea-capture.lock",
+    ):
+        assert secret not in inventory.included, f"{secret} leaked into the backup"
+        assert secret in recorded, f"{secret} is not recorded as excluded"
+        assert recorded[secret].strip(), f"{secret} has an empty exclusion reason"
+
+    for name in owned:
+        assert f"data/{name}.sqlite3" in inventory.included, f"{name} was lost"
+    for name in ("conversation-memory", "import-jobs"):
+        assert f"data/{name}.sqlite3" not in inventory.included
+
+    # Author content under data/ must survive the recursive walk.
+    assert "data/methodology/library.json" in inventory.included
+
+
+def test_data_secret_class_catches_an_equivalent_new_file(tmp_path: Path) -> None:
+    """The ``data/`` class matches a ROLE, not three filenames.
+
+    An equivalent new file — a future ``telegram-sessions.json``, a
+    ``machine-state.json`` or a new ``*.lock`` — is caught by the same rule, and
+    a same-named file OUTSIDE ``data/`` is never touched by the scoped class.
+    """
+    _make(tmp_path / "data" / "telegram-sessions.json")
+    _make(tmp_path / "data" / "machine-state.json")
+    _make(tmp_path / "data" / "world-checkpoints.lock")
+    _make(tmp_path / "config" / "sessions.json")  # same name, different subtree
+
+    inventory = build_inventory(tmp_path)
+
+    for secret in (
+        "data/telegram-sessions.json",
+        "data/machine-state.json",
+        "data/world-checkpoints.lock",
+    ):
+        assert secret not in inventory.included
+    recorded = {entry.path: entry.reason for entry in inventory.excluded}
+    assert recorded["data/telegram-sessions.json"] == "excluded:auth-session-material"
+    assert recorded["data/machine-state.json"] == "excluded:local-machine-state"
+    assert recorded["data/world-checkpoints.lock"] == "excluded:process-lock-file"
+    # The class is scoped to data/: a same-named file elsewhere is untouched.
+    assert "config/sessions.json" in inventory.included
+

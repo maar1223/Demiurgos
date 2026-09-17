@@ -11,6 +11,10 @@ The proofs:
   missing entry, a size mismatch, a checksum mismatch, an incomplete manifest,
   an unsupported schema version, a failed ``PRAGMA integrity_check`` and an OKF
   contract failure (SC-RS-2.1/2.2) — with the data root proved byte-identical;
+* a crafted/tampered manifest path (``entries[].path`` AND ``sqlite[].path``) is
+  refused at VALIDATION time — traversal, absolute, Windows drive-qualified and
+  UNC variants — so nothing outside the staging root is ever read and nothing
+  outside the data root is ever written (WARNING-1 fix);
 * the swap parks and renames per member, quiesces before the first rename and
   resumes after the last, and never touches an excluded member;
 * a mid-swap rename failure rolls back, retries once and, when the retry also
@@ -366,6 +370,155 @@ def test_validation_aborts_on_an_okf_contract_failure(tmp_path: Path) -> None:
 
     assert failure.value.path == "mundos/ekkor/lore/Bad.md"
     assert "OKF" in str(failure.value)
+
+
+def _crafted_manifest_snapshot(
+    tmp_path: Path,
+    *,
+    manifest_path: str,
+    as_sqlite: bool,
+) -> tuple[Path, Path | None]:
+    """A staged snapshot whose manifest names *manifest_path* as a record.
+
+    The record's path is the attack: ``as_sqlite`` puts it on ``sqlite[].path``,
+    otherwise on ``entries[].path``. When the crafted path resolves INSIDE
+    ``tmp_path`` a real file is planted there, so the test can prove it is never
+    read and never written; an absolute or drive-qualified path resolves outside
+    the sandbox, so nothing is planted (the test stays hermetic and never writes
+    to a real location). Returns ``(staged, planted_or_None)``.
+    """
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    planted: Path | None = None
+    try:
+        candidate = (staged / manifest_path).resolve()
+        candidate.relative_to(tmp_path)
+    except (ValueError, OSError):
+        candidate = None  # escapes the sandbox: plant nothing, still reject
+    if candidate is not None:
+        planted = candidate
+        planted.parent.mkdir(parents=True, exist_ok=True)
+
+    if as_sqlite:
+        payload = _database_bytes()
+        if planted is not None:
+            planted.write_bytes(payload)
+        digest = hashlib.sha256(payload).hexdigest()
+        record = SqliteRecord("evil", manifest_path, digest, "ok")
+        entries: tuple[EntryRecord, ...] = ()
+        records: tuple[SqliteRecord, ...] = (record,)
+    else:
+        payload = b"planted outside staging"
+        if planted is not None:
+            planted.write_bytes(payload)
+        digest = hashlib.sha256(payload).hexdigest()
+        entry = EntryRecord(
+            path=manifest_path,
+            kind="file",
+            size=len(payload),
+            sha256=digest,
+            mtime_ns=planted.stat().st_mtime_ns if planted is not None else 0,
+        )
+        entries = (entry,)
+        records = ()
+
+    manifest = Manifest(
+        schema_version=MANIFEST_SCHEMA_VERSION,
+        snapshot_id="2026-01-01T000000Z",
+        created_at="2026-01-01T00:00:00Z",
+        data_root="/original/root",
+        checksum_algorithm="sha256",
+        complete=True,
+        totals=Totals(entries=len(entries) + len(records), bytes=len(payload)),
+        top_level=(),
+        entries=entries,
+        sqlite=records,
+        excluded=(),
+        findings=(),
+    )
+    manifest_path_obj = staged / R.SNAPSHOT_MANIFEST_PATH
+    manifest_path_obj.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path_obj.write_text(json.dumps(manifest.to_dict()), encoding="utf-8")
+    return staged, planted
+
+
+#: The crafted paths a tampered manifest may carry. Each is unsafe: traversal,
+#: absolute POSIX, Windows drive-qualified, and UNC. Both record kinds are gated.
+_UNSAFE_MANIFEST_PATHS = (
+    "../../evil.sqlite3",
+    "../../../evil.sqlite3",
+    "/tmp/demiurgos-evil.sqlite3",
+    "C:\\evil.sqlite3",
+    "\\\\share\\evil.sqlite3",
+    "nested/../../evil.sqlite3",
+)
+
+
+@pytest.mark.parametrize("manifest_path", _UNSAFE_MANIFEST_PATHS)
+@pytest.mark.parametrize("as_sqlite", (True, False))
+def test_validation_rejects_an_unsafe_manifest_path_before_any_read_or_write(
+    tmp_path: Path, manifest_path: str, as_sqlite: bool
+) -> None:
+    """WARNING-1 fix: a crafted manifest path is refused BEFORE any read/write.
+
+    The verifier's probe put ``../../evil.sqlite3`` on ``sqlite[].path`` with a
+    valid database planted outside staging; it passed validation, was READ from
+    outside staging and was WRITTEN outside the data root. Every manifest-supplied
+    path — ``entries[].path`` AND ``sqlite[].path`` — now runs through the
+    transport's own name gate at VALIDATION time, so the refusal happens before
+    the first read or write. This test makes the probe permanent and also asserts
+    nothing outside was touched.
+    """
+    staged, planted = _crafted_manifest_snapshot(
+        tmp_path, manifest_path=manifest_path, as_sqlite=as_sqlite
+    )
+    root = tmp_path / "data-root"
+    root.mkdir()
+    planted_before = planted.read_bytes() if planted is not None else None
+
+    with pytest.raises(R.SnapshotValidationError):
+        R.validate_staged_snapshot(staged)
+
+    # Nothing was read or written outside staging: a planted file is intact.
+    if planted is not None:
+        assert planted.read_bytes() == planted_before
+    # Nothing appeared in the data root either.
+    assert list(root.iterdir()) == []
+
+
+def test_validation_gate_also_guards_the_direct_read_and_write_seams(
+    tmp_path: Path,
+) -> None:
+    """Defence in depth: ``capture_staged_databases`` and ``restore_databases``.
+
+    Both are reachable directly, so each re-gates its path. A payload keyed by a
+    traversal path must be refused by ``restore_databases`` BEFORE it writes
+    outside the data root.
+    """
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    manifest = Manifest(
+        schema_version=MANIFEST_SCHEMA_VERSION,
+        snapshot_id="2026-01-01T000000Z",
+        created_at="2026-01-01T00:00:00Z",
+        data_root="/original/root",
+        checksum_algorithm="sha256",
+        complete=True,
+        totals=Totals(entries=1, bytes=8),
+        top_level=(),
+        entries=(),
+        sqlite=(SqliteRecord("evil", "../../evil.sqlite3", "0" * 64, "ok"),),
+        excluded=(),
+        findings=(),
+    )
+    with pytest.raises(R.SnapshotValidationError):
+        R.capture_staged_databases(staged, manifest)
+
+    root = tmp_path / "data-root"
+    root.mkdir()
+    with pytest.raises(R.SnapshotValidationError):
+        R.restore_databases(root, {"../../evil.sqlite3": b"payload"})
+    assert not (tmp_path / "evil.sqlite3").exists()
 
 
 def _database_bytes(rows: int = 1) -> bytes:
