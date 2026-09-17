@@ -8,10 +8,12 @@ never proves readiness. It never overstates a remote/cloud capability.
 ``project_cards`` derives the OC12 card states from authoritative local
 truth (ONB-3.1/3.2, OC11/OC12/OC21):
 
-- Cloud cards WITHOUT a dedicated contract (backup) NEVER become
-  ``configured`` from local evidence: only their dedicated contracts may mark
-  them configured. A stale registry claim is downgraded to ``pending``
-  instead of being trusted.
+- Cloud cards WITHOUT a dedicated contract NEVER become ``configured`` from
+  local evidence: only their dedicated contracts may mark them configured. A
+  stale registry claim is downgraded to ``pending`` instead of being trusted.
+  The ``backup`` card is no longer in that set: it gained a DEDICATED CONTRACT
+  (REQ-CC-1) and is ``configured`` only with a persisted folder AND a recorded
+  successful local write, supplied through ``backup_state``.
 - The identity card HAS a dedicated contract (vault-settings-configure,
   R-ID-01): it is ``configured`` ONLY when the persisted vault flag is on
   (``capabilities.vault.enabled``) OR when ``DEMIURGOS_AUTH_MODE=credentials``
@@ -48,18 +50,21 @@ from local_state import CARD_STATES
 
 # Cloud/remote capabilities without a dedicated contract: their cards can
 # never be derived to ``configured`` from local evidence in this slice
-# (ONB-3.1). ``identity`` is excluded because auth-vault-credentials (R-ID1)
-# provides its dedicated contract below. Telegram is excluded here because
-# ONB-3.3 provides its dedicated backend contract; its state is passed in
-# explicitly.
-CLOUD_CARDS: frozenset[str] = frozenset({"backup"})
+# (ONB-3.1). The constant is KEPT (``project_cards`` iterates it) but is now
+# EMPTY: ``backup`` left it in WU-14, because the modern backup/restore flow
+# gained a dedicated contract (REQ-CC-1, SC-CC-1.3) supplied via
+# ``backup_state``. A future cloud card without a contract goes back in here.
+CLOUD_CARDS: frozenset[str] = frozenset()
 
 # Remote capabilities whose readiness depends on connectivity (OC5): they are
 # never available offline. ``assistant`` is included because a cloud/multimodal
 # model needs its provider; a pending assistant (no proven multimodal model)
 # therefore surfaces as remote-pending while the local core keeps working.
 # ``identity`` is NOT remote-pending: the credentials identity contract is
-# local (account slot + mode), not connectivity-bound.
+# local (account slot + mode), not connectivity-bound. ``backup`` STAYS here
+# (WU-14): the folder is a local copy, but the sync client that carries it off
+# the machine is connectivity-dependent, so a pending backup is honestly
+# remote-pending.
 REMOTE_CARDS: tuple[str, ...] = ("telegram", "backup", "assistant")
 
 # Assistant proof evidence keys required before the card may be configured.
@@ -116,6 +121,7 @@ def project_cards(
     worlds: Sequence[str],
     probe_ok: bool,
     telegram_state: str | None = None,
+    backup_state: str | None = None,
 ) -> dict[str, str]:
     """Derive honest Configuration Center card states (OC11/OC12/OC21).
 
@@ -123,8 +129,11 @@ def project_cards(
     of existing world names (filesystem truth); ``probe_ok`` is the derived
     local-storage probe result; ``telegram_state`` is the state supplied by
     the ONB-3.3 telegram backend (write-only token presence + last connection
-    test) or None when no backend evidence exists. Returns one CardState per
-    card key.
+    test) or None when no backend evidence exists. ``backup_state`` is the
+    backup card's dedicated-contract state (REQ-CC-1), supplied by
+    ``backup.state.backup_state`` from a persisted folder plus a recorded
+    successful local write; without it the card stays ``pending``. Returns one
+    CardState per card key.
     """
     cards: dict[str, str] = {}
     for key in CLOUD_CARDS:
@@ -141,6 +150,13 @@ def project_cards(
     # the backend's real evidence; without it the card stays pending.
     cards["telegram"] = (
         telegram_state if telegram_state in CARD_STATES else "pending"
+    )
+    # Backup has its own dedicated contract (REQ-CC-1): the backend derives it
+    # from a persisted folder AND a recorded successful local write, exactly
+    # like telegram. A bare registry claim is never consulted, so the card
+    # stays pending without that evidence (SC-CC-1.1/1.2).
+    cards["backup"] = (
+        backup_state if backup_state in CARD_STATES else "pending"
     )
     cards["assistant"] = "configured" if assistant_proven(state) else "pending"
     cards["world"] = "configured" if worlds else "pending"

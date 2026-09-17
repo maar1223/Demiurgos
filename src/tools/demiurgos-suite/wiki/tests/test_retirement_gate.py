@@ -168,6 +168,43 @@ def test_deferred_handoff_passes_with_stale_claims():
     assert gate.check_deferred_handoff(PROJECT_ROOT).passed
 
 
+def test_deferred_handoff_bare_backup_claim_stays_pending():
+    """SC-CC-3.1 (forward) — a bare ``backup: configured`` claim never configures."""
+    cards = gate._cards({"identity": "configured", "backup": "configured"})
+    assert cards["backup"] == "pending"
+    assert cards["identity"] == "pending"
+    # The gate reports the bare claim as honest while the claim stays pending.
+    assert gate.check_deferred_handoff(PROJECT_ROOT).passed
+
+
+def test_deferred_handoff_evidenced_backup_configures():
+    """SC-CC-3.1 (reverse) — a genuinely evidenced backup card configures it."""
+    cards = gate._cards(
+        {"identity": "configured", "backup": "configured"},
+        backup_state="configured",
+    )
+    assert cards["backup"] == "configured"
+    # The gate must not fail the real evidence, only the bare claim.
+    assert gate.check_deferred_handoff(PROJECT_ROOT).passed
+
+
+def test_deferred_handoff_fails_when_evidenced_backup_cannot_configure(monkeypatch):
+    """The gate's failure branch: if the dedicated contract cannot configure,
+    the gate must fail instead of silently ignoring the evidence."""
+    real = gate.project_cards
+
+    def broken(state, worlds, probe_ok, telegram_state=None, backup_state=None):
+        cards = real(state, worlds, probe_ok,
+                     telegram_state=telegram_state, backup_state=backup_state)
+        cards["backup"] = "pending"
+        return cards
+
+    monkeypatch.setattr(gate, "project_cards", broken)
+    check = gate.check_deferred_handoff(PROJECT_ROOT)
+    assert not check.passed
+    assert "evidenced backup" in check.detail
+
+
 def test_zero_legacy_mutation_passes():
     assert gate.check_zero_legacy_mutation(PROJECT_ROOT).passed
 
