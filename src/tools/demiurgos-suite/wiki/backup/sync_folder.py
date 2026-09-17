@@ -16,8 +16,9 @@ Two responsibilities, both about TELLING THE TRUTH before a byte is written:
   heuristic guess must never block (REQ-SF-3, SC-SF-3.3).
 
 **Every OS touchpoint is injected** — ``environ``, ``registry_reader``,
-``drive_type``, ``platform`` and ``home`` — so the Windows logic is fully
-unit-testable on Linux and the module is hermetic under test.
+``drive_type``, ``platform``, ``home`` and ``mounts_reader`` — so both the
+Windows logic and the Linux mount-table signal are fully unit-testable without a
+real registry, drive type or mount, and the module is hermetic under test.
 
 **UNVERIFIED signals (deliberately NOT implemented as verified):**
 
@@ -31,10 +32,12 @@ unit-testable on Linux and the module is hermetic under test.
   differs the signal simply does not fire and the target stays ``unknown``
   (a safe false-negative, never a false "streaming" verdict).
 
-Only two signals are treated as verified: the ``DRIVE_REMOTE`` + drive-root
-marker pair, and a bounded walk whose ``stat()`` raises for a not-materialized
-entry. OneDrive's ``%OneDrive%`` being a reparse point is a usability signal
-(fall back to the registry), not a streaming verdict.
+Three signals are treated as verified: the ``DRIVE_REMOTE`` + drive-root marker
+pair, a bounded walk whose ``stat()`` raises for a not-materialized entry, and —
+on Linux — a mount table whose longest matching mount point for the target is a
+``fuse``/``fuse.*`` filesystem, because a FUSE mount is an illusion over the
+network, not local storage. OneDrive's ``%OneDrive%`` being a reparse point is a
+usability signal (fall back to the registry), not a streaming verdict.
 
 **Honest copy (REQ-SF-4).** The status/copy surface here reports the LOCAL write
 only. :data:`FORBIDDEN_DELIVERY_VOCABULARY` (es-ES and en) and
@@ -98,8 +101,24 @@ MACOS_GOOGLE_DRIVE_GLOB = "GoogleDrive*/My Drive"
 #: A bounded walk never reads more than this many entries (REQ-SF-3).
 WALK_LIMIT = 200
 
+#: The mount table the production seam reads to detect a Linux FUSE mount.
+#: It is an OS path, not author data, and the reader returns nothing when absent.
+MOUNTS_PATH = Path("/proc/mounts")
+#: A FUSE filesystem is the streaming shape on Linux. ``fuseblk`` (NTFS-3G) is a
+#: real block-backed local mount and is deliberately NOT a FUSE fstype here.
+FUSE_FSTYPE = "fuse"
+
 #: The remedy shown when a verified streaming target is blocked (REQ-SF-3.1).
+#: It is a Windows remedy: the "Mirroring" setting belongs to Google Drive for
+#: Desktop and has no equivalent on Linux.
 MIRRORING_REMEDY = "switch Google Drive for Desktop to Mirroring"
+#: The remedy for the Linux FUSE-mount signal. "Mirroring" does not exist on
+#: Linux and a FUSE mount is not a sync client, so the operator must pick a real
+#: one or a folder that is genuinely local.
+LINUX_STREAMING_REMEDY = (
+    "this folder is a network-backed FUSE mount; use a real sync client such as "
+    "abraunegg/onedrive, or choose a folder that is genuinely local storage"
+)
 MODE_UNKNOWN_NOTE = (
     "target mode is unknown (no verified signal) — accepted as a local folder"
 )
@@ -178,6 +197,19 @@ def default_drive_type(path: Path) -> int | None:
         return int(ctypes.windll.kernel32.GetDriveTypeW(str(path)))
     except Exception:  # pragma: no cover - defensive
         return None
+
+
+def default_mounts_reader() -> list[str]:
+    """Read the real mount table (``/proc/mounts``); ``[]`` when it is absent.
+
+    This is the production half of the ``mounts_reader`` seam: it reads the
+    host's table for the Linux FUSE-mount signal. Tests inject a fake table
+    instead, so no test ever mounts FUSE or depends on the host's mounts.
+    """
+    try:
+        return MOUNTS_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return []
 
 
 class _ScandirEntry:
@@ -425,9 +457,13 @@ def discover_candidates(
 
     Windows reads the OneDrive env vars and falls back to the registry; Google
     Drive gets heuristics only; every other client is picker-only. macOS gets
-    heuristics; Linux gets nothing (the deferred rclone transport would own
-    that). Whatever is returned — including an empty list — the caller MUST
-    still offer the picker, so any user-chosen folder works (REQ-SF-1).
+    heuristics; Linux gets no candidate because every OneDrive/Google Drive
+    desktop client there is third-party and must be chosen by the operator —
+    there is no deferred transport to own it. The recommended Linux client is the
+    ``abraunegg/onedrive`` sync client; a FUSE mount (``onedriver``) is the
+    streaming shape :func:`classify_target` rejects, not a sync replacement.
+    Whatever is returned — including an empty list — the caller MUST still offer
+    the picker, so any user-chosen folder works (REQ-SF-1).
 
     ``drive_type=None`` disables the bounded fixed-drive scan; production passes
     :func:`default_drive_type`, and tests inject a fake to stay hermetic.
@@ -520,7 +556,7 @@ def _walk_signal(target: Path, walk: Callable[[Path, int], Iterable[Any]]) -> st
     """``streaming`` on an unstattable entry, else ``clean``/``empty``.
 
     A ``stat()`` that raises means the entry is a not-materialized placeholder —
-    the second (and only other) verified streaming signal (REQ-SF-3).
+    a verified streaming signal (REQ-SF-3).
     """
     saw_entry = False
     for entry in _iter_walk(walk, target):
@@ -532,12 +568,93 @@ def _walk_signal(target: Path, walk: Callable[[Path, int], Iterable[Any]]) -> st
     return "clean" if saw_entry else "empty"
 
 
+# POSIX mount tables escape whitespace and backslashes in every field
+# (mount(8), fstab(5)); a mount point with a space arrives as ``\040``.
+_MOUNT_UNESCAPES: tuple[tuple[str, str], ...] = (
+    ("\\040", " "),
+    ("\\011", "\t"),
+    ("\\012", "\n"),
+    ("\\134", "\\"),
+)
+
+
+def _unescape_mount_field(field: str) -> str:
+    """Decode the octal escapes a mount table uses inside a field."""
+    for escaped, plain in _MOUNT_UNESCAPES:
+        field = field.replace(escaped, plain)
+    return field
+
+
+def _mount_entries(lines: Iterable[str]) -> list[tuple[str, str]]:
+    """``(mount_point, fstype)`` pairs from ``/proc/mounts``-shaped lines.
+
+    A line without at least the three standard fields is skipped rather than
+    guessed at: the table is advisory, so a malformed entry can only fail to
+    fire the signal, never invent one.
+    """
+    entries: list[tuple[str, str]] = []
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        entries.append((_unescape_mount_field(fields[1]), fields[2]))
+    return entries
+
+
+def _mount_point_of(
+    absolute: str, entries: Iterable[tuple[str, str]]
+) -> tuple[str, str] | None:
+    """The longest mount point containing *absolute*, with its filesystem type.
+
+    Longest-prefix matching handles nested mounts: the innermost filesystem is
+    the one the target actually lives on. The root mount normalizes to the empty
+    prefix, which every absolute path starts with.
+    """
+    best: tuple[str, str] | None = None
+    for mount_point, fstype in entries:
+        prefix = mount_point.rstrip("/")
+        if absolute == prefix or absolute.startswith(prefix + "/"):
+            if best is None or len(prefix) > len(best[0]):
+                best = (prefix, fstype)
+    return best
+
+
+def _is_fuse_fstype(fstype: str) -> bool:
+    """True for ``fuse`` and ``fuse.*``; ``False`` for ``fuseblk`` and others.
+
+    ``fuseblk`` (NTFS-3G) and ``fusectl`` back a real local mount, so treating
+    them as streaming would be a false positive, not a verified signal.
+    """
+    return fstype == FUSE_FSTYPE or fstype.startswith(FUSE_FSTYPE + ".")
+
+
+def _fuse_mount_streaming(
+    target: Path, mounts_reader: Callable[[], Iterable[str]] | None
+) -> bool:
+    """A VERIFIED streaming signal from the mount table (Linux FUSE); else ``False``.
+
+    No heuristic: when the reader is unavailable, raises, returns nothing, or its
+    longest match for *target* is not a FUSE filesystem, the signal does not fire.
+    """
+    reader = default_mounts_reader if mounts_reader is None else mounts_reader
+    try:
+        lines = list(reader())
+        absolute = os.path.abspath(os.fspath(target))
+    except OSError:
+        return False
+    entry = _mount_point_of(absolute, _mount_entries(lines))
+    return entry is not None and _is_fuse_fstype(entry[1])
+
+
 def _classify_mode(
     target: Path,
     drive_type: Callable[[Path], int | None] | None,
     walk: Callable[[Path, int], Iterable[Any]],
+    mounts_reader: Callable[[], Iterable[str]] | None = None,
 ) -> str:
     """The mode verdict from verified signals only; ``unknown`` otherwise."""
+    if _fuse_mount_streaming(target, mounts_reader):
+        return MODE_STREAMING
     kind = _drive_kind(target, drive_type)
     if kind == DRIVE_REMOTE and _drive_root_has_markers(target, walk):
         return MODE_STREAMING
@@ -563,21 +680,27 @@ def classify_target(
     *,
     drive_type: Callable[[Path], int | None] | None = None,
     walk: Callable[[Path, int], Iterable[Any]] | None = None,
+    mounts_reader: Callable[[], Iterable[str]] | None = None,
 ) -> TargetCapabilities:
     """Classify *path* as ``mirrored``, ``streaming`` or ``unknown``.
 
     ``streaming`` requires a VERIFIED signal — ``DRIVE_REMOTE`` plus a drive-root
-    marker, or a bounded walk hitting an unstattable entry. ``mirrored`` requires
-    ``DRIVE_FIXED`` plus a bounded walk that reads every entry. Anything else is
-    ``unknown``: the unmeasured signals listed in the module docstring never
-    produce a verdict, and a heuristic guess never blocks (SC-SF-3.3).
+    marker, a bounded walk hitting an unstattable entry, or the Linux mount table
+    showing a ``fuse``/``fuse.*`` filesystem on the target's longest mount point.
+    ``mirrored`` requires ``DRIVE_FIXED`` plus a bounded walk that reads every
+    entry. Anything else is ``unknown``: the unmeasured signals listed in the
+    module docstring never produce a verdict, and a heuristic guess never blocks
+    (SC-SF-3.3).
 
     A verified streaming target reports ``writable=False``, so no run can publish
     into a cache that may be cleared or corrupted. ``same_volume_as_data_root``
     stays ``False`` here — the data root is not part of this seam.
+
+    ``mounts_reader`` defaults to reading the real ``/proc/mounts``; a test
+    injects a fake table, so no test mounts FUSE or reads the host's mounts.
     """
     target = Path(path)
-    mode = _classify_mode(target, drive_type, walk or bounded_walk)
+    mode = _classify_mode(target, drive_type, walk or bounded_walk, mounts_reader)
     writable = mode != MODE_STREAMING and _is_writable_directory(target)
     return TargetCapabilities(
         kind="folder",
@@ -593,23 +716,41 @@ def evaluate_target(
     *,
     drive_type: Callable[[Path], int | None] | None = None,
     walk: Callable[[Path, int], Iterable[Any]] | None = None,
+    mounts_reader: Callable[[], Iterable[str]] | None = None,
 ) -> TargetDecision:
     """The warn/block policy for a target, ready to gate ``/api/backup/run``.
 
-    * verified ``streaming`` — rejected with the Mirroring remedy, no bytes
-      written;
+    * verified ``streaming`` — rejected, no bytes written, with a remedy that
+      fits the verified signal;
     * ``mirrored`` — accepted silently;
     * ``unknown`` — accepted with an informational note;
     * missing / not-a-directory / not-writable — rejected with a specific reason.
+
+    The remedy is signal-appropriate: the Linux FUSE-mount signal carries
+    :data:`LINUX_STREAMING_REMEDY`, because "Mirroring" is a Google Drive for
+    Desktop setting that does not exist on Linux. Every other streaming signal
+    keeps the Windows :data:`MIRRORING_REMEDY`. Choosing by signal (not by an OS
+    argument) also keeps the production call sites correct without passing one.
 
     ``classify_target`` uses the same signals, so the transport's ``probe()`` and
     this gate cannot disagree about a verified status.
     """
     target = Path(path)
-    capabilities = classify_target(target, drive_type=drive_type, walk=walk)
+    resolved_walk = walk or bounded_walk
+    capabilities = classify_target(
+        target,
+        drive_type=drive_type,
+        walk=resolved_walk,
+        mounts_reader=mounts_reader,
+    )
     if capabilities.mode_hint == MODE_STREAMING:
+        remedy = (
+            LINUX_STREAMING_REMEDY
+            if _fuse_mount_streaming(target, mounts_reader)
+            else MIRRORING_REMEDY
+        )
         return TargetDecision(
-            False, capabilities, remedy=MIRRORING_REMEDY, reason=REASON_STREAMING
+            False, capabilities, remedy=remedy, reason=REASON_STREAMING
         )
     if not target.is_dir():
         return TargetDecision(False, capabilities, reason=REASON_NOT_A_DIRECTORY)

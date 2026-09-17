@@ -6,9 +6,10 @@ Covers REQ-SF-1 (no hardcoded destination; the picker is always offered), REQ-SF
 (verified streaming/mirroring detection with warn/block, ``unknown`` otherwise).
 
 **Hermetic by construction.** Every OS touchpoint is injected — ``environ``,
-``registry_reader``, ``drive_type``, ``platform`` and ``home`` — and every walk
-is a fake entry list, so no test reads a real registry, a real drive type or a
-real streaming mount. Paths used are ``tmp_path`` fixtures.
+``registry_reader``, ``drive_type``, ``platform``, ``home`` and ``mounts_reader``
+— and every walk is a fake entry list, so no test reads a real registry, a real
+drive type, a real mount table or a real streaming mount. Paths used are
+``tmp_path`` fixtures.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from backup.sync_folder import (  # noqa: E402
     CONFIDENCE_VERIFIED,
     DRIVE_FIXED,
     DRIVE_REMOTE,
+    LINUX_STREAMING_REMEDY,
     MIRRORING_REMEDY,
     MODE_MIRRORED,
     MODE_STREAMING,
@@ -101,6 +103,20 @@ def walk_over(mapping: dict[Path, list[FakeEntry]]):
 
 def _no_drive(path: Path) -> None:
     return None
+
+
+def mounts_from(*lines: str):
+    """A hermetic ``mounts_reader``: returns exactly the injected table lines."""
+
+    def read() -> list[str]:
+        return list(lines)
+
+    return read
+
+
+def _missing_mounts() -> list[str]:
+    """Stand in for an absent or unreadable mount table."""
+    raise OSError("mount table unavailable")
 
 
 # --------------------------------------------------------------------------
@@ -376,6 +392,147 @@ def test_unverified_drive_type_value_never_reports_streaming(
         target, drive_type=lambda path: DRIVE_FIXED, walk=walk
     )
     assert capabilities.mode_hint != MODE_STREAMING
+
+
+# --------------------------------------------------------------------------
+# REQ-SF-3 — the Linux FUSE-mount signal (verified, injected mount table)
+# --------------------------------------------------------------------------
+def test_fuse_mount_point_is_verified_streaming_with_a_linux_remedy(
+    tmp_path: Path,
+) -> None:
+    """A ``fuse.*`` mount is an illusion over the network — blocked on Linux."""
+    target = tmp_path / "onedrive"
+    target.mkdir()
+    reader = mounts_from(
+        f"onedriver {target} fuse.onedriver rw,nosuid,nodev 0 0"
+    )
+
+    capabilities = classify_target(
+        target, drive_type=None, walk=walk_over({}), mounts_reader=reader
+    )
+    assert capabilities.mode_hint == MODE_STREAMING
+    assert capabilities.writable is False
+
+    decision = evaluate_target(
+        target, drive_type=None, walk=walk_over({}), mounts_reader=reader
+    )
+    assert decision.accepted is False
+    assert decision.reason == "verified streaming/virtual target"
+    assert decision.remedy == LINUX_STREAMING_REMEDY
+    assert "Mirroring" not in decision.remedy
+
+
+def test_fuse_mount_on_a_parent_mount_point_is_streaming(tmp_path: Path) -> None:
+    """The target lives under the FUSE mount; longest-prefix matching finds it."""
+    mount_root = tmp_path / "drive"
+    target = mount_root / "Mundos"
+    target.mkdir(parents=True)
+    reader = mounts_from(
+        "/dev/sda2 / ext4 rw,relatime 0 0",
+        f"onedriver {mount_root} fuse.onedriver rw,nosuid,nodev 0 0",
+    )
+    capabilities = classify_target(
+        target, drive_type=None, walk=walk_over({}), mounts_reader=reader
+    )
+    assert capabilities.mode_hint == MODE_STREAMING
+
+
+def test_fuse_mount_at_the_filesystem_root_is_streaming(tmp_path: Path) -> None:
+    """The root mount is a valid longest-prefix match, not skipped."""
+    target = tmp_path / "somewhere"
+    target.mkdir()
+    root = target.anchor or "/"
+    reader = mounts_from(f"sshfs#host:/ {root} fuse.sshfs rw,nosuid,nodev 0 0")
+    capabilities = classify_target(
+        target, drive_type=None, walk=walk_over({}), mounts_reader=reader
+    )
+    assert capabilities.mode_hint == MODE_STREAMING
+
+
+def test_mount_table_octal_escapes_are_decoded(tmp_path: Path) -> None:
+    """``/proc/mounts`` escapes spaces as ``\\040``; matching decodes them."""
+    mount_root = tmp_path / "My Drive"
+    target = mount_root / "Mundos"
+    target.mkdir(parents=True)
+    escaped = str(mount_root).replace(" ", "\\040")
+    reader = mounts_from(
+        f"gdrive {escaped} fuse.google-drive-ocamlfuse rw 0 0"
+    )
+    capabilities = classify_target(
+        target, drive_type=None, walk=walk_over({}), mounts_reader=reader
+    )
+    assert capabilities.mode_hint == MODE_STREAMING
+
+
+def test_local_filesystem_mount_point_is_not_streaming(tmp_path: Path) -> None:
+    """A real block-backed filesystem never fires the FUSE signal."""
+    target = tmp_path / "local"
+    target.mkdir()
+    reader = mounts_from(f"/dev/sda2 {tmp_path} ext4 rw,relatime 0 0")
+    walk = walk_over({target: [FakeEntry("a.md")]})
+    capabilities = classify_target(
+        target,
+        drive_type=lambda path: DRIVE_FIXED,
+        walk=walk,
+        mounts_reader=reader,
+    )
+    assert capabilities.mode_hint == MODE_MIRRORED
+    assert capabilities.writable is True
+
+
+def test_fuseblk_and_fusectl_are_not_streaming_signals(tmp_path: Path) -> None:
+    """``fuseblk`` (NTFS-3G) and ``fusectl`` back real local mounts, not streams."""
+    for fstype in ("fuseblk", "fusectl"):
+        target = tmp_path / f"local-{fstype}"
+        target.mkdir()
+        reader = mounts_from(f"/dev/sdb1 {target} {fstype} rw,nosuid,nodev 0 0")
+        walk = walk_over({target: [FakeEntry("a.md")]})
+        capabilities = classify_target(
+            target,
+            drive_type=lambda path: DRIVE_FIXED,
+            walk=walk,
+            mounts_reader=reader,
+        )
+        assert capabilities.mode_hint == MODE_MIRRORED
+
+
+def test_fuse_mount_elsewhere_does_not_affect_a_local_target(
+    tmp_path: Path,
+) -> None:
+    """A FUSE mount on a DIFFERENT path never makes a local target streaming."""
+    target = tmp_path / "local"
+    target.mkdir()
+    reader = mounts_from(
+        "/dev/sda2 / ext4 rw,relatime 0 0",
+        f"onedriver {tmp_path / 'elsewhere'} fuse.onedriver rw 0 0",
+    )
+    capabilities = classify_target(
+        target,
+        drive_type=None,
+        walk=walk_over({target: [FakeEntry("a.md")]}),
+        mounts_reader=reader,
+    )
+    assert capabilities.mode_hint == MODE_UNKNOWN
+
+
+def test_empty_or_missing_mount_table_never_fires_the_fuse_signal(
+    tmp_path: Path,
+) -> None:
+    """Empty, malformed or unreadable table → no verdict, no false positive."""
+    target = tmp_path / "unknown"
+    target.mkdir()
+    walk = walk_over({target: [FakeEntry("a.md")]})
+    for reader in (mounts_from(), mounts_from("garbage"), _missing_mounts):
+        capabilities = classify_target(
+            target, drive_type=None, walk=walk, mounts_reader=reader
+        )
+        assert capabilities.mode_hint == MODE_UNKNOWN
+
+    decision = evaluate_target(
+        target, drive_type=None, walk=walk, mounts_reader=mounts_from()
+    )
+    assert decision.accepted is True
+    assert decision.note == MODE_UNKNOWN_NOTE
 
 
 def test_missing_target_is_rejected_with_a_reason(tmp_path: Path) -> None:

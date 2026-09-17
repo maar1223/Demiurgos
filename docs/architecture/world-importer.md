@@ -31,7 +31,7 @@
 - La **definición global del producto** (principios, conceptos canónicos, fronteras de dominio y decisiones G1–G15) vive en `docs/architecture/demiurgos-platform.md`. **Este documento no la duplica.**
 - El **gobierno de canon** (Borrador vs Canon, propuestas y conflictos; W3–W5, W11), el **árbol físico del mundo propiedad del Autor** y la distinción de **carpetas del sistema** (`_context`, `.history`, `.papelera`) viven en `docs/architecture/world-workshop.md`. El importador opera **dentro** de esas reglas y no las redefine.
 - El **contrato OKF mínimo v1** (identidad, relaciones, mínimos por tipo) es decisión global cerrada (constitución, G1) y su capa de validación servidor-vive en `src/tools/demiurgos-suite/wiki/okf_contract.py`. El importador debe validar y normalizar contra ese contrato, no contra un duplicado.
-- La **restauración desde respaldo** (Google Drive/rclone → Demiurgos) es un flujo distinto: recupera el estado del mundo y la configuración no secreta de una instalación, no analiza documentos ni genera candidatos de contenido. G11 la define como objetivo global; este contrato no la convierte en una modalidad de importación.
+- La **restauración desde respaldo** (carpeta sincronizada → Demiurgos) es un flujo distinto: recupera el estado del mundo y la configuración no secreta de una instalación, no analiza documentos ni genera candidatos de contenido. G11 la define como objetivo global; este contrato no la convierte en una modalidad de importación.
 - El **asistente visible** se llama **Asistente de Demiurgos**; "Hermes" es el nombre interno del proveedor y nunca aparece en copia visible (constitución, G15/10.6). `[DECISIÓN CERRADA — referencia]`
 - En caso de conflicto, prevalece la constitución; la contradicción se reporta al Autor.
 
@@ -108,7 +108,7 @@
 | **Importador de Mundo** | Incorporar contenido nuevo o cambiado desde fuentes seleccionadas | Candidatos revisables, propuestas, borradores o actualizaciones gated |
 | **Restaurar desde respaldo** | Recuperar un mundo y su configuración no secreta en otra máquina o después de un formateo | Estado restaurado, grafo reconstruido y servicios pendientes de revalidación |
 
-Google Drive/rclone puede ser una fuente de ambos flujos, pero no comparten semántica: importar analiza contenido; restaurar recupera estado. La restauración nunca debe pasar por el diagnóstico de entidades del importador.
+La carpeta sincronizada puede ser una fuente de ambos flujos, pero no comparten semántica: importar analiza contenido; restaurar recupera estado. La restauración nunca debe pasar por el diagnóstico de entidades del importador.
 
 **Ciclo objetivo** (sección 4): `seleccionar fuente → analizar → diagnosticar → revisar → aprobar → importar → resultado/errores`. Análisis e indexación son **de solo lectura**; la importación es la única fase con escritura, y queda **detrás de la aprobación explícita del Autor** (constitución, 1.4 y 9.1).
 
