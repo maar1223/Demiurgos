@@ -7,18 +7,28 @@ tables decide what is taken:
 
 * :data:`TOP_LEVEL_RULES` — the subtree policy for a member the data layout
   recognizes (``ideas/``, ``mundos/<World>/``, ``skills/``, ``plantillas/``,
-  ``taller/``, ``estado/``, ``config/``). The table selects a WALK POLICY only:
-  it never drives discovery and never rewrites a member's case. A discovered
-  member it does not recognize is still INCLUDED by default and reported as
+  ``data/``, ``config/``). The table selects a WALK POLICY only: it never drives
+  discovery and never rewrites a member's case. A discovered member it does not
+  recognize is still INCLUDED by default and reported as
   ``findings: unclassified_top_level`` (REQ-CDL-2, SC-CDL-2.2), so a new
   top-level folder is never silently dropped and a new SUBfolder of a known
   member is included by construction.
 * :data:`EXCLUSION_RULES` — the explicit, enumerable exclusion table
-  (world-trash content, import spool, probes, VCS / code-index / virtualenv
+  (world-trash content, import spool, probes, the ``data/`` secrets class — auth
+  sessions, local machine state and process locks — VCS / code-index / virtualenv
   directories, mount residue, SQLite sidecars, the two operational DBs, the
   out-of-scope archive, and secrets). Every match is recorded on
   :attr:`Inventory.excluded` with a reason string, and the match is made HERE by
   rule — no call site special-cases a path (REQ-BE-1, SC-BE-1.3).
+
+**The ``data/`` folder mixes databases with secrets.** It holds the four
+databases the backup owns, the two it must not take, author content under
+``data/methodology/``, and operational material that must never leave the
+machine (``sessions.json`` auth session hashes, ``local-state.json`` local
+machine state, ``idea-capture.lock``). Because a narrow sqlite-only walk would
+drop the author content, the folder is walked recursively and the operational
+material is refused by a reasoned exclusion CLASS scoped to ``data/`` — each row
+matches a role, so an equivalent new file is caught by the same rule.
 
 Case-collision detection (WU-7b) lives here: :func:`detect_case_collisions`
 compares TOP-LEVEL members by their NFC + ``casefold()`` key, and
@@ -58,13 +68,27 @@ class SubtreeRule:
 
 #: Recognized members -> walk policy. This does NOT drive discovery or inclusion:
 #: a member absent here is still included by default (SC-BE-2.1).
+#:
+#: ``data/`` is the real operational member: the six SQLite stores resolve to
+#: ``<data root>/data/<name>.sqlite3`` (import_store, co_creation_session_store,
+#: guided_session_store, conversation_memory_store, world checkpoints,
+#: idea-capture), and ``data/methodology/`` is author content that MUST be
+#: staged. It is walked RECURSIVELY rather than sqlite-only, because a
+#: sqlite-only walk would silently drop ``data/methodology/``. The secrets that
+#: also live in this folder (auth sessions, local machine state, lock files) are
+#: refused by :data:`EXCLUSION_RULES` instead — see the ``data/`` exclusion class.
+#:
+#: The former ``estado`` / ``taller`` rows named top-level members that do not
+#: exist on disk: the real layout puts every store under ``data/``. Those dead
+#: rows are replaced by this one. (The SDD spec/design/tasks artifacts still say
+#: ``estado/``; the code is authoritative and the archive phase applies that
+#: correction — see the note in the tests.)
 TOP_LEVEL_RULES: tuple[SubtreeRule, ...] = (
     SubtreeRule(member="ideas", subtree="ideas/*"),
     SubtreeRule(member="mundos", subtree="mundos/<World>/*"),
     SubtreeRule(member="skills", subtree="skills/*"),
     SubtreeRule(member="plantillas", subtree="plantillas/*"),
-    SubtreeRule(member="taller", subtree="data/methodology"),
-    SubtreeRule(member="estado", subtree="data/*.sqlite3", sqlite_only=True),
+    SubtreeRule(member="data", subtree="data/*"),
     SubtreeRule(member="config", subtree="config/* (no secrets)"),
 )
 
@@ -73,22 +97,70 @@ TOP_LEVEL_RULES: tuple[SubtreeRule, ...] = (
 class ExclusionRule:
     """One row of the exclusion table (REQ-BE-1, SC-BE-1.3).
 
-    ``scope="subtree"`` matches the relative path exactly or as a directory
-    prefix; ``scope="name"`` globs the basename anywhere in the tree.
+    ``scope`` selects how ``pattern`` is matched against a candidate path:
+
+    * ``"subtree"`` — the relative path equals ``pattern`` or starts with it as a
+      directory prefix.
+    * ``"name"`` — the basename globs ``pattern`` anywhere in the tree.
+    * ``"name_in_subtree"`` — the relative path sits under ``under`` AND its
+      basename globs ``pattern``. This is the safe-by-construction scope for the
+      ``data/`` secrets class: it can only ever match inside ``under``, so a
+      same-named file elsewhere in the tree is untouched.
     """
 
     pattern: str
     reason: str
     scope: str = "name"
+    under: str = ""
 
 
 #: The explicit exclusion table. Every match is surfaced on ``excluded[]`` with
 #: its reason, so the manifest is self-explaining and an exclusion can never
 #: vanish silently.
+#:
+#: The ``data/`` class (WARNING-2 fix) refuses the operational material that
+#: shares the folder with the databases and author content. Each row matches a
+#: ROLE, not a single filename, so an equivalent new file is caught by the same
+#: rule: any auth-session document (``sessions.json`` today, a future
+#: ``telegram-sessions.json``), any local machine-state document
+#: (``local-state.json`` today), and any process lock (``idea-capture.lock``
+#: today). The four databases the backup owns are NOT matched — they carry no
+#: ``.json``/``.lock`` name and are sqlite files — while the two that must stay
+#: out are refused by their own rows above.
 EXCLUSION_RULES: tuple[ExclusionRule, ...] = (
     ExclusionRule("data/world-trash", "excluded:world-trash-content", "subtree"),
     ExclusionRule("data/import-spool", "excluded:import-spool-transient", "subtree"),
     ExclusionRule("data/probes", "excluded:probes-regenerable", "subtree"),
+    ExclusionRule(
+        "sessions.json",
+        "excluded:auth-session-material",
+        "name_in_subtree",
+        "data",
+    ),
+    ExclusionRule(
+        "*-sessions.json",
+        "excluded:auth-session-material",
+        "name_in_subtree",
+        "data",
+    ),
+    ExclusionRule(
+        "local-state.json",
+        "excluded:local-machine-state",
+        "name_in_subtree",
+        "data",
+    ),
+    ExclusionRule(
+        "*-state.json",
+        "excluded:local-machine-state",
+        "name_in_subtree",
+        "data",
+    ),
+    ExclusionRule(
+        "*.lock",
+        "excluded:process-lock-file",
+        "name_in_subtree",
+        "data",
+    ),
     ExclusionRule("_archivo_produccion", "excluded:out-of-scope-archive", "subtree"),
     ExclusionRule(".git", "excluded:vcs-metadata"),
     ExclusionRule(".codegraph", "excluded:code-index-regenerable"),
@@ -249,12 +321,20 @@ def match_exclusion(relative_path: str) -> str | None:
     """The reason *relative_path* is excluded, or ``None`` when it is taken.
 
     The whole table is consulted by rule — callers never special-case a path.
+    ``name_in_subtree`` rows only ever match inside their ``under`` directory, so
+    the ``data/`` secrets class can never refuse a same-named file elsewhere.
     """
     normalized = unicodedata.normalize("NFC", relative_path).replace("\\", "/")
     base = normalized.rsplit("/", 1)[-1]
     for rule in EXCLUSION_RULES:
         if rule.scope == "subtree":
             if normalized == rule.pattern or normalized.startswith(rule.pattern + "/"):
+                return rule.reason
+        elif rule.scope == "name_in_subtree":
+            if (
+                normalized.startswith(rule.under + "/")
+                and fnmatch.fnmatch(base, rule.pattern)
+            ):
                 return rule.reason
         elif fnmatch.fnmatch(base, rule.pattern):
             return rule.reason
