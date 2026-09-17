@@ -161,6 +161,24 @@ def _data_root() -> Path:
     return resolve_data_root()
 
 
+def _notify_backup_engine() -> None:
+    """Signal the backup engine after an out-of-band capture write (REQ-BE-6).
+
+    Layer B of the trigger: Hermes writes captures without going through the
+    API, so the middleware never sees them. ``notify_data_changed`` is a
+    non-blocking, I/O-free call that is a no-op when no engine runs in this
+    process (the API's reconciliation pass is the cross-process backstop), so it
+    is safe on the capture path and can never break a capture.
+    """
+    try:
+        _ensure_code_on_path()
+        from backup.engine import notify_data_changed  # noqa: PLC0415 — needs the path above
+
+        notify_data_changed()
+    except Exception:  # noqa: BLE001 — a signal must never fail a capture
+        return
+
+
 _handler = None
 
 # PR idea-capture-confirm-queue (WU2, R-4): the tool handler never receives the
@@ -663,6 +681,9 @@ def capture_intake_hook(*, event, gateway, session_store, **kwargs) -> dict | No
     if receipt.status == "DUPLICATE":
         return {"action": "skip", "reason": "idea-capture-duplicate"}  # R-4 / S-4.1
 
+    # Layer B (REQ-BE-6): the capture row is persisted out of band, so the
+    # backup engine is signalled here, after the write and never on a replay.
+    _notify_backup_engine()
     adapter = gateway._adapter_for_source(event.source)
     if adapter is not None:
         _schedule_capture_prompt(adapter, source, receipt.capture_id)
@@ -1054,6 +1075,8 @@ def _capture_idea_tool(args: dict, **kwargs) -> str:
         # repeated capture attempt for already-captured material never mutates
         # the row.
         return json.dumps({"capture_id": receipt.capture_id, "status": receipt.status})
+    # Layer B (REQ-BE-6): a parked capture is a durable write; signal the engine.
+    _notify_backup_engine()
     # Park path (Opción A): the ONLY path. Keep the capture for user
     # confirmation — transition to AWAITING_CONFIRM and schedule the
     # Guardar/Descartar keyboard via the gateway stashed by the intake hook

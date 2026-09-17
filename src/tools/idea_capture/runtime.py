@@ -79,6 +79,23 @@ def _project_root() -> Path:
     return resolve_data_root()
 
 
+def _notify_backup_engine() -> None:
+    """Signal the backup engine after an intake that bypassed the API (REQ-BE-6).
+
+    Layer B of the trigger: the compatibility poller persists captures without
+    an HTTP request, so the API's middleware never sees them. The call is
+    non-blocking and I/O-free and is a no-op when no engine runs in this process;
+    it can never break an intake.
+    """
+    try:
+        _ensure_wiki_on_path()
+        from backup.engine import notify_data_changed  # noqa: PLC0415 — needs the path above
+
+        notify_data_changed()
+    except Exception:  # noqa: BLE001 — a signal must never fail an intake
+        return
+
+
 def _config_path() -> Path:
     """``<data root>/config/idea-capture.yaml``, resolved on every call."""
     return _project_root() / "config" / "idea-capture.yaml"
@@ -296,7 +313,10 @@ class IdeaCaptureRuntime:
             update = update_from_telegram(payload)
         else:
             update = update_from_telegram(payload, resolve_file=self.resolve_file)
-        return self.service.accept(update)
+        receipt = self.service.accept(update)
+        # Layer B (REQ-BE-6): the capture is persisted without an API request.
+        _notify_backup_engine()
+        return receipt
 
     # -- confirmation flow (Save / Change world / Cancel) --------------------
 
