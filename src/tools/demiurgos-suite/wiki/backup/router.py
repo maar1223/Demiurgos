@@ -38,6 +38,7 @@ from typing import Any, Callable, Iterable, Mapping
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from backup import runner as backup_runner
 from backup.restore import (
     RestoreBlockedError,
     RestoreError,
@@ -52,7 +53,6 @@ from backup.restore import (
     staging_directory,
     validate_staged_snapshot,
 )
-from backup.snapshotter import BackupSnapshotter
 from backup.state import (
     BackupDestination,
     backup_state,
@@ -130,18 +130,6 @@ def _assert_honest_payload(payload: Mapping[str, Any]) -> None:
         assert_honest_copy(text)
 
 
-def _default_run(data_root: Path, destination: BackupDestination) -> Mapping[str, Any]:
-    """One synchronous run into the chosen folder (the manual "backup now").
-
-    Builds the real transport + snapshotter, so a run performed from the UI
-    publishes exactly what the engine would. Returns the run's identity only —
-    the caller re-reads the persisted status for the honest report.
-    """
-    transport = FolderTransport(Path(destination.path), data_root=data_root)
-    result = BackupSnapshotter(transport).run(data_root)
-    return {"snapshot_id": result.snapshot_id, "created_at": result.created_at}
-
-
 def _default_preview(
     transport: Any, data_root: Path, snapshot_id: str
 ) -> Mapping[str, Any]:
@@ -186,7 +174,8 @@ def create_backup_router(
     transport_factory: Callable[[Path], Any] | None = None,
     discover: Callable[[], list[Candidate]] | None = None,
     evaluate: Callable[[Path], TargetDecision] | None = None,
-    run_backup: Callable[[Path, BackupDestination], Mapping[str, Any]] | None = None,
+    run_backup: Callable[[Path, BackupDestination | None], backup_runner.RunOutcome]
+    | None = None,
     preview: Callable[[Any, Path, str], Mapping[str, Any]] | None = None,
     restore: Callable[..., Any] | None = None,
     engine: Callable[[], Any] | None = None,
@@ -222,6 +211,23 @@ def create_backup_router(
             raise HTTPException(
                 status_code=500, detail=f"backup config is not usable: {exc}"
             ) from exc
+
+    def _default_run(
+        data_root: Path, destination: BackupDestination | None
+    ) -> backup_runner.RunOutcome:
+        """One run into the chosen folder — the ONE run implementation.
+
+        Delegates to :func:`backup.runner.run_backup`, so ``POST /run`` and the
+        engine's runner are the same code path: preconditions -> transport ->
+        snapshot -> retention -> last-write. The route maps a refusal to the
+        honest HTTP status.
+        """
+        return backup_runner.run_backup(
+            data_root=data_root,
+            destination=destination,
+            evaluate=evaluate,
+            transport_factory=transport_factory,
+        )
 
     def _status_payload(
         root: Path,
@@ -349,27 +355,22 @@ def create_backup_router(
     def run_backup_now(request: Request) -> dict[str, Any]:
         """Run one backup into the chosen folder (the "backup now" action).
 
-        Refuses when no destination is configured or when the target is not
-        accepted (verified streaming): no bytes are written and the reason is
-        surfaced.
+        Drives the ONE run implementation (:func:`backup.runner.run_backup`),
+        which refuses before writing any byte when there is no destination or
+        the target is a verified streaming one — the reason (and the Mirroring
+        remedy) is surfaced here; no bytes are written.
         """
         _guard(request)
         root = _root()
         destination = _persisted(root)
-        if destination is None:
-            raise HTTPException(status_code=409, detail="no backup destination configured")
-        classifier = evaluate or evaluate_target
-        decision = classifier(Path(destination.path))
-        if not decision.accepted:
-            # A blocked target surfaces the REMEDY when there is one (streaming),
-            # so the user learns how to make the folder usable (REQ-SF-3.1).
+        outcome = (run_backup or _default_run)(root, destination)
+        if getattr(outcome, "refused", False):
             raise HTTPException(
                 status_code=409,
-                detail=decision.remedy
-                or decision.reason
-                or "the chosen folder is not usable",
+                detail=outcome.remedy
+                or outcome.error
+                or "the backup run was refused",
             )
-        (run_backup or _default_run)(root, destination)
         return _status_payload(root)
 
     # -- snapshots ---------------------------------------------------------

@@ -175,6 +175,7 @@ from order_manifest import read_order, remove_from_order
 
 import data_root  # flat sibling module (data-root resolver, WU-2)
 import world_recycle_bin  # flat sibling module (world-level recycle bin)
+from backup import runner as backup_runner  # the ONE run implementation
 from backup.engine import BackupEngine  # in-process backup trigger (WU-11)
 from backup.middleware import DataChangeNotifierMiddleware  # write signal + quiesce gate
 from backup.router import create_backup_router  # /api/backup/* (WU-14)
@@ -186,18 +187,31 @@ logger = logging.getLogger("demiurgos-api")
 # ---------------------------------------------------------------------------
 # Backup engine lifecycle (WU-11, portable-data-root-drive-backup)
 # ---------------------------------------------------------------------------
-# ONE engine per process, started and stopped by ``_lifespan``. The runner
-# performs a single run on the engine's worker thread; until the destination
-# slice (WU-14) supplies a configured folder it records the request and returns
-# ``None``, so the trigger is observable without publishing anything.
+# ONE engine per process, started and stopped by ``_lifespan``. Its runner is
+# the SAME implementation ``POST /api/backup/run`` drives (``backup.runner``), so
+# a debounced trigger and a manual run behave identically.
 _BACKUP_ENGINE: BackupEngine | None = None
 _BACKUP_ENGINE_LOCK = threading.Lock()
 
 
 def _run_backup_once() -> Any:
-    """One backup run. Returns ``None`` until a destination is configured."""
-    logger.debug("backup run requested (no destination configured yet)")
-    return None
+    """One backup run, on the engine's worker thread.
+
+    Delegates to :func:`backup.runner.run_backup`, the single run implementation
+    shared with ``POST /api/backup/run``. The destination is read from the data
+    root's ``config/backup.json``; with none configured the run refuses and
+    records the reason in its outcome. A run never raises into the engine.
+    """
+    try:
+        root: Path | None = _project_root()
+    except Exception as exc:  # noqa: BLE001 — an unresolved root refuses, never crashes
+        logger.warning("backup run skipped: %s", exc)
+        return backup_runner.RunOutcome(
+            status=backup_runner.STATUS_FAILED,
+            refused=True,
+            error=f"backup run skipped: {exc}",
+        )
+    return backup_runner.run_backup(data_root=root)
 
 
 def _backup_engine() -> BackupEngine:
