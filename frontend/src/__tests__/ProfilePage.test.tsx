@@ -166,6 +166,39 @@ describe("ProfilePage", () => {
     }
   });
 
+  it("renders the backup card's declared action as a clickable control that moves focus into the card", async () => {
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: {
+        backup: "pending",
+        locale: "configured",
+        offline: "configured",
+      },
+      offline: { local_ready: true, remote_pending: [] },
+      legacy: [],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/perfil"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Centro de Configuración" }));
+    await screen.findByRole("heading", { name: "Respaldo y restauración" });
+
+    // WU-15's declared action used to be dropped for every key except locale;
+    // the backup entry point must render as a real, clickable control.
+    const action = screen.getByRole("button", { name: "Configurar respaldo" });
+    expect(action).toBeInTheDocument();
+
+    // Its target is the current page (/perfil?tab=configuracion), so a plain
+    // navigate would be an invisible no-op. The control moves the user to the
+    // card section (scroll + focus) instead.
+    fireEvent.click(action);
+    expect(document.getElementById("config-card-backup")).toHaveFocus();
+  });
+
   it("renders the idea-capture wizard as the only Telegram surface inside Integraciones", () => {
     render(
       <MemoryRouter>

@@ -9,6 +9,7 @@ import {
   runBackupNow,
   setBackupDestination,
 } from "@/api/backup";
+import { ApiError } from "@/api/types";
 import type {
   BackupCandidate,
   BackupConflictReport,
@@ -81,6 +82,28 @@ function errorText(cause: unknown, fallback: string): string {
 }
 
 /**
+ * True when a failed `/api/backup/*` read means "no session", not "the backup
+ * is broken". The router fails CLOSED behind `require_principal`: an
+ * unauthenticated call is a 401 whose detail is `Autenticación requerida`. That
+ * case gets its own actionable state; every other failure keeps the honest
+ * error path.
+ */
+export function isSessionRequiredError(cause: unknown): boolean {
+  const message = cause instanceof Error ? cause.message : "";
+  if (cause instanceof ApiError && cause.status === 401) return true;
+  return /autenticación requerida/i.test(message);
+}
+
+export interface BackupSectionProps {
+  /**
+   * Concrete way forward for the session-required state. The Profile page
+   * passes a callback that opens its "Sesión de edición" tab, where the local
+   * session can actually be started.
+   */
+  onRequestSignIn?: () => void;
+}
+
+/**
  * The card may render "Configurado" ONLY with real evidence: the backend state
  * is `configured` AND a folder is persisted AND a successful local write is
  * recorded (REQ-CC-1/REQ-BUI-3). A bare `configured` claim from a stale/buggy
@@ -145,7 +168,7 @@ function modeLabel(mode: string | null): string {
   return MODE_LABELS[mode] ?? "Modo desconocido";
 }
 
-export function BackupSection() {
+export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [candidates, setCandidates] = useState<BackupCandidate[]>([]);
   const [pickerPath, setPickerPath] = useState("");
@@ -154,6 +177,9 @@ export function BackupSection() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // A 401 / `Autenticación requerida` is not a crash: it is a missing session
+  // with a concrete next step, kept separate from the honest error path.
+  const [sessionRequired, setSessionRequired] = useState(false);
 
   // Restore sub-flow state (state 5): list → preview → confirm → running → result.
   const [restoreOpen, setRestoreOpen] = useState(false);
@@ -170,9 +196,14 @@ export function BackupSection() {
     return getBackupStatus()
       .then((next) => {
         setStatus(next);
+        setSessionRequired(false);
         return next;
       })
       .catch((cause: unknown) => {
+        if (isSessionRequiredError(cause)) {
+          setSessionRequired(true);
+          return null;
+        }
         setError(errorText(cause, "No se pudo cargar el estado del respaldo"));
         return null;
       });
@@ -200,7 +231,12 @@ export function BackupSection() {
         setCandidates(discovered.candidates);
       })
       .catch((cause: unknown) => {
-        if (active) setError(errorText(cause, "No se pudo cargar la configuración de respaldo"));
+        if (!active) return;
+        if (isSessionRequiredError(cause)) {
+          setSessionRequired(true);
+          return;
+        }
+        setError(errorText(cause, "No se pudo cargar la configuración de respaldo"));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -310,6 +346,29 @@ export function BackupSection() {
     return (
       <div className="mt-4 flex items-center gap-2 text-small text-muted">
         <Spinner size="sm" /> Cargando estado del respaldo…
+      </div>
+    );
+  }
+
+  if (sessionRequired && !status) {
+    return (
+      <div
+        data-testid="backup-session-required"
+        role="status"
+        className="mt-3 rounded-lg border border-edge bg-surface-raised p-4"
+      >
+        <p className="text-small font-medium text-primary">
+          Necesitás iniciar sesión para configurar el respaldo
+        </p>
+        <p className="mt-1 text-small text-muted">
+          La carpeta de respaldo se lee y se escribe con tu sesión local. Iniciá sesión y volvé a
+          esta tarjeta para elegir la carpeta y ejecutar la primera copia.
+        </p>
+        {onRequestSignIn && (
+          <Button variant="primary" size="sm" className="mt-3" onClick={onRequestSignIn}>
+            Iniciar sesión
+          </Button>
+        )}
       </div>
     );
   }
