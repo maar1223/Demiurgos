@@ -16,10 +16,11 @@ tables decide what is taken:
 * :data:`EXCLUSION_RULES` — the explicit, enumerable exclusion table
   (world-trash content, import spool, probes, the ``data/`` secrets class — auth
   sessions, local machine state and process locks — VCS / code-index / virtualenv
-  directories, mount residue, SQLite sidecars, the two operational DBs, the
-  out-of-scope archive, and secrets). Every match is recorded on
-  :attr:`Inventory.excluded` with a reason string, and the match is made HERE by
-  rule — no call site special-cases a path (REQ-BE-1, SC-BE-1.3).
+  directories, installed dependency trees and tool caches, mount residue, SQLite
+  sidecars, the two operational DBs, the out-of-scope archive, and secrets).
+  Every match is recorded on :attr:`Inventory.excluded` with a reason string, and
+  the match is made HERE by rule — no call site special-cases a path
+  (REQ-BE-1, SC-BE-1.3).
 
 **The ``data/`` folder mixes databases with secrets.** It holds the four
 databases the backup owns, the two it must not take, author content under
@@ -165,6 +166,27 @@ EXCLUSION_RULES: tuple[ExclusionRule, ...] = (
     ExclusionRule(".git", "excluded:vcs-metadata"),
     ExclusionRule(".codegraph", "excluded:code-index-regenerable"),
     ExclusionRule(".venv", "excluded:virtualenv-code"),
+    # Tooling / dependency / cache directories, refused by basename ANYWHERE in
+    # the tree (scope ``name``). Their names are unambiguous: a folder called
+    # ``node_modules`` or ``__pycache__`` is tool output, never author lore, so
+    # refusing it anywhere cannot drop a world. This is what keeps an installed
+    # dependency tree and the test/tool caches out of the synced backup folder.
+    #
+    # Generic names are deliberately ABSENT: a folder called ``dist``, ``build``,
+    # ``target``, ``out``, ``output`` or ``cache`` can legitimately hold author
+    # content, and dropping it would be exactly the silent loss the design
+    # forbids ("unruled members are INCLUDED by default").
+    ExclusionRule("node_modules", "excluded:dependency-tree"),
+    ExclusionRule("__pycache__", "excluded:python-bytecode-cache"),
+    ExclusionRule(".pytest_cache", "excluded:test-run-cache"),
+    ExclusionRule(".mypy_cache", "excluded:type-check-cache"),
+    ExclusionRule(".ruff_cache", "excluded:linter-cache"),
+    ExclusionRule(".tox", "excluded:test-matrix-virtualenv"),
+    ExclusionRule(".nox", "excluded:test-matrix-virtualenv"),
+    ExclusionRule("*.egg-info", "excluded:python-package-metadata"),
+    ExclusionRule("venv", "excluded:virtualenv-code"),
+    ExclusionRule(".DS_Store", "excluded:os-metadata"),
+    ExclusionRule("Thumbs.db", "excluded:os-metadata"),
     ExclusionRule(".fuse_hidden*", "excluded:mount-residue"),
     ExclusionRule("*.sqlite3-wal", "excluded:sqlite-sidecar-wal"),
     ExclusionRule("*.sqlite3-shm", "excluded:sqlite-sidecar-shm"),
@@ -302,6 +324,18 @@ class Inventory:
     included: tuple[str, ...]
     excluded: tuple[ExcludedPath, ...]
     findings: tuple[Finding, ...]
+
+    @property
+    def excluded_count(self) -> int:
+        """How many paths the exclusion table left out, and why they are listed.
+
+        The full listing — every path WITH the reason that matched it — is
+        :attr:`excluded`; the manifest copies it verbatim, so what a run left
+        out is recorded rather than trusted. This one-number summary is the
+        minimum a caller (a run report or the UI) needs to surface the effect.
+        Pure data: no I/O and no new document.
+        """
+        return len(self.excluded)
 
 
 def classify_member(name: str) -> SubtreeRule | None:
