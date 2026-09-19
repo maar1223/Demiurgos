@@ -36,6 +36,12 @@ vi.mock("@/api/backup", async (importOriginal) => {
   return {
     ...actual,
     getBackupStatus: vi.fn(),
+    getBackupCandidates: vi.fn().mockResolvedValue({ candidates: [], picker: true }),
+    getBackupRestoreStatus: vi.fn().mockResolvedValue({
+      pending: false,
+      leftovers: [],
+      last_write: null,
+    }),
   };
 });
 

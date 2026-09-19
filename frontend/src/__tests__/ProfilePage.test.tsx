@@ -238,7 +238,7 @@ describe("ProfilePage", () => {
     }
   });
 
-  it("renders the backup card's declared action as a clickable control that moves focus into the card", async () => {
+  it("renders the backup card's declared action and navigates it to the Respaldo section", async () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {
@@ -264,11 +264,36 @@ describe("ProfilePage", () => {
     const action = screen.getByRole("button", { name: "Configurar respaldo" });
     expect(action).toBeInTheDocument();
 
-    // Its target is the current page (/perfil?tab=configuracion), so a plain
-    // navigate would be an invisible no-op. The control moves the user to the
-    // card section (scroll + focus) instead.
+    // REQ-PIA-10: the backup card targets the Respaldo section, so the click
+    // navigates there (the in-page scroll only applies to the exact location
+    // already shown, e.g. the locale card on Preferencias).
     fireEvent.click(action);
-    expect(document.getElementById("config-card-backup")).toHaveFocus();
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      ),
+    );
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Respaldo");
+  });
+
+  it("hosts the backup surface inside the Respaldo section (REQ-PIA-02)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=respaldo"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+
+    // BackupSection owns the respaldo section: its status heading renders
+    // against the mocked pending state.
+    expect(
+      await screen.findByRole("heading", { name: "Estado del respaldo" }),
+    ).toBeInTheDocument();
+    // The configuration hub's backup card (Preferencias) is NOT duplicated
+    // here — each surface renders exactly once (REQ-PIA-02).
+    expect(
+      screen.queryByRole("heading", { name: "Respaldo y restauración" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the idea-capture wizard as the only Telegram surface inside Conexiones", () => {

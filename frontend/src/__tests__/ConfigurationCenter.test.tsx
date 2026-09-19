@@ -49,17 +49,23 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     const importCard = CARD_DEFS.find((card) => card.key === "import");
     expect(importCard?.description).toMatch(/El importador está operativo/i);
 
-    // WU-15: the backup card leaves the deferred entry-only state — it now
-    // links to its real configuration surface and its description is
-    // provider-neutral and local-write-only (no provider, no rclone).
+    // REQ-PIA-10: every declared card action targets an existing route/section.
+    // The backup card points at the Respaldo section and the locale card at
+    // Preferencias — the `configuracion` tab and the `?step=step0` reconfigure
+    // path no longer exist.
     const backupCard = CARD_DEFS.find((card) => card.key === "backup");
     expect(backupCard?.action).toEqual({
       label: "Configurar respaldo",
-      to: "/perfil?tab=configuracion",
+      to: "/perfil?tab=respaldo",
     });
     expect(backupCard?.description).toMatch(/carpeta local/i);
     expect(backupCard?.description).not.toMatch(/rclone/i);
     expect(backupCard?.description).not.toMatch(/Google Drive/i);
+    const localeCard = CARD_DEFS.find((card) => card.key === "locale");
+    expect(localeCard?.action).toEqual({
+      label: "Configurar",
+      to: "/perfil?tab=preferencias",
+    });
   });
 
   it("cardState never overstates deferred capabilities (ONB-3.1/ONB-3.5)", () => {

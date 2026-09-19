@@ -1009,22 +1009,23 @@ function AssistantSection() {
 }
 
 /**
- * Perfil → Centro de Configuración — the configuration capabilities that have
- * NO home elsewhere in the Profile: Respaldo y restauración, Idioma/región/zona
- * horaria and Offline/dispositivo, plus the essential local readiness summary.
+ * Perfil → Preferencias — the configuration capabilities that have no home
+ * elsewhere in the Profile: Idioma/región/zona horaria and Offline/dispositivo,
+ * plus the essential local readiness summary. The backup card stays here as an
+ * honest entry point (badge + action); its action leads to the Respaldo
+ * section, where the real backup surface lives (REQ-PIA-02/10).
  *
  * The other Configuration Center cards (Identidad, IA texto y visión, Telegram,
  * Mundos, Importar mundo) are intentionally NOT duplicated here — each of those
- * already lives in a dedicated Profile tab (Asistente IA / Mundos /
- * Integraciones) or in the Profile/Taller de Mundo themselves (nav-restructure
- * decision): the idea-capture wizard (with the Telegram bot config folded in)
- * renders under Integraciones and the legacy-folder MigrationPanel under
- * Mundos. State semantics (ONB-3.1/ONB-3.5
- * anti-overstatement guard, OC19 assistant label, OC11/OC21 essential badges)
- * are reused from ConfigurationCenter.tsx so the Profile tabs and the shared
- * module never drift.
+ * already lives in a dedicated Profile section (Conexiones / Mundos) or in the
+ * Profile/Taller de Mundo themselves (nav-restructure decision): the
+ * idea-capture wizard (with the Telegram bot config folded in) renders under
+ * Conexiones and the legacy-folder MigrationPanel under Mundos. State semantics
+ * (ONB-3.1/ONB-3.5 anti-overstatement guard, OC19 assistant label, OC11/OC21
+ * essential badges) are reused from ConfigurationCenter.tsx so the Profile tabs
+ * and the shared module never drift.
  */
-function ConfigurationSection({ onRequestSignIn }: { onRequestSignIn?: () => void }) {
+function ConfigurationSection() {
   const navigate = useNavigate();
   const location = useLocation();
   const [readiness, setReadiness] = useState<ReadinessSnapshot | null>(null);
@@ -1045,17 +1046,17 @@ function ConfigurationSection({ onRequestSignIn }: { onRequestSignIn?: () => voi
   /**
    * Every declared card action is the card's real entry point, so the renderer
    * below draws `card.action` for ANY card that declares one — never a growing
-   * allowlist of keys. When the target is the page you are already on (backup →
-   * `/perfil?tab=configuracion`), navigating would be an invisible no-op, so the
-   * control performs an in-page move instead: scroll the card section into view
-   * and focus it, the same landing guarantee an anchor/skip-link gives keyboard
-   * and assistive-technology users.
+   * allowlist of keys. When the target is EXACTLY the location already shown
+   * (e.g. the locale card on `/perfil?tab=preferencias`), navigating would be
+   * an invisible no-op, so the control performs an in-page move instead: scroll
+   * the card section into view and focus it, the same landing guarantee an
+   * anchor/skip-link gives keyboard and assistive-technology users. Any other
+   * target — including a different `?tab=` section (REQ-PIA-10) — navigates.
    */
   const runCardAction = (card: (typeof CARD_DEFS)[number]) => {
     const action = card.action;
     if (!action) return;
-    const targetPath = action.to.split("?")[0];
-    if (targetPath === location.pathname) {
+    if (action.to === location.pathname + location.search) {
       const section = document.getElementById(`config-card-${card.key}`);
       if (section) {
         section.scrollIntoView?.({ behavior: "smooth", block: "start" });
@@ -1161,8 +1162,6 @@ function ConfigurationSection({ onRequestSignIn }: { onRequestSignIn?: () => voi
                 </Button>
               </div>
             )}
-
-            {card.key === "backup" && <BackupSection onRequestSignIn={onRequestSignIn} />}
 
             {card.key === "offline" && (
               <dl className="mt-4 space-y-3 border-t border-edge pt-4">
@@ -1477,10 +1476,10 @@ function WorldsSection() {
  * Interim content mapping (later WUs re-home without changing embedded
  * behavior, CON-PIA-05): `cuenta` is the merged account/security surface
  * (WU-2, REQ-PIA-09) with the session-scoped words unlock (REQ-SRW-01..04);
- * `preferencias` still hosts the configuration hub (locale extraction is
- * WU-4), `conexiones` stacks the idea-capture and assistant panels (fold-in
- * is WU-5), and `respaldo` lands empty until WU-3 moves BackupSection out of
- * the hub.
+ * `respaldo` hosts BackupSection (WU-3, REQ-PIA-02) with its sign-in
+ * affordance pointing back to `cuenta`; `preferencias` still hosts the
+ * configuration hub (locale extraction is WU-4), `conexiones` stacks the
+ * idea-capture and assistant panels (fold-in is WU-5).
  */
 export default function ProfilePage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1550,8 +1549,10 @@ export default function ProfilePage() {
                   onUnlocked={unlock}
                   onLock={lock}
                 />
-              ) : activeSection === "respaldo" ? null : activeSection === "preferencias" ? (
-                <ConfigurationSection onRequestSignIn={() => selectSection("cuenta")} />
+              ) : activeSection === "respaldo" ? (
+                <BackupSection onRequestSignIn={() => selectSection("cuenta")} />
+              ) : activeSection === "preferencias" ? (
+                <ConfigurationSection />
               ) : activeSection === "conexiones" ? (
                 <>
                   <IntegrationsSection />
