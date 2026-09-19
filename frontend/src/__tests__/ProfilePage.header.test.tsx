@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { MemoryRouter } from "react-router-dom";
 import ProfilePage from "@/pages/ProfilePage";
 import { getReadiness } from "@/api/onboarding";
+import { getLocale } from "@/api/config";
 import { getAuthStatus, getVaultConfig } from "@/api/wiki";
 import { getBackupStatus } from "@/api/backup";
 import { getAssistantSettings } from "@/api/assistantSettings";
@@ -14,6 +15,12 @@ vi.mock("@/hooks/useWorlds", () => ({
 
 vi.mock("@/api/onboarding", () => ({
   getReadiness: vi.fn(),
+}));
+
+// The section sweep mounts the inline locale form (REQ-PIA-12); resolve its
+// saved-locale read locally so the sweep stays hermetic.
+vi.mock("@/api/config", () => ({
+  getLocale: vi.fn(),
 }));
 
 // The header (REQ-PIA-05) reads identity, backup and assistant state on every
@@ -108,6 +115,14 @@ describe("ProfilePage status overview header (REQ-PIA-05)", () => {
       cards: {},
       offline: { local_ready: true, remote_pending: [] },
       legacy: [],
+    });
+    (getLocale as Mock).mockResolvedValue({
+      ui: "es",
+      conversation: "es",
+      content: "es",
+      region: null,
+      region_explicit: false,
+      iana_timezone: "UTC",
     });
     (getAuthStatus as Mock).mockResolvedValue({
       mode: "credentials",

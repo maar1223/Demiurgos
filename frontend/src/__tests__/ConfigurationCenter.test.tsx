@@ -16,12 +16,12 @@ import {
 /**
  * ConfigurationCenter is now a shared exporter module (nav-restructure
  * decision): the standalone `/centro-configuracion` page and route are gone —
- * the surface lives inside the Profile (`/perfil` → "Centro de Configuración"
- * tab, with the idea-capture wizard under Integraciones and MigrationPanel
- * under Mundos). These tests pin the module's remaining contract: card
- * definitions, honest state helpers and the re-exported migration panel. The
- * panel has a dedicated suite (MigrationPanel.test.tsx) and the Profile tabs
- * are covered by ProfilePage.test.tsx.
+ * the surface lives inside the Profile (`/perfil` → "Preferencias", with the
+ * idea-capture wizard under Conexiones and MigrationPanel under Mundos).
+ * These tests pin the module's remaining contract: card definitions, honest
+ * state helpers and the re-exported migration panel. The panel has a dedicated
+ * suite (MigrationPanel.test.tsx) and the Profile sections are covered by
+ * ProfilePage.test.tsx.
  */
 describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
   afterEach(() => {

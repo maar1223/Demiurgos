@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Icon, type IconName } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { LocaleForm } from "@/components/organisms/LocaleForm";
 import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import { BackupSection } from "@/components/organisms/BackupSection";
@@ -1010,10 +1011,10 @@ function AssistantSection() {
 
 /**
  * Perfil → Preferencias — the configuration capabilities that have no home
- * elsewhere in the Profile: Idioma/región/zona horaria and Offline/dispositivo,
- * plus the essential local readiness summary. The backup card stays here as an
- * honest entry point (badge + action); its action leads to the Respaldo
- * section, where the real backup surface lives (REQ-PIA-02/10).
+ * elsewhere in the Profile: the inline locale form (REQ-PIA-12) and
+ * Offline/dispositivo, plus the essential local readiness summary. The backup
+ * card stays here as an honest entry point (badge + action); its action leads
+ * to the Respaldo section, where the real backup surface lives (REQ-PIA-02/10).
  *
  * The other Configuration Center cards (Identidad, IA texto y visión, Telegram,
  * Mundos, Importar mundo) are intentionally NOT duplicated here — each of those
@@ -1027,43 +1028,35 @@ function AssistantSection() {
  */
 function ConfigurationSection() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [readiness, setReadiness] = useState<ReadinessSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
 
-  const load = () => {
-    setLoading(true);
+  // A silent reload refreshes the locale badge after an inline save without
+  // replacing the whole section with the loading spinner.
+  const load = (options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoading(true);
     setError(null);
     void getReadiness()
       .then(setReadiness)
       .catch((cause: unknown) => setError(cause))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!options?.silent) setLoading(false);
+      });
   };
 
-  useEffect(load, []);
+  useEffect(() => load(), []);
 
   /**
    * Every declared card action is the card's real entry point, so the renderer
    * below draws `card.action` for ANY card that declares one — never a growing
-   * allowlist of keys. When the target is EXACTLY the location already shown
-   * (e.g. the locale card on `/perfil?tab=preferencias`), navigating would be
-   * an invisible no-op, so the control performs an in-page move instead: scroll
-   * the card section into view and focus it, the same landing guarantee an
-   * anchor/skip-link gives keyboard and assistive-technology users. Any other
-   * target — including a different `?tab=` section (REQ-PIA-10) — navigates.
+   * allowlist of keys. Every kept action targets a location that differs from
+   * the one shown here (the backup card lives on Preferencias and points at
+   * Respaldo), so a card click always navigates (REQ-PIA-10).
    */
   const runCardAction = (card: (typeof CARD_DEFS)[number]) => {
     const action = card.action;
     if (!action) return;
-    if (action.to === location.pathname + location.search) {
-      const section = document.getElementById(`config-card-${card.key}`);
-      if (section) {
-        section.scrollIntoView?.({ behavior: "smooth", block: "start" });
-        section.focus();
-      }
-      return;
-    }
     navigate(action.to);
   };
 
@@ -1088,8 +1081,13 @@ function ConfigurationSection() {
 
   const cards = readiness.cards ?? {};
   const keepCards = CARD_DEFS.filter((card) =>
-    ["backup", "locale", "offline"].includes(card.key),
+    ["backup", "offline"].includes(card.key),
   );
+  // The locale surface renders as the inline form below, not as a navigation
+  // card, so its readiness state still drives the honest badge (REQ-PIA-12).
+  const localeState = cardState(cards, "locale");
+  const localeLabel = cardLabel("locale", localeState);
+  const localeMeta = STATE_META[localeState];
 
   return (
     <div className="space-y-4" aria-live="polite">
@@ -1121,6 +1119,31 @@ function ConfigurationSection() {
             );
           })}
         </div>
+      </section>
+
+      {/* Inline locale form (REQ-PIA-12) — the extracted Onboarding step-0
+          form rendered directly in Preferencias, so the old `?step=step0`
+          reconfigure handoff has no path left. Saving refreshes the badge
+          silently. */}
+      <section
+        id="config-card-locale"
+        tabIndex={-1}
+        aria-labelledby="config-card-title-locale"
+        className="rounded-lg border border-edge bg-surface-raised p-4"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <h3
+            id="config-card-title-locale"
+            className="font-heading text-body text-primary"
+          >
+            Idioma, región y zona horaria
+          </h3>
+          <span className="flex items-center gap-2">
+            <Badge variant={localeMeta.badge}>{localeLabel}</Badge>
+            <span className="sr-only">Estado: {localeLabel}</span>
+          </span>
+        </div>
+        <LocaleForm onSaved={() => load({ silent: true })} />
       </section>
 
       {/* Kept configuration cards — same rounded-box style as the other
@@ -1477,8 +1500,8 @@ function WorldsSection() {
  * behavior, CON-PIA-05): `cuenta` is the merged account/security surface
  * (WU-2, REQ-PIA-09) with the session-scoped words unlock (REQ-SRW-01..04);
  * `respaldo` hosts BackupSection (WU-3, REQ-PIA-02) with its sign-in
- * affordance pointing back to `cuenta`; `preferencias` still hosts the
- * configuration hub (locale extraction is WU-4), `conexiones` stacks the
+ * affordance pointing back to `cuenta`; `preferencias` hosts the configuration
+ * hub with the locale form inline (WU-4, REQ-PIA-12), `conexiones` stacks the
  * idea-capture and assistant panels (fold-in is WU-5).
  */
 export default function ProfilePage() {

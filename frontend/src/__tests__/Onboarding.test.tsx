@@ -14,6 +14,12 @@ vi.mock("@/api/onboarding", () => ({
   getReadiness: vi.fn(),
 }));
 
+// The shared LocaleForm prefills step 0 from the saved locale; resolve it
+// locally so the suite stays hermetic and fast.
+vi.mock("@/api/config", () => ({
+  getLocale: vi.fn(),
+}));
+
 vi.mock("@/api/wiki", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/api/wiki")>();
   return {
@@ -29,6 +35,7 @@ import {
   getOnboardingStatus,
   submitStep0,
 } from "@/api/onboarding";
+import { getLocale } from "@/api/config";
 import { createAccount, getAuthStatus, listWorlds } from "@/api/wiki";
 import type { Mock } from "vitest";
 
@@ -119,6 +126,15 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     (createWorld as Mock).mockReset();
     (getAuthStatus as Mock).mockReset();
     (createAccount as Mock).mockReset();
+    (getLocale as Mock).mockReset();
+    (getLocale as Mock).mockResolvedValue({
+      ui: "es",
+      conversation: "es",
+      content: "es",
+      region: null,
+      region_explicit: false,
+      iana_timezone: "UTC",
+    });
     (getAuthStatus as Mock).mockResolvedValue(CREDENTIALS_AUTH);
   });
 
@@ -290,21 +306,29 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
 
     await screen.findByRole("heading", { name: "Creá tu mundo" });
     expect(screen.getByText("Asistente de IA (texto y visión)")).toBeInTheDocument();
-    expect(screen.getByText("Requiere conexión y una cuenta configurada. Se retoma desde el Centro de Configuración.")).toBeInTheDocument();
   });
 
-  it("lands on the Profile (not a standalone page) after reconfiguring locale", async () => {
-    // Reconfigure (`?step=step0`) re-opens ONLY the locale step; after saving
-    // the user must land on `/perfil`, where the Centro de Configuración tab
-    // lives (nav-restructure decision — the `/centro-configuracion` route is gone).
+  it("prefills step 0 from the saved locale via the shared LocaleForm (REQ-PIA-12)", async () => {
+    // The extracted locale form loads GET /api/locale on mount, so the
+    // onboarding step reflects the persisted values instead of hardcoded
+    // defaults (the reconfigure path this replaces is retired).
     (getOnboardingStatus as Mock).mockResolvedValue(FRESH_STATUS);
-    (submitStep0 as Mock).mockResolvedValue(STEP0_DONE_STATUS);
-    const user = userEvent.setup();
-    renderOnboarding("/onboarding?step=step0");
+    (getLocale as Mock).mockResolvedValue({
+      ui: "en",
+      conversation: "en",
+      content: "es",
+      region: "MX",
+      region_explicit: true,
+      iana_timezone: "America/Mexico_City",
+    });
+    renderOnboarding();
 
     await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
-    await user.click(screen.getByRole("button", { name: "Continuar" }));
-
-    expect(await screen.findByTestId("perfil")).toBeInTheDocument();
+    expect(screen.getByLabelText("Idioma de la interfaz")).toHaveValue("en");
+    expect(screen.getByLabelText("Idioma de conversación (asistente)")).toHaveValue("en");
+    expect(screen.getByLabelText("Idioma de contenido (prosa del mundo)")).toHaveValue("es");
+    expect(screen.getByLabelText(/Región \(opcional/)).toHaveValue("MX");
+    expect(screen.getByLabelText(/Confirmo la región/)).toBeChecked();
+    expect(screen.getByLabelText(/Zona horaria/)).toHaveValue("America/Mexico_City");
   });
 });

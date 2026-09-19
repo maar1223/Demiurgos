@@ -5,12 +5,13 @@ import type { CardState, ReadinessSnapshot } from "@/api/types";
  *
  * The standalone `/centro-configuracion` page no longer exists
  * (nav-restructure decision): the configuration surface lives inside the
- * Profile (`/perfil` → "Centro de Configuración" tab, with the legacy-folder
- * migration under "Mundos" and the idea-capture wizard — the single Telegram
- * surface — under "Integraciones"). This module stays as the single shared
- * exporter of the card definitions, the honest state helpers and the panel
- * that was exclusive to the standalone page, so the Profile tabs and this
- * module never drift.
+ * Profile (`/perfil` → "Preferencias", which hosts the essential readiness
+ * summary, the inline locale form — REQ-PIA-12 — and the backup/offline
+ * cards; the legacy-folder migration lives under "Mundos" and the idea-capture
+ * wizard — the single Telegram surface — under "Conexiones"). This module
+ * stays as the single shared exporter of the card definitions, the honest
+ * state helpers and the panel that was exclusive to the standalone page, so
+ * the Profile sections and this module never drift.
  */
 
 /** Panel relocated from the standalone page (ONB-4.3, WU-4c2). */

@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Router, useSearchParams } from "react-router-dom";
 import { createMemoryHistory } from "@remix-run/router";
 import { useLayoutEffect, useState, type ReactNode } from "react";
 import ProfilePage from "@/pages/ProfilePage";
 import { getReadiness } from "@/api/onboarding";
+import { getLocale } from "@/api/config";
 import { getAuthStatus, getVaultConfig } from "@/api/wiki";
 import type { Mock } from "vitest";
 
@@ -35,6 +36,12 @@ vi.mock("@/hooks/useWorlds", () => ({
 
 vi.mock("@/api/onboarding", () => ({
   getReadiness: vi.fn(),
+}));
+
+// The inline locale form (REQ-PIA-12) prefills from the saved locale on
+// mount; resolve it locally so the preferencias cases stay hermetic.
+vi.mock("@/api/config", () => ({
+  getLocale: vi.fn(),
 }));
 
 // The default `cuenta` section stacks the session and vault surfaces (the
@@ -138,11 +145,6 @@ vi.mock("@/api/assistantSettings", () => ({
 }));
 
 describe("ProfilePage", () => {
-  afterEach(() => {
-    // jsdom does not implement scrollIntoView; the exact-location test stubs it.
-    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
-  });
-
   beforeEach(() => {
     // Default readiness: no legacy folders. The Mundos tab's migration panel
     // only renders when readiness reports legacy findings.
@@ -151,6 +153,14 @@ describe("ProfilePage", () => {
       cards: {},
       offline: { local_ready: true, remote_pending: [] },
       legacy: [],
+    });
+    (getLocale as Mock).mockResolvedValue({
+      ui: "es",
+      conversation: "es",
+      content: "es",
+      region: null,
+      region_explicit: false,
+      iana_timezone: "UTC",
     });
     (getAuthStatus as Mock).mockResolvedValue({
       mode: "local-dev",
@@ -214,7 +224,7 @@ describe("ProfilePage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Preferencias" }));
 
-    // Readiness summary + the three kept cards render.
+    // Readiness summary + the inline locale form + the two kept cards render.
     expect(
       await screen.findByRole("heading", { name: "Listo para trabajar" }),
     ).toBeInTheDocument();
@@ -282,7 +292,7 @@ describe("ProfilePage", () => {
     expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Respaldo");
   });
 
-  it("focuses the matching config card in place when its target is the current location", async () => {
+  it("renders the locale form inline in Preferencias (REQ-PIA-12)", async () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {
@@ -293,34 +303,31 @@ describe("ProfilePage", () => {
       offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
-    // jsdom does not implement scrollIntoView; stub it so the retained in-page
-    // branch is observable instead of silently skipped by the optional call.
-    const scrollIntoView = vi.fn();
-    Element.prototype.scrollIntoView = scrollIntoView;
 
-    // The locale card's declared target IS the current location, so the click
-    // must NOT navigate — the in-page scroll/focus branch handles it.
     render(
       <MemoryRouter initialEntries={["/perfil?tab=preferencias"]}>
         <ProfilePage />
       </MemoryRouter>,
     );
 
-    const localeHeading = await screen.findByRole("heading", {
+    // The locale surface IS the form, rendered directly in Preferencias — the
+    // old "Configurar" reconfigure handoff is gone (REQ-PIA-12).
+    const heading = await screen.findByRole("heading", {
       name: "Idioma, región y zona horaria",
     });
-    const section = localeHeading.closest("section") as HTMLElement;
+    const section = heading.closest("section") as HTMLElement;
     expect(section.id).toBe("config-card-locale");
 
-    fireEvent.click(within(section).getByRole("button", { name: "Configurar" }));
-
-    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
-    expect(document.activeElement).toBe(section);
-    // Still on Preferencias: the exact-location branch never navigates away.
-    expect(screen.getByRole("tab", { name: "Preferencias" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
+    // All six fields are usable inline, without leaving /perfil.
+    expect(within(section).getByLabelText("Idioma de la interfaz")).toBeInTheDocument();
+    expect(within(section).getByLabelText("Idioma de conversación (asistente)")).toBeInTheDocument();
+    expect(within(section).getByLabelText("Idioma de contenido (prosa del mundo)")).toBeInTheDocument();
+    expect(within(section).getByLabelText(/Región \(opcional/)).toBeInTheDocument();
+    expect(within(section).getByLabelText(/Confirmo la región/)).toBeInTheDocument();
+    expect(within(section).getByLabelText(/Zona horaria/)).toBeInTheDocument();
+    expect(within(section).getByRole("button", { name: "Guardar" })).toBeInTheDocument();
+    // No handoff control remains on the form.
+    expect(within(section).queryByRole("button", { name: "Configurar" })).not.toBeInTheDocument();
   });
 
   it("hosts the backup surface inside the Respaldo section (REQ-PIA-02)", async () => {
