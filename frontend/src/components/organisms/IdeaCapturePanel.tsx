@@ -551,7 +551,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <Button
-                    variant="primary"
+                    variant="secondary"
                     onClick={() => void handleTokenSave()}
                     disabled={!tokenDraft.trim() || tokenBusy}
                   >
@@ -666,7 +666,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                                 </p>
                               </div>
                               <Button
-                                variant="primary"
+                                variant="secondary"
                                 onClick={() => void handleAuthorizePrivate(candidate)}
                                 disabled={authorizingId !== null}
                               >

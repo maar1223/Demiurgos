@@ -2077,6 +2077,7 @@ export default function WorldImporter() {
           title="Eliminar importación"
           message={`¿Eliminar la importación ${deleteTarget.job_id}? Esta acción es permanente y no se puede deshacer.`}
           confirmLabel="Eliminar"
+          confirmVariant="danger"
           isBusy={deleting}
           onConfirm={() => void handleDeleteJob(deleteTarget)}
           onClose={() => setDeleteTarget(null)}

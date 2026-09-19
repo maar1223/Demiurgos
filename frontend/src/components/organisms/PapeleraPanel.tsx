@@ -318,12 +318,14 @@ export function PapeleraPanel({
         </div>
       </div>
 
-      {/* Per-entry purge confirm (soft) */}
+      {/* Per-entry purge confirm — irreversible, so it opts into the danger
+          treatment (REQ-PIA-08). */}
       {purgeTarget && (
         <ConfirmDialog
           title="Purgar"
           message={`¿Purgar permanentemente "${purgeTarget.original_path.split("/").pop()}"? Se eliminará sin posibilidad de restaurarlo.`}
           confirmLabel="Purgar"
+          confirmVariant="danger"
           isBusy={busyEntryId === purgeTarget.entry_id}
           error={actionError}
           onConfirm={() => void handlePurgeConfirm()}
@@ -342,6 +344,7 @@ export function PapeleraPanel({
             entries.length === 1 ? "entrada" : "entradas"
           }. Esta acción no se puede deshacer.`}
           confirmLabel="Vaciar papelera"
+          confirmVariant="danger"
           isBusy={isEmptying}
           error={actionError}
           onConfirm={() => void handleEmptyConfirm()}

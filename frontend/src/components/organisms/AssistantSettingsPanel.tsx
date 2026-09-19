@@ -346,7 +346,7 @@ export function AssistantSettingsPanel({ auth }: { auth: AuthSessionController }
       ) : (
         <>
           <div className="mt-4 flex flex-wrap gap-1" aria-label="Pasos de configuración">
-            {steps.map((item) => <Button key={item.id} variant={step === item.id ? "primary" : "ghost"} size="sm" onClick={() => goTo(item.id)}>{item.label}</Button>)}
+            {steps.map((item) => <Button key={item.id} variant={step === item.id ? "secondary" : "ghost"} size="sm" onClick={() => goTo(item.id)}>{item.label}</Button>)}
           </div>
           <p className="mt-3 text-small text-muted">Estado: <strong>{stateLabel(status.runtime_state)}</strong></p>
           <div className="mt-5 space-y-4">

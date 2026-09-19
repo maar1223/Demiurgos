@@ -768,7 +768,14 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
 
     // Reopen and confirm → DELETE called with the job id, history reloaded.
     fireEvent.click(screen.getByTestId("history-delete-j1"));
-    fireEvent.click(screen.getByRole("button", { name: "Eliminar" }));
+    // REQ-PIA-08: this deletion is irreversible, so its confirm action carries
+    // the danger treatment instead of the primary style.
+    const deleteConfirm = within(
+      screen.getByRole("dialog", { name: /Eliminar importación/i }),
+    ).getByRole("button", { name: "Eliminar" });
+    expect(deleteConfirm.className).toContain("bg-status-error");
+    expect(deleteConfirm.className).not.toContain("bg-action");
+    fireEvent.click(deleteConfirm);
     await waitFor(() =>
       expect(deleteImportJob).toHaveBeenCalledWith("mundo", "j1"),
     );
