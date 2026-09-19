@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
-import { Icon } from "@/components/atoms/Icon";
+import { Icon, type IconName } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import { BackupSection } from "@/components/organisms/BackupSection";
+import { ProfileSectionRail } from "@/components/organisms/ProfileSectionRail";
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
 import { WorldPickerDialog } from "@/components/organisms/WorldPickerDialog";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
@@ -51,16 +52,28 @@ import {
   cardState,
   essentialBadgeFor,
 } from "@/pages/ConfigurationCenter";
-import { cn } from "@/lib/utils";
 import { getErrorMessage } from "@/lib/utils";
 
 type ProfileSection =
-  | "sesion"
-  | "seguridad"
-  | "configuracion"
-  | "integraciones"
-  | "asistente"
+  | "cuenta"
+  | "respaldo"
+  | "preferencias"
+  | "conexiones"
   | "mundos";
+
+/** The five intent-based sections (REQ-PIA-01) with rail label and icon
+ *  (REQ-PIA-06). `cuenta` is the default landing section. */
+const PROFILE_SECTIONS: { id: ProfileSection; label: string; icon: IconName }[] = [
+  { id: "cuenta", label: "Cuenta", icon: "avatar" },
+  { id: "respaldo", label: "Respaldo", icon: "save" },
+  { id: "preferencias", label: "Preferencias", icon: "monitor" },
+  { id: "conexiones", label: "Conexiones", icon: "lightbulb" },
+  { id: "mundos", label: "Mundos", icon: "world" },
+];
+
+function isProfileSection(value: string | null): value is ProfileSection {
+  return PROFILE_SECTIONS.some((section) => section.id === value);
+}
 
 /** Sesión de edición — the same local-dev session controls as the Navbar
  *  dropdown, kept accessible from the full Profile page. Mode-aware: in the
@@ -1482,68 +1495,103 @@ function WorldsSection() {
 }
 
 /**
- * Profile page (`/perfil`) — the unified configuration surface.
+ * Profile page (`/perfil`) — the unified configuration surface, organized by
+ * user intent instead of implementation module (REQ-PIA-01/02).
  *
- * Sections: Sesión de edición (unified session controls, same as the Navbar
- * dropdown), Centro de Configuración (configuration capabilities without a
- * Profile home: backup, locale, offline + essential readiness), Integraciones
- * (idea-capture wizard — the single Telegram surface, ONB-3.3), Asistente IA
- * (assistant settings) and Mundos (world delete + recycle bin + legacy-folder
- * migration, ONB-4.3). The gated sections depend on the unified session
- * (credentials vault or local-dev), matching the wiki editing boundary.
+ * Five sections — Cuenta, Respaldo, Preferencias, Conexiones, Mundos — driven
+ * by `?tab=<section>` (REQ-PIA-03): deep links and refresh preserve the
+ * section, an explicit tab click pushes a history entry so Back cycles the
+ * tabs, the default landing never pushes, and an invalid value falls back to
+ * `cuenta` via a `replace` normalization. The rail is a page-owned ARIA
+ * tablist/tab/tabpanel set with roving focus (REQ-PIA-04) and one icon per
+ * section (REQ-PIA-06); each panel opens with its `h2` so the outline stays
+ * `h1 → h2 → h3` with no orphan level (REQ-PIA-07).
+ *
+ * WU-1a interim content mapping (later WUs re-home without changing embedded
+ * behavior, CON-PIA-05): `cuenta` stacks the session and vault surfaces (the
+ * account/security merge is WU-2), `preferencias` still hosts the
+ * configuration hub (locale extraction is WU-4), `conexiones` stacks the
+ * idea-capture and assistant panels (fold-in is WU-5), and `respaldo` lands
+ * empty until WU-3 moves BackupSection out of the hub.
  */
 export default function ProfilePage() {
-  const [section, setSection] = useState<ProfileSection>("sesion");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get("tab");
+  const activeSection: ProfileSection = isProfileSection(rawTab) ? rawTab : "cuenta";
+  // Click-driven changes move focus to the panel heading; the default landing
+  // and arrow-key roves never steal focus (REQ-PIA-04).
+  const [focusPanel, setFocusPanel] = useState(false);
 
-  const tabs: { id: ProfileSection; label: string }[] = [
-    { id: "sesion", label: "Sesión de edición" },
-    { id: "seguridad", label: "Seguridad / Bóveda" },
-    { id: "configuracion", label: "Centro de Configuración" },
-    { id: "integraciones", label: "Integraciones" },
-    { id: "asistente", label: "Asistente IA" },
-    { id: "mundos", label: "Mundos" },
-  ];
+  // An unknown or invalid `?tab` falls back to `cuenta` and the URL is
+  // normalized with `replace` so the fallback never pollutes history.
+  useEffect(() => {
+    if (rawTab !== null && !isProfileSection(rawTab)) {
+      const next = new URLSearchParams(searchParams);
+      next.set("tab", "cuenta");
+      setSearchParams(next, { replace: true });
+    }
+  }, [rawTab, searchParams, setSearchParams]);
+
+  // After a click-driven section change, focus moves to the panel heading.
+  useEffect(() => {
+    if (!focusPanel) return;
+    setFocusPanel(false);
+    document.getElementById(`profile-panel-heading-${activeSection}`)?.focus();
+  }, [activeSection, focusPanel]);
+
+  const selectSection = (id: string, options?: { focusPanel?: boolean }) => {
+    if (!isProfileSection(id) || id === activeSection) return;
+    if (options?.focusPanel) setFocusPanel(true);
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", id);
+    setSearchParams(next);
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-surface">
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
         <h1 className="font-heading text-h3 text-primary">Perfil</h1>
         <div className="mt-6 flex flex-col gap-6 md:flex-row">
-          <nav
-            aria-label="Secciones del perfil"
-            className="flex gap-1 md:w-56 md:flex-col md:gap-1"
+          <ProfileSectionRail
+            sections={PROFILE_SECTIONS}
+            activeId={activeSection}
+            onSelect={selectSection}
+          />
+          <section
+            role="tabpanel"
+            id={`profile-panel-${activeSection}`}
+            aria-labelledby={`profile-tab-${activeSection}`}
+            tabIndex={-1}
+            className="min-w-0 flex-1"
           >
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setSection(tab.id)}
-                aria-current={section === tab.id ? "page" : undefined}
-                className={cn(
-                  "rounded-lg px-3 py-2 text-left text-body transition-colors",
-                  section === tab.id
-                    ? "bg-surface-raised text-primary"
-                    : "text-muted hover:bg-surface-raised hover:text-primary",
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-          <section className="min-w-0 flex-1">
-            {section === "sesion" ? (
-              <SessionSection />
-            ) : section === "seguridad" ? (
-              <VaultSection />
-            ) : section === "configuracion" ? (
-              <ConfigurationSection onRequestSignIn={() => setSection("sesion")} />
-            ) : section === "integraciones" ? (
-              <IntegrationsSection />
-            ) : section === "mundos" ? (
-              <WorldsSection />
-            ) : (
-              <AssistantSection />
-            )}
+            <h2
+              id={`profile-panel-heading-${activeSection}`}
+              tabIndex={-1}
+              className="font-heading text-h4 text-primary"
+            >
+              {PROFILE_SECTIONS.find((section) => section.id === activeSection)?.label}
+            </h2>
+            <div className="mt-4">
+              {activeSection === "cuenta" ? (
+                <>
+                  <SessionSection />
+                  <div className="mt-4">
+                    <VaultSection />
+                  </div>
+                </>
+              ) : activeSection === "respaldo" ? null : activeSection === "preferencias" ? (
+                <ConfigurationSection onRequestSignIn={() => selectSection("cuenta")} />
+              ) : activeSection === "conexiones" ? (
+                <>
+                  <IntegrationsSection />
+                  <div className="mt-4">
+                    <AssistantSection />
+                  </div>
+                </>
+              ) : (
+                <WorldsSection />
+              )}
+            </div>
           </section>
         </div>
       </main>

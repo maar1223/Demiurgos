@@ -7,6 +7,7 @@ import { useWorlds } from "@/hooks/useWorlds";
 import { listTrash, permanentDelete, restoreWorld } from "@/api/worlds";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { getReadiness } from "@/api/onboarding";
+import { getAuthStatus, getVaultConfig } from "@/api/wiki";
 import type { IdeaCaptureStatus, WorldInfo, WorldTrashEntry } from "@/api/types";
 import type { Mock } from "vitest";
 
@@ -19,6 +20,21 @@ vi.mock("@/api/worlds", () => ({
 }));
 vi.mock("@/api/ideaCapture", () => ({ getIdeaCaptureStatus: vi.fn() }));
 vi.mock("@/api/onboarding", () => ({ getReadiness: vi.fn() }));
+
+// The default `cuenta` section stacks the session and vault surfaces (the
+// account/security merge is WU-2); keep the recycle-bin flows hermetic.
+vi.mock("@/api/wiki", () => ({
+  getAuthStatus: vi.fn(),
+  logoutSession: vi.fn(),
+  changeUsername: vi.fn(),
+  changePassword: vi.fn(),
+  removePassword: vi.fn(),
+  rotateWords: vi.fn(),
+  getVaultConfig: vi.fn(),
+  enableVault: vi.fn(),
+  disableVault: vi.fn(),
+  setReauthInterval: vi.fn(),
+}));
 
 vi.mock("@/hooks/useLocalDevAuth", () => ({
   useLocalDevAuth: () => ({
@@ -95,7 +111,7 @@ function renderProfile() {
 }
 
 async function openMundosTab() {
-  fireEvent.click(screen.getByRole("button", { name: "Mundos" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Mundos" }));
   await screen.findByText("Zona peligrosa");
 }
 
@@ -117,6 +133,20 @@ beforeEach(() => {
     cards: {},
     offline: { local_ready: true, remote_pending: [] },
     legacy: [],
+  });
+  (getAuthStatus as Mock).mockResolvedValue({
+    mode: "local-dev",
+    enabled: true,
+    authenticated: true,
+    label: "Local development user",
+  });
+  (getVaultConfig as Mock).mockResolvedValue({
+    enabled: false,
+    account_exists: false,
+    username: null,
+    has_password: false,
+    reauth_interval_d: 14,
+    env_override: false,
   });
   listTrashMock.mockResolvedValue([trashEntry]);
   restoreWorldMock.mockResolvedValue({ status: "restored", world_name: "Avalor" });

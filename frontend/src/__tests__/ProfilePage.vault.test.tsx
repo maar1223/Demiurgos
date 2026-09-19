@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import ProfilePage from "@/pages/ProfilePage";
 import {
   changePassword,
@@ -97,6 +98,16 @@ const credentialsStatus = {
   days_until_reauth: 4,
 };
 
+// The `cuenta` section stacks the session and vault surfaces until WU-2
+// merges them; the vault read must be hermetic in every test.
+function renderProfile() {
+  return render(
+    <MemoryRouter>
+      <ProfilePage />
+    </MemoryRouter>,
+  );
+}
+
 describe("ProfilePage account section (credentials mode)", () => {
   beforeEach(() => {
     (getAuthStatus as Mock).mockResolvedValue(credentialsStatus);
@@ -116,13 +127,21 @@ describe("ProfilePage account section (credentials mode)", () => {
       offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
+    (getVaultConfig as Mock).mockResolvedValue({
+      enabled: false,
+      account_exists: false,
+      username: null,
+      has_password: false,
+      reauth_interval_d: 14,
+      env_override: false,
+    });
   });
 
   it("renders the Account section instead of the local-dev panel", async () => {
-    render(<ProfilePage />);
+    renderProfile();
 
     expect(
-      await screen.findByRole("heading", { name: "Cuenta" }),
+      await screen.findByRole("heading", { name: "Cuenta", level: 3 }),
     ).toBeInTheDocument();
     expect(screen.getByText("el-autor")).toBeInTheDocument();
     expect(screen.getByText("Proveedor: Credenciales")).toBeInTheDocument();
@@ -137,7 +156,7 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("shows the soft re-auth countdown with the warning copy (R-AC-04d)", async () => {
-    render(<ProfilePage />);
+    renderProfile();
 
     expect(
       await screen.findByText("Reingreso recomendado en 4 días"),
@@ -150,7 +169,7 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("changes the username by proving ownership with the words", async () => {
-    render(<ProfilePage />);
+    renderProfile();
 
     const form = await screen.findByRole("heading", {
       name: "Cambiar usuario",
@@ -174,7 +193,7 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("changes the password by proving ownership with the words", async () => {
-    render(<ProfilePage />);
+    renderProfile();
 
     const form = await screen.findByRole("heading", {
       name: "Cambiar contraseña",
@@ -197,7 +216,7 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("removes the password (back to passwordless) with a two-click confirm", async () => {
-    render(<ProfilePage />);
+    renderProfile();
 
     const form = await screen.findByRole("heading", {
       name: "Retirar contraseña",
@@ -227,7 +246,7 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("rotates the words and shows the new plaintext exactly once", async () => {
-    render(<ProfilePage />);
+    renderProfile();
 
     fireEvent.click(
       await screen.findByRole("button", { name: "Rotar palabras claves" }),
@@ -240,7 +259,7 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("logs out through the unified session endpoint and reloads", async () => {
-    render(<ProfilePage />);
+    renderProfile();
 
     fireEvent.click(
       await screen.findByRole("button", { name: "Cerrar sesión" }),
@@ -273,11 +292,9 @@ describe("ProfilePage vault panel (Seguridad / Bóveda, R-VC-02..05)", () => {
     (setReauthInterval as Mock).mockResolvedValue({ reauth_interval_d: 7 });
   });
 
-  async function openVaultTab() {
-    render(<ProfilePage />);
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Seguridad / Bóveda" }),
-    );
+async function openVaultTab() {
+    renderProfile();
+    fireEvent.click(await screen.findByRole("tab", { name: "Cuenta" }));
   }
 
   it("renders the create-account activation form when vault OFF and no account", async () => {
@@ -390,19 +407,23 @@ describe("ProfilePage vault panel (Seguridad / Bóveda, R-VC-02..05)", () => {
 
     expect(await screen.findByText("Activa")).toBeInTheDocument();
     expect(screen.getByText(/Cuenta:/)).toBeInTheDocument();
-    expect(screen.getByText("el-autor")).toBeInTheDocument();
+    // Until WU-2 merges the account and vault surfaces, the management
+    // controls exist on both stacked panels; assert presence, not uniqueness.
+    expect(screen.getAllByText("el-autor").length).toBeGreaterThan(0);
     expect(
-      screen.getByRole("heading", { name: "Cambiar usuario" }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("heading", { name: "Cambiar usuario" }).length,
+    ).toBeGreaterThan(0);
     expect(
-      screen.getByRole("heading", { name: "Cambiar contraseña" }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("heading", { name: "Cambiar contraseña" }).length,
+    ).toBeGreaterThan(0);
     expect(
-      screen.getByRole("heading", { name: "Retirar contraseña" }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("heading", { name: "Retirar contraseña" }).length,
+    ).toBeGreaterThan(0);
     expect(
-      screen.getByRole("heading", { name: "Rotar palabras claves" }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("heading", { name: "Rotar palabras claves" }).length,
+    ).toBeGreaterThan(0);
+    // Vault-only surfaces: reauth interval and disable-vault live solely in
+    // the management panel.
     expect(
       screen.getByRole("heading", { name: "Intervalo de reingreso" }),
     ).toBeInTheDocument();
