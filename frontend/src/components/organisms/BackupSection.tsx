@@ -565,7 +565,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
           ) : (
             <div>
               <div className="flex items-center justify-between gap-3">
-                <h5 className="font-heading text-small text-primary">Restaurar desde una copia</h5>
+                <h4 className="font-heading text-small text-primary">Restaurar desde una copia</h4>
                 <Button variant="ghost" size="sm" onClick={closeRestore} disabled={busy && restoreStage === "running"}>
                   Cerrar
                 </Button>

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Router, useSearchParams } from "react-router-dom";
 import { createMemoryHistory } from "@remix-run/router";
@@ -138,6 +138,11 @@ vi.mock("@/api/assistantSettings", () => ({
 }));
 
 describe("ProfilePage", () => {
+  afterEach(() => {
+    // jsdom does not implement scrollIntoView; the exact-location test stubs it.
+    delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+  });
+
   beforeEach(() => {
     // Default readiness: no legacy folders. The Mundos tab's migration panel
     // only renders when readiness reports legacy findings.
@@ -275,6 +280,47 @@ describe("ProfilePage", () => {
       ),
     );
     expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Respaldo");
+  });
+
+  it("focuses the matching config card in place when its target is the current location", async () => {
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: {
+        backup: "pending",
+        locale: "configured",
+        offline: "configured",
+      },
+      offline: { local_ready: true, remote_pending: [] },
+      legacy: [],
+    });
+    // jsdom does not implement scrollIntoView; stub it so the retained in-page
+    // branch is observable instead of silently skipped by the optional call.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    // The locale card's declared target IS the current location, so the click
+    // must NOT navigate — the in-page scroll/focus branch handles it.
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=preferencias"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+
+    const localeHeading = await screen.findByRole("heading", {
+      name: "Idioma, región y zona horaria",
+    });
+    const section = localeHeading.closest("section") as HTMLElement;
+    expect(section.id).toBe("config-card-locale");
+
+    fireEvent.click(within(section).getByRole("button", { name: "Configurar" }));
+
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: "smooth", block: "start" });
+    expect(document.activeElement).toBe(section);
+    // Still on Preferencias: the exact-location branch never navigates away.
+    expect(screen.getByRole("tab", { name: "Preferencias" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 
   it("hosts the backup surface inside the Respaldo section (REQ-PIA-02)", async () => {
