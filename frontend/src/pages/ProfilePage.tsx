@@ -34,6 +34,7 @@ import {
 } from "@/api/wiki";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
+import { useRecoveryWordsUnlock } from "@/hooks/useRecoveryWordsUnlock";
 import { useAuthSession } from "@/hooks/useAuthSession";
 import { reloadPage } from "@/lib/reloadPage";
 import type {
@@ -76,21 +77,40 @@ function isProfileSection(value: string | null): value is ProfileSection {
   return PROFILE_SECTIONS.some((section) => section.id === value);
 }
 
-/** Sesión de edición — the same local-dev session controls as the Navbar
- *  dropdown, kept accessible from the full Profile page. Mode-aware: in the
- *  credentials vault mode (DEMIURGOS_AUTH_MODE=credentials) the panel shows
- *  the Account section (session + logout + credential management via words +
- *  re-auth indicator); local-dev and disabled keep their legacy behavior
- *  unchanged. */
-function SessionSection() {
+/**
+ * Perfil → Cuenta — the single account/security surface (REQ-PIA-09), merging
+ * the former session panel, credentials Account section and vault
+ * management/activation panels into one section. Vault ON and vault OFF are
+ * two states of the same surface: the session card is always present
+ * (credentials or local-dev branch), and below it the vault card renders
+ * either the words-management forms (ON) or the activation forms (OFF).
+ *
+ * The recovery-words unlock (REQ-SRW-01..04) is session-scoped: the first
+ * successful words-gated action arms the verified words and later actions
+ * replay them without re-prompting. The words live in page-level memory only
+ * (never localStorage/sessionStorage/cookies) and are cleared on logout and
+ * on unmount.
+ */
+function CuentaSection({
+  unlockedWords,
+  onUnlocked,
+  onLock,
+}: {
+  unlockedWords: string | null;
+  onUnlocked: (words: string) => void;
+  onLock: () => void;
+}) {
   const localDev = useLocalDevAuth(true);
+  const [vaultStatus, setVaultStatus] = useState<AuthSessionStatus | null>(null);
+  const [config, setConfig] = useState<VaultConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Unified status decides the vault branch; on failure the panel degrades
-  // to the local-dev view — a low-stakes read, never a wall.
-  const [vaultStatus, setVaultStatus] = useState<AuthSessionStatus | null>(null);
-
+  // Unified status decides the session-card branch (credentials vs local-dev);
+  // on failure the card degrades to the local-dev view — a low-stakes read,
+  // never a wall.
   useEffect(() => {
     let active = true;
     void getAuthStatus()
@@ -105,117 +125,28 @@ function SessionSection() {
     };
   }, []);
 
-  const handleAction = async () => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      if (localDev.status?.authenticated) {
-        await localDev.logout();
-      } else {
-        await localDev.start();
-      }
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : "No se pudo actualizar la sesión local",
-      );
-    } finally {
-      setActionLoading(false);
-    }
+  const load = () => {
+    setError(null);
+    void getVaultConfig()
+      .then(setConfig)
+      .catch((cause: unknown) => setError(cause))
+      .finally(() => setLoading(false));
   };
 
-  // Credentials vault mode: Account section (session + credential management).
-  if (vaultStatus?.mode === "credentials") {
-    return <AccountSection status={vaultStatus} />;
-  }
-
-  // Local-dev / disabled: legacy panel (unchanged).
-  if (localDev.isLoading) {
-    return (
-      <div className="flex items-center gap-2 py-6 text-small text-muted">
-        <Spinner size="sm" /> Comprobando sesión local…
-      </div>
-    );
-  }
-
-  if (localDev.error) {
-    return <p className="text-small text-status-error">{localDev.error.message}</p>;
-  }
-
-  if (!localDev.status) return null;
-
-  return (
-    <div className="rounded-lg border border-edge bg-surface-raised p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="font-heading text-body text-primary">Sesión de edición</h3>
-        <span className="text-small text-muted">Local</span>
-      </div>
-
-      {localDev.status.authenticated && (
-        <>
-          <p className="mt-3 text-small text-status-success">Sesión local activa</p>
-          <p className="mt-1 text-small text-muted">{localDev.status.label}</p>
-          <Button
-            variant="secondary"
-            onClick={() => void handleAction()}
-            disabled={actionLoading}
-            className="mt-3"
-          >
-            {actionLoading ? "Cerrando…" : "Cerrar sesión local"}
-          </Button>
-        </>
-      )}
-
-      {!localDev.status.authenticated && localDev.status.enabled && (
-        <>
-          <p className="mt-3 text-small text-muted">
-            Sesión local no iniciada. Iniciala para editar y configurar el perfil.
-          </p>
-          <Button
-            variant="primary"
-            onClick={() => void handleAction()}
-            disabled={actionLoading}
-            className="mt-3"
-          >
-            {actionLoading ? "Iniciando…" : "Iniciar sesión local"}
-          </Button>
-        </>
-      )}
-
-      {!localDev.status.enabled && (
-        <p className="mt-3 text-small text-muted">
-          Autenticación local desactivada. Activá{" "}
-          <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=local-dev</code> en{" "}
-          <code className="text-icon-muted">.env</code> para probar la edición.
-        </p>
-      )}
-
-      {actionError && <p className="mt-3 text-small text-status-error">{actionError}</p>}
-    </div>
-  );
-}
-
-/**
- * Credentials Account section (R-AC-05, replaces the vault session panel):
- * session info + logout, the soft re-auth indicator (R-AC-04d), and the
- * credential-management actions — change username, change/remove password and
- * rotate the recovery words — each gated on the recovery words (ownership
- * key). The words are NEVER displayed here (S-AC-01c); rotation returns new
- * plaintext words exactly once.
- */
-function AccountSection({ status }: { status: AuthSessionStatus }) {
-  const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
+  useEffect(load, []);
 
   const daysUntilReauth =
-    status.authenticated && typeof status.days_until_reauth === "number"
-      ? status.days_until_reauth
+    vaultStatus?.authenticated && typeof vaultStatus.days_until_reauth === "number"
+      ? vaultStatus.days_until_reauth
       : null;
 
+  // Credentials logout clears the unlocked words before the reload (REQ-SRW-03).
   const handleLogout = async () => {
     setActionLoading(true);
     setActionError(null);
     try {
       await logoutSession();
+      onLock();
       reloadPage();
     } catch (cause) {
       setActionError(
@@ -226,99 +157,276 @@ function AccountSection({ status }: { status: AuthSessionStatus }) {
     }
   };
 
-  return (
-    <div className="rounded-lg border border-edge bg-surface-raised p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="font-heading text-body text-primary">Cuenta</h3>
-        <span className="text-small text-muted">Credenciales</span>
-      </div>
+  // Local-dev / disabled session action (start or close the local session).
+  const handleLocalAction = async () => {
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      if (localDev.status?.authenticated) {
+        await localDev.logout();
+      } else {
+        await localDev.start();
+      }
+    } catch (cause) {
+      setActionError(
+        cause instanceof Error
+          ? cause.message
+          : "No se pudo actualizar la sesión local",
+      );
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
-      {status.authenticated ? (
-        <>
-          <p className="mt-3 text-small text-status-success">Sesión activa</p>
-          <p className="mt-1 text-small text-muted">{status.label}</p>
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-6 text-small text-muted">
+        <Spinner size="sm" /> Comprobando la bóveda…
+      </div>
+    );
+  }
+
+  if (!!error && !config) {
+    return (
+      <ErrorBanner message="No se pudo cargar el estado de la bóveda." onRetry={load} />
+    );
+  }
+
+  if (!config) return null;
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-lg border border-edge bg-surface-raised p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-heading text-body text-primary">Sesión</h3>
+          <span className="text-small text-muted">
+            {vaultStatus?.mode === "credentials" ? "Credenciales" : "Local"}
+          </span>
+        </div>
+
+        {vaultStatus?.mode === "credentials" ? (
+          vaultStatus.authenticated ? (
+            <>
+              <p className="mt-3 text-small text-status-success">Sesión activa</p>
+              <p className="mt-1 text-small text-muted">{vaultStatus.label}</p>
+              <p className="mt-1 text-small text-muted">
+                Proveedor: {providerLabel(vaultStatus.provider)}
+              </p>
+
+              {daysUntilReauth !== null && (
+                <div
+                  role="status"
+                  className="mt-3 rounded-lg border border-edge bg-surface/50 p-3"
+                >
+                  <p className="text-small text-primary">
+                    {daysUntilReauth <= 0
+                      ? "Reingreso recomendado: hoy"
+                      : `Reingreso recomendado en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}`}
+                  </p>
+                  <p className="mt-2 text-small text-muted">
+                    Si no reingresas tu contraseña, la sesión de Demiurgos se
+                    cerrará. Y si olvidaste tu contraseña, solo vas a poder
+                    recuperarla con tus palabras claves.
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => void handleLogout()}
+                  disabled={actionLoading}
+                >
+                  {actionLoading ? "Cerrando…" : "Cerrar sesión"}
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p className="mt-3 text-small text-muted">
+              No hay una sesión de cuenta activa. Iniciá sesión para editar y
+              configurar el perfil.
+            </p>
+          )
+        ) : localDev.isLoading ? (
+          <div className="flex items-center gap-2 py-6 text-small text-muted">
+            <Spinner size="sm" /> Comprobando sesión local…
+          </div>
+        ) : localDev.error ? (
+          <p className="text-small text-status-error">{localDev.error.message}</p>
+        ) : !localDev.status ? null : (
+          <>
+            {localDev.status.authenticated && (
+              <>
+                <p className="mt-3 text-small text-status-success">
+                  Sesión local activa
+                </p>
+                <p className="mt-1 text-small text-muted">{localDev.status.label}</p>
+                <Button
+                  variant="secondary"
+                  onClick={() => void handleLocalAction()}
+                  disabled={actionLoading}
+                  className="mt-3"
+                >
+                  {actionLoading ? "Cerrando…" : "Cerrar sesión local"}
+                </Button>
+              </>
+            )}
+
+            {!localDev.status.authenticated && localDev.status.enabled && (
+              <>
+                <p className="mt-3 text-small text-muted">
+                  Sesión local no iniciada. Iniciala para editar y configurar el
+                  perfil.
+                </p>
+                <Button
+                  variant="primary"
+                  onClick={() => void handleLocalAction()}
+                  disabled={actionLoading}
+                  className="mt-3"
+                >
+                  {actionLoading ? "Iniciando…" : "Iniciar sesión local"}
+                </Button>
+              </>
+            )}
+
+            {!localDev.status.enabled && (
+              <p className="mt-3 text-small text-muted">
+                Autenticación local desactivada. Activá{" "}
+                <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=local-dev</code>{" "}
+                en <code className="text-icon-muted">.env</code> para probar la
+                edición.
+              </p>
+            )}
+          </>
+        )}
+
+        {actionError && (
+          <p className="mt-3 text-small text-status-error">{actionError}</p>
+        )}
+      </section>
+
+      {config.enabled ? (
+        <section className="rounded-lg border border-edge bg-surface-raised p-4">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="font-heading text-body text-primary">
+              Seguridad / Bóveda
+            </h3>
+            <span className="text-small text-muted">Activa</span>
+          </div>
           <p className="mt-1 text-small text-muted">
-            Proveedor: {providerLabel(status.provider)}
+            Cuenta: <span className="text-primary">{config.username ?? "—"}</span>
+            {config.has_password ? " · contraseña definida" : " · sin contraseña"}
+            {config.env_override && (
+              <span className="text-muted">
+                {" "}
+                · forzada por{" "}
+                <code className="text-icon-muted">DEMIURGOS_AUTH_MODE</code>
+              </span>
+            )}
           </p>
 
-          {daysUntilReauth !== null && (
-            <div
-              role="status"
-              className="mt-3 rounded-lg border border-edge bg-surface/50 p-3"
-            >
-              <p className="text-small text-primary">
-                {daysUntilReauth <= 0
-                  ? "Reingreso recomendado: hoy"
-                  : `Reingreso recomendado en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}`}
-              </p>
-              <p className="mt-2 text-small text-muted">
-                Si no reingresas tu contraseña, la sesión de Demiurgos se
-                cerrará. Y si olvidaste tu contraseña, solo vas a poder
-                recuperarla con tus palabras claves.
-              </p>
-            </div>
-          )}
+          <div className="mt-4 space-y-4">
+            <WordsUnlockBanner unlocked={unlockedWords !== null} />
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => void handleLogout()}
-              disabled={actionLoading}
-            >
-              {actionLoading ? "Cerrando…" : "Cerrar sesión"}
-            </Button>
+            <WordsForm
+              title="Cambiar usuario"
+              description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
+              extraLabel="Nuevo usuario"
+              extraPlaceholder="nuevo-usuario"
+              submitLabel="Cambiar usuario"
+              busyLabel="Cambiando…"
+              unlockedWords={unlockedWords}
+              onSubmit={async (words, newUsername) => {
+                await changeUsername(words, newUsername);
+                onUnlocked(words);
+                load();
+              }}
+            />
+
+            <WordsForm
+              title="Cambiar contraseña"
+              description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
+              extraLabel="Nueva contraseña"
+              extraType="password"
+              extraPlaceholder="Nueva contraseña"
+              extraRequired
+              submitLabel="Cambiar contraseña"
+              busyLabel="Cambiando…"
+              unlockedWords={unlockedWords}
+              onSubmit={async (words, newPassword) => {
+                await changePassword(words, newPassword);
+                onUnlocked(words);
+                load();
+              }}
+            />
+
+            <WordsForm
+              title="Retirar contraseña"
+              description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
+              submitLabel="Retirar contraseña"
+              busyLabel="Retirando…"
+              confirmLabel="¿Confirmás el retiro?"
+              unlockedWords={unlockedWords}
+              onSubmit={async (words) => {
+                await removePassword(words);
+                onUnlocked(words);
+                load();
+              }}
+            />
+
+            <RotateWordsCard />
+
+            <ReauthIntervalForm config={config} onSaved={load} />
+
+            <WordsForm
+              title="Desactivar bóveda"
+              description="Apagar la bóveda quita la autenticación de la instalación. Lo confirmás con tus palabras claves."
+              submitLabel="Desactivar bóveda"
+              busyLabel="Desactivando…"
+              confirmLabel="¿Confirmás la desactivación?"
+              unlockedWords={unlockedWords}
+              onSubmit={async (words) => {
+                await disableVault(words);
+                onUnlocked(words);
+                load();
+              }}
+            />
           </div>
-        </>
+        </section>
       ) : (
-        <p className="mt-3 text-small text-muted">
-          No hay una sesión de cuenta activa. Iniciá sesión para editar y
-          configurar el perfil.
-        </p>
+        <ActivationPanel
+          config={config}
+          onActivated={load}
+          onVerified={onUnlocked}
+        />
       )}
-
-      {actionError && <p className="mt-3 text-small text-status-error">{actionError}</p>}
-
-      <div className="mt-5 space-y-4 border-t border-edge pt-4">
-        <WordsForm
-          title="Cambiar usuario"
-          description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
-          extraLabel="Nuevo usuario"
-          extraPlaceholder="nuevo-usuario"
-          submitLabel="Cambiar usuario"
-          busyLabel="Cambiando…"
-          onSubmit={async (words, newUsername) => {
-            await changeUsername(words, newUsername);
-          }}
-        />
-
-        <WordsForm
-          title="Cambiar contraseña"
-          description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
-          extraLabel="Nueva contraseña"
-          extraType="password"
-          extraPlaceholder="Nueva contraseña"
-          extraRequired
-          submitLabel="Cambiar contraseña"
-          busyLabel="Cambiando…"
-          onSubmit={async (words, newPassword) => {
-            await changePassword(words, newPassword);
-          }}
-        />
-
-        <WordsForm
-          title="Retirar contraseña"
-          description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
-          submitLabel="Retirar contraseña"
-          busyLabel="Retirando…"
-          confirmLabel="¿Confirmás el retiro?"
-          onSubmit={async (words) => {
-            await removePassword(words);
-          }}
-        />
-
-        <RotateWordsCard />
-      </div>
     </div>
+  );
+}
+
+/**
+ * Recovery-words unlock state for the current session (REQ-SRW-01). Locked
+ * until the first successful words-gated action arms the verified words;
+ * never persisted to web storage (REQ-SRW-02).
+ */
+function WordsUnlockBanner({ unlocked }: { unlocked: boolean }) {
+  return (
+    <section
+      aria-live="polite"
+      className="rounded-lg border border-edge bg-surface/50 p-3"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <h4 className="font-heading text-body text-primary">Palabras claves</h4>
+        <Badge variant={unlocked ? "success" : "default"}>
+          {unlocked ? "Desbloqueadas" : "Bloqueadas"}
+        </Badge>
+      </div>
+      <p className="mt-1 text-small text-muted">
+        {unlocked
+          ? "Desbloqueadas para esta sesión: las acciones que piden palabras claves ya no las vuelven a solicitar. No se guardan en el navegador."
+          : "Bloqueadas para esta sesión. La primera acción que pida palabras claves las desbloquea; se recuerdan hasta cerrar sesión, recargar o salir del perfil."}
+      </p>
+    </section>
   );
 }
 
@@ -334,13 +442,17 @@ interface WordsFormProps {
   busyLabel: string;
   /** Two-click confirm for destructive actions (e.g. password removal). */
   confirmLabel?: string;
+  /** Session-unlocked words (REQ-SRW-01): when present the words input is
+   *  hidden and these cached words replay on submit without re-prompting. */
+  unlockedWords?: string | null;
   onSubmit: (words: string, extra: string) => Promise<void>;
 }
 
 /**
  * A words-gated credential action (R-AC-05): recovery words + optional extra
  * value (new username/password). The words are the ownership proof; every
- * action shows its own inline busy/error/success state.
+ * action shows its own inline busy/error/success state. When the session has
+ * unlocked words (REQ-SRW-01) the input is hidden and the cached words replay.
  */
 function WordsForm({
   title,
@@ -352,6 +464,7 @@ function WordsForm({
   submitLabel,
   busyLabel,
   confirmLabel,
+  unlockedWords,
   onSubmit,
 }: WordsFormProps) {
   const [words, setWords] = useState("");
@@ -360,6 +473,10 @@ function WordsForm({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [confirming, setConfirming] = useState(false);
+
+  // While the session unlock is armed the cached words replay; otherwise the
+  // user types them (the words input is only rendered in that state).
+  const effectiveWords = unlockedWords ?? words;
 
   const handleSubmit = async () => {
     if (extraRequired && extra.trim() === "") {
@@ -373,7 +490,7 @@ function WordsForm({
     setBusy(true);
     setError(null);
     try {
-      await onSubmit(words.trim(), extra.trim());
+      await onSubmit(effectiveWords.trim(), extra.trim());
       setDone(true);
       setWords("");
       setExtra("");
@@ -392,23 +509,31 @@ function WordsForm({
       <h4 className="font-heading text-body text-primary">{title}</h4>
       <p className="mt-1 text-small text-muted">{description}</p>
 
-      <label htmlFor={`${title}-words`} className="sr-only">
-        Palabras claves para {title}
-      </label>
-      <input
-        id={`${title}-words`}
-        type="text"
-        autoComplete="off"
-        placeholder="Palabras claves"
-        value={words}
-        onChange={(event) => {
-          setWords(event.target.value);
-          setError(null);
-          setConfirming(false);
-        }}
-        disabled={busy}
-        className="mt-3 w-full rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
-      />
+      {unlockedWords ? (
+        <p className="mt-3 text-small text-muted">
+          Palabras claves ya verificadas para esta sesión.
+        </p>
+      ) : (
+        <>
+          <label htmlFor={`${title}-words`} className="sr-only">
+            Palabras claves para {title}
+          </label>
+          <input
+            id={`${title}-words`}
+            type="text"
+            autoComplete="off"
+            placeholder="Palabras claves"
+            value={words}
+            onChange={(event) => {
+              setWords(event.target.value);
+              setError(null);
+              setConfirming(false);
+            }}
+            disabled={busy}
+            className="mt-3 w-full rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
+          />
+        </>
+      )}
 
       {extraLabel &&
         (extraType === "password" ? (
@@ -460,7 +585,7 @@ function WordsForm({
         variant="secondary"
         size="sm"
         onClick={() => void handleSubmit()}
-        disabled={busy || words.trim() === ""}
+        disabled={busy || (unlockedWords ? false : words.trim() === "")}
         className="mt-3"
       >
         {busy
@@ -551,53 +676,6 @@ function RotateWordsCard() {
   );
 }
 
-/**
- * Perfil → Seguridad / Bóveda — the vault lifecycle panel, driven by
- * GET /api/auth/vault/config (`vault.enabled`, the persisted flag + optional
- * env override — NOT the auth-mode string). When the vault is OFF it renders
- * the ACTIVATION panel (create an account with the words shown exactly once,
- * or verify an existing account's words); when ON it renders the MANAGEMENT
- * panel (session, change user/password via words, remove password, rotate
- * words, adjust the soft re-auth interval, and disable with the words).
- */
-function VaultSection() {
-  const [config, setConfig] = useState<VaultConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<unknown>(null);
-
-  const load = () => {
-    setError(null);
-    void getVaultConfig()
-      .then(setConfig)
-      .catch((cause: unknown) => setError(cause))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, []);
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-6 text-small text-muted">
-        <Spinner size="sm" /> Comprobando la bóveda…
-      </div>
-    );
-  }
-
-  if (!!error && !config) {
-    return (
-      <ErrorBanner message="No se pudo cargar el estado de la bóveda." onRetry={load} />
-    );
-  }
-
-  if (!config) return null;
-
-  return config.enabled ? (
-    <ManagementPanel config={config} onChanged={load} />
-  ) : (
-    <ActivationPanel config={config} onActivated={load} />
-  );
-}
-
 /** Vault OFF — activation. With no account: create one (username + optional
  *  password); the recovery words are shown EXACTLY once (S-VC-03a). With an
  *  existing account (e.g. a migrated install): verify the words (ownership
@@ -605,9 +683,13 @@ function VaultSection() {
 function ActivationPanel({
   config,
   onActivated,
+  onVerified,
 }: {
   config: VaultConfig;
   onActivated: () => void;
+  /** Arm the session unlock after a words-based activation succeeds
+   *  (REQ-SRW-01): the typed words were just verified server-side. */
+  onVerified?: (words: string) => void;
 }) {
   const [words, setWords] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -630,6 +712,10 @@ function ActivationPanel({
         // New account: the words are shown exactly once before continuing.
         setWords(result.words);
       } else {
+        // Existing account: the typed words were just verified server-side,
+        // so they arm the session unlock (REQ-SRW-01) before switching to
+        // the vault-ON management surface.
+        if (body.words) onVerified?.(body.words);
         onActivated();
       }
     } catch (cause) {
@@ -799,127 +885,6 @@ function ActivationPanel({
           {error}
         </p>
       )}
-    </div>
-  );
-}
-
-/** Vault ON — management: session info + logout, credential management via
- *  the words (change user/password, remove password, rotate words), the soft
- *  re-auth interval, and disabling the vault (words + confirmation). */
-function ManagementPanel({
-  config,
-  onChanged,
-}: {
-  config: VaultConfig;
-  onChanged: () => void;
-}) {
-  const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const handleLogout = async () => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await logoutSession();
-      reloadPage();
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : "No se pudo cerrar la sesión",
-      );
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <section className="rounded-lg border border-edge bg-surface-raised p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="font-heading text-body text-primary">
-            Seguridad / Bóveda
-          </h3>
-          <span className="text-small text-muted">Activa</span>
-        </div>
-        <p className="mt-1 text-small text-muted">
-          Cuenta: <span className="text-primary">{config.username ?? "—"}</span>
-          {config.has_password ? " · contraseña definida" : " · sin contraseña"}
-          {config.env_override && (
-            <span className="text-muted">
-              {" "}
-              · forzada por <code className="text-icon-muted">DEMIURGOS_AUTH_MODE</code>
-            </span>
-          )}
-        </p>
-        <div className="mt-4">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void handleLogout()}
-            disabled={actionLoading}
-          >
-            {actionLoading ? "Cerrando…" : "Cerrar sesión"}
-          </Button>
-        </div>
-        {actionError && <p className="mt-3 text-small text-status-error">{actionError}</p>}
-      </section>
-
-      <div className="space-y-4">
-        <WordsForm
-          title="Cambiar usuario"
-          description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
-          extraLabel="Nuevo usuario"
-          extraPlaceholder="nuevo-usuario"
-          submitLabel="Cambiar usuario"
-          busyLabel="Cambiando…"
-          onSubmit={async (words, newUsername) => {
-            await changeUsername(words, newUsername);
-            onChanged();
-          }}
-        />
-
-        <WordsForm
-          title="Cambiar contraseña"
-          description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
-          extraLabel="Nueva contraseña"
-          extraType="password"
-          extraPlaceholder="Nueva contraseña"
-          extraRequired
-          submitLabel="Cambiar contraseña"
-          busyLabel="Cambiando…"
-          onSubmit={async (words, newPassword) => {
-            await changePassword(words, newPassword);
-            onChanged();
-          }}
-        />
-
-        <WordsForm
-          title="Retirar contraseña"
-          description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
-          submitLabel="Retirar contraseña"
-          busyLabel="Retirando…"
-          confirmLabel="¿Confirmás el retiro?"
-          onSubmit={async (words) => {
-            await removePassword(words);
-            onChanged();
-          }}
-        />
-
-        <RotateWordsCard />
-
-        <ReauthIntervalForm config={config} onSaved={onChanged} />
-
-        <WordsForm
-          title="Desactivar bóveda"
-          description="Apagar la bóveda quita la autenticación de la instalación. Lo confirmás con tus palabras claves."
-          submitLabel="Desactivar bóveda"
-          busyLabel="Desactivando…"
-          confirmLabel="¿Confirmás la desactivación?"
-          onSubmit={async (words) => {
-            await disableVault(words);
-            onChanged();
-          }}
-        />
-      </div>
     </div>
   );
 }
@@ -1508,17 +1473,21 @@ function WorldsSection() {
  * section (REQ-PIA-06); each panel opens with its `h2` so the outline stays
  * `h1 → h2 → h3` with no orphan level (REQ-PIA-07).
  *
- * WU-1a interim content mapping (later WUs re-home without changing embedded
- * behavior, CON-PIA-05): `cuenta` stacks the session and vault surfaces (the
- * account/security merge is WU-2), `preferencias` still hosts the
- * configuration hub (locale extraction is WU-4), `conexiones` stacks the
- * idea-capture and assistant panels (fold-in is WU-5), and `respaldo` lands
- * empty until WU-3 moves BackupSection out of the hub.
+ * Interim content mapping (later WUs re-home without changing embedded
+ * behavior, CON-PIA-05): `cuenta` is the merged account/security surface
+ * (WU-2, REQ-PIA-09) with the session-scoped words unlock (REQ-SRW-01..04);
+ * `preferencias` still hosts the configuration hub (locale extraction is
+ * WU-4), `conexiones` stacks the idea-capture and assistant panels (fold-in
+ * is WU-5), and `respaldo` lands empty until WU-3 moves BackupSection out of
+ * the hub.
  */
 export default function ProfilePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get("tab");
   const activeSection: ProfileSection = isProfileSection(rawTab) ? rawTab : "cuenta";
+  // The session-scoped words unlock (REQ-SRW-01..04) lives at page level so
+  // it survives section switches; the merged cuenta surface consumes it.
+  const { unlockedWords, unlock, lock } = useRecoveryWordsUnlock();
   // Click-driven changes move focus to the panel heading; the default landing
   // and arrow-key roves never steal focus (REQ-PIA-04).
   const [focusPanel, setFocusPanel] = useState(false);
@@ -1575,12 +1544,11 @@ export default function ProfilePage() {
             </h2>
             <div className="mt-4">
               {activeSection === "cuenta" ? (
-                <>
-                  <SessionSection />
-                  <div className="mt-4">
-                    <VaultSection />
-                  </div>
-                </>
+                <CuentaSection
+                  unlockedWords={unlockedWords}
+                  onUnlocked={unlock}
+                  onLock={lock}
+                />
               ) : activeSection === "respaldo" ? null : activeSection === "preferencias" ? (
                 <ConfigurationSection onRequestSignIn={() => selectSection("cuenta")} />
               ) : activeSection === "conexiones" ? (

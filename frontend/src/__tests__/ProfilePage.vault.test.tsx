@@ -154,6 +154,16 @@ const credentialsStatus = {
   days_until_reauth: 4,
 };
 
+/** Vault ON — the merged cuenta surface renders the management forms. */
+const vaultOnConfig = {
+  enabled: true,
+  account_exists: true,
+  username: "el-autor",
+  has_password: true,
+  reauth_interval_d: 14,
+  env_override: false,
+};
+
 // The `cuenta` section stacks the session and vault surfaces until WU-2
 // merges them; the vault read must be hermetic in every test.
 function renderProfile() {
@@ -193,21 +203,23 @@ describe("ProfilePage account section (credentials mode)", () => {
     });
   });
 
-  it("renders the Account section instead of the local-dev panel", async () => {
+  it("renders the merged session card instead of the local-dev panel", async () => {
     renderProfile();
 
     expect(
-      await screen.findByRole("heading", { name: "Cuenta", level: 3 }),
+      await screen.findByRole("heading", { name: "Sesión", level: 3 }),
     ).toBeInTheDocument();
     // The header badge also shows the account label (REQ-PIA-05); scope to the
-    // panel so the duplicate doesn't collide with the Account-section assert.
+    // panel so the duplicate doesn't collide with the section assertions.
     const panel = within(screen.getByRole("tabpanel"));
     expect(panel.getByText("el-autor")).toBeInTheDocument();
     expect(panel.getByText("Proveedor: Credenciales")).toBeInTheDocument();
     expect(panel.getByRole("button", { name: "Cerrar sesión" })).toBeInTheDocument();
+    // The management forms are part of the vault-ON state (REQ-PIA-09); with
+    // the vault OFF only the activation surface renders below the session card.
     expect(
-      panel.getByRole("button", { name: "Rotar palabras claves" }),
-    ).toBeInTheDocument();
+      panel.queryByRole("button", { name: "Rotar palabras claves" }),
+    ).not.toBeInTheDocument();
     // The local-dev panel must not render in credentials mode.
     expect(
       screen.queryByRole("button", { name: "Cerrar sesión local" }),
@@ -228,6 +240,8 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("changes the username by proving ownership with the words", async () => {
+    // The words forms belong to the vault-ON management surface (REQ-PIA-09).
+    (getVaultConfig as Mock).mockResolvedValue(vaultOnConfig);
     renderProfile();
 
     const form = await screen.findByRole("heading", {
@@ -252,6 +266,7 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("changes the password by proving ownership with the words", async () => {
+    (getVaultConfig as Mock).mockResolvedValue(vaultOnConfig);
     renderProfile();
 
     const form = await screen.findByRole("heading", {
@@ -275,6 +290,7 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("removes the password (back to passwordless) with a two-click confirm", async () => {
+    (getVaultConfig as Mock).mockResolvedValue(vaultOnConfig);
     renderProfile();
 
     const form = await screen.findByRole("heading", {
@@ -305,6 +321,7 @@ describe("ProfilePage account section (credentials mode)", () => {
   });
 
   it("rotates the words and shows the new plaintext exactly once", async () => {
+    (getVaultConfig as Mock).mockResolvedValue(vaultOnConfig);
     renderProfile();
 
     fireEvent.click(
@@ -326,6 +343,179 @@ describe("ProfilePage account section (credentials mode)", () => {
 
     await waitFor(() => expect(logoutSession).toHaveBeenCalled());
     await waitFor(() => expect(reloadPage).toHaveBeenCalled());
+  });
+});
+
+describe("ProfilePage session words unlock (REQ-SRW-01..04)", () => {
+  beforeEach(() => {
+    (getAuthStatus as Mock).mockResolvedValue(credentialsStatus);
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: {},
+      offline: { local_ready: true, remote_pending: [] },
+      legacy: [],
+    });
+    (getVaultConfig as Mock).mockResolvedValue(vaultOnConfig);
+    (changeUsername as Mock).mockResolvedValue({ success: true });
+    (changePassword as Mock).mockResolvedValue({ success: true });
+    (removePassword as Mock).mockResolvedValue({ success: true });
+    (rotateWords as Mock).mockResolvedValue({
+      new_words: "alpha beta gamma delta",
+    });
+    (logoutSession as Mock).mockResolvedValue({
+      ...credentialsStatus,
+      authenticated: false,
+    });
+  });
+
+  it("unlocks once with a successful words action and replays on later actions", async () => {
+    renderProfile();
+
+    // First words-gated action types the words; success arms the unlock.
+    const usernameForm = await screen
+      .findByRole("heading", { name: "Cambiar usuario" })
+      .then((heading) => heading.closest("div") as HTMLElement);
+    fireEvent.change(
+      within(usernameForm).getByLabelText("Palabras claves para Cambiar usuario"),
+      { target: { value: "alpha beta gamma" } },
+    );
+    fireEvent.change(within(usernameForm).getByLabelText("Nuevo usuario"), {
+      target: { value: "nuevo-nombre" },
+    });
+    fireEvent.click(
+      within(usernameForm).getByRole("button", { name: "Cambiar usuario" }),
+    );
+
+    await waitFor(() =>
+      expect(changeUsername).toHaveBeenCalledWith("alpha beta gamma", "nuevo-nombre"),
+    );
+    // The unlock banner arms for the session.
+    expect(await screen.findByText("Desbloqueadas")).toBeInTheDocument();
+
+    // The next words action no longer re-requests the words (REQ-SRW-01):
+    // the input is hidden and the cached words replay on submit.
+    const passwordForm = await screen
+      .findByRole("heading", { name: "Cambiar contraseña" })
+      .then((heading) => heading.closest("div") as HTMLElement);
+    expect(
+      within(passwordForm).queryByLabelText("Palabras claves para Cambiar contraseña"),
+    ).not.toBeInTheDocument();
+    fireEvent.change(within(passwordForm).getByLabelText("Nueva contraseña"), {
+      target: { value: "clave-nueva" },
+    });
+    fireEvent.click(
+      within(passwordForm).getByRole("button", { name: "Cambiar contraseña" }),
+    );
+
+    await waitFor(() =>
+      expect(changePassword).toHaveBeenCalledWith("alpha beta gamma", "clave-nueva"),
+    );
+  });
+
+  it("stays locked after an invalid words attempt", async () => {
+    (changeUsername as Mock).mockRejectedValue(new Error("Palabras incorrectas"));
+    renderProfile();
+
+    const form = await screen
+      .findByRole("heading", { name: "Cambiar usuario" })
+      .then((heading) => heading.closest("div") as HTMLElement);
+    fireEvent.change(
+      within(form).getByLabelText("Palabras claves para Cambiar usuario"),
+      { target: { value: "wrong words" } },
+    );
+    fireEvent.change(within(form).getByLabelText("Nuevo usuario"), {
+      target: { value: "nuevo-nombre" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Cambiar usuario" }));
+
+    expect(await within(form).findByText("Palabras incorrectas")).toBeInTheDocument();
+    // No session replay is armed: the banner stays locked and every action
+    // card still asks for the words.
+    expect(screen.getByText("Bloqueadas")).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("Palabras claves para Cambiar contraseña"),
+    ).toBeInTheDocument();
+  });
+
+  it("never persists the unlocked words to web storage (REQ-SRW-02)", async () => {
+    renderProfile();
+
+    const form = await screen
+      .findByRole("heading", { name: "Cambiar usuario" })
+      .then((heading) => heading.closest("div") as HTMLElement);
+    fireEvent.change(
+      within(form).getByLabelText("Palabras claves para Cambiar usuario"),
+      { target: { value: "alpha beta gamma" } },
+    );
+    fireEvent.change(within(form).getByLabelText("Nuevo usuario"), {
+      target: { value: "nuevo-nombre" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Cambiar usuario" }));
+    await screen.findByText("Desbloqueadas");
+
+    // The words must be absent from every web-storage surface.
+    for (const storage of [localStorage, sessionStorage]) {
+      for (let i = 0; i < storage.length; i += 1) {
+        const key = storage.key(i);
+        if (key !== null) {
+          expect(storage.getItem(key)).not.toContain("alpha beta gamma");
+        }
+      }
+    }
+    expect(document.cookie).not.toContain("alpha beta gamma");
+  });
+
+  it("clears the unlocked words on logout (REQ-SRW-03)", async () => {
+    renderProfile();
+
+    const form = await screen
+      .findByRole("heading", { name: "Cambiar usuario" })
+      .then((heading) => heading.closest("div") as HTMLElement);
+    fireEvent.change(
+      within(form).getByLabelText("Palabras claves para Cambiar usuario"),
+      { target: { value: "alpha beta gamma" } },
+    );
+    fireEvent.change(within(form).getByLabelText("Nuevo usuario"), {
+      target: { value: "nuevo-nombre" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Cambiar usuario" }));
+    await screen.findByText("Desbloqueadas");
+
+    fireEvent.click(screen.getByRole("button", { name: "Cerrar sesión" }));
+
+    await waitFor(() => expect(logoutSession).toHaveBeenCalled());
+    // The words are cleared before the reload: the banner is locked again and
+    // the next action re-requests the words.
+    expect(await screen.findByText("Bloqueadas")).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("Palabras claves para Cambiar usuario"),
+    ).toBeInTheDocument();
+  });
+
+  it("clears the unlocked words when the surface unmounts (REQ-SRW-03)", async () => {
+    const { unmount } = renderProfile();
+
+    const form = await screen
+      .findByRole("heading", { name: "Cambiar usuario" })
+      .then((heading) => heading.closest("div") as HTMLElement);
+    fireEvent.change(
+      within(form).getByLabelText("Palabras claves para Cambiar usuario"),
+      { target: { value: "alpha beta gamma" } },
+    );
+    fireEvent.change(within(form).getByLabelText("Nuevo usuario"), {
+      target: { value: "nuevo-nombre" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Cambiar usuario" }));
+    await screen.findByText("Desbloqueadas");
+
+    // Unmount destroys the page-level session state; a fresh render starts
+    // locked and re-requests the words.
+    unmount();
+    renderProfile();
+    expect(
+      await screen.findByLabelText("Palabras claves para Cambiar usuario"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Bloqueadas")).toBeInTheDocument();
   });
 });
 
@@ -453,48 +643,35 @@ async function openVaultTab() {
     );
   });
 
-  it("renders the management UI when the vault is ON (R-VC-02b)", async () => {
-    (getVaultConfig as Mock).mockResolvedValue({
-      enabled: true,
-      account_exists: true,
-      username: "el-autor",
-      has_password: true,
-      reauth_interval_d: 14,
-      env_override: false,
-    });
+  it("renders a single account/security surface when the vault is ON (REQ-PIA-09)", async () => {
+    (getVaultConfig as Mock).mockResolvedValue(vaultOnConfig);
     await openVaultTab();
 
     expect(await screen.findByText("Activa")).toBeInTheDocument();
-    expect(screen.getByText(/Cuenta:/)).toBeInTheDocument();
-    // Until WU-2 merges the account and vault surfaces, the management
-    // controls exist on both stacked panels; assert presence, not uniqueness.
-    expect(screen.getAllByText("el-autor").length).toBeGreaterThan(0);
+    const panel = within(screen.getByRole("tabpanel"));
+    expect(panel.getByText(/Cuenta:/)).toBeInTheDocument();
+    // The merged surface renders every management control exactly once: one
+    // logout, one words form per action, one rotate, one reauth, one disable.
     expect(
-      screen.getAllByRole("heading", { name: "Cambiar usuario" }).length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.getAllByRole("heading", { name: "Cambiar contraseña" }).length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.getAllByRole("heading", { name: "Retirar contraseña" }).length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.getAllByRole("heading", { name: "Rotar palabras claves" }).length,
-    ).toBeGreaterThan(0);
-    // Vault-only surfaces: reauth interval and disable-vault live solely in
-    // the management panel.
-    expect(
-      screen.getByRole("heading", { name: "Intervalo de reingreso" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Desactivar bóveda" }),
-    ).toBeInTheDocument();
+      panel.getAllByRole("button", { name: "Cerrar sesión" }),
+    ).toHaveLength(1);
+    for (const heading of [
+      "Cambiar usuario",
+      "Cambiar contraseña",
+      "Retirar contraseña",
+      "Rotar palabras claves",
+      "Intervalo de reingreso",
+      "Desactivar bóveda",
+      "Palabras claves",
+    ]) {
+      expect(panel.getAllByRole("heading", { name: heading })).toHaveLength(1);
+    }
     // Activation-only surfaces must not render while ON.
     expect(
-      screen.queryByRole("button", { name: "Activar bóveda" }),
+      panel.queryByRole("button", { name: "Activar bóveda" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Crear cuenta y activar" }),
+      panel.queryByRole("heading", { name: "Crear cuenta y activar" }),
     ).not.toBeInTheDocument();
   });
 
