@@ -1,7 +1,7 @@
 import { type ButtonHTMLAttributes, forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
-type Variant = "primary" | "secondary" | "ghost";
+type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -16,6 +16,8 @@ const variantStyles: Record<Variant, string> = {
     "bg-surface-raised text-primary border border-edge hover:bg-surface-hover active:bg-surface-raised/80 focus-visible:ring-edge/50",
   ghost:
     "bg-surface-raised/40 text-primary border border-edge/70 hover:bg-surface-hover active:bg-surface-raised/30 focus-visible:ring-edge/50",
+  danger:
+    "bg-status-error text-action-text hover:bg-status-error/80 active:bg-status-error/90 focus-visible:ring-status-error/50",
 };
 
 const sizeStyles: Record<Size, string> = {
@@ -25,7 +27,9 @@ const sizeStyles: Record<Size, string> = {
 };
 
 /**
- * Demiurgos-styled button with primary/secondary/ghost variants.
+ * Demiurgos-styled button with primary/secondary/ghost/danger variants.
+ * `danger` is the destructive treatment (REQ-PIA-08); use it only for
+ * irreversible actions.
  */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   (

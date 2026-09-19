@@ -30,6 +30,15 @@ describe("Button", () => {
     expect(btn.className).toContain("border-edge/70");
   });
 
+  it("applies the danger variant", () => {
+    render(<Button variant="danger">Delete</Button>);
+    const btn = screen.getByRole("button");
+    // Destructive treatment (REQ-PIA-08): the status-error surface, never the
+    // primary action surface.
+    expect(btn.className).toContain("bg-status-error");
+    expect(btn.className).not.toContain("bg-action");
+  });
+
   it("applies a shadow to every variant", () => {
     const { rerender } = render(<Button variant="primary">P</Button>);
     expect(screen.getByRole("button").className).toContain("shadow-sm");

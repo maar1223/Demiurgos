@@ -252,7 +252,14 @@ describe("ProfilePage — Papelera de mundos (W-5)", () => {
     // Confirm — permanent delete + list/worlds refresh.
     fireEvent.click(rowButton);
     dialog = screen.getByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: "Eliminar permanentemente" }));
+    // REQ-PIA-08: the irreversible world purge opts into the danger treatment
+    // instead of the primary confirm style.
+    const dialogConfirm = within(dialog).getByRole("button", {
+      name: "Eliminar permanentemente",
+    });
+    expect(dialogConfirm.className).toContain("bg-status-error");
+    expect(dialogConfirm.className).not.toContain("bg-action");
+    fireEvent.click(dialogConfirm);
 
     await waitFor(() => expect(permanentDeleteMock).toHaveBeenCalledWith("Avalor"));
     await waitFor(() => expect(screen.getByText("La papelera está vacía")).toBeInTheDocument());
