@@ -67,34 +67,6 @@ vi.mock("@/api/assistantSettings", () => ({
   }),
 }));
 
-// The page-level status header (REQ-PIA-05) reads backup and assistant state
-// on every render; resolve both locally so these flows stay hermetic.
-vi.mock("@/api/backup", () => ({
-  getBackupStatus: vi.fn().mockResolvedValue({
-    state: "pending",
-    destination: null,
-    mode: null,
-    blocked: false,
-    warning: null,
-    last_write: null,
-    copy: null,
-  }),
-}));
-
-vi.mock("@/api/assistantSettings", () => ({
-  getAssistantSettings: vi.fn().mockResolvedValue({
-    provider: "opencode-go",
-    base_url: "",
-    model: "",
-    model_metadata: { id: "", label: "", capability: "unknown", pricing: null },
-    key_configured: false,
-    models: [],
-    active_profile: "",
-    revision: 0,
-    runtime_state: "saved-not-active",
-  }),
-}));
-
 vi.mock("@/hooks/useLocalDevAuth", () => ({
   useLocalDevAuth: () => ({
     status: {

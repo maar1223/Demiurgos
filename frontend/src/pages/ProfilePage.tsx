@@ -164,6 +164,7 @@ function CuentaSection({
     try {
       if (localDev.status?.authenticated) {
         await localDev.logout();
+        onLock();
       } else {
         await localDev.start();
       }
