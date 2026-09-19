@@ -732,7 +732,7 @@ function ActivationPanel({
   if (words) {
     return (
       <section className="rounded-lg border border-status-success/40 bg-surface-raised p-4">
-        <h4 className="font-heading text-body text-primary">Bóveda activada</h4>
+        <h3 className="font-heading text-body text-primary">Bóveda activada</h3>
         <p className="mt-1 text-small text-muted">
           Se creó tu cuenta. Estas son tus palabras claves — guardalas fuera del
           navegador: solo se muestran una vez.
@@ -986,27 +986,28 @@ function providerLabel(provider?: AuthSessionStatus["provider"]): string {
   }
 }
 
-/** Perfil → Integraciones → Captura de ideas — the single Telegram surface.
- *  The guided wizard covers the write-only bot token (save/replace/clear) and
- *  getMe-backed connection validation via the "Detectar chat" step. */
-function IntegrationsSection() {
+/**
+ * Perfil → Conexiones — the two external-connection surfaces. The Telegram
+ * idea-capture wizard (the single Telegram surface) keeps its embedded
+ * behavior intact (CON-PIA-05); the Wiki assistant panel brings its own
+ * "Asistente del Wiki" `h3`, so this section adds no duplicate heading for it.
+ */
+function ConexionesSection() {
   const auth = useAuthSession(true);
   return (
-    <div>
-      <h3 className="font-heading text-body text-primary">Captura de ideas</h3>
-      <p className="mt-1 text-small text-muted">
-        Hermes / Telegram — ingreso de ideas nativo desde el bot.
-      </p>
-      <div className="mt-4">
-        <IdeaCapturePanel auth={auth} />
-      </div>
+    <div className="space-y-6">
+      <section>
+        <h3 className="font-heading text-body text-primary">Captura de ideas</h3>
+        <p className="mt-1 text-small text-muted">
+          Hermes / Telegram — ingreso de ideas nativo desde el bot.
+        </p>
+        <div className="mt-4">
+          <IdeaCapturePanel auth={auth} />
+        </div>
+      </section>
+      <AssistantSettingsPanel auth={auth} />
     </div>
   );
-}
-
-function AssistantSection() {
-  const auth = useAuthSession(true);
-  return <AssistantSettingsPanel auth={auth} />;
 }
 
 /**
@@ -1501,8 +1502,8 @@ function WorldsSection() {
  * (WU-2, REQ-PIA-09) with the session-scoped words unlock (REQ-SRW-01..04);
  * `respaldo` hosts BackupSection (WU-3, REQ-PIA-02) with its sign-in
  * affordance pointing back to `cuenta`; `preferencias` hosts the configuration
- * hub with the locale form inline (WU-4, REQ-PIA-12), `conexiones` stacks the
- * idea-capture and assistant panels (fold-in is WU-5).
+ * hub with the locale form inline (WU-4, REQ-PIA-12), `conexiones` folds the
+ * idea-capture and assistant panels into one section (WU-5, REQ-PIA-02/07).
  */
 export default function ProfilePage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1577,12 +1578,7 @@ export default function ProfilePage() {
               ) : activeSection === "preferencias" ? (
                 <ConfigurationSection />
               ) : activeSection === "conexiones" ? (
-                <>
-                  <IntegrationsSection />
-                  <div className="mt-4">
-                    <AssistantSection />
-                  </div>
-                </>
+                <ConexionesSection />
               ) : (
                 <WorldsSection />
               )}

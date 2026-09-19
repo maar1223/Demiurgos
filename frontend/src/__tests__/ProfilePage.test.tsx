@@ -658,4 +658,24 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
       expect(levels[i]).toBeLessThanOrEqual(levels[i - 1] + 1);
     }
   });
+
+  it("keeps a contiguous heading outline inside Conexiones (REQ-PIA-07)", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=conexiones"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    const panel = within(screen.getByRole("tabpanel"));
+    // The section owns its h3 heading directly under the panel h2.
+    expect(
+      panel.getByRole("heading", { name: "Captura de ideas", level: 3 }),
+    ).toBeInTheDocument();
+    const levels = panel
+      .getAllByRole("heading")
+      .map((heading) => Number(heading.tagName.slice(1)));
+    expect(levels[0]).toBe(2); // the panel h2 "Conexiones"
+    for (let i = 1; i < levels.length; i += 1) {
+      expect(levels[i]).toBeLessThanOrEqual(levels[i - 1] + 1);
+    }
+  });
 });

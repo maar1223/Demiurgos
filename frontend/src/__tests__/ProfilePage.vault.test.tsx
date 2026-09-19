@@ -580,6 +580,11 @@ async function openVaultTab() {
     expect(
       await screen.findByTestId("vault-words"),
     ).toHaveTextContent("alpha beta gamma delta");
+    // REQ-PIA-07: the activation state is an h3 directly under the panel h2 —
+    // it must not skip to h4 with no containing h3.
+    expect(
+      screen.getByRole("heading", { name: "Bóveda activada", level: 3 }),
+    ).toBeInTheDocument();
     fireEvent.click(
       screen.getByRole("button", { name: "Guardé mis palabras" }),
     );
