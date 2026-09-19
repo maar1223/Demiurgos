@@ -678,4 +678,27 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
       expect(levels[i]).toBeLessThanOrEqual(levels[i - 1] + 1);
     }
   });
+
+  it("keeps the Mundos subsections at h3 under the panel h2 (REQ-PIA-07)", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=mundos"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    const panel = within(screen.getByRole("tabpanel"));
+    // The section intro stays h3; every subsection starts at the same h3
+    // level, so the world list, the recycle bin and the legacy migration
+    // panel never emit an orphan h4 under it.
+    expect(panel.getByRole("heading", { name: "Zona peligrosa", level: 3 })).toBeInTheDocument();
+    expect(
+      panel.getByRole("heading", { name: "Papelera de mundos", level: 3 }),
+    ).toBeInTheDocument();
+    const levels = panel
+      .getAllByRole("heading")
+      .map((heading) => Number(heading.tagName.slice(1)));
+    expect(levels[0]).toBe(2); // the panel h2 "Mundos"
+    for (let i = 1; i < levels.length; i += 1) {
+      expect(levels[i]).toBeLessThanOrEqual(levels[i - 1] + 1);
+    }
+  });
 });

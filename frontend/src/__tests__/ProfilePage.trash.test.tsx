@@ -186,6 +186,11 @@ describe("ProfilePage — Papelera de mundos (W-5)", () => {
     renderProfile();
     await openMundosTab();
 
+    // WU-6 visual alignment: the recycle bin heading is a subsection h3 under
+    // the panel h2, not the former orphan h4 (REQ-PIA-07).
+    expect(
+      screen.getByRole("heading", { name: "Papelera de mundos", level: 3 }),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Restaurar" })).toBeInTheDocument(),
     );

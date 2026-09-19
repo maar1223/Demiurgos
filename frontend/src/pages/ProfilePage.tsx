@@ -1232,6 +1232,12 @@ function ConfigurationSection() {
  * detection stays read-only and the migration only runs through the panel's
  * explicit confirm flow.
  *
+ * Visual alignment (WU-6, CON-PIA-04): the section presents its three intents
+ * as bordered cards in the same rounded-box language as the other Profile
+ * sections. The section intro stays `h3` and every subsection heading starts
+ * at `h3`, so the recycle bin's former orphan `h4` is gone (REQ-PIA-07).
+ * Behavior is unchanged.
+ *
  * The delete button mirrors the backend guards: it is disabled for the active
  * world (idea-capture config) and when the world is the only one left. A
  * successful delete refreshes the worlds list and bumps the trash panel's
@@ -1330,19 +1336,30 @@ function WorldsSection() {
   }, [mutate]);
 
   return (
-    <div>
-      <h3 className="font-heading text-body text-primary">Mundos</h3>
-      <p className="mt-1 text-small text-muted">
-        Gestioná los mundos del taller: eliminá uno (queda recuperable 30 días en la papelera) o
-        restaurá mundos eliminados.
-      </p>
+    <div className="space-y-6">
+      <section aria-labelledby="mundos-title">
+        <h3 id="mundos-title" className="font-heading text-body text-primary">
+          Mundos
+        </h3>
+        <p className="mt-1 text-small text-muted">
+          Gestioná los mundos del taller: eliminá uno (queda recuperable 30 días en la papelera) o
+          restaurá mundos eliminados.
+        </p>
+      </section>
 
-      {/* Zona peligrosa — 3-step confirmation before any delete. */}
-      <div className="mt-4 rounded-lg border border-status-error/30 bg-status-error/10 p-4">
-        <h4 className="flex items-center gap-2 font-heading text-body text-status-error">
-          <Icon name="trash" size={18} />
+      {/* Zona peligrosa — 3-step confirmation before any delete. The trash
+          icon lives on the section intro so the danger card does not repeat
+          it. */}
+      <section
+        aria-labelledby="mundos-danger-title"
+        className="rounded-lg border border-status-error/30 bg-status-error/10 p-4"
+      >
+        <h3
+          id="mundos-danger-title"
+          className="font-heading text-body text-status-error"
+        >
           Zona peligrosa
-        </h4>
+        </h3>
         <p className="mt-1 text-small text-muted">
           Eliminar un mundo lo mueve a la papelera durante 30 días; no se destruye de inmediato.
         </p>
@@ -1410,21 +1427,29 @@ function WorldsSection() {
             })}
           </ul>
         )}
-      </div>
+      </section>
 
-      {/* Papelera de mundos — restore / permanent delete. */}
-      <div className="mt-6">
+      {/* Papelera de mundos — restore / permanent delete. The panel owns its
+          heading; it is wrapped in the same card treatment as the other
+          intent blocks so the three Mundos subsections line up visually. */}
+      <section
+        aria-label="Papelera de mundos"
+        className="rounded-lg border border-edge bg-surface/50 p-4"
+      >
         <WorldTrashPanel refreshToken={trashRefresh} onChanged={handleTrashChanged} />
-      </div>
+      </section>
 
       {/* ONB-4.2/4.3 (WU-4c2) — legacy uppercase-folder migration, relocated
           from the standalone Centro de Configuración page. Rendered only when
           readiness detected legacy folders; migration never runs automatically
           and always requires the panel's explicit confirm flow. */}
       {legacy.length > 0 && (
-        <div className="mt-6">
+        <section
+          aria-label="Migración de carpetas"
+          className="rounded-lg border border-edge bg-surface/50 p-4"
+        >
           <MigrationPanel findings={legacy} onMigrated={loadLegacy} />
-        </div>
+        </section>
       )}
 
       {deleteTarget && (

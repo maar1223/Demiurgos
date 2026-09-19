@@ -185,7 +185,13 @@ describe("ProfilePage — Mundos tab / 3-step delete flow (W-4)", () => {
     renderProfile();
     await openMundosTab();
 
+    // The section intro and each subsection are h3 under the panel h2, so no
+    // orphan level appears (REQ-PIA-07); the recycle bin's heading is covered
+    // in the trash suite.
     expect(screen.getByRole("heading", { name: "Mundos", level: 3 })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Zona peligrosa", level: 3 }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Avalor")).toBeInTheDocument();
     expect(screen.getByText("Vibrantes")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Borrar" })).toHaveLength(2);
