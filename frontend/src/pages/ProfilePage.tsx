@@ -9,6 +9,7 @@ import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import { BackupSection } from "@/components/organisms/BackupSection";
 import { ProfileSectionRail } from "@/components/organisms/ProfileSectionRail";
+import { StatusOverviewHeader } from "@/components/organisms/StatusOverviewHeader";
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
 import { WorldPickerDialog } from "@/components/organisms/WorldPickerDialog";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
@@ -1551,6 +1552,7 @@ export default function ProfilePage() {
     <div className="flex min-h-screen flex-col bg-surface">
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
         <h1 className="font-heading text-h3 text-primary">Perfil</h1>
+        <StatusOverviewHeader />
         <div className="mt-6 flex flex-col gap-6 md:flex-row">
           <ProfileSectionRail
             sections={PROFILE_SECTIONS}

@@ -121,6 +121,22 @@ vi.mock("@/api/backup", async (importOriginal) => {
   };
 });
 
+// The status overview header (REQ-PIA-05) reads assistant state on every
+// ProfilePage render; resolve it locally so this suite stays hermetic.
+vi.mock("@/api/assistantSettings", () => ({
+  getAssistantSettings: vi.fn().mockResolvedValue({
+    provider: "opencode-go",
+    base_url: "",
+    model: "",
+    model_metadata: { id: "", label: "", capability: "unknown", pricing: null },
+    key_configured: false,
+    models: [],
+    active_profile: "",
+    revision: 0,
+    runtime_state: "saved-not-active",
+  }),
+}));
+
 describe("ProfilePage", () => {
   beforeEach(() => {
     // Default readiness: no legacy folders. The Mundos tab's migration panel

@@ -36,6 +36,34 @@ vi.mock("@/api/wiki", () => ({
   setReauthInterval: vi.fn(),
 }));
 
+// The status overview header (REQ-PIA-05) reads backup + assistant state on
+// every ProfilePage render; resolve them locally so this flow stays hermetic.
+vi.mock("@/api/backup", () => ({
+  getBackupStatus: vi.fn().mockResolvedValue({
+    state: "pending",
+    destination: null,
+    mode: null,
+    blocked: false,
+    warning: null,
+    last_write: null,
+    copy: null,
+  }),
+}));
+
+vi.mock("@/api/assistantSettings", () => ({
+  getAssistantSettings: vi.fn().mockResolvedValue({
+    provider: "opencode-go",
+    base_url: "",
+    model: "",
+    model_metadata: { id: "", label: "", capability: "unknown", pricing: null },
+    key_configured: false,
+    models: [],
+    active_profile: "",
+    revision: 0,
+    runtime_state: "saved-not-active",
+  }),
+}));
+
 vi.mock("@/hooks/useLocalDevAuth", () => ({
   useLocalDevAuth: () => ({
     status: {
