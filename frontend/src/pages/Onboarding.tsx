@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { getLocale } from "@/api/config";
 import { createWorld, getOnboardingStatus, submitStep0 } from "@/api/onboarding";
 import { createAccount } from "@/api/wiki";
 import { ApiError, type LocaleInput, type OnboardingStatus } from "@/api/types";
@@ -115,6 +116,33 @@ export default function Onboarding() {
 
   useEffect(loadStatus, [navigate, reconfigure]);
 
+  // Reconfigure mode re-opens the SAME step0 form against an ALREADY-SAVED
+  // locale, so it must show what is stored instead of the fresh-install
+  // defaults. `/api/locale` is the authoritative read (the onboarding status
+  // carries no locale); a failed read keeps the defaults rather than inventing
+  // values. Without this the region, and any non-default language or zone,
+  // render wrong — and submitting would overwrite the stored value with null.
+  useEffect(() => {
+    if (!reconfigure) return;
+    let active = true;
+    void getLocale()
+      .then((saved) => {
+        if (!active) return;
+        setUiLang(saved.ui);
+        setConversationLang(saved.conversation);
+        setContentLang(saved.content);
+        setRegion(saved.region ?? "");
+        setRegionExplicit(saved.region_explicit);
+        setTimezone(saved.iana_timezone);
+      })
+      .catch(() => {
+        // offline/failure — keep the safe defaults; never invent values
+      });
+    return () => {
+      active = false;
+    };
+  }, [reconfigure]);
+
   const handleStep0 = (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -204,10 +232,13 @@ export default function Onboarding() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-4 py-12">
       <div className="w-full max-w-xl">
-        <h1 className="font-heading text-h3 text-primary">Bienvenida a Demiurgos</h1>
+        <h1 className="font-heading text-h3 text-primary">
+          {reconfigure ? "Configuración" : "Bienvenida a Demiurgos"}
+        </h1>
         <p className="mt-2 text-body text-muted">
-          Configuración inicial para dejar la instalación operativa. Podés
-          retomar cada capacidad después desde el Centro de Configuración.
+          {reconfigure
+            ? "Actualizá el idioma de la interfaz, el de conversación, el de contenido, la región y la zona horaria. Se guardan sobre la configuración actual."
+            : "Configuración inicial para dejar la instalación operativa. Podés retomar cada capacidad después desde el Centro de Configuración."}
         </p>
 
         {!!error && !status && (
@@ -267,7 +298,7 @@ export default function Onboarding() {
           )
         )}
 
-        {status && (
+        {status && !reconfigure && (
           <PendingCards
             remotePending={status.remote_pending}
             worldDone={status.completed_steps.includes("world")}
@@ -388,7 +419,7 @@ function Step0Form(props: {
 
       <div className="mt-6 flex items-center justify-end">
         <Button type="submit" disabled={props.busy}>
-          {props.busy ? "Guardando…" : "Continuar"}
+          {props.busy ? "Guardando…" : props.reconfiguring ? "Guardar" : "Continuar"}
         </Button>
       </div>
     </form>
