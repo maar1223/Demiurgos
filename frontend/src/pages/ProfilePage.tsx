@@ -1347,9 +1347,9 @@ function WorldsSection() {
         </p>
       </section>
 
-      {/* Zona peligrosa — 3-step confirmation before any delete. The trash
-          icon lives on the section intro so the danger card does not repeat
-          it. */}
+      {/* Zona peligrosa — 3-step confirmation before any delete. The intro
+          heading carries no trash icon; the Papelera panel below owns the
+          only one in this section. */}
       <section
         aria-labelledby="mundos-danger-title"
         className="rounded-lg border border-status-error/30 bg-status-error/10 p-4"
@@ -1434,7 +1434,7 @@ function WorldsSection() {
           intent blocks so the three Mundos subsections line up visually. */}
       <section
         aria-label="Papelera de mundos"
-        className="rounded-lg border border-edge bg-surface/50 p-4"
+        className="rounded-lg border border-edge bg-surface-raised p-4"
       >
         <WorldTrashPanel refreshToken={trashRefresh} onChanged={handleTrashChanged} />
       </section>
@@ -1444,10 +1444,7 @@ function WorldsSection() {
           readiness detected legacy folders; migration never runs automatically
           and always requires the panel's explicit confirm flow. */}
       {legacy.length > 0 && (
-        <section
-          aria-label="Migración de carpetas"
-          className="rounded-lg border border-edge bg-surface/50 p-4"
-        >
+        <section aria-label="Migración de carpetas">
           <MigrationPanel findings={legacy} onMigrated={loadLegacy} />
         </section>
       )}
