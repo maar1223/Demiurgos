@@ -6,9 +6,9 @@ import type { CardState, ReadinessSnapshot } from "@/api/types";
  * The standalone `/centro-configuracion` page no longer exists
  * (nav-restructure decision): the configuration surface lives inside the
  * Profile (`/perfil` → "Preferencias", which hosts the inline locale form —
- * REQ-PIA-12 — and the offline card; the legacy-folder migration lives under
- * "Mundos" and the idea-capture wizard — the single Telegram surface — under
- * "Conexiones"). This module stays as the single shared exporter of the card
+ * REQ-PIA-12), the legacy-folder migration lives under "Mundos", and the
+ * idea-capture wizard — the single Telegram surface — lives under
+ * "Conexiones". This module stays as the single shared exporter of the card
  * definitions, the honest state helpers and the panel that was exclusive to
  * the standalone page, so the Profile sections and this module never drift.
  */
@@ -60,14 +60,6 @@ export const ESSENTIAL_BADGES: { key: string; title: string }[] = [
   { key: "editor", title: "Editor local" },
 ];
 
-/** Remote capability labels shown in the offline card breakdown (OC5). */
-export const REMOTE_LABELS: Record<string, string> = {
-  identity: "Identidad",
-  telegram: "Telegram",
-  backup: "Respaldo",
-  assistant: "Asistente (IA)",
-};
-
 interface CardAction {
   label: string;
   to: string;
@@ -86,7 +78,6 @@ export const CARD_DEFS: CardDef[] = [
   { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: null },
   { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/perfil?tab=preferencias" } },
   { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },
-  { key: "offline", title: "Offline / dispositivo", description: "Núcleo local (editor, ideas, grafo) sin conexión.", action: null },
   { key: "import", title: "Importar mundo", description: "Importar contenido a un mundo. El importador está operativo: iniciá una nueva importación o retomá una anterior desde el Taller de Mundo.", action: { label: "Ir al Taller de Mundo", to: "/taller-mundo" } },
 ];
 

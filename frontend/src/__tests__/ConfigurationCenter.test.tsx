@@ -6,7 +6,6 @@ import {
   DEFERRED_CARD_KEYS,
   ESSENTIAL_BADGES,
   MigrationPanel,
-  REMOTE_LABELS,
   STATE_META,
   cardLabel,
   cardState,
@@ -28,7 +27,7 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     vi.clearAllMocks();
   });
 
-  it("exposes the seven OC12 card definitions with honest descriptions", () => {
+  it("exposes the six OC12 card definitions with honest descriptions", () => {
     const keys = CARD_DEFS.map((card) => card.key);
     expect(keys).toEqual([
       "identity",
@@ -36,7 +35,6 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
       "telegram",
       "locale",
       "world",
-      "offline",
       "import",
     ]);
     // Every card carries a title, a description and an explicit action (or null).
@@ -50,9 +48,11 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
 
     // The redundant backup card was removed (product-owner decision): it only
     // pointed at the Respaldo section, which already has its own rail entry.
-    // The locale card still targets Preferencias — the `configuracion` tab and
+    // The Offline/dispositivo card was removed for the same redundancy reason:
+    // the locale card still targets Preferencias — the `configuracion` tab and
     // the `?step=step0` reconfigure path no longer exist.
     expect(CARD_DEFS.some((card) => card.key === "backup")).toBe(false);
+    expect(CARD_DEFS.some((card) => card.key === "offline")).toBe(false);
     const localeCard = CARD_DEFS.find((card) => card.key === "locale");
     expect(localeCard?.action).toEqual({
       label: "Configurar",
@@ -79,9 +79,8 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     expect([...DEFERRED_CARD_KEYS]).toEqual(["import"]);
     expect(cardState(stale, "backup")).toBe("configured");
     // identity (auth-vault-credentials R-ID1 backend contract), telegram (WU-3b1,
-    // ONB-3.3), assistant, locale, world and offline may truthfully render
-    // configured.
-    for (const key of ["identity", "telegram", "assistant", "locale", "world", "offline"]) {
+    // ONB-3.3), assistant, locale and world may truthfully render configured.
+    for (const key of ["identity", "telegram", "assistant", "locale", "world"]) {
       expect(cardState(stale, key)).toBe("configured");
     }
     // Unknown keys default to pending.
@@ -112,14 +111,8 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     ).toEqual({ label: "Pendiente", badge: "default" });
   });
 
-  it("exposes the essential badges, remote labels and state meta", () => {
+  it("exposes the essential badges and state meta", () => {
     expect(ESSENTIAL_BADGES.map((b) => b.key)).toEqual(["world", "editor"]);
-    expect(REMOTE_LABELS).toMatchObject({
-      identity: "Identidad",
-      telegram: "Telegram",
-      backup: "Respaldo",
-      assistant: "Asistente (IA)",
-    });
     expect(STATE_META.pending.label).toBe("Pendiente");
     expect(STATE_META.configured.badge).toBe("success");
     expect(STATE_META.requires_connection.label).toBe("Requiere conexión");

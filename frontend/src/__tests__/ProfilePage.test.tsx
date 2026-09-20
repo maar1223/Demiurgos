@@ -151,7 +151,6 @@ describe("ProfilePage", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
     (getLocale as Mock).mockResolvedValue({
@@ -190,17 +189,13 @@ describe("ProfilePage", () => {
     expect(screen.getByText("assistant settings panel")).toBeInTheDocument();
   });
 
-  it("renders the configuration tab between cuenta and conexiones with only kept cards", async () => {
+  it("renders the configuration tab between cuenta and conexiones with only the locale form", async () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {
         backup: "pending",
         locale: "configured",
         offline: "configured",
-      },
-      offline: {
-        local_ready: true,
-        remote_pending: ["identity", "telegram", "backup", "assistant"],
       },
       legacy: [],
     });
@@ -224,13 +219,10 @@ describe("ProfilePage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Preferencias" }));
 
-    // The inline locale form + the kept offline card render; the redundant
-    // readiness intro ("Listo para trabajar") is gone (product-owner decision).
+    // The inline locale form renders; the redundant readiness intro ("Listo
+    // para trabajar") and the offline card are gone (product-owner decision).
     expect(
       await screen.findByRole("heading", { name: "Idioma, región y zona horaria" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Offline / dispositivo" }),
     ).toBeInTheDocument();
 
     // Redundant cards are NOT duplicated — they live in other Profile tabs
@@ -248,7 +240,7 @@ describe("ProfilePage", () => {
     }
   });
 
-  it("drops the redundant backup card from Preferencias while keeping the offline card", async () => {
+  it("drops the redundant backup card from Preferencias", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {
@@ -256,7 +248,6 @@ describe("ProfilePage", () => {
         locale: "configured",
         offline: "configured",
       },
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
 
@@ -266,16 +257,10 @@ describe("ProfilePage", () => {
       </MemoryRouter>,
     );
 
-    // The offline card is still the kept configuration card in Preferencias.
-    expect(
-      await screen.findByRole("heading", { name: "Offline / dispositivo" }),
-    ).toBeInTheDocument();
-
     // The redundant backup card is gone (product-owner decision): it merely
     // navigated to the Respaldo section — which already has its own rail entry
     // — and its only remaining value, the status badge, was declared
-    // unnecessary. Under the previous keepCards allowlist (`["backup",
-    // "offline"]`) the assertion below fails: the card rendered here.
+    // unnecessary.
     expect(
       screen.queryByRole("heading", { name: "Respaldo y restauración" }),
     ).not.toBeInTheDocument();
@@ -284,11 +269,10 @@ describe("ProfilePage", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("drops the redundant readiness block from Preferencias while keeping the locale form and offline card", async () => {
+  it("drops the redundant readiness block from Preferencias while keeping the locale form", async () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: { locale: "configured", offline: "configured" },
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
 
@@ -298,13 +282,10 @@ describe("ProfilePage", () => {
       </MemoryRouter>,
     );
 
-    // Non-vacuous: the locale form and the offline card must be present, so
-    // the absence assertions below cannot pass on an empty Preferencias panel.
+    // Non-vacuous: the locale form must be present, so the absence assertions
+    // below cannot pass on an empty Preferencias panel.
     expect(
       await screen.findByRole("heading", { name: "Idioma, región y zona horaria" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Offline / dispositivo" }),
     ).toBeInTheDocument();
 
     // The old Centro de Configuración intro block is gone. Under the
@@ -327,7 +308,6 @@ describe("ProfilePage", () => {
         locale: "configured",
         offline: "configured",
       },
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
 
@@ -398,7 +378,6 @@ describe("ProfilePage", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [{ world: "legacy-x", folders: ["Lore"] }],
     });
     render(
@@ -431,7 +410,6 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
     (getAuthStatus as Mock).mockResolvedValue({

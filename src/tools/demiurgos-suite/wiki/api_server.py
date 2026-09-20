@@ -131,7 +131,7 @@ from onboarding import (
     commit_world_created as _commit_world_created,
     status_from as _onboarding_status_from,
 )
-from readiness import probe_local_storage, project_cards, project_offline
+from readiness import probe_local_storage, project_cards
 from telegram_settings import (
     has_token as telegram_has_token,
     telegram_state,
@@ -666,10 +666,10 @@ def onboarding_readiness():
     from local evidence (ONB-3.1); the projection downgrades any stale
     registry claim instead of trusting it. The telegram card follows the
     ONB-3.3 backend's real evidence (write-only token presence + last
-    connection test) passed through ``telegram_state``. The ``offline``
-    breakdown (ONB-3.4) reports local-ready + remote-pending honestly. The
-    ``legacy`` list (ONB-4.2) reports worlds using uppercase ``Lore``/
-    ``Personajes`` folders — read-only detection; nothing is ever renamed.
+    connection test) passed through ``telegram_state``. The ``cards`` map
+    (OC11/OC12/OC21) carries the honest card states. The ``legacy`` list (ONB-4.2)
+    reports worlds using uppercase ``Lore``/``Personajes`` folders — read-only
+    detection; nothing is ever renamed.
     """
     probe = probe_local_storage(_project_root())
     state = _local_state().snapshot()
@@ -683,7 +683,6 @@ def onboarding_readiness():
     return {
         "local_editor": probe,
         "cards": cards,
-        "offline": project_offline(cards),
         "legacy": detect_legacy_layout(_mundos_dir()),
     }
 

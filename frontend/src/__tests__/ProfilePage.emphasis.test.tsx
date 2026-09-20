@@ -197,7 +197,6 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
     (getLocale as Mock).mockResolvedValue({

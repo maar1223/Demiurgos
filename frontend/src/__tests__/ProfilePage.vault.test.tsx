@@ -180,7 +180,6 @@ describe("ProfilePage account section (credentials mode)", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
     (getVaultConfig as Mock).mockResolvedValue(vaultOnConfig);
@@ -463,7 +462,6 @@ describe("ProfilePage session words unlock (REQ-SRW-01..04)", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
     (getVaultConfig as Mock).mockResolvedValue(vaultOnConfig);
@@ -606,7 +604,6 @@ describe("ProfilePage vault panel (Seguridad / Bóveda, R-VC-02..05)", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
     (getVaultConfig as Mock).mockResolvedValue({

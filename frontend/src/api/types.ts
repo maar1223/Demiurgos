@@ -247,13 +247,6 @@ export type CardState =
   | "requires_connection"
   | "error";
 
-/** Honest offline/dispositivo breakdown (OC5/ONB-3.4): the local core works
- *  without connection while remote capabilities stay pending. */
-export interface OfflineBreakdown {
-  local_ready: boolean;
-  remote_pending: string[];
-}
-
 /** Read-only legacy-layout finding (ONB-4.2): a world whose top level uses
  *  uppercase `Lore`/`Personajes` folders instead of the canonical lowercase
  *  tree. Detection never mutates; migration is a separate, explicitly
@@ -302,7 +295,6 @@ export interface MigrationExecuteResult {
 export interface ReadinessSnapshot {
   local_editor: { probe: string; ok: boolean; detail: string };
   cards: Record<string, CardState>;
-  offline: OfflineBreakdown;
   /** Worlds using the legacy uppercase layout (read-only detection). */
   legacy: LegacyFinding[];
 }

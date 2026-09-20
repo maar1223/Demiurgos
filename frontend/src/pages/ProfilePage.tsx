@@ -48,9 +48,7 @@ import type {
   WorldInfo,
 } from "@/api/types";
 import {
-  CARD_DEFS,
   MigrationPanel,
-  REMOTE_LABELS,
   STATE_META,
   cardLabel,
   cardState,
@@ -1082,13 +1080,14 @@ function ConexionesSection() {
 }
 
 /**
- * Perfil → Preferencias — the configuration capabilities that have no home
- * elsewhere in the Profile: the inline locale form (REQ-PIA-12) and
- * Offline/dispositivo, plus the essential local readiness summary. The backup
- * card was removed (product-owner decision): it only navigated to the Respaldo
- * section, which already has its own rail entry, and its badge was declared
- * unnecessary; the real backup surface lives in the Respaldo section
- * (REQ-PIA-02).
+ * Perfil → Preferencias — the inline locale form (REQ-PIA-12), the only
+ * configuration capability that has no home elsewhere in the Profile. The
+ * backup card was removed (product-owner decision): it only navigated to the
+ * Respaldo section, which already has its own rail entry, and its badge was
+ * declared unnecessary; the real backup surface lives in the Respaldo section
+ * (REQ-PIA-02). The Offline/dispositivo card was removed for the same
+ * redundancy reason: it stated the storage probe three times, offered no
+ * action, and duplicated state owned by Conexiones and Captura de ideas.
  *
  * The other Configuration Center cards (Identidad, IA texto y visión, Telegram,
  * Mundos, Importar mundo) are intentionally NOT duplicated here — each of those
@@ -1121,12 +1120,12 @@ function ConfigurationSection() {
   useEffect(() => load(), []);
 
   /**
-   * Only the offline card is kept here. The redundant backup card was removed
-   * (product-owner decision): it only navigated to the Respaldo section, which
-   * already has its own rail entry, and its sole remaining value — the status
-   * badge — was declared unnecessary. The offline card declares no action, so
-   * this section renders no navigation controls; the locale surface renders as
-   * the inline form below.
+   * Preferencias renders no navigation cards. The backup card was removed
+   * (product-owner decision) and the Offline/dispositivo card was removed for
+   * the same redundancy reason: it stated the storage probe three times,
+   * offered no action, and duplicated state owned by Conexiones and Captura de
+   * ideas. The locale surface renders as the inline form below, with its
+   * honest badge.
    */
 
   if (loading) {
@@ -1149,7 +1148,6 @@ function ConfigurationSection() {
   if (!readiness) return null;
 
   const cards = readiness.cards ?? {};
-  const keepCards = CARD_DEFS.filter((card) => card.key === "offline");
   // The locale surface renders as the inline form below, not as a navigation
   // card, so its readiness state still drives the honest badge (REQ-PIA-12).
   const localeState = cardState(cards, "locale");
@@ -1182,68 +1180,6 @@ function ConfigurationSection() {
         </div>
         <LocaleForm onSaved={() => load({ silent: true })} />
       </section>
-
-      {/* Kept configuration cards — same rounded-box style as the other
-          Profile sections (title row on top, content below). */}
-      {keepCards.map((card) => {
-        const state = cardState(cards, card.key);
-        const label = cardLabel(card.key, state);
-        const meta = STATE_META[state];
-        return (
-          <section
-            key={card.key}
-            id={`config-card-${card.key}`}
-            tabIndex={-1}
-            aria-labelledby={`config-card-title-${card.key}`}
-            className="rounded-lg border border-edge bg-surface-raised p-4"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <h3
-                id={`config-card-title-${card.key}`}
-                className="font-heading text-body text-primary"
-              >
-                {card.title}
-              </h3>
-              <span className="flex items-center gap-2">
-                <Badge variant={meta.badge}>{label}</Badge>
-                <span className="sr-only">Estado: {label}</span>
-              </span>
-            </div>
-            <p className="mt-1 text-small text-muted">{card.description}</p>
-
-            {card.key === "offline" && (
-              <dl className="mt-4 space-y-3 border-t border-edge pt-4">
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-small text-muted">Núcleo local</dt>
-                  <dd className="flex items-center gap-2">
-                    <Badge variant={readiness.offline.local_ready ? "success" : "error"}>
-                      {readiness.offline.local_ready ? "Listo" : "No disponible"}
-                    </Badge>
-                    <span className="sr-only">
-                      Estado: {readiness.offline.local_ready ? "Listo" : "No disponible"}
-                    </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-small text-muted">Remoto</dt>
-                  <dd className="mt-1 text-small text-muted">
-                    {readiness.offline.remote_pending.length > 0 ? (
-                      <span>
-                        Capacidades remotas pendientes (requieren conexión):{" "}
-                        {readiness.offline.remote_pending
-                          .map((key) => REMOTE_LABELS[key] ?? key)
-                          .join(", ")}.
-                      </span>
-                    ) : (
-                      <span>Sin capacidades remotas pendientes.</span>
-                    )}
-                  </dd>
-                </div>
-              </dl>
-            )}
-          </section>
-        );
-      })}
     </div>
   );
 }
