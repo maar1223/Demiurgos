@@ -39,16 +39,6 @@ class _FakePrincipal:
         self.id = pid
 
 
-class _FakeStderr:
-    """Bounded in-memory stand-in for ``proc.stderr``."""
-
-    def __init__(self, data: bytes):
-        self._data = data
-
-    def read(self, limit: int = -1) -> bytes:
-        return self._data[:limit] if limit >= 0 else self._data
-
-
 class _FakeProc:
     """Minimal ``subprocess.Popen`` stand-in for the unit tests.
 
@@ -56,9 +46,8 @@ class _FakeProc:
     the already-observed exit code.
     """
 
-    def __init__(self, poll_result: int | None, stderr_bytes: bytes = b""):
+    def __init__(self, poll_result: int | None):
         self._poll_result = poll_result
-        self.stderr = _FakeStderr(stderr_bytes)
 
     def poll(self) -> int | None:
         return self._poll_result
@@ -70,6 +59,9 @@ def _make_app(require_principal, launcher_path: Path) -> FastAPI:
         create_system_control_router(
             require_principal=require_principal,
             launcher_path=launcher_path,
+            # Keep the launcher stderr log inside the test's tmp_path instead
+            # of the real /tmp/demiurgos-launcher.log.
+            launcher_log=launcher_path.parent / "demiurgos-launcher.log",
         )
     )
     return app
@@ -121,7 +113,13 @@ def test_restart_dispatches_detached_launcher(launcher_path: Path, monkeypatch) 
     assert calls["argv"] == [str(launcher_path), "restart"]
     assert calls["kwargs"]["start_new_session"] is True
     assert calls["kwargs"]["stdout"] == subprocess.DEVNULL
-    assert calls["kwargs"]["stderr"] == subprocess.PIPE
+    # The launcher OUTLIVES this API (on restart it stops the stack, this
+    # process included). Its stderr must therefore be a file, never a pipe: a
+    # pipe whose reader died kills the launcher with SIGPIPE after the stack is
+    # already stopped, so the API never comes back.
+    assert calls["kwargs"]["stderr"] is not subprocess.PIPE
+    assert calls["kwargs"]["stderr"] is not subprocess.DEVNULL
+    assert Path(calls["kwargs"]["stderr"].name).name == "demiurgos-launcher.log"
 
 
 def test_shutdown_dispatches_detached_launcher(launcher_path: Path, monkeypatch) -> None:
@@ -143,7 +141,13 @@ def test_shutdown_dispatches_detached_launcher(launcher_path: Path, monkeypatch)
     assert calls["argv"] == [str(launcher_path), "stop"]
     assert calls["kwargs"]["start_new_session"] is True
     assert calls["kwargs"]["stdout"] == subprocess.DEVNULL
-    assert calls["kwargs"]["stderr"] == subprocess.PIPE
+    # The launcher OUTLIVES this API (on restart it stops the stack, this
+    # process included). Its stderr must therefore be a file, never a pipe: a
+    # pipe whose reader died kills the launcher with SIGPIPE after the stack is
+    # already stopped, so the API never comes back.
+    assert calls["kwargs"]["stderr"] is not subprocess.PIPE
+    assert calls["kwargs"]["stderr"] is not subprocess.DEVNULL
+    assert Path(calls["kwargs"]["stderr"].name).name == "demiurgos-launcher.log"
 
 
 def test_launcher_exit_zero_is_accepted(launcher_path: Path, monkeypatch) -> None:
@@ -169,7 +173,10 @@ def test_nonzero_launcher_exit_returns_500_with_stderr(
     launcher_path: Path, monkeypatch
 ) -> None:
     def fake_popen(argv, **kwargs):
-        return _FakeProc(poll_result=3, stderr_bytes=b"bash: restart: not found\n")
+        # The launcher's stderr is the injected log file; write what a failing
+        # launcher would have written there.
+        kwargs["stderr"].write(b"bash: restart: not found\n")
+        return _FakeProc(poll_result=3)
 
     monkeypatch.setattr(system_control.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(system_control.time, "sleep", lambda _seconds: None)
@@ -198,6 +205,40 @@ def test_spawn_failure_returns_500(launcher_path: Path, monkeypatch) -> None:
     body = resp.json()
     assert body["accepted"] is False
     assert "launcher" in body["error"]
+
+
+def test_unavailable_log_never_reports_a_previous_runs_stderr(
+    launcher_path: Path, monkeypatch
+) -> None:
+    """A leftover log from an earlier run must never be attributed to this one.
+
+    If this run cannot open its log, the excerpt must report "no stderr output"
+    rather than whatever a previous launcher left at the same path.
+    """
+    stale = launcher_path.parent / "demiurgos-launcher.log"
+    stale.write_bytes(b"OLD STALE OUTPUT FROM A PREVIOUS RUN\n")
+
+    def fake_popen(argv, **kwargs):
+        return _FakeProc(poll_result=7)
+
+    def failing_open(path, *args, **kwargs):
+        if Path(path) == stale:
+            raise OSError(24, "Too many open files")
+        return open(path, *args, **kwargs)
+
+    monkeypatch.setattr(system_control.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(system_control.time, "sleep", lambda _seconds: None)
+    # Patch the router module's `open` only: the rest of the process keeps the
+    # real builtin, so TestClient and pytest are unaffected.
+    monkeypatch.setattr(system_control, "open", failing_open, raising=False)
+    app = _make_app(require_principal=lambda request: _FakePrincipal(),
+                    launcher_path=launcher_path)
+    resp = TestClient(app).post("/api/system/restart")
+
+    assert resp.status_code == 500
+    body = resp.json()
+    assert "OLD STALE OUTPUT" not in body["error"]
+    assert "no stderr output" in body["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +300,81 @@ def test_integration_dispatches_launcher_detached_and_returns_fast(
         os.waitpid(int(pid), 0)
     except ChildProcessError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Regression: the launcher OUTLIVES the API that spawned it
+# ---------------------------------------------------------------------------
+
+#: Driver that dispatches the launcher through the REAL router and then exits —
+#: which is what the API does when ``stop_all`` kills it mid-restart.
+_DRIVER = """
+import sys
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from system_control import create_system_control_router
+
+app = FastAPI()
+app.include_router(create_system_control_router(
+    require_principal=lambda request: object(),
+    launcher_path=Path(sys.argv[1]),
+    launcher_log=Path(sys.argv[2]),
+))
+resp = TestClient(app).post("/api/system/restart")
+print(resp.status_code, flush=True)
+"""
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="detached POSIX launcher stub (bash + signals) is POSIX-only",
+)
+def test_launcher_survives_its_stderr_write_after_the_api_dies(
+    tmp_path: Path,
+) -> None:
+    """The launcher must still be able to write to stderr once the API is gone.
+
+    ``restart`` stops the stack BEFORE it starts it again, and stopping the API
+    is what takes the launcher's stderr reader away when ``stderr`` is a
+    ``subprocess.PIPE``. The launcher's next stderr write then raises EPIPE and
+    SIGPIPE kills it — after the stack is already down and before the API is
+    started back, which is how "Reiniciar Demiurgos" left Demiurgos half down.
+
+    The driver reproduces the real sequence in a child process: dispatch, then
+    die. A launcher whose stderr is a pipe cannot survive that.
+    """
+    marker = tmp_path / "survived.txt"
+    stub = tmp_path / "start-demiurgos-linux.sh"
+    stub.write_text(
+        "#!/usr/bin/env bash\n"
+        # Outlive the 0.5s peek window AND the driver, then write to stderr.
+        "sleep 2\n"
+        "printf 'launcher diagnostic\\n' >&2\n"
+        f"printf 'survived\\n' > {marker}\n",
+        encoding="utf-8",
+    )
+    stub.chmod(stub.stat().st_mode
+               | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    env = {**os.environ, "PYTHONPATH": str(_WIKI)}
+    driver = subprocess.run(
+        [sys.executable, "-c", _DRIVER, str(stub),
+         str(tmp_path / "demiurgos-launcher.log")],
+        capture_output=True, text=True, env=env, timeout=30,
+    )
+    assert driver.returncode == 0, driver.stderr
+    assert driver.stdout.strip() == "200"
+
+    deadline = time.monotonic() + 10.0
+    while time.monotonic() < deadline and not marker.is_file():
+        time.sleep(0.1)
+    assert marker.is_file(), (
+        "the detached launcher died on its stderr write after the API it was "
+        "spawned by exited: a PIPE stderr cannot outlive the API"
+    )
 
 
 # ---------------------------------------------------------------------------

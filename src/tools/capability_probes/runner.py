@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass
+import logging
 import re
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -26,11 +27,19 @@ from urllib.parse import urlsplit
 
 import httpx
 
+logger = logging.getLogger(__name__)
+
 OUTCOME_PASSED = "passed"
 OUTCOME_MALFORMED = "malformed"
 OUTCOME_TIMEOUT = "timeout"
 OUTCOME_PROVIDER_FAILURE = "provider_failure"
 OUTCOME_NOT_CAUSAL = "not_causal"
+
+#: Statuses that can mean "the JSON was parsed and the SHAPE was rejected":
+#: 400 Bad Request, 415 Unsupported Media Type, 422 Unprocessable Entity.
+#: Only these justify retrying the other image encoding. Credentials (401/403),
+#: rate limits and quota (429) and server faults (5xx) are NOT shape problems.
+_ENCODING_RETRY_STATUSES = frozenset({400, 415, 422})
 
 TEXT_MARKER = "mercurio"
 VISION_QUESTION = (
@@ -42,6 +51,13 @@ VISION_QUESTION = (
 # request can never carry credentials or the full base64 image blob back to UI.
 _REDACT_DATA_URI = re.compile(r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+")
 _REDACT_BEARER = re.compile(r"\b(?:bearer|api[_-]?key|sk-)[A-Za-z0-9._-]+", re.IGNORECASE)
+
+# UI cap for the provider's rejection detail. A schema/format rejection puts the
+# actionable part AFTER a fixed preamble (~107 chars: "Upstream request failed:
+# [invalid_request_error] Failed to deserialize the JSON body into the target
+# type: messages[0]: …"), so the old 120-char cap cut away exactly the useful
+# tail and left the user with an undiagnosable error.
+_DETAIL_LIMIT = 400
 
 _DEFAULT_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "logo-demiurgos.jpg"
 _DEFAULT_VARIANT = Path(__file__).resolve().parent / "fixtures" / "logo-demiurgos-altered.jpg"
@@ -63,12 +79,22 @@ class ProbeResult:
 
 
 class ProbeFailure(RuntimeError):
-    """Carries a probe outcome for an HTTP/transport-level failure."""
+    """Carries a probe outcome for an HTTP/transport-level failure.
 
-    def __init__(self, outcome: str, message: str) -> None:
+    ``status`` is the provider's HTTP status when the failure came from a
+    response, and ``None`` for transport/timeout failures. Callers MUST branch
+    on it instead of matching words in ``message``: the rendered message cannot
+    tell a schema rejection from a ``401 invalid_api_key``, so wording-based
+    retries either miss the real format errors or repeat an auth/quota failure.
+    """
+
+    def __init__(
+        self, outcome: str, message: str, *, status: int | None = None
+    ) -> None:
         super().__init__(message)
         self.outcome = outcome
         self.message = message
+        self.status = status
 
 
 def chat_completions_url(base_url: str) -> str:
@@ -261,10 +287,14 @@ def _provider_rejection_message(status: int, body: Any) -> str:
     message = " ".join(message.split())
     message = _REDACT_DATA_URI.sub("<image-data>", message)
     message = _REDACT_BEARER.sub("<bearer-token>", message)
-    # Cap the detail to a short diagnostic snippet so an echo of the request
-    # (some providers echo malformed payloads) cannot carry it back to the UI.
-    if len(message) > 120:
-        message = message[:120] + "…"
+    # Record the FULL redacted detail before the UI cap. A field report of a
+    # provider rejection would otherwise be truncated to the fixed preamble,
+    # which is exactly the part that says nothing about the cause.
+    logger.warning("probe rejected by provider (HTTP %s): %s", status, message)
+    # Cap the detail so an echo of the request (some providers echo malformed
+    # payloads) cannot carry the whole body back to the UI.
+    if len(message) > _DETAIL_LIMIT:
+        message = message[: _DETAIL_LIMIT - 1] + "…"
     return f"{base} Provider detail: {message}"
 
 
@@ -341,7 +371,9 @@ class ProbeRunner:
             raise ProbeFailure(OUTCOME_PROVIDER_FAILURE, "The provider endpoint could not be reached.")
         if status >= 400:
             raise ProbeFailure(
-                OUTCOME_PROVIDER_FAILURE, _provider_rejection_message(status, body)
+                OUTCOME_PROVIDER_FAILURE,
+                _provider_rejection_message(status, body),
+                status=status,
             )
         content_text = _extract_content(body)
         if content_text is None:
@@ -377,20 +409,29 @@ class ProbeRunner:
     def _chat_vision(self, vision_question: str, path: Path) -> str:
         """Vision chat with automatic fallback between image encodings.
 
-        Definitive: first tries the legacy direct-string form (Ollama/LM
-        Studio + current OpenCode Go path), and on a 400 rejection retries
-        with the spec-compliant {"url": data_uri} object form (strict
-        gateways like MiMo/Console Go). This covers both without per-model
-        patches.
+        Tries the legacy direct-string form first (Ollama/LM Studio) and, when
+        the provider rejects the SHAPE, retries with the spec-compliant
+        ``{"url": data_uri}`` object form (strict OpenAI-schema gateways, e.g.
+        OpenCode Go, which answers ``422 invalid type: string "<image-data>",
+        expected struct ...ImageUrl`` for the bare string).
+
+        Only shape rejections are retried. A 401/403 (credentials) or 429
+        (quota) is the same failure however the image is encoded, so retrying it
+        would repeat the failure, double the credential attempts and burn quota
+        — while hiding the real cause behind the second response.
         """
         try:
             return self._chat(
                 [{"type": "text", "text": vision_question}, self._image_content(path)]
             )
         except ProbeFailure as exc:
-            if exc.outcome != OUTCOME_PROVIDER_FAILURE or "400" not in exc.message:
+            if (
+                exc.outcome != OUTCOME_PROVIDER_FAILURE
+                or exc.status not in _ENCODING_RETRY_STATUSES
+            ):
                 raise
-            # Retry with object form on any 400 that looks like a format issue
+            # The status says "unprocessable"; only a format-class detail tells
+            # us the encoding itself is what it could not parse.
             lower_msg = exc.message.lower()
             retry_triggers = ("param", "deserialize", "format", "invalid", "malformed")
             if not any(trigger in lower_msg for trigger in retry_triggers):

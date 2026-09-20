@@ -7,6 +7,12 @@ interface ConfirmDialogProps {
   title: string;
   message: string;
   confirmLabel?: string;
+  /**
+   * Variant for the confirm action. Defaults to `primary`, so every existing
+   * caller keeps its current appearance. Destructive flows opt into `danger`
+   * (REQ-PIA-08).
+   */
+  confirmVariant?: "primary" | "danger";
   isBusy?: boolean;
   error?: string | null;
   onConfirm: () => void;
@@ -18,12 +24,15 @@ interface ConfirmDialogProps {
  * nothing, Cancel aborts. Overlay pattern mirrors ImagePicker (fixed inset-0
  * z-50, role dialog, aria-modal, Escape/overlay click). Used for Delete —
  * the target name is shown in `message`, so the user always sees what is
- * about to be moved to the trash.
+ * about to be moved to the trash. Destructive callers pass
+ * `confirmVariant="danger"` so the confirm action carries the danger
+ * treatment instead of the primary style (REQ-PIA-08).
  */
 export function ConfirmDialog({
   title,
   message,
   confirmLabel = "Confirmar",
+  confirmVariant = "primary",
   isBusy = false,
   error = null,
   onConfirm,
@@ -89,7 +98,7 @@ export function ConfirmDialog({
             Cancelar
           </Button>
           <Button
-            variant="primary"
+            variant={confirmVariant}
             size="sm"
             onClick={onConfirm}
             disabled={isBusy}

@@ -1,9 +1,34 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { MemoryRouter, Router, useSearchParams } from "react-router-dom";
+import { createMemoryHistory } from "@remix-run/router";
+import { useLayoutEffect, useState, type ReactNode } from "react";
 import ProfilePage from "@/pages/ProfilePage";
 import { getReadiness } from "@/api/onboarding";
+import { getLocale } from "@/api/config";
+import { getAuthStatus, getVaultConfig } from "@/api/wiki";
 import type { Mock } from "vitest";
+
+/** Controlled Router that subscribes to a memory history so push/Back/replace
+ *  navigation is observable in tests (MemoryRouter hides its history). */
+function HistoryRouter({
+  history,
+  children,
+}: {
+  history: ReturnType<typeof createMemoryHistory>;
+  children: ReactNode;
+}) {
+  const [state, setState] = useState({
+    action: history.action,
+    location: history.location,
+  });
+  useLayoutEffect(() => history.listen(setState), [history]);
+  return (
+    <Router location={state.location} navigationType={state.action} navigator={history}>
+      {children}
+    </Router>
+  );
+}
 
 vi.mock("@/hooks/useWorlds", () => ({
   useWorlds: () => ({ worlds: [] }),
@@ -11,6 +36,28 @@ vi.mock("@/hooks/useWorlds", () => ({
 
 vi.mock("@/api/onboarding", () => ({
   getReadiness: vi.fn(),
+}));
+
+// The inline locale form (REQ-PIA-12) prefills from the saved locale on
+// mount; resolve it locally so the preferencias cases stay hermetic.
+vi.mock("@/api/config", () => ({
+  getLocale: vi.fn(),
+}));
+
+// The default `cuenta` section stacks the session and vault surfaces (the
+// account/security merge is WU-2); keep the page test hermetic by resolving
+// the session and vault reads locally.
+vi.mock("@/api/wiki", () => ({
+  getAuthStatus: vi.fn(),
+  logoutSession: vi.fn(),
+  changeUsername: vi.fn(),
+  changePassword: vi.fn(),
+  removePassword: vi.fn(),
+  rotateWords: vi.fn(),
+  getVaultConfig: vi.fn(),
+  enableVault: vi.fn(),
+  disableVault: vi.fn(),
+  setReauthInterval: vi.fn(),
 }));
 
 vi.mock("@/hooks/useLocalDevAuth", () => ({
@@ -81,6 +128,22 @@ vi.mock("@/api/backup", async (importOriginal) => {
   };
 });
 
+// The status overview header (REQ-PIA-05) reads assistant state on every
+// ProfilePage render; resolve it locally so this suite stays hermetic.
+vi.mock("@/api/assistantSettings", () => ({
+  getAssistantSettings: vi.fn().mockResolvedValue({
+    provider: "opencode-go",
+    base_url: "",
+    model: "",
+    model_metadata: { id: "", label: "", capability: "unknown", pricing: null },
+    key_configured: false,
+    models: [],
+    active_profile: "",
+    revision: 0,
+    runtime_state: "saved-not-active",
+  }),
+}));
+
 describe("ProfilePage", () => {
   beforeEach(() => {
     // Default readiness: no legacy folders. The Mundos tab's migration panel
@@ -88,30 +151,51 @@ describe("ProfilePage", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
+    });
+    (getLocale as Mock).mockResolvedValue({
+      ui: "es",
+      conversation: "es",
+      content: "es",
+      region: null,
+      region_explicit: false,
+      iana_timezone: "UTC",
+    });
+    (getAuthStatus as Mock).mockResolvedValue({
+      mode: "local-dev",
+      enabled: true,
+      authenticated: true,
+      label: "Local development user",
+    });
+    (getVaultConfig as Mock).mockResolvedValue({
+      enabled: false,
+      account_exists: false,
+      username: null,
+      has_password: false,
+      reauth_interval_d: 14,
+      env_override: false,
     });
   });
 
-  it("renders the assistant section entry point and panel", () => {
-    render(<ProfilePage />);
+  it("renders the assistant panel entry point inside Conexiones", () => {
+    render(
+      <MemoryRouter>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
 
-    fireEvent.click(screen.getByRole("button", { name: "Asistente IA" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Conexiones" }));
 
     expect(screen.getByText("assistant settings panel")).toBeInTheDocument();
   });
 
-  it("renders the configuration tab between sesión and integraciones with only kept cards", async () => {
+  it("renders the configuration tab between cuenta and conexiones with only the locale form", async () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {
         backup: "pending",
         locale: "configured",
         offline: "configured",
-      },
-      offline: {
-        local_ready: true,
-        remote_pending: ["identity", "telegram", "backup", "assistant"],
       },
       legacy: [],
     });
@@ -122,40 +206,30 @@ describe("ProfilePage", () => {
       </MemoryRouter>,
     );
 
-    // Tab order: Sesión de edición → Centro de Configuración → Integraciones.
+    // Tab order: Cuenta → Respaldo → Preferencias → Conexiones → Mundos.
     const tabLabels = screen
-      .getAllByRole("button")
-      .map((button) => button.textContent);
+      .getAllByRole("tab")
+      .map((tab) => tab.textContent);
     const order = (label: string) => tabLabels.indexOf(label);
-    expect(order("Sesión de edición")).toBeGreaterThanOrEqual(0);
-    expect(order("Centro de Configuración")).toBeGreaterThan(
-      order("Sesión de edición"),
-    );
-    expect(order("Integraciones")).toBeGreaterThan(
-      order("Centro de Configuración"),
-    );
+    expect(order("Cuenta")).toBeGreaterThanOrEqual(0);
+    expect(order("Respaldo")).toBeGreaterThan(order("Cuenta"));
+    expect(order("Preferencias")).toBeGreaterThan(order("Respaldo"));
+    expect(order("Conexiones")).toBeGreaterThan(order("Preferencias"));
+    expect(order("Mundos")).toBeGreaterThan(order("Conexiones"));
 
-    fireEvent.click(screen.getByRole("button", { name: "Centro de Configuración" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Preferencias" }));
 
-    // Readiness summary + the three kept cards render.
+    // The inline locale form renders; the redundant readiness intro ("Listo
+    // para trabajar") and the offline card are gone (product-owner decision).
     expect(
-      await screen.findByRole("heading", { name: "Listo para trabajar" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Respaldo y restauración" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Idioma, región y zona horaria" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Offline / dispositivo" }),
+      await screen.findByRole("heading", { name: "Idioma, región y zona horaria" }),
     ).toBeInTheDocument();
 
     // Redundant cards are NOT duplicated — they live in other Profile tabs
-    // (Asistente IA / Mundos / Integraciones) or in the Profile itself.
+    // (Asistente IA / Mundos / Conexiones) or in the Profile itself.
     for (const redundant of [
       "Identidad",
-      "IA texto y visión",
+      "Asistente de Demiurgos",
       "Telegram",
       "Mundos",
       "Importar mundo",
@@ -166,7 +240,7 @@ describe("ProfilePage", () => {
     }
   });
 
-  it("renders the backup card's declared action as a clickable control that moves focus into the card", async () => {
+  it("drops the redundant backup card from Preferencias", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {
@@ -174,39 +248,123 @@ describe("ProfilePage", () => {
         locale: "configured",
         offline: "configured",
       },
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [],
     });
 
     render(
-      <MemoryRouter initialEntries={["/perfil"]}>
+      <MemoryRouter initialEntries={["/perfil?tab=preferencias"]}>
         <ProfilePage />
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Centro de Configuración" }));
-    await screen.findByRole("heading", { name: "Respaldo y restauración" });
-
-    // WU-15's declared action used to be dropped for every key except locale;
-    // the backup entry point must render as a real, clickable control.
-    const action = screen.getByRole("button", { name: "Configurar respaldo" });
-    expect(action).toBeInTheDocument();
-
-    // Its target is the current page (/perfil?tab=configuracion), so a plain
-    // navigate would be an invisible no-op. The control moves the user to the
-    // card section (scroll + focus) instead.
-    fireEvent.click(action);
-    expect(document.getElementById("config-card-backup")).toHaveFocus();
+    // The redundant backup card is gone (product-owner decision): it merely
+    // navigated to the Respaldo section — which already has its own rail entry
+    // — and its only remaining value, the status badge, was declared
+    // unnecessary.
+    expect(
+      screen.queryByRole("heading", { name: "Respaldo y restauración" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Configurar respaldo" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("renders the idea-capture wizard as the only Telegram surface inside Integraciones", () => {
+  it("drops the redundant readiness block from Preferencias while keeping the locale form", async () => {
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: { locale: "configured", offline: "configured" },
+      legacy: [],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=preferencias"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+
+    // Non-vacuous: the locale form must be present, so the absence assertions
+    // below cannot pass on an empty Preferencias panel.
+    expect(
+      await screen.findByRole("heading", { name: "Idioma, región y zona horaria" }),
+    ).toBeInTheDocument();
+
+    // The old Centro de Configuración intro block is gone. Under the
+    // pre-change code these assertions fail: the "Listo para trabajar" h3,
+    // its paragraph and the ESSENTIAL_BADGES row all rendered here.
+    expect(
+      screen.queryByRole("heading", { name: "Listo para trabajar" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Capacidades esenciales locales: Mundo y editor local."),
+    ).not.toBeInTheDocument();
+    expect(document.getElementById("config-readiness-title")).toBeNull();
+  });
+
+  it("renders the locale form inline in Preferencias (REQ-PIA-12)", async () => {
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: {
+        backup: "pending",
+        locale: "configured",
+        offline: "configured",
+      },
+      legacy: [],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=preferencias"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+
+    // The locale surface IS the form, rendered directly in Preferencias — the
+    // old "Configurar" reconfigure handoff is gone (REQ-PIA-12).
+    const heading = await screen.findByRole("heading", {
+      name: "Idioma, región y zona horaria",
+    });
+    const section = heading.closest("section") as HTMLElement;
+    expect(section.id).toBe("config-card-locale");
+
+    // All six fields are usable inline, without leaving /perfil.
+    expect(within(section).getByLabelText("Idioma de la interfaz")).toBeInTheDocument();
+    expect(within(section).getByLabelText("Idioma de conversación (asistente)")).toBeInTheDocument();
+    expect(within(section).getByLabelText("Idioma de contenido (prosa del mundo)")).toBeInTheDocument();
+    expect(within(section).getByLabelText(/Región \(opcional/)).toBeInTheDocument();
+    expect(within(section).getByLabelText(/Confirmo la región/)).toBeInTheDocument();
+    // The timezone is a dropdown (zone + city), not a free-text field.
+    expect(within(section).getByLabelText(/Zona horaria/)).toHaveRole("combobox");
+    expect(within(section).getByRole("button", { name: "Guardar" })).toBeInTheDocument();
+    // No handoff control remains on the form.
+    expect(within(section).queryByRole("button", { name: "Configurar" })).not.toBeInTheDocument();
+  });
+
+  it("hosts the backup surface inside the Respaldo section (REQ-PIA-02)", async () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=respaldo"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+
+    // BackupSection owns the respaldo section: its status heading renders
+    // against the mocked pending state.
+    expect(
+      await screen.findByRole("heading", { name: "Estado del respaldo" }),
+    ).toBeInTheDocument();
+    // The backup surface renders exactly once: BackupSection owns it here, and
+    // the removed Preferencias card no longer duplicates it (REQ-PIA-02).
+    expect(
+      screen.queryByRole("heading", { name: "Respaldo y restauración" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders the idea-capture wizard as the only Telegram surface inside Conexiones", () => {
     render(
       <MemoryRouter>
         <ProfilePage />
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Integraciones" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Conexiones" }));
 
     // "Captura de ideas" (IdeaCapturePanel) is the single Telegram surface:
     // no separate TelegramCard block may render alongside it.
@@ -220,7 +378,6 @@ describe("ProfilePage", () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
-      offline: { local_ready: true, remote_pending: [] },
       legacy: [{ world: "legacy-x", folders: ["Lore"] }],
     });
     render(
@@ -229,7 +386,7 @@ describe("ProfilePage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Mundos" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Mundos" }));
 
     expect(await screen.findByText("migration panel")).toBeInTheDocument();
   });
@@ -241,9 +398,313 @@ describe("ProfilePage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Mundos" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Mundos" }));
     await screen.findByText("Zona peligrosa");
 
     expect(screen.queryByText("migration panel")).not.toBeInTheDocument();
+  });
+});
+
+describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04/06/07/11)", () => {
+  beforeEach(() => {
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: {},
+      legacy: [],
+    });
+    (getAuthStatus as Mock).mockResolvedValue({
+      mode: "local-dev",
+      enabled: true,
+      authenticated: true,
+      label: "Local development user",
+    });
+    (getVaultConfig as Mock).mockResolvedValue({
+      enabled: false,
+      account_exists: false,
+      username: null,
+      has_password: false,
+      reauth_interval_d: 14,
+      env_override: false,
+    });
+  });
+
+  /** Probe the `?tab` param exactly as the page reads it. */
+  function UrlTabProbe() {
+    const [params] = useSearchParams();
+    return <span data-testid="url-tab">{params.get("tab") ?? ""}</span>;
+  }
+
+  it("opens the deep-linked section from ?tab= and preserves it across a reload", () => {
+    const { unmount } = render(
+      <MemoryRouter initialEntries={["/perfil?tab=respaldo"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Respaldo");
+    expect(screen.getByRole("heading", { name: "Respaldo" })).toBeInTheDocument();
+
+    // A reload re-renders from the same URL; the query param drives the state.
+    unmount();
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=respaldo"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("lands on cuenta without pushing when ?tab is absent", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil"]}>
+        <UrlTabProbe />
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.getByTestId("url-tab")).toHaveTextContent("");
+  });
+
+  it("pushes on an explicit tab click and Back returns to the previous section", () => {
+    const history = createMemoryHistory({
+      initialEntries: ["/perfil"],
+      v5Compat: true,
+    });
+    render(
+      <HistoryRouter history={history}>
+        <UrlTabProbe />
+        <ProfilePage />
+      </HistoryRouter>,
+    );
+    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    fireEvent.click(screen.getByRole("tab", { name: "Conexiones" }));
+    expect(screen.getByTestId("url-tab")).toHaveTextContent("conexiones");
+    expect(screen.getByRole("tab", { name: "Conexiones" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    act(() => history.go(-1));
+    expect(screen.getByTestId("url-tab")).toHaveTextContent("");
+    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("replaces an invalid ?tab with cuenta without pushing a history entry", async () => {
+    const history = createMemoryHistory({
+      initialEntries: ["/perfil?tab=does-not-exist"],
+      v5Compat: true,
+    });
+    render(
+      <HistoryRouter history={history}>
+        <UrlTabProbe />
+        <ProfilePage />
+      </HistoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("url-tab")).toHaveTextContent("cuenta"),
+    );
+    // `replace` keeps the history index; a push would have advanced it.
+    expect(history.index).toBe(0);
+    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("does not push when clicking the already-active tab", () => {
+    const history = createMemoryHistory({
+      initialEntries: ["/perfil"],
+      v5Compat: true,
+    });
+    render(
+      <HistoryRouter history={history}>
+        <UrlTabProbe />
+        <ProfilePage />
+      </HistoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Cuenta" }));
+    expect(screen.getByTestId("url-tab")).toHaveTextContent("");
+    expect(history.index).toBe(0);
+  });
+
+  it("wires the tablist/tab/tabpanel contract with aria-selected and aria-controls", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    const tablist = screen.getByRole("tablist", { name: "Secciones del perfil" });
+    const tabs = within(tablist).getAllByRole("tab");
+    expect(tabs.map((tab) => tab.textContent)).toEqual([
+      "Cuenta",
+      "Respaldo",
+      "Preferencias",
+      "Conexiones",
+      "Mundos",
+    ]);
+    const activeTab = within(tablist).getByRole("tab", { name: "Cuenta" });
+    expect(activeTab).toHaveAttribute("aria-selected", "true");
+    expect(activeTab).toHaveAttribute("aria-controls", "profile-panel-cuenta");
+    for (const tab of tabs) {
+      if (tab !== activeTab) {
+        expect(tab).toHaveAttribute("aria-selected", "false");
+      }
+    }
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAttribute("id", "profile-panel-cuenta");
+    expect(panel).toHaveAttribute("aria-labelledby", "profile-tab-cuenta");
+  });
+
+  it("roves focus with ArrowLeft/Right/Home/End and selects the adjacent section", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    const cuentaTab = screen.getByRole("tab", { name: "Cuenta" });
+    fireEvent.keyDown(cuentaTab, { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Respaldo" }), { key: "End" });
+    expect(screen.getByRole("tab", { name: "Mundos" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Mundos" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Mundos" }), { key: "Home" });
+    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    // ArrowLeft wraps back to the last tab.
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Cuenta" }), { key: "ArrowLeft" });
+    expect(screen.getByRole("tab", { name: "Mundos" })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: "Mundos" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("moves focus to the panel heading after a click-driven section change", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Mundos" }));
+    expect(document.getElementById("profile-panel-heading-mundos")).toHaveFocus();
+  });
+
+  it("keeps focus away from the panel heading on the default landing", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    expect(
+      document.getElementById("profile-panel-heading-cuenta"),
+    ).not.toHaveFocus();
+  });
+
+  it("shows exactly one icon per section", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    for (const tab of screen.getAllByRole("tab")) {
+      expect(tab.querySelectorAll("svg")).toHaveLength(1);
+    }
+  });
+
+  it("scrolls the rail horizontally on small widths instead of overflowing", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    expect(screen.getByRole("tablist")).toHaveClass("overflow-x-auto");
+  });
+
+  it("exposes an h1 followed by the section h2 with no skipped heading levels", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    const levels = screen
+      .getAllByRole("heading")
+      .map((heading) => Number(heading.tagName.slice(1)));
+    expect(levels[0]).toBe(1); // h1 "Perfil"
+    expect(levels[1]).toBe(2); // the section's h2
+    for (let i = 1; i < levels.length; i += 1) {
+      expect(levels[i]).toBeLessThanOrEqual(levels[i - 1] + 1);
+    }
+  });
+
+  it("keeps a contiguous heading outline inside Conexiones (REQ-PIA-07)", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=conexiones"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    const panel = within(screen.getByRole("tabpanel"));
+    // The section owns its h3 heading directly under the panel h2.
+    expect(
+      panel.getByRole("heading", { name: "Captura de ideas", level: 3 }),
+    ).toBeInTheDocument();
+    const levels = panel
+      .getAllByRole("heading")
+      .map((heading) => Number(heading.tagName.slice(1)));
+    expect(levels[0]).toBe(2); // the panel h2 "Conexiones"
+    for (let i = 1; i < levels.length; i += 1) {
+      expect(levels[i]).toBeLessThanOrEqual(levels[i - 1] + 1);
+    }
+  });
+
+  it("keeps the Mundos subsections at h3 under the panel h2 (REQ-PIA-07)", () => {
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=mundos"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+    const panel = within(screen.getByRole("tabpanel"));
+    // The section intro stays h3; every subsection starts at the same h3
+    // level, so the world list, the recycle bin and the legacy migration
+    // panel never emit an orphan h4 under it.
+    expect(panel.getByRole("heading", { name: "Zona peligrosa", level: 3 })).toBeInTheDocument();
+    expect(
+      panel.getByRole("heading", { name: "Papelera de mundos", level: 3 }),
+    ).toBeInTheDocument();
+    const levels = panel
+      .getAllByRole("heading")
+      .map((heading) => Number(heading.tagName.slice(1)));
+    expect(levels[0]).toBe(2); // the panel h2 "Mundos"
+    for (let i = 1; i < levels.length; i += 1) {
+      expect(levels[i]).toBeLessThanOrEqual(levels[i - 1] + 1);
+    }
   });
 });

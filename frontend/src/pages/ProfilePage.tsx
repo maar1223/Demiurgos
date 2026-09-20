@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
-import { Icon } from "@/components/atoms/Icon";
+import { Icon, type IconName } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { LocaleForm } from "@/components/organisms/LocaleForm";
 import { IdeaCapturePanel } from "@/components/organisms/IdeaCapturePanel";
 import { AssistantSettingsPanel } from "@/components/organisms/AssistantSettingsPanel";
 import { BackupSection } from "@/components/organisms/BackupSection";
+import { ProfileSectionRail } from "@/components/organisms/ProfileSectionRail";
+import { StatusOverviewHeader } from "@/components/organisms/StatusOverviewHeader";
 import { DeleteWorldModal } from "@/components/organisms/DeleteWorldModal";
 import { WorldPickerDialog } from "@/components/organisms/WorldPickerDialog";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
@@ -16,6 +19,10 @@ import { renameWorld } from "@/api/worlds";
 import { clearCurrentWorld, getCurrentWorld, setCurrentWorld } from "@/lib/currentWorld";
 import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
 import { SecretInput } from "@/components/molecules/SecretInput";
+import {
+  ConnectionsPanel,
+  type ConnectionStatusSummary,
+} from "@/components/molecules/ConnectionsPanel";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { getReadiness } from "@/api/onboarding";
 import {
@@ -25,15 +32,14 @@ import {
   enableVault,
   getAuthStatus,
   getVaultConfig,
-  logoutSession,
   removePassword,
   rotateWords,
   setReauthInterval,
 } from "@/api/wiki";
 import { useWorlds } from "@/hooks/useWorlds";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
+import { useRecoveryWordsUnlock } from "@/hooks/useRecoveryWordsUnlock";
 import { useAuthSession } from "@/hooks/useAuthSession";
-import { reloadPage } from "@/lib/reloadPage";
 import type {
   ApiError,
   AuthSessionStatus,
@@ -42,41 +48,88 @@ import type {
   WorldInfo,
 } from "@/api/types";
 import {
-  CARD_DEFS,
-  ESSENTIAL_BADGES,
   MigrationPanel,
-  REMOTE_LABELS,
   STATE_META,
   cardLabel,
   cardState,
-  essentialBadgeFor,
 } from "@/pages/ConfigurationCenter";
-import { cn } from "@/lib/utils";
-import { getErrorMessage } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 
 type ProfileSection =
-  | "sesion"
-  | "seguridad"
-  | "configuracion"
-  | "integraciones"
-  | "asistente"
+  | "cuenta"
+  | "respaldo"
+  | "preferencias"
+  | "conexiones"
   | "mundos";
 
-/** Sesión de edición — the same local-dev session controls as the Navbar
- *  dropdown, kept accessible from the full Profile page. Mode-aware: in the
- *  credentials vault mode (DEMIURGOS_AUTH_MODE=credentials) the panel shows
- *  the Account section (session + logout + credential management via words +
- *  re-auth indicator); local-dev and disabled keep their legacy behavior
- *  unchanged. */
-function SessionSection() {
+/** The five intent-based sections (REQ-PIA-01) with rail label and icon
+ *  (REQ-PIA-06). `cuenta` is the default landing section. */
+const PROFILE_SECTIONS: { id: ProfileSection; label: string; icon: IconName }[] = [
+  { id: "cuenta", label: "Cuenta", icon: "avatar" },
+  { id: "respaldo", label: "Respaldo", icon: "save" },
+  { id: "preferencias", label: "Preferencias", icon: "monitor" },
+  { id: "conexiones", label: "Conexiones", icon: "lightbulb" },
+  { id: "mundos", label: "Mundos", icon: "world" },
+];
+
+function isProfileSection(value: string | null): value is ProfileSection {
+  return PROFILE_SECTIONS.some((section) => section.id === value);
+}
+
+/**
+ * Perfil → Cuenta — the single account/security surface (REQ-PIA-09). Vault ON
+ * and vault OFF are two states of the same section: a compact status card is
+ * always present, and below it the vault renders either the credentials
+ * management disclosures (ON) or the activation flow (OFF).
+ *
+ * Management lives behind collapsed disclosures because this is a
+ * rarely-visited Operate surface: "Gestionar credenciales" shows one segmented
+ * form at a time and a danger-treated "Zona peligrosa" holds the destructive
+ * actions. Logout and the local-dev session start both live in the Navbar and
+ * are intentionally not duplicated here (approved REQ-PIA-09 deviation).
+ *
+ * The recovery-words unlock (REQ-SRW-01..04) is session-scoped: the first
+ * successful words-gated action arms the verified words and later actions
+ * replay them without re-prompting. The words live in page-level memory only
+ * (never localStorage/sessionStorage/cookies) and are cleared on unmount; a
+ * logout reloads the page, so they are cleared trivially.
+ */
+
+/** The four credentials panels — exactly one visible at a time. */
+type CredentialPanel = "usuario" | "password" | "words" | "reauth";
+
+const CREDENTIAL_PANELS: { id: CredentialPanel; label: string }[] = [
+  { id: "usuario", label: "Usuario" },
+  { id: "password", label: "Contraseña" },
+  { id: "words", label: "Palabras claves" },
+  { id: "reauth", label: "Reingreso" },
+];
+
+const CREDENTIALS_REGION_ID = "cuenta-credentials-region";
+const SENSITIVE_REGION_ID = "cuenta-sensitive-region";
+function CuentaSection({
+  unlockedWords,
+  onUnlocked,
+}: {
+  unlockedWords: string | null;
+  onUnlocked: (words: string) => void;
+}) {
   const localDev = useLocalDevAuth(true);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  // Unified status decides the vault branch; on failure the panel degrades
-  // to the local-dev view — a low-stakes read, never a wall.
   const [vaultStatus, setVaultStatus] = useState<AuthSessionStatus | null>(null);
+  const [config, setConfig] = useState<VaultConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<unknown>(null);
+  // Disclosures start collapsed: this is a rarely-visited Operate surface, so
+  // its first read is a compact status summary instead of the former stack of
+  // forms.
+  const [credentialsOpen, setCredentialsOpen] = useState(false);
+  const [sensitiveOpen, setSensitiveOpen] = useState(false);
+  const [credentialPanel, setCredentialPanel] =
+    useState<CredentialPanel>("usuario");
 
+  // Unified status decides the session-card branch (credentials vs local-dev);
+  // on failure the card degrades to the local-dev view — a low-stakes read,
+  // never a wall.
   useEffect(() => {
     let active = true;
     void getAuthStatus()
@@ -91,219 +144,326 @@ function SessionSection() {
     };
   }, []);
 
-  const handleAction = async () => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      if (localDev.status?.authenticated) {
-        await localDev.logout();
-      } else {
-        await localDev.start();
-      }
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : "No se pudo actualizar la sesión local",
-      );
-    } finally {
-      setActionLoading(false);
-    }
+  const load = () => {
+    setError(null);
+    void getVaultConfig()
+      .then(setConfig)
+      .catch((cause: unknown) => setError(cause))
+      .finally(() => setLoading(false));
   };
 
-  // Credentials vault mode: Account section (session + credential management).
-  if (vaultStatus?.mode === "credentials") {
-    return <AccountSection status={vaultStatus} />;
-  }
+  useEffect(load, []);
 
-  // Local-dev / disabled: legacy panel (unchanged).
-  if (localDev.isLoading) {
+  const daysUntilReauth =
+    vaultStatus?.authenticated && typeof vaultStatus.days_until_reauth === "number"
+      ? vaultStatus.days_until_reauth
+      : null;
+
+  // The status chip reflects whichever session source is authoritative: the
+  // credentials session when the vault is active, the loopback session
+  // otherwise. `enabled`/`authenticated` from GET /api/auth/session/status are
+  // false in local-dev mode, so the loopback hook supplies that state.
+  const sessionActive =
+    vaultStatus?.mode === "credentials"
+      ? Boolean(vaultStatus.authenticated)
+      : Boolean(localDev.status?.authenticated);
+
+  if (loading) {
     return (
       <div className="flex items-center gap-2 py-6 text-small text-muted">
-        <Spinner size="sm" /> Comprobando sesión local…
+        <Spinner size="sm" /> Comprobando la bóveda…
       </div>
     );
   }
 
-  if (localDev.error) {
-    return <p className="text-small text-status-error">{localDev.error.message}</p>;
+  if (!!error && !config) {
+    return (
+      <ErrorBanner message="No se pudo cargar el estado de la bóveda." onRetry={load} />
+    );
   }
 
-  if (!localDev.status) return null;
+  if (!config) return null;
 
   return (
-    <div className="rounded-lg border border-edge bg-surface-raised p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="font-heading text-body text-primary">Sesión de edición</h3>
-        <span className="text-small text-muted">Local</span>
-      </div>
+    <div className="space-y-4">
+      {/* One status card (absorbs the former Sesión card): the account, the
+          session words lock and the re-auth countdown as compact rows. */}
+      <section className="rounded-lg border border-edge bg-surface-raised p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-heading text-body text-primary">Sesión</h3>
+          <Badge variant={sessionActive ? "success" : "default"}>
+            {sessionActive ? "Activa" : "Apagada"}
+          </Badge>
+        </div>
 
-      {localDev.status.authenticated && (
-        <>
-          <p className="mt-3 text-small text-status-success">Sesión local activa</p>
-          <p className="mt-1 text-small text-muted">{localDev.status.label}</p>
-          <Button
-            variant="secondary"
-            onClick={() => void handleAction()}
-            disabled={actionLoading}
-            className="mt-3"
-          >
-            {actionLoading ? "Cerrando…" : "Cerrar sesión local"}
-          </Button>
-        </>
-      )}
-
-      {!localDev.status.authenticated && localDev.status.enabled && (
-        <>
-          <p className="mt-3 text-small text-muted">
-            Sesión local no iniciada. Iniciala para editar y configurar el perfil.
-          </p>
-          <Button
-            variant="primary"
-            onClick={() => void handleAction()}
-            disabled={actionLoading}
-            className="mt-3"
-          >
-            {actionLoading ? "Iniciando…" : "Iniciar sesión local"}
-          </Button>
-        </>
-      )}
-
-      {!localDev.status.enabled && (
-        <p className="mt-3 text-small text-muted">
-          Autenticación local desactivada. Activá{" "}
-          <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=local-dev</code> en{" "}
-          <code className="text-icon-muted">.env</code> para probar la edición.
-        </p>
-      )}
-
-      {actionError && <p className="mt-3 text-small text-status-error">{actionError}</p>}
-    </div>
-  );
-}
-
-/**
- * Credentials Account section (R-AC-05, replaces the vault session panel):
- * session info + logout, the soft re-auth indicator (R-AC-04d), and the
- * credential-management actions — change username, change/remove password and
- * rotate the recovery words — each gated on the recovery words (ownership
- * key). The words are NEVER displayed here (S-AC-01c); rotation returns new
- * plaintext words exactly once.
- */
-function AccountSection({ status }: { status: AuthSessionStatus }) {
-  const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const daysUntilReauth =
-    status.authenticated && typeof status.days_until_reauth === "number"
-      ? status.days_until_reauth
-      : null;
-
-  const handleLogout = async () => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await logoutSession();
-      reloadPage();
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : "No se pudo cerrar la sesión",
-      );
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  return (
-    <div className="rounded-lg border border-edge bg-surface-raised p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="font-heading text-body text-primary">Cuenta</h3>
-        <span className="text-small text-muted">Credenciales</span>
-      </div>
-
-      {status.authenticated ? (
-        <>
-          <p className="mt-3 text-small text-status-success">Sesión activa</p>
-          <p className="mt-1 text-small text-muted">{status.label}</p>
-          <p className="mt-1 text-small text-muted">
-            Proveedor: {providerLabel(status.provider)}
-          </p>
-
-          {daysUntilReauth !== null && (
-            <div
-              role="status"
-              className="mt-3 rounded-lg border border-edge bg-surface/50 p-3"
-            >
-              <p className="text-small text-primary">
-                {daysUntilReauth <= 0
-                  ? "Reingreso recomendado: hoy"
-                  : `Reingreso recomendado en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}`}
-              </p>
-              <p className="mt-2 text-small text-muted">
-                Si no reingresas tu contraseña, la sesión de Demiurgos se
-                cerrará. Y si olvidaste tu contraseña, solo vas a poder
-                recuperarla con tus palabras claves.
-              </p>
-            </div>
-          )}
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => void handleLogout()}
-              disabled={actionLoading}
-            >
-              {actionLoading ? "Cerrando…" : "Cerrar sesión"}
-            </Button>
+        {vaultStatus?.mode === "credentials" ? (
+          vaultStatus.authenticated ? (
+            <dl className="mt-2 text-small">
+              <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
+                <dt className="text-muted">Cuenta</dt>
+                <dd className="text-right">
+                  <span className="block text-primary">
+                    {config.username ?? "—"}
+                  </span>
+                  <span className="block text-muted">
+                    {config.has_password ? "contraseña definida" : "sin contraseña"}
+                  </span>
+                  {config.env_override && (
+                    <span className="block text-muted">
+                      Forzada por{" "}
+                      <code className="text-icon-muted">DEMIURGOS_AUTH_MODE</code>
+                    </span>
+                  )}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between gap-3 border-t border-edge py-2">
+                <dt className="text-muted">Palabras claves</dt>
+                <dd>
+                  <Badge variant={unlockedWords !== null ? "success" : "default"}>
+                    {unlockedWords !== null
+                      ? "Desbloqueadas esta sesión"
+                      : "Bloqueadas"}
+                  </Badge>
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
+                <dt className="text-muted">Reingreso</dt>
+                <dd className="text-primary">
+                  {daysUntilReauth !== null
+                    ? daysUntilReauth <= 0
+                      ? "hoy"
+                      : `en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}`
+                    : "—"}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="mt-3 text-small text-muted">
+              No hay una sesión de cuenta activa. Iniciá sesión para editar y
+              configurar el perfil.
+            </p>
+          )
+        ) : localDev.isLoading ? (
+          <div className="flex items-center gap-2 py-6 text-small text-muted">
+            <Spinner size="sm" /> Comprobando sesión local…
           </div>
+        ) : localDev.error ? (
+          <p className="text-small text-status-error">{localDev.error.message}</p>
+        ) : !localDev.status ? null : localDev.status.authenticated ? (
+          <dl className="mt-2 text-small">
+            <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
+              <dt className="text-muted">Cuenta</dt>
+              <dd className="text-right text-primary">
+                {localDev.status.label ?? "Sesión local"}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-edge py-2">
+              <dt className="text-muted">Palabras claves</dt>
+              <dd>
+                <Badge variant={unlockedWords !== null ? "success" : "default"}>
+                  {unlockedWords !== null
+                    ? "Desbloqueadas esta sesión"
+                    : "Bloqueadas"}
+                </Badge>
+              </dd>
+            </div>
+          </dl>
+        ) : localDev.status.enabled ? (
+          <p className="mt-3 text-small text-muted">
+            Sesión local no iniciada. Iniciala desde el menú de tu perfil para
+            editar y configurar el perfil.
+          </p>
+        ) : (
+          <p className="mt-3 text-small text-muted">
+            Autenticación local desactivada. Activá{" "}
+            <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=local-dev</code>{" "}
+            en <code className="text-icon-muted">.env</code> para probar la
+            edición.
+          </p>
+        )}
+      </section>
+
+      {config.enabled ? (
+        <>
+          <section className="rounded-lg border border-edge bg-surface-raised">
+            <h3>
+              <button
+                type="button"
+                aria-expanded={credentialsOpen}
+                aria-controls={CREDENTIALS_REGION_ID}
+                onClick={() => setCredentialsOpen((open) => !open)}
+                className="flex w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-icon-muted/50"
+              >
+                <span className="font-heading text-body text-primary">
+                  Gestionar credenciales
+                </span>
+                <Icon
+                  name={credentialsOpen ? "chevron-down" : "chevron-right"}
+                  size={16}
+                  className="text-icon-muted"
+                />
+              </button>
+            </h3>
+            <div
+              id={CREDENTIALS_REGION_ID}
+              hidden={!credentialsOpen}
+              className="px-4 pb-4"
+            >
+              <p className="text-small text-muted">
+                Tus palabras claves son la llave de propiedad de la cuenta: la
+                primera acción que las pida las desbloquea para esta sesión y se
+                recuerdan hasta cerrar sesión, sin guardarse en el navegador.
+              </p>
+
+              <div
+                role="group"
+                aria-label="Gestión de credenciales"
+                className="mt-3 flex flex-wrap gap-2"
+              >
+                {CREDENTIAL_PANELS.map((panel) => {
+                  const active = credentialPanel === panel.id;
+                  return (
+                    <button
+                      key={panel.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setCredentialPanel(panel.id)}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-small transition-colors",
+                        active
+                          ? "border-icon-muted bg-surface-hover text-primary"
+                          : "border-edge text-muted hover:text-primary",
+                      )}
+                    >
+                      {panel.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mt-4">
+                {credentialPanel === "usuario" && (
+                  <WordsForm
+                    title="Cambiar usuario"
+                    description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
+                    extraLabel="Nuevo usuario"
+                    extraPlaceholder="nuevo-usuario"
+                    submitLabel="Cambiar usuario"
+                    busyLabel="Cambiando…"
+                    unlockedWords={unlockedWords}
+                    onSubmit={async (words, newUsername) => {
+                      await changeUsername(words, newUsername);
+                      onUnlocked(words);
+                      load();
+                    }}
+                  />
+                )}
+
+                {credentialPanel === "password" && (
+                  <WordsForm
+                    title="Cambiar contraseña"
+                    description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
+                    extraLabel="Nueva contraseña"
+                    extraType="password"
+                    extraPlaceholder="Nueva contraseña"
+                    extraRequired
+                    submitLabel="Cambiar contraseña"
+                    busyLabel="Cambiando…"
+                    unlockedWords={unlockedWords}
+                    onSubmit={async (words, newPassword) => {
+                      await changePassword(words, newPassword);
+                      onUnlocked(words);
+                      load();
+                    }}
+                  />
+                )}
+
+                {credentialPanel === "words" && <RotateWordsCard />}
+
+                {credentialPanel === "reauth" && (
+                  <>
+                    <ReauthIntervalForm config={config} onSaved={load} />
+                    {daysUntilReauth !== null && (
+                      <p className="mt-3 text-small text-muted">
+                        {daysUntilReauth <= 0
+                          ? "Reingreso recomendado: hoy."
+                          : `Reingreso recomendado en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}.`}{" "}
+                        Si no reingresas tu contraseña, la sesión de Demiurgos se
+                        cerrará. Y si olvidaste tu contraseña, solo vas a poder
+                        recuperarla con tus palabras claves.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-status-error/30 bg-status-error/10 p-4">
+            <h3>
+              <button
+                type="button"
+                aria-expanded={sensitiveOpen}
+                aria-controls={SENSITIVE_REGION_ID}
+                onClick={() => setSensitiveOpen((open) => !open)}
+                className="flex w-full items-center justify-between gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-error/50"
+              >
+                <span className="font-heading text-body text-status-error">
+                  Zona peligrosa
+                </span>
+                <Icon
+                  name={sensitiveOpen ? "chevron-down" : "chevron-right"}
+                  size={16}
+                  className="text-status-error"
+                />
+              </button>
+            </h3>
+            <div
+              id={SENSITIVE_REGION_ID}
+              hidden={!sensitiveOpen}
+              className="mt-4 space-y-4"
+            >
+              <p className="text-small text-muted">
+                Acciones que cambian el acceso a tu cuenta.
+              </p>
+              <WordsForm
+                title="Retirar contraseña"
+                description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
+                submitLabel="Retirar contraseña"
+                busyLabel="Retirando…"
+                confirmLabel="¿Confirmás el retiro?"
+                destructive
+                unlockedWords={unlockedWords}
+                onSubmit={async (words) => {
+                  await removePassword(words);
+                  onUnlocked(words);
+                  load();
+                }}
+              />
+              <WordsForm
+                title="Desactivar bóveda"
+                description="Apagar la bóveda quita la autenticación de la instalación. Lo confirmás con tus palabras claves."
+                submitLabel="Desactivar bóveda"
+                busyLabel="Desactivando…"
+                confirmLabel="¿Confirmás la desactivación?"
+                destructive
+                unlockedWords={unlockedWords}
+                onSubmit={async (words) => {
+                  await disableVault(words);
+                  onUnlocked(words);
+                  load();
+                }}
+              />
+            </div>
+          </section>
         </>
       ) : (
-        <p className="mt-3 text-small text-muted">
-          No hay una sesión de cuenta activa. Iniciá sesión para editar y
-          configurar el perfil.
-        </p>
+        <ActivationPanel
+          config={config}
+          onActivated={load}
+          onVerified={onUnlocked}
+        />
       )}
-
-      {actionError && <p className="mt-3 text-small text-status-error">{actionError}</p>}
-
-      <div className="mt-5 space-y-4 border-t border-edge pt-4">
-        <WordsForm
-          title="Cambiar usuario"
-          description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
-          extraLabel="Nuevo usuario"
-          extraPlaceholder="nuevo-usuario"
-          submitLabel="Cambiar usuario"
-          busyLabel="Cambiando…"
-          onSubmit={async (words, newUsername) => {
-            await changeUsername(words, newUsername);
-          }}
-        />
-
-        <WordsForm
-          title="Cambiar contraseña"
-          description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
-          extraLabel="Nueva contraseña"
-          extraType="password"
-          extraPlaceholder="Nueva contraseña"
-          extraRequired
-          submitLabel="Cambiar contraseña"
-          busyLabel="Cambiando…"
-          onSubmit={async (words, newPassword) => {
-            await changePassword(words, newPassword);
-          }}
-        />
-
-        <WordsForm
-          title="Retirar contraseña"
-          description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
-          submitLabel="Retirar contraseña"
-          busyLabel="Retirando…"
-          confirmLabel="¿Confirmás el retiro?"
-          onSubmit={async (words) => {
-            await removePassword(words);
-          }}
-        />
-
-        <RotateWordsCard />
-      </div>
     </div>
   );
 }
@@ -320,13 +480,20 @@ interface WordsFormProps {
   busyLabel: string;
   /** Two-click confirm for destructive actions (e.g. password removal). */
   confirmLabel?: string;
+  /** Render the submit/confirm button with the danger treatment (REQ-PIA-08).
+   *  Destructive actions (password removal, vault deactivation) opt in. */
+  destructive?: boolean;
+  /** Session-unlocked words (REQ-SRW-01): when present the words input is
+   *  hidden and these cached words replay on submit without re-prompting. */
+  unlockedWords?: string | null;
   onSubmit: (words: string, extra: string) => Promise<void>;
 }
 
 /**
  * A words-gated credential action (R-AC-05): recovery words + optional extra
  * value (new username/password). The words are the ownership proof; every
- * action shows its own inline busy/error/success state.
+ * action shows its own inline busy/error/success state. When the session has
+ * unlocked words (REQ-SRW-01) the input is hidden and the cached words replay.
  */
 function WordsForm({
   title,
@@ -338,6 +505,8 @@ function WordsForm({
   submitLabel,
   busyLabel,
   confirmLabel,
+  destructive = false,
+  unlockedWords,
   onSubmit,
 }: WordsFormProps) {
   const [words, setWords] = useState("");
@@ -346,6 +515,10 @@ function WordsForm({
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [confirming, setConfirming] = useState(false);
+
+  // While the session unlock is armed the cached words replay; otherwise the
+  // user types them (the words input is only rendered in that state).
+  const effectiveWords = unlockedWords ?? words;
 
   const handleSubmit = async () => {
     if (extraRequired && extra.trim() === "") {
@@ -359,7 +532,7 @@ function WordsForm({
     setBusy(true);
     setError(null);
     try {
-      await onSubmit(words.trim(), extra.trim());
+      await onSubmit(effectiveWords.trim(), extra.trim());
       setDone(true);
       setWords("");
       setExtra("");
@@ -378,23 +551,31 @@ function WordsForm({
       <h4 className="font-heading text-body text-primary">{title}</h4>
       <p className="mt-1 text-small text-muted">{description}</p>
 
-      <label htmlFor={`${title}-words`} className="sr-only">
-        Palabras claves para {title}
-      </label>
-      <input
-        id={`${title}-words`}
-        type="text"
-        autoComplete="off"
-        placeholder="Palabras claves"
-        value={words}
-        onChange={(event) => {
-          setWords(event.target.value);
-          setError(null);
-          setConfirming(false);
-        }}
-        disabled={busy}
-        className="mt-3 w-full rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
-      />
+      {unlockedWords ? (
+        <p className="mt-3 text-small text-muted">
+          Palabras claves ya verificadas para esta sesión.
+        </p>
+      ) : (
+        <>
+          <label htmlFor={`${title}-words`} className="sr-only">
+            Palabras claves para {title}
+          </label>
+          <input
+            id={`${title}-words`}
+            type="text"
+            autoComplete="off"
+            placeholder="Palabras claves"
+            value={words}
+            onChange={(event) => {
+              setWords(event.target.value);
+              setError(null);
+              setConfirming(false);
+            }}
+            disabled={busy}
+            className="mt-3 w-full rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
+          />
+        </>
+      )}
 
       {extraLabel &&
         (extraType === "password" ? (
@@ -443,10 +624,10 @@ function WordsForm({
         ))}
 
       <Button
-        variant="secondary"
+        variant={destructive ? "danger" : "secondary"}
         size="sm"
         onClick={() => void handleSubmit()}
-        disabled={busy || words.trim() === ""}
+        disabled={busy || (unlockedWords ? false : words.trim() === "")}
         className="mt-3"
       >
         {busy
@@ -537,53 +718,6 @@ function RotateWordsCard() {
   );
 }
 
-/**
- * Perfil → Seguridad / Bóveda — the vault lifecycle panel, driven by
- * GET /api/auth/vault/config (`vault.enabled`, the persisted flag + optional
- * env override — NOT the auth-mode string). When the vault is OFF it renders
- * the ACTIVATION panel (create an account with the words shown exactly once,
- * or verify an existing account's words); when ON it renders the MANAGEMENT
- * panel (session, change user/password via words, remove password, rotate
- * words, adjust the soft re-auth interval, and disable with the words).
- */
-function VaultSection() {
-  const [config, setConfig] = useState<VaultConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<unknown>(null);
-
-  const load = () => {
-    setError(null);
-    void getVaultConfig()
-      .then(setConfig)
-      .catch((cause: unknown) => setError(cause))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, []);
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 py-6 text-small text-muted">
-        <Spinner size="sm" /> Comprobando la bóveda…
-      </div>
-    );
-  }
-
-  if (!!error && !config) {
-    return (
-      <ErrorBanner message="No se pudo cargar el estado de la bóveda." onRetry={load} />
-    );
-  }
-
-  if (!config) return null;
-
-  return config.enabled ? (
-    <ManagementPanel config={config} onChanged={load} />
-  ) : (
-    <ActivationPanel config={config} onActivated={load} />
-  );
-}
-
 /** Vault OFF — activation. With no account: create one (username + optional
  *  password); the recovery words are shown EXACTLY once (S-VC-03a). With an
  *  existing account (e.g. a migrated install): verify the words (ownership
@@ -591,9 +725,13 @@ function VaultSection() {
 function ActivationPanel({
   config,
   onActivated,
+  onVerified,
 }: {
   config: VaultConfig;
   onActivated: () => void;
+  /** Arm the session unlock after a words-based activation succeeds
+   *  (REQ-SRW-01): the typed words were just verified server-side. */
+  onVerified?: (words: string) => void;
 }) {
   const [words, setWords] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -616,6 +754,10 @@ function ActivationPanel({
         // New account: the words are shown exactly once before continuing.
         setWords(result.words);
       } else {
+        // Existing account: the typed words were just verified server-side,
+        // so they arm the session unlock (REQ-SRW-01) before switching to
+        // the vault-ON management surface.
+        if (body.words) onVerified?.(body.words);
         onActivated();
       }
     } catch (cause) {
@@ -630,7 +772,7 @@ function ActivationPanel({
   if (words) {
     return (
       <section className="rounded-lg border border-status-success/40 bg-surface-raised p-4">
-        <h4 className="font-heading text-body text-primary">Bóveda activada</h4>
+        <h3 className="font-heading text-body text-primary">Bóveda activada</h3>
         <p className="mt-1 text-small text-muted">
           Se creó tu cuenta. Estas son tus palabras claves — guardalas fuera del
           navegador: solo se muestran una vez.
@@ -789,127 +931,6 @@ function ActivationPanel({
   );
 }
 
-/** Vault ON — management: session info + logout, credential management via
- *  the words (change user/password, remove password, rotate words), the soft
- *  re-auth interval, and disabling the vault (words + confirmation). */
-function ManagementPanel({
-  config,
-  onChanged,
-}: {
-  config: VaultConfig;
-  onChanged: () => void;
-}) {
-  const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const handleLogout = async () => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await logoutSession();
-      reloadPage();
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : "No se pudo cerrar la sesión",
-      );
-    } finally {
-      setActionLoading(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <section className="rounded-lg border border-edge bg-surface-raised p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="font-heading text-body text-primary">
-            Seguridad / Bóveda
-          </h3>
-          <span className="text-small text-muted">Activa</span>
-        </div>
-        <p className="mt-1 text-small text-muted">
-          Cuenta: <span className="text-primary">{config.username ?? "—"}</span>
-          {config.has_password ? " · contraseña definida" : " · sin contraseña"}
-          {config.env_override && (
-            <span className="text-muted">
-              {" "}
-              · forzada por <code className="text-icon-muted">DEMIURGOS_AUTH_MODE</code>
-            </span>
-          )}
-        </p>
-        <div className="mt-4">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void handleLogout()}
-            disabled={actionLoading}
-          >
-            {actionLoading ? "Cerrando…" : "Cerrar sesión"}
-          </Button>
-        </div>
-        {actionError && <p className="mt-3 text-small text-status-error">{actionError}</p>}
-      </section>
-
-      <div className="space-y-4">
-        <WordsForm
-          title="Cambiar usuario"
-          description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
-          extraLabel="Nuevo usuario"
-          extraPlaceholder="nuevo-usuario"
-          submitLabel="Cambiar usuario"
-          busyLabel="Cambiando…"
-          onSubmit={async (words, newUsername) => {
-            await changeUsername(words, newUsername);
-            onChanged();
-          }}
-        />
-
-        <WordsForm
-          title="Cambiar contraseña"
-          description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
-          extraLabel="Nueva contraseña"
-          extraType="password"
-          extraPlaceholder="Nueva contraseña"
-          extraRequired
-          submitLabel="Cambiar contraseña"
-          busyLabel="Cambiando…"
-          onSubmit={async (words, newPassword) => {
-            await changePassword(words, newPassword);
-            onChanged();
-          }}
-        />
-
-        <WordsForm
-          title="Retirar contraseña"
-          description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
-          submitLabel="Retirar contraseña"
-          busyLabel="Retirando…"
-          confirmLabel="¿Confirmás el retiro?"
-          onSubmit={async (words) => {
-            await removePassword(words);
-            onChanged();
-          }}
-        />
-
-        <RotateWordsCard />
-
-        <ReauthIntervalForm config={config} onSaved={onChanged} />
-
-        <WordsForm
-          title="Desactivar bóveda"
-          description="Apagar la bóveda quita la autenticación de la instalación. Lo confirmás con tus palabras claves."
-          submitLabel="Desactivar bóveda"
-          busyLabel="Desactivando…"
-          confirmLabel="¿Confirmás la desactivación?"
-          onSubmit={async (words) => {
-            await disableVault(words);
-            onChanged();
-          }}
-        />
-      </div>
-    </div>
-  );
-}
-
 /** Adjust the soft re-auth interval (days) via POST /api/auth/vault/reauth-interval. */
 function ReauthIntervalForm({
   config,
@@ -993,98 +1014,119 @@ function ReauthIntervalForm({
   );
 }
 
-/** Human label for the active session provider. */
-function providerLabel(provider?: AuthSessionStatus["provider"]): string {
-  switch (provider) {
-    case "credentials":
-      return "Credenciales";
-    case "local-dev":
-      return "Local";
-    default:
-      return "Desconocido";
-  }
-}
-
-/** Perfil → Integraciones → Captura de ideas — the single Telegram surface.
- *  The guided wizard covers the write-only bot token (save/replace/clear) and
- *  getMe-backed connection validation via the "Detectar chat" step. */
-function IntegrationsSection() {
+/**
+ * Perfil → Conexiones — the two external-connection surfaces presented as ONE
+ * card family: a two-row index (assistant first, Telegram second) drives a
+ * single detail region. Both bodies stay mounted and the inactive one is
+ * `hidden`, so each wizard keeps its step state and its status reads stay
+ * warm. The section no longer owns a "Captura de ideas" heading or the
+ * Hermes / Telegram intro paragraph: both moved into the shared card header
+ * and subtitle (CON-PIA-05 keeps the embedded behavior intact).
+ */
+function ConexionesSection() {
   const auth = useAuthSession(true);
+  // Assistant first and active by default: it is the reachable-from-scroll-top
+  // surface, while the idea-capture wizard keeps its step state mounted.
+  const [activeConnection, setActiveConnection] = useState("assistant");
+  const [assistantStatus, setAssistantStatus] =
+    useState<ConnectionStatusSummary | null>(null);
+  const [telegramStatus, setTelegramStatus] =
+    useState<ConnectionStatusSummary | null>(null);
+
+  // Status callbacks are stable and dedupe by label/variant. A child that
+  // reports a fresh object every render must not loop the parent, so the
+  // setter only stores when the summary actually changed.
+  const handleAssistantStatus = useCallback((next: ConnectionStatusSummary) => {
+    setAssistantStatus((prev) =>
+      prev?.label === next.label && prev?.variant === next.variant ? prev : next,
+    );
+  }, []);
+  const handleTelegramStatus = useCallback((next: ConnectionStatusSummary) => {
+    setTelegramStatus((prev) =>
+      prev?.label === next.label && prev?.variant === next.variant ? prev : next,
+    );
+  }, []);
+
   return (
-    <div>
-      <h3 className="font-heading text-body text-primary">Captura de ideas</h3>
-      <p className="mt-1 text-small text-muted">
-        Hermes / Telegram — ingreso de ideas nativo desde el bot.
-      </p>
-      <div className="mt-4">
-        <IdeaCapturePanel auth={auth} />
-      </div>
-    </div>
+    <ConnectionsPanel
+      connections={[
+        {
+          id: "assistant",
+          icon: "demiurgos",
+          title: "Asistente de Demiurgos",
+          subtitle:
+            "El modelo compartido de Demiurgos: sirve a la Wiki, al bot de Telegram, a la Skill Madre y a los talleres. Las claves solo se envían al backend autenticado.",
+          status: assistantStatus ?? undefined,
+          body: (
+            <AssistantSettingsPanel
+              auth={auth}
+              onStatus={handleAssistantStatus}
+            />
+          ),
+        },
+        {
+          id: "telegram",
+          icon: "lightbulb",
+          title: "Captura de ideas",
+          subtitle: "Hermes / Telegram — ingreso de ideas nativo desde el bot.",
+          status: telegramStatus ?? undefined,
+          body: <IdeaCapturePanel auth={auth} onStatus={handleTelegramStatus} />,
+        },
+      ]}
+      activeId={activeConnection}
+      onSelect={setActiveConnection}
+    />
   );
 }
 
-function AssistantSection() {
-  const auth = useAuthSession(true);
-  return <AssistantSettingsPanel auth={auth} />;
-}
-
 /**
- * Perfil → Centro de Configuración — the configuration capabilities that have
- * NO home elsewhere in the Profile: Respaldo y restauración, Idioma/región/zona
- * horaria and Offline/dispositivo, plus the essential local readiness summary.
+ * Perfil → Preferencias — the inline locale form (REQ-PIA-12), the only
+ * configuration capability that has no home elsewhere in the Profile. The
+ * backup card was removed (product-owner decision): it only navigated to the
+ * Respaldo section, which already has its own rail entry, and its badge was
+ * declared unnecessary; the real backup surface lives in the Respaldo section
+ * (REQ-PIA-02). The Offline/dispositivo card was removed for the same
+ * redundancy reason: it stated the storage probe three times, offered no
+ * action, and duplicated state owned by Conexiones and Captura de ideas.
  *
- * The other Configuration Center cards (Identidad, IA texto y visión, Telegram,
+ * The other Configuration Center cards (Identidad, Asistente de Demiurgos, Telegram,
  * Mundos, Importar mundo) are intentionally NOT duplicated here — each of those
- * already lives in a dedicated Profile tab (Asistente IA / Mundos /
- * Integraciones) or in the Profile/Taller de Mundo themselves (nav-restructure
- * decision): the idea-capture wizard (with the Telegram bot config folded in)
- * renders under Integraciones and the legacy-folder MigrationPanel under
- * Mundos. State semantics (ONB-3.1/ONB-3.5
- * anti-overstatement guard, OC19 assistant label, OC11/OC21 essential badges)
- * are reused from ConfigurationCenter.tsx so the Profile tabs and the shared
- * module never drift.
+ * already lives in a dedicated Profile section (Conexiones / Mundos) or in the
+ * Profile/Taller de Mundo themselves (nav-restructure decision): the
+ * idea-capture wizard (with the Telegram bot config folded in) renders under
+ * Conexiones and the legacy-folder MigrationPanel under Mundos. State semantics
+ * (ONB-3.1/ONB-3.5 anti-overstatement guard, OC19 assistant label, OC11/OC21
+ * essential badges) are reused from ConfigurationCenter.tsx so the Profile tabs
+ * and the shared module never drift.
  */
-function ConfigurationSection({ onRequestSignIn }: { onRequestSignIn?: () => void }) {
-  const navigate = useNavigate();
-  const location = useLocation();
+function ConfigurationSection() {
   const [readiness, setReadiness] = useState<ReadinessSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
 
-  const load = () => {
-    setLoading(true);
+  // A silent reload refreshes the locale badge after an inline save without
+  // replacing the whole section with the loading spinner.
+  const load = (options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoading(true);
     setError(null);
     void getReadiness()
       .then(setReadiness)
       .catch((cause: unknown) => setError(cause))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!options?.silent) setLoading(false);
+      });
   };
 
-  useEffect(load, []);
+  useEffect(() => load(), []);
 
   /**
-   * Every declared card action is the card's real entry point, so the renderer
-   * below draws `card.action` for ANY card that declares one — never a growing
-   * allowlist of keys. When the target is the page you are already on (backup →
-   * `/perfil?tab=configuracion`), navigating would be an invisible no-op, so the
-   * control performs an in-page move instead: scroll the card section into view
-   * and focus it, the same landing guarantee an anchor/skip-link gives keyboard
-   * and assistive-technology users.
+   * Preferencias renders no navigation cards. The backup card was removed
+   * (product-owner decision) and the Offline/dispositivo card was removed for
+   * the same redundancy reason: it stated the storage probe three times,
+   * offered no action, and duplicated state owned by Conexiones and Captura de
+   * ideas. The locale surface renders as the inline form below, with its
+   * honest badge.
    */
-  const runCardAction = (card: (typeof CARD_DEFS)[number]) => {
-    const action = card.action;
-    if (!action) return;
-    const targetPath = action.to.split("?")[0];
-    if (targetPath === location.pathname) {
-      const section = document.getElementById(`config-card-${card.key}`);
-      if (section) {
-        section.scrollIntoView?.({ behavior: "smooth", block: "start" });
-        section.focus();
-      }
-      return;
-    }
-    navigate(action.to);
-  };
 
   if (loading) {
     return (
@@ -1106,117 +1148,38 @@ function ConfigurationSection({ onRequestSignIn }: { onRequestSignIn?: () => voi
   if (!readiness) return null;
 
   const cards = readiness.cards ?? {};
-  const keepCards = CARD_DEFS.filter((card) =>
-    ["backup", "locale", "offline"].includes(card.key),
-  );
+  // The locale surface renders as the inline form below, not as a navigation
+  // card, so its readiness state still drives the honest badge (REQ-PIA-12).
+  const localeState = cardState(cards, "locale");
+  const localeLabel = cardLabel("locale", localeState);
+  const localeMeta = STATE_META[localeState];
 
   return (
     <div className="space-y-4" aria-live="polite">
-      {/* Essential local readiness (OC11/OC21) — the tab's intro block. */}
+      {/* Inline locale form (REQ-PIA-12) — the extracted Onboarding step-0
+          form rendered directly in Preferencias, so the old `?step=step0`
+          reconfigure handoff has no path left. Saving refreshes the badge
+          silently. */}
       <section
-        aria-labelledby="config-readiness-title"
+        id="config-card-locale"
+        tabIndex={-1}
+        aria-labelledby="config-card-title-locale"
         className="rounded-lg border border-edge bg-surface-raised p-4"
       >
         <div className="flex items-center justify-between gap-3">
           <h3
-            id="config-readiness-title"
+            id="config-card-title-locale"
             className="font-heading text-body text-primary"
           >
-            Listo para trabajar
+            Idioma, región y zona horaria
           </h3>
+          <span className="flex items-center gap-2">
+            <Badge variant={localeMeta.badge}>{localeLabel}</Badge>
+            <span className="sr-only">Estado: {localeLabel}</span>
+          </span>
         </div>
-        <p className="mt-1 text-small text-muted">
-          Capacidades esenciales locales: Mundo y editor local.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-3">
-          {ESSENTIAL_BADGES.map((badge) => {
-            const meta = essentialBadgeFor(readiness, cards, badge.key);
-            return (
-              <span key={badge.key} className="flex items-center gap-2">
-                <span className="text-small text-muted">{badge.title}:</span>
-                <Badge variant={meta.badge}>{meta.label}</Badge>
-                <span className="sr-only">Estado: {meta.label}</span>
-              </span>
-            );
-          })}
-        </div>
+        <LocaleForm onSaved={() => load({ silent: true })} />
       </section>
-
-      {/* Kept configuration cards — same rounded-box style as the other
-          Profile sections (title row on top, content below). */}
-      {keepCards.map((card) => {
-        const state = cardState(cards, card.key);
-        const label = cardLabel(card.key, state);
-        const meta = STATE_META[state];
-        return (
-          <section
-            key={card.key}
-            id={`config-card-${card.key}`}
-            tabIndex={-1}
-            aria-labelledby={`config-card-title-${card.key}`}
-            className="rounded-lg border border-edge bg-surface-raised p-4"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <h3
-                id={`config-card-title-${card.key}`}
-                className="font-heading text-body text-primary"
-              >
-                {card.title}
-              </h3>
-              <span className="flex items-center gap-2">
-                <Badge variant={meta.badge}>{label}</Badge>
-                <span className="sr-only">Estado: {label}</span>
-              </span>
-            </div>
-            <p className="mt-1 text-small text-muted">{card.description}</p>
-
-            {card.action && (
-              <div className="mt-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => runCardAction(card)}
-                >
-                  {card.action.label}
-                </Button>
-              </div>
-            )}
-
-            {card.key === "backup" && <BackupSection onRequestSignIn={onRequestSignIn} />}
-
-            {card.key === "offline" && (
-              <dl className="mt-4 space-y-3 border-t border-edge pt-4">
-                <div className="flex items-center justify-between gap-3">
-                  <dt className="text-small text-muted">Núcleo local</dt>
-                  <dd className="flex items-center gap-2">
-                    <Badge variant={readiness.offline.local_ready ? "success" : "error"}>
-                      {readiness.offline.local_ready ? "Listo" : "No disponible"}
-                    </Badge>
-                    <span className="sr-only">
-                      Estado: {readiness.offline.local_ready ? "Listo" : "No disponible"}
-                    </span>
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-small text-muted">Remoto</dt>
-                  <dd className="mt-1 text-small text-muted">
-                    {readiness.offline.remote_pending.length > 0 ? (
-                      <span>
-                        Capacidades remotas pendientes (requieren conexión):{" "}
-                        {readiness.offline.remote_pending
-                          .map((key) => REMOTE_LABELS[key] ?? key)
-                          .join(", ")}.
-                      </span>
-                    ) : (
-                      <span>Sin capacidades remotas pendientes.</span>
-                    )}
-                  </dd>
-                </div>
-              </dl>
-            )}
-          </section>
-        );
-      })}
     </div>
   );
 }
@@ -1228,6 +1191,12 @@ function ConfigurationSection({ onRequestSignIn }: { onRequestSignIn?: () => voi
  * standalone Centro de Configuración page (nav-restructure decision):
  * detection stays read-only and the migration only runs through the panel's
  * explicit confirm flow.
+ *
+ * Visual alignment (WU-6, CON-PIA-04): the section presents its three intents
+ * as bordered cards in the same rounded-box language as the other Profile
+ * sections. The section intro stays `h3` and every subsection heading starts
+ * at `h3`, so the recycle bin's former orphan `h4` is gone (REQ-PIA-07).
+ * Behavior is unchanged.
  *
  * The delete button mirrors the backend guards: it is disabled for the active
  * world (idea-capture config) and when the world is the only one left. A
@@ -1327,19 +1296,30 @@ function WorldsSection() {
   }, [mutate]);
 
   return (
-    <div>
-      <h3 className="font-heading text-body text-primary">Mundos</h3>
-      <p className="mt-1 text-small text-muted">
-        Gestioná los mundos del taller: eliminá uno (queda recuperable 30 días en la papelera) o
-        restaurá mundos eliminados.
-      </p>
+    <div className="space-y-6">
+      <section aria-labelledby="mundos-title">
+        <h3 id="mundos-title" className="font-heading text-body text-primary">
+          Mundos
+        </h3>
+        <p className="mt-1 text-small text-muted">
+          Gestioná los mundos del taller: eliminá uno (queda recuperable 30 días en la papelera) o
+          restaurá mundos eliminados.
+        </p>
+      </section>
 
-      {/* Zona peligrosa — 3-step confirmation before any delete. */}
-      <div className="mt-4 rounded-lg border border-status-error/30 bg-status-error/10 p-4">
-        <h4 className="flex items-center gap-2 font-heading text-body text-status-error">
-          <Icon name="trash" size={18} />
+      {/* Zona peligrosa — 3-step confirmation before any delete. The intro
+          heading carries no trash icon; the Papelera panel below owns the
+          only one in this section. */}
+      <section
+        aria-labelledby="mundos-danger-title"
+        className="rounded-lg border border-status-error/30 bg-status-error/10 p-4"
+      >
+        <h3
+          id="mundos-danger-title"
+          className="font-heading text-body text-status-error"
+        >
           Zona peligrosa
-        </h4>
+        </h3>
         <p className="mt-1 text-small text-muted">
           Eliminar un mundo lo mueve a la papelera durante 30 días; no se destruye de inmediato.
         </p>
@@ -1407,21 +1387,26 @@ function WorldsSection() {
             })}
           </ul>
         )}
-      </div>
+      </section>
 
-      {/* Papelera de mundos — restore / permanent delete. */}
-      <div className="mt-6">
+      {/* Papelera de mundos — restore / permanent delete. The panel owns its
+          heading; it is wrapped in the same card treatment as the other
+          intent blocks so the three Mundos subsections line up visually. */}
+      <section
+        aria-label="Papelera de mundos"
+        className="rounded-lg border border-edge bg-surface-raised p-4"
+      >
         <WorldTrashPanel refreshToken={trashRefresh} onChanged={handleTrashChanged} />
-      </div>
+      </section>
 
       {/* ONB-4.2/4.3 (WU-4c2) — legacy uppercase-folder migration, relocated
           from the standalone Centro de Configuración page. Rendered only when
           readiness detected legacy folders; migration never runs automatically
           and always requires the panel's explicit confirm flow. */}
       {legacy.length > 0 && (
-        <div className="mt-6">
+        <section aria-label="Migración de carpetas">
           <MigrationPanel findings={legacy} onMigrated={loadLegacy} />
-        </div>
+        </section>
       )}
 
       {deleteTarget && (
@@ -1482,68 +1467,103 @@ function WorldsSection() {
 }
 
 /**
- * Profile page (`/perfil`) — the unified configuration surface.
+ * Profile page (`/perfil`) — the unified configuration surface, organized by
+ * user intent instead of implementation module (REQ-PIA-01/02).
  *
- * Sections: Sesión de edición (unified session controls, same as the Navbar
- * dropdown), Centro de Configuración (configuration capabilities without a
- * Profile home: backup, locale, offline + essential readiness), Integraciones
- * (idea-capture wizard — the single Telegram surface, ONB-3.3), Asistente IA
- * (assistant settings) and Mundos (world delete + recycle bin + legacy-folder
- * migration, ONB-4.3). The gated sections depend on the unified session
- * (credentials vault or local-dev), matching the wiki editing boundary.
+ * Five sections — Cuenta, Respaldo, Preferencias, Conexiones, Mundos — driven
+ * by `?tab=<section>` (REQ-PIA-03): deep links and refresh preserve the
+ * section, an explicit tab click pushes a history entry so Back cycles the
+ * tabs, the default landing never pushes, and an invalid value falls back to
+ * `cuenta` via a `replace` normalization. The rail is a page-owned ARIA
+ * tablist/tab/tabpanel set with roving focus (REQ-PIA-04) and one icon per
+ * section (REQ-PIA-06); each panel opens with its `h2` so the outline stays
+ * `h1 → h2 → h3` with no orphan level (REQ-PIA-07).
+ *
+ * Interim content mapping (later WUs re-home without changing embedded
+ * behavior, CON-PIA-05): `cuenta` is the merged account/security surface
+ * (WU-2, REQ-PIA-09) with the session-scoped words unlock (REQ-SRW-01..04);
+ * `respaldo` hosts BackupSection (WU-3, REQ-PIA-02) with its sign-in
+ * affordance pointing back to `cuenta`; `preferencias` hosts the configuration
+ * hub with the locale form inline (WU-4, REQ-PIA-12), `conexiones` folds the
+ * idea-capture and assistant panels into one section (WU-5, REQ-PIA-02/07).
  */
 export default function ProfilePage() {
-  const [section, setSection] = useState<ProfileSection>("sesion");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const rawTab = searchParams.get("tab");
+  const activeSection: ProfileSection = isProfileSection(rawTab) ? rawTab : "cuenta";
+  // The session-scoped words unlock (REQ-SRW-01..04) lives at page level so
+  // it survives section switches; the merged cuenta surface consumes it.
+  const { unlockedWords, unlock } = useRecoveryWordsUnlock();
+  // Click-driven changes move focus to the panel heading; the default landing
+  // and arrow-key roves never steal focus (REQ-PIA-04).
+  const [focusPanel, setFocusPanel] = useState(false);
 
-  const tabs: { id: ProfileSection; label: string }[] = [
-    { id: "sesion", label: "Sesión de edición" },
-    { id: "seguridad", label: "Seguridad / Bóveda" },
-    { id: "configuracion", label: "Centro de Configuración" },
-    { id: "integraciones", label: "Integraciones" },
-    { id: "asistente", label: "Asistente IA" },
-    { id: "mundos", label: "Mundos" },
-  ];
+  // An unknown or invalid `?tab` falls back to `cuenta` and the URL is
+  // normalized with `replace` so the fallback never pollutes history.
+  useEffect(() => {
+    if (rawTab !== null && !isProfileSection(rawTab)) {
+      const next = new URLSearchParams(searchParams);
+      next.set("tab", "cuenta");
+      setSearchParams(next, { replace: true });
+    }
+  }, [rawTab, searchParams, setSearchParams]);
+
+  // After a click-driven section change, focus moves to the panel heading.
+  useEffect(() => {
+    if (!focusPanel) return;
+    setFocusPanel(false);
+    document.getElementById(`profile-panel-heading-${activeSection}`)?.focus();
+  }, [activeSection, focusPanel]);
+
+  const selectSection = (id: string, options?: { focusPanel?: boolean }) => {
+    if (!isProfileSection(id) || id === activeSection) return;
+    if (options?.focusPanel) setFocusPanel(true);
+    const next = new URLSearchParams(searchParams);
+    next.set("tab", id);
+    setSearchParams(next);
+  };
 
   return (
     <div className="flex min-h-screen flex-col bg-surface">
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
         <h1 className="font-heading text-h3 text-primary">Perfil</h1>
+        <StatusOverviewHeader />
         <div className="mt-6 flex flex-col gap-6 md:flex-row">
-          <nav
-            aria-label="Secciones del perfil"
-            className="flex gap-1 md:w-56 md:flex-col md:gap-1"
+          <ProfileSectionRail
+            sections={PROFILE_SECTIONS}
+            activeId={activeSection}
+            onSelect={selectSection}
+          />
+          <section
+            role="tabpanel"
+            id={`profile-panel-${activeSection}`}
+            aria-labelledby={`profile-tab-${activeSection}`}
+            tabIndex={-1}
+            className="min-w-0 flex-1"
           >
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => setSection(tab.id)}
-                aria-current={section === tab.id ? "page" : undefined}
-                className={cn(
-                  "rounded-lg px-3 py-2 text-left text-body transition-colors",
-                  section === tab.id
-                    ? "bg-surface-raised text-primary"
-                    : "text-muted hover:bg-surface-raised hover:text-primary",
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-          <section className="min-w-0 flex-1">
-            {section === "sesion" ? (
-              <SessionSection />
-            ) : section === "seguridad" ? (
-              <VaultSection />
-            ) : section === "configuracion" ? (
-              <ConfigurationSection onRequestSignIn={() => setSection("sesion")} />
-            ) : section === "integraciones" ? (
-              <IntegrationsSection />
-            ) : section === "mundos" ? (
-              <WorldsSection />
-            ) : (
-              <AssistantSection />
-            )}
+            <h2
+              id={`profile-panel-heading-${activeSection}`}
+              tabIndex={-1}
+              className="font-heading text-h4 text-primary"
+            >
+              {PROFILE_SECTIONS.find((section) => section.id === activeSection)?.label}
+            </h2>
+            <div className="mt-4">
+              {activeSection === "cuenta" ? (
+                <CuentaSection
+                  unlockedWords={unlockedWords}
+                  onUnlocked={unlock}
+                />
+              ) : activeSection === "respaldo" ? (
+                <BackupSection onRequestSignIn={() => selectSection("cuenta")} />
+              ) : activeSection === "preferencias" ? (
+                <ConfigurationSection />
+              ) : activeSection === "conexiones" ? (
+                <ConexionesSection />
+              ) : (
+                <WorldsSection />
+              )}
+            </div>
           </section>
         </div>
       </main>

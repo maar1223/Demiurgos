@@ -7,6 +7,7 @@ import { useWorlds } from "@/hooks/useWorlds";
 import { deleteWorld, listTrash, permanentDelete, restoreWorld } from "@/api/worlds";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { getReadiness } from "@/api/onboarding";
+import { getAuthStatus, getVaultConfig } from "@/api/wiki";
 import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
 import { ApiError, type IdeaCaptureStatus, type WorldInfo, type WorldTrashEntry } from "@/api/types";
 import type { Mock } from "vitest";
@@ -20,6 +21,49 @@ vi.mock("@/api/worlds", () => ({
 }));
 vi.mock("@/api/ideaCapture", () => ({ getIdeaCaptureStatus: vi.fn() }));
 vi.mock("@/api/onboarding", () => ({ getReadiness: vi.fn() }));
+
+// The default `cuenta` section stacks the session and vault surfaces (the
+// account/security merge is WU-2); keep the Mundo flows hermetic.
+vi.mock("@/api/wiki", () => ({
+  getAuthStatus: vi.fn(),
+  logoutSession: vi.fn(),
+  changeUsername: vi.fn(),
+  changePassword: vi.fn(),
+  removePassword: vi.fn(),
+  rotateWords: vi.fn(),
+  getVaultConfig: vi.fn(),
+  enableVault: vi.fn(),
+  disableVault: vi.fn(),
+  setReauthInterval: vi.fn(),
+}));
+
+// The status overview header (REQ-PIA-05) reads backup + assistant state on
+// every ProfilePage render; resolve them locally so this flow stays hermetic.
+vi.mock("@/api/backup", () => ({
+  getBackupStatus: vi.fn().mockResolvedValue({
+    state: "pending",
+    destination: null,
+    mode: null,
+    blocked: false,
+    warning: null,
+    last_write: null,
+    copy: null,
+  }),
+}));
+
+vi.mock("@/api/assistantSettings", () => ({
+  getAssistantSettings: vi.fn().mockResolvedValue({
+    provider: "opencode-go",
+    base_url: "",
+    model: "",
+    model_metadata: { id: "", label: "", capability: "unknown", pricing: null },
+    key_configured: false,
+    models: [],
+    active_profile: "",
+    revision: 0,
+    runtime_state: "saved-not-active",
+  }),
+}));
 
 vi.mock("@/hooks/useLocalDevAuth", () => ({
   useLocalDevAuth: () => ({
@@ -93,7 +137,7 @@ function renderProfile() {
 }
 
 async function openMundosTab() {
-  fireEvent.click(screen.getByRole("button", { name: "Mundos" }));
+  fireEvent.click(screen.getByRole("tab", { name: "Mundos" }));
   await screen.findByText("Zona peligrosa");
 }
 
@@ -113,8 +157,21 @@ beforeEach(() => {
   (getReadiness as Mock).mockResolvedValue({
     local_editor: { probe: "local_editor", ok: true, detail: "ok" },
     cards: {},
-    offline: { local_ready: true, remote_pending: [] },
     legacy: [],
+  });
+  (getAuthStatus as Mock).mockResolvedValue({
+    mode: "local-dev",
+    enabled: true,
+    authenticated: true,
+    label: "Local development user",
+  });
+  (getVaultConfig as Mock).mockResolvedValue({
+    enabled: false,
+    account_exists: false,
+    username: null,
+    has_password: false,
+    reauth_interval_d: 14,
+    env_override: false,
   });
   deleteWorldMock.mockResolvedValue(trashEntry);
   listTrashMock.mockResolvedValue([]);
@@ -127,7 +184,13 @@ describe("ProfilePage — Mundos tab / 3-step delete flow (W-4)", () => {
     renderProfile();
     await openMundosTab();
 
-    expect(screen.getByRole("heading", { name: "Mundos" })).toBeInTheDocument();
+    // The section intro and each subsection are h3 under the panel h2, so no
+    // orphan level appears (REQ-PIA-07); the recycle bin's heading is covered
+    // in the trash suite.
+    expect(screen.getByRole("heading", { name: "Mundos", level: 3 })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Zona peligrosa", level: 3 }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Avalor")).toBeInTheDocument();
     expect(screen.getByText("Vibrantes")).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Borrar" })).toHaveLength(2);

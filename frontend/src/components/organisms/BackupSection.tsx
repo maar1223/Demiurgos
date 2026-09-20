@@ -391,7 +391,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
   return (
     <div className="mt-3" aria-live="polite">
       <div className="flex items-center justify-between gap-3">
-        <h4 className="font-heading text-small text-primary">Estado del respaldo</h4>
+        <h3 className="font-heading text-small text-primary">Estado del respaldo</h3>
         <span className="flex items-center gap-2">
           <Badge variant={badgeVariant}>{badgeLabel}</Badge>
           <span className="sr-only">Estado del respaldo: {badgeLabel}</span>
@@ -565,7 +565,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
           ) : (
             <div>
               <div className="flex items-center justify-between gap-3">
-                <h5 className="font-heading text-small text-primary">Restaurar desde una copia</h5>
+                <h4 className="font-heading text-small text-primary">Restaurar desde una copia</h4>
                 <Button variant="ghost" size="sm" onClick={closeRestore} disabled={busy && restoreStage === "running"}>
                   Cerrar
                 </Button>

@@ -8,9 +8,9 @@ vault flag is on (``capabilities.vault.enabled``, PRIMARY) OR when
 configures it (S-ID-01b) and registry claims never configure it.
 
 And the backup card's dedicated contract (REQ-CC-1, WU-14): ``backup`` left
-``CLOUD_CARDS``, stays in ``REMOTE_CARDS``, and is ``configured`` only with a
-persisted folder plus a recorded successful local write — a bare registry
-claim can never configure it (SC-CC-1.1/1.2/1.3).
+``CLOUD_CARDS`` and is ``configured`` only with a persisted folder plus a
+recorded successful local write — a bare registry claim can never configure it
+(SC-CC-1.1/1.2/1.3).
 """
 
 from __future__ import annotations
@@ -27,12 +27,10 @@ if str(_WIKI) not in sys.path:
 
 from readiness import (  # noqa: E402
     CLOUD_CARDS,
-    REMOTE_CARDS,
     identity_configured,
     local_editor_ready,
     probe_local_storage,
     project_cards,
-    project_offline,
 )
 from backup.manifest import LastWriteRecord  # noqa: E402
 from backup.state import (  # noqa: E402
@@ -111,9 +109,6 @@ def test_identity_configured_when_vault_flag_on(
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     cards = project_cards(_vault_on_state(), worlds=[], probe_ok=True)
     assert cards["identity"] == "configured"
-    # The identity contract is local configuration, not connectivity: it must
-    # never surface as remote-pending (R-ID-01).
-    assert "identity" not in project_offline(cards)["remote_pending"]
 
 
 def test_identity_pending_when_account_exists_but_vault_off(
@@ -123,9 +118,6 @@ def test_identity_pending_when_account_exists_but_vault_off(
     monkeypatch.delenv("DEMIURGOS_AUTH_MODE", raising=False)
     cards = project_cards(_account_state(), worlds=[], probe_ok=True)
     assert cards["identity"] == "pending"
-    # The identity contract is local configuration, not connectivity: it must
-    # never surface as remote-pending (R-ID-01).
-    assert "identity" not in project_offline(cards)["remote_pending"]
 
 
 def test_identity_configured_when_credentials_mode_active(
@@ -211,16 +203,10 @@ def test_cloud_cards_no_longer_contains_backup() -> None:
     assert "backup" not in CLOUD_CARDS
 
 
-def test_remote_cards_still_contains_backup() -> None:
-    """WU-14 keeps ``backup`` remote-pending: the sync client needs connectivity."""
-    assert "backup" in REMOTE_CARDS
-
-
 def test_backup_card_pending_without_evidence() -> None:
     """SC-CC-1.1 — a bare ``backup: configured`` claim stays pending."""
     cards = project_cards({"backup": "configured"}, worlds=[], probe_ok=True)
     assert cards["backup"] == "pending"
-    assert "backup" in project_offline(cards)["remote_pending"]
 
 
 def test_backup_card_rejects_an_unknown_state() -> None:

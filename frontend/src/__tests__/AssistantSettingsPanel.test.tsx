@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import type { Mock } from "vitest";
@@ -74,26 +74,24 @@ const renderPanel = () =>
     </MemoryRouter>,
   );
 
-/** Walk the happy path up to the single capability step with a discovered model. */
-const walkToCapability = async (user: ReturnType<typeof userEvent.setup>) => {
-  await screen.findByRole("heading", { name: "Proveedor" });
-  await user.click(screen.getByRole("button", { name: "Conexión" }));
+/** Walk the happy path to the Pruebas step with a discovered model. */
+const walkToProbes = async (user: ReturnType<typeof userEvent.setup>) => {
+  await screen.findByRole("heading", { name: "Conexión" });
   await user.click(screen.getByRole("button", { name: "Validar conexión" }));
   expect(await screen.findByText("Conexión validada.")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Modelos" }));
+  await user.click(screen.getByRole("button", { name: "Siguiente" }));
+  await screen.findByRole("heading", { name: "Modelo" });
   await user.click(screen.getByRole("button", { name: "Descubrir modelos" }));
   await screen.findByRole("combobox", { name: "Modelo descubierto" });
-  await user.click(screen.getByRole("button", { name: "Capacidad" }));
-  expect(screen.getByRole("heading", { name: "Capacidad" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Siguiente" }));
+  expect(screen.getByRole("heading", { name: "Pruebas" })).toBeInTheDocument();
 };
 
-/** Run both probes, reach confirmation and press the save button. */
+/** Run both probes and press save. */
 const saveFlow = async (user: ReturnType<typeof userEvent.setup>) => {
-  await walkToCapability(user);
+  await walkToProbes(user);
   await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
   await screen.findByText("Prueba de visión superada.");
-  await user.click(screen.getByRole("button", { name: "Confirmación" }));
-  expect(screen.getByRole("heading", { name: "Confirmación" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
 };
 
@@ -113,20 +111,46 @@ describe("AssistantSettingsPanel", () => {
     mocked.clearAssistantKey.mockResolvedValue({ ...status, key_configured: false });
   });
 
-  it("renders exactly five revisitable steps", async () => {
+  it("renders exactly three steps and revisits completed ones", async () => {
+    const user = userEvent.setup();
     renderPanel();
 
-    expect(await screen.findByRole("heading", { name: "Proveedor" })).toBeInTheDocument();
-    for (const label of ["Proveedor", "Conexión", "Modelos", "Capacidad", "Confirmación"]) {
-      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Conexión" });
+    const progress = screen.getByRole("navigation", { name: "Pasos de configuración" });
+    for (const label of ["Conexión", "Modelo", "Pruebas"]) {
+      expect(within(progress).getByText(label)).toBeInTheDocument();
     }
-    await userEvent.click(screen.getByRole("button", { name: "Conexión" }));
+    // Future steps stay static (not selectable) until their gate is met.
+    expect(screen.queryByRole("button", { name: /Modelo/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Pruebas/ })).not.toBeInTheDocument();
+
+    // Once the connection validates, the completed step is revisitable.
+    await user.click(screen.getByRole("button", { name: "Validar conexión" }));
+    await screen.findByText("Conexión validada.");
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByRole("heading", { name: "Modelo" });
+    await user.click(screen.getByRole("button", { name: /Conexión/ }));
     expect(screen.getByRole("heading", { name: "Conexión" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Proveedor" }));
-    expect(screen.getByRole("heading", { name: "Proveedor" })).toBeInTheDocument();
   });
 
-  it("preserves the connection payload when navigating from Connection to Models", async () => {
+  it("does not mark Modelo done when the backend reports no model id yet", async () => {
+    // The GET seeds `selectedModel` from `model_metadata`, which is an object
+    // even when nothing is configured yet. An empty id must not read as "done",
+    // or a fresh profile shows a completed step the user never completed.
+    mocked.getAssistantSettings.mockResolvedValue({
+      ...status,
+      model: "",
+      model_metadata: { id: "", label: "", capability: "unknown", pricing: null },
+    });
+    renderPanel();
+
+    await screen.findByRole("heading", { name: "Conexión" });
+    const progress = screen.getByRole("navigation", { name: "Pasos de configuración" });
+    // Step 2 still renders its numeral: it is not complete.
+    expect(within(progress).getByText("2")).toBeInTheDocument();
+  });
+
+  it("preserves the connection payload when navigating from Conexión to Modelo", async () => {
     const user = userEvent.setup();
     const expectedPayload = {
       provider: "opencode-go",
@@ -134,17 +158,19 @@ describe("AssistantSettingsPanel", () => {
       api_key: "opaque-test-key",
     };
     renderPanel();
-    await screen.findByRole("heading", { name: "Proveedor" });
-    await user.click(screen.getByRole("button", { name: "Conexión" }));
-    await user.click(screen.getByRole("button", { name: "Modelos" }));
+    await screen.findByRole("heading", { name: "Conexión" });
+    // Discovery is not reachable before the connection validates.
     expect(screen.queryByRole("button", { name: "Descubrir modelos" })).not.toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Conexión" }));
+
     await user.clear(screen.getByLabelText("Endpoint"));
     await user.type(screen.getByLabelText("Endpoint"), expectedPayload.base_url);
     await user.type(screen.getByLabelText("Clave API"), expectedPayload.api_key);
     await user.click(screen.getByRole("button", { name: "Validar conexión" }));
     expect(mocked.validateAssistantConnection).toHaveBeenLastCalledWith(expectedPayload);
-    await user.click(screen.getByRole("button", { name: "Modelos" }));
+
+    // The transient key survives the step change and feeds discovery.
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByRole("heading", { name: "Modelo" });
     await user.click(screen.getByRole("button", { name: "Descubrir modelos" }));
     expect(mocked.discoverAssistantModels).toHaveBeenLastCalledWith(expectedPayload);
     expect(await screen.findByRole("combobox", { name: "Modelo descubierto" })).toHaveValue("gpt-5.6-luna");
@@ -160,10 +186,9 @@ describe("AssistantSettingsPanel", () => {
       base_url: "https://custom.example/v1",
     });
     renderPanel();
-    await screen.findByRole("heading", { name: "Proveedor" });
+    await screen.findByRole("heading", { name: "Conexión" });
 
     await user.selectOptions(screen.getByLabelText("Elegí un proveedor"), "opencode-go");
-    await user.click(screen.getByRole("button", { name: "Conexión" }));
 
     expect(screen.getByLabelText("Endpoint")).toHaveValue("https://opencode.ai/zen/go/v1");
   });
@@ -171,8 +196,7 @@ describe("AssistantSettingsPanel", () => {
   it("requires revalidation when the API key changes", async () => {
     const user = userEvent.setup();
     renderPanel();
-    await screen.findByRole("heading", { name: "Proveedor" });
-    await user.click(screen.getByRole("button", { name: "Conexión" }));
+    await screen.findByRole("heading", { name: "Conexión" });
     await user.click(screen.getByRole("button", { name: "Validar conexión" }));
 
     expect(await screen.findByText("Conexión validada.")).toBeInTheDocument();
@@ -184,7 +208,7 @@ describe("AssistantSettingsPanel", () => {
     expect(screen.getByRole("button", { name: "Siguiente" })).toBeDisabled();
   });
 
-  it("offers manual fallback and requires both probes before confirmation", async () => {
+  it("offers the manual fallback and requires both probes before saving", async () => {
     const user = userEvent.setup();
     mocked.discoverAssistantModels.mockResolvedValue({
       outcome: "failed",
@@ -194,31 +218,32 @@ describe("AssistantSettingsPanel", () => {
       models: [],
     });
     renderPanel();
-    await screen.findByRole("heading", { name: "Proveedor" });
-    await user.click(screen.getByRole("button", { name: "Conexión" }));
+    await screen.findByRole("heading", { name: "Conexión" });
     await user.click(screen.getByRole("button", { name: "Validar conexión" }));
     expect(await screen.findByText("Conexión validada.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Modelos" }));
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByRole("heading", { name: "Modelo" });
     await user.click(screen.getByRole("button", { name: "Descubrir modelos" }));
     expect(screen.getByText(/No usable models/)).toBeInTheDocument();
     await user.type(screen.getByLabelText("ID de modelo manual"), "manual-model");
     await user.click(screen.getByRole("button", { name: "Usar modelo manual" }));
-    await user.click(screen.getByRole("button", { name: "Capacidad" }));
-    expect(screen.getByRole("heading", { name: "Capacidad" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Confirmación" }));
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    expect(screen.getByRole("heading", { name: "Pruebas" })).toBeInTheDocument();
+
+    // Saving stays blocked until both probes pass.
+    expect(screen.getByRole("button", { name: "Guardar configuración" })).toBeDisabled();
     expect(screen.getByText(/pruebas de texto y visión/)).toBeInTheDocument();
+
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
     expect(await screen.findByText("Prueba de texto superada.")).toBeInTheDocument();
     expect(await screen.findByText("Prueba de visión superada.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Confirmación" }));
-    expect(screen.getByRole("heading", { name: "Confirmación" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Guardar configuración" })).toBeEnabled();
   });
 
   it("runs the text probe before the vision probe in the combined step", async () => {
     const user = userEvent.setup();
     renderPanel();
-    await walkToCapability(user);
+    await walkToProbes(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
     expect(await screen.findByText("Prueba de visión superada.")).toBeInTheDocument();
@@ -233,7 +258,7 @@ describe("AssistantSettingsPanel", () => {
     expect(screen.getByText("Prueba de visión superada.")).toBeInTheDocument();
   });
 
-  it("skips vision and blocks confirmation when the text probe fails", async () => {
+  it("skips vision and keeps saving blocked when the text probe fails", async () => {
     const user = userEvent.setup();
     mocked.runAssistantTextProbe.mockResolvedValue({
       outcome: "not_causal",
@@ -241,16 +266,16 @@ describe("AssistantSettingsPanel", () => {
       message: "La prueba de texto no pasó.",
     });
     renderPanel();
-    await walkToCapability(user);
+    await walkToProbes(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
     expect(await screen.findByText("La prueba de texto no pasó.")).toBeInTheDocument();
     expect(screen.getByText("La visión no se ejecutó porque la prueba de texto no pasó.")).toBeInTheDocument();
     expect(mocked.runAssistantVisionProbe).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Confirmación" }));
+    // The footer explains the blocked save; the save button stays disabled.
     expect(screen.getByText(/pruebas de texto y visión/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Guardar configuración" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar configuración" })).toBeDisabled();
   });
 
   it("keeps the text result and shows the vision error when vision fails", async () => {
@@ -261,7 +286,7 @@ describe("AssistantSettingsPanel", () => {
       message: "La prueba de visión no pasó.",
     });
     renderPanel();
-    await walkToCapability(user);
+    await walkToProbes(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
     expect(await screen.findByText("La prueba de visión no pasó.")).toBeInTheDocument();
@@ -269,22 +294,19 @@ describe("AssistantSettingsPanel", () => {
     expect(screen.getByText("Prueba de texto superada.")).toBeInTheDocument();
     expect(screen.queryByText("La visión no se ejecutó porque la prueba de texto no pasó.")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Confirmación" }));
     expect(screen.getByText(/pruebas de texto y visión/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Guardar configuración" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Guardar configuración" })).toBeDisabled();
   });
 
-  it("walks provider → connection → models → capability → confirmation and saves without unknown_ack", async () => {
+  it("walks Conexión → Modelo → Pruebas and saves without unknown_ack", async () => {
     const user = userEvent.setup();
     renderPanel();
-    await walkToCapability(user);
+    await saveFlow(user);
 
-    await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
-    expect(await screen.findByText("Prueba de visión superada.")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Confirmación" }));
-    expect(screen.getByRole("heading", { name: "Confirmación" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
     expect(mocked.saveAssistantConfiguration).toHaveBeenCalledTimes(1);
+    expect(mocked.saveAssistantConfiguration.mock.calls[0][0]).toMatchObject({
+      revision: status.revision,
+    });
     expect(mocked.saveAssistantConfiguration.mock.calls[0][0]).not.toHaveProperty("unknown_ack");
   });
 
@@ -297,7 +319,7 @@ describe("AssistantSettingsPanel", () => {
       }),
     );
     renderPanel();
-    await walkToCapability(user);
+    await walkToProbes(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
     const busyButton = await screen.findByRole("button", { name: "Probando texto…" });
@@ -315,7 +337,7 @@ describe("AssistantSettingsPanel", () => {
   it("announces probe results and the skipped-vision reason via aria-live", async () => {
     const user = userEvent.setup();
     renderPanel();
-    await walkToCapability(user);
+    await walkToProbes(user);
 
     await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
     expect(await screen.findByText("Prueba de visión superada.")).toBeInTheDocument();
@@ -348,8 +370,7 @@ describe("AssistantSettingsPanel", () => {
   it("clears the configured key through the authenticated endpoint", async () => {
     const user = userEvent.setup();
     renderPanel();
-    await screen.findByRole("heading", { name: "Proveedor" });
-    await user.click(screen.getByRole("button", { name: "Conexión" }));
+    await screen.findByRole("heading", { name: "Conexión" });
     await user.click(screen.getByRole("button", { name: "Eliminar clave" }));
 
     expect(mocked.clearAssistantKey).toHaveBeenCalledTimes(1);
@@ -361,14 +382,16 @@ describe("AssistantSettingsPanel", () => {
     renderPanel();
     await saveFlow(user);
 
-    expect(await screen.findByRole("status")).toBeInTheDocument();
-    expect(screen.getByText("Configuración guardada")).toBeInTheDocument();
-    expect(screen.getByText("opencode-go")).toBeInTheDocument();
-    expect(screen.getByText("GPT-5.6 Luna")).toBeInTheDocument();
-    expect(screen.getByText("Texto: superada · Visión: superada")).toBeInTheDocument();
+    const success = await screen.findByRole("status");
+    expect(within(success).getByText("Configuración guardada")).toBeInTheDocument();
+    expect(within(success).getByText("opencode-go")).toBeInTheDocument();
+    expect(within(success).getByText("GPT-5.6 Luna")).toBeInTheDocument();
+    expect(within(success).getByText("Texto: superada · Visión: superada")).toBeInTheDocument();
     // Real runtime state, not hardcoded success.
-    expect(screen.getByText("Activo")).toBeInTheDocument();
-    expect(screen.getByText("Volver al Taller de Mundos")).toBeInTheDocument();
+    expect(within(success).getByText("Activo")).toBeInTheDocument();
+    expect(within(success).getByRole("button", { name: "Volver al Taller de Mundos" })).toBeInTheDocument();
+    // The wizard and its progress indicator survive the success.
+    expect(screen.getByRole("navigation", { name: "Pasos de configuración" })).toBeInTheDocument();
   });
 
   it("blocks a second save after the first succeeds (no duplicate requests)", async () => {
@@ -378,7 +401,7 @@ describe("AssistantSettingsPanel", () => {
     await saveFlow(user);
 
     expect(await screen.findByText("Configuración guardada")).toBeInTheDocument();
-    // The editable flow (and its save button) is replaced by the success view.
+    // The success block replaces the probes body, so the save button is gone.
     expect(screen.queryByRole("button", { name: "Guardar configuración" })).not.toBeInTheDocument();
     expect(mocked.saveAssistantConfiguration).toHaveBeenCalledTimes(1);
   });
@@ -388,7 +411,8 @@ describe("AssistantSettingsPanel", () => {
     mocked.saveAssistantConfiguration.mockResolvedValue({ ...status, runtime_state: "pending-reload" });
     renderPanel();
     await saveFlow(user);
-    expect(await screen.findByText("Guardado, pendiente de recarga")).toBeInTheDocument();
+    const success = await screen.findByRole("status");
+    expect(within(success).getByText("Guardado, pendiente de recarga")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Cambiar configuración" }));
     expect(screen.queryByText("Configuración guardada")).not.toBeInTheDocument();
@@ -406,7 +430,7 @@ describe("AssistantSettingsPanel", () => {
     expect(screen.getByRole("button", { name: "Guardar configuración" })).toBeInTheDocument();
   });
 
-  it("clears the confirmation and returns to the provider step via Cambiar configuración", async () => {
+  it("clears the confirmation and returns to the Conexión step via Cambiar configuración", async () => {
     const user = userEvent.setup();
     mocked.saveAssistantConfiguration.mockResolvedValue({ ...status, runtime_state: "active" });
     renderPanel();
@@ -415,7 +439,7 @@ describe("AssistantSettingsPanel", () => {
 
     await user.click(screen.getByRole("button", { name: "Cambiar configuración" }));
     expect(screen.queryByText("Configuración guardada")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Proveedor" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Conexión" })).toBeInTheDocument();
     // Confirmation was cleared: the flow must be re-run to save again.
     expect(screen.queryByRole("button", { name: "Guardar configuración" })).not.toBeInTheDocument();
   });

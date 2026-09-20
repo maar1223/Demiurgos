@@ -31,11 +31,6 @@ truth (ONB-3.1/3.2, OC11/OC12/OC21):
 - ``world`` follows filesystem truth (a real world directory exists),
   ``locale`` follows the persisted step-0 locale, and ``offline`` follows
   the local-storage probe.
-
-``project_offline`` derives the honest offline/dispositivo breakdown (OC5):
-the local core is ready when the storage probe round-trips, and every remote
-capability that is still pending or requires connection is listed as
-remote-pending — never claimed available offline.
 """
 
 from __future__ import annotations
@@ -55,17 +50,6 @@ from local_state import CARD_STATES
 # gained a dedicated contract (REQ-CC-1, SC-CC-1.3) supplied via
 # ``backup_state``. A future cloud card without a contract goes back in here.
 CLOUD_CARDS: frozenset[str] = frozenset()
-
-# Remote capabilities whose readiness depends on connectivity (OC5): they are
-# never available offline. ``assistant`` is included because a cloud/multimodal
-# model needs its provider; a pending assistant (no proven multimodal model)
-# therefore surfaces as remote-pending while the local core keeps working.
-# ``identity`` is NOT remote-pending: the credentials identity contract is
-# local (account slot + mode), not connectivity-bound. ``backup`` STAYS here
-# (WU-14): the folder is a local copy, but the sync client that carries it off
-# the machine is connectivity-dependent, so a pending backup is honestly
-# remote-pending.
-REMOTE_CARDS: tuple[str, ...] = ("telegram", "backup", "assistant")
 
 # Assistant proof evidence keys required before the card may be configured.
 ASSISTANT_PROOF_KEYS: tuple[str, ...] = ("text", "vision", "runtime")
@@ -163,24 +147,6 @@ def project_cards(
     cards["locale"] = "configured" if state.get("locale") else "pending"
     cards["offline"] = "configured" if probe_ok else "error"
     return cards
-
-
-def project_offline(cards: Mapping[str, str]) -> dict[str, Any]:
-    """Derive the honest offline/dispositivo breakdown (OC5/OC21).
-
-    ``local_ready`` follows the projected offline card (the storage probe
-    round-trip) — the local core (editor, worlds, ideas, plantillas, graph)
-    works without connection. ``remote_pending`` lists the remote capabilities
-    that still need connectivity or a dedicated contract; none is ever claimed
-    available offline.
-    """
-    return {
-        "local_ready": cards.get("offline") == "configured",
-        "remote_pending": [
-            key for key in REMOTE_CARDS
-            if cards.get(key) in ("pending", "requires_connection")
-        ],
-    }
 
 
 def probe_local_storage(root: Path) -> dict[str, Any]:

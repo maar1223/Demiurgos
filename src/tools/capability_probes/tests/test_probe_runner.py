@@ -297,3 +297,146 @@ class TestSecretBoundaryInProbes:
         assert "opaque-probe-secret" not in repr(payload)
         image = payload["messages"][0]["content"][1]
         assert base64.b64decode(image["image_url"].split(",", 1)[1])[:8]
+
+
+def _replay_transport(calls: list, responses: list[tuple[int, Any]]):
+    """Transport that replays ``(status, body)`` pairs in order."""
+
+    def transport(method: str, url: str, headers: dict[str, str], payload: dict[str, Any]):
+        calls.append((method, url, payload))
+        return responses.pop(0)
+
+    return transport
+
+
+def _image_url_part(payload: dict[str, Any]) -> Any:
+    return payload["messages"][0]["content"][1]["image_url"]
+
+
+class TestVisionEncodingFallback:
+    """Strict OpenAI-schema gateways reject the legacy bare-string ``image_url``.
+
+    OpenCode Go answers the string form with HTTP 422:
+    ``invalid type: string "<image-data>", expected struct OpenAICompletionImageUrl``.
+    The probe must retry with the spec-compliant object form — and must NOT
+    retry failures that are not about the shape.
+    """
+
+    _SCHEMA_REJECTION = {
+        "error": {
+            "message": (
+                "Upstream request failed: [invalid_request_error] Failed to "
+                "deserialize the JSON body into the target type: messages[0]: "
+                'invalid type: string "data:image/jpeg;base64,AAAA", expected '
+                "struct OpenAICompletionImageUrl at line 1 column 100901"
+            )
+        }
+    }
+
+    def test_422_schema_rejection_retries_with_the_object_form(self):
+        calls: list = []
+        responses = [
+            (422, self._SCHEMA_REJECTION),
+            (200, _text_answer("no")),
+            (422, self._SCHEMA_REJECTION),
+            (200, _text_answer("yes")),
+        ]
+        runner = ProbeRunner(
+            "https://gateway.test/v1", "m", transport=_replay_transport(calls, responses)
+        )
+
+        result = runner.run_vision()
+
+        assert result.outcome == OUTCOME_PASSED
+        # Each case still tries the legacy string form first, then the object
+        # form — the retry is per call, not remembered across cases.
+        assert isinstance(_image_url_part(calls[0][2]), str)
+        assert isinstance(_image_url_part(calls[1][2]), dict)
+        assert _image_url_part(calls[1][2])["url"].startswith("data:image/jpeg;base64,")
+
+    def test_400_format_rejection_still_retries(self):
+        calls: list = []
+        responses = [
+            (400, {"error": {"message": "Param Incorrect: image format unsupported"}}),
+            (200, _text_answer("no")),
+            (400, {"error": {"message": "Param Incorrect: image format unsupported"}}),
+            (200, _text_answer("yes")),
+        ]
+        runner = ProbeRunner(
+            "https://gateway.test/v1", "m", transport=_replay_transport(calls, responses)
+        )
+
+        assert runner.run_vision().outcome == OUTCOME_PASSED
+        assert isinstance(_image_url_part(calls[1][2]), dict)
+
+    def test_401_credentials_failure_is_never_retried(self):
+        # `invalid_api_key` contains "invalid": a wording-based retry would
+        # repeat the failure and double the credential attempts.
+        calls: list = []
+        responses = [(401, {"error": {"message": "invalid_api_key"}})]
+        runner = ProbeRunner(
+            "https://gateway.test/v1", "m", transport=_replay_transport(calls, responses)
+        )
+
+        result = runner.run_vision()
+
+        assert result.outcome == OUTCOME_PROVIDER_FAILURE
+        assert len(calls) == 1, "a 401 must not be retried with the other encoding"
+
+    def test_429_quota_failure_is_never_retried(self):
+        calls: list = []
+        responses = [
+            (429, {"error": {"message": "Monthly usage limit reached. Invalid plan."}})
+        ]
+        runner = ProbeRunner(
+            "https://gateway.test/v1", "m", transport=_replay_transport(calls, responses)
+        )
+
+        result = runner.run_vision()
+
+        assert result.outcome == OUTCOME_PROVIDER_FAILURE
+        assert len(calls) == 1, "a 429 must not burn more quota on a retry"
+
+    def test_403_is_never_retried(self):
+        calls: list = []
+        responses = [(403, {"error": {"message": "forbidden: model not available"}})]
+        runner = ProbeRunner(
+            "https://gateway.test/v1", "m", transport=_replay_transport(calls, responses)
+        )
+
+        result = runner.run_vision()
+
+        assert result.outcome == OUTCOME_PROVIDER_FAILURE
+        assert len(calls) == 1
+
+    def test_422_without_a_format_detail_is_not_retried(self):
+        # A capability rejection is a valid 422 that has nothing to do with the
+        # encoding; retrying would just repeat it.
+        calls: list = []
+        responses = [
+            (422, {"error": {"message": "model does not support image input"}})
+        ]
+        runner = ProbeRunner(
+            "https://gateway.test/v1", "m", transport=_replay_transport(calls, responses)
+        )
+
+        result = runner.run_vision()
+
+        assert result.outcome == OUTCOME_PROVIDER_FAILURE
+        assert len(calls) == 1
+
+    def test_422_that_survives_the_retry_reports_the_second_failure(self):
+        calls: list = []
+        responses = [
+            (422, self._SCHEMA_REJECTION),
+            (422, {"error": {"message": "still unprocessable: invalid image"}}),
+        ]
+        runner = ProbeRunner(
+            "https://gateway.test/v1", "m", transport=_replay_transport(calls, responses)
+        )
+
+        result = runner.run_vision()
+
+        assert result.outcome == OUTCOME_PROVIDER_FAILURE
+        assert len(calls) == 2
+        assert isinstance(_image_url_part(calls[1][2]), dict)

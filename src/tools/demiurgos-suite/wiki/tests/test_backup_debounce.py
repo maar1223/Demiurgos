@@ -265,6 +265,97 @@ def test_an_unchanged_reconcile_tick_schedules_nothing(engine_factory) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The durable gate: a run needs a REAL change to the included tree (REQ-BE-6)
+# ---------------------------------------------------------------------------
+
+
+def _armable_root(tmp_path: Path) -> Path:
+    """A real data root with one included world file and one excluded code file."""
+    root = tmp_path / "data-root"
+    (root / "mundos").mkdir(parents=True)
+    (root / "mundos" / "alpha.md").write_text("alpha", encoding="utf-8")
+    (root / "src").mkdir()
+    (root / "src" / "code.py").write_text("code", encoding="utf-8")
+    return root
+
+
+def test_an_excluded_path_event_does_not_schedule_a_run(tmp_path, engine_factory) -> None:
+    """A durable event on an EXCLUDED path must not start a run.
+
+    Regression for the class of leaks the observer cannot fully close (directory
+    events, normalization edge cases, the event-loss backstop, or a future
+    gap): the engine must gate the run on the included-tree fingerprint, not on
+    the mere arrival of a signal. Non-vacuous: on the pre-gate code the second
+    ``pump()`` returns ``True`` and the runner is called twice, so the assertion
+    below fails.
+    """
+    root = _armable_root(tmp_path)
+    engine, runner, clock = engine_factory(data_root=root)
+
+    # Arm the gate: the first scheduled run takes the baseline fingerprint.
+    engine.notify("mundos/alpha.md")
+    clock.advance(DEBOUNCE)
+    assert engine.pump() is True
+    assert runner.calls == 1
+
+    # A write under an EXCLUDED path changes nothing the snapshot takes.
+    (root / "src" / "code.py").write_text("code changed", encoding="utf-8")
+    engine.notify("src/code.py")
+    clock.advance(DEBOUNCE)
+
+    assert engine.pump() is False, "an excluded-path event must not schedule a run"
+    assert runner.calls == 1
+
+
+def test_an_included_path_event_still_schedules_exactly_one_run(
+    tmp_path, engine_factory
+) -> None:
+    """A genuine change to an INCLUDED path still produces exactly one run."""
+    root = _armable_root(tmp_path)
+    target = root / "mundos" / "alpha.md"
+    engine, runner, clock = engine_factory(data_root=root)
+
+    engine.notify("mundos/alpha.md")
+    clock.advance(DEBOUNCE)
+    assert engine.pump() is True
+    assert runner.calls == 1
+
+    target.write_text("alpha changed", encoding="utf-8")
+    engine.notify("mundos/alpha.md")
+    clock.advance(DEBOUNCE)
+
+    assert engine.pump() is True, "a real data change must still schedule a run"
+    assert runner.calls == 2, "exactly one run for the one genuine change"
+    assert engine.pump() is False, "the run does not schedule another run"
+
+
+def test_backup_reserved_artifacts_never_schedule_a_run(tmp_path, engine_factory) -> None:
+    """The marker, its temp and the park directory are not author data.
+
+    They are excluded from the inventory, so writing them leaves the included
+    tree byte-identical and the gate drops the run. Without the exclusion the
+    marker would be an included path and each write would move the fingerprint.
+    """
+    root = _armable_root(tmp_path)
+    engine, runner, clock = engine_factory(data_root=root)
+
+    engine.notify("mundos/alpha.md")
+    clock.advance(DEBOUNCE)
+    assert engine.pump() is True
+    assert runner.calls == 1
+
+    (root / QUIESCE_MARKER_NAME).write_text("{}", encoding="utf-8")
+    (root / f"{QUIESCE_MARKER_NAME}.tmp-deadbeef").write_text("{}", encoding="utf-8")
+    (root / ".demiurgos-old-abc" / "ideas").mkdir(parents=True)
+    (root / ".demiurgos-old-abc" / "ideas" / "a.md").write_text("x", encoding="utf-8")
+    engine.notify(QUIESCE_MARKER_NAME)
+    clock.advance(DEBOUNCE)
+
+    assert engine.pump() is False, "backup bookkeeping must not schedule a run"
+    assert runner.calls == 1
+
+
+# ---------------------------------------------------------------------------
 # The debounce window is clamped into [5, 10]
 # ---------------------------------------------------------------------------
 

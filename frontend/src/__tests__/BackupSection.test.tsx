@@ -340,6 +340,31 @@ describe("BackupSection", () => {
     expect(screen.queryByRole("button", { name: "Continuar" })).not.toBeInTheDocument();
   });
 
+  // REQ-PIA-07: the restore pane must not orphan a heading level. The status
+  // heading is h3; the restore heading used to be h5, skipping h4.
+  it("opens the restore pane with a contiguous heading outline (no skipped level)", async () => {
+    const user = userEvent.setup();
+    await renderSection(CHOSEN_STATUS);
+
+    await user.click(screen.getByRole("button", { name: "Restaurar…" }));
+    const restoreHeading = await screen.findByRole("heading", {
+      name: "Restaurar desde una copia",
+    });
+    // The pane heading is the h4 that closes the h2 → h3 → h4 outline.
+    expect(restoreHeading.tagName).toBe("H4");
+
+    const levels = screen
+      .getAllByRole("heading")
+      .map((heading) => Number(heading.tagName.slice(1)));
+    expect(levels[0]).toBe(3);
+    levels.forEach((level, index) => {
+      if (index === 0) return;
+      // Staying or descending one level is fine; a jump of two or more (the old
+      // h3 → h5) is exactly the orphan level REQ-PIA-07 forbids.
+      expect(level - levels[index - 1]).toBeLessThanOrEqual(1);
+    });
+  });
+
   it("surfaces an unresolved previous restore without hiding it", async () => {
     mocked.getBackupRestoreStatus.mockResolvedValue({
       pending: true,

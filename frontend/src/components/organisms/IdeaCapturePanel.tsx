@@ -3,6 +3,8 @@ import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { SecretInput } from "@/components/molecules/SecretInput";
+import { WizardProgress } from "@/components/molecules/WizardProgress";
+import type { ConnectionStatusSummary } from "@/components/molecules/ConnectionsPanel";
 import {
   authorizeChat,
   clearIdeaCaptureToken,
@@ -19,7 +21,6 @@ import type {
   IdeaCaptureStatus,
 } from "@/api/types";
 import { ApiError } from "@/api/types";
-import { cn } from "@/lib/utils";
 
 /** Unified session controller surfaced by useAuthSession — passed in so the
  *  panel stays decoupled from the hook and easy to test. `start`/`logout`
@@ -105,7 +106,16 @@ function countAuthorized(privateText: string, groupRows: GroupRow[]): number {
  * typed. Configure/discover is a migration-only flow. Production ingress is
  * owned by Hermes; the legacy serve command is never started from the panel.
  */
-export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
+export function IdeaCapturePanel({
+  auth,
+  onStatus,
+}: {
+  auth: AuthSessionController;
+  /** Reports the connection status to the shell. Keyed on the primitive
+   *  `has_token` + authorized-chat count so a fresh object per render cannot
+   *  loop the parent. */
+  onStatus?: (status: ConnectionStatusSummary) => void;
+}) {
   const authenticated = auth.status?.authenticated ?? false;
 
   // ------------------------------------------------------------------ data
@@ -167,6 +177,21 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
   const [tokenMessage, setTokenMessage] = useState<string | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
+
+  // Report the connection status to the shell as a row badge. Keyed on the
+  // primitive `has_token` + authorized-chat count (never on `status` or the
+  // form objects) so the effect only fires on a real change.
+  const authorizedCount = countAuthorized(privateText, groupRows);
+  useEffect(() => {
+    if (!onStatus) return;
+    if (!hasToken) {
+      onStatus({ label: "Sin token", variant: "warning" });
+    } else if (authorizedCount === 0) {
+      onStatus({ label: "Sin chats autorizados", variant: "warning" });
+    } else {
+      onStatus({ label: "Listo", variant: "success" });
+    }
+  }, [onStatus, hasToken, authorizedCount]);
 
   const handleTokenSave = async () => {
     const value = tokenDraft.trim();
@@ -397,7 +422,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
             configuración de captura de ideas.
           </p>
           <Button
-            variant="primary"
+            variant="secondary"
             onClick={() => void auth.start?.()}
             className="mt-3"
           >
@@ -436,7 +461,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
   };
 
   return (
-    <div className="mx-auto w-full max-w-2xl space-y-5">
+    <div className="space-y-5">
       {/* Operational distinction: discovery is migration-only; Hermes owns ingress. */}
       <div className="rounded-lg border border-edge bg-surface-raised p-3 text-small text-muted">
         <span className="font-medium text-primary">Cómo funciona:</span>{" "}
@@ -460,69 +485,15 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
       {status && (
         <>
           {/* --------------------------------------------------- progress */}
-          <nav
-            aria-label="Progreso de la configuración"
-            className="flex items-center gap-1"
-          >
-            {STEPS.map((entry, index) => {
-              const state =
-                index < step ? "done" : index === step ? "current" : "todo";
-              return (
-                <div key={entry.id} className="flex flex-1 items-center gap-1">
-                  <div
-                    className={cn(
-                      "flex min-w-0 flex-1 flex-col items-center gap-1 text-center",
-                      index > 0 && "ml-1",
-                    )}
-                    aria-current={index === step ? "step" : undefined}
-                  >
-                    <span
-                      className={cn(
-                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-medium",
-                        state === "done" &&
-                          "border-status-success bg-status-success/15 text-status-success",
-                        state === "current" &&
-                          "border-action bg-action/15 text-action",
-                        state === "todo" &&
-                          "border-edge bg-surface-raised text-muted",
-                      )}
-                    >
-                      {state === "done" ? <Icon name="check" size={14} /> : index + 1}
-                    </span>
-                    <span
-                      className={cn(
-                        "text-xs leading-tight",
-                        state === "current"
-                          ? "text-primary"
-                          : state === "done"
-                            ? "text-status-success"
-                            : "text-muted",
-                      )}
-                    >
-                      {entry.label}
-                    </span>
-                  </div>
-                  {index < LAST_STEP && (
-                    <div
-                      aria-hidden="true"
-                      className={cn(
-                        "mb-5 h-px w-3 shrink-0",
-                        index < step ? "bg-status-success/50" : "bg-surface-raised",
-                      )}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </nav>
+          <WizardProgress steps={STEPS} current={step} />
 
           {/* -------------------------------------------------- step content */}
           <div className="rounded-lg border border-edge bg-surface-raised p-5">
             {step === 0 && (
               <section aria-label="Conectar bot">
-                <h3 className="font-heading text-body text-primary">
+                <h4 className="font-heading text-body text-primary">
                   Conectá tu bot de Telegram
-                </h3>
+                </h4>
                 <p className="mt-1 text-small text-muted">
                   {hasToken
                     ? "Token configurado en .env. No se vuelve a mostrar: pegá un valor nuevo para reemplazarlo."
@@ -551,7 +522,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                 </div>
                 <div className="mt-3 flex items-center gap-2">
                   <Button
-                    variant="primary"
+                    variant="secondary"
                     onClick={() => void handleTokenSave()}
                     disabled={!tokenDraft.trim() || tokenBusy}
                   >
@@ -578,9 +549,9 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
 
             {step === 1 && (
               <section aria-label="Detectar chat">
-                <h3 className="font-heading text-body text-primary">
+                <h4 className="font-heading text-body text-primary">
                   Detectá el chat que recibirá tus ideas
-                </h3>
+                </h4>
                 <p className="mt-1 text-small text-muted">
                   Enviá <code className="text-icon-muted">/start</code> (o cualquier
                   mensaje) a tu bot en Telegram y después tocá{" "}
@@ -666,7 +637,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
                                 </p>
                               </div>
                               <Button
-                                variant="primary"
+                                variant="secondary"
                                 onClick={() => void handleAuthorizePrivate(candidate)}
                                 disabled={authorizingId !== null}
                               >
@@ -761,9 +732,9 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
 
             {step === 2 && (
               <section aria-label="Revisar">
-                <h3 className="font-heading text-body text-primary">
+                <h4 className="font-heading text-body text-primary">
                   Revisá tu configuración
-                </h3>
+                </h4>
                 <dl className="mt-3 space-y-2 text-small">
                   <div className="flex items-center justify-between gap-3">
                     <dt className="text-muted">Bot de Telegram</dt>
@@ -936,9 +907,9 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
 
             {step === 3 && (
               <section aria-label="Finalizar">
-                <h3 className="font-heading text-body text-primary">
+                <h4 className="font-heading text-body text-primary">
                   Finalizá y arrancá la captura
-                </h3>
+                </h4>
                 <p className="mt-1 text-small text-muted">
                   Guardá la configuración y después ejecutá el comando del
                   gateway Hermes en tu terminal para empezar a capturar ideas.
@@ -1017,7 +988,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
             {step < LAST_STEP && (
               <div className="flex flex-col items-end gap-1">
                 <Button
-                  variant="primary"
+                  variant="secondary"
                   onClick={goNext}
                   disabled={!canContinue || busy}
                 >

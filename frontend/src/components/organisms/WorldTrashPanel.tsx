@@ -117,10 +117,10 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
 
   return (
     <div>
-      <h4 className="flex items-center gap-2 font-heading text-body text-primary">
+      <h3 className="flex items-center gap-2 font-heading text-body text-primary">
         <Icon name="trash" size={18} className="text-icon-muted" />
         Papelera de mundos
-      </h4>
+      </h3>
       <p className="mt-1 text-small text-muted">
         Mundos eliminados: quedan 30 días para restaurarlos antes de que se purguen.
       </p>
@@ -208,12 +208,14 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
       )}
 
       {/* Permanent-delete confirmation — irreversible, so it needs its own
-          confirm step on top of the list action (REQ-010). */}
+          confirm step on top of the list action (REQ-010) and the danger
+          treatment on its confirm action (REQ-PIA-08). */}
       {purgeTarget && (
         <ConfirmDialog
           title="Eliminar permanentemente"
           message={`¿Eliminar permanentemente el mundo «${purgeTarget.world_name}»? Esta acción no se puede deshacer y también limpia sus datos asociados.`}
           confirmLabel="Eliminar permanentemente"
+          confirmVariant="danger"
           isBusy={busyName === purgeTarget.world_name}
           error={actionError}
           onConfirm={() => void handlePurgeConfirm()}

@@ -6727,39 +6727,35 @@ class TestTelegramSettings:
 
 
 # ---------------------------------------------------------------------------
-# ONB-3.4 — Offline/dispositivo card backend: honest offline breakdown
-# (local-ready + remote-pending) and expired local sessions are never reused.
-# The local core must not depend on authentication or the assistant (OC5/OC19).
+# ONB-3.4 — offline continuation: readiness is public and independent of auth,
+# the local core keeps working offline, and expired local sessions are never
+# reused (OC5/OC19). The offline breakdown was removed from the payload
+# (product-owner decision): the card map alone carries that state.
 # ---------------------------------------------------------------------------
 
 
 class TestOfflineContinuation:
     """ONB-3.4 — offline continuation (WU-3c)."""
 
-    def test_readiness_reports_offline_local_ready_and_remote_pending(
+    def test_readiness_no_longer_reports_the_offline_breakdown(
             self, empty_client: TestClient):
-        """The offline card needs an honest breakdown: the local core is
-        ready (storage probe ok) while remote capabilities stay pending.
-        ``identity`` is NOT remote-pending: the vault identity contract is
-        local configuration (mode + client id), not connectivity-bound."""
+        """The readiness payload no longer carries an ``offline`` key; the
+        card map keeps its shape and the local core stays configured."""
         body = empty_client.get("/api/onboarding/readiness").json()
-        offline = body["offline"]
-        assert offline["local_ready"] is True
-        assert "identity" not in offline["remote_pending"]
-        assert "telegram" in offline["remote_pending"]
-        assert "backup" in offline["remote_pending"]
-        assert "assistant" in offline["remote_pending"]
+        assert "offline" not in body
+        assert body["cards"]["offline"] == "configured"
 
-    def test_readiness_reports_offline_unavailable_when_probe_fails(
+    def test_readiness_card_reports_error_when_probe_fails(
             self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
-        """When the storage probe fails the local core is NOT claimed ready."""
+        """When the storage probe fails the offline card reports error and no
+        offline breakdown is emitted."""
         monkeypatch.setattr(
             api_server,
             "probe_local_storage",
             lambda root: {"probe": "local_editor", "ok": False, "detail": "read-only"},
         )
         body = empty_client.get("/api/onboarding/readiness").json()
-        assert body["offline"]["local_ready"] is False
+        assert "offline" not in body
         assert body["cards"]["offline"] == "error"
 
     def test_offline_readiness_is_public_without_auth(self, empty_client: TestClient):

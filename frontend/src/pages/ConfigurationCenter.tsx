@@ -5,12 +5,12 @@ import type { CardState, ReadinessSnapshot } from "@/api/types";
  *
  * The standalone `/centro-configuracion` page no longer exists
  * (nav-restructure decision): the configuration surface lives inside the
- * Profile (`/perfil` → "Centro de Configuración" tab, with the legacy-folder
- * migration under "Mundos" and the idea-capture wizard — the single Telegram
- * surface — under "Integraciones"). This module stays as the single shared
- * exporter of the card definitions, the honest state helpers and the panel
- * that was exclusive to the standalone page, so the Profile tabs and this
- * module never drift.
+ * Profile (`/perfil` → "Preferencias", which hosts the inline locale form —
+ * REQ-PIA-12), the legacy-folder migration lives under "Mundos", and the
+ * idea-capture wizard — the single Telegram surface — lives under
+ * "Conexiones". This module stays as the single shared exporter of the card
+ * definitions, the honest state helpers and the panel that was exclusive to
+ * the standalone page, so the Profile sections and this module never drift.
  */
 
 /** Panel relocated from the standalone page (ONB-4.3, WU-4c2). */
@@ -52,19 +52,13 @@ export const STATE_META: Record<CardState, { label: string; badge: "default" | "
  */
 export const DEFERRED_CARD_KEYS: ReadonlySet<string> = new Set(["import"]);
 
-/** Essential local readiness badges (OC11/OC21): World + local editor. */
+/** Essential local readiness badges (OC11/OC21): World + local editor.
+ *  No longer rendered by the Profile Preferencias surface (product-owner
+ *  decision): kept exported for the shared contract tests. */
 export const ESSENTIAL_BADGES: { key: string; title: string }[] = [
   { key: "world", title: "Mundos" },
   { key: "editor", title: "Editor local" },
 ];
-
-/** Remote capability labels shown in the offline card breakdown (OC5). */
-export const REMOTE_LABELS: Record<string, string> = {
-  identity: "Identidad",
-  telegram: "Telegram",
-  backup: "Respaldo",
-  assistant: "Asistente (IA)",
-};
 
 interface CardAction {
   label: string;
@@ -80,12 +74,10 @@ interface CardDef {
 
 export const CARD_DEFS: CardDef[] = [
   { key: "identity", title: "Identidad", description: "Cuenta local: contraseña o palabras claves para recuperación autorizada.", action: { label: "Ir a Perfil", to: "/perfil" } },
-  { key: "assistant", title: "IA texto y visión", description: "Modelo principal del Asistente (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
+  { key: "assistant", title: "Asistente de Demiurgos", description: "Modelo compartido de la plataforma (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
   { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: null },
-  { key: "backup", title: "Respaldo y restauración", description: "Guardá una copia de tus datos en la carpeta local que elijas. Demiurgos escribe los archivos localmente y no afirma ningún envío remoto.", action: { label: "Configurar respaldo", to: "/perfil?tab=configuracion" } },
-  { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/onboarding?step=step0" } },
+  { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/perfil?tab=preferencias" } },
   { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },
-  { key: "offline", title: "Offline / dispositivo", description: "Núcleo local (editor, ideas, grafo) sin conexión.", action: null },
   { key: "import", title: "Importar mundo", description: "Importar contenido a un mundo. El importador está operativo: iniciá una nueva importación o retomá una anterior desde el Taller de Mundo.", action: { label: "Ir al Taller de Mundo", to: "/taller-mundo" } },
 ];
 
@@ -122,7 +114,11 @@ export function cardLabel(key: string, state: CardState): string {
   return STATE_META[state].label;
 }
 
-/** Essential World + editor badge truth (OC11/OC21), shared with Profile. */
+/**
+ * Essential World + editor badge truth (OC11/OC21). Retained as the shared
+ * contract helper; the Profile Preferencias surface no longer renders it
+ * (product-owner decision), so only the contract tests exercise it today.
+ */
 export function essentialBadgeFor(
   readiness: ReadinessSnapshot | null,
   cards: Record<string, CardState>,

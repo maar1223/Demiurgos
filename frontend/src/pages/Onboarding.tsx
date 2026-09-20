@@ -1,21 +1,21 @@
 import { FormEvent, useEffect, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { getLocale } from "@/api/config";
-import { createWorld, getOnboardingStatus, submitStep0 } from "@/api/onboarding";
+import { useNavigate } from "react-router-dom";
+import { createWorld, getOnboardingStatus } from "@/api/onboarding";
 import { createAccount } from "@/api/wiki";
-import { ApiError, type LocaleInput, type OnboardingStatus } from "@/api/types";
+import type { OnboardingStatus } from "@/api/types";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { LocaleForm, authHint } from "@/components/organisms/LocaleForm";
 
 /**
  * First-run onboarding (OC1/OC2, Slice 1).
  *
  * Flow: step 0 (locale) → account (always active on a fresh install) → world
  * creation → ready. Remote steps (AI, Telegram, Backup) are NEVER blocking and
- * are reported as pending — they are resumed from the Centro de Configuración
- * tab inside the Profile (`/perfil`). Completed steps are never replayed
- * after a restart (server is authoritative).
+ * are reported as pending — they are resumed from the Profile (`/perfil`).
+ * Completed steps are never replayed after a restart (server is
+ * authoritative).
  *
  * The account step (R-AC-01) is BLOCKING and ALWAYS active on a fresh install
  * (vault-settings-configure removed the credentials-mode guard): username +
@@ -28,64 +28,29 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
  * clear hint (fail closed, never a silent bypass).
  */
 
-const LANGUAGE_OPTIONS = [
-  { value: "es", label: "Español" },
-  { value: "en", label: "English" },
-];
-
-const COMMON_TIMEZONES = [
-  "UTC",
-  "America/Argentina/Buenos_Aires",
-  "America/Mexico_City",
-  "America/New_York",
-  "Europe/Madrid",
-  "Asia/Kolkata",
-  "Asia/Shanghai",
-];
-
 const REMOTE_PENDING: Record<string, { title: string; description: string }> = {
   ai: {
-    title: "Asistente de IA (texto y visión)",
+    title: "Asistente de Demiurgos (texto y visión)",
     description:
-      "Requiere un modelo local o remoto validado. Se retoma desde el Centro de Configuración.",
+      "Requiere un modelo local o remoto validado. Se retoma desde el Perfil.",
   },
   telegram: {
     title: "Telegram",
-    description: "Requiere conexión y una cuenta configurada. Se retoma desde el Centro de Configuración.",
+    description: "Requiere conexión y una cuenta configurada. Se retoma desde el Perfil.",
   },
   backup_handoff: {
     title: "Respaldo y restauración",
-    description: "Requiere conexión y consentimiento. Se retoma desde el Centro de Configuración.",
+    description: "Requiere conexión y consentimiento. Se retoma desde el Perfil.",
   },
 };
 
-function authHint(error: unknown): string | null {
-  if (error instanceof ApiError && error.status === 401) {
-    return "La sesión expiró. Inicia sesión e intenta de nuevo.";
-  }
-  return null;
-}
-
 export default function Onboarding() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
-  // `?step=step0` re-opens ONLY the locale step from the Profile's
-  // "Centro de Configuración" tab (OC12 per-section resume) without replaying
-  // the completed flow; after saving, the user lands back on `/perfil`.
-  const reconfigure = searchParams.get("step") === "step0";
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const [writeError, setWriteError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-
-  // Step 0 form
-  const [uiLang, setUiLang] = useState("es");
-  const [conversationLang, setConversationLang] = useState("es");
-  const [contentLang, setContentLang] = useState("es");
-  const [region, setRegion] = useState("");
-  const [regionExplicit, setRegionExplicit] = useState(false);
-  const [timezone, setTimezone] = useState("UTC");
 
   // World form
   const [worldName, setWorldName] = useState("");
@@ -106,7 +71,7 @@ export default function Onboarding() {
     void getOnboardingStatus()
       .then((next) => {
         setStatus(next);
-        if (next.completed && !reconfigure) {
+        if (next.completed) {
           navigate("/wiki", { replace: true });
         }
       })
@@ -114,62 +79,16 @@ export default function Onboarding() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(loadStatus, [navigate, reconfigure]);
+  useEffect(loadStatus, [navigate]);
 
-  // Reconfigure mode re-opens the SAME step0 form against an ALREADY-SAVED
-  // locale, so it must show what is stored instead of the fresh-install
-  // defaults. `/api/locale` is the authoritative read (the onboarding status
-  // carries no locale); a failed read keeps the defaults rather than inventing
-  // values. Without this the region, and any non-default language or zone,
-  // render wrong — and submitting would overwrite the stored value with null.
-  useEffect(() => {
-    if (!reconfigure) return;
-    let active = true;
-    void getLocale()
-      .then((saved) => {
-        if (!active) return;
-        setUiLang(saved.ui);
-        setConversationLang(saved.conversation);
-        setContentLang(saved.content);
-        setRegion(saved.region ?? "");
-        setRegionExplicit(saved.region_explicit);
-        setTimezone(saved.iana_timezone);
-      })
-      .catch(() => {
-        // offline/failure — keep the safe defaults; never invent values
-      });
-    return () => {
-      active = false;
-    };
-  }, [reconfigure]);
-
-  const handleStep0 = (event: FormEvent) => {
-    event.preventDefault();
-    setBusy(true);
-    setWriteError(null);
-    const locale: LocaleInput = {
-      ui: uiLang,
-      conversation: conversationLang,
-      content: contentLang,
-      region: region.trim() ? region.trim() : null,
-      region_explicit: regionExplicit,
-      iana_timezone: timezone.trim(),
-    };
-    void submitStep0(locale)
-      .then((next) => {
-        setStatus(next);
-        setBusy(false);
-        if (next.completed || reconfigure) {
-          // The Configuration Center now lives inside the Profile (Perfil →
-          // "Centro de Configuración" tab), so the reconfigure handoff lands
-          // there instead of a standalone page.
-          navigate("/perfil", { replace: true });
-        }
-      })
-      .catch((cause: unknown) => {
-        setWriteError(cause);
-        setBusy(false);
-      });
+  const handleStep0Saved = (next: OnboardingStatus) => {
+    // The server is authoritative: step 0 is committed, so the next blocking
+    // step renders from the refreshed status. A fully completed install is
+    // redirected instead of replaying the flow.
+    setStatus(next);
+    if (next.completed) {
+      navigate("/perfil", { replace: true });
+    }
   };
 
   const handleCreateWorld = (event: FormEvent) => {
@@ -232,13 +151,10 @@ export default function Onboarding() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-4 py-12">
       <div className="w-full max-w-xl">
-        <h1 className="font-heading text-h3 text-primary">
-          {reconfigure ? "Configuración" : "Bienvenida a Demiurgos"}
-        </h1>
+        <h1 className="font-heading text-h3 text-primary">Bienvenida a Demiurgos</h1>
         <p className="mt-2 text-body text-muted">
-          {reconfigure
-            ? "Actualizá el idioma de la interfaz, el de conversación, el de contenido, la región y la zona horaria. Se guardan sobre la configuración actual."
-            : "Configuración inicial para dejar la instalación operativa. Podés retomar cada capacidad después desde el Centro de Configuración."}
+          Configuración inicial para dejar la instalación operativa. Podés
+          retomar cada capacidad después desde el Perfil.
         </p>
 
         {!!error && !status && (
@@ -278,27 +194,16 @@ export default function Onboarding() {
           )
         ) : (
           status && (
-            <Step0Form
-              uiLang={uiLang}
-              onUiLang={setUiLang}
-              conversationLang={conversationLang}
-              onConversationLang={setConversationLang}
-              contentLang={contentLang}
-              onContentLang={setContentLang}
-              region={region}
-              onRegion={setRegion}
-              regionExplicit={regionExplicit}
-              onRegionExplicit={setRegionExplicit}
-              timezone={timezone}
-              onTimezone={setTimezone}
-              busy={busy}
-              onSubmit={handleStep0}
-              reconfiguring={reconfigure}
-            />
+            <div className="mt-8 rounded-lg border border-edge bg-surface-raised p-6">
+              <h2 className="font-heading text-h4 text-primary">
+                Paso 1: idioma, región y zona horaria
+              </h2>
+              <LocaleForm onSaved={handleStep0Saved} submitLabel="Continuar" />
+            </div>
           )
         )}
 
-        {status && !reconfigure && (
+        {status && (
           <PendingCards
             remotePending={status.remote_pending}
             worldDone={status.completed_steps.includes("world")}
@@ -306,123 +211,6 @@ export default function Onboarding() {
         )}
       </div>
     </div>
-  );
-}
-
-function Step0Form(props: {
-  uiLang: string;
-  onUiLang: (v: string) => void;
-  conversationLang: string;
-  onConversationLang: (v: string) => void;
-  contentLang: string;
-  onContentLang: (v: string) => void;
-  region: string;
-  onRegion: (v: string) => void;
-  regionExplicit: boolean;
-  onRegionExplicit: (v: boolean) => void;
-  timezone: string;
-  onTimezone: (v: string) => void;
-  busy: boolean;
-  onSubmit: (e: FormEvent) => void;
-  reconfiguring?: boolean;
-}) {
-  return (
-    <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-edge bg-surface-raised p-6">
-      <h2 className="font-heading text-h4 text-primary">
-        {props.reconfiguring ? "Idioma, región y zona horaria" : "Paso 1: idioma, región y zona horaria"}
-      </h2>
-      <p className="mt-1 text-small text-muted">
-        Cada lenguaje se configura de forma independiente; la región solo
-        sugiere valores y nunca se aplica en silencio.
-      </p>
-
-      <div className="mt-5 grid gap-4">
-        <label htmlFor="onboarding-ui-lang" className="flex flex-col gap-1 text-small text-primary">
-          Idioma de la interfaz
-          <select
-            id="onboarding-ui-lang"
-            value={props.uiLang}
-            onChange={(e) => props.onUiLang(e.target.value)}
-            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
-          >
-            {LANGUAGE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </label>
-
-        <label htmlFor="onboarding-conversation-lang" className="flex flex-col gap-1 text-small text-primary">
-          Idioma de conversación (asistente)
-          <select
-            id="onboarding-conversation-lang"
-            value={props.conversationLang}
-            onChange={(e) => props.onConversationLang(e.target.value)}
-            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
-          >
-            {LANGUAGE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </label>
-
-        <label htmlFor="onboarding-content-lang" className="flex flex-col gap-1 text-small text-primary">
-          Idioma de contenido (prosa del mundo)
-          <select
-            id="onboarding-content-lang"
-            value={props.contentLang}
-            onChange={(e) => props.onContentLang(e.target.value)}
-            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
-          >
-            {LANGUAGE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </select>
-        </label>
-
-        <label htmlFor="onboarding-region" className="flex flex-col gap-1 text-small text-primary">
-          Región (opcional; sugiere valores, nunca impone dialecto)
-          <input
-            id="onboarding-region"
-            value={props.region}
-            onChange={(e) => props.onRegion(e.target.value)}
-            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
-            placeholder="AR, MX, US…"
-          />
-        </label>
-
-        <label className="flex items-center gap-2 text-small text-primary">
-          <input
-            type="checkbox"
-            checked={props.regionExplicit}
-            onChange={(e) => props.onRegionExplicit(e.target.checked)}
-            className="h-4 w-4"
-          />
-          Confirmo la región de forma explícita (override)
-        </label>
-
-        <label htmlFor="onboarding-timezone" className="flex flex-col gap-1 text-small text-primary">
-          Zona horaria (identificador IANA; los timestamps se guardan en UTC)
-          <input
-            id="onboarding-timezone"
-            list="onboarding-timezones"
-            value={props.timezone}
-            onChange={(e) => props.onTimezone(e.target.value)}
-            className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
-          />
-          <datalist id="onboarding-timezones">
-            {COMMON_TIMEZONES.map((tz) => (
-              <option key={tz} value={tz} />
-            ))}
-          </datalist>
-        </label>
-      </div>
-
-      <div className="mt-6 flex items-center justify-end">
-        <Button type="submit" disabled={props.busy}>
-          {props.busy ? "Guardando…" : props.reconfiguring ? "Guardar" : "Continuar"}
-        </Button>
-      </div>
-    </form>
   );
 }
 
