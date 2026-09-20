@@ -115,6 +115,24 @@ class _WatchdogObserver:
         self._observer.join(timeout=2.0)
 
 
+#: The watchdog event types that mean "durable bytes changed". The read-only
+#: types (``opened``/``closed``/``closed_no_write``, and ``accessed`` where the
+#: backend emits it) are deliberately ABSENT: inotify delivers them for pure
+#: READS, and this engine READS every admitted file on each run — counting them
+#: would let each run schedule the next one (a self-sustaining snapshot loop on
+#: Linux; Windows never reports opens, which is why it went unseen there).
+DURABLE_EVENT_TYPES = frozenset({"created", "modified", "deleted", "moved"})
+
+
+def is_durable_event(event_type: str) -> bool:
+    """Whether a watchdog ``event_type`` means the tree actually changed.
+
+    Only a real mutation may schedule a backup (REQ-BE-6): a read-only event is
+    ignored so a run's own reads never feed the next run.
+    """
+    return event_type in DURABLE_EVENT_TYPES
+
+
 def default_observer_factory(
     data_root: Path, on_change: Callable[[str], None]
 ) -> DataRootObserver:
@@ -137,6 +155,11 @@ def default_observer_factory(
         """Translate one watchdog event into a change callback, per exclusion rule."""
 
         def on_any_event(self, event: Any) -> None:
+            # Ignore read-only events BEFORE any path work: a backup run reads
+            # the whole tree, so signalling on its own reads would schedule the
+            # next run and loop forever.
+            if not is_durable_event(str(getattr(event, "event_type", ""))):
+                return
             raw = getattr(event, "dest_path", None) or getattr(event, "src_path", "")
             if not raw:
                 return
