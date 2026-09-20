@@ -88,7 +88,8 @@ class SubtreeRule:
 TOP_LEVEL_RULES: tuple[SubtreeRule, ...] = (
     SubtreeRule(member="ideas", subtree="ideas/*"),
     SubtreeRule(member="mundos", subtree="mundos/<World>/*"),
-    SubtreeRule(member="skills", subtree="skills/*"),
+    # `skills/` has no row here: it is excluded outright by EXCLUSION_RULES, so
+    # no walk policy is ever consulted for it.
     SubtreeRule(member="plantillas", subtree="plantillas/*"),
     SubtreeRule(member="data", subtree="data/*"),
     SubtreeRule(member="config", subtree="config/* (no secrets)"),
