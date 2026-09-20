@@ -7,6 +7,14 @@ Demiurgos launcher script DETACHED (``subprocess.Popen`` with
 very uvicorn process, so the response MUST flush before the launcher's
 ``stop`` lands; a blocking ``subprocess.run`` would race the self-kill.
 
+The launcher's stderr is redirected to a FILE, never ``subprocess.PIPE``. A
+pipe's read end is owned by this process, and ``restart`` deliberately stops
+the stack — including this API — before starting it again. With a pipe, the
+launcher's first stderr write after that point raises EPIPE and SIGPIPE kills
+it mid-sequence: the API is already stopped and never comes back, so the
+platform is left half down. A file cannot EPIPE, and it doubles as the
+launcher's diagnostic log.
+
 Auth mirrors the sibling routers (``create_ideas_bank_router``): every route
 requires a trusted local principal resolved at call time via
 ``require_principal``; None maps to 401. The production wiring passes
@@ -26,6 +34,7 @@ the request leaves the browser.
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable
@@ -43,22 +52,31 @@ _PEEK_WINDOW_SECONDS = 0.5
 #: stderr excerpt cap for the 500 early-failure report.
 _STDERR_EXCERPT_LIMIT = 2048
 
+#: Default launcher stderr log (see the module docstring for why it is a file
+#: and not a pipe). Kept beside the launcher's own ``/tmp/demiurgos-*.log``
+#: family so every stack log is found in one place.
+_LAUNCHER_LOG = Path(tempfile.gettempdir()) / "demiurgos-launcher.log"
+
 _AUTH_REQUIRED_DETAIL = "Autenticación requerida"
 
 
-def _stderr_excerpt(proc: subprocess.Popen, exit_code: int) -> str:
-    """Read up to 2KB of the launcher's stderr once it has exited.
+def _stderr_excerpt(log_path: Path | None, exit_code: int) -> str:
+    """Read up to 2KB of the launcher's stderr log for an immediate failure.
 
     Only called after ``proc.poll()`` returned a non-None exit code, so the
-    read hits EOF immediately and cannot block the request.
+    launcher has already exited and the log holds whatever it managed to write.
+
+    ``log_path`` is ``None`` when this run could not open its log. Reading the
+    path anyway would report a PREVIOUS run's stderr as this run's failure, so
+    an unavailable log reports no output instead of someone else's output.
     """
     excerpt = ""
-    try:
-        if proc.stderr is not None:
-            raw = proc.stderr.read(_STDERR_EXCERPT_LIMIT)
-            excerpt = raw.decode("utf-8", errors="replace").strip()
-    except OSError:  # pragma: no cover - defensive; the fd is already closed
-        excerpt = ""
+    if log_path is not None:
+        try:
+            raw = log_path.read_bytes()
+            excerpt = raw[-_STDERR_EXCERPT_LIMIT:].decode("utf-8", errors="replace").strip()
+        except OSError:  # pragma: no cover - defensive; the log may be absent
+            excerpt = ""
     if excerpt:
         return f"script exited with code {exit_code}: {excerpt}"
     return f"script exited with code {exit_code} (no stderr output)"
@@ -67,6 +85,7 @@ def _stderr_excerpt(proc: subprocess.Popen, exit_code: int) -> str:
 def create_system_control_router(
     require_principal: Callable[[Request], Any],
     launcher_path: Path,
+    launcher_log: Path | None = None,
 ) -> APIRouter:
     """Build the /api/system router.
 
@@ -79,8 +98,13 @@ def create_system_control_router(
     ``launcher_path`` is the Demiurgos launcher script. Only the hardcoded
     actions ``restart`` (POST /restart) and ``stop`` (POST /shutdown) are ever
     dispatched — no user input reaches the shell.
+
+    ``launcher_log`` is where the detached launcher's stderr is captured. It
+    MUST NOT be a pipe (see the module docstring); the default is
+    ``_LAUNCHER_LOG``.
     """
     router = APIRouter(prefix="/api/system", tags=["system-control"])
+    log_path = Path(launcher_log) if launcher_log is not None else _LAUNCHER_LOG
 
     def _guard(request: Request) -> None:
         if require_principal(request) is None:
@@ -90,12 +114,22 @@ def create_system_control_router(
         # Detached dispatch: the launcher outlives this request. The server
         # answers BEFORE the launcher stops/restarts the stack (shutdown kills
         # this very process), so subprocess.run is never an option here.
+        #
+        # stderr is a FILE, never a PIPE: the launcher keeps writing after this
+        # process is gone, and a pipe whose reader died would kill it with
+        # SIGPIPE mid-sequence (see the module docstring).
+        try:
+            stderr_target = open(log_path, "wb")
+        except OSError:
+            # Losing the early-failure excerpt must never block the operation.
+            stderr_target = None
+
         try:
             proc = subprocess.Popen(
                 [str(launcher_path), launcher_arg],
                 start_new_session=True,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stderr=stderr_target if stderr_target is not None else subprocess.DEVNULL,
             )
         except OSError as exc:
             # The spawn itself failed (bad path, permission denied): surface it
@@ -105,6 +139,11 @@ def create_system_control_router(
                 "accepted": False,
                 "error": f"failed to spawn launcher: {exc}",
             })
+        finally:
+            # The child holds its own descriptor: closing ours keeps this
+            # process free of a leaked fd and never affects the launcher.
+            if stderr_target is not None:
+                stderr_target.close()
 
         # Non-blocking early-failure peek: give an instantly-failing launcher
         # (bad path, permission, missing Hermes) a brief window to exit, then
@@ -117,7 +156,9 @@ def create_system_control_router(
             return JSONResponse(status_code=500, content={
                 "action": api_action,
                 "accepted": False,
-                "error": _stderr_excerpt(proc, exit_code),
+                "error": _stderr_excerpt(
+                    log_path if stderr_target is not None else None, exit_code
+                ),
             })
         return JSONResponse(status_code=200, content={
             "action": api_action,
