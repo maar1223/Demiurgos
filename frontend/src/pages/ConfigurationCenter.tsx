@@ -5,13 +5,12 @@ import type { CardState, ReadinessSnapshot } from "@/api/types";
  *
  * The standalone `/centro-configuracion` page no longer exists
  * (nav-restructure decision): the configuration surface lives inside the
- * Profile (`/perfil` → "Preferencias", which hosts the essential readiness
- * summary, the inline locale form — REQ-PIA-12 — and the offline card; the
- * legacy-folder migration lives under "Mundos" and the idea-capture
- * wizard — the single Telegram surface — under "Conexiones"). This module
- * stays as the single shared exporter of the card definitions, the honest
- * state helpers and the panel that was exclusive to the standalone page, so
- * the Profile sections and this module never drift.
+ * Profile (`/perfil` → "Preferencias", which hosts the inline locale form —
+ * REQ-PIA-12 — and the offline card; the legacy-folder migration lives under
+ * "Mundos" and the idea-capture wizard — the single Telegram surface — under
+ * "Conexiones"). This module stays as the single shared exporter of the card
+ * definitions, the honest state helpers and the panel that was exclusive to
+ * the standalone page, so the Profile sections and this module never drift.
  */
 
 /** Panel relocated from the standalone page (ONB-4.3, WU-4c2). */
@@ -53,7 +52,9 @@ export const STATE_META: Record<CardState, { label: string; badge: "default" | "
  */
 export const DEFERRED_CARD_KEYS: ReadonlySet<string> = new Set(["import"]);
 
-/** Essential local readiness badges (OC11/OC21): World + local editor. */
+/** Essential local readiness badges (OC11/OC21): World + local editor.
+ *  No longer rendered by the Profile Preferencias surface (product-owner
+ *  decision): kept exported for the shared contract tests. */
 export const ESSENTIAL_BADGES: { key: string; title: string }[] = [
   { key: "world", title: "Mundos" },
   { key: "editor", title: "Editor local" },
@@ -122,7 +123,11 @@ export function cardLabel(key: string, state: CardState): string {
   return STATE_META[state].label;
 }
 
-/** Essential World + editor badge truth (OC11/OC21), shared with Profile. */
+/**
+ * Essential World + editor badge truth (OC11/OC21). Retained as the shared
+ * contract helper; the Profile Preferencias surface no longer renders it
+ * (product-owner decision), so only the contract tests exercise it today.
+ */
 export function essentialBadgeFor(
   readiness: ReadinessSnapshot | null,
   cards: Record<string, CardState>,

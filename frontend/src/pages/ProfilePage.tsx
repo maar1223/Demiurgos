@@ -47,13 +47,11 @@ import type {
 } from "@/api/types";
 import {
   CARD_DEFS,
-  ESSENTIAL_BADGES,
   MigrationPanel,
   REMOTE_LABELS,
   STATE_META,
   cardLabel,
   cardState,
-  essentialBadgeFor,
 } from "@/pages/ConfigurationCenter";
 import { getErrorMessage } from "@/lib/utils";
 
@@ -1087,36 +1085,6 @@ function ConfigurationSection() {
 
   return (
     <div className="space-y-4" aria-live="polite">
-      {/* Essential local readiness (OC11/OC21) — the tab's intro block. */}
-      <section
-        aria-labelledby="config-readiness-title"
-        className="rounded-lg border border-edge bg-surface-raised p-4"
-      >
-        <div className="flex items-center justify-between gap-3">
-          <h3
-            id="config-readiness-title"
-            className="font-heading text-body text-primary"
-          >
-            Listo para trabajar
-          </h3>
-        </div>
-        <p className="mt-1 text-small text-muted">
-          Capacidades esenciales locales: Mundo y editor local.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-3">
-          {ESSENTIAL_BADGES.map((badge) => {
-            const meta = essentialBadgeFor(readiness, cards, badge.key);
-            return (
-              <span key={badge.key} className="flex items-center gap-2">
-                <span className="text-small text-muted">{badge.title}:</span>
-                <Badge variant={meta.badge}>{meta.label}</Badge>
-                <span className="sr-only">Estado: {meta.label}</span>
-              </span>
-            );
-          })}
-        </div>
-      </section>
-
       {/* Inline locale form (REQ-PIA-12) — the extracted Onboarding step-0
           form rendered directly in Preferencias, so the old `?step=step0`
           reconfigure handoff has no path left. Saving refreshes the badge

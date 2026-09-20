@@ -224,12 +224,10 @@ describe("ProfilePage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Preferencias" }));
 
-    // Readiness summary + the inline locale form + the kept offline card render.
+    // The inline locale form + the kept offline card render; the redundant
+    // readiness intro ("Listo para trabajar") is gone (product-owner decision).
     expect(
-      await screen.findByRole("heading", { name: "Listo para trabajar" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Idioma, región y zona horaria" }),
+      await screen.findByRole("heading", { name: "Idioma, región y zona horaria" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Offline / dispositivo" }),
@@ -284,6 +282,41 @@ describe("ProfilePage", () => {
     expect(
       screen.queryByRole("button", { name: "Configurar respaldo" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("drops the redundant readiness block from Preferencias while keeping the locale form and offline card", async () => {
+    (getReadiness as Mock).mockResolvedValue({
+      local_editor: { probe: "local_editor", ok: true, detail: "ok" },
+      cards: { locale: "configured", offline: "configured" },
+      offline: { local_ready: true, remote_pending: [] },
+      legacy: [],
+    });
+
+    render(
+      <MemoryRouter initialEntries={["/perfil?tab=preferencias"]}>
+        <ProfilePage />
+      </MemoryRouter>,
+    );
+
+    // Non-vacuous: the locale form and the offline card must be present, so
+    // the absence assertions below cannot pass on an empty Preferencias panel.
+    expect(
+      await screen.findByRole("heading", { name: "Idioma, región y zona horaria" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Offline / dispositivo" }),
+    ).toBeInTheDocument();
+
+    // The old Centro de Configuración intro block is gone. Under the
+    // pre-change code these assertions fail: the "Listo para trabajar" h3,
+    // its paragraph and the ESSENTIAL_BADGES row all rendered here.
+    expect(
+      screen.queryByRole("heading", { name: "Listo para trabajar" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Capacidades esenciales locales: Mundo y editor local."),
+    ).not.toBeInTheDocument();
+    expect(document.getElementById("config-readiness-title")).toBeNull();
   });
 
   it("renders the locale form inline in Preferencias (REQ-PIA-12)", async () => {
