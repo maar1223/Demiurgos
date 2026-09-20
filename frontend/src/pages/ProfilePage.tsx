@@ -19,6 +19,10 @@ import { renameWorld } from "@/api/worlds";
 import { clearCurrentWorld, getCurrentWorld, setCurrentWorld } from "@/lib/currentWorld";
 import { WorldTrashPanel } from "@/components/organisms/WorldTrashPanel";
 import { SecretInput } from "@/components/molecules/SecretInput";
+import {
+  ConnectionsPanel,
+  type ConnectionStatusSummary,
+} from "@/components/molecules/ConnectionsPanel";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { getReadiness } from "@/api/onboarding";
 import {
@@ -1013,26 +1017,67 @@ function ReauthIntervalForm({
 }
 
 /**
- * Perfil → Conexiones — the two external-connection surfaces. The Telegram
- * idea-capture wizard (the single Telegram surface) keeps its embedded
- * behavior intact (CON-PIA-05); the Wiki assistant panel brings its own
- * "Asistente del Wiki" `h3`, so this section adds no duplicate heading for it.
+ * Perfil → Conexiones — the two external-connection surfaces presented as ONE
+ * card family: a two-row index (assistant first, Telegram second) drives a
+ * single detail region. Both bodies stay mounted and the inactive one is
+ * `hidden`, so each wizard keeps its step state and its status reads stay
+ * warm. The section no longer owns a "Captura de ideas" heading or the
+ * Hermes / Telegram intro paragraph: both moved into the shared card header
+ * and subtitle (CON-PIA-05 keeps the embedded behavior intact).
  */
 function ConexionesSection() {
   const auth = useAuthSession(true);
+  // Assistant first and active by default: it is the reachable-from-scroll-top
+  // surface, while the idea-capture wizard keeps its step state mounted.
+  const [activeConnection, setActiveConnection] = useState("assistant");
+  const [assistantStatus, setAssistantStatus] =
+    useState<ConnectionStatusSummary | null>(null);
+  const [telegramStatus, setTelegramStatus] =
+    useState<ConnectionStatusSummary | null>(null);
+
+  // Status callbacks are stable and dedupe by label/variant. A child that
+  // reports a fresh object every render must not loop the parent, so the
+  // setter only stores when the summary actually changed.
+  const handleAssistantStatus = useCallback((next: ConnectionStatusSummary) => {
+    setAssistantStatus((prev) =>
+      prev?.label === next.label && prev?.variant === next.variant ? prev : next,
+    );
+  }, []);
+  const handleTelegramStatus = useCallback((next: ConnectionStatusSummary) => {
+    setTelegramStatus((prev) =>
+      prev?.label === next.label && prev?.variant === next.variant ? prev : next,
+    );
+  }, []);
+
   return (
-    <div className="space-y-6">
-      <section>
-        <h3 className="font-heading text-body text-primary">Captura de ideas</h3>
-        <p className="mt-1 text-small text-muted">
-          Hermes / Telegram — ingreso de ideas nativo desde el bot.
-        </p>
-        <div className="mt-4">
-          <IdeaCapturePanel auth={auth} />
-        </div>
-      </section>
-      <AssistantSettingsPanel auth={auth} />
-    </div>
+    <ConnectionsPanel
+      connections={[
+        {
+          id: "assistant",
+          icon: "demiurgos",
+          title: "Asistente del Wiki",
+          subtitle:
+            "Configuración provider-neutral. Las claves solo se envían al backend autenticado.",
+          status: assistantStatus ?? undefined,
+          body: (
+            <AssistantSettingsPanel
+              auth={auth}
+              onStatus={handleAssistantStatus}
+            />
+          ),
+        },
+        {
+          id: "telegram",
+          icon: "lightbulb",
+          title: "Captura de ideas",
+          subtitle: "Hermes / Telegram — ingreso de ideas nativo desde el bot.",
+          status: telegramStatus ?? undefined,
+          body: <IdeaCapturePanel auth={auth} onStatus={handleTelegramStatus} />,
+        },
+      ]}
+      activeId={activeConnection}
+      onSelect={setActiveConnection}
+    />
   );
 }
 

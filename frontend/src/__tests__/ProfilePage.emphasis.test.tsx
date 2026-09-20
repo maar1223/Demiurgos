@@ -137,13 +137,31 @@ const SECTIONS = ["Cuenta", "Respaldo", "Preferencias", "Conexiones", "Mundos"] 
 /**
  * Primary actions rendered inside the active section panel. A primary action
  * is a `button` carrying the `Button` primary surface (`bg-action`); the
- * danger treatment (`bg-status-error`) is intentionally not counted here.
+ * danger treatment (`bg-status-error`) is intentionally not counted here. A
+ * hidden subtree (an inactive connection body) is a different view, so it is
+ * excluded: the rule is at most one primary per VISIBLE view.
  */
 function primaryLabels(): string[] {
   const panel = screen.getByRole("tabpanel");
   return Array.from(panel.querySelectorAll("button"))
+    .filter((button) => !button.closest("[hidden]"))
     .filter((button) => button.className.includes("bg-action"))
     .map((button) => (button.textContent ?? "").trim());
+}
+
+/**
+ * Open one connection by its index-row toggle (the `h3` title button, whose
+ * accessible name is exactly the title) and wait until it is expanded.
+ */
+async function openConnection(name: string) {
+  const toggle = screen.getByRole("button", { name });
+  fireEvent.click(toggle);
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    ),
+  );
 }
 
 async function showSection(name: (typeof SECTIONS)[number]) {
@@ -401,22 +419,11 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     await screen.findByRole("tab", { name: "Cuenta" });
     await showSection("Conexiones");
 
-    // --- idea-capture wizard: step 0 (connect) → step 3 (finish)
-    await screen.findByRole("button", { name: "Continuar" });
-    await expectAtMostOnePrimary();
-
-    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
-    await screen.findByRole("heading", { name: "Detectá el chat que recibirá tus ideas" });
-    await expectAtMostOnePrimary();
-
-    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
-    await screen.findByRole("heading", { name: "Revisá tu configuración" });
-    await expectAtMostOnePrimary();
-
-    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
-    await screen.findByRole("heading", { name: "Finalizá y arrancá la captura" });
-    // The idea-capture final commit is the section's only primary.
-    await waitFor(() => expect(primaryLabels()).toEqual(["Guardar configuración"]));
+    // Assistant first and active by default. The hidden idea-capture body is
+    // excluded from the count — the rule is per VISIBLE view.
+    expect(
+      screen.getByRole("button", { name: "Asistente del Wiki" }),
+    ).toHaveAttribute("aria-expanded", "true");
 
     // --- assistant settings wizard: provider → confirmation
     await screen.findByRole("heading", { name: "Proveedor" });
@@ -450,5 +457,57 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
     await screen.findByRole("heading", { name: "Confirmación" });
     await expectAtMostOnePrimary();
+
+    // --- idea-capture wizard: open its row, then step 0 (connect) → step 3
+    await openConnection("Captura de ideas");
+    await screen.findByRole("heading", { name: "Conectá tu bot de Telegram" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await screen.findByRole("heading", { name: "Detectá el chat que recibirá tus ideas" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await screen.findByRole("heading", { name: "Revisá tu configuración" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await screen.findByRole("heading", { name: "Finalizá y arrancá la captura" });
+    // The idea-capture final commit is the visible view's only primary.
+    await waitFor(() => expect(primaryLabels()).toEqual(["Guardar configuración"]));
+  });
+
+  it("renders the two connection rows with one visible body and no second tablist", async () => {
+    renderProfile();
+    await screen.findByRole("tab", { name: "Cuenta" });
+    await showSection("Conexiones");
+
+    const panel = screen.getByRole("tabpanel");
+    // Assistant first, Telegram second — both as `h3` index rows, never tabs.
+    expect(
+      within(panel)
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent),
+    ).toEqual(["Asistente del Wiki", "Captura de ideas"]);
+
+    const assistantToggle = screen.getByRole("button", { name: "Asistente del Wiki" });
+    const telegramToggle = screen.getByRole("button", { name: "Captura de ideas" });
+    expect(assistantToggle).toHaveAttribute("aria-expanded", "true");
+    expect(telegramToggle).toHaveAttribute("aria-expanded", "false");
+
+    // Both bodies stay mounted; exactly one is visible at a time.
+    const bodies = panel.querySelectorAll('[id^="connection-"][id$="-body"]');
+    expect(bodies).toHaveLength(2);
+    expect(Array.from(bodies).filter((body) => !body.hasAttribute("hidden"))).toHaveLength(1);
+    expect(document.getElementById("connection-assistant-body")).not.toHaveAttribute("hidden");
+    expect(document.getElementById("connection-telegram-body")).toHaveAttribute("hidden");
+
+    // The page's section rail still owns the only tablist.
+    expect(screen.getAllByRole("tablist")).toHaveLength(1);
+
+    // Switching connections flips which single body is visible.
+    await openConnection("Captura de ideas");
+    expect(document.getElementById("connection-assistant-body")).toHaveAttribute("hidden");
+    expect(document.getElementById("connection-telegram-body")).not.toHaveAttribute("hidden");
   });
 });

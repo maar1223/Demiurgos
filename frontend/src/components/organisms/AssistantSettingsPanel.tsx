@@ -17,6 +17,7 @@ import type {
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { SecretInput } from "@/components/molecules/SecretInput";
+import type { ConnectionStatusSummary } from "@/components/molecules/ConnectionsPanel";
 import type { AuthSessionController } from "@/components/organisms/IdeaCapturePanel";
 
 type Step = "provider" | "connection" | "models" | "capability" | "confirmation";
@@ -76,7 +77,15 @@ function modelDescription(model: AssistantModelOption | null): string {
   return model.capability === "multimodal" ? "Multimodal" : "Solo texto";
 }
 
-export function AssistantSettingsPanel({ auth }: { auth: AuthSessionController }) {
+export function AssistantSettingsPanel({
+  auth,
+  onStatus,
+}: {
+  auth: AuthSessionController;
+  /** Reports the connection status to the shell. Keyed on the primitive
+   *  `runtime_state` so a fresh object every render cannot loop the parent. */
+  onStatus?: (status: ConnectionStatusSummary) => void;
+}) {
   const navigate = useNavigate();
   const authenticated = auth.status?.authenticated ?? false;
   const [status, setStatus] = useState<AssistantSettingsStatus | null>(null);
@@ -122,19 +131,34 @@ export function AssistantSettingsPanel({ auth }: { auth: AuthSessionController }
     };
   }, [authenticated]);
 
+  // Report the runtime state to the shell as a row badge. Keyed on the
+  // primitive `runtime_state` (never on the `status` object) so the effect
+  // only fires on a real change.
+  const runtimeState = status?.runtime_state;
+  useEffect(() => {
+    if (!onStatus) return;
+    onStatus(
+      runtimeState === "active"
+        ? { label: "Activo", variant: "success" }
+        : runtimeState === "pending-reload"
+          ? { label: "Pendiente de recarga", variant: "warning" }
+          : { label: "No activo", variant: "info" },
+    );
+  }, [onStatus, runtimeState]);
+
   if (auth.isLoading || loading) {
     return <div className="flex items-center gap-2 py-6 text-small text-muted"><Spinner size="sm" /> Cargando configuración…</div>;
   }
   if (auth.error) {
-    return <p className="rounded-lg border border-edge bg-surface-raised p-4 text-small text-muted">No se pudo comprobar la sesión. Verifica la conexión con el servidor e intenta de nuevo.</p>;
+    return <p className="text-small text-muted">No se pudo comprobar la sesión. Verifica la conexión con el servidor e intenta de nuevo.</p>;
   }
   if (auth.status?.enabled && !authenticated) {
     if (auth.status.mode === "local-dev") {
-      return <div className="rounded-lg border border-edge bg-surface-raised p-4"><p className="text-small text-muted">Inicia la sesión local para configurar el asistente.</p><Button className="mt-3" variant="secondary" onClick={() => void auth.start?.()}>Iniciar sesión local</Button></div>;
+      return <div><p className="text-small text-muted">Inicia la sesión local para configurar el asistente.</p><Button className="mt-3" variant="secondary" onClick={() => void auth.start?.()}>Iniciar sesión local</Button></div>;
     }
     // Credentials vault mode: the login surface is the app-level AuthGate.
     return (
-      <div className="rounded-lg border border-edge bg-surface-raised p-4">
+      <div>
         <p className="text-small text-muted">Tu sesión venció. Inicia sesión de nuevo para configurar el asistente.</p>
         <Button className="mt-3" variant="secondary" onClick={() => navigate("/")}>Iniciar sesión</Button>
       </div>
@@ -310,11 +334,9 @@ export function AssistantSettingsPanel({ auth }: { auth: AuthSessionController }
   };
 
   return (
-    <div className="rounded-lg border border-edge bg-surface-raised p-4">
-      <h3 className="font-heading text-body text-primary">Asistente del Wiki</h3>
-      <p className="mt-1 text-small text-muted">Configuración provider-neutral. Las claves solo se envían al backend autenticado.</p>
+    <div>
       {saved ? (
-        <div className="mt-4 rounded-lg border border-status-success/30 bg-status-success/10 p-4" role="status" aria-live="polite">
+        <div className="rounded-lg border border-status-success/30 bg-status-success/10 p-4" role="status" aria-live="polite">
           <h4 className="font-heading text-body text-primary">Configuración guardada</h4>
           <p className="mt-1 text-small text-muted">La configuración se guardó correctamente en el servidor.</p>
           <dl className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -345,7 +367,7 @@ export function AssistantSettingsPanel({ auth }: { auth: AuthSessionController }
         </div>
       ) : (
         <>
-          <div className="mt-4 flex flex-wrap gap-1" aria-label="Pasos de configuración">
+          <div className="flex flex-wrap gap-1" aria-label="Pasos de configuración">
             {steps.map((item) => <Button key={item.id} variant={step === item.id ? "secondary" : "ghost"} size="sm" onClick={() => goTo(item.id)}>{item.label}</Button>)}
           </div>
           <p className="mt-3 text-small text-muted">Estado: <strong>{stateLabel(status.runtime_state)}</strong></p>
