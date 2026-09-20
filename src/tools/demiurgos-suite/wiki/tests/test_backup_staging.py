@@ -40,7 +40,7 @@ from backup.transport.folder import (  # noqa: E402
 TOKEN = "0123456789abcdef0123456789abcdef"
 SNAPSHOT_ID = "2026-09-16T120530Z"
 #: The files the fixture data root holds; directories are implied, not entries.
-STAGED = ("ideas/alpha.md", "skills/seeds/seed.bin", "zzq-unruled/note.md")
+STAGED = ("ideas/alpha.md", "mundos/MyWorld/seed.bin", "zzq-unruled/note.md")
 
 
 def _data_root(tmp_path: Path) -> Path:
@@ -48,8 +48,8 @@ def _data_root(tmp_path: Path) -> Path:
     root = tmp_path / "data-root"
     (root / "ideas").mkdir(parents=True, exist_ok=True)
     (root / "ideas" / "alpha.md").write_bytes(b"alpha\n")
-    (root / "skills" / "seeds").mkdir(parents=True, exist_ok=True)
-    (root / "skills" / "seeds" / "seed.bin").write_bytes(b"\x00\x01\x02")
+    (root / "mundos" / "MyWorld").mkdir(parents=True, exist_ok=True)
+    (root / "mundos" / "MyWorld" / "seed.bin").write_bytes(b"\x00\x01\x02")
     (root / "zzq-unruled").mkdir(exist_ok=True)
     (root / "zzq-unruled" / "note.md").write_text("note", encoding="utf-8")
     (root / "data" / "world-trash").mkdir(parents=True, exist_ok=True)
@@ -77,7 +77,7 @@ def test_staged_set_matches_the_inventory_and_never_rescans(tmp_path: Path) -> N
     assert len(staged.entries) == len(STAGED)
     # A directory is implied by its files, never an entry of its own.
     assert "ideas" not in staged.paths()
-    assert "skills/seeds" not in staged.paths()
+    assert "mundos/MyWorld" not in staged.paths()
     for entry in staged.entries:
         assert entry.source == root / entry.path
 

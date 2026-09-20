@@ -43,7 +43,7 @@ from backup.manifest import (  # noqa: E402
 )
 
 #: The files the fixture root holds, and therefore the staged set.
-STAGED = ("ideas/alpha.md", "skills/seeds/seed.bin", "zzq-unruled/note.md")
+STAGED = ("ideas/alpha.md", "mundos/MyWorld/seed.bin", "zzq-unruled/note.md")
 
 
 def _data_root(tmp_path: Path) -> Path:
@@ -51,8 +51,8 @@ def _data_root(tmp_path: Path) -> Path:
     root = tmp_path / "data-root"
     (root / "ideas").mkdir(parents=True, exist_ok=True)
     (root / "ideas" / "alpha.md").write_bytes(b"alpha\n")
-    (root / "skills" / "seeds").mkdir(parents=True, exist_ok=True)
-    (root / "skills" / "seeds" / "seed.bin").write_bytes(b"\x00\x01\x02")
+    (root / "mundos" / "MyWorld").mkdir(parents=True, exist_ok=True)
+    (root / "mundos" / "MyWorld" / "seed.bin").write_bytes(b"\x00\x01\x02")
     (root / "zzq-unruled").mkdir(exist_ok=True)
     (root / "zzq-unruled" / "note.md").write_text("note", encoding="utf-8")
     (root / "data" / "world-trash").mkdir(parents=True, exist_ok=True)
@@ -134,7 +134,7 @@ def test_build_reflects_the_inventory_and_never_rescans(tmp_path: Path) -> None:
     assert {record.kind for record in manifest.findings} == {
         "unclassified_top_level"
     }
-    assert {record.name for record in manifest.top_level} >= {"ideas", "skills"}
+    assert {record.name for record in manifest.top_level} >= {"ideas", "mundos"}
 
 
 def test_verify_accepts_an_intact_tree(tmp_path: Path) -> None:
