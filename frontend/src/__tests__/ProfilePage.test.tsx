@@ -224,12 +224,9 @@ describe("ProfilePage", () => {
 
     fireEvent.click(screen.getByRole("tab", { name: "Preferencias" }));
 
-    // Readiness summary + the inline locale form + the two kept cards render.
+    // Readiness summary + the inline locale form + the kept offline card render.
     expect(
       await screen.findByRole("heading", { name: "Listo para trabajar" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("heading", { name: "Respaldo y restauración" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Idioma, región y zona horaria" }),
@@ -253,7 +250,7 @@ describe("ProfilePage", () => {
     }
   });
 
-  it("renders the backup card's declared action and navigates it to the Respaldo section", async () => {
+  it("drops the redundant backup card from Preferencias while keeping the offline card", async () => {
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {
@@ -266,30 +263,27 @@ describe("ProfilePage", () => {
     });
 
     render(
-      <MemoryRouter initialEntries={["/perfil"]}>
+      <MemoryRouter initialEntries={["/perfil?tab=preferencias"]}>
         <ProfilePage />
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "Preferencias" }));
-    await screen.findByRole("heading", { name: "Respaldo y restauración" });
+    // The offline card is still the kept configuration card in Preferencias.
+    expect(
+      await screen.findByRole("heading", { name: "Offline / dispositivo" }),
+    ).toBeInTheDocument();
 
-    // WU-15's declared action used to be dropped for every key except locale;
-    // the backup entry point must render as a real, clickable control.
-    const action = screen.getByRole("button", { name: "Configurar respaldo" });
-    expect(action).toBeInTheDocument();
-
-    // REQ-PIA-10: the backup card targets the Respaldo section, so the click
-    // navigates there (the in-page scroll only applies to the exact location
-    // already shown, e.g. the locale card on Preferencias).
-    fireEvent.click(action);
-    await waitFor(() =>
-      expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveAttribute(
-        "aria-selected",
-        "true",
-      ),
-    );
-    expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Respaldo");
+    // The redundant backup card is gone (product-owner decision): it merely
+    // navigated to the Respaldo section — which already has its own rail entry
+    // — and its only remaining value, the status badge, was declared
+    // unnecessary. Under the previous keepCards allowlist (`["backup",
+    // "offline"]`) the assertion below fails: the card rendered here.
+    expect(
+      screen.queryByRole("heading", { name: "Respaldo y restauración" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Configurar respaldo" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the locale form inline in Preferencias (REQ-PIA-12)", async () => {
@@ -342,8 +336,8 @@ describe("ProfilePage", () => {
     expect(
       await screen.findByRole("heading", { name: "Estado del respaldo" }),
     ).toBeInTheDocument();
-    // The configuration hub's backup card (Preferencias) is NOT duplicated
-    // here — each surface renders exactly once (REQ-PIA-02).
+    // The backup surface renders exactly once: BackupSection owns it here, and
+    // the removed Preferencias card no longer duplicates it (REQ-PIA-02).
     expect(
       screen.queryByRole("heading", { name: "Respaldo y restauración" }),
     ).not.toBeInTheDocument();

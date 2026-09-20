@@ -28,13 +28,12 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     vi.clearAllMocks();
   });
 
-  it("exposes the eight OC12 card definitions with honest descriptions", () => {
+  it("exposes the seven OC12 card definitions with honest descriptions", () => {
     const keys = CARD_DEFS.map((card) => card.key);
     expect(keys).toEqual([
       "identity",
       "assistant",
       "telegram",
-      "backup",
       "locale",
       "world",
       "offline",
@@ -49,18 +48,11 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     const importCard = CARD_DEFS.find((card) => card.key === "import");
     expect(importCard?.description).toMatch(/El importador está operativo/i);
 
-    // REQ-PIA-10: every declared card action targets an existing route/section.
-    // The backup card points at the Respaldo section and the locale card at
-    // Preferencias — the `configuracion` tab and the `?step=step0` reconfigure
-    // path no longer exist.
-    const backupCard = CARD_DEFS.find((card) => card.key === "backup");
-    expect(backupCard?.action).toEqual({
-      label: "Configurar respaldo",
-      to: "/perfil?tab=respaldo",
-    });
-    expect(backupCard?.description).toMatch(/carpeta local/i);
-    expect(backupCard?.description).not.toMatch(/rclone/i);
-    expect(backupCard?.description).not.toMatch(/Google Drive/i);
+    // The redundant backup card was removed (product-owner decision): it only
+    // pointed at the Respaldo section, which already has its own rail entry.
+    // The locale card still targets Preferencias — the `configuracion` tab and
+    // the `?step=step0` reconfigure path no longer exist.
+    expect(CARD_DEFS.some((card) => card.key === "backup")).toBe(false);
     const localeCard = CARD_DEFS.find((card) => card.key === "locale");
     expect(localeCard?.action).toEqual({
       label: "Configurar",
@@ -69,9 +61,13 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
   });
 
   it("cardState never overstates deferred capabilities (ONB-3.1/ONB-3.5)", () => {
-    const stale: Record<string, CardState> = Object.fromEntries(
-      CARD_DEFS.map((card) => [card.key, "configured"]),
-    );
+    const stale: Record<string, CardState> = {
+      ...Object.fromEntries(CARD_DEFS.map((card) => [card.key, "configured"])),
+      // `backup` no longer has a card definition, but its readiness contract is
+      // unchanged: it left the forced-pending set, so its dedicated contract
+      // (backup_state) is the authority.
+      backup: "configured",
+    };
     // import lacks a dedicated contract → forced pending.
     for (const key of DEFERRED_CARD_KEYS) {
       expect(cardState(stale, key)).toBe("pending");

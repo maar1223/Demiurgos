@@ -1014,8 +1014,10 @@ function ConexionesSection() {
  * Perfil → Preferencias — the configuration capabilities that have no home
  * elsewhere in the Profile: the inline locale form (REQ-PIA-12) and
  * Offline/dispositivo, plus the essential local readiness summary. The backup
- * card stays here as an honest entry point (badge + action); its action leads
- * to the Respaldo section, where the real backup surface lives (REQ-PIA-02/10).
+ * card was removed (product-owner decision): it only navigated to the Respaldo
+ * section, which already has its own rail entry, and its badge was declared
+ * unnecessary; the real backup surface lives in the Respaldo section
+ * (REQ-PIA-02).
  *
  * The other Configuration Center cards (Identidad, IA texto y visión, Telegram,
  * Mundos, Importar mundo) are intentionally NOT duplicated here — each of those
@@ -1028,7 +1030,6 @@ function ConexionesSection() {
  * and the shared module never drift.
  */
 function ConfigurationSection() {
-  const navigate = useNavigate();
   const [readiness, setReadiness] = useState<ReadinessSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -1049,17 +1050,13 @@ function ConfigurationSection() {
   useEffect(() => load(), []);
 
   /**
-   * Every declared card action is the card's real entry point, so the renderer
-   * below draws `card.action` for ANY card that declares one — never a growing
-   * allowlist of keys. Every kept action targets a location that differs from
-   * the one shown here (the backup card lives on Preferencias and points at
-   * Respaldo), so a card click always navigates (REQ-PIA-10).
+   * Only the offline card is kept here. The redundant backup card was removed
+   * (product-owner decision): it only navigated to the Respaldo section, which
+   * already has its own rail entry, and its sole remaining value — the status
+   * badge — was declared unnecessary. The offline card declares no action, so
+   * this section renders no navigation controls; the locale surface renders as
+   * the inline form below.
    */
-  const runCardAction = (card: (typeof CARD_DEFS)[number]) => {
-    const action = card.action;
-    if (!action) return;
-    navigate(action.to);
-  };
 
   if (loading) {
     return (
@@ -1081,9 +1078,7 @@ function ConfigurationSection() {
   if (!readiness) return null;
 
   const cards = readiness.cards ?? {};
-  const keepCards = CARD_DEFS.filter((card) =>
-    ["backup", "offline"].includes(card.key),
-  );
+  const keepCards = CARD_DEFS.filter((card) => card.key === "offline");
   // The locale surface renders as the inline form below, not as a navigation
   // card, so its readiness state still drives the honest badge (REQ-PIA-12).
   const localeState = cardState(cards, "locale");
@@ -1174,18 +1169,6 @@ function ConfigurationSection() {
               </span>
             </div>
             <p className="mt-1 text-small text-muted">{card.description}</p>
-
-            {card.action && (
-              <div className="mt-3">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => runCardAction(card)}
-                >
-                  {card.action.label}
-                </Button>
-              </div>
-            )}
 
             {card.key === "offline" && (
               <dl className="mt-4 space-y-3 border-t border-edge pt-4">

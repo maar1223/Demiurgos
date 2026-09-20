@@ -6,8 +6,8 @@ import type { CardState, ReadinessSnapshot } from "@/api/types";
  * The standalone `/centro-configuracion` page no longer exists
  * (nav-restructure decision): the configuration surface lives inside the
  * Profile (`/perfil` → "Preferencias", which hosts the essential readiness
- * summary, the inline locale form — REQ-PIA-12 — and the backup/offline
- * cards; the legacy-folder migration lives under "Mundos" and the idea-capture
+ * summary, the inline locale form — REQ-PIA-12 — and the offline card; the
+ * legacy-folder migration lives under "Mundos" and the idea-capture
  * wizard — the single Telegram surface — under "Conexiones"). This module
  * stays as the single shared exporter of the card definitions, the honest
  * state helpers and the panel that was exclusive to the standalone page, so
@@ -83,7 +83,6 @@ export const CARD_DEFS: CardDef[] = [
   { key: "identity", title: "Identidad", description: "Cuenta local: contraseña o palabras claves para recuperación autorizada.", action: { label: "Ir a Perfil", to: "/perfil" } },
   { key: "assistant", title: "IA texto y visión", description: "Modelo principal del Asistente (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
   { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: null },
-  { key: "backup", title: "Respaldo y restauración", description: "Guardá una copia de tus datos en la carpeta local que elijas. Demiurgos escribe los archivos localmente y no afirma ningún envío remoto.", action: { label: "Configurar respaldo", to: "/perfil?tab=respaldo" } },
   { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/perfil?tab=preferencias" } },
   { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },
   { key: "offline", title: "Offline / dispositivo", description: "Núcleo local (editor, ideas, grafo) sin conexión.", action: null },
