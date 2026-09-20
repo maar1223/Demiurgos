@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import ProfilePage from "@/pages/ProfilePage";
 import { getReadiness } from "@/api/onboarding";
@@ -15,6 +15,17 @@ import {
 } from "@/api/assistantSettings";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import type { Mock } from "vitest";
+
+// Mutable so one test can put the Cuenta section in the reachable
+// vault-OFF + local-dev-not-started state without re-mocking the module.
+const localDevMock = vi.hoisted(() => ({
+  current: {
+    mode: "local-dev",
+    enabled: true,
+    authenticated: true,
+    label: "Local development user" as string | null,
+  },
+}));
 
 // REQ-PIA-08 (emphasis rule) — AT MOST one primary action per visible view.
 // The product owner accepted this interpretation: zero is allowed, since a
@@ -96,12 +107,7 @@ vi.mock("@/api/worlds", () => ({
 
 vi.mock("@/hooks/useLocalDevAuth", () => ({
   useLocalDevAuth: () => ({
-    status: {
-      mode: "local-dev",
-      enabled: true,
-      authenticated: true,
-      label: "Local development user",
-    },
+    status: localDevMock.current,
     isLoading: false,
     error: null,
     start: vi.fn(),
@@ -162,6 +168,14 @@ function renderProfile() {
 
 describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
   beforeEach(() => {
+    // Default: an authenticated local-dev session, so `cuenta` renders no
+    // session action. Individual tests may flip this to reach other states.
+    localDevMock.current = {
+      mode: "local-dev",
+      enabled: true,
+      authenticated: true,
+      label: "Local development user",
+    };
     (getReadiness as Mock).mockResolvedValue({
       local_editor: { probe: "local_editor", ok: true, detail: "ok" },
       cards: {},
@@ -317,6 +331,36 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     // recycle-bin Restaurar (secondary) and the migration action (secondary):
     // no page-owned primary exists, and none is invented here.
     await showSection("Mundos");
+    await expectAtMostOnePrimary();
+  });
+
+  it("renders exactly one primary with the vault OFF and the local session not started", async () => {
+    // Reachable state: vault OFF + local-dev enabled but not authenticated.
+    // Starting the local session is the Navbar's job, so the section must not
+    // stack its own "Iniciar sesión local" primary on top of ActivationPanel's.
+    // Fails under the old code, which rendered both primaries here; after the
+    // fix, ActivationPanel owns the section's single primary.
+    localDevMock.current = {
+      mode: "local-dev",
+      enabled: true,
+      authenticated: false,
+      label: null,
+    };
+
+    renderProfile();
+    await screen.findByRole("tab", { name: "Cuenta" });
+    await showSection("Cuenta");
+
+    // The duplicated action is gone — it lives only in the Navbar.
+    expect(
+      within(screen.getByRole("tabpanel")).queryByRole("button", {
+        name: "Iniciar sesión local",
+      }),
+    ).not.toBeInTheDocument();
+    // Exactly one primary remains, owned by the activation flow.
+    await waitFor(() =>
+      expect(primaryLabels()).toEqual(["Crear cuenta y activar"]),
+    );
     await expectAtMostOnePrimary();
   });
 

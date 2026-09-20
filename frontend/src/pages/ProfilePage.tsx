@@ -83,8 +83,8 @@ function isProfileSection(value: string | null): value is ProfileSection {
  * Management lives behind collapsed disclosures because this is a
  * rarely-visited Operate surface: "Gestionar credenciales" shows one segmented
  * form at a time and a de-emphasised "Zona sensible" holds the destructive
- * actions. Logout lives in the Navbar and is intentionally not duplicated here
- * (approved REQ-PIA-09 deviation).
+ * actions. Logout and the local-dev session start both live in the Navbar and
+ * are intentionally not duplicated here (approved REQ-PIA-09 deviation).
  *
  * The recovery-words unlock (REQ-SRW-01..04) is session-scoped: the first
  * successful words-gated action arms the verified words and later actions
@@ -117,10 +117,9 @@ function CuentaSection({
   const [config, setConfig] = useState<VaultConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
-  const [actionLoading, setActionLoading] = useState(false);
-  const [actionError, setActionError] = useState<string | null>(null);
   // Disclosures start collapsed: this is a rarely-visited Operate surface, so
-  // its first read is a compact status summary instead of seven stacked forms.
+  // its first read is a compact status summary instead of the former stack of
+  // forms.
   const [credentialsOpen, setCredentialsOpen] = useState(false);
   const [sensitiveOpen, setSensitiveOpen] = useState(false);
   const [credentialPanel, setCredentialPanel] =
@@ -166,25 +165,6 @@ function CuentaSection({
     vaultStatus?.mode === "credentials"
       ? Boolean(vaultStatus.authenticated)
       : Boolean(localDev.status?.authenticated);
-
-  // Local-dev session action (start the loopback session). Logout moved to the
-  // Navbar profile menu — the section no longer owns duplicate logout controls
-  // (approved REQ-PIA-09 deviation).
-  const handleLocalAction = async () => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await localDev.start();
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error
-          ? cause.message
-          : "No se pudo actualizar la sesión local",
-      );
-    } finally {
-      setActionLoading(false);
-    }
-  };
 
   if (loading) {
     return (
@@ -287,22 +267,10 @@ function CuentaSection({
             </div>
           </dl>
         ) : localDev.status.enabled ? (
-          <>
-            <p className="mt-3 text-small text-muted">
-              Sesión local no iniciada. Iniciala para editar y configurar el
-              perfil.
-            </p>
-            {/* Local-dev has no vault account: starting the loopback session
-                is this section's primary action when none is active yet. */}
-            <Button
-              variant="primary"
-              onClick={() => void handleLocalAction()}
-              disabled={actionLoading}
-              className="mt-3"
-            >
-              {actionLoading ? "Iniciando…" : "Iniciar sesión local"}
-            </Button>
-          </>
+          <p className="mt-3 text-small text-muted">
+            Sesión local no iniciada. Iniciala desde el menú de tu perfil para
+            editar y configurar el perfil.
+          </p>
         ) : (
           <p className="mt-3 text-small text-muted">
             Autenticación local desactivada. Activá{" "}
@@ -310,10 +278,6 @@ function CuentaSection({
             en <code className="text-icon-muted">.env</code> para probar la
             edición.
           </p>
-        )}
-
-        {actionError && (
-          <p className="mt-3 text-small text-status-error">{actionError}</p>
         )}
       </section>
 
