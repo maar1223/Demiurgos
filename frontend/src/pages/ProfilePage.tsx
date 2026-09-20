@@ -28,7 +28,6 @@ import {
   enableVault,
   getAuthStatus,
   getVaultConfig,
-  logoutSession,
   removePassword,
   rotateWords,
   setReauthInterval,
@@ -37,7 +36,6 @@ import { useWorlds } from "@/hooks/useWorlds";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
 import { useRecoveryWordsUnlock } from "@/hooks/useRecoveryWordsUnlock";
 import { useAuthSession } from "@/hooks/useAuthSession";
-import { reloadPage } from "@/lib/reloadPage";
 import type {
   ApiError,
   AuthSessionStatus,
@@ -53,7 +51,7 @@ import {
   cardLabel,
   cardState,
 } from "@/pages/ConfigurationCenter";
-import { getErrorMessage } from "@/lib/utils";
+import { cn, getErrorMessage } from "@/lib/utils";
 
 type ProfileSection =
   | "cuenta"
@@ -77,27 +75,42 @@ function isProfileSection(value: string | null): value is ProfileSection {
 }
 
 /**
- * Perfil → Cuenta — the single account/security surface (REQ-PIA-09), merging
- * the former session panel, credentials Account section and vault
- * management/activation panels into one section. Vault ON and vault OFF are
- * two states of the same surface: the session card is always present
- * (credentials or local-dev branch), and below it the vault card renders
- * either the words-management forms (ON) or the activation forms (OFF).
+ * Perfil → Cuenta — the single account/security surface (REQ-PIA-09). Vault ON
+ * and vault OFF are two states of the same section: a compact status card is
+ * always present, and below it the vault renders either the credentials
+ * management disclosures (ON) or the activation flow (OFF).
+ *
+ * Management lives behind collapsed disclosures because this is a
+ * rarely-visited Operate surface: "Gestionar credenciales" shows one segmented
+ * form at a time and a de-emphasised "Zona sensible" holds the destructive
+ * actions. Logout lives in the Navbar and is intentionally not duplicated here
+ * (approved REQ-PIA-09 deviation).
  *
  * The recovery-words unlock (REQ-SRW-01..04) is session-scoped: the first
  * successful words-gated action arms the verified words and later actions
  * replay them without re-prompting. The words live in page-level memory only
- * (never localStorage/sessionStorage/cookies) and are cleared on logout and
- * on unmount.
+ * (never localStorage/sessionStorage/cookies) and are cleared on unmount; a
+ * logout reloads the page, so they are cleared trivially.
  */
+
+/** The four credentials panels — exactly one visible at a time. */
+type CredentialPanel = "usuario" | "password" | "words" | "reauth";
+
+const CREDENTIAL_PANELS: { id: CredentialPanel; label: string }[] = [
+  { id: "usuario", label: "Usuario" },
+  { id: "password", label: "Contraseña" },
+  { id: "words", label: "Palabras claves" },
+  { id: "reauth", label: "Reingreso" },
+];
+
+const CREDENTIALS_REGION_ID = "cuenta-credentials-region";
+const SENSITIVE_REGION_ID = "cuenta-sensitive-region";
 function CuentaSection({
   unlockedWords,
   onUnlocked,
-  onLock,
 }: {
   unlockedWords: string | null;
   onUnlocked: (words: string) => void;
-  onLock: () => void;
 }) {
   const localDev = useLocalDevAuth(true);
   const [vaultStatus, setVaultStatus] = useState<AuthSessionStatus | null>(null);
@@ -106,6 +119,12 @@ function CuentaSection({
   const [error, setError] = useState<unknown>(null);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Disclosures start collapsed: this is a rarely-visited Operate surface, so
+  // its first read is a compact status summary instead of seven stacked forms.
+  const [credentialsOpen, setCredentialsOpen] = useState(false);
+  const [sensitiveOpen, setSensitiveOpen] = useState(false);
+  const [credentialPanel, setCredentialPanel] =
+    useState<CredentialPanel>("usuario");
 
   // Unified status decides the session-card branch (credentials vs local-dev);
   // on failure the card degrades to the local-dev view — a low-stakes read,
@@ -139,34 +158,23 @@ function CuentaSection({
       ? vaultStatus.days_until_reauth
       : null;
 
-  // Credentials logout clears the unlocked words before the reload (REQ-SRW-03).
-  const handleLogout = async () => {
-    setActionLoading(true);
-    setActionError(null);
-    try {
-      await logoutSession();
-      onLock();
-      reloadPage();
-    } catch (cause) {
-      setActionError(
-        cause instanceof Error ? cause.message : "No se pudo cerrar la sesión",
-      );
-    } finally {
-      setActionLoading(false);
-    }
-  };
+  // The status chip reflects whichever session source is authoritative: the
+  // credentials session when the vault is active, the loopback session
+  // otherwise. `enabled`/`authenticated` from GET /api/auth/session/status are
+  // false in local-dev mode, so the loopback hook supplies that state.
+  const sessionActive =
+    vaultStatus?.mode === "credentials"
+      ? Boolean(vaultStatus.authenticated)
+      : Boolean(localDev.status?.authenticated);
 
-  // Local-dev / disabled session action (start or close the local session).
+  // Local-dev session action (start the loopback session). Logout moved to the
+  // Navbar profile menu — the section no longer owns duplicate logout controls
+  // (approved REQ-PIA-09 deviation).
   const handleLocalAction = async () => {
     setActionLoading(true);
     setActionError(null);
     try {
-      if (localDev.status?.authenticated) {
-        await localDev.logout();
-        onLock();
-      } else {
-        await localDev.start();
-      }
+      await localDev.start();
     } catch (cause) {
       setActionError(
         cause instanceof Error
@@ -196,51 +204,57 @@ function CuentaSection({
 
   return (
     <div className="space-y-4">
+      {/* One status card (absorbs the former Sesión card): the account, the
+          session words lock and the re-auth countdown as compact rows. */}
       <section className="rounded-lg border border-edge bg-surface-raised p-4">
         <div className="flex items-center justify-between gap-3">
           <h3 className="font-heading text-body text-primary">Sesión</h3>
-          <span className="text-small text-muted">
-            {vaultStatus?.mode === "credentials" ? "Credenciales" : "Local"}
-          </span>
+          <Badge variant={sessionActive ? "success" : "default"}>
+            {sessionActive ? "Activa" : "Apagada"}
+          </Badge>
         </div>
 
         {vaultStatus?.mode === "credentials" ? (
           vaultStatus.authenticated ? (
-            <>
-              <p className="mt-3 text-small text-status-success">Sesión activa</p>
-              <p className="mt-1 text-small text-muted">{vaultStatus.label}</p>
-              <p className="mt-1 text-small text-muted">
-                Proveedor: {providerLabel(vaultStatus.provider)}
-              </p>
-
-              {daysUntilReauth !== null && (
-                <div
-                  role="status"
-                  className="mt-3 rounded-lg border border-edge bg-surface/50 p-3"
-                >
-                  <p className="text-small text-primary">
-                    {daysUntilReauth <= 0
-                      ? "Reingreso recomendado: hoy"
-                      : `Reingreso recomendado en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}`}
-                  </p>
-                  <p className="mt-2 text-small text-muted">
-                    Si no reingresas tu contraseña, la sesión de Demiurgos se
-                    cerrará. Y si olvidaste tu contraseña, solo vas a poder
-                    recuperarla con tus palabras claves.
-                  </p>
-                </div>
-              )}
-
-              <div className="mt-4 flex flex-wrap gap-2">
-                <Button
-                  variant="secondary"
-                  onClick={() => void handleLogout()}
-                  disabled={actionLoading}
-                >
-                  {actionLoading ? "Cerrando…" : "Cerrar sesión"}
-                </Button>
+            <dl className="mt-2 text-small">
+              <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
+                <dt className="text-muted">Cuenta</dt>
+                <dd className="text-right">
+                  <span className="block text-primary">
+                    {config.username ?? "—"}
+                  </span>
+                  <span className="block text-muted">
+                    {config.has_password ? "contraseña definida" : "sin contraseña"}
+                  </span>
+                  {config.env_override && (
+                    <span className="block text-muted">
+                      Forzada por{" "}
+                      <code className="text-icon-muted">DEMIURGOS_AUTH_MODE</code>
+                    </span>
+                  )}
+                </dd>
               </div>
-            </>
+              <div className="flex items-center justify-between gap-3 border-t border-edge py-2">
+                <dt className="text-muted">Palabras claves</dt>
+                <dd>
+                  <Badge variant={unlockedWords !== null ? "success" : "default"}>
+                    {unlockedWords !== null
+                      ? "Desbloqueadas esta sesión"
+                      : "Bloqueadas"}
+                  </Badge>
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
+                <dt className="text-muted">Reingreso</dt>
+                <dd className="text-primary">
+                  {daysUntilReauth !== null
+                    ? daysUntilReauth <= 0
+                      ? "hoy"
+                      : `en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}`
+                    : "—"}
+                </dd>
+              </div>
+            </dl>
           ) : (
             <p className="mt-3 text-small text-muted">
               No hay una sesión de cuenta activa. Iniciá sesión para editar y
@@ -253,51 +267,49 @@ function CuentaSection({
           </div>
         ) : localDev.error ? (
           <p className="text-small text-status-error">{localDev.error.message}</p>
-        ) : !localDev.status ? null : (
+        ) : !localDev.status ? null : localDev.status.authenticated ? (
+          <dl className="mt-2 text-small">
+            <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
+              <dt className="text-muted">Cuenta</dt>
+              <dd className="text-right text-primary">
+                {localDev.status.label ?? "Sesión local"}
+              </dd>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-edge py-2">
+              <dt className="text-muted">Palabras claves</dt>
+              <dd>
+                <Badge variant={unlockedWords !== null ? "success" : "default"}>
+                  {unlockedWords !== null
+                    ? "Desbloqueadas esta sesión"
+                    : "Bloqueadas"}
+                </Badge>
+              </dd>
+            </div>
+          </dl>
+        ) : localDev.status.enabled ? (
           <>
-            {localDev.status.authenticated && (
-              <>
-                <p className="mt-3 text-small text-status-success">
-                  Sesión local activa
-                </p>
-                <p className="mt-1 text-small text-muted">{localDev.status.label}</p>
-                <Button
-                  variant="secondary"
-                  onClick={() => void handleLocalAction()}
-                  disabled={actionLoading}
-                  className="mt-3"
-                >
-                  {actionLoading ? "Cerrando…" : "Cerrar sesión local"}
-                </Button>
-              </>
-            )}
-
-            {!localDev.status.authenticated && localDev.status.enabled && (
-              <>
-                <p className="mt-3 text-small text-muted">
-                  Sesión local no iniciada. Iniciala para editar y configurar el
-                  perfil.
-                </p>
-                <Button
-                  variant="primary"
-                  onClick={() => void handleLocalAction()}
-                  disabled={actionLoading}
-                  className="mt-3"
-                >
-                  {actionLoading ? "Iniciando…" : "Iniciar sesión local"}
-                </Button>
-              </>
-            )}
-
-            {!localDev.status.enabled && (
-              <p className="mt-3 text-small text-muted">
-                Autenticación local desactivada. Activá{" "}
-                <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=local-dev</code>{" "}
-                en <code className="text-icon-muted">.env</code> para probar la
-                edición.
-              </p>
-            )}
+            <p className="mt-3 text-small text-muted">
+              Sesión local no iniciada. Iniciala para editar y configurar el
+              perfil.
+            </p>
+            {/* Local-dev has no vault account: starting the loopback session
+                is this section's primary action when none is active yet. */}
+            <Button
+              variant="primary"
+              onClick={() => void handleLocalAction()}
+              disabled={actionLoading}
+              className="mt-3"
+            >
+              {actionLoading ? "Iniciando…" : "Iniciar sesión local"}
+            </Button>
           </>
+        ) : (
+          <p className="mt-3 text-small text-muted">
+            Autenticación local desactivada. Activá{" "}
+            <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=local-dev</code>{" "}
+            en <code className="text-icon-muted">.env</code> para probar la
+            edición.
+          </p>
         )}
 
         {actionError && (
@@ -306,93 +318,177 @@ function CuentaSection({
       </section>
 
       {config.enabled ? (
-        <section className="rounded-lg border border-edge bg-surface-raised p-4">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="font-heading text-body text-primary">
-              Seguridad / Bóveda
+        <>
+          <section className="rounded-lg border border-edge bg-surface-raised">
+            <h3>
+              <button
+                type="button"
+                aria-expanded={credentialsOpen}
+                aria-controls={CREDENTIALS_REGION_ID}
+                onClick={() => setCredentialsOpen((open) => !open)}
+                className="flex w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-icon-muted/50"
+              >
+                <span className="font-heading text-body text-primary">
+                  Gestionar credenciales
+                </span>
+                <Icon
+                  name={credentialsOpen ? "chevron-down" : "chevron-right"}
+                  size={16}
+                  className="text-icon-muted"
+                />
+              </button>
             </h3>
-            <span className="text-small text-muted">Activa</span>
-          </div>
-          <p className="mt-1 text-small text-muted">
-            Cuenta: <span className="text-primary">{config.username ?? "—"}</span>
-            {config.has_password ? " · contraseña definida" : " · sin contraseña"}
-            {config.env_override && (
-              <span className="text-muted">
-                {" "}
-                · forzada por{" "}
-                <code className="text-icon-muted">DEMIURGOS_AUTH_MODE</code>
-              </span>
-            )}
-          </p>
+            <div
+              id={CREDENTIALS_REGION_ID}
+              hidden={!credentialsOpen}
+              className="px-4 pb-4"
+            >
+              <p className="text-small text-muted">
+                Tus palabras claves son la llave de propiedad de la cuenta: la
+                primera acción que las pida las desbloquea para esta sesión y se
+                recuerdan hasta cerrar sesión, sin guardarse en el navegador.
+              </p>
 
-          <div className="mt-4 space-y-4">
-            <WordsUnlockBanner unlocked={unlockedWords !== null} />
+              <div
+                role="group"
+                aria-label="Gestión de credenciales"
+                className="mt-3 flex flex-wrap gap-2"
+              >
+                {CREDENTIAL_PANELS.map((panel) => {
+                  const active = credentialPanel === panel.id;
+                  return (
+                    <button
+                      key={panel.id}
+                      type="button"
+                      aria-pressed={active}
+                      onClick={() => setCredentialPanel(panel.id)}
+                      className={cn(
+                        "rounded-full border px-3 py-1 text-small transition-colors",
+                        active
+                          ? "border-icon-muted bg-surface-hover text-primary"
+                          : "border-edge text-muted hover:text-primary",
+                      )}
+                    >
+                      {panel.label}
+                    </button>
+                  );
+                })}
+              </div>
 
-            <WordsForm
-              title="Cambiar usuario"
-              description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
-              extraLabel="Nuevo usuario"
-              extraPlaceholder="nuevo-usuario"
-              submitLabel="Cambiar usuario"
-              busyLabel="Cambiando…"
-              unlockedWords={unlockedWords}
-              onSubmit={async (words, newUsername) => {
-                await changeUsername(words, newUsername);
-                onUnlocked(words);
-                load();
-              }}
-            />
+              <div className="mt-4">
+                {credentialPanel === "usuario" && (
+                  <WordsForm
+                    title="Cambiar usuario"
+                    description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
+                    extraLabel="Nuevo usuario"
+                    extraPlaceholder="nuevo-usuario"
+                    submitLabel="Cambiar usuario"
+                    busyLabel="Cambiando…"
+                    unlockedWords={unlockedWords}
+                    onSubmit={async (words, newUsername) => {
+                      await changeUsername(words, newUsername);
+                      onUnlocked(words);
+                      load();
+                    }}
+                  />
+                )}
 
-            <WordsForm
-              title="Cambiar contraseña"
-              description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
-              extraLabel="Nueva contraseña"
-              extraType="password"
-              extraPlaceholder="Nueva contraseña"
-              extraRequired
-              submitLabel="Cambiar contraseña"
-              busyLabel="Cambiando…"
-              unlockedWords={unlockedWords}
-              onSubmit={async (words, newPassword) => {
-                await changePassword(words, newPassword);
-                onUnlocked(words);
-                load();
-              }}
-            />
+                {credentialPanel === "password" && (
+                  <WordsForm
+                    title="Cambiar contraseña"
+                    description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
+                    extraLabel="Nueva contraseña"
+                    extraType="password"
+                    extraPlaceholder="Nueva contraseña"
+                    extraRequired
+                    submitLabel="Cambiar contraseña"
+                    busyLabel="Cambiando…"
+                    unlockedWords={unlockedWords}
+                    onSubmit={async (words, newPassword) => {
+                      await changePassword(words, newPassword);
+                      onUnlocked(words);
+                      load();
+                    }}
+                  />
+                )}
 
-            <WordsForm
-              title="Retirar contraseña"
-              description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
-              submitLabel="Retirar contraseña"
-              busyLabel="Retirando…"
-              confirmLabel="¿Confirmás el retiro?"
-              unlockedWords={unlockedWords}
-              onSubmit={async (words) => {
-                await removePassword(words);
-                onUnlocked(words);
-                load();
-              }}
-            />
+                {credentialPanel === "words" && <RotateWordsCard />}
 
-            <RotateWordsCard />
+                {credentialPanel === "reauth" && (
+                  <>
+                    <ReauthIntervalForm config={config} onSaved={load} />
+                    {daysUntilReauth !== null && (
+                      <p className="mt-3 text-small text-muted">
+                        {daysUntilReauth <= 0
+                          ? "Reingreso recomendado: hoy."
+                          : `Reingreso recomendado en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}.`}{" "}
+                        Si no reingresas tu contraseña, la sesión de Demiurgos se
+                        cerrará. Y si olvidaste tu contraseña, solo vas a poder
+                        recuperarla con tus palabras claves.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
 
-            <ReauthIntervalForm config={config} onSaved={load} />
-
-            <WordsForm
-              title="Desactivar bóveda"
-              description="Apagar la bóveda quita la autenticación de la instalación. Lo confirmás con tus palabras claves."
-              submitLabel="Desactivar bóveda"
-              busyLabel="Desactivando…"
-              confirmLabel="¿Confirmás la desactivación?"
-              unlockedWords={unlockedWords}
-              onSubmit={async (words) => {
-                await disableVault(words);
-                onUnlocked(words);
-                load();
-              }}
-            />
-          </div>
-        </section>
+          <section className="rounded-lg border border-edge/70 bg-surface-raised/60">
+            <h3>
+              <button
+                type="button"
+                aria-expanded={sensitiveOpen}
+                aria-controls={SENSITIVE_REGION_ID}
+                onClick={() => setSensitiveOpen((open) => !open)}
+                className="flex w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-icon-muted/50"
+              >
+                <span className="font-heading text-body text-muted">
+                  Zona sensible
+                </span>
+                <Icon
+                  name={sensitiveOpen ? "chevron-down" : "chevron-right"}
+                  size={16}
+                  className="text-icon-muted"
+                />
+              </button>
+            </h3>
+            <div
+              id={SENSITIVE_REGION_ID}
+              hidden={!sensitiveOpen}
+              className="space-y-4 px-4 pb-4"
+            >
+              <p className="text-small text-muted">
+                Acciones que cambian el acceso a tu cuenta.
+              </p>
+              <WordsForm
+                title="Retirar contraseña"
+                description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
+                submitLabel="Retirar contraseña"
+                busyLabel="Retirando…"
+                confirmLabel="¿Confirmás el retiro?"
+                unlockedWords={unlockedWords}
+                onSubmit={async (words) => {
+                  await removePassword(words);
+                  onUnlocked(words);
+                  load();
+                }}
+              />
+              <WordsForm
+                title="Desactivar bóveda"
+                description="Apagar la bóveda quita la autenticación de la instalación. Lo confirmás con tus palabras claves."
+                submitLabel="Desactivar bóveda"
+                busyLabel="Desactivando…"
+                confirmLabel="¿Confirmás la desactivación?"
+                unlockedWords={unlockedWords}
+                onSubmit={async (words) => {
+                  await disableVault(words);
+                  onUnlocked(words);
+                  load();
+                }}
+              />
+            </div>
+          </section>
+        </>
       ) : (
         <ActivationPanel
           config={config}
@@ -401,32 +497,6 @@ function CuentaSection({
         />
       )}
     </div>
-  );
-}
-
-/**
- * Recovery-words unlock state for the current session (REQ-SRW-01). Locked
- * until the first successful words-gated action arms the verified words;
- * never persisted to web storage (REQ-SRW-02).
- */
-function WordsUnlockBanner({ unlocked }: { unlocked: boolean }) {
-  return (
-    <section
-      aria-live="polite"
-      className="rounded-lg border border-edge bg-surface/50 p-3"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <h4 className="font-heading text-body text-primary">Palabras claves</h4>
-        <Badge variant={unlocked ? "success" : "default"}>
-          {unlocked ? "Desbloqueadas" : "Bloqueadas"}
-        </Badge>
-      </div>
-      <p className="mt-1 text-small text-muted">
-        {unlocked
-          ? "Desbloqueadas para esta sesión: las acciones que piden palabras claves ya no las vuelven a solicitar. No se guardan en el navegador."
-          : "Bloqueadas para esta sesión. La primera acción que pida palabras claves las desbloquea; se recuerdan hasta cerrar sesión, recargar o salir del perfil."}
-      </p>
-    </section>
   );
 }
 
@@ -972,18 +1042,6 @@ function ReauthIntervalForm({
   );
 }
 
-/** Human label for the active session provider. */
-function providerLabel(provider?: AuthSessionStatus["provider"]): string {
-  switch (provider) {
-    case "credentials":
-      return "Credenciales";
-    case "local-dev":
-      return "Local";
-    default:
-      return "Desconocido";
-  }
-}
-
 /**
  * Perfil → Conexiones — the two external-connection surfaces. The Telegram
  * idea-capture wizard (the single Telegram surface) keeps its embedded
@@ -1484,7 +1542,7 @@ export default function ProfilePage() {
   const activeSection: ProfileSection = isProfileSection(rawTab) ? rawTab : "cuenta";
   // The session-scoped words unlock (REQ-SRW-01..04) lives at page level so
   // it survives section switches; the merged cuenta surface consumes it.
-  const { unlockedWords, unlock, lock } = useRecoveryWordsUnlock();
+  const { unlockedWords, unlock } = useRecoveryWordsUnlock();
   // Click-driven changes move focus to the panel heading; the default landing
   // and arrow-key roves never steal focus (REQ-PIA-04).
   const [focusPanel, setFocusPanel] = useState(false);
@@ -1544,7 +1602,6 @@ export default function ProfilePage() {
                 <CuentaSection
                   unlockedWords={unlockedWords}
                   onUnlocked={unlock}
-                  onLock={lock}
                 />
               ) : activeSection === "respaldo" ? (
                 <BackupSection onRequestSignIn={() => selectSection("cuenta")} />

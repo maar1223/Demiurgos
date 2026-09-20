@@ -285,10 +285,11 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     }
   });
 
-  it("accepts zero primaries in read-only sections (Cuenta with vault ON, Mundos)", async () => {
-    // Vault ON: Cuenta renders the status/security surface, whose words-gated
-    // actions are all secondary. Zero primaries here is correct, not a gap, so
-    // the rule is asserted as `<= 1` rather than `=== 1`.
+  it("renders zero primaries in the vault-ON Cuenta surface", async () => {
+    // Vault ON: Cuenta renders the status card plus two collapsed management
+    // disclosures. Every action inside is secondary, so zero primaries is
+    // correct — and the collapsed default hides no primary behind a
+    // disclosure, so the count is asserted as exactly zero, not `<= 1`.
     (getVaultConfig as Mock).mockResolvedValue({
       enabled: true,
       account_exists: true,
@@ -299,10 +300,18 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     });
 
     renderProfile();
-    await screen.findByRole("tab", { name: "Cuenta" });
+    await screen.findByRole("button", { name: "Gestionar credenciales" });
 
     await showSection("Cuenta");
-    await expectAtMostOnePrimary();
+    await waitFor(() => expect(primaryLabels()).toEqual([]));
+    // Both management disclosures start collapsed.
+    expect(
+      screen.getByRole("button", { name: "Gestionar credenciales" }),
+    ).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("button", { name: "Zona sensible" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
 
     // Mundos only offers per-row ghost actions (Renombrar/Borrar), the
     // recycle-bin Restaurar (secondary) and the migration action (secondary):
