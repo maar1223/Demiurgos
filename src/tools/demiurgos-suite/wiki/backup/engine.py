@@ -18,6 +18,15 @@ publish — happens on the worker thread.
    fingerprint and calls ``notify`` only when it diverges — the backstop for
    mounts where filesystem events are never delivered.
 
+**A run needs a REAL change (REQ-BE-6).** A due deadline starts a run only when
+the included-tree fingerprint (the files the exclusion table admits) differs
+from the baseline taken at start-up and refreshed on each run. A durable signal
+that left every admitted path byte-identical — a leaked event on an excluded
+path, a directory event, a path-normalization edge case, or the reconcile
+backstop — is therefore dropped, so only a change the snapshot actually takes
+can start one. The gate adds no walk of its own: it reuses the detector that
+already fingerprints the included tree.
+
 **Debounce arithmetic (SC-BE-6.1/6.2).** ``notify`` sets
 ``_deadline = clock() + debounce``; the worker blocks on the injected waiter
 with a timeout equal to the remaining window, so a save at ``t0`` runs at
@@ -192,6 +201,20 @@ class _DataRootChangeDetector:
         self._root = Path(data_root)
         self._previous: str | None = None
 
+    @property
+    def is_primed(self) -> bool:
+        """Whether a baseline fingerprint has been taken yet."""
+        return self._previous is not None
+
+    def prime(self) -> None:
+        """Take the baseline WITHOUT reporting a change.
+
+        Called at start-up (and lazily by the run gate when no baseline exists):
+        the first observation is a reference point, never itself a change, so
+        priming can never schedule a spurious run.
+        """
+        self._previous = self._scan()
+
     def __call__(self) -> bool:
         current = self._scan()
         changed = self._previous is not None and current != self._previous
@@ -342,6 +365,15 @@ class BackupEngine:
             if reconcile is not None
             else (_DataRootChangeDetector(self._data_root) if self._data_root else None)
         )
+        #: The run gate: a SECOND detector over the included tree, whose baseline
+        #: only the gate consumes. It is deliberately not the reconcile detector:
+        #: a reconciliation tick that observes a change must not consume the very
+        #: signal the gate needs to admit the scheduled run.
+        self._gate = (
+            _DataRootChangeDetector(self._data_root)
+            if self._data_root is not None
+            else None
+        )
         self._on_error = on_error
 
         self._lock = threading.Lock()
@@ -446,6 +478,11 @@ class BackupEngine:
             else now + float(self._reconcile_interval)
         )
         self._load_marker()
+        if self._gate is not None and not self._gate.is_primed:
+            # Establish the included-tree baseline at start-up: the first
+            # observation is a reference point, never a change, so starting the
+            # engine can never schedule a spurious run (SC-BE-6.3).
+            self._gate.prime()
         if not self._quiesced.is_set():
             self._start_observer()
         self._thread = threading.Thread(
@@ -513,6 +550,13 @@ class BackupEngine:
             if due:
                 self._deadline = None
         if due:
+            if not self._included_tree_changed():
+                # The durable event did not move the included tree — an excluded
+                # path, a directory event, a normalization edge case or the
+                # backstop. Drop the run and the paths it had coalesced.
+                with self._lock:
+                    self._changed.clear()
+                return False
             self._run()
             return True
         if self._next_reconcile is not None and now >= self._next_reconcile:
@@ -555,6 +599,29 @@ class BackupEngine:
             logger.exception("backup run failed")
             if self._on_error is not None:
                 self._on_error(exc)
+
+    def _included_tree_changed(self) -> bool:
+        """Whether the included tree moved since the last run (the durable gate).
+
+        A signal that leaves every admitted path byte-identical — an event on an
+        excluded path, a directory event, a path-normalization edge case, or the
+        event-loss backstop — must NOT schedule a run, because nothing the
+        snapshot takes has changed. The comparison is the fingerprint
+        :class:`_DataRootChangeDetector` already computes over only the included
+        tree, so this adds no new walk logic.
+
+        When no detector exists (no data root) or no baseline has been taken
+        yet, report ``True``. A missing observation is never evidence that
+        nothing changed, so the gate can never suppress a genuine write; the
+        production engine primes the baseline in :meth:`start`, so an ordinary
+        run is always gated by a real comparison.
+        """
+        if self._gate is None:
+            return True
+        if not self._gate.is_primed:
+            self._gate.prime()
+            return True
+        return self._gate()
 
     # -- observer ----------------------------------------------------------
 

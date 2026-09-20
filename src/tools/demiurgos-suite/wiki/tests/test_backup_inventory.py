@@ -559,3 +559,41 @@ def test_top_level_code_exclusions_never_drop_same_named_world_content(
         assert path in inventory.included, f"{path} was dropped"
         assert path in staged, f"{path} was not staged"
         assert path not in recorded, f"{path} was excluded by a root rule"
+
+
+def test_backup_reserved_names_are_excluded_and_never_staged(tmp_path: Path) -> None:
+    """The backup's own bookkeeping is never snapshotted (mirrors restore).
+
+    ``restore._is_reserved_member`` is authoritative: the maintenance marker,
+    every transport temp name and the park directories are restore/engine
+    infrastructure, not author data. The exclusion table MIRRORS those names
+    because ``inventory`` cannot import ``restore`` (restore imports this
+    module); this test pins the mirror to the authoritative constants.
+
+    Non-vacuous: on the pre-fix table ``match_exclusion`` returned ``None`` for
+    every name below, so the marker itself could be snapshotted and each marker
+    write moved the included-tree fingerprint.
+    """
+    from backup.engine import QUIESCE_MARKER_NAME  # noqa: PLC0415
+    from backup.restore import PARK_DIR_PREFIX  # noqa: PLC0415
+
+    marker = QUIESCE_MARKER_NAME
+    marker_temp = f"{marker}.tmp-deadbeef"
+    park = f"{PARK_DIR_PREFIX}20260916T000000Z"
+
+    for name in (marker, marker_temp, park):
+        reason = match_exclusion(name)
+        assert reason is not None, f"{name} is not excluded"
+        assert reason.strip(), f"{name} has an empty exclusion reason"
+
+    _make(tmp_path / marker)
+    _make(tmp_path / marker_temp)
+    _make(tmp_path / park / "ideas" / "alpha.md")
+
+    inventory = build_inventory(tmp_path)
+    staged = set(stage_inventory(inventory).paths())
+
+    for name in (marker, marker_temp, park):
+        assert name not in inventory.included, f"{name} was included"
+        assert name not in staged, f"{name} reached the staged set"
+    assert not any(path.startswith(f"{park}/") for path in staged)

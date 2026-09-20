@@ -265,6 +265,31 @@ EXCLUSION_RULES: tuple[ExclusionRule, ...] = (
     ExclusionRule("*.key", "excluded:secrets-never-backed-up"),
     ExclusionRule("*.pem", "excluded:secrets-never-backed-up"),
     ExclusionRule("credentials*", "excluded:secrets-never-backed-up"),
+    # --- The backup's own reserved names -----------------------------------
+    # `restore.py`'s `_is_reserved_member` owns the authoritative list: the
+    # maintenance marker, every transport temp name, and the park directories a
+    # restore swaps members through. They are bookkeeping, never author data, so
+    # the snapshot must not carry them and a write to one must not move the
+    # included-tree fingerprint. The names are MIRRORED here because `inventory`
+    # cannot import `restore` (restore imports this module); a test pins them
+    # against restore's constants. The marker and its temp live at the data
+    # root; the park directories are named `.demiurgos-old-<id>` anywhere the
+    # restore created them.
+    ExclusionRule(
+        ".demiurgos-maintenance.json",
+        "excluded:backup-maintenance-marker",
+        "top_level_name",
+    ),
+    ExclusionRule(
+        ".demiurgos-maintenance.json.tmp-*",
+        "excluded:backup-maintenance-marker-temp",
+        "top_level_name",
+    ),
+    ExclusionRule(
+        ".demiurgos-old-*",
+        "excluded:backup-restore-park-dir",
+        "name",
+    ),
 )
 
 
