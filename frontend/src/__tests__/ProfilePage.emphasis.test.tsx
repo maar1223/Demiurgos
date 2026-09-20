@@ -301,9 +301,9 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
 
   it("renders zero primaries in the vault-ON Cuenta surface", async () => {
     // Vault ON: Cuenta renders the status card plus two collapsed management
-    // disclosures. Every action inside is secondary, so zero primaries is
-    // correct — and the collapsed default hides no primary behind a
-    // disclosure, so the count is asserted as exactly zero, not `<= 1`.
+    // disclosures. Every action inside is secondary or danger, so zero
+    // primaries is correct — and the collapsed default hides no primary behind
+    // a disclosure, so the count is asserted as exactly zero, not `<= 1`.
     (getVaultConfig as Mock).mockResolvedValue({
       enabled: true,
       account_exists: true,
@@ -322,7 +322,7 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     expect(
       screen.getByRole("button", { name: "Gestionar credenciales" }),
     ).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("button", { name: "Zona sensible" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Zona peligrosa" })).toHaveAttribute(
       "aria-expanded",
       "false",
     );

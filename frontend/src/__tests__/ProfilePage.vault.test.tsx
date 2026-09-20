@@ -153,9 +153,9 @@ async function openCredentials() {
   );
 }
 
-/** Open the collapsed "Zona sensible" disclosure. */
+/** Open the collapsed "Zona peligrosa" disclosure. */
 async function openSensitive() {
-  fireEvent.click(await screen.findByRole("button", { name: "Zona sensible" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Zona peligrosa" }));
 }
 
 /** Pick one of the four credentials panels in the segmented control. */
@@ -287,7 +287,7 @@ describe("ProfilePage account section (credentials mode)", () => {
     renderProfile();
     await screen.findByRole("heading", { name: "Sesión", level: 3 });
 
-    const trigger = screen.getByRole("button", { name: "Zona sensible" });
+    const trigger = screen.getByRole("button", { name: "Zona peligrosa" });
     expect(trigger).toHaveAttribute("aria-expanded", "false");
     expect(
       screen.queryByRole("heading", { name: "Retirar contraseña" }),
@@ -304,6 +304,21 @@ describe("ProfilePage account section (credentials mode)", () => {
     expect(
       screen.getByRole("heading", { name: "Desactivar bóveda" }),
     ).toBeInTheDocument();
+
+    // REQ-PIA-08: the destructive submit/confirm buttons carry the danger
+    // treatment, never the neutral secondary one. Under the old code these
+    // buttons used the `secondary` variant, so they lacked `bg-status-error`
+    // and the two containment assertions below failed.
+    const removePasswordButton = screen.getByRole("button", {
+      name: "Retirar contraseña",
+    });
+    expect(removePasswordButton.className).toContain("bg-status-error");
+    expect(removePasswordButton.className).not.toContain("bg-action");
+    const disableVaultButton = screen.getByRole("button", {
+      name: "Desactivar bóveda",
+    });
+    expect(disableVaultButton.className).toContain("bg-status-error");
+    expect(disableVaultButton.className).not.toContain("bg-action");
   });
 
   it("does not duplicate the Navbar logout controls (REQ-PIA-09 deviation)", async () => {
@@ -712,7 +727,7 @@ describe("ProfilePage vault panel (Seguridad / Bóveda, R-VC-02..05)", () => {
       panel.getAllByRole("button", { name: "Gestionar credenciales" }),
     ).toHaveLength(1);
     expect(
-      panel.getAllByRole("button", { name: "Zona sensible" }),
+      panel.getAllByRole("button", { name: "Zona peligrosa" }),
     ).toHaveLength(1);
     // No duplicated logout inside the section.
     expect(

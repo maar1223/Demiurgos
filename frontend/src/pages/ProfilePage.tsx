@@ -82,7 +82,7 @@ function isProfileSection(value: string | null): value is ProfileSection {
  *
  * Management lives behind collapsed disclosures because this is a
  * rarely-visited Operate surface: "Gestionar credenciales" shows one segmented
- * form at a time and a de-emphasised "Zona sensible" holds the destructive
+ * form at a time and a danger-treated "Zona peligrosa" holds the destructive
  * actions. Logout and the local-dev session start both live in the Navbar and
  * are intentionally not duplicated here (approved REQ-PIA-09 deviation).
  *
@@ -397,29 +397,29 @@ function CuentaSection({
             </div>
           </section>
 
-          <section className="rounded-lg border border-edge/70 bg-surface-raised/60">
+          <section className="rounded-lg border border-status-error/30 bg-status-error/10 p-4">
             <h3>
               <button
                 type="button"
                 aria-expanded={sensitiveOpen}
                 aria-controls={SENSITIVE_REGION_ID}
                 onClick={() => setSensitiveOpen((open) => !open)}
-                className="flex w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-icon-muted/50"
+                className="flex w-full items-center justify-between gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-error/50"
               >
-                <span className="font-heading text-body text-muted">
-                  Zona sensible
+                <span className="font-heading text-body text-status-error">
+                  Zona peligrosa
                 </span>
                 <Icon
                   name={sensitiveOpen ? "chevron-down" : "chevron-right"}
                   size={16}
-                  className="text-icon-muted"
+                  className="text-status-error"
                 />
               </button>
             </h3>
             <div
               id={SENSITIVE_REGION_ID}
               hidden={!sensitiveOpen}
-              className="space-y-4 px-4 pb-4"
+              className="mt-4 space-y-4"
             >
               <p className="text-small text-muted">
                 Acciones que cambian el acceso a tu cuenta.
@@ -430,6 +430,7 @@ function CuentaSection({
                 submitLabel="Retirar contraseña"
                 busyLabel="Retirando…"
                 confirmLabel="¿Confirmás el retiro?"
+                destructive
                 unlockedWords={unlockedWords}
                 onSubmit={async (words) => {
                   await removePassword(words);
@@ -443,6 +444,7 @@ function CuentaSection({
                 submitLabel="Desactivar bóveda"
                 busyLabel="Desactivando…"
                 confirmLabel="¿Confirmás la desactivación?"
+                destructive
                 unlockedWords={unlockedWords}
                 onSubmit={async (words) => {
                   await disableVault(words);
@@ -476,6 +478,9 @@ interface WordsFormProps {
   busyLabel: string;
   /** Two-click confirm for destructive actions (e.g. password removal). */
   confirmLabel?: string;
+  /** Render the submit/confirm button with the danger treatment (REQ-PIA-08).
+   *  Destructive actions (password removal, vault deactivation) opt in. */
+  destructive?: boolean;
   /** Session-unlocked words (REQ-SRW-01): when present the words input is
    *  hidden and these cached words replay on submit without re-prompting. */
   unlockedWords?: string | null;
@@ -498,6 +503,7 @@ function WordsForm({
   submitLabel,
   busyLabel,
   confirmLabel,
+  destructive = false,
   unlockedWords,
   onSubmit,
 }: WordsFormProps) {
@@ -616,7 +622,7 @@ function WordsForm({
         ))}
 
       <Button
-        variant="secondary"
+        variant={destructive ? "danger" : "secondary"}
         size="sm"
         onClick={() => void handleSubmit()}
         disabled={busy || (unlockedWords ? false : words.trim() === "")}
