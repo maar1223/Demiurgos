@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { getLocale } from "@/api/config";
 import { submitStep0 } from "@/api/onboarding";
 import { ApiError, type LocaleInput, type OnboardingStatus } from "@/api/types";
@@ -10,15 +10,99 @@ const LANGUAGE_OPTIONS = [
   { value: "en", label: "English" },
 ];
 
-const COMMON_TIMEZONES = [
+/**
+ * Curated fallback used only when the runtime lacks
+ * `Intl.supportedValuesOf("timeZone")`, so the control never regresses to a
+ * free-text field. The primary source is the full IANA set (~400 zones).
+ */
+const FALLBACK_TIMEZONES = [
   "UTC",
+  "Africa/Cairo",
+  "Africa/Johannesburg",
   "America/Argentina/Buenos_Aires",
+  "America/Bogota",
+  "America/Chicago",
+  "America/Los_Angeles",
   "America/Mexico_City",
   "America/New_York",
-  "Europe/Madrid",
+  "America/Sao_Paulo",
+  "Asia/Dubai",
   "Asia/Kolkata",
   "Asia/Shanghai",
+  "Asia/Tokyo",
+  "Atlantic/Canary",
+  "Australia/Sydney",
+  "Europe/Berlin",
+  "Europe/Lisbon",
+  "Europe/London",
+  "Europe/Madrid",
+  "Europe/Paris",
+  "Pacific/Auckland",
 ];
+
+/** Catch-all group for zones without an area segment (e.g. UTC). */
+const OTHER_REGION = "Otros";
+
+/** Last IANA path segment, de-slugged: `Buenos_Aires` → `Buenos Aires`. */
+function timeZoneCity(zone: string): string {
+  const segment = zone.split("/").pop() ?? zone;
+  return segment.replace(/_/g, " ");
+}
+
+function timeZoneRegion(zone: string): string {
+  const slash = zone.indexOf("/");
+  return slash === -1 ? OTHER_REGION : zone.slice(0, slash);
+}
+
+/** `Europe/Madrid` → `Europe/Madrid - Madrid`; a cityless `UTC` stays `UTC`. */
+function timeZoneLabel(zone: string): string {
+  const city = timeZoneCity(zone);
+  return city === zone ? zone : `${zone} - ${city}`;
+}
+
+function supportedTimeZones(): string[] {
+  const intl = Intl as typeof Intl & {
+    supportedValuesOf?: (key: "timeZone") => string[];
+  };
+  if (typeof intl.supportedValuesOf === "function") {
+    try {
+      const zones = intl.supportedValuesOf("timeZone");
+      if (zones.length > 0) return zones;
+    } catch {
+      // Some engines expose the method but throw; fall through to the list.
+    }
+  }
+  return FALLBACK_TIMEZONES;
+}
+
+interface TimeZoneGroup {
+  region: string;
+  zones: string[];
+}
+
+/**
+ * Groups the ~400 IANA zones by area and sorts them so the option order never
+ * shifts between renders. A stored value the runtime does not list (UTC, a
+ * retired alias) is injected so it stays selectable and selected instead of
+ * being silently dropped.
+ */
+function buildTimeZoneGroups(current: string): TimeZoneGroup[] {
+  const zones = new Set(supportedTimeZones());
+  const stored = current.trim();
+  if (stored) zones.add(stored);
+
+  const byRegion = new Map<string, string[]>();
+  for (const zone of [...zones].sort()) {
+    const region = timeZoneRegion(zone);
+    const list = byRegion.get(region);
+    if (list) list.push(zone);
+    else byRegion.set(region, [zone]);
+  }
+
+  return [...byRegion.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([region, regionZones]) => ({ region, zones: regionZones }));
+}
 
 /** A gated write that answers 401 means the session expired (fail closed). */
 export function authHint(error: unknown): string | null {
@@ -79,6 +163,10 @@ export function LocaleForm({
       alive = false;
     };
   }, []);
+
+  // Rebuilt when the value changes so a stored zone the runtime does not
+  // list keeps its own option and stays selected.
+  const timeZoneGroups = useMemo(() => buildTimeZoneGroups(timezone), [timezone]);
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
@@ -177,19 +265,23 @@ export function LocaleForm({
         </label>
 
         <label htmlFor="locale-timezone" className="flex flex-col gap-1 text-small text-primary">
-          Zona horaria (identificador IANA; los timestamps se guardan en UTC)
-          <input
+          Zona horaria (los timestamps se guardan en UTC)
+          <select
             id="locale-timezone"
-            list="locale-timezones"
             value={timezone}
             onChange={(e) => setTimezone(e.target.value)}
             className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
-          />
-          <datalist id="locale-timezones">
-            {COMMON_TIMEZONES.map((tz) => (
-              <option key={tz} value={tz} />
+          >
+            {timeZoneGroups.map((group) => (
+              <optgroup key={group.region} label={group.region}>
+                {group.zones.map((zone) => (
+                  <option key={zone} value={zone}>
+                    {timeZoneLabel(zone)}
+                  </option>
+                ))}
+              </optgroup>
             ))}
-          </datalist>
+          </select>
         </label>
       </div>
 

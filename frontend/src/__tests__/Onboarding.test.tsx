@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { renderHook } from "@testing-library/react";
@@ -167,9 +167,10 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     await user.selectOptions(screen.getByLabelText("Idioma de la interfaz"), "en");
     await user.type(screen.getByLabelText(/Región \(opcional/), "AR");
     await user.click(screen.getByLabelText(/Confirmo la región/));
-    const tzInput = screen.getByLabelText(/Zona horaria/);
-    await user.clear(tzInput);
-    await user.type(tzInput, "America/Argentina/Buenos_Aires");
+    await user.selectOptions(
+      screen.getByLabelText(/Zona horaria/),
+      "Europe/Madrid",
+    );
     await user.click(screen.getByRole("button", { name: "Continuar" }));
 
     await waitFor(() =>
@@ -179,7 +180,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
         content: "es",
         region: "AR",
         region_explicit: true,
-        iana_timezone: "America/Argentina/Buenos_Aires",
+        iana_timezone: "Europe/Madrid",
       }),
     );
     // After step 0, the BLOCKING account step is offered (not step 0 again).
@@ -329,6 +330,138 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     expect(screen.getByLabelText("Idioma de contenido (prosa del mundo)")).toHaveValue("es");
     expect(screen.getByLabelText(/Región \(opcional/)).toHaveValue("MX");
     expect(screen.getByLabelText(/Confirmo la región/)).toBeChecked();
-    expect(screen.getByLabelText(/Zona horaria/)).toHaveValue("America/Mexico_City");
+    // The timezone control is a dropdown and the stored zone is the selected
+    // option (labelled with its main city), not a raw free-text value.
+    const tzSelect = screen.getByLabelText(/Zona horaria/);
+    expect(tzSelect).toHaveRole("combobox");
+    expect(tzSelect).toHaveValue("America/Mexico_City");
+    expect(
+      (
+        screen.getByRole("option", {
+          name: "America/Mexico_City - Mexico City",
+        }) as HTMLOptionElement
+      ).selected,
+    ).toBe(true);
+  });
+
+  it("renders the timezone field as a grouped select, not a free-text input", async () => {
+    (getOnboardingStatus as Mock).mockResolvedValue(FRESH_STATUS);
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
+    const tzSelect = screen.getByLabelText(/Zona horaria/);
+
+    // Under the old free-text implementation this control was an <input>
+    // (role "textbox", tagName "INPUT"), so both assertions fail there.
+    expect(tzSelect).toHaveRole("combobox");
+    expect(tzSelect.tagName).toBe("SELECT");
+    expect(tzSelect).not.toHaveAttribute("list");
+  });
+
+  it("labels every timezone option with its IANA zone and main city", async () => {
+    (getOnboardingStatus as Mock).mockResolvedValue(FRESH_STATUS);
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
+    const tzSelect = screen.getByLabelText(/Zona horaria/);
+
+    // City is derived from the last path segment (underscores → spaces).
+    const mexicoCity = within(tzSelect).getByRole("option", {
+      name: "America/Mexico_City - Mexico City",
+    });
+    expect(mexicoCity).toHaveValue("America/Mexico_City");
+    expect(within(tzSelect).getByRole("option", { name: "Europe/Madrid - Madrid" })).toBeInTheDocument();
+
+    // ~400 zones are unusable flat: they are grouped by first IANA segment.
+    expect(within(tzSelect).getByRole("group", { name: "Europe" })).toBeInTheDocument();
+    expect(within(tzSelect).getByRole("group", { name: "America" })).toBeInTheDocument();
+  });
+
+  it("keeps a stored IANA alias the engine canonicalizes away as an option", async () => {
+    // ICU canonicalizes `America/Argentina/Buenos_Aires` to
+    // `America/Buenos_Aires`, so the stored alias is absent from the derived
+    // list and must be injected to stay selectable and selected.
+    (getOnboardingStatus as Mock).mockResolvedValue(FRESH_STATUS);
+    (getLocale as Mock).mockResolvedValue({
+      ui: "es",
+      conversation: "es",
+      content: "es",
+      region: null,
+      region_explicit: false,
+      iana_timezone: "America/Argentina/Buenos_Aires",
+    });
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
+    const tzSelect = screen.getByLabelText(/Zona horaria/);
+    const alias = within(tzSelect).getByRole("option", {
+      name: "America/Argentina/Buenos_Aires - Buenos Aires",
+    });
+    expect(alias).toHaveValue("America/Argentina/Buenos_Aires");
+    expect(tzSelect).toHaveValue("America/Argentina/Buenos_Aires");
+    expect((alias as HTMLOptionElement).selected).toBe(true);
+  });
+
+  it("preserves a stored zone the runtime does not list (UTC) as a selected option", async () => {
+    // `Intl.supportedValuesOf("timeZone")` enumerates the IANA set but omits
+    // UTC, so the control must inject the stored value instead of dropping it.
+    (getOnboardingStatus as Mock).mockResolvedValue(FRESH_STATUS);
+    (getLocale as Mock).mockResolvedValue({
+      ui: "es",
+      conversation: "es",
+      content: "es",
+      region: null,
+      region_explicit: false,
+      iana_timezone: "UTC",
+    });
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
+    const tzSelect = screen.getByLabelText(/Zona horaria/);
+    const utc = within(tzSelect).getByRole("option", { name: "UTC" });
+    expect(utc).toHaveValue("UTC");
+    expect(tzSelect).toHaveValue("UTC");
+    expect((utc as HTMLOptionElement).selected).toBe(true);
+  });
+
+  it("falls back to a curated list when Intl.supportedValuesOf is unavailable", async () => {
+    const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
+    const original = intl.supportedValuesOf;
+    intl.supportedValuesOf = undefined;
+    try {
+      (getOnboardingStatus as Mock).mockResolvedValue(FRESH_STATUS);
+      renderOnboarding();
+
+      await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
+      const tzSelect = screen.getByLabelText(/Zona horaria/);
+      expect(tzSelect).toHaveRole("combobox");
+      expect(
+        within(tzSelect).getByRole("option", { name: "Europe/Madrid - Madrid" }),
+      ).toBeInTheDocument();
+      expect(within(tzSelect).getByRole("option", { name: "UTC" })).toBeInTheDocument();
+    } finally {
+      intl.supportedValuesOf = original;
+    }
+  });
+
+  it("derives the options at runtime and injects the stored value on top", async () => {
+    const intl = Intl as unknown as { supportedValuesOf?: (key: string) => string[] };
+    const original = intl.supportedValuesOf;
+    intl.supportedValuesOf = () => ["Europe/Madrid", "America/New_York", "Asia/Tokyo"];
+    try {
+      (getOnboardingStatus as Mock).mockResolvedValue(FRESH_STATUS);
+      renderOnboarding();
+
+      await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
+      const tzSelect = screen.getByLabelText(/Zona horaria/);
+      // The three mocked zones plus the stored "UTC" the engine did not list.
+      expect(within(tzSelect).getAllByRole("option")).toHaveLength(4);
+      expect(within(tzSelect).getByRole("group", { name: "Asia" })).toBeInTheDocument();
+      expect(
+        (within(tzSelect).getByRole("option", { name: "UTC" }) as HTMLOptionElement).selected,
+      ).toBe(true);
+    } finally {
+      intl.supportedValuesOf = original;
+    }
   });
 });

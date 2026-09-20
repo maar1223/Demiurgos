@@ -351,7 +351,8 @@ describe("ProfilePage", () => {
     expect(within(section).getByLabelText("Idioma de contenido (prosa del mundo)")).toBeInTheDocument();
     expect(within(section).getByLabelText(/Región \(opcional/)).toBeInTheDocument();
     expect(within(section).getByLabelText(/Confirmo la región/)).toBeInTheDocument();
-    expect(within(section).getByLabelText(/Zona horaria/)).toBeInTheDocument();
+    // The timezone is a dropdown (zone + city), not a free-text field.
+    expect(within(section).getByLabelText(/Zona horaria/)).toHaveRole("combobox");
     expect(within(section).getByRole("button", { name: "Guardar" })).toBeInTheDocument();
     // No handoff control remains on the form.
     expect(within(section).queryByRole("button", { name: "Configurar" })).not.toBeInTheDocument();
