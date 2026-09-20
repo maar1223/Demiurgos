@@ -14,6 +14,11 @@ vi.mock("@/api/onboarding", () => ({
   getReadiness: vi.fn(),
 }));
 
+vi.mock("@/api/config", () => ({
+  getAppConfig: vi.fn(),
+  getLocale: vi.fn(),
+}));
+
 vi.mock("@/api/wiki", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/api/wiki")>();
   return {
@@ -30,6 +35,7 @@ import {
   submitStep0,
 } from "@/api/onboarding";
 import { createAccount, getAuthStatus, listWorlds } from "@/api/wiki";
+import { getLocale } from "@/api/config";
 import type { Mock } from "vitest";
 
 const CREDENTIALS_AUTH = {
@@ -65,6 +71,26 @@ const ACCOUNT_DONE_STATUS = {
   completed_steps: ["step0", "account"],
   pending_steps: ["ai", "telegram", "world", "backup_handoff", "ready"],
   blocking_pending: ["world"],
+};
+
+/** The real end state: nothing blocking is pending any more. */
+const COMPLETED_STATUS = {
+  completed: true,
+  current_step: "ready",
+  completed_steps: ["step0", "account", "world", "ready"],
+  pending_steps: ["ai", "telegram", "backup_handoff"],
+  remote_pending: ["ai", "telegram", "backup_handoff"],
+  blocking_pending: [],
+};
+
+/** The safe locale the reconfigure read falls back to when nothing is stored. */
+const DEFAULT_LOCALE = {
+  ui: "es",
+  conversation: "es",
+  content: "es",
+  region: null,
+  region_explicit: false,
+  iana_timezone: "UTC",
 };
 
 function renderOnboarding(initialEntry = "/onboarding") {
@@ -119,7 +145,9 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     (createWorld as Mock).mockReset();
     (getAuthStatus as Mock).mockReset();
     (createAccount as Mock).mockReset();
+    (getLocale as Mock).mockReset();
     (getAuthStatus as Mock).mockResolvedValue(CREDENTIALS_AUTH);
+    (getLocale as Mock).mockResolvedValue(DEFAULT_LOCALE);
   });
 
   afterEach(() => {
@@ -303,8 +331,40 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     renderOnboarding("/onboarding?step=step0");
 
     await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
-    await user.click(screen.getByRole("button", { name: "Continuar" }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
 
     expect(await screen.findByTestId("perfil")).toBeInTheDocument();
+  });
+
+  it("reconfigure (?step=step0) shows the SAVED locale and sends it back on save", async () => {
+    // Regression: the form used to render the fresh-install defaults, so the
+    // stored region showed blank and submitting overwrote it with null.
+    (getOnboardingStatus as Mock).mockResolvedValue(COMPLETED_STATUS);
+    (getLocale as Mock).mockResolvedValue({
+      ui: "es",
+      conversation: "es",
+      content: "es",
+      region: "VE",
+      region_explicit: false,
+      iana_timezone: "America/Caracas",
+    });
+    (submitStep0 as Mock).mockResolvedValue(COMPLETED_STATUS);
+    const user = userEvent.setup();
+    renderOnboarding("/onboarding?step=step0");
+
+    await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
+    await waitFor(() =>
+      expect(screen.getByLabelText(/Región \(opcional/)).toHaveValue("VE"),
+    );
+    expect(screen.getByLabelText(/Zona horaria/)).toHaveValue("America/Caracas");
+    // The first-run pending cards belong to onboarding, not to reconfiguration.
+    expect(screen.queryByText("Asistente de IA (texto y visión)")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() =>
+      expect(submitStep0).toHaveBeenCalledWith(
+        expect.objectContaining({ region: "VE", iana_timezone: "America/Caracas" }),
+      ),
+    );
   });
 });
