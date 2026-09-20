@@ -16,7 +16,8 @@ tables decide what is taken:
 * :data:`EXCLUSION_RULES` — the explicit, enumerable exclusion table
   (world-trash content, import spool, probes, the ``data/`` secrets class — auth
   sessions, local machine state and process locks — VCS / code-index / virtualenv
-  directories, installed dependency trees and tool caches, mount residue, SQLite
+  directories, the project's own source/tooling paths at the checkout root,
+  installed dependency trees and tool caches, mount residue, SQLite
   sidecars, the two operational DBs, the out-of-scope archive, and secrets).
   Every match is recorded on :attr:`Inventory.excluded` with a reason string, and
   the match is made HERE by rule — no call site special-cases a path
@@ -107,6 +108,10 @@ class ExclusionRule:
       basename globs ``pattern``. This is the safe-by-construction scope for the
       ``data/`` secrets class: it can only ever match inside ``under``, so a
       same-named file elsewhere in the tree is untouched.
+    * ``"top_level_name"`` — the relative path is a TOP-LEVEL entry (it carries
+      no ``/``) AND its name globs ``pattern``. This is the safe-by-construction
+      scope for the checkout's own root files (``README*``, ``start-*.ps1``): a
+      same-named file inside a world is never matched, so author data survives.
     """
 
     pattern: str
@@ -163,6 +168,67 @@ EXCLUSION_RULES: tuple[ExclusionRule, ...] = (
         "data",
     ),
     ExclusionRule("_archivo_produccion", "excluded:out-of-scope-archive", "subtree"),
+    # --- Project code and tooling (the checkout IS the data root) -----------
+    # The data root is the whole project checkout, so without these rows every
+    # snapshot carried the source tree: any build, edit or ``git`` operation
+    # scheduled a large backup, and a restore would overwrite code with the
+    # snapshot's stale copy. These paths are already versioned in git, so the
+    # snapshot only needs to carry what git does NOT track.
+    #
+    # Directories use ``subtree`` (the top-level name and everything below it),
+    # which also lets the watcher and the change detector ignore edits inside
+    # them. The match is anchored at the top level: a same-named folder deeper
+    # in the tree — ``mundos/World/docs``, ``mundos/World/src`` — never matches,
+    # because dropping it would be the silent author-data loss the design
+    # forbids. Root files use ``top_level_name`` for the same reason, so a
+    # world's own ``README.md`` survives.
+    #
+    # The user's data is DELIBERATELY ABSENT: ``mundos/`` and ``ideas/`` are
+    # gitignored, so the backup is their only protection and must keep it.
+    ExclusionRule("src", "excluded:project-source-code", "subtree"),
+    ExclusionRule("frontend", "excluded:project-source-code", "subtree"),
+    ExclusionRule("desktop", "excluded:project-source-code", "subtree"),
+    ExclusionRule("docs", "excluded:project-documentation", "subtree"),
+    ExclusionRule("skills", "excluded:agent-skill-definitions", "subtree"),
+    ExclusionRule("scripts", "excluded:project-setup-scripts", "subtree"),
+    ExclusionRule("sdd", "excluded:sdd-workflow-artifacts", "subtree"),
+    ExclusionRule(".github", "excluded:ci-configuration", "subtree"),
+    ExclusionRule(".hermes", "excluded:agent-tooling-config", "subtree"),
+    ExclusionRule(".opencode", "excluded:agent-tooling-config", "subtree"),
+    ExclusionRule(".atl", "excluded:agent-tooling-config", "subtree"),
+    ExclusionRule(".impeccable", "excluded:agent-tooling-config", "subtree"),
+    ExclusionRule(
+        "install.sh", "excluded:project-setup-scripts", "top_level_name"
+    ),
+    ExclusionRule(
+        "install.ps1", "excluded:project-setup-scripts", "top_level_name"
+    ),
+    ExclusionRule(
+        "start-*.ps1", "excluded:project-setup-scripts", "top_level_name"
+    ),
+    ExclusionRule("README*", "excluded:project-documentation", "top_level_name"),
+    ExclusionRule("AGENTS.md", "excluded:project-documentation", "top_level_name"),
+    ExclusionRule(
+        "Agente_Maestro.md", "excluded:project-documentation", "top_level_name"
+    ),
+    ExclusionRule("COMANDOS.md", "excluded:project-documentation", "top_level_name"),
+    ExclusionRule("LEEME.md", "excluded:project-documentation", "top_level_name"),
+    ExclusionRule(
+        "REGLAS_LENGUAJE.md", "excluded:project-documentation", "top_level_name"
+    ),
+    ExclusionRule(
+        "Plantilla_Guion.md", "excluded:project-documentation", "top_level_name"
+    ),
+    ExclusionRule(
+        "engram-export.json", "excluded:agent-memory-export", "top_level_name"
+    ),
+    ExclusionRule(".gitignore", "excluded:vcs-configuration", "top_level_name"),
+    ExclusionRule(".gitattributes", "excluded:vcs-configuration", "top_level_name"),
+    ExclusionRule(
+        ".migration-baseline.txt",
+        "excluded:migration-baseline-artifact",
+        "top_level_name",
+    ),
     ExclusionRule(".git", "excluded:vcs-metadata"),
     ExclusionRule(".codegraph", "excluded:code-index-regenerable"),
     ExclusionRule(".venv", "excluded:virtualenv-code"),
@@ -369,6 +435,11 @@ def match_exclusion(relative_path: str) -> str | None:
                 normalized.startswith(rule.under + "/")
                 and fnmatch.fnmatch(base, rule.pattern)
             ):
+                return rule.reason
+        elif rule.scope == "top_level_name":
+            # Root-only: a nested entry carries a "/" and is never matched, so
+            # a same-named world file is untouched by a checkout-root rule.
+            if "/" not in normalized and fnmatch.fnmatch(normalized, rule.pattern):
                 return rule.reason
         elif fnmatch.fnmatch(base, rule.pattern):
             return rule.reason

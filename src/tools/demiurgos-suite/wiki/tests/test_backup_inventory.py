@@ -315,25 +315,32 @@ def test_tooling_directories_are_excluded_anywhere_and_never_staged(
 ) -> None:
     """An installed dependency tree stays out of the staged set (REQ-BE-1).
 
-    The real deployment's data root IS the checkout, so ``frontend/node_modules``
-    (and any nested ``node_modules`` deeper in the tree) was being staged into
-    the synced backup folder — thousands of files and hundreds of MB of tool
-    output. The class refuses such a directory by its unambiguous NAME anywhere
-    in the tree. This asserts on the STAGED set, not merely on the rule table:
-    a rule that matched but was not consulted by the walk would still let the
-    files through.
+    The class refuses a tooling directory by its unambiguous NAME anywhere in
+    the tree, including inside user data. This asserts on the STAGED set, not
+    merely on the rule table: a rule that matched but was not consulted by the
+    walk would still let the files through. The container is a world, so a
+    same-named author folder nested beside the dependency tree is exercised too.
     """
-    _make(tmp_path / "frontend" / "node_modules" / "pkg" / "index.js")
-    _make(tmp_path / "frontend" / "packages" / "app" / "node_modules" / "dep" / "index.js")
-    _make(tmp_path / "frontend" / "src" / "app.ts")
+    _make(tmp_path / "mundos" / "MyWorld" / "node_modules" / "pkg" / "index.js")
+    _make(
+        tmp_path
+        / "mundos"
+        / "MyWorld"
+        / "packages"
+        / "app"
+        / "node_modules"
+        / "dep"
+        / "index.js"
+    )
+    _make(tmp_path / "mundos" / "MyWorld" / "src" / "app.ts")  # author folder
     _make(tmp_path / "ideas" / "nota.md")
 
     inventory = build_inventory(tmp_path)
     recorded = {entry.path: entry.reason for entry in inventory.excluded}
 
     for dependency_dir in (
-        "frontend/node_modules",
-        "frontend/packages/app/node_modules",  # nested, not only top-level
+        "mundos/MyWorld/node_modules",
+        "mundos/MyWorld/packages/app/node_modules",  # nested, not only top-level
     ):
         assert dependency_dir in recorded, f"{dependency_dir} is not excluded"
         assert recorded[dependency_dir].strip(), f"{dependency_dir} has no reason"
@@ -343,9 +350,9 @@ def test_tooling_directories_are_excluded_anywhere_and_never_staged(
     assert not any("node_modules" in path.split("/") for path in staged), (
         "a node_modules file reached the staged set"
     )
-    # Author data and the surrounding frontend source are untouched.
+    # Author data and a same-named folder nested inside a world are untouched.
     assert "ideas/nota.md" in staged
-    assert "frontend/src/app.ts" in staged
+    assert "mundos/MyWorld/src/app.ts" in staged
 
 
 def test_every_tooling_exclusion_carries_a_non_empty_reason() -> None:
@@ -413,7 +420,7 @@ def test_inventory_surfaces_the_excluded_listing_and_count(tmp_path: Path) -> No
     what the run left out instead of trusting it; ``excluded_count`` is the
     one-number summary a report or UI can show. No I/O and no new document.
     """
-    _make(tmp_path / "frontend" / "node_modules" / "pkg" / "index.js")
+    _make(tmp_path / "mundos" / "MyWorld" / "node_modules" / "pkg" / "index.js")
     _make(tmp_path / "ideas" / "nota.md")
 
     inventory = build_inventory(tmp_path)
@@ -421,6 +428,134 @@ def test_inventory_surfaces_the_excluded_listing_and_count(tmp_path: Path) -> No
     assert inventory.excluded_count == len(inventory.excluded)
     assert inventory.excluded_count == 1
     entry = inventory.excluded[0]
-    assert entry.path == "frontend/node_modules"
+    assert entry.path == "mundos/MyWorld/node_modules"
     assert entry.reason == "excluded:dependency-tree"
 
+
+#: Top-level checkout directories git already versions: source, docs, tooling.
+CODE_TOP_LEVEL = (
+    "src",
+    "frontend",
+    "docs",
+    "skills",
+    "scripts",
+    ".github",
+    ".hermes",
+    "desktop",
+    "sdd",
+    ".atl",
+    ".opencode",
+    ".impeccable",
+)
+
+#: Root files git already versions; the snapshot must not carry them either.
+CODE_ROOT_FILES = (
+    "install.sh",
+    "install.ps1",
+    "start-api.ps1",
+    "start-demiurgos.ps1",
+    "README.md",
+    "README.es.md",
+    "AGENTS.md",
+    "Agente_Maestro.md",
+    "COMANDOS.md",
+    "LEEME.md",
+    "REGLAS_LENGUAJE.md",
+    "Plantilla_Guion.md",
+    "engram-export.json",
+    ".gitignore",
+    ".gitattributes",
+    ".migration-baseline.txt",
+)
+
+
+def test_project_code_and_tooling_are_excluded_at_the_checkout_root(
+    tmp_path: Path,
+) -> None:
+    """The snapshot carries user data, not the source checkout (REQ-BE-1).
+
+    The data root IS the checkout, so before this table every snapshot carried
+    the source tree and any build/edit/``git`` operation scheduled a large
+    backup. Each code/tooling path is now refused BY RULE with a recorded
+    reason. Non-vacuous: without the rule, the first assertion fails because
+    ``src`` would be listed on ``inventory.included``.
+    """
+    for name in CODE_TOP_LEVEL:
+        _make(tmp_path / name / "entry.txt")
+    for name in CODE_ROOT_FILES:
+        _make(tmp_path / name)
+
+    inventory = build_inventory(tmp_path)
+    recorded = {entry.path: entry.reason for entry in inventory.excluded}
+
+    for name in CODE_TOP_LEVEL + CODE_ROOT_FILES:
+        assert name not in inventory.included, f"{name} was staged into the backup"
+        assert name in recorded, f"{name} is not recorded as excluded"
+        assert recorded[name].strip(), f"{name} has an empty exclusion reason"
+
+    # The staged set — not merely the rule table — holds no code file.
+    staged = set(stage_inventory(inventory).paths())
+    code_roots = set(CODE_TOP_LEVEL) | set(CODE_ROOT_FILES)
+    assert not any(path.split("/")[0] in code_roots for path in staged)
+
+
+def test_user_data_survives_the_code_exclusions(tmp_path: Path) -> None:
+    """``mundos/`` and the other data paths are STILL protected (regression).
+
+    ``mundos/`` and ``ideas/`` are gitignored, so the backup is their ONLY
+    protection. An over-matching code rule that dropped them would be the worst
+    failure this change could introduce, so inclusion is asserted on the STAGED
+    set, not only on the rule table.
+    """
+    _make(tmp_path / "mundos" / "MyWorld" / "ficha.md")
+    _make(tmp_path / "ideas" / "nota.md")
+    _make(tmp_path / "data" / "idea-capture.sqlite3")
+    _make(tmp_path / "data" / "methodology" / "library.json")
+    _make(tmp_path / "config" / "local.json")
+    _make(tmp_path / ".demiurgos-estado.json")
+
+    inventory = build_inventory(tmp_path)
+    staged = set(stage_inventory(inventory).paths())
+
+    for relative in (
+        "mundos/MyWorld/ficha.md",
+        "ideas/nota.md",
+        "data/idea-capture.sqlite3",
+        "data/methodology/library.json",
+        "config/local.json",
+        ".demiurgos-estado.json",
+    ):
+        assert relative in inventory.included, f"{relative} was dropped"
+        assert relative in staged, f"{relative} was not staged"
+
+
+def test_top_level_code_exclusions_never_drop_same_named_world_content(
+    tmp_path: Path,
+) -> None:
+    """A world's own ``docs/``, ``src/`` or ``README.md`` is never matched.
+
+    The code exclusions are anchored at the checkout root. A world nesting a
+    folder or file with the same name is author data and must survive; without
+    the root anchoring these paths would be silently dropped.
+    """
+    nested = (
+        "docs/guide.md",
+        "src/world.ts",
+        "scripts/build.md",
+        "README.md",
+        "AGENTS.md",
+        ".gitignore",
+        "install.sh",
+    )
+    for relative in nested:
+        _make(tmp_path / "mundos" / "MyWorld" / relative)
+
+    inventory = build_inventory(tmp_path)
+    recorded = {entry.path for entry in inventory.excluded}
+    staged = set(stage_inventory(inventory).paths())
+
+    for relative in nested:
+        path = f"mundos/MyWorld/{relative}"
+        assert path in inventory.included, f"{path} was dropped"
+        assert path in staged, f"{path} was not staged"
+        assert path not in recorded, f"{path} was excluded by a root rule"
