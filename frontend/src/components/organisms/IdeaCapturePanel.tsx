@@ -397,7 +397,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
             configuración de captura de ideas.
           </p>
           <Button
-            variant="primary"
+            variant="secondary"
             onClick={() => void auth.start?.()}
             className="mt-3"
           >
@@ -1017,7 +1017,7 @@ export function IdeaCapturePanel({ auth }: { auth: AuthSessionController }) {
             {step < LAST_STEP && (
               <div className="flex flex-col items-end gap-1">
                 <Button
-                  variant="primary"
+                  variant="secondary"
                   onClick={goNext}
                   disabled={!canContinue || busy}
                 >

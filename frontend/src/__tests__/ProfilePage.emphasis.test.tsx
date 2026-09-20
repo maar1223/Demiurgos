@@ -6,15 +6,26 @@ import { getReadiness } from "@/api/onboarding";
 import { getLocale } from "@/api/config";
 import { getAuthStatus, getVaultConfig } from "@/api/wiki";
 import { getBackupStatus } from "@/api/backup";
-import { getAssistantSettings } from "@/api/assistantSettings";
+import {
+  discoverAssistantModels,
+  getAssistantSettings,
+  runAssistantTextProbe,
+  runAssistantVisionProbe,
+  validateAssistantConnection,
+} from "@/api/assistantSettings";
 import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import type { Mock } from "vitest";
 
-// REQ-PIA-08 (emphasis rule) — one primary action per visible view. This suite
-// mounts the real five Perfil sections (embedded panels included, not stubbed)
-// and counts the primary treatment (`bg-action`) inside the active tabpanel.
-// Destructive confirms use the danger treatment and are covered by the
-// ConfirmDialog / WorldTrashPanel / PapeleraPanel / WorldImporter suites.
+// REQ-PIA-08 (emphasis rule) — AT MOST one primary action per visible view.
+// The product owner accepted this interpretation: zero is allowed, since a
+// read-only/status section needs no primary (`cuenta` with the vault ON and
+// `mundos` legitimately render none). This suite mounts the real five Perfil
+// sections (embedded panels included, not stubbed), counts the primary
+// treatment (`bg-action`) inside the active tabpanel, and advances BOTH
+// Conexiones wizards step by step — a static default view missed the two
+// stacked primaries the assistant sub-wizard used to render. Destructive
+// confirms use the danger treatment and are covered by the ConfirmDialog /
+// WorldTrashPanel / PapeleraPanel / WorldImporter suites.
 
 vi.mock("@/hooks/useWorlds", () => ({
   useWorlds: () => ({ worlds: [] }),
@@ -136,6 +147,19 @@ async function showSection(name: (typeof SECTIONS)[number]) {
   );
 }
 
+/** The spec rule: the visible section never shows more than one primary. */
+async function expectAtMostOnePrimary() {
+  await waitFor(() => expect(primaryLabels().length).toBeLessThanOrEqual(1));
+}
+
+function renderProfile() {
+  render(
+    <MemoryRouter initialEntries={["/perfil"]}>
+      <ProfilePage />
+    </MemoryRouter>,
+  );
+}
+
 describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
   beforeEach(() => {
     (getReadiness as Mock).mockResolvedValue({
@@ -219,67 +243,159 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
   });
 
   /**
-   * The audited per-section primary counts. Cuenta/Respaldo/Preferencias/
-   * Conexiones must render exactly one; Mundos currently renders none, which is
-   * reported as a product decision rather than invented here.
+   * The audited primary labels per section. An empty list is a legitimate
+   * outcome for a read-only/status section (accepted REQ-PIA-08 reading):
+   * `Conexiones` now keeps only the idea-capture final commit as primary, and
+   * `Mundos` owns no page-level CTA at all.
    */
   const AUDIT: Record<(typeof SECTIONS)[number], string[]> = {
     Cuenta: ["Crear cuenta y activar"],
     Respaldo: ["Backup ahora"],
     Preferencias: ["Guardar"],
-    Conexiones: ["Continuar"],
+    Conexiones: [],
     Mundos: [],
   };
 
-  it("renders the audited primary count in every section view", async () => {
-    render(
-      <MemoryRouter initialEntries={["/perfil"]}>
-        <ProfilePage />
-      </MemoryRouter>,
-    );
+  it("renders at most one primary in every section view", async () => {
+    renderProfile();
     await screen.findByRole("tab", { name: "Cuenta" });
 
     for (const section of SECTIONS) {
       // eslint-disable-next-line no-await-in-loop
       await showSection(section);
-      const expected = AUDIT[section];
       // eslint-disable-next-line no-await-in-loop
-      await waitFor(() => expect(primaryLabels()).toEqual(expected));
-      if (expected.length === 1) {
-        expect(primaryLabels()).toHaveLength(1);
+      await expectAtMostOnePrimary();
+      const expected = AUDIT[section];
+      if (expected.length > 0) {
+        // eslint-disable-next-line no-await-in-loop
+        await waitFor(() => expect(primaryLabels()).toEqual(expected));
       }
     }
   });
 
   it("never renders a second primary action in any section view", async () => {
-    render(
-      <MemoryRouter initialEntries={["/perfil"]}>
-        <ProfilePage />
-      </MemoryRouter>,
-    );
+    renderProfile();
     await screen.findByRole("tab", { name: "Cuenta" });
 
     for (const section of SECTIONS) {
       // eslint-disable-next-line no-await-in-loop
       await showSection(section);
-      // The concrete spec scenario: "exactly one primary action and no second
-      // primary". Conexiones previously rendered three ("Guardar token",
-      // "Continuar" and the assistant's active step chip).
       // eslint-disable-next-line no-await-in-loop
-      await waitFor(() => expect(primaryLabels().length).toBeLessThanOrEqual(1));
+      await expectAtMostOnePrimary();
     }
   });
 
-  it("documents the Mundos section rendering no primary (needs product decision)", async () => {
-    render(
-      <MemoryRouter initialEntries={["/perfil?tab=mundos"]}>
-        <ProfilePage />
-      </MemoryRouter>,
-    );
-    await screen.findByRole("tab", { name: "Mundos" });
-    // The section only offers per-row ghost actions (Renombrar/Borrar), the
-    // recycle-bin Restaurar (secondary), and the migration action (secondary).
-    // No page-owned CTA exists, so none is invented here.
-    await waitFor(() => expect(primaryLabels()).toHaveLength(0));
+  it("accepts zero primaries in read-only sections (Cuenta with vault ON, Mundos)", async () => {
+    // Vault ON: Cuenta renders the status/security surface, whose words-gated
+    // actions are all secondary. Zero primaries here is correct, not a gap, so
+    // the rule is asserted as `<= 1` rather than `=== 1`.
+    (getVaultConfig as Mock).mockResolvedValue({
+      enabled: true,
+      account_exists: true,
+      username: "ada",
+      has_password: true,
+      reauth_interval_d: 14,
+      env_override: false,
+    });
+
+    renderProfile();
+    await screen.findByRole("tab", { name: "Cuenta" });
+
+    await showSection("Cuenta");
+    await expectAtMostOnePrimary();
+
+    // Mundos only offers per-row ghost actions (Renombrar/Borrar), the
+    // recycle-bin Restaurar (secondary) and the migration action (secondary):
+    // no page-owned primary exists, and none is invented here.
+    await showSection("Mundos");
+    await expectAtMostOnePrimary();
+  });
+
+  it("keeps at most one primary while advancing both Conexiones wizards step by step", async () => {
+    // The idea-capture wizard needs a saved token to leave step 0; the
+    // assistant panel needs a validated connection, discovered models and both
+    // capability probes to reach its later steps.
+    (getIdeaCaptureStatus as Mock).mockResolvedValue({
+      config: {
+        private_chat_ids: [],
+        approved_groups: {},
+        limits: { image_mb: 20, audio_mb: 50, audio_minutes: 5, raw_retention_days: 30 },
+      },
+      has_token: true,
+      validation: { ok: true, errors: [] },
+      serve: { command: "cmd", runnable: false, blocked_reasons: [] },
+      worlds: [],
+      limitations: [],
+    });
+    (validateAssistantConnection as Mock).mockResolvedValue({ outcome: "validated", message: null });
+    (discoverAssistantModels as Mock).mockResolvedValue({
+      outcome: "discovered",
+      models: [
+        { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash", capability: "text-only", pricing: null },
+      ],
+    });
+    (runAssistantTextProbe as Mock).mockResolvedValue({ outcome: "passed", oracle: "text-marker", message: null });
+    (runAssistantVisionProbe as Mock).mockResolvedValue({ outcome: "passed", oracle: "causal-vision", message: null });
+
+    // Under the old code every assistant CTA ("Validar conexión", "Descubrir
+    // modelos", "Probar texto + visión", "Guardar configuración",
+    // "Cambiar configuración") defaulted to primary. The assertion that fails
+    // under the old code is the `expectAtMostOnePrimary()` right after entering
+    // the assistant "Conexión" step (and at every later assistant step): it saw
+    // two primary buttons — the assistant CTA plus the idea-capture
+    // "Guardar configuración".
+    renderProfile();
+    await screen.findByRole("tab", { name: "Cuenta" });
+    await showSection("Conexiones");
+
+    // --- idea-capture wizard: step 0 (connect) → step 3 (finish)
+    await screen.findByRole("button", { name: "Continuar" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await screen.findByRole("heading", { name: "Detectá el chat que recibirá tus ideas" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await screen.findByRole("heading", { name: "Revisá tu configuración" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await screen.findByRole("heading", { name: "Finalizá y arrancá la captura" });
+    // The idea-capture final commit is the section's only primary.
+    await waitFor(() => expect(primaryLabels()).toEqual(["Guardar configuración"]));
+
+    // --- assistant settings wizard: provider → confirmation
+    await screen.findByRole("heading", { name: "Proveedor" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByRole("heading", { name: "Conexión" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Validar conexión" }));
+    await screen.findByText("Conexión validada.");
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByRole("heading", { name: "Modelos" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Descubrir modelos" }));
+    await screen.findByRole("combobox", { name: "Modelo descubierto" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByRole("heading", { name: "Capacidad" });
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Probar texto + visión" }));
+    await screen.findByText("Prueba de texto superada.");
+    await screen.findByText("Prueba de visión superada.");
+    await expectAtMostOnePrimary();
+
+    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    await screen.findByRole("heading", { name: "Confirmación" });
+    await expectAtMostOnePrimary();
   });
 });
