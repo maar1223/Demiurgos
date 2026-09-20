@@ -229,7 +229,7 @@ describe("ProfilePage", () => {
     // (Asistente IA / Mundos / Conexiones) or in the Profile itself.
     for (const redundant of [
       "Identidad",
-      "IA texto y visión",
+      "Asistente de Demiurgos",
       "Telegram",
       "Mundos",
       "Importar mundo",

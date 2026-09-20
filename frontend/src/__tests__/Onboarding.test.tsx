@@ -152,7 +152,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     expect(screen.getByLabelText("Idioma de la interfaz")).toBeInTheDocument();
     expect(screen.getByLabelText("Idioma de conversación (asistente)")).toBeInTheDocument();
     expect(screen.getByLabelText("Idioma de contenido (prosa del mundo)")).toBeInTheDocument();
-    expect(screen.getByText("Asistente de IA (texto y visión)")).toBeInTheDocument();
+    expect(screen.getByText("Asistente de Demiurgos (texto y visión)")).toBeInTheDocument();
     expect(screen.getByText("Telegram")).toBeInTheDocument();
     expect(screen.getByText("Respaldo y restauración")).toBeInTheDocument();
   });
@@ -306,7 +306,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     renderOnboarding();
 
     await screen.findByRole("heading", { name: "Creá tu mundo" });
-    expect(screen.getByText("Asistente de IA (texto y visión)")).toBeInTheDocument();
+    expect(screen.getByText("Asistente de Demiurgos (texto y visión)")).toBeInTheDocument();
   });
 
   it("prefills step 0 from the saved locale via the shared LocaleForm (REQ-PIA-12)", async () => {

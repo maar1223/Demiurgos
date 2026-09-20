@@ -205,9 +205,9 @@ describe("ProfilePage — Conexiones connection-card family", () => {
       within(panel)
         .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent),
-    ).toEqual(["Asistente del Wiki", "Captura de ideas"]);
+    ).toEqual(["Asistente de Demiurgos", "Captura de ideas"]);
 
-    expect(screen.getByRole("button", { name: "Asistente del Wiki" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Asistente de Demiurgos" })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
@@ -228,7 +228,7 @@ describe("ProfilePage — Conexiones connection-card family", () => {
     // The visible assistant body renders its wizard…
     expect(
       await within(visibleBodies[0] as HTMLElement).findByRole("heading", {
-        name: "Proveedor",
+        name: "Conexión",
       }),
     ).toBeInTheDocument();
     // …while the hidden Telegram body keeps its content mounted (state warm).

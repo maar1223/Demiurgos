@@ -1053,9 +1053,9 @@ function ConexionesSection() {
         {
           id: "assistant",
           icon: "demiurgos",
-          title: "Asistente del Wiki",
+          title: "Asistente de Demiurgos",
           subtitle:
-            "Configuración provider-neutral. Las claves solo se envían al backend autenticado.",
+            "El modelo compartido de Demiurgos: sirve a la Wiki, al bot de Telegram, a la Skill Madre y a los talleres. Las claves solo se envían al backend autenticado.",
           status: assistantStatus ?? undefined,
           body: (
             <AssistantSettingsPanel
@@ -1089,7 +1089,7 @@ function ConexionesSection() {
  * redundancy reason: it stated the storage probe three times, offered no
  * action, and duplicated state owned by Conexiones and Captura de ideas.
  *
- * The other Configuration Center cards (Identidad, IA texto y visión, Telegram,
+ * The other Configuration Center cards (Identidad, Asistente de Demiurgos, Telegram,
  * Mundos, Importar mundo) are intentionally NOT duplicated here — each of those
  * already lives in a dedicated Profile section (Conexiones / Mundos) or in the
  * Profile/Taller de Mundo themselves (nav-restructure decision): the

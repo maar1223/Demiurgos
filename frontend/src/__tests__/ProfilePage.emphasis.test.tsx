@@ -421,14 +421,10 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     // Assistant first and active by default. The hidden idea-capture body is
     // excluded from the count — the rule is per VISIBLE view.
     expect(
-      screen.getByRole("button", { name: "Asistente del Wiki" }),
+      screen.getByRole("button", { name: "Asistente de Demiurgos" }),
     ).toHaveAttribute("aria-expanded", "true");
 
-    // --- assistant settings wizard: provider → confirmation
-    await screen.findByRole("heading", { name: "Proveedor" });
-    await expectAtMostOnePrimary();
-
-    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
+    // --- assistant settings wizard: Conexión → Modelo → Pruebas
     await screen.findByRole("heading", { name: "Conexión" });
     await expectAtMostOnePrimary();
 
@@ -437,7 +433,7 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     await expectAtMostOnePrimary();
 
     fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
-    await screen.findByRole("heading", { name: "Modelos" });
+    await screen.findByRole("heading", { name: "Modelo" });
     await expectAtMostOnePrimary();
 
     fireEvent.click(screen.getByRole("button", { name: "Descubrir modelos" }));
@@ -445,16 +441,12 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
     await expectAtMostOnePrimary();
 
     fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
-    await screen.findByRole("heading", { name: "Capacidad" });
+    await screen.findByRole("heading", { name: "Pruebas" });
     await expectAtMostOnePrimary();
 
     fireEvent.click(screen.getByRole("button", { name: "Probar texto + visión" }));
     await screen.findByText("Prueba de texto superada.");
     await screen.findByText("Prueba de visión superada.");
-    await expectAtMostOnePrimary();
-
-    fireEvent.click(screen.getByRole("button", { name: "Siguiente" }));
-    await screen.findByRole("heading", { name: "Confirmación" });
     await expectAtMostOnePrimary();
 
     // --- idea-capture wizard: open its row, then step 0 (connect) → step 3
@@ -487,9 +479,9 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
       within(panel)
         .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent),
-    ).toEqual(["Asistente del Wiki", "Captura de ideas"]);
+    ).toEqual(["Asistente de Demiurgos", "Captura de ideas"]);
 
-    const assistantToggle = screen.getByRole("button", { name: "Asistente del Wiki" });
+    const assistantToggle = screen.getByRole("button", { name: "Asistente de Demiurgos" });
     const telegramToggle = screen.getByRole("button", { name: "Captura de ideas" });
     expect(assistantToggle).toHaveAttribute("aria-expanded", "true");
     expect(telegramToggle).toHaveAttribute("aria-expanded", "false");

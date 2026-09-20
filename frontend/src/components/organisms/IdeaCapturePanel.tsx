@@ -3,6 +3,7 @@ import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { SecretInput } from "@/components/molecules/SecretInput";
+import { WizardProgress } from "@/components/molecules/WizardProgress";
 import type { ConnectionStatusSummary } from "@/components/molecules/ConnectionsPanel";
 import {
   authorizeChat,
@@ -20,7 +21,6 @@ import type {
   IdeaCaptureStatus,
 } from "@/api/types";
 import { ApiError } from "@/api/types";
-import { cn } from "@/lib/utils";
 
 /** Unified session controller surfaced by useAuthSession — passed in so the
  *  panel stays decoupled from the hook and easy to test. `start`/`logout`
@@ -485,61 +485,7 @@ export function IdeaCapturePanel({
       {status && (
         <>
           {/* --------------------------------------------------- progress */}
-          <nav
-            aria-label="Progreso de la configuración"
-            className="flex items-center gap-1"
-          >
-            {STEPS.map((entry, index) => {
-              const state =
-                index < step ? "done" : index === step ? "current" : "todo";
-              return (
-                <div key={entry.id} className="flex flex-1 items-center gap-1">
-                  <div
-                    className={cn(
-                      "flex min-w-0 flex-1 flex-col items-center gap-1 text-center",
-                      index > 0 && "ml-1",
-                    )}
-                    aria-current={index === step ? "step" : undefined}
-                  >
-                    <span
-                      className={cn(
-                        "flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-medium",
-                        state === "done" &&
-                          "border-status-success bg-status-success/15 text-status-success",
-                        state === "current" &&
-                          "border-action bg-action/15 text-action",
-                        state === "todo" &&
-                          "border-edge bg-surface-raised text-muted",
-                      )}
-                    >
-                      {state === "done" ? <Icon name="check" size={14} /> : index + 1}
-                    </span>
-                    <span
-                      className={cn(
-                        "text-xs leading-tight",
-                        state === "current"
-                          ? "text-primary"
-                          : state === "done"
-                            ? "text-status-success"
-                            : "text-muted",
-                      )}
-                    >
-                      {entry.label}
-                    </span>
-                  </div>
-                  {index < LAST_STEP && (
-                    <div
-                      aria-hidden="true"
-                      className={cn(
-                        "mb-5 h-px w-3 shrink-0",
-                        index < step ? "bg-status-success/50" : "bg-surface-raised",
-                      )}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </nav>
+          <WizardProgress steps={STEPS} current={step} />
 
           {/* -------------------------------------------------- step content */}
           <div className="rounded-lg border border-edge bg-surface-raised p-5">

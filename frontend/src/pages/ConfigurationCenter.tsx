@@ -74,7 +74,7 @@ interface CardDef {
 
 export const CARD_DEFS: CardDef[] = [
   { key: "identity", title: "Identidad", description: "Cuenta local: contraseña o palabras claves para recuperación autorizada.", action: { label: "Ir a Perfil", to: "/perfil" } },
-  { key: "assistant", title: "IA texto y visión", description: "Modelo principal del Asistente (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
+  { key: "assistant", title: "Asistente de Demiurgos", description: "Modelo compartido de la plataforma (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
   { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: null },
   { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/perfil?tab=preferencias" } },
   { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },

@@ -9,7 +9,7 @@ const connections: ConnectionDef[] = [
   {
     id: "assistant",
     icon: "demiurgos",
-    title: "Asistente del Wiki",
+    title: "Asistente de Demiurgos",
     subtitle: "Configuración provider-neutral.",
     status: { label: "Activo", variant: "success" },
     body: <p>cuerpo asistente</p>,
@@ -34,7 +34,7 @@ describe("ConnectionsPanel", () => {
       />,
     );
 
-    const assistant = screen.getByRole("button", { name: "Asistente del Wiki" });
+    const assistant = screen.getByRole("button", { name: "Asistente de Demiurgos" });
     const telegram = screen.getByRole("button", { name: "Captura de ideas" });
     expect(assistant).toHaveAttribute("aria-expanded", "true");
     expect(assistant).toHaveAttribute("aria-controls", "connection-assistant-body");
@@ -44,7 +44,7 @@ describe("ConnectionsPanel", () => {
     // The heading owning each region carries EXACTLY the title: the subtitle,
     // the badge and the aria-hidden chevron never leak into the accessible name.
     expect(
-      screen.getByRole("heading", { name: "Asistente del Wiki", level: 3 }),
+      screen.getByRole("heading", { name: "Asistente de Demiurgos", level: 3 }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Captura de ideas", level: 3 }),

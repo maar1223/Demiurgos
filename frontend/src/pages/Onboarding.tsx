@@ -30,7 +30,7 @@ import { LocaleForm, authHint } from "@/components/organisms/LocaleForm";
 
 const REMOTE_PENDING: Record<string, { title: string; description: string }> = {
   ai: {
-    title: "Asistente de IA (texto y visión)",
+    title: "Asistente de Demiurgos (texto y visión)",
     description:
       "Requiere un modelo local o remoto validado. Se retoma desde el Perfil.",
   },
