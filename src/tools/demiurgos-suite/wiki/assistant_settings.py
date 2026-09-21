@@ -751,14 +751,15 @@ def create_assistant_settings_router(
                 ),
             )
             if runtime_state_resolver is not None:
-                # Real runtime truth: liveness plus the persisted three-proof
-                # acceptance for the saved revision. A live runtime accepts the
-                # save; otherwise it stays saved-not-active.
-                runtime_state = (
-                    "active"
-                    if runtime_liveness is not None and runtime_liveness()
-                    else "saved-not-active"
-                )
+                # Real runtime truth: exactly ONE liveness observation drives
+                # both the recorded acceptance and the response. Probing a
+                # second time (through the resolver) could disagree with itself
+                # — a TOCTOU race — and the recorded acceptance is the arbiter,
+                # so the response must be the value that was just recorded. A
+                # save with the gateway down therefore stays non-active until a
+                # later save observes it up (fail closed, by design).
+                live = runtime_liveness is not None and runtime_liveness()
+                runtime_state = "active" if live else "saved-not-active"
             else:
                 runtime_state = seam.apply(saved["revision"]).state
             saved["runtime_state"] = runtime_state
@@ -766,8 +767,6 @@ def create_assistant_settings_router(
             # badge may become configured only on real acceptance.
             if on_acceptance is not None:
                 on_acceptance(runtime_state)
-            if runtime_state_resolver is not None:
-                saved["runtime_state"] = runtime_state_resolver(saved["revision"])
             return saved
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc

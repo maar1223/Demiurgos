@@ -742,13 +742,27 @@ class TestRuntimeStateResolver:
         assert response.status_code == 200, response.text
         assert response.json()["runtime_state"] == state
 
-    def test_save_reports_liveness_acceptance_and_resolver_response(self, tmp_path, monkeypatch):
+    @pytest.mark.parametrize("live", [False, True])
+    def test_save_reports_liveness_acceptance_and_resolver_response(
+            self, tmp_path, monkeypatch, live):
+        """F-3: one liveness observation drives both surfaces, so they agree.
+
+        The save path must probe liveness exactly once and use that value for
+        both the recorded acceptance (``on_acceptance``) and the response. The
+        injected resolver is a tripwire: if the save path resolved a second
+        time, this test would fail instead of silently normalising a
+        response/evidence disagreement.
+        """
         captured: list[str] = []
+
+        def _resolver_must_not_be_called(revision):  # pragma: no cover - tripwire
+            raise AssertionError("save must not resolve liveness twice")
+
         client = self._build(
             tmp_path,
             monkeypatch,
-            resolver=lambda revision: "active",
-            liveness=lambda: False,
+            resolver=_resolver_must_not_be_called,
+            liveness=lambda: live,
             on_acceptance=captured.append,
         )
 
@@ -762,9 +776,10 @@ class TestRuntimeStateResolver:
         )
 
         assert response.status_code == 200, response.text
-        # Liveness drives the recorded acceptance; the resolver owns the payload.
-        assert captured == ["saved-not-active"]
-        assert response.json()["runtime_state"] == "active"
+        expected = "active" if live else "saved-not-active"
+        assert captured == [expected]
+        # Both the recorded acceptance and the response are the same observation.
+        assert response.json()["runtime_state"] == captured[0]
 
     def test_current_config_revision_matches_active_profile(self, tmp_path, monkeypatch):
         hermes = tmp_path / "hermes-revision"

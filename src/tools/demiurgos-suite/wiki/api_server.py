@@ -725,8 +725,11 @@ def _assistant_gateway_probe() -> "HermesGatewayProbe":
 def _resolve_assistant_runtime_state(revision: int) -> str:
     """Honest runtime state for a config revision.
 
-    ``active`` requires a live gateway AND a recorded acceptance for THIS
-    revision with both probes passed. A live gateway without that acceptance is
+    The recorded acceptance is the arbiter: ``active`` requires a live gateway
+    AND an acceptance for THIS revision whose recorded ``runtime`` is
+    ``accepted`` (with both probes passed). ``readiness.assistant_proven`` reads
+    that same evidence for the Configuration Center card, so the panel and the
+    card agree on one truth. A live gateway without such an acceptance is
     ``pending-reload`` (config present but unproven). No live gateway — or an
     unreadable snapshot — is ``saved-not-active`` (fail closed).
     """
@@ -738,6 +741,7 @@ def _resolve_assistant_runtime_state(revision: int) -> str:
         and evidence.get("revision") == revision
         and evidence.get("text") == "passed"
         and evidence.get("vision") == "passed"
+        and evidence.get("runtime") == "accepted"
     ):
         return "active"
     return "pending-reload"
