@@ -110,12 +110,14 @@ export function AssistantSettingsPanel({
   // only fires on a real change.
   const runtimeState = status?.runtime_state;
   useEffect(() => {
-    if (!onStatus) return;
+    // Never report a state while the status is still in flight: an undefined
+    // runtime_state would flash "No activo" on a healthy, active assistant.
+    if (!onStatus || runtimeState === undefined) return;
     onStatus(
       runtimeState === "active"
         ? { label: "Activo", variant: "success" }
         : runtimeState === "pending-reload"
-          ? { label: "Pendiente de recarga", variant: "warning" }
+          ? { label: "Sin verificar", variant: "warning" }
           : { label: "No activo", variant: "info" },
     );
   }, [onStatus, runtimeState]);
@@ -310,6 +312,17 @@ export function AssistantSettingsPanel({
     setError(null);
   };
 
+  /** Fast path: change only the model. The validated connection and the stored
+   *  key stay untouched, so the connection step is never forced and no key is
+   *  requested. Both capability probes still gate the save. */
+  const changeModel = () => {
+    setSaved(false);
+    setTextProbe(null);
+    setVisionProbe(null);
+    setError(null);
+    setStep("models");
+  };
+
   const clear = async () => {
     setBusy(true);
     setError(null);
@@ -334,6 +347,9 @@ export function AssistantSettingsPanel({
   // Honest completion, derived from real state — never from how far the user
   // walked. This is the single source of the navigation preconditions.
   const connectionDone = validation === "validated";
+  // A validated connection with a stored key means the author never has to
+  // retype the secret for a model-only change.
+  const usingStoredKey = connectionDone && status.key_configured;
   // The GET seeds `selectedModel` from `model_metadata`, which the backend can
   // return with an EMPTY id when nothing is configured yet — a non-null object
   // is therefore not proof that a model was chosen. Require a real id, or the
@@ -417,6 +433,7 @@ export function AssistantSettingsPanel({
         {step === "models" && (
           <AssistantModelStep
             validated={connectionDone}
+            usingStoredKey={usingStoredKey}
             busy={busy}
             error={error}
             models={models}
@@ -435,6 +452,7 @@ export function AssistantSettingsPanel({
               provider={provider}
               selectedModel={selectedModel}
               onChangeConfiguration={changeConfiguration}
+              onChangeModel={changeModel}
               onNavigateWorkshop={() => navigate("/taller-mundo")}
             />
           ) : (

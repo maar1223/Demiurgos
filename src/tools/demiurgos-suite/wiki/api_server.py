@@ -696,6 +696,9 @@ def _record_assistant_acceptance(runtime_state: str) -> None:
     any other state (``pending-reload``/``saved-not-active``) keeps the badge
     honestly pending because the projection requires exactly
     text=passed + vision=passed + runtime=accepted.
+
+    The accepted ``revision`` is stamped so a later save invalidates this
+    acceptance; the readiness projection ignores the extra key.
     """
     registry = _local_state()
     state = registry.snapshot()
@@ -703,8 +706,45 @@ def _record_assistant_acceptance(runtime_state: str) -> None:
         "text": "passed",
         "vision": "passed",
         "runtime": "accepted" if runtime_state == "active" else runtime_state,
+        "revision": assistant_settings.current_config_revision(),
     }
     registry.atomic_commit(state)
+
+
+_GATEWAY_PROBE = None
+
+
+def _assistant_gateway_probe() -> "HermesGatewayProbe":
+    """Lazily-built read-only gateway liveness probe (process-free)."""
+    global _GATEWAY_PROBE
+    if _GATEWAY_PROBE is None:
+        _GATEWAY_PROBE = HermesGatewayProbe()
+    return _GATEWAY_PROBE
+
+
+def _resolve_assistant_runtime_state(revision: int) -> str:
+    """Honest runtime state for a config revision.
+
+    The recorded acceptance is the arbiter: ``active`` requires a live gateway
+    AND an acceptance for THIS revision whose recorded ``runtime`` is
+    ``accepted`` (with both probes passed). ``readiness.assistant_proven`` reads
+    that same evidence for the Configuration Center card, so the panel and the
+    card agree on one truth. A live gateway without such an acceptance is
+    ``pending-reload`` (config present but unproven). No live gateway — or an
+    unreadable snapshot — is ``saved-not-active`` (fail closed).
+    """
+    if not _assistant_gateway_probe().is_running():
+        return "saved-not-active"
+    evidence = _local_state().snapshot().get("assistant_acceptance")
+    if (
+        isinstance(evidence, dict)
+        and evidence.get("revision") == revision
+        and evidence.get("text") == "passed"
+        and evidence.get("vision") == "passed"
+        and evidence.get("runtime") == "accepted"
+    ):
+        return "active"
+    return "pending-reload"
 
 
 # ---------------------------------------------------------------------------
@@ -7666,7 +7706,9 @@ from idea_capture_ui import create_idea_capture_router  # noqa: E402
 from ideas_bank_router import create_ideas_bank_router  # noqa: E402
 from docx_export import _convert_markdown_to_docx, _strip_frontmatter  # noqa: E402
 from ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
+import assistant_settings  # noqa: E402
 from assistant_settings import create_assistant_settings_router  # noqa: E402
+from hermes_runtime_probe import HermesGatewayProbe  # noqa: E402
 from telegram_settings import create_telegram_settings_router  # noqa: E402
 from migration_settings import create_migration_settings_router  # noqa: E402
 from import_router import create_import_router  # noqa: E402
@@ -7940,6 +7982,11 @@ app.include_router(
         # in the local registry so the readiness badge may become configured
         # only on real acceptance (pending/no-apto otherwise).
         on_acceptance=_record_assistant_acceptance,
+        # Real runtime truth: the state is derived on every read from a
+        # read-only gateway liveness probe plus the persisted acceptance for the
+        # revision, so a server restart no longer degrades "Activo" to a lie.
+        runtime_state_resolver=_resolve_assistant_runtime_state,
+        runtime_liveness=lambda: _assistant_gateway_probe().is_running(),
     ),
 )
 

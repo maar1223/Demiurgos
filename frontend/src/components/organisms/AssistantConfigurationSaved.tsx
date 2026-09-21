@@ -10,6 +10,7 @@ export interface AssistantConfigurationSavedProps {
   provider: string;
   selectedModel: AssistantModelOption | null;
   onChangeConfiguration: () => void;
+  onChangeModel: () => void;
   onNavigateWorkshop: () => void;
 }
 
@@ -23,6 +24,7 @@ export function AssistantConfigurationSaved({
   provider,
   selectedModel,
   onChangeConfiguration,
+  onChangeModel,
   onNavigateWorkshop,
 }: AssistantConfigurationSavedProps) {
   return (
@@ -65,6 +67,9 @@ export function AssistantConfigurationSaved({
         </div>
       </dl>
       <div className="mt-4 flex flex-wrap gap-2">
+        <Button variant="primary" onClick={onChangeModel}>
+          Cambiar modelo
+        </Button>
         <Button variant="secondary" onClick={onChangeConfiguration}>
           Cambiar configuración
         </Button>
