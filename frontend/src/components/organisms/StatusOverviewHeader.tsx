@@ -39,7 +39,7 @@ function assistantBadge(assistant: AssistantSettingsStatus | null): StatusBadge 
   if (!assistant.key_configured) return { label: "Asistente no configurado", variant: "default" };
   if (assistant.runtime_state === "active") return { label: "Asistente activo", variant: "success" };
   if (assistant.runtime_state === "pending-reload") {
-    return { label: "Asistente pendiente de recarga", variant: "warning" };
+    return { label: "Asistente sin verificar", variant: "warning" };
   }
   return { label: "Asistente guardado, no activo", variant: "default" };
 }

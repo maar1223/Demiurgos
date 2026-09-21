@@ -6839,6 +6839,38 @@ class TestAssistantEvidence:
         body = empty_client.get("/api/onboarding/readiness").json()
         assert body["cards"]["assistant"] == "pending"
 
+    def test_runtime_state_requires_live_gateway_and_matching_acceptance(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        class _Probe:
+            def __init__(self, running: bool) -> None:
+                self._running = running
+
+            def is_running(self) -> bool:
+                return self._running
+
+        registry = api_server._local_state()
+        state = registry.snapshot()
+        state["assistant_acceptance"] = {
+            "text": "passed", "vision": "passed", "runtime": "accepted", "revision": 3,
+        }
+        registry.atomic_commit(state)
+
+        monkeypatch.setattr(api_server, "_assistant_gateway_probe", lambda: _Probe(True))
+        assert api_server._resolve_assistant_runtime_state(3) == "active"
+        # A different revision has no acceptance -> pending, never active.
+        assert api_server._resolve_assistant_runtime_state(4) == "pending-reload"
+
+        monkeypatch.setattr(api_server, "_assistant_gateway_probe", lambda: _Probe(False))
+        assert api_server._resolve_assistant_runtime_state(3) == "saved-not-active"
+
+    def test_acceptance_records_the_current_revision(
+            self, empty_client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(api_server.assistant_settings, "current_config_revision", lambda: 17)
+        api_server._record_assistant_acceptance("active")
+        evidence = api_server._local_state().snapshot()["assistant_acceptance"]
+        assert evidence["revision"] == 17
+        assert evidence["runtime"] == "accepted"
+
 
 # ---------------------------------------------------------------------------
 # BLOQUE 4 — GET /api/{mundo}/graph/entities (bulk entities + links)

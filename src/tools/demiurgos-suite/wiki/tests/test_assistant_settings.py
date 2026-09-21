@@ -697,3 +697,83 @@ class TestAcceptanceEvidenceCallback:
 
         assert response.status_code == 422
         assert captured == []
+
+
+class TestRuntimeStateResolver:
+    """When a resolver is wired, the router owns runtime_state from persisted
+    evidence plus live liveness instead of the legacy in-memory seam."""
+
+    def _build(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        resolver,
+        liveness=None,
+        on_acceptance=None,
+    ) -> TestClient:
+        hermes = tmp_path / "hermes-resolver"
+        hermes.mkdir()
+        (hermes / "config.yaml").write_text(
+            "model:\n  default: gpt-5.6-luna\n  provider: opencode-go\n"
+            "  base_url: https://opencode.ai/zen/go/v1\n",
+            encoding="utf-8",
+        )
+        (hermes / ".env").write_text("OPENCODE_GO_API_KEY=fixture\n", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes))
+        _install_fake_probes(monkeypatch)
+        registry = ProviderRegistry()
+        registry.transport = lambda method, url, headers: (200, {"data": []})
+        local_app = FastAPI()
+        local_app.include_router(
+            assistant_settings.create_assistant_settings_router(
+                require_principal=lambda request: object(),
+                provider_registry=registry,
+                runtime_state_resolver=resolver,
+                runtime_liveness=liveness,
+                on_acceptance=on_acceptance,
+            )
+        )
+        return TestClient(local_app, client=("127.0.0.1", 50000))
+
+    @pytest.mark.parametrize("state", ["active", "pending-reload", "saved-not-active"])
+    def test_get_reports_resolver_state(self, tmp_path, monkeypatch, state):
+        client = self._build(tmp_path, monkeypatch, lambda revision: state)
+        response = client.get("/api/profile/assistant")
+        assert response.status_code == 200, response.text
+        assert response.json()["runtime_state"] == state
+
+    def test_save_reports_liveness_acceptance_and_resolver_response(self, tmp_path, monkeypatch):
+        captured: list[str] = []
+        client = self._build(
+            tmp_path,
+            monkeypatch,
+            resolver=lambda revision: "active",
+            liveness=lambda: False,
+            on_acceptance=captured.append,
+        )
+
+        response = client.put(
+            "/api/profile/assistant/configuration",
+            json={
+                "provider": "openai",
+                "api_key": "fixture-resolver-key",
+                "manual_model_id": "manual-model",
+            },
+        )
+
+        assert response.status_code == 200, response.text
+        # Liveness drives the recorded acceptance; the resolver owns the payload.
+        assert captured == ["saved-not-active"]
+        assert response.json()["runtime_state"] == "active"
+
+    def test_current_config_revision_matches_active_profile(self, tmp_path, monkeypatch):
+        hermes = tmp_path / "hermes-revision"
+        hermes.mkdir()
+        (hermes / "config.yaml").write_text(
+            "model:\n  default: gpt-5.6-luna\n  provider: opencode-go\n"
+            "  base_url: https://opencode.ai/zen/go/v1\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("HERMES_HOME", str(hermes))
+        assert isinstance(assistant_settings.current_config_revision(), int)
+

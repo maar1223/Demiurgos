@@ -454,17 +454,34 @@ def _atomic_write(path: Path, content: str, mode: int | None = None) -> None:
 _ENV_FILE_MODE = 0o600
 
 
+def current_config_revision() -> int | None:
+    """Current normalized config revision for the active Hermes profile.
+
+    Returns ``None`` (never raises) when the profile cannot be resolved, so a
+    best-effort evidence recorder can stay total.
+    """
+    try:
+        paths = _resolve_profile_paths()
+        _, _, data = _read_config(paths.config)
+        return _status_from_config(paths, data).revision
+    except (AssistantSettingsError, OSError, UnicodeError):
+        return None
+
+
 def _status(
     paths: HermesProfilePaths,
     model: dict[str, Any],
     data: dict[str, Any] | None = None,
     runtime_seam: HermesRuntimeSeam | None = None,
+    runtime_state_resolver: Callable[[int], str] | None = None,
 ) -> dict[str, Any]:
     data = data or {"model": model}
     status = _status_from_config(paths, data)
     public = status.public()
     public["active_profile"] = paths.name
-    if runtime_seam is not None:
+    if runtime_state_resolver is not None:
+        public["runtime_state"] = runtime_state_resolver(status.revision)
+    elif runtime_seam is not None:
         public["runtime_state"] = runtime_seam.state_for(status.revision)
     return public
 
@@ -527,6 +544,8 @@ def create_assistant_settings_router(
     runtime_seam: HermesRuntimeSeam | None = None,
     probe_factory: Callable[[dict[str, Any], str], ProbeRunner] | None = None,
     on_acceptance: Callable[[str], None] | None = None,
+    runtime_state_resolver: Callable[[int], str] | None = None,
+    runtime_liveness: Callable[[], bool] | None = None,
 ) -> APIRouter:
     """Build authenticated assistant settings routes.
 
@@ -534,6 +553,12 @@ def create_assistant_settings_router(
     save with the applied runtime state (``active``/``pending-reload``/
     ``saved-not-active``) so the host can record acceptance evidence (ONB-3.6).
     It is never called when probes fail or the save is rejected.
+
+    ``runtime_state_resolver`` (optional) derives the runtime state for a config
+    revision from persisted evidence plus live liveness; when provided it owns
+    every read/save state (``runtime_seam`` then stays as the legacy fallback for
+    callers that inject only the seam). ``runtime_liveness`` reports whether the
+    runtime is up right now and feeds the save-time acceptance state.
     """
     router = APIRouter(prefix="/api/profile/assistant", tags=["assistant-settings"])
     if provider_registry is None:
@@ -595,7 +620,7 @@ def create_assistant_settings_router(
         try:
             paths = _resolve_profile_paths()
             _, model, data = _read_config(paths.config)
-            return _status(paths, model, data, seam)
+            return _status(paths, model, data, seam, runtime_state_resolver)
         except AssistantSettingsError as exc:
             raise settings_error(exc) from exc
 
@@ -654,7 +679,7 @@ def create_assistant_settings_router(
                     _atomic_write(paths.env, env_content, mode=_ENV_FILE_MODE)
                 raise
             _, refreshed_model, refreshed_data = _read_config(paths.config)
-            return _status(paths, refreshed_model, refreshed_data, seam)
+            return _status(paths, refreshed_model, refreshed_data, seam, runtime_state_resolver)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except (AssistantSettingsError, OSError, UnicodeError) as exc:
@@ -725,12 +750,24 @@ def create_assistant_settings_router(
                     capability=model["capability"], pricing=model["pricing"],
                 ),
             )
-            runtime_state = seam.apply(saved["revision"]).state
+            if runtime_state_resolver is not None:
+                # Real runtime truth: liveness plus the persisted three-proof
+                # acceptance for the saved revision. A live runtime accepts the
+                # save; otherwise it stays saved-not-active.
+                runtime_state = (
+                    "active"
+                    if runtime_liveness is not None and runtime_liveness()
+                    else "saved-not-active"
+                )
+            else:
+                runtime_state = seam.apply(saved["revision"]).state
             saved["runtime_state"] = runtime_state
             # ONB-3.6: record the runtime acceptance evidence so the Center
             # badge may become configured only on real acceptance.
             if on_acceptance is not None:
                 on_acceptance(runtime_state)
+            if runtime_state_resolver is not None:
+                saved["runtime_state"] = runtime_state_resolver(saved["revision"])
             return saved
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -773,7 +810,7 @@ def create_assistant_settings_router(
                     _atomic_write(paths.env, env_content, mode=_ENV_FILE_MODE)
                 raise
             _, refreshed_model, refreshed_data = _read_config(paths.config)
-            return _status(paths, refreshed_model, refreshed_data, seam)
+            return _status(paths, refreshed_model, refreshed_data, seam, runtime_state_resolver)
         except (AssistantSettingsError, OSError, UnicodeError) as exc:
             if isinstance(exc, AssistantSettingsError):
                 raise settings_error(exc) from exc

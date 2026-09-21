@@ -359,7 +359,7 @@ describe("AssistantSettingsPanel", () => {
 
   it.each([
     ["active", "Activo"],
-    ["pending-reload", "Guardado, pendiente de recarga"],
+    ["pending-reload", "Guardado, sin verificar"],
     ["saved-not-active", "Guardado, no activo"],
   ] as const)("shows runtime state %s", async (runtime_state, label) => {
     mocked.getAssistantSettings.mockResolvedValue({ ...status, runtime_state });
@@ -412,7 +412,7 @@ describe("AssistantSettingsPanel", () => {
     renderPanel();
     await saveFlow(user);
     const success = await screen.findByRole("status");
-    expect(within(success).getByText("Guardado, pendiente de recarga")).toBeInTheDocument();
+    expect(within(success).getByText("Guardado, sin verificar")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Cambiar configuración" }));
     expect(screen.queryByText("Configuración guardada")).not.toBeInTheDocument();
@@ -442,5 +442,81 @@ describe("AssistantSettingsPanel", () => {
     expect(screen.getByRole("heading", { name: "Conexión" })).toBeInTheDocument();
     // Confirmation was cleared: the flow must be re-run to save again.
     expect(screen.queryByRole("button", { name: "Guardar configuración" })).not.toBeInTheDocument();
+  });
+
+  it("never reports a state while the status is still loading", async () => {
+    let resolveStatus: (value: AssistantSettingsStatus) => void = () => {};
+    mocked.getAssistantSettings.mockReturnValue(
+      new Promise<AssistantSettingsStatus>((resolve) => {
+        resolveStatus = resolve;
+      }),
+    );
+    const onStatus = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <AssistantSettingsPanel auth={auth} onStatus={onStatus} />
+      </MemoryRouter>,
+    );
+
+    // No "No activo" flash before the real status arrives.
+    expect(onStatus).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveStatus(status);
+    });
+    expect(onStatus).toHaveBeenCalledWith({ label: "Activo", variant: "success" });
+  });
+
+  it("changes only the model from the saved card without revalidating the connection", async () => {
+    const user = userEvent.setup();
+    mocked.saveAssistantConfiguration.mockResolvedValue({ ...status, runtime_state: "active" });
+    renderPanel();
+    await saveFlow(user);
+    expect(mocked.validateAssistantConnection).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole("button", { name: "Cambiar modelo" }));
+
+    // Straight to Modelo with the connection still validated and no key asked.
+    expect(await screen.findByRole("heading", { name: "Modelo" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Validar conexión" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Clave API")).not.toBeInTheDocument();
+    expect(screen.getByText(/Usando la clave guardada/)).toBeInTheDocument();
+
+    // Save the new model: the connection is never revalidated.
+    await user.click(screen.getByRole("button", { name: "Descubrir modelos" }));
+    await screen.findByRole("combobox", { name: "Modelo descubierto" });
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+    await user.click(screen.getByRole("button", { name: "Probar texto + visión" }));
+    await screen.findByText("Prueba de visión superada.");
+    await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
+
+    expect(await screen.findByText("Configuración guardada")).toBeInTheDocument();
+    expect(mocked.validateAssistantConnection).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the current model selectable when it is absent from the catalog", async () => {
+    const user = userEvent.setup();
+    const liveModel: AssistantModelOption = {
+      id: "deepseek-v4.1-flash",
+      label: "DeepSeek V4.1 Flash",
+      capability: "text-only",
+      pricing: null,
+    };
+    mocked.getAssistantSettings.mockResolvedValue({
+      ...status,
+      model: liveModel.id,
+      model_metadata: liveModel,
+      models: [], // server catalog does not know the live model
+    });
+    renderPanel();
+
+    await screen.findByRole("heading", { name: "Conexión" });
+    await user.click(screen.getByRole("button", { name: "Validar conexión" }));
+    await screen.findByText("Conexión validada.");
+    await user.click(screen.getByRole("button", { name: "Siguiente" }));
+
+    const select = await screen.findByRole("combobox", { name: "Modelo descubierto" });
+    expect(within(select).getByRole("option", { name: "DeepSeek V4.1 Flash" })).toBeInTheDocument();
   });
 });

@@ -57,7 +57,7 @@ export function stateLabel(
   return state === "active"
     ? "Activo"
     : state === "pending-reload"
-      ? "Guardado, pendiente de recarga"
+      ? "Guardado, sin verificar"
       : "Guardado, no activo";
 }
 
@@ -68,7 +68,7 @@ export function stateContext(
   return state === "active"
     ? "La configuración ya está aplicada y el asistente la está usando."
     : state === "pending-reload"
-      ? "La configuración se guardó, pero el asistente necesita recargarse o reiniciarse para aplicarla."
+      ? "La configuración se guardó, pero el asistente todavía no la confirmó para esta versión."
       : "La configuración se guardó, pero el asistente no está activo en este momento.";
 }
 
