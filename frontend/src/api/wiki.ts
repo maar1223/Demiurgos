@@ -191,11 +191,16 @@ export function changeUsername(
 }
 
 /** POST /api/auth/credentials/words/rotate — rotate the recovery words
- *  (R-ERK-01, requires a session). Returns the new plaintext words once. */
-export function rotateWords(): Promise<{ new_words: string }> {
+ *  (R-ERK-01, requires a session AND the current recovery words as the
+ *  ownership proof). Returns the new plaintext words once. */
+export function rotateWords(words: string): Promise<{ new_words: string }> {
   return apiFetch<{ new_words: string }>(
     apiUrl(["api", "auth", "credentials", "words", "rotate"]),
-    { method: "POST", credentials: "same-origin" },
+    {
+      method: "POST",
+      credentials: "same-origin",
+      body: JSON.stringify({ words }),
+    },
   );
 }
 

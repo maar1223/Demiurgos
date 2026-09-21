@@ -301,7 +301,8 @@ def test_credentials_endpoints_forbidden_when_vault_off(
         "/api/auth/credentials/recover",
         json={"words": "x"}).status_code == 403
     assert credentials_client.post(
-        "/api/auth/credentials/words/rotate").status_code == 403
+        "/api/auth/credentials/words/rotate",
+        json={"words": "x"}).status_code == 403
     # S-AC-01b: the onboarding account step must still work with vault OFF.
     created = credentials_client.post(
         "/api/auth/credentials/account",
@@ -666,17 +667,35 @@ def test_change_username_via_words(credentials_client: TestClient):
     assert _account_slot(credentials_client)["username"] == "new-handle"
 
 
-def test_rotate_words_requires_an_active_session(credentials_client: TestClient):
-    _create_account(credentials_client, password=PASSWORD)
+def test_rotate_words_requires_ownership_words(credentials_client: TestClient):
+    """R-ERK-01 (amended) — rotating requires the CURRENT recovery words.
+
+    A session alone is NOT an ownership proof: otherwise anyone who knows the
+    password could mint fresh words and escalate the session into permanent
+    ownership. Both the no-session and the session-with-wrong-words cases are
+    rejected.
+    """
+    old_words = _create_account(credentials_client, password=PASSWORD)
+
+    # No session at all: rejected before the words are even checked.
     assert credentials_client.post(
-        "/api/auth/credentials/words/rotate").status_code == 401
+        "/api/auth/credentials/words/rotate",
+        json={"words": old_words}).status_code == 401
+
+    _login(credentials_client, password=PASSWORD)
+
+    # A valid session plus WRONG words (made-up ownership proof): rejected.
+    assert credentials_client.post(
+        "/api/auth/credentials/words/rotate",
+        json={"words": "not the words"}).status_code == 401
 
 
 def test_rotate_words_returns_new_words_once(credentials_client: TestClient):
     old_words = _create_account(credentials_client, password=PASSWORD)
     _login(credentials_client, password=PASSWORD)
 
-    rotated = credentials_client.post("/api/auth/credentials/words/rotate")
+    rotated = credentials_client.post(
+        "/api/auth/credentials/words/rotate", json={"words": old_words})
     assert rotated.status_code == 200
     new_words = rotated.json()["new_words"]
     assert new_words and new_words != old_words
@@ -688,6 +707,49 @@ def test_rotate_words_returns_new_words_once(credentials_client: TestClient):
     assert credentials_client.post(
         "/api/auth/credentials/recover",
         json={"words": new_words}).status_code == 200
+
+
+def test_rotate_words_cannot_escalate_a_session_to_ownership(
+        credentials_client: TestClient):
+    """Regression for the confirmed escalation chain.
+
+    With a session but WITHOUT the words, rotation fails; therefore made-up
+    words cannot be used to mint ownership and change the username. With the
+    correct current words, rotation succeeds and the NEW words are the ones
+    that prove ownership on /credentials/username, while the OLD ones do not.
+    """
+    old_words = _create_account(credentials_client, password=PASSWORD)
+    _login(credentials_client, password=PASSWORD)
+
+    # Step 1: a session alone cannot rotate with made-up words…
+    assert credentials_client.post(
+        "/api/auth/credentials/words/rotate",
+        json={"words": "made up words"}).status_code == 401
+
+    # …so those made-up words cannot be used to change the username either.
+    assert credentials_client.post(
+        "/api/auth/credentials/username",
+        json={"words": "made up words", "new_username": "attacker"},
+    ).status_code == 401
+    assert _account_slot(credentials_client)["username"] == USERNAME
+
+    # Step 2: the correct current words DO rotate, minting new ownership.
+    rotated = credentials_client.post(
+        "/api/auth/credentials/words/rotate", json={"words": old_words})
+    assert rotated.status_code == 200
+    new_words = rotated.json()["new_words"]
+    assert new_words and new_words != old_words
+
+    # Step 3: the NEW words now change the username; the OLD words no longer do.
+    assert credentials_client.post(
+        "/api/auth/credentials/username",
+        json={"words": old_words, "new_username": "old-words-user"},
+    ).status_code == 401
+    assert credentials_client.post(
+        "/api/auth/credentials/username",
+        json={"words": new_words, "new_username": "new-words-user"},
+    ).status_code == 200
+    assert _account_slot(credentials_client)["username"] == "new-words-user"
 
 
 # ---------------------------------------------------------------------------

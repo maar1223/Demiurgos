@@ -397,19 +397,71 @@ describe("ProfilePage account section (credentials mode)", () => {
     );
   });
 
-  it("rotates the words and shows the new plaintext exactly once", async () => {
+  it("asks for the current words before rotating and never calls the API without them", async () => {
     renderProfile();
     await openCredentials();
     selectPanel("Palabras claves");
 
+    const form = wordsForm("Rotar palabras claves");
+    // Locked: the current recovery words are requested…
+    expect(
+      within(form).getByLabelText("Palabras claves para Rotar palabras claves"),
+    ).toBeInTheDocument();
+    // …and the action is not armed until they are given.
+    expect(
+      within(form).getByRole("button", { name: "Rotar palabras claves" }),
+    ).toBeDisabled();
+    expect(rotateWords).not.toHaveBeenCalled();
+  });
+
+  it("rotates the words by proving ownership and shows the new plaintext once", async () => {
+    renderProfile();
+    await openCredentials();
+    selectPanel("Palabras claves");
+
+    const form = wordsForm("Rotar palabras claves");
+    fireEvent.change(
+      within(form).getByLabelText("Palabras claves para Rotar palabras claves"),
+      { target: { value: "alpha beta gamma" } },
+    );
     fireEvent.click(
-      screen.getByRole("button", { name: "Rotar palabras claves" }),
+      within(form).getByRole("button", { name: "Rotar palabras claves" }),
     );
 
+    await waitFor(() =>
+      expect(rotateWords).toHaveBeenCalledWith("alpha beta gamma"),
+    );
+    expect(rotateWords).toHaveBeenCalledTimes(1);
+    // The new words are shown exactly once.
     expect(
       await screen.findByText("alpha beta gamma delta"),
     ).toBeInTheDocument();
-    expect(rotateWords).toHaveBeenCalledTimes(1);
+    expect(screen.getAllByText("alpha beta gamma delta")).toHaveLength(1);
+
+    // The NEW words arm the session unlock (rotation invalidated the old
+    // ones): the next words-gated action replays the new ownership key
+    // without re-asking, and never the now-invalid old words.
+    selectPanel("Usuario");
+    const nextForm = wordsForm("Cambiar usuario");
+    expect(
+      within(nextForm).queryByLabelText("Palabras claves para Cambiar usuario"),
+    ).not.toBeInTheDocument();
+    fireEvent.change(within(nextForm).getByLabelText("Nuevo usuario"), {
+      target: { value: "otro-nombre" },
+    });
+    fireEvent.click(
+      within(nextForm).getByRole("button", { name: "Cambiar usuario" }),
+    );
+    await waitFor(() =>
+      expect(changeUsername).toHaveBeenCalledWith(
+        "alpha beta gamma delta",
+        "otro-nombre",
+      ),
+    );
+    expect(changeUsername).not.toHaveBeenCalledWith(
+      "alpha beta gamma",
+      "otro-nombre",
+    );
   });
 
   it("adjusts the reauth interval (S-VC-05a)", async () => {
@@ -516,6 +568,41 @@ describe("ProfilePage session words unlock (REQ-SRW-01..04)", () => {
 
     await waitFor(() =>
       expect(changePassword).toHaveBeenCalledWith("alpha beta gamma", "clave-nueva"),
+    );
+  });
+
+  it("does not re-ask for the words on rotation once the session is unlocked (REQ-SRW-01)", async () => {
+    renderProfile();
+    await openCredentials();
+
+    // Arm the unlock with a first words-gated action.
+    const usernameForm = wordsForm("Cambiar usuario");
+    fireEvent.change(
+      within(usernameForm).getByLabelText("Palabras claves para Cambiar usuario"),
+      { target: { value: "alpha beta gamma" } },
+    );
+    fireEvent.change(within(usernameForm).getByLabelText("Nuevo usuario"), {
+      target: { value: "nuevo-nombre" },
+    });
+    fireEvent.click(
+      within(usernameForm).getByRole("button", { name: "Cambiar usuario" }),
+    );
+    await screen.findByText("Desbloqueadas esta sesión");
+
+    // The words panel no longer asks for the words: it replays the cached ones.
+    selectPanel("Palabras claves");
+    const rotateForm = wordsForm("Rotar palabras claves");
+    expect(
+      within(rotateForm).queryByLabelText(
+        "Palabras claves para Rotar palabras claves",
+      ),
+    ).not.toBeInTheDocument();
+    fireEvent.click(
+      within(rotateForm).getByRole("button", { name: "Rotar palabras claves" }),
+    );
+
+    await waitFor(() =>
+      expect(rotateWords).toHaveBeenCalledWith("alpha beta gamma"),
     );
   });
 

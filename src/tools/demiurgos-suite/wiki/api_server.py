@@ -1752,9 +1752,16 @@ def credentials_change_username(payload: CredentialsUsernameRequest, request: Re
     return {"success": True}
 
 
+class CredentialsRotateWordsRequest(BaseModel):
+    words: str
+
+
 @app.post("/api/auth/credentials/words/rotate")
-def credentials_rotate_words(request: Request):
-    """Rotate the recovery words (R-ERK-01); requires an active session.
+def credentials_rotate_words(
+    payload: CredentialsRotateWordsRequest, request: Request, response: Response
+):
+    """Rotate the recovery words (R-ERK-01, amended); the CURRENT recovery
+    words are the ownership proof, rate-limited exactly like R-AC-05a/b/c.
 
     Returns the new plaintext words exactly once; the old words are
     invalidated by the atomic commit of the new Argon2id hash.
@@ -1763,6 +1770,11 @@ def credentials_rotate_words(request: Request):
         raise HTTPException(status_code=403, detail="Credentials auth is disabled")
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Authentication required")
+    account = account_get_account(_local_state())
+    if account is None:
+        raise HTTPException(status_code=401, detail="No account configured")
+    if not account_verify_words(payload.words, account.get("words_hash"), _words_rate_limiter):
+        raise HTTPException(status_code=401, detail="Invalid or rate-limited recovery words")
     words, _ = account_rotate_words(_local_state())
     return {"new_words": words}
 
