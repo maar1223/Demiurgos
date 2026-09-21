@@ -378,7 +378,12 @@ function CuentaSection({
                   />
                 )}
 
-                {credentialPanel === "words" && <RotateWordsCard />}
+                {credentialPanel === "words" && (
+                  <RotateWordsCard
+                    unlockedWords={unlockedWords}
+                    onUnlocked={onUnlocked}
+                  />
+                )}
 
                 {credentialPanel === "reauth" && (
                   <>
@@ -651,55 +656,39 @@ function WordsForm({
   );
 }
 
-/** Rotate the recovery words (R-ERK-01): the new plaintext words are shown
- *  exactly once; the previous words are invalidated server-side. */
-function RotateWordsCard() {
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+/** Rotate the recovery words (R-ERK-01, amended): the CURRENT words are the
+ *  ownership proof, so the card is words-gated like the sibling tabs. The new
+ *  plaintext words are shown exactly once; the previous words are invalidated
+ *  server-side. On success the verified words arm the session unlock
+ *  (REQ-SRW-01) and are never persisted (REQ-SRW-02). */
+function RotateWordsCard({
+  unlockedWords,
+  onUnlocked,
+}: {
+  unlockedWords: string | null;
+  onUnlocked: (words: string) => void;
+}) {
   const [newWords, setNewWords] = useState<string | null>(null);
-
-  const handleRotate = async () => {
-    setBusy(true);
-    setError(null);
-    setNewWords(null);
-    try {
-      const { new_words } = await rotateWords();
-      // The server persists only the hash; the plaintext is shown once.
-      setNewWords(new_words);
-    } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : "No se pudieron rotar las palabras de recuperación",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div className="rounded-lg border border-edge bg-surface/50 p-3">
-      <h4 className="font-heading text-body text-primary">
-        Rotar palabras claves
-      </h4>
-      <p className="mt-1 text-small text-muted">
-        Generá unas palabras nuevas y anulá las anteriores. Las palabras son tu
-        única forma de recuperar la cuenta si olvidás la contraseña.
-      </p>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={() => void handleRotate()}
-        disabled={busy}
-        className="mt-3"
-      >
-        {busy ? "Rotando…" : "Rotar palabras claves"}
-      </Button>
-      {error && (
-        <p className="mt-2 text-small text-status-error" role="alert">
-          {error}
-        </p>
-      )}
+      <WordsForm
+        title="Rotar palabras claves"
+        description="Demostrá que la cuenta es tuya con tus palabras claves actuales y generá unas nuevas. Las anteriores quedan anuladas: guardá las nuevas fuera del navegador."
+        submitLabel="Rotar palabras claves"
+        busyLabel="Rotando…"
+        unlockedWords={unlockedWords}
+        onSubmit={async (words) => {
+          const { new_words } = await rotateWords(words);
+          // Rotation invalidates the words just submitted, so the session
+          // unlock must arm with the NEW ownership key: replaying the old
+          // words would make the next words-gated action fail (REQ-SRW-01).
+          // The server persists only the hash and the plaintext is shown once
+          // below.
+          onUnlocked(new_words);
+          setNewWords(new_words);
+        }}
+      />
       {newWords && (
         <div
           role="status"
