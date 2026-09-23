@@ -553,8 +553,11 @@ export function useAIAssistantSessions(
         // answering with the bare session directly is still admitted; anything
         // malformed is dropped instead of being stored as `guided`.
         const envelope = await acceptGuidedConsent(contextMundo, token);
-        const guided =
-          envelope.guided_state ?? (isUsableGuidedSession(envelope) ? envelope : undefined);
+        // Validate the unwrapped value too: a present-but-malformed
+        // `guided_state` must not be stored either, so this boundary stays
+        // symmetric with loadSessions instead of trusting the server's type.
+        const unwrapped = envelope.guided_state ?? envelope;
+        const guided = isUsableGuidedSession(unwrapped) ? unwrapped : undefined;
         setSessions((prev) =>
           prev.map((session) =>
             session.id === activeSessionId

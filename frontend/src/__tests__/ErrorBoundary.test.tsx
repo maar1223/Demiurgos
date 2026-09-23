@@ -1,13 +1,19 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 /** React logs every caught boundary error; keep the suite output clean. */
-const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+let consoleError: ReturnType<typeof vi.spyOn>;
+
+beforeEach(() => {
+  consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+});
 
 afterEach(() => {
-  consoleError.mockClear();
+  // Restore, not just clear: a stub left installed would mask a real
+  // console.error in any later test in this file.
+  consoleError.mockRestore();
 });
 
 let flakyShouldThrow = false;

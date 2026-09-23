@@ -371,6 +371,33 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     expect(guided?.revision).toBe(1);
   });
 
+  it("drops a present but malformed guided_state instead of storing it", async () => {
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue(suggestionEnvelope);
+    acceptMock.mockResolvedValue({
+      ...consentAcceptEnvelope,
+      guided_state: {
+        session_id: "guided-42",
+        revision: 1,
+        phase: "confirmation",
+      } as GuidedCharacterSession,
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Quiero crear un personaje");
+    });
+    await act(async () => {
+      await result.current.resolveGuidedConsent(true);
+    });
+
+    // A handle without a candidate would crash the sidebar, so the boundary
+    // drops it; the session itself survives with the consent token cleared.
+    expect(result.current.activeSession?.guided).toBeUndefined();
+    expect(result.current.activeSession?.consentToken).toBeUndefined();
+  });
+
   it("dismisses the suggestion on decline without opening the flow", async () => {
     streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
     askMock.mockResolvedValue(suggestionEnvelope);
