@@ -779,3 +779,47 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
     expect(screen.queryByRole("button", { name: "Seguir charlando" })).not.toBeInTheDocument();
   });
 });
+
+describe("AIAssistantSidebar malformed guided session", () => {
+  beforeEach(() => {
+    useAppLanguageMock.mockReturnValue("es");
+  });
+
+  it("renders the normal chat UI when guided lacks candidate", () => {
+    const malformedGuided = {
+      protocol_version: "guided-character-v1",
+      session_id: "guided-42",
+      world: "Vibrantes",
+      phase: "conversation",
+      mode: "full",
+      depth: "standard",
+      revision: 1,
+      pending_question: null,
+      messages: [],
+      proposal: null,
+    } as unknown as GuidedCharacterSession;
+
+    useSessionsMock.mockReturnValue(createSessionsState({
+      activeSession: {
+        id: "session-42",
+        title: "Create a character",
+        messages: [
+          { role: "user", content: "Quiero crear un personaje" },
+          { role: "assistant", content: "I found an opportunity to clarify it." },
+        ],
+        createdAt: 1,
+        guided: malformedGuided,
+      },
+    }));
+
+    expect(() =>
+      render(<AIAssistantSidebar mundo="Vibrantes" onGuidedReview={vi.fn()} />),
+    ).not.toThrow();
+
+    // The malformed handle is ignored: the normal chat surface still renders.
+    expect(screen.getByText("I found an opportunity to clarify it.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Revisar y aprobar el diff del personaje" }),
+    ).not.toBeInTheDocument();
+  });
+});
