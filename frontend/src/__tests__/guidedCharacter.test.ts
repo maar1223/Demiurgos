@@ -11,15 +11,18 @@ import {
   startGuidedCharacter,
 } from "@/api/guidedCharacter";
 import { ApiError } from "@/api/types";
+import type { GuidedCharacterSession, SemanticDecisionEnvelope } from "@/api/types";
 
 const mockApiFetch = vi.hoisted(() => vi.fn());
 vi.mock("@/api/client", () => ({ apiFetch: mockApiFetch }));
 
-const session = {
+const session: GuidedCharacterSession = {
   protocol_version: "guided-character-v1",
   session_id: "s1",
   world: "nec",
-  phase: "conversation" as const,
+  phase: "conversation",
+  mode: "full",
+  depth: "standard",
   revision: 1,
   pending_question: null,
   messages: [],
@@ -65,7 +68,28 @@ describe("guided character API compatibility", () => {
   });
 
   it("wires the one-shot consent accept/decline calls with the token body", async () => {
-    await acceptGuidedConsent("world with spaces", "ct-1");
+    const consentEnvelope: SemanticDecisionEnvelope = {
+      state: "require_confirmation",
+      action: "request_confirmation",
+      response: "¿Creo este personaje?",
+      request_id: "r-consent",
+      attempts: 1,
+      fallback: false,
+      guided: true,
+      guided_explicitness: "imperative",
+      session_id: "guided-1",
+      guided_session_id: "guided-1",
+      guided_revision: 1,
+      guided_state: session,
+    };
+    mockApiFetch
+      .mockReset()
+      .mockResolvedValueOnce(consentEnvelope)
+      .mockResolvedValueOnce({ consent: "declined" });
+
+    await expect(acceptGuidedConsent("world with spaces", "ct-1")).resolves.toEqual(
+      consentEnvelope,
+    );
     await declineGuidedConsent("world with spaces", "ct-1");
 
     const calls = mockApiFetch.mock.calls;

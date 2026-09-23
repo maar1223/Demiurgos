@@ -286,6 +286,26 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     proposal: null,
   };
 
+  /**
+   * The real `/consent/accept` response: a semantic decision envelope whose
+   * bare session lives in `guided_state`. Mocking the bare session directly
+   * (the old shape) masked the unwrap bug.
+   */
+  const consentAcceptEnvelope: SemanticDecisionEnvelope = {
+    state: "require_confirmation",
+    action: "request_confirmation",
+    response: "¿Creo este personaje?",
+    request_id: "r-consent",
+    attempts: 1,
+    fallback: false,
+    guided: true,
+    guided_explicitness: "imperative",
+    session_id: "guided-42",
+    guided_session_id: "guided-42",
+    guided_revision: 1,
+    guided_state: guidedSession,
+  };
+
   beforeEach(() => {
     streamMock.mockReset();
     askMock.mockReset();
@@ -311,7 +331,7 @@ describe("useAIAssistantSessions guided consent wiring", () => {
   it("opens the guided flow on accept and clears the suggestion", async () => {
     streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
     askMock.mockResolvedValue(suggestionEnvelope);
-    acceptMock.mockResolvedValue(guidedSession);
+    acceptMock.mockResolvedValue(consentAcceptEnvelope);
 
     const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
 
@@ -325,6 +345,30 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     expect(acceptMock).toHaveBeenCalledWith("Vibrantes", "ct-1");
     expect(result.current.activeSession?.guided).toEqual(guidedSession);
     expect(result.current.activeSession?.consentToken).toBeUndefined();
+  });
+
+  it("unwraps a real consent envelope into a usable bare guided session", async () => {
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue(suggestionEnvelope);
+    acceptMock.mockResolvedValue(consentAcceptEnvelope);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Quiero crear un personaje");
+    });
+    await act(async () => {
+      await result.current.resolveGuidedConsent(true);
+    });
+
+    const guided = result.current.activeSession?.guided;
+    // The stored value is the bare session, never the envelope wrapper.
+    expect(guided).not.toHaveProperty("guided_state");
+    expect(guided?.candidate).toBeDefined();
+    expect(guided?.candidate?.proposals).toEqual(expect.any(Object));
+    expect(guided?.candidate?.accepted_canon).toEqual(expect.any(Object));
+    expect(guided?.phase).toBe("confirmation");
+    expect(guided?.revision).toBe(1);
   });
 
   it("dismisses the suggestion on decline without opening the flow", async () => {

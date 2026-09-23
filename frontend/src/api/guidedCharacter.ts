@@ -1,5 +1,9 @@
 import { apiFetch } from "@/api/client";
-import type { EditProposal, GuidedCharacterSession } from "@/api/types";
+import type {
+  EditProposal,
+  GuidedCharacterSession,
+  SemanticDecisionEnvelope,
+} from "@/api/types";
 
 const GUIDED_CHARACTER_TIMEOUT_MS = 35_000;
 
@@ -94,12 +98,17 @@ export function retryGuidedCharacterIndex(
  * Consume a one-shot consent token and open the deferred guided flow. The
  * click IS the imperative: the server replays the token-bound continuation
  * with no second Hermes run. Expired/replayed/foreign tokens fail closed.
+ *
+ * The server answers with a semantic decision envelope whose bare guided
+ * session lives in `guided_state`; callers must unwrap it (see
+ * `resolveGuidedConsent`). This endpoint never returns the bare session
+ * directly.
  */
 export function acceptGuidedConsent(
   world: string,
   token: string,
-): Promise<GuidedCharacterSession> {
-  return apiFetch<GuidedCharacterSession>(url(world, "/consent/accept"), {
+): Promise<SemanticDecisionEnvelope> {
+  return apiFetch<SemanticDecisionEnvelope>(url(world, "/consent/accept"), {
     method: "POST",
     body: JSON.stringify({ token }),
     timeout: GUIDED_CHARACTER_TIMEOUT_MS,

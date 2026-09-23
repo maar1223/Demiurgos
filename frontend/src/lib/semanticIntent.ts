@@ -45,7 +45,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isGuidedSession(value: unknown): value is GuidedCharacterSession {
+/**
+ * Structural guard for a bare guided session. Shared by the semantic mapper
+ * (which admits `guided_state` from the `/ai/ask` envelope) and the
+ * consent-envelope unwrap at the assistant boundary, so both keep the exact
+ * same notion of "a usable guided session".
+ */
+export function isGuidedSession(value: unknown): value is GuidedCharacterSession {
   if (!isRecord(value)) return false;
   return (
     typeof value.session_id === "string" &&

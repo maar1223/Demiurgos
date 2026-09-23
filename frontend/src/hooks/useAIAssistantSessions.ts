@@ -21,7 +21,7 @@ import {
   serializeGuidedCharacter,
 } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
-import { mapSemanticDecision, semanticBlockedText } from "@/lib/semanticIntent";
+import { mapSemanticDecision, semanticBlockedText, isGuidedSession } from "@/lib/semanticIntent";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export interface Message {
@@ -521,8 +521,15 @@ export function useAIAssistantSessions(
     try {
       if (accept) {
         // Accepting IS the imperative: the server opens the deferred guided
-        // continuation with no second Hermes run.
-        const guided = await acceptGuidedConsent(contextMundo, token);
+        // continuation with no second Hermes run. The endpoint answers with a
+        // semantic decision envelope; the bare session lives in `guided_state`.
+        // Normalize once, at this boundary, so `session.guided` is ALWAYS a
+        // bare session (or undefined) — never the envelope. A legacy server
+        // answering with the bare session directly is still admitted; anything
+        // malformed is dropped instead of being stored as `guided`.
+        const envelope = await acceptGuidedConsent(contextMundo, token);
+        const guided =
+          envelope.guided_state ?? (isGuidedSession(envelope) ? envelope : undefined);
         setSessions((prev) =>
           prev.map((session) =>
             session.id === activeSessionId
