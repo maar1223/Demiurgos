@@ -151,6 +151,23 @@ class _CapturingGuidedProvider:
         }
 
 
+class _ProbeRecordingGuidedProvider:
+    """Guided provider that records how many times it was invoked."""
+
+    def __init__(self):
+        self.invocations = 0
+
+    async def invoke(self, request, token, **kwargs):
+        self.invocations += 1
+        return {
+            "protocol_version": "guided-character-v1",
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "What drives them?",
+        }
+
+
 class _PartialActivityAdapter:
     """Emits a delta answer then completes; used for the streaming path."""
 
@@ -362,6 +379,41 @@ class TestGuidedContractProjection:
             api_server.Capabilities("guided-character-v1", True, True, True, 30000),
         ))
         assert result.outcome.value == "question"
+
+
+class TestGuidedContinuationProbe:
+    def test_guided_continue_probes_capabilities_before_invoking(self, monkeypatch):
+        """Regression: a session opened through the semantic chat path never
+        called the REST start route, so _GUIDED_CAPABILITIES stayed None and the
+        first real turn failed closed with CAPABILITY_UNAVAILABLE (503) without
+        ever invoking the provider. The shared continuation choke point must
+        probe before invoking, so an unpopulated global is resolved here."""
+        provider = _ProbeRecordingGuidedProvider()
+        store = api_server.GuidedSessionStore()
+        store.create("guided-sess", "test_mundo", "tester")
+        confirming = store.begin_confirmation(
+            "guided-sess", "tester", "Create Rhyz's sister", "Start? (yes/no)",
+        )
+        assert confirming is not None and confirming.phase == "confirmation"
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
+        monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+        # Regression condition: the chat path never populated the global.
+        monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", None)
+        probe_calls = []
+
+        async def spy():
+            probe_calls.append(True)
+            return api_server.Capabilities("guided-character-v1", True, True, True, 30000)
+
+        monkeypatch.setattr(api_server, "_probe_guided_capabilities", spy)
+
+        asyncio.run(api_server._guided_continue(
+            "test_mundo", "guided-sess", 1, "sí",
+            api_server.EditPrincipal("tester"),
+        ))
+
+        assert probe_calls == [True]
+        assert provider.invocations == 1
 
 
 class TestActivityStreamMemory:

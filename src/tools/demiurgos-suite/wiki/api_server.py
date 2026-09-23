@@ -2422,8 +2422,15 @@ async def _guided_continue(
     # RECOVERED state (delta=None), so turn one and fast-mode turn one can
     # never inject; gate-passed turns inject ≤1 pinned carrier block.
     specimen = _convergence_specimen_markdown(mundo, session_flow, state)
+    # Shared choke point for every guided continuation. Sessions opened by the
+    # semantic chat path never called the REST start route, so the module-level
+    # cache was never probed: passing it straight through sent None into
+    # invoke_bounded and the first real turn failed closed with
+    # CAPABILITY_UNAVAILABLE (503). Probe here; the helper short-circuits when
+    # already populated and returns None on probe failure (fail closed).
+    capabilities = await _probe_guided_capabilities()
     response, state = await continue_session(
-        _GUIDED_SESSIONS, _GUIDED_PROVIDER, request, _GUIDED_CAPABILITIES,
+        _GUIDED_SESSIONS, _GUIDED_PROVIDER, request, capabilities,
         compiled_contract_markdown=compiled,
         convergence_specimen_markdown=specimen,
     )
