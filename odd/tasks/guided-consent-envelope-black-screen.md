@@ -139,12 +139,21 @@ request to the following session. Root cause identified on 2026-09-21 and approv
   - T1 `4ac7d21` — `fix(guided): unwrap consent envelope into a bare guided session`
   - T2 `ba6eb22` — `fix(assistant): guard sidebar guided candidate dereference`
   - T3 `d7f29ec` — `fix(assistant): sanitize persisted guided sessions on load`
-  - T4 — `fix(assistant): add a root error boundary` (this commit; it also lands this task update, so its own SHA is not self-referenced — see `git log`)
-- Verification after all four units (from `frontend/`):
-  - `npm test` -> 108 files / 1307 tests passed, exit 0
-  - `npm run typecheck` -> exit 0
+  - T4 `dfd8c01` — `fix(assistant): add a root error boundary` (also landed this task update)
+- Verification after the four units (from `frontend/`): `npm test` -> 108 files / 1307 tests passed; `npm run typecheck` -> exit 0. Backend scope: `git diff --name-only f0e16e5..HEAD -- src/` -> 0 files.
+- Independent verification (read-only; RDD is off, so the change was treated as high risk and given a separate verifier): verdict **PASS WITH WARNINGS**, zero blockers. It tried and failed to falsify the boundary fallback (Icon `error`/`refresh` exist at `Icon.tsx:176,299`, `Button` variants are real, every Tailwind token resolves), the non-vacuity of the T1/T2/T3/T4 tests, the `/ai/ask` path (`isGuidedSession` body is byte-identical; `mapSemanticDecision` still uses it), and any backend bleed.
+- Scoped correction from that verification, commit `ee5a0b7` — `fix(assistant): validate the unwrapped guided_state at the consent boundary`:
+  - a present-but-malformed `guided_state` is no longer stored unvalidated; the boundary now uses `isUsableGuidedSession` symmetrically with `loadSessions`, plus a regression test;
+  - the `ErrorBoundary` test spy now restores `console.error` per test instead of leaking the stub.
+- Final verification (from `frontend/`): `npm test` -> 108 files / 1308 tests passed, exit 0; `npm run typecheck` -> exit 0.
 - Acceptance criteria: (1) real envelope unwraps to a bare session with candidate/phase/revision — T1 test; (2) candidate-less `guided` renders the chat UI — T2 test; (3) old-shape `localStorage` session mounts without crashing and keeps its conversation — T3 tests; (4) uncaught render error shows the boundary fallback with retry/reload — T4 tests; (5) both commands green; (6) no backend file modified.
+- Flake observed once: `src/__tests__/GraphView.test.tsx > does not select a node when the click starts on a connection handle` failed in one full-suite run, then passed 2/2 in isolation and the full suite went green on re-run. Timing-sensitive d3-force/xyflow test, unrelated to this change (not in the diff).
+- Follow-ups (NOT done, out of the approved scope):
+  - `loadSessions` validates `id` and `guided` but not `messages`; a stored session with a non-array `messages` still reaches unguarded spreads (`AIAssistantSidebar.tsx:306,327,462,720`). Pre-existing; the new root boundary degrades it to the fallback instead of a black screen.
+  - Duplicated `isRecord` (`semanticIntent.ts:44`) and `isRecordLike` (`useAIAssistantSessions.ts:108`) helpers.
+  - Chrome-preserving per-route error boundaries (root only today).
+  - Dead `GuidedCharacterPanel.tsx` / `useGuidedCharacter.ts` pair, still unreferenced by production code.
 
 ## Next step
 
-All four tasks are implemented and committed on `fix/guided-consent-envelope-black-screen`. Next: run the independent verifier against commits `4ac7d21`, `ba6eb22`, `d7f29ec` and the T4 boundary commit. Push/PR/merge remain the Author's decision.
+The fix is complete, committed and independently verified on `fix/guided-consent-envelope-black-screen` (5 commits on top of `f0e16e5`). Push, PR and merge remain the Author's decision.
