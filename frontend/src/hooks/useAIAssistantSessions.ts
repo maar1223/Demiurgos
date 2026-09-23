@@ -21,7 +21,7 @@ import {
   serializeGuidedCharacter,
 } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
-import { mapSemanticDecision, semanticBlockedText, isGuidedSession } from "@/lib/semanticIntent";
+import { mapSemanticDecision, semanticBlockedText, isUsableGuidedSession } from "@/lib/semanticIntent";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export interface Message {
@@ -105,10 +105,35 @@ function truncateTitle(text: string): string {
     : cleaned;
 }
 
+function isRecordLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Restore sessions defensively. The stored payload is untrusted: a non-array
+ * value, a non-object entry, or a guided handle without the candidate the
+ * sidebar dereferences must never survive into the render tree. A malformed
+ * guided handle is dropped while the rest of the session (messages, title,
+ * consent token) is preserved, so mount never crashes on an old shape.
+ */
 function loadSessions(): Session[] {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? (JSON.parse(stored) as Session[]) : [];
+    if (!stored) return [];
+    const parsed: unknown = JSON.parse(stored);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (value): value is Session =>
+          isRecordLike(value) && typeof value.id === "string" && value.id.length > 0,
+      )
+      .map((session) => {
+        if (session.guided === undefined || isUsableGuidedSession(session.guided)) {
+          return session;
+        }
+        const { guided: _malformedGuided, ...rest } = session;
+        return rest;
+      });
   } catch {
     return [];
   }
@@ -529,7 +554,7 @@ export function useAIAssistantSessions(
         // malformed is dropped instead of being stored as `guided`.
         const envelope = await acceptGuidedConsent(contextMundo, token);
         const guided =
-          envelope.guided_state ?? (isGuidedSession(envelope) ? envelope : undefined);
+          envelope.guided_state ?? (isUsableGuidedSession(envelope) ? envelope : undefined);
         setSessions((prev) =>
           prev.map((session) =>
             session.id === activeSessionId

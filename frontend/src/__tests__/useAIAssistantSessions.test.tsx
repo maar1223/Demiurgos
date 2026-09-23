@@ -424,3 +424,69 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     expect(result.current.activeSession?.consentToken).toBeUndefined();
   });
 });
+
+describe("useAIAssistantSessions persisted session sanitization", () => {
+  it("drops a malformed guided handle from a stored session without losing the conversation", () => {
+    const oldShape = {
+      id: "s1",
+      title: "Old session",
+      messages: [{ role: "user", content: "Hola" }],
+      createdAt: 1,
+      guided: {
+        // The pre-unwrap envelope era: a guided handle with no candidate.
+        protocol_version: "guided-character-v1",
+        session_id: "guided-1",
+        world: "Vibrantes",
+        phase: "conversation",
+        revision: 3,
+        pending_question: null,
+        messages: [],
+        proposal: null,
+      },
+    };
+    seedSessions([oldShape] as unknown as Session[]);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    expect(result.current.sessions).toHaveLength(1);
+    expect(result.current.sessions[0].id).toBe("s1");
+    // The conversation survives; only the unsafe guided handle is dropped.
+    expect(result.current.sessions[0].messages).toHaveLength(1);
+    expect(result.current.sessions[0].guided).toBeUndefined();
+  });
+
+  it("keeps a stored session whose guided handle carries a candidate", () => {
+    const validGuided = {
+      protocol_version: "guided-character-v1",
+      session_id: "guided-1",
+      world: "Vibrantes",
+      phase: "conversation",
+      mode: "full",
+      depth: "standard",
+      revision: 3,
+      pending_question: null,
+      messages: [],
+      candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+      proposal: null,
+    };
+    seedSessions([
+      {
+        id: "s1",
+        title: "Valid session",
+        messages: [{ role: "user", content: "Hola" }],
+        createdAt: 1,
+        guided: validGuided,
+      } as unknown as Session,
+    ]);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    expect(result.current.sessions[0].guided).toEqual(validGuided);
+  });
+
+  it("ignores a stored payload that is not an array", () => {
+    window.localStorage.setItem(SESSIONS_KEY, JSON.stringify({ nope: true }));
+
+    expect(() => renderHook(() => useAIAssistantSessions("Vibrantes"))).not.toThrow();
+  });
+});

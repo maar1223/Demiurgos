@@ -48,8 +48,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Structural guard for a bare guided session. Shared by the semantic mapper
  * (which admits `guided_state` from the `/ai/ask` envelope) and the
- * consent-envelope unwrap at the assistant boundary, so both keep the exact
- * same notion of "a usable guided session".
+ * consent-envelope unwrap at the assistant boundary.
  */
 export function isGuidedSession(value: unknown): value is GuidedCharacterSession {
   if (!isRecord(value)) return false;
@@ -58,6 +57,26 @@ export function isGuidedSession(value: unknown): value is GuidedCharacterSession
     typeof value.revision === "number" &&
     typeof value.phase === "string"
   );
+}
+
+/** A candidate the sidebar can safely enumerate (proposals + accepted canon). */
+function isGuidedCandidate(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  return isRecord(value.proposals) && isRecord(value.accepted_canon);
+}
+
+/**
+ * Strict usability guard for a guided session the UI is about to keep or
+ * persist. The sidebar dereferences `candidate.proposals` /
+ * `candidate.accepted_canon`, so a handle without a well-formed candidate can
+ * never be rendered or stored safely.
+ *
+ * Deliberately stricter than `isGuidedSession`: the live `/ai/ask` mapping
+ * keeps its exact semantics, while the persisted-session loader and the
+ * consent unwrap drop a shape that would crash on mount.
+ */
+export function isUsableGuidedSession(value: unknown): value is GuidedCharacterSession {
+  return isGuidedSession(value) && isGuidedCandidate(value.candidate);
 }
 
 function toEditProposal(value: Record<string, unknown>): EditProposal | null {
