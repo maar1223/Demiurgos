@@ -25,6 +25,7 @@ from ideas_bank import (  # noqa: E402
     IdeaNotFound,
     IdeasBank,
     InvalidIdea,
+    _valid_slug,
 )
 
 
@@ -870,3 +871,103 @@ def test_update_rejects_client_updated_at(bank: IdeasBank) -> None:
     _create(bank, slug="cerrada")
     with pytest.raises(InvalidIdea):
         bank.update("cerrada", {"updated_at": "2020-01-01"})
+
+
+# ---------------------------------------------------------------------------
+# AD9 / R-CG-04 — case-sensitive, traversal-safe canon path resolution
+# ---------------------------------------------------------------------------
+
+def test_canon_path_for_resolves_mixed_case_world(bank: IdeasBank, tmp_path: Path) -> None:
+    """R-CG-04 — a mixed-case world (``Vibrantes``) resolves case-sensitively.
+
+    RED before the fix: the old lowercase-only ``_valid_slug`` gate rejected
+    any world name containing an uppercase letter, so materializing into
+    ``Vibrantes`` raised ``InvalidIdea`` and ``based_on`` was silently never
+    written. After the fix the on-disk directory resolves exactly.
+    """
+    world = tmp_path / "mundos" / "Vibrantes"
+    world.mkdir(parents=True)
+    target = bank._canon_path_for("Vibrantes", "lore/tema/El_Arquero.md")
+    assert target == (world / "lore" / "tema" / "El_Arquero.md").resolve()
+
+
+def test_canon_path_for_rejects_non_str_or_empty_world(bank: IdeasBank, tmp_path: Path) -> None:
+    """AD9 — non-str and empty world names fail closed with InvalidIdea."""
+    (tmp_path / "mundos").mkdir(parents=True)
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for(42, "lore/a.md")
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("", "lore/a.md")
+
+
+def test_canon_path_for_rejects_separator_or_absolute_world(bank: IdeasBank, tmp_path: Path) -> None:
+    """AD9 — separators, ``..`` segments and absolute paths in the world name
+    are rejected (the world must be a single directory name)."""
+    (tmp_path / "mundos").mkdir(parents=True)
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("Vibrantes/../Otro", "lore/a.md")
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("/absoluto", "lore/a.md")
+
+
+def test_canon_path_for_rejects_dot_or_underscore_world(bank: IdeasBank, tmp_path: Path) -> None:
+    """AD9 — hidden and ``_``-prefixed worlds are rejected (visibility rules
+    mirrored from ``_list_worlds`` / ``_resolve_mundo_dir``)."""
+    (tmp_path / "mundos").mkdir(parents=True)
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for(".oculto", "lore/a.md")
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("_privado", "lore/a.md")
+
+
+def test_canon_path_for_rejects_unknown_world(bank: IdeasBank, tmp_path: Path) -> None:
+    """AD9 — a world that does not exist on disk is rejected (RED before the
+    fix: the old code resolved paths under non-existent worlds)."""
+    (tmp_path / "mundos").mkdir(parents=True)
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("no-existe", "lore/a.md")
+
+
+def test_canon_path_for_rejects_reserved_world(bank: IdeasBank, tmp_path: Path) -> None:
+    """AD9 — reserved world names (mirror ``_RESERVED_WORLD_NAMES``) are
+    rejected; ``trash`` was previously accepted by the lowercase-only gate."""
+    (tmp_path / "mundos").mkdir(parents=True)
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("Ideas", "lore/a.md")
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("trash", "lore/a.md")
+
+
+def test_canon_path_for_rejects_dotdot_canon_rel(bank: IdeasBank, tmp_path: Path) -> None:
+    """AD9 — ``..`` segments in ``canon_rel`` are rejected."""
+    (tmp_path / "mundos" / "Vibrantes").mkdir(parents=True)
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("Vibrantes", "lore/../../etc/passwd")
+
+
+def test_canon_path_for_rejects_absolute_canon_rel(bank: IdeasBank, tmp_path: Path) -> None:
+    """AD9 — an absolute ``canon_rel`` is rejected."""
+    (tmp_path / "mundos" / "Vibrantes").mkdir(parents=True)
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("Vibrantes", "/etc/passwd")
+
+
+def test_canon_path_for_rejects_symlink_escape(bank: IdeasBank, tmp_path: Path) -> None:
+    """AD9 containment — a ``canon_rel`` whose resolved path escapes the world
+    via a symlink is rejected even though it carries no ``..`` segment."""
+    world = tmp_path / "mundos" / "Vibrantes"
+    world.mkdir(parents=True)
+    outside = tmp_path / "outside.md"
+    outside.write_text("x", encoding="utf-8")
+    (world / "escape.md").symlink_to(outside)
+    with pytest.raises(InvalidIdea):
+        bank._canon_path_for("Vibrantes", "escape.md")
+
+
+def test_valid_slug_still_gates_idea_slugs_via_path_for(bank: IdeasBank) -> None:
+    """AD9 — ``_valid_slug`` is KEPT for idea slugs: a mixed-case slug is still
+    rejected by ``_path_for`` even though worlds resolve case-sensitively."""
+    assert _valid_slug("arquero-ciego") is True
+    assert _valid_slug("Vibrantes") is False
+    with pytest.raises(InvalidIdea):
+        bank._path_for("Vibrantes")

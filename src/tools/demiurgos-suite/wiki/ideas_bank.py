@@ -18,6 +18,7 @@ graph indexing or OKF validation.
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -46,6 +47,12 @@ IDEA_STATUSES: tuple[str, ...] = ("fresh", "used")
 
 # URL-safe slug: lowercase letters/digits, hyphens and underscores.
 _RE_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+# Reserved world names, mirrored from ``api_server._RESERVED_WORLD_NAMES``
+# (api_server.py:405). Mirrored locally on purpose: importing api_server from
+# ideas_bank would drag in the whole FastAPI app (heavy, package-relative).
+# Keep this set in sync with api_server.py when it changes.
+_RESERVED_WORLD_NAMES = frozenset({"Ideas", "trash"})
 
 
 class IdeaBankError(Exception):
@@ -182,14 +189,31 @@ class IdeasBank:
         return path
 
     def _canon_path_for(self, world_slug: str, canon_rel: str) -> Path:
-        """Resolve a canon ficha under ``mundos/{world}/{rel}`` safely."""
-        if not _valid_slug(world_slug) or world_slug.startswith((".", "_")):
+        """Resolve a canon ficha under ``mundos/{world}/{rel}`` safely.
+
+        World names resolve CASE-SENSITIVELY against the on-disk ``mundos/``
+        directory — a valid mixed-case world such as ``Vibrantes`` must not be
+        rejected by a lowercase-only gate (R-CG-04). Mirrors
+        ``_resolve_mundo_dir`` (api_server.py:456-482) without importing
+        api_server: non-str/empty world, separators/absolute/dot segments,
+        leading ``.``/``_``, reserved names, a missing directory and root
+        escape are all rejected. ``canon_rel`` must stay relative and its
+        resolved path must remain inside the world directory.
+        """
+        if not isinstance(world_slug, str) or not world_slug:
+            raise InvalidIdea(f"El mundo '{world_slug}' no es un nombre seguro.")
+        if world_slug != Path(world_slug).name:  # separators / absolute / dot segments
+            raise InvalidIdea(f"El mundo '{world_slug}' no es un nombre seguro.")
+        if world_slug.startswith((".", "_")) or world_slug in _RESERVED_WORLD_NAMES:
+            raise InvalidIdea(f"El mundo '{world_slug}' no es un nombre seguro.")
+        world_dir = (self._mundos_root / world_slug).resolve()
+        if not world_dir.is_dir() or world_dir.parent != self._mundos_root.resolve():
             raise InvalidIdea(f"El mundo '{world_slug}' no es un nombre seguro.")
         rel = Path(canon_rel)
         if rel.is_absolute() or ".." in rel.parts:
             raise InvalidIdea("La ruta canónica debe ser relativa dentro del mundo.")
-        path = (self._mundos_root / world_slug / rel).resolve()
-        if path.parent != (self._mundos_root / world_slug / rel.parent).resolve():
+        path = (world_dir / rel).resolve()
+        if not str(path).startswith(str(world_dir) + os.sep):
             raise InvalidIdea("La ruta canónica escapa del mundo.")
         return path
 
