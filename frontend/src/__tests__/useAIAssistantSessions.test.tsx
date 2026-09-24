@@ -286,6 +286,26 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     proposal: null,
   };
 
+  /**
+   * The real `/consent/accept` response: a semantic decision envelope whose
+   * bare session lives in `guided_state`. Mocking the bare session directly
+   * (the old shape) masked the unwrap bug.
+   */
+  const consentAcceptEnvelope: SemanticDecisionEnvelope = {
+    state: "require_confirmation",
+    action: "request_confirmation",
+    response: "¿Creo este personaje?",
+    request_id: "r-consent",
+    attempts: 1,
+    fallback: false,
+    guided: true,
+    guided_explicitness: "imperative",
+    session_id: "guided-42",
+    guided_session_id: "guided-42",
+    guided_revision: 1,
+    guided_state: guidedSession,
+  };
+
   beforeEach(() => {
     streamMock.mockReset();
     askMock.mockReset();
@@ -311,7 +331,7 @@ describe("useAIAssistantSessions guided consent wiring", () => {
   it("opens the guided flow on accept and clears the suggestion", async () => {
     streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
     askMock.mockResolvedValue(suggestionEnvelope);
-    acceptMock.mockResolvedValue(guidedSession);
+    acceptMock.mockResolvedValue(consentAcceptEnvelope);
 
     const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
 
@@ -324,6 +344,57 @@ describe("useAIAssistantSessions guided consent wiring", () => {
 
     expect(acceptMock).toHaveBeenCalledWith("Vibrantes", "ct-1");
     expect(result.current.activeSession?.guided).toEqual(guidedSession);
+    expect(result.current.activeSession?.consentToken).toBeUndefined();
+  });
+
+  it("unwraps a real consent envelope into a usable bare guided session", async () => {
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue(suggestionEnvelope);
+    acceptMock.mockResolvedValue(consentAcceptEnvelope);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Quiero crear un personaje");
+    });
+    await act(async () => {
+      await result.current.resolveGuidedConsent(true);
+    });
+
+    const guided = result.current.activeSession?.guided;
+    // The stored value is the bare session, never the envelope wrapper.
+    expect(guided).not.toHaveProperty("guided_state");
+    expect(guided?.candidate).toBeDefined();
+    expect(guided?.candidate?.proposals).toEqual(expect.any(Object));
+    expect(guided?.candidate?.accepted_canon).toEqual(expect.any(Object));
+    expect(guided?.phase).toBe("confirmation");
+    expect(guided?.revision).toBe(1);
+  });
+
+  it("drops a present but malformed guided_state instead of storing it", async () => {
+    streamMock.mockRejectedValue(new AssistantActivityUnavailable(503, "guided_handoff"));
+    askMock.mockResolvedValue(suggestionEnvelope);
+    acceptMock.mockResolvedValue({
+      ...consentAcceptEnvelope,
+      guided_state: {
+        session_id: "guided-42",
+        revision: 1,
+        phase: "confirmation",
+      } as GuidedCharacterSession,
+    });
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    await act(async () => {
+      await result.current.sendMessage("Quiero crear un personaje");
+    });
+    await act(async () => {
+      await result.current.resolveGuidedConsent(true);
+    });
+
+    // A handle without a candidate would crash the sidebar, so the boundary
+    // drops it; the session itself survives with the consent token cleared.
+    expect(result.current.activeSession?.guided).toBeUndefined();
     expect(result.current.activeSession?.consentToken).toBeUndefined();
   });
 
@@ -378,5 +449,71 @@ describe("useAIAssistantSessions guided consent wiring", () => {
     });
 
     expect(result.current.activeSession?.consentToken).toBeUndefined();
+  });
+});
+
+describe("useAIAssistantSessions persisted session sanitization", () => {
+  it("drops a malformed guided handle from a stored session without losing the conversation", () => {
+    const oldShape = {
+      id: "s1",
+      title: "Old session",
+      messages: [{ role: "user", content: "Hola" }],
+      createdAt: 1,
+      guided: {
+        // The pre-unwrap envelope era: a guided handle with no candidate.
+        protocol_version: "guided-character-v1",
+        session_id: "guided-1",
+        world: "Vibrantes",
+        phase: "conversation",
+        revision: 3,
+        pending_question: null,
+        messages: [],
+        proposal: null,
+      },
+    };
+    seedSessions([oldShape] as unknown as Session[]);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    expect(result.current.sessions).toHaveLength(1);
+    expect(result.current.sessions[0].id).toBe("s1");
+    // The conversation survives; only the unsafe guided handle is dropped.
+    expect(result.current.sessions[0].messages).toHaveLength(1);
+    expect(result.current.sessions[0].guided).toBeUndefined();
+  });
+
+  it("keeps a stored session whose guided handle carries a candidate", () => {
+    const validGuided = {
+      protocol_version: "guided-character-v1",
+      session_id: "guided-1",
+      world: "Vibrantes",
+      phase: "conversation",
+      mode: "full",
+      depth: "standard",
+      revision: 3,
+      pending_question: null,
+      messages: [],
+      candidate: { accepted_canon: {}, proposals: {}, unresolved_references: [], conflicts: [] },
+      proposal: null,
+    };
+    seedSessions([
+      {
+        id: "s1",
+        title: "Valid session",
+        messages: [{ role: "user", content: "Hola" }],
+        createdAt: 1,
+        guided: validGuided,
+      } as unknown as Session,
+    ]);
+
+    const { result } = renderHook(() => useAIAssistantSessions("Vibrantes"));
+
+    expect(result.current.sessions[0].guided).toEqual(validGuided);
+  });
+
+  it("ignores a stored payload that is not an array", () => {
+    window.localStorage.setItem(SESSIONS_KEY, JSON.stringify({ nope: true }));
+
+    expect(() => renderHook(() => useAIAssistantSessions("Vibrantes"))).not.toThrow();
   });
 });

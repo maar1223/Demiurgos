@@ -143,6 +143,19 @@ If Engram is unavailable, report the error. Do not continue SDD work without per
 
 ## SDD (Spec-Driven Development)
 
+### Artifact Store — SIEMPRE Engram (regla dura)
+
+El artifact store de SDD de este proyecto es **siempre `engram`**. No preguntar,
+no ofrecer OpenSpec ni hybrid, y no volver a plantear esta decisión.
+
+El dispatcher nativo de SDD (`gentle-ai sdd-status` / `gentle-ai sdd-continue`)
+es **solo-OpenSpec por diseño**: lee únicamente `openspec/changes/` y siempre
+emite `artifactStore: openspec`; no puede observar cambios respaldados por
+Engram. Con store `engram` **no invocarlo**: resolver estado y artefactos directo
+desde Engram (`mem_search` + `mem_get_observation` sobre `sdd/{change-name}/...`)
+usando el manual status schema. Los artefactos del ciclo viven como topic keys
+`sdd/{change-name}/{phase}`.
+
 Use SDD for substantial features or architectural changes. The workflow:
 
 1. **Explore** (optional): Investigate the codebase, understand context

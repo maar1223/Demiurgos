@@ -327,8 +327,8 @@ function ChatScreen({
   const hasAssistantAnswer = messages.some((message) => message.role === "assistant");
   const hasGuidedCandidate = Boolean(
     activeSession?.guided && (
-      Object.keys(activeSession.guided.candidate.proposals).length > 0 ||
-      Object.keys(activeSession.guided.candidate.accepted_canon).length > 0 ||
+      Object.keys(activeSession.guided.candidate?.proposals ?? {}).length > 0 ||
+      Object.keys(activeSession.guided.candidate?.accepted_canon ?? {}).length > 0 ||
       activeSession.guided.phase === "review" ||
       activeSession.guided.phase === "complete"
     ),
