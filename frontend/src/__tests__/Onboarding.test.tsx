@@ -6,6 +6,7 @@ import { renderHook } from "@testing-library/react";
 import Onboarding from "@/pages/Onboarding";
 import { useOnboardingGate } from "@/hooks/useOnboardingGate";
 import { ApiError } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 vi.mock("@/api/onboarding", () => ({
   getOnboardingStatus: vi.fn(),
@@ -176,15 +177,17 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     await waitFor(() =>
       expect(submitStep0).toHaveBeenCalledWith({
         ui: "en",
-        conversation: "es",
-        content: "es",
+        conversation: "en",
+        content: "en",
+        conversation_explicit: false,
+        content_explicit: false,
         region: "AR",
         region_explicit: true,
         iana_timezone: "Europe/Madrid",
       }),
     );
     // After step 0, the BLOCKING account step is offered (not step 0 again).
-    expect(await screen.findByRole("heading", { name: "Creá tu cuenta" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: tEs("onboarding.account.title") })).toBeInTheDocument();
   });
 
   it("creates the account and shows the recovery words exactly once", async () => {
@@ -198,7 +201,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     const user = userEvent.setup();
     renderOnboarding();
 
-    await screen.findByRole("heading", { name: "Creá tu cuenta" });
+    await screen.findByRole("heading", { name: tEs("onboarding.account.title") });
     await user.type(screen.getByLabelText("Usuario"), "el-autor");
     await user.type(screen.getByLabelText("Contraseña (opcional)"), "clave-fuerte");
     await user.click(screen.getByRole("button", { name: "Crear cuenta" }));
@@ -217,7 +220,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     // Words never shown again; the world step is offered next.
     expect(screen.queryByTestId("onboarding-words")).not.toBeInTheDocument();
     expect(
-      await screen.findByRole("heading", { name: "Creá tu mundo" }),
+      await screen.findByRole("heading", { name: tEs("onboarding.world.title") }),
     ).toBeInTheDocument();
   });
 
@@ -230,7 +233,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     const user = userEvent.setup();
     renderOnboarding();
 
-    await screen.findByRole("heading", { name: "Creá tu cuenta" });
+    await screen.findByRole("heading", { name: tEs("onboarding.account.title") });
     await user.type(screen.getByLabelText("Usuario"), "el-autor");
     await user.click(screen.getByRole("button", { name: "Crear cuenta" }));
 
@@ -254,10 +257,10 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     renderOnboarding();
 
     expect(
-      await screen.findByRole("heading", { name: "Creá tu cuenta" }),
+      await screen.findByRole("heading", { name: tEs("onboarding.account.title") }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Creá tu mundo" }),
+      screen.queryByRole("heading", { name: tEs("onboarding.world.title") }),
     ).not.toBeInTheDocument();
   });
 
@@ -266,7 +269,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     renderOnboarding();
 
     expect(
-      await screen.findByRole("heading", { name: "Creá tu cuenta" }),
+      await screen.findByRole("heading", { name: tEs("onboarding.account.title") }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: /Paso 1: idioma/ }),
@@ -279,7 +282,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     const user = userEvent.setup();
     renderOnboarding();
 
-    await screen.findByRole("heading", { name: "Creá tu mundo" });
+    await screen.findByRole("heading", { name: tEs("onboarding.world.title") });
     await user.type(screen.getByLabelText("Nombre del mundo"), "mi-mundo");
     await user.click(screen.getByRole("button", { name: "Crear mundo" }));
 
@@ -305,7 +308,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     (getOnboardingStatus as Mock).mockResolvedValue(ACCOUNT_DONE_STATUS);
     renderOnboarding();
 
-    await screen.findByRole("heading", { name: "Creá tu mundo" });
+    await screen.findByRole("heading", { name: tEs("onboarding.world.title") });
     expect(screen.getByText("Asistente de Demiurgos (texto y visión)")).toBeInTheDocument();
   });
 
@@ -326,8 +329,10 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
 
     await screen.findByRole("heading", { name: /idioma, región y zona horaria/i });
     expect(screen.getByLabelText("Idioma de la interfaz")).toHaveValue("en");
-    expect(screen.getByLabelText("Idioma de conversación (asistente)")).toHaveValue("en");
-    expect(screen.getByLabelText("Idioma de contenido (prosa del mundo)")).toHaveValue("es");
+    // AD-7: without explicit domain flags the conversation/content selects
+    // prefill as "inherit" (""), resolving to the ui value on save.
+    expect(screen.getByLabelText("Idioma de conversación (asistente)")).toHaveValue("");
+    expect(screen.getByLabelText("Idioma de contenido (prosa del mundo)")).toHaveValue("");
     expect(screen.getByLabelText(/Región \(opcional/)).toHaveValue("MX");
     expect(screen.getByLabelText(/Confirmo la región/)).toBeChecked();
     // The timezone control is a dropdown and the stored zone is the selected

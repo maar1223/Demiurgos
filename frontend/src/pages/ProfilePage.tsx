@@ -54,6 +54,8 @@ import {
   cardState,
 } from "@/pages/ConfigurationCenter";
 import { cn, getErrorMessage } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 type ProfileSection =
   | "cuenta"
@@ -64,12 +66,12 @@ type ProfileSection =
 
 /** The five intent-based sections (REQ-PIA-01) with rail label and icon
  *  (REQ-PIA-06). `cuenta` is the default landing section. */
-const PROFILE_SECTIONS: { id: ProfileSection; label: string; icon: IconName }[] = [
-  { id: "cuenta", label: "Cuenta", icon: "avatar" },
-  { id: "respaldo", label: "Respaldo", icon: "save" },
-  { id: "preferencias", label: "Preferencias", icon: "monitor" },
-  { id: "conexiones", label: "Conexiones", icon: "lightbulb" },
-  { id: "mundos", label: "Mundos", icon: "world" },
+const PROFILE_SECTIONS: { id: ProfileSection; labelKey: MessageKey; icon: IconName }[] = [
+  { id: "cuenta", labelKey: "profile.section.cuenta", icon: "avatar" },
+  { id: "respaldo", labelKey: "profile.section.respaldo", icon: "save" },
+  { id: "preferencias", labelKey: "profile.section.preferencias", icon: "monitor" },
+  { id: "conexiones", labelKey: "profile.section.conexiones", icon: "lightbulb" },
+  { id: "mundos", labelKey: "profile.section.mundos", icon: "world" },
 ];
 
 function isProfileSection(value: string | null): value is ProfileSection {
@@ -98,11 +100,11 @@ function isProfileSection(value: string | null): value is ProfileSection {
 /** The four credentials panels — exactly one visible at a time. */
 type CredentialPanel = "usuario" | "password" | "words" | "reauth";
 
-const CREDENTIAL_PANELS: { id: CredentialPanel; label: string }[] = [
-  { id: "usuario", label: "Usuario" },
-  { id: "password", label: "Contraseña" },
-  { id: "words", label: "Palabras claves" },
-  { id: "reauth", label: "Reingreso" },
+const CREDENTIAL_PANELS: { id: CredentialPanel; labelKey: MessageKey }[] = [
+  { id: "usuario", labelKey: "profile.cuenta.panel.username" },
+  { id: "password", labelKey: "profile.cuenta.panel.password" },
+  { id: "words", labelKey: "profile.cuenta.panel.words" },
+  { id: "reauth", labelKey: "profile.cuenta.panel.reauth" },
 ];
 
 const CREDENTIALS_REGION_ID = "cuenta-credentials-region";
@@ -114,6 +116,7 @@ function CuentaSection({
   unlockedWords: string | null;
   onUnlocked: (words: string) => void;
 }) {
+  const { t } = useAppLanguage();
   const localDev = useLocalDevAuth(true);
   const [vaultStatus, setVaultStatus] = useState<AuthSessionStatus | null>(null);
   const [config, setConfig] = useState<VaultConfig | null>(null);
@@ -171,14 +174,14 @@ function CuentaSection({
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-6 text-small text-muted">
-        <Spinner size="sm" /> Comprobando la bóveda…
+        <Spinner size="sm" /> {t("profile.cuenta.checkingVault")}
       </div>
     );
   }
 
   if (!!error && !config) {
     return (
-      <ErrorBanner message="No se pudo cargar el estado de la bóveda." onRetry={load} />
+      <ErrorBanner message={t("profile.cuenta.loadError")} onRetry={load} />
     );
   }
 
@@ -190,9 +193,9 @@ function CuentaSection({
           session words lock and the re-auth countdown as compact rows. */}
       <section className="rounded-lg border border-edge bg-surface-raised p-4">
         <div className="flex items-center justify-between gap-3">
-          <h3 className="font-heading text-body text-primary">Sesión</h3>
+          <h3 className="font-heading text-body text-primary">{t("profile.cuenta.session")}</h3>
           <Badge variant={sessionActive ? "success" : "default"}>
-            {sessionActive ? "Activa" : "Apagada"}
+            {sessionActive ? t("profile.cuenta.sessionActive") : t("profile.cuenta.sessionOff")}
           </Badge>
         </div>
 
@@ -200,52 +203,53 @@ function CuentaSection({
           vaultStatus.authenticated ? (
             <dl className="mt-2 text-small">
               <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
-                <dt className="text-muted">Cuenta</dt>
+                <dt className="text-muted">{t("profile.cuenta.account")}</dt>
                 <dd className="text-right">
                   <span className="block text-primary">
                     {config.username ?? "—"}
                   </span>
                   <span className="block text-muted">
-                    {config.has_password ? "contraseña definida" : "sin contraseña"}
+                    {config.has_password ? t("profile.cuenta.passwordSet") : t("profile.cuenta.noPassword")}
                   </span>
                   {config.env_override && (
                     <span className="block text-muted">
-                      Forzada por{" "}
+                      {t("profile.cuenta.forcedBy")}{" "}
                       <code className="text-icon-muted">DEMIURGOS_AUTH_MODE</code>
                     </span>
                   )}
                 </dd>
               </div>
               <div className="flex items-center justify-between gap-3 border-t border-edge py-2">
-                <dt className="text-muted">Palabras claves</dt>
+                <dt className="text-muted">{t("profile.cuenta.recoveryWords")}</dt>
                 <dd>
                   <Badge variant={unlockedWords !== null ? "success" : "default"}>
                     {unlockedWords !== null
-                      ? "Desbloqueadas esta sesión"
-                      : "Bloqueadas"}
+                      ? t("profile.cuenta.wordsUnlocked")
+                      : t("profile.cuenta.wordsLocked")}
                   </Badge>
                 </dd>
               </div>
               <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
-                <dt className="text-muted">Reingreso</dt>
+                <dt className="text-muted">{t("profile.cuenta.reauth")}</dt>
                 <dd className="text-primary">
                   {daysUntilReauth !== null
                     ? daysUntilReauth <= 0
-                      ? "hoy"
-                      : `en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}`
+                      ? t("profile.cuenta.today")
+                      : daysUntilReauth === 1
+                        ? t("profile.cuenta.inDaysOne")
+                        : t("profile.cuenta.inDaysMany", { days: daysUntilReauth })
                     : "—"}
                 </dd>
               </div>
             </dl>
           ) : (
             <p className="mt-3 text-small text-muted">
-              No hay una sesión de cuenta activa. Iniciá sesión para editar y
-              configurar el perfil.
+              {t("profile.cuenta.noActiveSession")}
             </p>
           )
         ) : localDev.isLoading ? (
           <div className="flex items-center gap-2 py-6 text-small text-muted">
-            <Spinner size="sm" /> Comprobando sesión local…
+            <Spinner size="sm" /> {t("profile.cuenta.localChecking")}
           </div>
         ) : localDev.error ? (
           <p className="text-small text-status-error">{localDev.error.message}</p>
@@ -254,7 +258,7 @@ function CuentaSection({
             <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
               <dt className="text-muted">Cuenta</dt>
               <dd className="text-right text-primary">
-                {localDev.status.label ?? "Sesión local"}
+                {localDev.status.label ?? t("profile.cuenta.localSession")}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-edge py-2">
@@ -262,23 +266,19 @@ function CuentaSection({
               <dd>
                 <Badge variant={unlockedWords !== null ? "success" : "default"}>
                   {unlockedWords !== null
-                    ? "Desbloqueadas esta sesión"
-                    : "Bloqueadas"}
+                    ? t("profile.cuenta.wordsUnlocked")
+                    : t("profile.cuenta.wordsLocked")}
                 </Badge>
               </dd>
             </div>
           </dl>
         ) : localDev.status.enabled ? (
           <p className="mt-3 text-small text-muted">
-            Sesión local no iniciada. Iniciala desde el menú de tu perfil para
-            editar y configurar el perfil.
+            {t("profile.cuenta.localNotStarted")}
           </p>
         ) : (
           <p className="mt-3 text-small text-muted">
-            Autenticación local desactivada. Activá{" "}
-            <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=local-dev</code>{" "}
-            en <code className="text-icon-muted">.env</code> para probar la
-            edición.
+            {t("profile.cuenta.localDisabled")}
           </p>
         )}
       </section>
@@ -295,7 +295,7 @@ function CuentaSection({
                 className="flex w-full items-center justify-between gap-3 p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-icon-muted/50"
               >
                 <span className="font-heading text-body text-primary">
-                  Gestionar credenciales
+                  {t("profile.cuenta.manageCredentials")}
                 </span>
                 <Icon
                   name={credentialsOpen ? "chevron-down" : "chevron-right"}
@@ -310,14 +310,12 @@ function CuentaSection({
               className="px-4 pb-4"
             >
               <p className="text-small text-muted">
-                Tus palabras claves son la llave de propiedad de la cuenta: la
-                primera acción que las pida las desbloquea para esta sesión y se
-                recuerdan hasta cerrar sesión, sin guardarse en el navegador.
+                {t("profile.cuenta.credentialsIntro")}
               </p>
 
               <div
                 role="group"
-                aria-label="Gestión de credenciales"
+                aria-label={t("profile.cuenta.credentialsAria")}
                 className="mt-3 flex flex-wrap gap-2"
               >
                 {CREDENTIAL_PANELS.map((panel) => {
@@ -335,7 +333,7 @@ function CuentaSection({
                           : "border-edge text-muted hover:text-primary",
                       )}
                     >
-                      {panel.label}
+                      {t(panel.labelKey)}
                     </button>
                   );
                 })}
@@ -344,12 +342,12 @@ function CuentaSection({
               <div className="mt-4">
                 {credentialPanel === "usuario" && (
                   <WordsForm
-                    title="Cambiar usuario"
-                    description="Demostrá que la cuenta es tuya con tus palabras claves y elegí un nuevo usuario."
-                    extraLabel="Nuevo usuario"
-                    extraPlaceholder="nuevo-usuario"
-                    submitLabel="Cambiar usuario"
-                    busyLabel="Cambiando…"
+                    title={t("profile.words.changeUsername.title")}
+                    description={t("profile.words.changeUsername.desc")}
+                    extraLabel={t("profile.words.changeUsername.extraLabel")}
+                    extraPlaceholder={t("profile.words.changeUsername.extraPlaceholder")}
+                    submitLabel={t("profile.words.changeUsername.submit")}
+                    busyLabel={t("profile.words.busy")}
                     unlockedWords={unlockedWords}
                     onSubmit={async (words, newUsername) => {
                       await changeUsername(words, newUsername);
@@ -361,14 +359,14 @@ function CuentaSection({
 
                 {credentialPanel === "password" && (
                   <WordsForm
-                    title="Cambiar contraseña"
-                    description="Demostrá que la cuenta es tuya con tus palabras claves y definí una nueva contraseña."
-                    extraLabel="Nueva contraseña"
+                    title={t("profile.words.changePassword.title")}
+                    description={t("profile.words.changePassword.desc")}
+                    extraLabel={t("profile.words.changePassword.extraLabel")}
                     extraType="password"
-                    extraPlaceholder="Nueva contraseña"
+                    extraPlaceholder={t("profile.words.changePassword.extraPlaceholder")}
                     extraRequired
-                    submitLabel="Cambiar contraseña"
-                    busyLabel="Cambiando…"
+                    submitLabel={t("profile.words.changePassword.submit")}
+                    busyLabel={t("profile.words.busy")}
                     unlockedWords={unlockedWords}
                     onSubmit={async (words, newPassword) => {
                       await changePassword(words, newPassword);
@@ -391,11 +389,11 @@ function CuentaSection({
                     {daysUntilReauth !== null && (
                       <p className="mt-3 text-small text-muted">
                         {daysUntilReauth <= 0
-                          ? "Reingreso recomendado: hoy."
-                          : `Reingreso recomendado en ${daysUntilReauth} día${daysUntilReauth === 1 ? "" : "s"}.`}{" "}
-                        Si no reingresas tu contraseña, la sesión de Demiurgos se
-                        cerrará. Y si olvidaste tu contraseña, solo vas a poder
-                        recuperarla con tus palabras claves.
+                          ? t("profile.reauth.recommendedToday")
+                          : daysUntilReauth === 1
+                            ? t("profile.reauth.recommendedInDaysOne")
+                            : t("profile.reauth.recommendedInDaysMany", { days: daysUntilReauth })}{" "}
+                        {t("profile.reauth.warning")}
                       </p>
                     )}
                   </>
@@ -414,7 +412,7 @@ function CuentaSection({
                 className="flex w-full items-center justify-between gap-3 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-status-error/50"
               >
                 <span className="font-heading text-body text-status-error">
-                  Zona peligrosa
+                  {t("profile.cuenta.dangerZone")}
                 </span>
                 <Icon
                   name={sensitiveOpen ? "chevron-down" : "chevron-right"}
@@ -429,14 +427,14 @@ function CuentaSection({
               className="mt-4 space-y-4"
             >
               <p className="text-small text-muted">
-                Acciones que cambian el acceso a tu cuenta.
+                {t("profile.cuenta.dangerIntro")}
               </p>
               <WordsForm
-                title="Retirar contraseña"
-                description="Tu cuenta pasa a ser sin contraseña: alcanza con el botón Entrar. Lo confirmás con tus palabras claves."
-                submitLabel="Retirar contraseña"
-                busyLabel="Retirando…"
-                confirmLabel="¿Confirmás el retiro?"
+                title={t("profile.words.removePassword.title")}
+                description={t("profile.words.removePassword.desc")}
+                submitLabel={t("profile.words.removePassword.submit")}
+                busyLabel={t("profile.words.removing")}
+                confirmLabel={t("profile.words.removePassword.confirm")}
                 destructive
                 unlockedWords={unlockedWords}
                 onSubmit={async (words) => {
@@ -446,11 +444,11 @@ function CuentaSection({
                 }}
               />
               <WordsForm
-                title="Desactivar bóveda"
-                description="Apagar la bóveda quita la autenticación de la instalación. Lo confirmás con tus palabras claves."
-                submitLabel="Desactivar bóveda"
-                busyLabel="Desactivando…"
-                confirmLabel="¿Confirmás la desactivación?"
+                title={t("profile.words.disableVault.title")}
+                description={t("profile.words.disableVault.desc")}
+                submitLabel={t("profile.words.disableVault.submit")}
+                busyLabel={t("profile.words.disabling")}
+                confirmLabel={t("profile.words.disableVault.confirm")}
                 destructive
                 unlockedWords={unlockedWords}
                 onSubmit={async (words) => {
@@ -514,6 +512,7 @@ function WordsForm({
   unlockedWords,
   onSubmit,
 }: WordsFormProps) {
+  const { t } = useAppLanguage();
   const [words, setWords] = useState("");
   const [extra, setExtra] = useState("");
   const [busy, setBusy] = useState(false);
@@ -527,7 +526,7 @@ function WordsForm({
 
   const handleSubmit = async () => {
     if (extraRequired && extra.trim() === "") {
-      setError(`Completá el campo ${extraLabel?.toLowerCase() ?? "obligatorio"}.`);
+      setError(t("profile.words.requiredError", { field: extraLabel?.toLowerCase() ?? t("profile.words.required") }));
       return;
     }
     if (confirmLabel && !confirming) {
@@ -544,7 +543,7 @@ function WordsForm({
       setConfirming(false);
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "No se pudo completar la acción",
+        cause instanceof Error ? cause.message : t("profile.words.actionError"),
       );
     } finally {
       setBusy(false);
@@ -558,18 +557,18 @@ function WordsForm({
 
       {unlockedWords ? (
         <p className="mt-3 text-small text-muted">
-          Palabras claves ya verificadas para esta sesión.
+          {t("profile.words.verifiedHint")}
         </p>
       ) : (
         <>
           <label htmlFor={`${title}-words`} className="sr-only">
-            Palabras claves para {title}
+            {t("profile.words.inputLabel", { title })}
           </label>
           <input
             id={`${title}-words`}
             type="text"
             autoComplete="off"
-            placeholder="Palabras claves"
+            placeholder={t("profile.words.inputPlaceholder")}
             value={words}
             onChange={(event) => {
               setWords(event.target.value);
@@ -649,7 +648,7 @@ function WordsForm({
       )}
       {done && (
         <p className="mt-2 text-small text-status-success" role="status">
-          Listo. Cambio guardado.
+          {t("profile.words.done")}
         </p>
       )}
     </div>
@@ -668,15 +667,16 @@ function RotateWordsCard({
   unlockedWords: string | null;
   onUnlocked: (words: string) => void;
 }) {
+  const { t } = useAppLanguage();
   const [newWords, setNewWords] = useState<string | null>(null);
 
   return (
     <div className="rounded-lg border border-edge bg-surface/50 p-3">
       <WordsForm
-        title="Rotar palabras claves"
-        description="Demostrá que la cuenta es tuya con tus palabras claves actuales y generá unas nuevas. Las anteriores quedan anuladas: guardá las nuevas fuera del navegador."
-        submitLabel="Rotar palabras claves"
-        busyLabel="Rotando…"
+        title={t("profile.words.rotate.title")}
+        description={t("profile.words.rotate.desc")}
+        submitLabel={t("profile.words.rotate.submit")}
+        busyLabel={t("profile.words.rotating")}
         unlockedWords={unlockedWords}
         onSubmit={async (words) => {
           const { new_words } = await rotateWords(words);
@@ -695,8 +695,7 @@ function RotateWordsCard({
           className="mt-3 rounded-lg border border-status-success/40 bg-surface-raised p-3"
         >
           <p className="text-small text-status-success">
-            Nuevas palabras claves — guardalas fuera del navegador; solo se
-            muestran una vez:
+            {t("profile.words.rotate.result")}
           </p>
           <p className="mt-2 break-words font-mono text-small text-primary">
             {newWords}
@@ -722,6 +721,7 @@ function ActivationPanel({
    *  (REQ-SRW-01): the typed words were just verified server-side. */
   onVerified?: (words: string) => void;
 }) {
+  const { t } = useAppLanguage();
   const [words, setWords] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -751,7 +751,7 @@ function ActivationPanel({
       }
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "No se pudo activar la bóveda",
+        cause instanceof Error ? cause.message : t("profile.vault.activationError"),
       );
     } finally {
       setBusy(false);
@@ -761,10 +761,9 @@ function ActivationPanel({
   if (words) {
     return (
       <section className="rounded-lg border border-status-success/40 bg-surface-raised p-4">
-        <h3 className="font-heading text-body text-primary">Bóveda activada</h3>
+        <h3 className="font-heading text-body text-primary">{t("profile.vault.activatedTitle")}</h3>
         <p className="mt-1 text-small text-muted">
-          Se creó tu cuenta. Estas son tus palabras claves — guardalas fuera del
-          navegador: solo se muestran una vez.
+          {t("profile.vault.activatedIntro")}
         </p>
         <p
           data-testid="vault-words"
@@ -773,7 +772,7 @@ function ActivationPanel({
           {words}
         </p>
         <Button className="mt-4" onClick={onActivated}>
-          Guardé mis palabras
+          {t("profile.vault.confirmWords")}
         </Button>
       </section>
     );
@@ -784,17 +783,16 @@ function ActivationPanel({
       <section className="rounded-lg border border-edge bg-surface-raised p-4">
         <div className="flex items-center justify-between gap-3">
           <h3 className="font-heading text-body text-primary">
-            Seguridad / Bóveda
+            {t("profile.vault.title")}
           </h3>
-          <span className="text-small text-muted">Apagada</span>
+          <span className="text-small text-muted">{t("profile.vault.off")}</span>
         </div>
         <p className="mt-1 text-small text-muted">
-          La bóveda protege tu instalación con una cuenta y tus palabras
-          claves. Activarla exige demostrar que la cuenta es tuya.
+          {t("profile.vault.intro")}
         </p>
         {config.env_override && (
           <p className="mt-3 rounded-lg border border-edge bg-surface/50 p-3 text-small text-muted">
-            La autenticación está forzada por la variable de entorno{" "}
+            {t("profile.vault.envForced")}{" "}
             <code className="text-icon-muted">DEMIURGOS_AUTH_MODE=credentials</code>.
           </p>
         )}
@@ -809,20 +807,21 @@ function ActivationPanel({
           }}
         >
           <h4 className="font-heading text-body text-primary">
-            Activar la bóveda
+            {t("profile.vault.activateTitle")}
           </h4>
           <p className="mt-1 text-small text-muted">
-            Ya existe una cuenta ({config.username ?? "sin usuario"}). Demostrá
-            que es tuya con tus palabras claves para activar la bóveda.
+            {t("profile.vault.activateIntro", {
+              username: config.username ?? t("profile.vault.noUsername"),
+            })}
           </p>
           <label htmlFor="vault-verify-words" className="sr-only">
-            Palabras claves para activar la bóveda
+            {t("profile.vault.verifyWordsLabel")}
           </label>
           <input
             id="vault-verify-words"
             type="text"
             autoComplete="off"
-            placeholder="Palabras claves"
+            placeholder={t("profile.words.inputPlaceholder")}
             value={verifyWords}
             onChange={(e) => {
               setVerifyWords(e.target.value);
@@ -838,7 +837,7 @@ function ActivationPanel({
             disabled={busy || verifyWords.trim() === ""}
             className="mt-3"
           >
-            {busy ? "Activando…" : "Activar bóveda"}
+            {busy ? t("profile.vault.activating") : t("profile.vault.activate")}
           </Button>
         </form>
       ) : (
@@ -853,18 +852,17 @@ function ActivationPanel({
           }}
         >
           <h4 className="font-heading text-body text-primary">
-            Crear cuenta y activar
+            {t("profile.vault.createTitle")}
           </h4>
           <p className="mt-1 text-small text-muted">
-            No hay una cuenta todavía. Creala ahora: la contraseña es opcional
-            y se generan tus palabras claves (se muestran una sola vez).
+            {t("profile.vault.createIntro")}
           </p>
           <div className="mt-3 grid gap-4">
             <label
               htmlFor="vault-create-username"
               className="flex flex-col gap-1 text-small text-primary"
             >
-              Usuario
+              {t("profile.vault.username")}
               <input
                 id="vault-create-username"
                 value={username}
@@ -874,7 +872,7 @@ function ActivationPanel({
                 }}
                 disabled={busy}
                 autoComplete="username"
-                placeholder="tu-usuario"
+                placeholder={t("profile.vault.usernamePlaceholder")}
                 className="rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
               />
             </label>
@@ -883,7 +881,7 @@ function ActivationPanel({
                 htmlFor="vault-create-password"
                 className="text-small text-primary"
               >
-                Contraseña (opcional)
+                {t("profile.vault.password")}
               </label>
               <SecretInput
                 id="vault-create-password"
@@ -894,7 +892,7 @@ function ActivationPanel({
                 }}
                 disabled={busy}
                 autoComplete="new-password"
-                placeholder="Dejalo vacío para entrar sin contraseña"
+                placeholder={t("profile.vault.passwordPlaceholder")}
                 className="rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none disabled:opacity-50"
               />
             </div>
@@ -906,7 +904,7 @@ function ActivationPanel({
             disabled={busy || username.trim() === ""}
             className="mt-3"
           >
-            {busy ? "Activando…" : "Crear cuenta y activar"}
+            {busy ? t("profile.vault.activating") : t("profile.vault.create")}
           </Button>
         </form>
       )}
@@ -928,6 +926,7 @@ function ReauthIntervalForm({
   config: VaultConfig;
   onSaved: () => void;
 }) {
+  const { t } = useAppLanguage();
   const [value, setValue] = useState(String(config.reauth_interval_d));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -936,7 +935,7 @@ function ReauthIntervalForm({
   const handleSubmit = async () => {
     const days = Number(value);
     if (!Number.isFinite(days) || days < 1) {
-      setError("Ingresá un intervalo válido en días.");
+      setError(t("profile.reauth.invalid"));
       return;
     }
     setBusy(true);
@@ -948,7 +947,7 @@ function ReauthIntervalForm({
       onSaved();
     } catch (cause) {
       setError(
-        cause instanceof Error ? cause.message : "No se pudo ajustar el intervalo",
+        cause instanceof Error ? cause.message : t("profile.reauth.error"),
       );
     } finally {
       setBusy(false);
@@ -958,14 +957,14 @@ function ReauthIntervalForm({
   return (
     <div className="rounded-lg border border-edge bg-surface/50 p-3">
       <h4 className="font-heading text-body text-primary">
-        Intervalo de reingreso
+        {t("profile.reauth.title")}
       </h4>
       <p className="mt-1 text-small text-muted">
-        Cada cuántos días se te pide reingresar la contraseña.
+        {t("profile.reauth.intro")}
       </p>
       <div className="mt-3 flex items-center gap-3">
         <label htmlFor="reauth-interval" className="sr-only">
-          Días entre reingresos
+          {t("profile.reauth.daysLabel")}
         </label>
         <input
           id="reauth-interval"
@@ -979,14 +978,14 @@ function ReauthIntervalForm({
           disabled={busy}
           className="w-28 rounded-lg border border-edge bg-surface-raised px-3 py-2 text-body text-primary focus:border-icon-muted focus:outline-none disabled:opacity-50"
         />
-        <span className="text-small text-muted">días</span>
+        <span className="text-small text-muted">{t("profile.reauth.daysUnit")}</span>
         <Button
           variant="secondary"
           size="sm"
           onClick={() => void handleSubmit()}
           disabled={busy}
         >
-          {busy ? "Guardando…" : "Guardar"}
+          {busy ? t("common.saving") : t("common.save")}
         </Button>
       </div>
       {error && (
@@ -996,7 +995,7 @@ function ReauthIntervalForm({
       )}
       {done && (
         <p className="mt-2 text-small text-status-success" role="status">
-          Listo. Intervalo guardado.
+          {t("profile.reauth.done")}
         </p>
       )}
     </div>
@@ -1013,6 +1012,7 @@ function ReauthIntervalForm({
  * and subtitle (CON-PIA-05 keeps the embedded behavior intact).
  */
 function ConexionesSection() {
+  const { t } = useAppLanguage();
   const auth = useAuthSession(true);
   // Assistant first and active by default: it is the reachable-from-scroll-top
   // surface, while the idea-capture wizard keeps its step state mounted.
@@ -1042,9 +1042,8 @@ function ConexionesSection() {
         {
           id: "assistant",
           icon: "demiurgos",
-          title: "Asistente de Demiurgos",
-          subtitle:
-            "El modelo compartido de Demiurgos: sirve a la Wiki, al bot de Telegram, a la Skill Madre y a los talleres. Las claves solo se envían al backend autenticado.",
+          title: t("profile.conexiones.assistantTitle"),
+          subtitle: t("profile.conexiones.assistantSubtitle"),
           status: assistantStatus ?? undefined,
           body: (
             <AssistantSettingsPanel
@@ -1056,8 +1055,8 @@ function ConexionesSection() {
         {
           id: "telegram",
           icon: "lightbulb",
-          title: "Captura de ideas",
-          subtitle: "Hermes / Telegram — ingreso de ideas nativo desde el bot.",
+          title: t("profile.conexiones.captureTitle"),
+          subtitle: t("profile.conexiones.captureSubtitle"),
           status: telegramStatus ?? undefined,
           body: <IdeaCapturePanel auth={auth} onStatus={handleTelegramStatus} />,
         },
@@ -1089,6 +1088,7 @@ function ConexionesSection() {
  * and the shared module never drift.
  */
 function ConfigurationSection() {
+  const { t } = useAppLanguage();
   const [readiness, setReadiness] = useState<ReadinessSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -1120,7 +1120,7 @@ function ConfigurationSection() {
   if (loading) {
     return (
       <div className="flex items-center gap-2 py-6 text-small text-muted">
-        <Spinner size="sm" /> Comprobando configuración…
+        <Spinner size="sm" /> {t("profile.locale.checking")}
       </div>
     );
   }
@@ -1128,7 +1128,7 @@ function ConfigurationSection() {
   if (!!error && !readiness) {
     return (
       <ErrorBanner
-        message="No se pudieron cargar los estados de configuración."
+        message={t("profile.locale.loadError")}
         onRetry={load}
       />
     );
@@ -1160,11 +1160,11 @@ function ConfigurationSection() {
             id="config-card-title-locale"
             className="font-heading text-body text-primary"
           >
-            Idioma, región y zona horaria
+            {t("profile.locale.title")}
           </h3>
           <span className="flex items-center gap-2">
             <Badge variant={localeMeta.badge}>{localeLabel}</Badge>
-            <span className="sr-only">Estado: {localeLabel}</span>
+            <span className="sr-only">{t("profile.locale.stateLabel", { label: localeLabel })}</span>
           </span>
         </div>
         <LocaleForm onSaved={() => load({ silent: true })} />
@@ -1193,6 +1193,7 @@ function ConfigurationSection() {
  * refresh token so the new entry appears immediately.
  */
 function WorldsSection() {
+  const { t } = useAppLanguage();
   const { worlds, isLoading, error, mutate } = useWorlds();
   const [deleteTarget, setDeleteTarget] = useState<WorldInfo | null>(null);
   const [trashRefresh, setTrashRefresh] = useState(0);
@@ -1288,11 +1289,10 @@ function WorldsSection() {
     <div className="space-y-6">
       <section aria-labelledby="mundos-title">
         <h3 id="mundos-title" className="font-heading text-body text-primary">
-          Mundos
+          {t("profile.mundos.title")}
         </h3>
         <p className="mt-1 text-small text-muted">
-          Gestioná los mundos del taller: eliminá uno (queda recuperable 30 días en la papelera) o
-          restaurá mundos eliminados.
+          {t("profile.mundos.intro")}
         </p>
       </section>
 
@@ -1307,10 +1307,10 @@ function WorldsSection() {
           id="mundos-danger-title"
           className="font-heading text-body text-status-error"
         >
-          Zona peligrosa
+          {t("profile.mundos.dangerTitle")}
         </h3>
         <p className="mt-1 text-small text-muted">
-          Eliminar un mundo lo mueve a la papelera durante 30 días; no se destruye de inmediato.
+          {t("profile.mundos.dangerIntro")}
         </p>
 
         {error && (
@@ -1327,15 +1327,15 @@ function WorldsSection() {
             <Spinner size="md" />
           </div>
         ) : worlds.length === 0 ? (
-          <p className="mt-3 text-small text-muted">No hay mundos creados todavía.</p>
+          <p className="mt-3 text-small text-muted">{t("profile.mundos.empty")}</p>
         ) : (
           <ul className="mt-3 flex flex-col gap-2">
             {worlds.map((world) => {
               const isActive = activeWorld.toLowerCase() === world.name.toLowerCase();
               const disabledReason = isActive
-                ? "No se puede eliminar el mundo activo"
+                ? t("profile.mundos.deleteActiveReason")
                 : onlyWorld
-                  ? "Debe existir al menos un mundo"
+                  ? t("profile.mundos.deleteOnlyReason")
                   : null;
               return (
                 <li
@@ -1346,8 +1346,8 @@ function WorldsSection() {
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-mono text-small text-primary">{world.name}</p>
                     <div className="mt-1 flex flex-wrap items-center gap-1">
-                      <Badge>Lore {world.lore_count}</Badge>
-                      <Badge>Personajes {world.character_count}</Badge>
+                      <Badge>{t("profile.mundos.loreBadge", { count: world.lore_count })}</Badge>
+                      <Badge>{t("profile.mundos.charactersBadge", { count: world.character_count })}</Badge>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
@@ -1359,7 +1359,7 @@ function WorldsSection() {
                         setRenameTarget(world);
                       }}
                     >
-                      Renombrar
+                      {t("profile.mundos.rename")}
                     </Button>
                     <Button
                       variant="ghost"
@@ -1368,7 +1368,7 @@ function WorldsSection() {
                       title={disabledReason ?? undefined}
                       onClick={() => setDeleteTarget(world)}
                     >
-                      Borrar
+                      {t("profile.mundos.delete")}
                     </Button>
                   </div>
                 </li>
@@ -1382,7 +1382,7 @@ function WorldsSection() {
           heading; it is wrapped in the same card treatment as the other
           intent blocks so the three Mundos subsections line up visually. */}
       <section
-        aria-label="Papelera de mundos"
+        aria-label={t("profile.mundos.trashAria")}
         className="rounded-lg border border-edge bg-surface-raised p-4"
       >
         <WorldTrashPanel refreshToken={trashRefresh} onChanged={handleTrashChanged} />
@@ -1393,7 +1393,7 @@ function WorldsSection() {
           readiness detected legacy folders; migration never runs automatically
           and always requires the panel's explicit confirm flow. */}
       {legacy.length > 0 && (
-        <section aria-label="Migración de carpetas">
+        <section aria-label={t("profile.mundos.migrationAria")}>
           <MigrationPanel findings={legacy} onMigrated={loadLegacy} />
         </section>
       )}
@@ -1422,7 +1422,7 @@ function WorldsSection() {
             setCreateOpen(true);
           }}
           onClose={() => setPickerOpen(false)}
-          footerAction={{ label: "Cancelar", onAction: () => setPickerOpen(false) }}
+          footerAction={{ label: t("common.cancel"), onAction: () => setPickerOpen(false) }}
         />
       )}
 
@@ -1438,10 +1438,10 @@ function WorldsSection() {
 
       {renameTarget && (
         <WorldNameDialog
-          title="Renombrar mundo"
-          message={`El mundo «${renameTarget.name}» se moverá a un nuevo nombre. Los enlaces viejos siguen funcionando (se redirigen).`}
+          title={t("profile.mundos.renameDialogTitle")}
+          message={t("profile.mundos.renameDialogMessage", { name: renameTarget.name })}
           initialValue={renameTarget.name}
-          confirmLabel="Renombrar"
+          confirmLabel={t("profile.mundos.renameDialogConfirm")}
           confirmBusy={renameBusy}
           error={renameError}
           onConfirm={(newName) => void handleRename(renameTarget, newName)}
@@ -1477,6 +1477,7 @@ function WorldsSection() {
  * idea-capture and assistant panels into one section (WU-5, REQ-PIA-02/07).
  */
 export default function ProfilePage() {
+  const { t } = useAppLanguage();
   const [searchParams, setSearchParams] = useSearchParams();
   const rawTab = searchParams.get("tab");
   const activeSection: ProfileSection = isProfileSection(rawTab) ? rawTab : "cuenta";
@@ -1515,11 +1516,14 @@ export default function ProfilePage() {
   return (
     <div className="flex min-h-screen flex-col bg-surface">
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8">
-        <h1 className="font-heading text-h3 text-primary">Perfil</h1>
+        <h1 className="font-heading text-h3 text-primary">{t("profile.title")}</h1>
         <StatusOverviewHeader />
         <div className="mt-6 flex flex-col gap-6 md:flex-row">
           <ProfileSectionRail
-            sections={PROFILE_SECTIONS}
+            sections={PROFILE_SECTIONS.map((section) => ({
+              ...section,
+              label: t(section.labelKey),
+            }))}
             activeId={activeSection}
             onSelect={selectSection}
           />
@@ -1535,7 +1539,7 @@ export default function ProfilePage() {
               tabIndex={-1}
               className="font-heading text-h4 text-primary"
             >
-              {PROFILE_SECTIONS.find((section) => section.id === activeSection)?.label}
+              {t(PROFILE_SECTIONS.find((section) => section.id === activeSection)?.labelKey ?? "profile.section.cuenta")}
             </h2>
             <div className="mt-4">
               {activeSection === "cuenta" ? (

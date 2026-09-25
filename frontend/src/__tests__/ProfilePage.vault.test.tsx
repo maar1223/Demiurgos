@@ -15,6 +15,7 @@ import {
 } from "@/api/wiki";
 import { getReadiness } from "@/api/onboarding";
 import type { Mock } from "vitest";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 vi.mock("@/hooks/useWorlds", () => ({
   useWorlds: () => ({ worlds: [] }),
@@ -495,11 +496,11 @@ describe("ProfilePage account section (credentials mode)", () => {
     // First click only arms the confirmation; nothing was sent yet.
     expect(removePassword).not.toHaveBeenCalled();
     expect(
-      within(form).getByRole("button", { name: "¿Confirmás el retiro?" }),
+      within(form).getByRole("button", { name: tEs("profile.words.removePassword.confirm") }),
     ).toBeInTheDocument();
 
     fireEvent.click(
-      within(form).getByRole("button", { name: "¿Confirmás el retiro?" }),
+      within(form).getByRole("button", { name: tEs("profile.words.removePassword.confirm") }),
     );
 
     await waitFor(() =>
@@ -867,7 +868,7 @@ describe("ProfilePage vault panel (Seguridad / Bóveda, R-VC-02..05)", () => {
     // First click only arms the confirmation; nothing was sent yet.
     expect(disableVault).not.toHaveBeenCalled();
     fireEvent.click(
-      within(form).getByRole("button", { name: "¿Confirmás la desactivación?" }),
+      within(form).getByRole("button", { name: tEs("profile.words.disableVault.confirm") }),
     );
 
     await waitFor(() =>

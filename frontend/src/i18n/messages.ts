@@ -192,6 +192,7 @@ export const messages = {
     "profile.words.inputLabel": "Palabras claves para {title}",
     "profile.words.inputPlaceholder": "Palabras claves",
     "profile.words.requiredError": "Completa el campo {field}.",
+    "profile.words.required": "obligatorio",
     "profile.words.actionError": "No se pudo completar la acción",
     "profile.words.done": "Listo. Cambio guardado.",
     "profile.words.busy": "Cambiando…",
@@ -240,6 +241,7 @@ export const messages = {
     "profile.vault.activateIntro":
       "Ya existe una cuenta ({username}). Demuestra que es tuya con tus palabras claves para activar la bóveda.",
     "profile.vault.verifyWordsLabel": "Palabras claves para activar la bóveda",
+    "profile.vault.noUsername": "sin usuario",
     "profile.vault.activating": "Activando…",
     "profile.vault.activate": "Activar bóveda",
     "profile.vault.createTitle": "Crear cuenta y activar",
@@ -472,6 +474,7 @@ export const messages = {
     "profile.words.inputLabel": "Recovery words for {title}",
     "profile.words.inputPlaceholder": "Recovery words",
     "profile.words.requiredError": "Complete the {field} field.",
+    "profile.words.required": "required",
     "profile.words.actionError": "Could not complete the action",
     "profile.words.done": "Done. Change saved.",
     "profile.words.busy": "Changing…",
@@ -520,6 +523,7 @@ export const messages = {
     "profile.vault.activateIntro":
       "An account already exists ({username}). Prove it is yours with your recovery words to activate the vault.",
     "profile.vault.verifyWordsLabel": "Recovery words to activate the vault",
+    "profile.vault.noUsername": "no username",
     "profile.vault.activating": "Activating…",
     "profile.vault.activate": "Activate vault",
     "profile.vault.createTitle": "Create account and activate",

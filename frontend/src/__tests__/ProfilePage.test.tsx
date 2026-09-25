@@ -8,6 +8,7 @@ import { getReadiness } from "@/api/onboarding";
 import { getLocale } from "@/api/config";
 import { getAuthStatus, getVaultConfig } from "@/api/wiki";
 import type { Mock } from "vitest";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 /** Controlled Router that subscribes to a memory history so push/Back/replace
  *  navigation is observable in tests (MemoryRouter hides its history). */
@@ -184,7 +185,7 @@ describe("ProfilePage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "Conexiones" }));
+    fireEvent.click(screen.getByRole("tab", { name: tEs("profile.section.conexiones") }));
 
     expect(screen.getByText("assistant settings panel")).toBeInTheDocument();
   });
@@ -211,18 +212,18 @@ describe("ProfilePage", () => {
       .getAllByRole("tab")
       .map((tab) => tab.textContent);
     const order = (label: string) => tabLabels.indexOf(label);
-    expect(order("Cuenta")).toBeGreaterThanOrEqual(0);
-    expect(order("Respaldo")).toBeGreaterThan(order("Cuenta"));
-    expect(order("Preferencias")).toBeGreaterThan(order("Respaldo"));
-    expect(order("Conexiones")).toBeGreaterThan(order("Preferencias"));
-    expect(order("Mundos")).toBeGreaterThan(order("Conexiones"));
+    expect(order(tEs("profile.section.cuenta"))).toBeGreaterThanOrEqual(0);
+    expect(order(tEs("profile.section.respaldo"))).toBeGreaterThan(order(tEs("profile.section.cuenta")));
+    expect(order(tEs("profile.section.preferencias"))).toBeGreaterThan(order(tEs("profile.section.respaldo")));
+    expect(order(tEs("profile.section.conexiones"))).toBeGreaterThan(order(tEs("profile.section.preferencias")));
+    expect(order(tEs("profile.section.mundos"))).toBeGreaterThan(order(tEs("profile.section.conexiones")));
 
-    fireEvent.click(screen.getByRole("tab", { name: "Preferencias" }));
+    fireEvent.click(screen.getByRole("tab", { name: tEs("profile.section.preferencias") }));
 
     // The inline locale form renders; the redundant readiness intro ("Listo
     // para trabajar") and the offline card are gone (product-owner decision).
     expect(
-      await screen.findByRole("heading", { name: "Idioma, región y zona horaria" }),
+      await screen.findByRole("heading", { name: tEs("profile.locale.title") }),
     ).toBeInTheDocument();
 
     // Redundant cards are NOT duplicated — they live in other Profile tabs
@@ -285,12 +286,14 @@ describe("ProfilePage", () => {
     // Non-vacuous: the locale form must be present, so the absence assertions
     // below cannot pass on an empty Preferencias panel.
     expect(
-      await screen.findByRole("heading", { name: "Idioma, región y zona horaria" }),
+      await screen.findByRole("heading", { name: tEs("profile.locale.title") }),
     ).toBeInTheDocument();
 
     // The old Centro de Configuración intro block is gone. Under the
     // pre-change code these assertions fail: the "Listo para trabajar" h3,
-    // its paragraph and the ESSENTIAL_BADGES row all rendered here.
+    // its paragraph and the ESSENTIAL_BADGES row all rendered here. Those
+    // surfaces are migrated in later work units, so their legacy literals are
+    // asserted verbatim.
     expect(
       screen.queryByRole("heading", { name: "Listo para trabajar" }),
     ).not.toBeInTheDocument();
@@ -326,14 +329,14 @@ describe("ProfilePage", () => {
     expect(section.id).toBe("config-card-locale");
 
     // All six fields are usable inline, without leaving /perfil.
-    expect(within(section).getByLabelText("Idioma de la interfaz")).toBeInTheDocument();
-    expect(within(section).getByLabelText("Idioma de conversación (asistente)")).toBeInTheDocument();
-    expect(within(section).getByLabelText("Idioma de contenido (prosa del mundo)")).toBeInTheDocument();
+    expect(within(section).getByLabelText(tEs("locale.ui"))).toBeInTheDocument();
+    expect(within(section).getByLabelText(tEs("locale.conversation"))).toBeInTheDocument();
+    expect(within(section).getByLabelText(tEs("locale.content"))).toBeInTheDocument();
     expect(within(section).getByLabelText(/Región \(opcional/)).toBeInTheDocument();
     expect(within(section).getByLabelText(/Confirmo la región/)).toBeInTheDocument();
     // The timezone is a dropdown (zone + city), not a free-text field.
     expect(within(section).getByLabelText(/Zona horaria/)).toHaveRole("combobox");
-    expect(within(section).getByRole("button", { name: "Guardar" })).toBeInTheDocument();
+    expect(within(section).getByRole("button", { name: tEs("common.save") })).toBeInTheDocument();
     // No handoff control remains on the form.
     expect(within(section).queryByRole("button", { name: "Configurar" })).not.toBeInTheDocument();
   });
@@ -364,7 +367,7 @@ describe("ProfilePage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "Conexiones" }));
+    fireEvent.click(screen.getByRole("tab", { name: tEs("profile.section.conexiones") }));
 
     // "Captura de ideas" (IdeaCapturePanel) is the single Telegram surface:
     // no separate TelegramCard block may render alongside it.
@@ -386,7 +389,7 @@ describe("ProfilePage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "Mundos" }));
+    fireEvent.click(screen.getByRole("tab", { name: tEs("profile.section.mundos") }));
 
     expect(await screen.findByText("migration panel")).toBeInTheDocument();
   });
@@ -398,8 +401,8 @@ describe("ProfilePage", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "Mundos" }));
-    await screen.findByText("Zona peligrosa");
+    fireEvent.click(screen.getByRole("tab", { name: tEs("profile.section.mundos") }));
+    await screen.findByText(tEs("profile.mundos.dangerTitle"));
 
     expect(screen.queryByText("migration panel")).not.toBeInTheDocument();
   });
@@ -440,12 +443,12 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
         <ProfilePage />
       </MemoryRouter>,
     );
-    expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.respaldo") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
     expect(screen.getByRole("tabpanel")).toHaveAccessibleName("Respaldo");
-    expect(screen.getByRole("heading", { name: "Respaldo" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: tEs("profile.section.respaldo") })).toBeInTheDocument();
 
     // A reload re-renders from the same URL; the query param drives the state.
     unmount();
@@ -454,7 +457,7 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
         <ProfilePage />
       </MemoryRouter>,
     );
-    expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.respaldo") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -467,7 +470,7 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
         <ProfilePage />
       </MemoryRouter>,
     );
-    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.cuenta") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -485,21 +488,21 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
         <ProfilePage />
       </HistoryRouter>,
     );
-    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.cuenta") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
 
-    fireEvent.click(screen.getByRole("tab", { name: "Conexiones" }));
+    fireEvent.click(screen.getByRole("tab", { name: tEs("profile.section.conexiones") }));
     expect(screen.getByTestId("url-tab")).toHaveTextContent("conexiones");
-    expect(screen.getByRole("tab", { name: "Conexiones" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.conexiones") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
 
     act(() => history.go(-1));
     expect(screen.getByTestId("url-tab")).toHaveTextContent("");
-    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.cuenta") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -521,7 +524,7 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
     );
     // `replace` keeps the history index; a push would have advanced it.
     expect(history.index).toBe(0);
-    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.cuenta") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -538,7 +541,7 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
         <ProfilePage />
       </HistoryRouter>,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Cuenta" }));
+    fireEvent.click(screen.getByRole("tab", { name: tEs("profile.section.cuenta") }));
     expect(screen.getByTestId("url-tab")).toHaveTextContent("");
     expect(history.index).toBe(0);
   });
@@ -552,13 +555,13 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
     const tablist = screen.getByRole("tablist", { name: "Secciones del perfil" });
     const tabs = within(tablist).getAllByRole("tab");
     expect(tabs.map((tab) => tab.textContent)).toEqual([
-      "Cuenta",
-      "Respaldo",
-      "Preferencias",
-      "Conexiones",
-      "Mundos",
+      tEs("profile.section.cuenta"),
+      tEs("profile.section.respaldo"),
+      tEs("profile.section.preferencias"),
+      tEs("profile.section.conexiones"),
+      tEs("profile.section.mundos"),
     ]);
-    const activeTab = within(tablist).getByRole("tab", { name: "Cuenta" });
+    const activeTab = within(tablist).getByRole("tab", { name: tEs("profile.section.cuenta") });
     expect(activeTab).toHaveAttribute("aria-selected", "true");
     expect(activeTab).toHaveAttribute("aria-controls", "profile-panel-cuenta");
     for (const tab of tabs) {
@@ -577,32 +580,32 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
         <ProfilePage />
       </MemoryRouter>,
     );
-    const cuentaTab = screen.getByRole("tab", { name: "Cuenta" });
+    const cuentaTab = screen.getByRole("tab", { name: tEs("profile.section.cuenta") });
     fireEvent.keyDown(cuentaTab, { key: "ArrowRight" });
-    expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveFocus();
-    expect(screen.getByRole("tab", { name: "Respaldo" })).toHaveAttribute(
+    expect(screen.getByRole("tab", { name: tEs("profile.section.respaldo") })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: tEs("profile.section.respaldo") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Respaldo" }), { key: "End" });
-    expect(screen.getByRole("tab", { name: "Mundos" })).toHaveFocus();
-    expect(screen.getByRole("tab", { name: "Mundos" })).toHaveAttribute(
+    fireEvent.keyDown(screen.getByRole("tab", { name: tEs("profile.section.respaldo") }), { key: "End" });
+    expect(screen.getByRole("tab", { name: tEs("profile.section.mundos") })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: tEs("profile.section.mundos") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
 
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Mundos" }), { key: "Home" });
-    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveFocus();
-    expect(screen.getByRole("tab", { name: "Cuenta" })).toHaveAttribute(
+    fireEvent.keyDown(screen.getByRole("tab", { name: tEs("profile.section.mundos") }), { key: "Home" });
+    expect(screen.getByRole("tab", { name: tEs("profile.section.cuenta") })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: tEs("profile.section.cuenta") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
 
     // ArrowLeft wraps back to the last tab.
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Cuenta" }), { key: "ArrowLeft" });
-    expect(screen.getByRole("tab", { name: "Mundos" })).toHaveFocus();
-    expect(screen.getByRole("tab", { name: "Mundos" })).toHaveAttribute(
+    fireEvent.keyDown(screen.getByRole("tab", { name: tEs("profile.section.cuenta") }), { key: "ArrowLeft" });
+    expect(screen.getByRole("tab", { name: tEs("profile.section.mundos") })).toHaveFocus();
+    expect(screen.getByRole("tab", { name: tEs("profile.section.mundos") })).toHaveAttribute(
       "aria-selected",
       "true",
     );
@@ -614,7 +617,7 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
         <ProfilePage />
       </MemoryRouter>,
     );
-    fireEvent.click(screen.getByRole("tab", { name: "Mundos" }));
+    fireEvent.click(screen.getByRole("tab", { name: tEs("profile.section.mundos") }));
     expect(document.getElementById("profile-panel-heading-mundos")).toHaveFocus();
   });
 
@@ -674,7 +677,7 @@ describe("ProfilePage shell — URL-driven sections and ARIA rail (REQ-PIA-03/04
     const panel = within(screen.getByRole("tabpanel"));
     // The section owns its h3 heading directly under the panel h2.
     expect(
-      panel.getByRole("heading", { name: "Captura de ideas", level: 3 }),
+      panel.getByRole("heading", { name: tEs("profile.conexiones.captureTitle"), level: 3 }),
     ).toBeInTheDocument();
     const levels = panel
       .getAllByRole("heading")

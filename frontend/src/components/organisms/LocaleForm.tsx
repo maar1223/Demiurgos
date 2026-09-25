@@ -4,6 +4,8 @@ import { submitStep0 } from "@/api/onboarding";
 import { ApiError, type LocaleInput, type OnboardingStatus } from "@/api/types";
 import { Button } from "@/components/atoms/Button";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { useLocale } from "@/i18n/LocaleProvider";
+import type { TFunction } from "@/i18n/messages";
 
 const LANGUAGE_OPTIONS = [
   { value: "es", label: "Español" },
@@ -105,9 +107,9 @@ function buildTimeZoneGroups(current: string): TimeZoneGroup[] {
 }
 
 /** A gated write that answers 401 means the session expired (fail closed). */
-export function authHint(error: unknown): string | null {
+export function authHint(error: unknown, t: TFunction): string | null {
   if (error instanceof ApiError && error.status === 401) {
-    return "La sesión expiró. Inicia sesión e intenta de nuevo.";
+    return t("error.sessionExpired");
   }
   return null;
 }
@@ -129,15 +131,25 @@ interface LocaleFormProps {
  * saved locale (GET /api/locale) is loaded on mount and prefills the fields;
  * an unavailable read fails open to the defaults so the form stays usable.
  * Each consumer supplies its own heading and card chrome.
+ *
+ * AD-7: the conversation and content selects lead with an "inherit" option
+ * (neutral "Igual que la interfaz" / "Same as interface"). Selecting it
+ * persists `*_explicit: false` plus the current `ui` value, so the domain
+ * follows the interface; any other selection persists an explicit override.
+ * After a successful save the provider refreshes the backend-authoritative
+ * locale so the whole chrome follows the selection instantly (UI-REQ-3).
  */
 export function LocaleForm({
   onSaved,
   busy = false,
-  submitLabel = "Guardar",
+  submitLabel,
 }: LocaleFormProps) {
+  const { t, refreshLocale } = useLocale();
   const [uiLang, setUiLang] = useState("es");
-  const [conversationLang, setConversationLang] = useState("es");
-  const [contentLang, setContentLang] = useState("es");
+  // "" means "inherit" (AD-7): the persisted explicit flag decides whether the
+  // raw domain value is stored and honored.
+  const [conversationLang, setConversationLang] = useState("");
+  const [contentLang, setContentLang] = useState("");
   const [region, setRegion] = useState("");
   const [regionExplicit, setRegionExplicit] = useState(false);
   const [timezone, setTimezone] = useState("UTC");
@@ -150,8 +162,8 @@ export function LocaleForm({
       .then((locale) => {
         if (!alive) return;
         setUiLang(locale.ui);
-        setConversationLang(locale.conversation);
-        setContentLang(locale.content);
+        setConversationLang(locale.conversation_explicit ? locale.conversation : "");
+        setContentLang(locale.content_explicit ? locale.content : "");
         setRegion(locale.region ?? "");
         setRegionExplicit(locale.region_explicit);
         setTimezone(locale.iana_timezone);
@@ -174,8 +186,11 @@ export function LocaleForm({
     setWriteError(null);
     const locale: LocaleInput = {
       ui: uiLang,
-      conversation: conversationLang,
-      content: contentLang,
+      // AD-7: an "inherit" selection resolves to the ui value with explicit=false.
+      conversation: conversationLang === "" ? uiLang : conversationLang,
+      content: contentLang === "" ? uiLang : contentLang,
+      conversation_explicit: conversationLang !== "",
+      content_explicit: contentLang !== "",
       region: region.trim() ? region.trim() : null,
       region_explicit: regionExplicit,
       iana_timezone: timezone.trim(),
@@ -183,6 +198,9 @@ export function LocaleForm({
     void submitStep0(locale)
       .then((next) => {
         setSaving(false);
+        // Re-read the backend-authoritative locale so every chrome consumer
+        // follows the saved selection without a reload (UI-REQ-3/4).
+        void refreshLocale();
         onSaved?.(next);
       })
       .catch((cause: unknown) => {
@@ -191,18 +209,15 @@ export function LocaleForm({
       });
   };
 
-  const hint = authHint(writeError);
+  const hint = authHint(writeError, t);
 
   return (
     <form onSubmit={handleSubmit}>
-      <p className="mt-1 text-small text-muted">
-        Cada lenguaje se configura de forma independiente; la región solo
-        sugiere valores y nunca se aplica en silencio.
-      </p>
+      <p className="mt-1 text-small text-muted">{t("locale.form.intro")}</p>
 
       <div className="mt-5 grid gap-4">
         <label htmlFor="locale-ui-lang" className="flex flex-col gap-1 text-small text-primary">
-          Idioma de la interfaz
+          {t("locale.ui")}
           <select
             id="locale-ui-lang"
             value={uiLang}
@@ -216,13 +231,14 @@ export function LocaleForm({
         </label>
 
         <label htmlFor="locale-conversation-lang" className="flex flex-col gap-1 text-small text-primary">
-          Idioma de conversación (asistente)
+          {t("locale.conversation")}
           <select
             id="locale-conversation-lang"
             value={conversationLang}
             onChange={(e) => setConversationLang(e.target.value)}
             className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
           >
+            <option value="">{t("locale.inherit")}</option>
             {LANGUAGE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
@@ -230,13 +246,14 @@ export function LocaleForm({
         </label>
 
         <label htmlFor="locale-content-lang" className="flex flex-col gap-1 text-small text-primary">
-          Idioma de contenido (prosa del mundo)
+          {t("locale.content")}
           <select
             id="locale-content-lang"
             value={contentLang}
             onChange={(e) => setContentLang(e.target.value)}
             className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
           >
+            <option value="">{t("locale.inherit")}</option>
             {LANGUAGE_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>{o.label}</option>
             ))}
@@ -244,13 +261,13 @@ export function LocaleForm({
         </label>
 
         <label htmlFor="locale-region" className="flex flex-col gap-1 text-small text-primary">
-          Región (opcional; sugiere valores, nunca impone dialecto)
+          {t("locale.region")}
           <input
             id="locale-region"
             value={region}
             onChange={(e) => setRegion(e.target.value)}
             className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
-            placeholder="AR, MX, US…"
+            placeholder={t("locale.regionPlaceholder")}
           />
         </label>
 
@@ -261,11 +278,11 @@ export function LocaleForm({
             onChange={(e) => setRegionExplicit(e.target.checked)}
             className="h-4 w-4"
           />
-          Confirmo la región de forma explícita (override)
+          {t("locale.regionExplicit")}
         </label>
 
         <label htmlFor="locale-timezone" className="flex flex-col gap-1 text-small text-primary">
-          Zona horaria (los timestamps se guardan en UTC)
+          {t("locale.timezone")}
           <select
             id="locale-timezone"
             value={timezone}
@@ -289,7 +306,7 @@ export function LocaleForm({
 
       <div className="mt-6 flex items-center justify-end">
         <Button type="submit" disabled={busy || saving}>
-          {busy || saving ? "Guardando…" : submitLabel}
+          {busy || saving ? t("common.saving") : (submitLabel ?? t("common.save"))}
         </Button>
       </div>
     </form>

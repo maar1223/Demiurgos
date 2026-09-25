@@ -7,6 +7,8 @@ import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { LocaleForm, authHint } from "@/components/organisms/LocaleForm";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 /**
  * First-run onboarding (OC1/OC2, Slice 1).
@@ -28,24 +30,24 @@ import { LocaleForm, authHint } from "@/components/organisms/LocaleForm";
  * clear hint (fail closed, never a silent bypass).
  */
 
-const REMOTE_PENDING: Record<string, { title: string; description: string }> = {
+const REMOTE_PENDING: Record<string, { titleKey: MessageKey; descriptionKey: MessageKey }> = {
   ai: {
-    title: "Asistente de Demiurgos (texto y visión)",
-    description:
-      "Requiere un modelo local o remoto validado. Se retoma desde el Perfil.",
+    titleKey: "onboarding.remote.ai.title",
+    descriptionKey: "onboarding.remote.ai.desc",
   },
   telegram: {
-    title: "Telegram",
-    description: "Requiere conexión y una cuenta configurada. Se retoma desde el Perfil.",
+    titleKey: "onboarding.remote.telegram.title",
+    descriptionKey: "onboarding.remote.telegram.desc",
   },
   backup_handoff: {
-    title: "Respaldo y restauración",
-    description: "Requiere conexión y consentimiento. Se retoma desde el Perfil.",
+    titleKey: "onboarding.remote.backup.title",
+    descriptionKey: "onboarding.remote.backup.desc",
   },
 };
 
 export default function Onboarding() {
   const navigate = useNavigate();
+  const { t } = useAppLanguage();
   const [status, setStatus] = useState<OnboardingStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
@@ -146,20 +148,17 @@ export default function Onboarding() {
     );
   }
 
-  const hint = authHint(error ?? writeError);
+  const hint = authHint(error ?? writeError, t);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-4 py-12">
       <div className="w-full max-w-xl">
-        <h1 className="font-heading text-h3 text-primary">Bienvenida a Demiurgos</h1>
-        <p className="mt-2 text-body text-muted">
-          Configuración inicial para dejar la instalación operativa. Podés
-          retomar cada capacidad después desde el Perfil.
-        </p>
+        <h1 className="font-heading text-h3 text-primary">{t("onboarding.title")}</h1>
+        <p className="mt-2 text-body text-muted">{t("onboarding.intro")}</p>
 
         {!!error && !status && (
           <div className="mt-6">
-            <ErrorBanner message="No se pudo consultar el estado de la instalación." onRetry={loadStatus} />
+            <ErrorBanner message={t("onboarding.loadError")} onRetry={loadStatus} />
           </div>
         )}
 
@@ -196,9 +195,9 @@ export default function Onboarding() {
           status && (
             <div className="mt-8 rounded-lg border border-edge bg-surface-raised p-6">
               <h2 className="font-heading text-h4 text-primary">
-                Paso 1: idioma, región y zona horaria
+                {t("onboarding.step1.title")}
               </h2>
-              <LocaleForm onSaved={handleStep0Saved} submitLabel="Continuar" />
+              <LocaleForm onSaved={handleStep0Saved} submitLabel={t("common.continue")} />
             </div>
           )
         )}
@@ -222,24 +221,22 @@ function WorldStep(props: {
   busy: boolean;
   onSubmit: (e: FormEvent) => void;
 }) {
+  const { t } = useAppLanguage();
   return (
     <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-edge bg-surface-raised p-6">
-      <h2 className="font-heading text-h4 text-primary">Creá tu mundo</h2>
-      <p className="mt-1 text-small text-muted">
-        Se crea un árbol canónico en minúsculas (lore, personajes). El
-        mundo es el último paso operativo para entrar al Taller de Mundo.
-      </p>
+      <h2 className="font-heading text-h4 text-primary">{t("onboarding.world.title")}</h2>
+      <p className="mt-1 text-small text-muted">{t("onboarding.world.intro")}</p>
 
       <div className="mt-5 grid gap-4">
         <label htmlFor="onboarding-world-name" className="flex flex-col gap-1 text-small text-primary">
-          Nombre del mundo
+          {t("onboarding.world.name")}
           <input
             id="onboarding-world-name"
             value={props.worldName}
             onChange={(e) => props.onWorldName(e.target.value)}
             required
             className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
-            placeholder="mi-mundo"
+            placeholder={t("onboarding.world.namePlaceholder")}
           />
         </label>
 
@@ -250,13 +247,13 @@ function WorldStep(props: {
             onChange={(e) => props.onLoreSkeleton(e.target.checked)}
             className="h-4 w-4"
           />
-          Incluir la estructura Lore recomendada (carpetas vacías)
+          {t("onboarding.world.loreSkeleton")}
         </label>
       </div>
 
       <div className="mt-6 flex items-center justify-end">
         <Button type="submit" disabled={props.busy || !props.worldName.trim()}>
-          {props.busy ? "Creando…" : "Crear mundo"}
+          {props.busy ? t("common.creating") : t("onboarding.world.create")}
         </Button>
       </div>
     </form>
@@ -264,27 +261,30 @@ function WorldStep(props: {
 }
 
 function PendingCards(props: { remotePending: string[]; worldDone: boolean }) {
-  const items = props.remotePending.map((step) => REMOTE_PENDING[step]).filter(Boolean);
+  const { t } = useAppLanguage();
+  const items = props.remotePending
+    .map((step) => REMOTE_PENDING[step])
+    .filter(Boolean);
   return (
-    <section aria-label="Capacidades pendientes" className="mt-8">
-      <h2 className="font-heading text-h4 text-primary">Lo que queda pendiente</h2>
+    <section aria-label={t("onboarding.pending.aria")} className="mt-8">
+      <h2 className="font-heading text-h4 text-primary">{t("onboarding.pending.title")}</h2>
       <div aria-live="polite" className="mt-3 grid gap-3">
         {items.map((item) => (
           <div
-            key={item.title}
+            key={item.titleKey}
             className="flex items-start justify-between gap-3 rounded-lg border border-edge bg-surface-raised p-4"
           >
             <div>
-              <p className="text-body text-primary">{item.title}</p>
-              <p className="mt-1 text-small text-muted">{item.description}</p>
+              <p className="text-body text-primary">{t(item.titleKey)}</p>
+              <p className="mt-1 text-small text-muted">{t(item.descriptionKey)}</p>
             </div>
             <span className="inline-flex shrink-0 items-center rounded-full border border-edge bg-surface-raised px-2.5 py-0.5 text-xs font-medium text-primary">
-              Pendiente
+              {t("onboarding.pending.badge")}
             </span>
           </div>
         ))}
         {props.worldDone && items.length === 0 && (
-          <p className="text-small text-muted">No hay capacidades pendientes.</p>
+          <p className="text-small text-muted">{t("onboarding.pending.none")}</p>
         )}
       </div>
     </section>
@@ -300,18 +300,16 @@ function AccountStep(props: {
   error: unknown;
   onSubmit: (e: FormEvent) => void;
 }) {
-  const hint = authHint(props.error);
+  const { t } = useAppLanguage();
+  const hint = authHint(props.error, t);
   return (
     <form onSubmit={props.onSubmit} className="mt-8 rounded-lg border border-edge bg-surface-raised p-6">
-      <h2 className="font-heading text-h4 text-primary">Creá tu cuenta</h2>
-      <p className="mt-1 text-small text-muted">
-        La cuenta protege tu instalación. La contraseña es opcional: sin ella
-        alcanza con el botón Entrar para ingresar.
-      </p>
+      <h2 className="font-heading text-h4 text-primary">{t("onboarding.account.title")}</h2>
+      <p className="mt-1 text-small text-muted">{t("onboarding.account.intro")}</p>
 
       <div className="mt-5 grid gap-4">
         <label htmlFor="onboarding-account-username" className="flex flex-col gap-1 text-small text-primary">
-          Usuario
+          {t("onboarding.account.username")}
           <input
             id="onboarding-account-username"
             value={props.username}
@@ -319,12 +317,12 @@ function AccountStep(props: {
             required
             autoComplete="username"
             className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary focus:border-icon-muted focus:outline-none"
-            placeholder="tu-usuario"
+            placeholder={t("onboarding.account.usernamePlaceholder")}
           />
         </label>
 
         <label htmlFor="onboarding-account-password" className="flex flex-col gap-1 text-small text-primary">
-          Contraseña (opcional)
+          {t("onboarding.account.password")}
           <input
             id="onboarding-account-password"
             type="password"
@@ -332,18 +330,13 @@ function AccountStep(props: {
             onChange={(e) => props.onPassword(e.target.value)}
             autoComplete="new-password"
             className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary focus:border-icon-muted focus:outline-none"
-            placeholder="Dejalo vacío para entrar sin contraseña"
+            placeholder={t("onboarding.account.passwordPlaceholder")}
           />
         </label>
       </div>
 
       <div className="mt-5 rounded-lg border border-action/40 bg-action/10 p-3">
-        <p className="text-small text-primary">
-          Al crear la cuenta se generan tus{" "}
-          <span className="font-medium">palabras claves</span>: son tu única
-          forma de recuperarla si olvidás la contraseña. Se muestran una sola
-          vez y no se pueden volver a ver.
-        </p>
+        <p className="text-small text-primary">{t("onboarding.account.wordsIntro")}</p>
       </div>
 
       {hint && (
@@ -355,13 +348,13 @@ function AccountStep(props: {
         <p className="mt-4 text-small text-status-error" role="alert">
           {props.error instanceof Error
             ? props.error.message
-            : "No se pudo crear la cuenta"}
+            : t("onboarding.account.createError")}
         </p>
       )}
 
       <div className="mt-6 flex items-center justify-end">
         <Button type="submit" disabled={props.busy || !props.username.trim()}>
-          {props.busy ? "Creando…" : "Crear cuenta"}
+          {props.busy ? t("common.creating") : t("onboarding.account.create")}
         </Button>
       </div>
     </form>
@@ -372,14 +365,11 @@ function AccountStep(props: {
  *  or rotation. The server persists only their hash — losing them plus the
  *  password means the vault is permanently locked (R-NF-03). */
 function WordsCard({ words, onConfirm }: { words: string; onConfirm: () => void }) {
+  const { t } = useAppLanguage();
   return (
     <div className="mt-8 rounded-lg border border-status-success/40 bg-surface-raised p-6">
-      <h2 className="font-heading text-h4 text-primary">Tus palabras claves</h2>
-      <p className="mt-1 text-small text-muted">
-        Guardalas en un lugar seguro, fuera del navegador. Solo se muestran una
-        vez: si las perdés y olvidás la contraseña, la cuenta queda bloqueada
-        para siempre.
-      </p>
+      <h2 className="font-heading text-h4 text-primary">{t("onboarding.words.title")}</h2>
+      <p className="mt-1 text-small text-muted">{t("onboarding.words.intro")}</p>
       <p
         className="mt-4 break-words rounded-lg border border-edge bg-surface p-4 font-mono text-body text-primary"
         data-testid="onboarding-words"
@@ -387,7 +377,7 @@ function WordsCard({ words, onConfirm }: { words: string; onConfirm: () => void 
         {words}
       </p>
       <div className="mt-6 flex items-center justify-end">
-        <Button onClick={onConfirm}>Guardé mis palabras</Button>
+        <Button onClick={onConfirm}>{t("onboarding.words.confirm")}</Button>
       </div>
     </div>
   );

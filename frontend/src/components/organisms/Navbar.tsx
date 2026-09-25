@@ -17,9 +17,18 @@ import {
   ROUTES,
   type NavLink,
 } from "@/lib/constants";
+
+/** Route → catalogue key for the Core workshop nav labels. */
+const NAV_LABEL_KEYS: Partial<Record<string, MessageKey>> = {
+  [ROUTES.TALLER_HERRAMIENTAS]: "nav.links.tallerHerramientas",
+  [ROUTES.IDEAS]: "nav.links.tallerIdeas",
+  [ROUTES.TALLER_MUNDO]: "nav.links.tallerMundo",
+};
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
 import { useCurrentWorld } from "@/hooks/useCurrentWorld";
 import { useTheme } from "@/hooks/useTheme";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 import { setCurrentWorld } from "@/lib/currentWorld";
 
 interface NavbarProps {
@@ -45,6 +54,12 @@ interface NavbarProps {
  */
 export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: NavbarProps) {
   const navigate = useNavigate();
+  const { t } = useAppLanguage();
+  /** Localized nav label; unknown (teaser) links fall back to their data. */
+  const navLabel = (link: NavLink) => {
+    const key = NAV_LABEL_KEYS[link.to];
+    return key ? t(key) : link.label;
+  };
   const { world: activeWorld } = useCurrentWorld();
   const resolvedWorld = currentWorld ?? activeWorld ?? undefined;
   // Brand theme: resolvedTheme drives the wordmark/favicon and the toggle
@@ -56,7 +71,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
     setTheme(resolvedTheme === "dark" ? "light" : "dark");
   };
   const themeIcon: IconName = resolvedTheme === "dark" ? "moon" : "sun";
-  const themeLabel = `Tema: ${resolvedTheme === "dark" ? "oscuro" : "claro"}`;
+  const themeLabel = resolvedTheme === "dark" ? t("nav.theme.dark") : t("nav.theme.light");
   const [worlds, setWorlds] = useState<WorldInfo[]>(worldsProp);
   const [creatingWorld, setCreatingWorld] = useState(false);
   const [pendingSwitch, setPendingSwitch] = useState<string | null>(null);
@@ -93,7 +108,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
           if (restartTimerRef.current) window.clearInterval(restartTimerRef.current);
           setTransition(null);
           setSystemNotice(
-            "El servidor no respondió. Arráncalo de nuevo o recarga la página.",
+            t("nav.system.serverDown"),
           );
         }
       }
@@ -145,7 +160,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
       .catch((cause: unknown) => {
         if (active) {
           setVaultError(
-            cause instanceof Error ? cause : new Error("No se pudo consultar la sesión"),
+            cause instanceof Error ? cause : new Error(t("nav.session.error.fetch")),
           );
         }
       })
@@ -452,7 +467,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
       }
     } catch (cause: unknown) {
       setSessionActionError(
-        cause instanceof Error ? cause.message : "No se pudo actualizar la sesión local",
+        cause instanceof Error ? cause.message : t("nav.session.error.update"),
       );
     } finally {
       setSessionActionLoading(false);
@@ -497,7 +512,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
       } catch (cause: unknown) {
         if (!(cause instanceof ApiError && cause.status === 0)) {
           setSystemError(
-            cause instanceof Error ? cause.message : "No se pudo completar la operación",
+            cause instanceof Error ? cause.message : t("nav.system.error.operation"),
           );
           return;
         }
@@ -526,7 +541,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
         <button
           type="button"
           onClick={() => navigate("/wiki")}
-          aria-label="Demiurgos — ir al inicio"
+          aria-label={t("nav.homeAria")}
           className="flex items-center transition-opacity hover:opacity-90"
         >
           <img
@@ -543,7 +558,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
             the selected workshop. Body-size bold; teasers stay muted. */}
         <nav
           ref={navRef}
-          aria-label="Navegación principal"
+          aria-label={t("nav.mainAria")}
           className="relative hidden items-center gap-1 md:flex"
         >
           {pill.visible && (
@@ -576,13 +591,13 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
                         : "text-muted hover:text-primary hover:bg-surface-hover"
                 }`}
               >
-                {link.label}
+                {navLabel(link)}
                 {isTeaser(link) && link.label !== GENERIC_TEASER_LABEL && (
                   <span
                     aria-hidden="true"
                     className="ml-1.5 rounded-full bg-surface-raised px-1.5 py-0.5 align-middle text-[10px] uppercase tracking-wide text-muted"
                   >
-                    Próximamente
+                    {t("nav.soon")}
                   </span>
                 )}
               </button>
@@ -607,7 +622,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
             type="button"
             onClick={cycleTheme}
             aria-label={themeLabel}
-            title="Cambiar tema"
+            title={t("nav.toggleTheme")}
             className="flex items-center justify-center rounded-lg p-1.5 text-icon-muted hover:bg-surface-hover hover:text-primary"
           >
             <Icon name={themeIcon} size={18} />
@@ -618,7 +633,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
             type="button"
             ref={avatarRef}
             onClick={handleAvatarClick}
-            aria-label="Perfil"
+            aria-label={t("nav.profileAria")}
             className="flex h-8 w-8 items-center justify-center rounded-full bg-surface-raised text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
           >
             <Icon name="avatar" size={18} />
@@ -643,9 +658,9 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
           className="absolute right-4 top-16 z-50 w-72 rounded-lg border border-edge bg-surface-raised p-4 shadow-xl"
         >
           <div className="flex items-center justify-between gap-3">
-            <h2 className="font-heading text-body text-primary">Sesión de edición</h2>
+            <h2 className="font-heading text-body text-primary">{t("nav.session.title")}</h2>
             <span className="text-small text-muted">
-              {vaultStatus?.mode === "credentials" ? "Credenciales" : "Local"}
+              {vaultStatus?.mode === "credentials" ? t("nav.session.mode.credentials") : t("nav.session.mode.local")}
             </span>
           </div>
 
@@ -653,12 +668,12 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
             /* Credentials vault session is the single authoritative login
                (R-VC-01): the panel follows it, not the secondary local-dev one. */
             vaultLoading ? (
-              <p className="mt-3 text-small text-muted">Comprobando sesión...</p>
+              <p className="mt-3 text-small text-muted">{t("nav.session.checking")}</p>
             ) : vaultError ? (
               <p className="mt-3 text-small text-status-error">{vaultError.message}</p>
             ) : vaultStatus.authenticated ? (
               <>
-                <p className="mt-3 text-small text-status-success">Sesión activa</p>
+                <p className="mt-3 text-small text-status-success">{t("nav.session.active")}</p>
                 <p className="mt-1 text-small text-muted">{vaultStatus.label}</p>
                  <button
                    type="button"
@@ -666,25 +681,25 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
                    disabled={systemBusy}
                    className="mt-3 w-full rounded-lg bg-surface-hover px-3 py-2 text-small text-primary disabled:opacity-60"
                  >
-                   {systemBusy ? "Cerrando..." : "Cerrar sesión"}
+                   {systemBusy ? t("nav.session.closing") : t("nav.session.logout")}
                  </button>
                </>
              ) : (
                <p className="mt-3 text-small text-muted">
-                 No hay una sesión de cuenta activa.
+                 {t("nav.session.none")}
               </p>
             )
           ) : (
             <>
               {sessionLoading && (
-                <p className="mt-3 text-small text-muted">Comprobando sesión local...</p>
+                <p className="mt-3 text-small text-muted">{t("nav.session.local.checking")}</p>
               )}
               {sessionError && (
                 <p className="mt-3 text-small text-status-error">{sessionError.message}</p>
               )}
               {!sessionLoading && !sessionError && status?.authenticated && (
                 <>
-                  <p className="mt-3 text-small text-status-success">Sesión local activa</p>
+                  <p className="mt-3 text-small text-status-success">{t("nav.session.local.active")}</p>
                   <p className="mt-1 text-small text-muted">{status.label}</p>
                   <button
                     type="button"
@@ -692,26 +707,26 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
                     disabled={sessionActionLoading}
                     className="mt-3 w-full rounded-lg bg-surface-hover px-3 py-2 text-small text-primary disabled:opacity-60"
                   >
-                    {sessionActionLoading ? "Cerrando..." : "Cerrar sesión local"}
+                    {sessionActionLoading ? t("nav.session.closing") : t("nav.session.local.logout")}
                   </button>
                 </>
               )}
               {!sessionLoading && !sessionError && status && !status.authenticated && status.enabled && (
                 <>
-                  <p className="mt-3 text-small text-muted">Sesión local no iniciada.</p>
+                  <p className="mt-3 text-small text-muted">{t("nav.session.local.notStarted")}</p>
                   <button
                     type="button"
                     onClick={() => void handleSessionAction()}
                     disabled={sessionActionLoading}
                     className="mt-3 w-full rounded-lg bg-action px-3 py-2 text-small text-action-text hover:bg-action-hover disabled:opacity-60"
                   >
-                    {sessionActionLoading ? "Iniciando..." : "Iniciar sesión local"}
+                    {sessionActionLoading ? t("nav.session.local.starting") : t("nav.session.local.start")}
                   </button>
                 </>
               )}
               {!sessionLoading && !sessionError && status && !status.enabled && (
                 <p className="mt-3 text-small text-muted">
-                  Autenticación local desactivada. Activa DEMIURGOS_AUTH_MODE=local-dev para probar la edición.
+                  {t("nav.session.local.disabled")}
                 </p>
               )}
             </>
@@ -729,7 +744,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
             }}
             className="mt-3 w-full rounded-lg bg-surface-hover px-3 py-2 text-small text-primary"
           >
-            Perfil completo
+            {t("nav.profile.openFull")}
           </button>
 
           {/* System-control zone — restart/shutdown of the whole stack. Available
@@ -747,7 +762,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
                   className="flex w-full items-center justify-center gap-2 rounded-lg bg-surface-hover px-3 py-2 text-small text-primary"
                 >
                   <Icon name="refresh" size={16} />
-                  Reiniciar Demiurgos
+                  {t("nav.system.restart")}
                 </button>
                 <button
                   type="button"
@@ -755,7 +770,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
                   className="flex w-full items-center justify-center gap-2 rounded-lg bg-surface-hover px-3 py-2 text-small text-status-error"
                 >
                   <Icon name="power" size={16} />
-                  Apagar Demiurgos
+                  {t("nav.system.shutdown")}
                 </button>
                 {systemNotice && (
                   <p className="text-small text-status-success">{systemNotice}</p>
@@ -769,7 +784,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
       {/* Mobile nav menu */}
       {mobileMenuOpen && (
         <div className="border-t border-edge bg-surface-raised md:hidden">
-          <nav aria-label="Navegación móvil" className="flex flex-col gap-1 px-4 py-3">
+          <nav aria-label={t("nav.mobileAria")} className="flex flex-col gap-1 px-4 py-3">
             {navLinks.map((link) => {
               const isActive = activePath === link.to;
               return (
@@ -786,13 +801,13 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
                         : "text-primary hover:bg-surface-hover"
                   }`}
                 >
-                  {link.label}
+                  {navLabel(link)}
                   {isTeaser(link) && link.label !== GENERIC_TEASER_LABEL && (
                     <span
                       aria-hidden="true"
                       className="ml-1.5 rounded-full bg-surface-raised px-1.5 py-0.5 align-middle text-[10px] uppercase tracking-wide text-muted"
                     >
-                      Próximamente
+                      {t("nav.soon")}
                     </span>
                   )}
                 </button>
@@ -816,9 +831,9 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
           newly-created world without losing it. */}
       {pendingSwitch && (
         <ConfirmDialog
-          title="Cambiar mundo activo"
-          message={`¿Querés cambiar el mundo activo a «${pendingSwitch}»?`}
-          confirmLabel="Cambiar"
+          title={t("nav.world.confirm.title")}
+          message={t("nav.world.confirm.message", { name: pendingSwitch })}
+          confirmLabel={t("nav.world.confirm.confirm")}
           onConfirm={confirmSwitch}
           onClose={() => setPendingSwitch(null)}
         />
@@ -832,24 +847,24 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
          <ConfirmDialog
            title={
              systemAction === "restart"
-               ? "Reiniciar Demiurgos"
+               ? t("nav.system.confirm.title.restart")
                : systemAction === "shutdown"
-                 ? "Apagar Demiurgos"
-                 : "Cerrar sesión"
+                 ? t("nav.system.confirm.title.shutdown")
+                 : t("nav.system.confirm.title.logout")
            }
            message={
              systemAction === "restart"
-               ? "La conexión se cortará y la página quedará en blanco por unos segundos. Cuando el servidor vuelva, la página se recargará automáticamente; tu sesión se conserva."
+               ? t("nav.system.confirm.message.restart")
                : systemAction === "shutdown"
-                 ? "El servidor se detendrá y el bot dejará de recibir ideas. Para volver a usarlo, arráncalo de nuevo; tu sesión se conserva."
-                 : "Cerrar la sesión deja el servidor y el bot corriendo; puedes volver a entrar cuando quieras."
+                 ? t("nav.system.confirm.message.shutdown")
+                 : t("nav.system.confirm.message.logout")
            }
            confirmLabel={
              systemAction === "restart"
-               ? "Reiniciar"
+               ? t("nav.system.confirm.confirm.restart")
                : systemAction === "shutdown"
-                 ? "Apagar"
-                 : "Cerrar sesión"
+                 ? t("nav.system.confirm.confirm.shutdown")
+                 : t("nav.system.confirm.confirm.logout")
            }
            isBusy={systemBusy}
            error={systemError}
@@ -865,17 +880,17 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
               {transition !== "off" && <Spinner size="lg" />}
               <p className="text-body text-primary">
                 {transition === "restarting"
-                  ? "Reiniciando Demiurgos…"
+                  ? t("nav.system.restarting")
                   : transition === "shuttingDown"
-                    ? "Apagando Demiurgos…"
-                    : "Demiurgos se apagó"}
+                    ? t("nav.system.shuttingDown")
+                    : t("nav.system.off")}
               </p>
               <p className="max-w-sm text-small text-muted">
                 {transition === "restarting"
-                  ? "El servidor se está reiniciando. La página se recargará automáticamente cuando vuelva; tu sesión se conserva."
+                  ? t("nav.system.transition.restarting")
                   : transition === "shuttingDown"
-                    ? "El servidor se está apagando. Cuando termine, la pantalla lo confirmará; tu sesión se conserva."
-                    : "La aplicación se detuvo por completo. Arráncalo de nuevo para volver a usarla; tu sesión se conserva."}
+                    ? t("nav.system.transition.shuttingDown")
+                    : t("nav.system.transition.off")}
               </p>
             </div>
           </div>,
