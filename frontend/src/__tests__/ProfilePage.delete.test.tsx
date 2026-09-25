@@ -9,6 +9,7 @@ import { getIdeaCaptureStatus } from "@/api/ideaCapture";
 import { getReadiness } from "@/api/onboarding";
 import { getAuthStatus, getVaultConfig } from "@/api/wiki";
 import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
+import { tEs } from "@/__tests__/i18nTestUtils";
 import { ApiError, type IdeaCaptureStatus, type WorldInfo, type WorldTrashEntry } from "@/api/types";
 import type { Mock } from "vitest";
 
@@ -270,7 +271,7 @@ describe("ProfilePage — Mundos tab / 3-step delete flow (W-4)", () => {
     );
     // And the world picker opens right away so the user is steered to another.
     await waitFor(() =>
-      expect(screen.getByText("Elegí un mundo")).toBeInTheDocument(),
+      expect(screen.getByText(tEs("worlds.picker.title"))).toBeInTheDocument(),
     );
   });
 

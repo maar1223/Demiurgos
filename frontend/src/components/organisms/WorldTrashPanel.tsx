@@ -9,7 +9,8 @@ import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 // NOT from @/api/wiki, which exports a DIFFERENT `listTrash(mundo)` for the
 // per-ficha papelera (requires a mundo argument).
 import { listTrash, permanentDelete, restoreWorld } from "@/api/worlds";
-import type { ApiError, WorldTrashEntry } from "@/api/types";
+import type { AppLanguage, ApiError, WorldTrashEntry } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { getErrorMessage } from "@/lib/utils";
 
 /** SWR cache key namespace for the world-level recycle bin list. */
@@ -22,24 +23,22 @@ interface WorldTrashPanelProps {
   onChanged: () => void;
 }
 
-const MONTHS = [
-  "ene", "feb", "mar", "abr", "may", "jun",
-  "jul", "ago", "sep", "oct", "nov", "dic",
-];
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDeletedAt(iso: string): string {
+function formatDeletedAt(iso: string, language: AppLanguage): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const day = d.getDate();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${day} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
+  return d.toLocaleString(language, {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 /**
@@ -55,6 +54,7 @@ function formatDeletedAt(iso: string): string {
  * trash entry appears without remounting the panel.
  */
 export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProps) {
+  const { language, t } = useAppLanguage();
   const { data, error, isLoading, mutate } = useSWR<WorldTrashEntry[], Error>(
     [WORLD_TRASH_KEY, refreshToken],
     () => listTrash(),
@@ -82,7 +82,7 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
         const result = await restoreWorld(entry.world_name);
         if (result.world_name !== entry.world_name) {
           setRestoreNotice(
-            `El mundo ya existía con ese nombre; se restauró como «${result.world_name}».`,
+            t("worlds.trash.restoredAs", { name: result.world_name }),
           );
         }
         await mutate();
@@ -94,7 +94,7 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
         setBusyName(null);
       }
     },
-    [mutate, onChanged],
+    [mutate, onChanged, t],
   );
 
   const handlePurgeConfirm = useCallback(async () => {
@@ -119,10 +119,10 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
     <div>
       <h3 className="flex items-center gap-2 font-heading text-body text-primary">
         <Icon name="trash" size={18} className="text-icon-muted" />
-        Papelera de mundos
+        {t("worlds.trash.heading")}
       </h3>
       <p className="mt-1 text-small text-muted">
-        Mundos eliminados: quedan 30 días para restaurarlos antes de que se purguen.
+        {t("worlds.trash.intro")}
       </p>
 
       {error && (
@@ -157,7 +157,7 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
       ) : entries.length === 0 ? (
         <div className="mt-3 flex flex-col items-center gap-2 rounded-lg border border-dashed border-edge py-8 text-center">
           <Icon name="trash" size={32} className="text-muted" />
-          <p className="text-body text-muted">La papelera está vacía</p>
+          <p className="text-body text-muted">{t("worlds.trash.empty")}</p>
         </div>
       ) : (
         <ul className="mt-3 flex flex-col gap-2">
@@ -172,12 +172,12 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-mono text-small text-primary">{entry.world_name}</p>
                   <p className="text-xs text-muted">
-                    eliminado el {formatDeletedAt(entry.deleted_at)} · {formatBytes(entry.size_bytes)}
+                    {t("worlds.trash.deletedAt", { date: formatDeletedAt(entry.deleted_at, language), size: formatBytes(entry.size_bytes) })}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-1">
-                    <Badge variant="warning">{entry.days_remaining} días</Badge>
-                    <Badge>Lore {entry.lore_count}</Badge>
-                    <Badge>Personajes {entry.character_count}</Badge>
+                    <Badge variant="warning">{t("worlds.trash.days", { count: entry.days_remaining })}</Badge>
+                    <Badge>{t("worlds.count.lore", { count: entry.lore_count })}</Badge>
+                    <Badge>{t("worlds.count.personajes", { count: entry.character_count })}</Badge>
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
@@ -187,7 +187,7 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
                     disabled={busy}
                     onClick={() => void handleRestore(entry)}
                   >
-                    Restaurar
+                    {t("worlds.trash.restore")}
                   </Button>
                   <Button
                     variant="ghost"
@@ -198,7 +198,7 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
                       setPurgeTarget(entry);
                     }}
                   >
-                    Eliminar permanentemente
+                    {t("worlds.trash.purge")}
                   </Button>
                 </div>
               </li>
@@ -212,9 +212,9 @@ export function WorldTrashPanel({ refreshToken, onChanged }: WorldTrashPanelProp
           treatment on its confirm action (REQ-PIA-08). */}
       {purgeTarget && (
         <ConfirmDialog
-          title="Eliminar permanentemente"
-          message={`¿Eliminar permanentemente el mundo «${purgeTarget.world_name}»? Esta acción no se puede deshacer y también limpia sus datos asociados.`}
-          confirmLabel="Eliminar permanentemente"
+          title={t("worlds.trash.purge")}
+          message={t("worlds.trash.purgeMessage", { world: purgeTarget.world_name })}
+          confirmLabel={t("worlds.trash.purge")}
           confirmVariant="danger"
           isBusy={busyName === purgeTarget.world_name}
           error={actionError}

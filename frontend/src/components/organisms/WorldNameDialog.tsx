@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface WorldNameDialogProps {
   title: string;
@@ -24,12 +25,13 @@ export function WorldNameDialog({
   title,
   message,
   initialValue = "",
-  confirmLabel = "Confirmar",
+  confirmLabel,
   confirmBusy = false,
   error = null,
   onConfirm,
   onClose,
 }: WorldNameDialogProps) {
+  const { t } = useAppLanguage();
   const [name, setName] = useState(initialValue);
   const inputRef = useRef<HTMLInputElement>(null);
   const [invalid, setInvalid] = useState(false);
@@ -83,7 +85,7 @@ export function WorldNameDialog({
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -93,7 +95,7 @@ export function WorldNameDialog({
           <div className="flex flex-col gap-4 px-6 py-4">
             <p className="text-body text-muted">{message}</p>
             <label className="flex flex-col gap-1 text-small text-primary">
-              Nombre del mundo
+              {t("worlds.name.label")}
               <input
                 ref={inputRef}
                 value={name}
@@ -102,7 +104,7 @@ export function WorldNameDialog({
                   if (invalid) setInvalid(false);
                   if (error) return; // server-side error shown below
                 }}
-                placeholder="mi-mundo"
+                placeholder={t("worlds.name.placeholder")}
                 aria-invalid={invalid || Boolean(error)}
                 className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
               />
@@ -112,16 +114,16 @@ export function WorldNameDialog({
                 role="alert"
                 className="rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-small text-status-error"
               >
-                {invalid ? "El nombre no puede estar vacío." : error}
+                {invalid ? t("worlds.name.empty") : error}
               </div>
             )}
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
             <Button type="button" variant="ghost" size="sm" onClick={onClose}>
-              Cancelar
+              {t("common.cancel")}
             </Button>
             <Button type="submit" variant="primary" size="sm" disabled={confirmBusy}>
-              {confirmBusy ? "Guardando…" : confirmLabel}
+              {confirmBusy ? t("worlds.name.saving") : (confirmLabel ?? t("common.confirm"))}
             </Button>
           </div>
         </form>

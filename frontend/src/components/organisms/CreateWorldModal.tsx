@@ -4,6 +4,8 @@ import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
 import { createWorld } from "@/api/onboarding";
 import { ApiError, type WorldCreateResult, type WorldInfo } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { TFunction } from "@/i18n/messages";
 
 interface CreateWorldModalProps {
   isOpen: boolean;
@@ -16,9 +18,9 @@ interface CreateWorldModalProps {
  * gated write, so a missing session surfaces the exact remediation instead of
  * retrying.
  */
-function authHint(error: unknown): string | null {
+function authHint(error: unknown, t: TFunction): string | null {
   if (error instanceof ApiError && error.status === 401) {
-    return "La sesión expiró. Inicia sesión e intenta de nuevo.";
+    return t("common.sessionExpired");
   }
   return null;
 }
@@ -47,6 +49,7 @@ function toWorldInfo(result: WorldCreateResult): WorldInfo {
  * HTTP 401 closes and surfaces the auth hint without retrying.
  */
 export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModalProps) {
+  const { t } = useAppLanguage();
   const [name, setName] = useState("");
   const [loreSkeleton, setLoreSkeleton] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -102,7 +105,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
     event.preventDefault();
     const trimmed = name.trim();
     if (!trimmed) {
-      setError("El nombre del mundo no puede estar vacío.");
+      setError(t("worlds.create.emptyName"));
       return;
     }
     setBusy(true);
@@ -123,7 +126,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
       })
       .catch((cause: unknown) => {
         setBusy(false);
-        const hint = authHint(cause);
+        const hint = authHint(cause, t);
         if (hint) {
           setError(hint);
           onClose();
@@ -132,7 +135,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
         setError(
           cause instanceof Error
             ? cause.message
-            : "No se pudo crear el mundo. Intentalo de nuevo.",
+            : t("worlds.create.failed"),
         );
       });
   };
@@ -158,13 +161,13 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
             id="create-world-title"
             className="font-heading text-h4 text-primary"
           >
-            Nuevo mundo
+            {t("worlds.create.title")}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -177,7 +180,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
               htmlFor="create-world-name"
               className="flex flex-col gap-1 text-small text-primary"
             >
-              Nombre del mundo
+              {t("worlds.create.nameLabel")}
               <input
                 id="create-world-name"
                 ref={inputRef}
@@ -186,7 +189,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
                   setName(event.target.value);
                   if (error) setError(null);
                 }}
-                placeholder="mi-mundo"
+                placeholder={t("worlds.create.namePlaceholder")}
                 className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary"
               />
             </label>
@@ -198,7 +201,7 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
                 onChange={(event) => setLoreSkeleton(event.target.checked)}
                 className="h-4 w-4"
               />
-              Incluir la estructura Lore recomendada (carpetas vacías)
+              {t("worlds.create.loreSkeleton")}
             </label>
 
             {error && (
@@ -219,10 +222,10 @@ export function CreateWorldModal({ isOpen, onClose, onCreated }: CreateWorldModa
               onClick={onClose}
               disabled={busy}
             >
-              Cancelar
+              {t("common.cancel")}
             </Button>
             <Button type="submit" variant="primary" size="sm" disabled={busy}>
-              {busy ? "Creando…" : "Crear mundo"}
+              {busy ? t("worlds.create.creating") : t("worlds.create.submit")}
             </Button>
           </div>
         </form>

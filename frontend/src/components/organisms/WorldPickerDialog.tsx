@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
 import type { WorldInfo } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface WorldPickerDialogProps {
   /** The world that no longer exists (shown in the message). */
@@ -31,6 +32,7 @@ export function WorldPickerDialog({
   onClose,
   footerAction,
 }: WorldPickerDialogProps) {
+  const { t } = useAppLanguage();
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -58,13 +60,13 @@ export function WorldPickerDialog({
             id="world-picker-title"
             className="font-heading text-h4 text-primary"
           >
-            Elegí un mundo
+            {t("worlds.picker.title")}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -73,13 +75,13 @@ export function WorldPickerDialog({
         <div className="px-6 py-4">
           {missingWorld ? (
             <p className="text-body text-primary">
-              El mundo «{missingWorld}» ya no existe.
+              {t("worlds.picker.missing", { world: missingWorld })}
             </p>
           ) : (
-            <p className="text-body text-primary">Elegí tu próximo mundo.</p>
+            <p className="text-body text-primary">{t("worlds.picker.pick")}</p>
           )}
           <p className="mt-1 text-small text-muted">
-            Seleccioná otro mundo para continuar o creá uno nuevo.
+            {t("worlds.picker.hint")}
           </p>
 
           <div className="mt-4 flex flex-col gap-2">
@@ -97,7 +99,7 @@ export function WorldPickerDialog({
               ))
             ) : (
               <p className="text-small text-muted">
-                No hay otros mundos creados todavía.
+                {t("worlds.picker.none")}
               </p>
             )}
             <button
@@ -106,7 +108,7 @@ export function WorldPickerDialog({
               className="flex items-center gap-2 rounded-lg border border-dashed border-action/40 px-3 py-2 text-left text-small text-action transition-colors hover:bg-action/10"
             >
               <Icon name="plus" size={14} />
-              Nuevo mundo
+              {t("worlds.picker.create")}
             </button>
           </div>
         </div>

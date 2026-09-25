@@ -5,6 +5,8 @@ import { Icon } from "@/components/atoms/Icon";
 import { deleteWorld } from "@/api/worlds";
 import type { ApiError, WorldInfo } from "@/api/types";
 import { getErrorMessage } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 type Step = 1 | 2 | 3;
 
@@ -18,11 +20,11 @@ interface DeleteWorldModalProps {
 }
 
 /** Step 2 — the three scope acknowledgements (REQ-009). */
-const SCOPE_LABELS = [
-  "Entiendo que se elimina TODO el contenido de este mundo.",
-  "Sé que el mundo queda recuperable durante 30 días en la papelera y luego se elimina permanentemente.",
-  "Acepto que los datos asociados (grafo, importaciones, sesiones guiadas e ideas) se ocultan y se limpian al purgar.",
-] as const;
+const SCOPE_LABELS: readonly MessageKey[] = [
+  "worlds.delete.scope1",
+  "worlds.delete.scope2",
+  "worlds.delete.scope3",
+];
 
 /**
  * 3-step world delete confirmation (REQ-009):
@@ -35,6 +37,7 @@ const SCOPE_LABELS = [
  * as `confirm_name` exactly as written (the backend compares case-insensitively).
  */
 export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModalProps) {
+  const { t } = useAppLanguage();
   const [step, setStep] = useState<Step>(1);
   const [checked, setChecked] = useState<[boolean, boolean, boolean]>([false, false, false]);
   const [typedName, setTypedName] = useState("");
@@ -105,13 +108,13 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
             className="flex items-center gap-2 font-heading text-h4 text-status-error"
           >
             <Icon name="trash" size={20} />
-            Eliminar mundo
+            {t("worlds.delete.title")}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -121,15 +124,14 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
         <div className="px-6 py-4">
           {step === 1 && (
             <div className="flex flex-col gap-3">
-              <p className="text-small text-muted">Estás por eliminar el mundo:</p>
+              <p className="text-small text-muted">{t("worlds.delete.intro")}</p>
               <p className="font-mono text-body text-primary">{world.name}</p>
               <div className="flex flex-wrap gap-2">
-                <Badge>Lore {world.lore_count}</Badge>
-                <Badge>Personajes {world.character_count}</Badge>
+                <Badge>{t("worlds.count.lore", { count: world.lore_count })}</Badge>
+                <Badge>{t("worlds.count.personajes", { count: world.character_count })}</Badge>
               </div>
               <div className="rounded-lg border border-action/30 bg-action/10 px-3 py-2 text-small text-action">
-                El mundo se moverá a la papelera y quedará recuperable durante 30 días. Pasado ese
-                plazo se eliminará permanentemente junto con sus datos asociados.
+                {t("worlds.delete.warning")}
               </div>
             </div>
           )}
@@ -137,7 +139,7 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
           {step === 2 && (
             <div className="flex flex-col gap-3">
               <p className="text-small text-muted">
-                Para continuar, confirmá el alcance de la eliminación:
+                {t("worlds.delete.scopeIntro")}
               </p>
               {SCOPE_LABELS.map((label, index) => (
                 <label
@@ -150,7 +152,7 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
                     onChange={() => toggleScope(index as 0 | 1 | 2)}
                     className="mt-0.5"
                   />
-                  {label}
+                  {t(label)}
                 </label>
               ))}
             </div>
@@ -159,7 +161,7 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
           {step === 3 && (
             <div className="flex flex-col gap-3">
               <p className="text-small text-muted">
-                Escribí el nombre del mundo con su ortografía exacta para confirmar:
+                {t("worlds.delete.confirmIntro")}
               </p>
               <p className="font-mono text-body text-primary">{world.name}</p>
               <input
@@ -167,11 +169,11 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
                 value={typedName}
                 onChange={(e) => setTypedName(e.target.value)}
                 placeholder={world.name}
-                aria-label="Nombre del mundo a eliminar"
+                aria-label={t("worlds.delete.nameAria")}
                 className="rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary placeholder:text-muted focus:border-action focus:outline-none"
               />
               {typedName && !nameMatches && (
-                <p className="text-small text-status-error">El nombre no coincide.</p>
+                <p className="text-small text-status-error">{t("worlds.delete.mismatch")}</p>
               )}
             </div>
           )}
@@ -190,23 +192,23 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
         <div className="flex items-center justify-between gap-2 border-t border-edge px-6 py-4">
           {step > 1 ? (
             <Button variant="ghost" size="sm" onClick={() => setStep((s) => (s - 1) as Step)} disabled={isBusy}>
-              Atrás
+              {t("common.back")}
             </Button>
           ) : (
             <span />
           )}
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={onClose} disabled={isBusy}>
-              Cancelar
+              {t("common.cancel")}
             </Button>
             {step === 1 && (
               <Button variant="primary" size="sm" onClick={() => setStep(2)}>
-                Entiendo, continuar
+                {t("worlds.delete.understand")}
               </Button>
             )}
             {step === 2 && (
               <Button variant="primary" size="sm" onClick={() => setStep(3)} disabled={!allScopesChecked}>
-                Continuar
+                {t("common.continue")}
               </Button>
             )}
             {step === 3 && (
@@ -216,7 +218,7 @@ export function DeleteWorldModal({ world, onDeleted, onClose }: DeleteWorldModal
                 onClick={() => void handleConfirmDelete()}
                 disabled={!nameMatches || isBusy}
               >
-                {isBusy ? "Eliminando…" : "Borrar definitivamente"}
+                {isBusy ? t("worlds.delete.deleting") : t("worlds.delete.confirm")}
               </Button>
             )}
           </div>

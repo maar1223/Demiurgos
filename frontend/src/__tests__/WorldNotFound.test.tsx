@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 import { WorldNotFound } from "@/components/organisms/WorldNotFound";
 import { useWorlds } from "@/hooks/useWorlds";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 vi.mock("@/hooks/useWorlds", () => ({ useWorlds: vi.fn() }));
 const useWorldsMock = vi.mocked(useWorlds);
@@ -44,7 +45,7 @@ describe("WorldNotFound", () => {
     renderNotFound("Avalor");
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByText("Elegí un mundo")).toBeInTheDocument();
+    expect(screen.getByText(tEs("worlds.picker.title"))).toBeInTheDocument();
     expect(screen.getByText(/El mundo «Avalor» ya no existe/)).toBeInTheDocument();
 
     // The deleted world is excluded; the remaining ones are offered.
@@ -83,6 +84,6 @@ describe("WorldNotFound", () => {
       expect(screen.getByRole("dialog")).toBeInTheDocument(),
     );
     expect(screen.getByLabelText(/Nombre del mundo/)).toBeInTheDocument();
-    expect(screen.queryByText("Elegí un mundo")).not.toBeInTheDocument();
+    expect(screen.queryByText(tEs("worlds.picker.title"))).not.toBeInTheDocument();
   });
 });
