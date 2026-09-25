@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import HistoryPanel from "@/components/organisms/HistoryPanel";
 import type { HistoryEntry } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 vi.mock("@/hooks/useFileHistory", () => ({
   useFileHistory: vi.fn(),
@@ -128,7 +129,7 @@ describe("HistoryPanel", () => {
     unmount();
 
     renderPanel({ entries: [] });
-    expect(screen.getByText("No history available.")).toBeInTheDocument();
+    expect(screen.getByText(tEs("history.empty"))).toBeInTheDocument();
   });
 
   it("orders snapshots newest-first and protects the current version", () => {
@@ -139,13 +140,17 @@ describe("HistoryPanel", () => {
     const list = screen.getByRole("list");
     const rows = within(list).getAllByRole("listitem");
     expect(rows.map((row) => row.textContent)).toEqual([
-      expect.stringContaining("Saved 1 hour ago"),
-      expect.stringContaining("Saved 2 hours ago"),
-      expect.stringContaining("Saved 3 hours ago"),
+      expect.stringContaining(tEs("history.relative.hourOne")),
+      expect.stringContaining(tEs("history.relative.hoursMany", { count: 2 })),
+      expect.stringContaining(tEs("history.relative.hoursMany", { count: 3 })),
     ]);
-    expect(within(rows[0]).getByText("Current version")).toBeInTheDocument();
-    expect(within(rows[0]).queryByRole("button", { name: "Restore" })).toBeNull();
-    expect(within(rows[2]).getByRole("button", { name: "Restore" })).toBeInTheDocument();
+    expect(within(rows[0]).getByText(tEs("history.current"))).toBeInTheDocument();
+    expect(
+      within(rows[0]).queryByRole("button", { name: tEs("history.restore") }),
+    ).toBeNull();
+    expect(
+      within(rows[2]).getByRole("button", { name: tEs("history.restore") }),
+    ).toBeInTheDocument();
   });
 
   it("labels snapshots with the saved-on timestamp, never the raw hash", () => {
@@ -161,11 +166,23 @@ describe("HistoryPanel", () => {
     expect(rows[0]).not.toHaveTextContent("snapshot-current");
 
     // The primary label is the localized save timestamp.
-    expect(rows[0]).toHaveTextContent("Version saved on");
+    expect(rows[0]).toHaveTextContent(
+      tEs("history.versionSavedOn", { date: "" }).trim(),
+    );
 
     // Relative time and size are retained as human-readable metadata.
-    expect(rows[0]).toHaveTextContent("Saved 1 hour ago · 9 bytes");
-    expect(rows[2]).toHaveTextContent("Saved 3 hours ago · 6 bytes");
+    expect(rows[0]).toHaveTextContent(
+      tEs("history.savedMeta", {
+        relative: tEs("history.relative.hourOne"),
+        size: 9,
+      }),
+    );
+    expect(rows[2]).toHaveTextContent(
+      tEs("history.savedMeta", {
+        relative: tEs("history.relative.hoursMany", { count: 3 }),
+        size: 6,
+      }),
+    );
   });
 
   it("requests history with the canonical mundo-relative target", () => {
@@ -180,10 +197,16 @@ describe("HistoryPanel", () => {
     renderPanel();
 
     const oldRow = within(screen.getByRole("list")).getAllByRole("listitem")[2];
-    await user.click(within(oldRow).getByRole("button", { name: "Restore" }));
-    const confirmation = screen.getByRole("dialog", { name: "Restore version" });
+    await user.click(
+      within(oldRow).getByRole("button", { name: tEs("history.restore") }),
+    );
+    const confirmation = screen.getByRole("dialog", {
+      name: tEs("history.restoreTitle"),
+    });
     expect(confirmation).toHaveTextContent("snapshot-old");
-    await user.click(within(confirmation).getByRole("button", { name: "Restore" }));
+    await user.click(
+      within(confirmation).getByRole("button", { name: tEs("history.restore") }),
+    );
 
     await waitFor(() => {
       expect(requestConfirmation).toHaveBeenCalledWith(
@@ -219,18 +242,17 @@ describe("HistoryPanel", () => {
     renderPanel();
 
     const oldRow = within(screen.getByRole("list")).getAllByRole("listitem")[2];
-    await user.click(within(oldRow).getByRole("button", { name: "Restore" }));
     await user.click(
-      within(screen.getByRole("dialog", { name: "Restore version" })).getByRole(
-        "button",
-        { name: "Restore" },
-      ),
+      within(oldRow).getByRole("button", { name: tEs("history.restore") }),
+    );
+    await user.click(
+      within(
+        screen.getByRole("dialog", { name: tEs("history.restoreTitle") }),
+      ).getByRole("button", { name: tEs("history.restore") }),
     );
 
     expect(
-      (await screen.findAllByText(
-        "The file changed. History was reloaded; review the restore again.",
-      )).length,
+      (await screen.findAllByText(tEs("history.error.stale"))).length,
     ).toBeGreaterThan(0);
     expect(mutate).toHaveBeenCalled();
     expect(onRestored).not.toHaveBeenCalled();

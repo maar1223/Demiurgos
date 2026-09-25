@@ -298,6 +298,30 @@ export const messages = {
       "El mundo «{name}» se moverá a un nuevo nombre. Los enlaces viejos siguen funcionando (se redirigen).",
     "profile.mundos.renameDialogConfirm": "Renombrar",
 
+    "history.title": "Historial del archivo",
+    "history.closeAria": "Cerrar el historial",
+    "history.empty": "No hay historial disponible.",
+    "history.versionSavedOn": "Versión guardada el {date}",
+    "history.savedMeta": "Guardado {relative} · {size} bytes",
+    "history.sizeBytes": "{size} bytes",
+    "history.current": "Versión actual",
+    "history.restore": "Restaurar",
+    "history.restoreTitle": "Restaurar versión",
+    "history.restoreMessage":
+      "¿Restaurar la instantánea «{snapshot}»? La versión actual se conservará en el historial.",
+    "history.error.alreadyCurrent":
+      "La instantánea seleccionada ya es la versión actual.",
+    "history.error.stale":
+      "El archivo cambió. El historial se recargó; revisa la restauración de nuevo.",
+    "history.rationale.restore": "Restaurar una versión retenida del archivo",
+    "history.relative.justNow": "ahora mismo",
+    "history.relative.minuteOne": "hace 1 minuto",
+    "history.relative.minutesMany": "hace {count} minutos",
+    "history.relative.hourOne": "hace 1 hora",
+    "history.relative.hoursMany": "hace {count} horas",
+    "history.relative.dayOne": "hace 1 día",
+    "history.relative.daysMany": "hace {count} días",
+
     "error.unknown": "Ocurrió un error inesperado.",
     "error.sessionExpired": "La sesión expiró. Inicia sesión e intenta de nuevo.",
     "error.network.unreachable": "No se pudo conectar al servidor. Verifica que esté corriendo.",
@@ -613,6 +637,30 @@ export const messages = {
     "profile.mundos.renameDialogMessage":
       "The world \"{name}\" will move to a new name. Old links keep working (they are redirected).",
     "profile.mundos.renameDialogConfirm": "Rename",
+
+    "history.title": "File history",
+    "history.closeAria": "Close history",
+    "history.empty": "No history available.",
+    "history.versionSavedOn": "Version saved on {date}",
+    "history.savedMeta": "Saved {relative} · {size} bytes",
+    "history.sizeBytes": "{size} bytes",
+    "history.current": "Current version",
+    "history.restore": "Restore",
+    "history.restoreTitle": "Restore version",
+    "history.restoreMessage":
+      "Restore snapshot \"{snapshot}\"? The current version will be preserved in history.",
+    "history.error.alreadyCurrent":
+      "The selected snapshot is already the current version.",
+    "history.error.stale":
+      "The file changed. History was reloaded; review the restore again.",
+    "history.rationale.restore": "Restore a retained file version",
+    "history.relative.justNow": "just now",
+    "history.relative.minuteOne": "1 minute ago",
+    "history.relative.minutesMany": "{count} minutes ago",
+    "history.relative.hourOne": "1 hour ago",
+    "history.relative.hoursMany": "{count} hours ago",
+    "history.relative.dayOne": "1 day ago",
+    "history.relative.daysMany": "{count} days ago",
 
     "error.unknown": "An unexpected error occurred.",
     "error.sessionExpired": "The session expired. Sign in and try again.",

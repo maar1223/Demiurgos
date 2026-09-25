@@ -5,6 +5,8 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { useEditReview } from "@/hooks/useEditReview";
 import { useFileHistory } from "@/hooks/useFileHistory";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { TFunction } from "@/i18n/messages";
 import type { ApiError, EditProposal, HistoryEntry } from "@/api/types";
 import { getErrorMessage } from "@/lib/utils";
 
@@ -24,19 +26,31 @@ function formatDate(value: string): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
-/** Compact relative label ("2 hours ago") for recent snapshots; returns "" for
- *  older ones where the absolute timestamp in the primary label is clearer. */
-function formatRelativeTime(value: string): string {
+/** Compact localized relative label ("2 hours ago") for recent snapshots;
+ *  returns "" for older ones where the absolute timestamp is clearer. */
+function formatRelativeTime(value: string, t: TFunction): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   const elapsedSeconds = Math.round((date.getTime() - Date.now()) / 1000);
-  if (elapsedSeconds > -45) return "just now";
+  if (elapsedSeconds > -45) return t("history.relative.justNow");
   const minutes = Math.round(-elapsedSeconds / 60);
-  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  if (minutes < 60) {
+    return minutes === 1
+      ? t("history.relative.minuteOne")
+      : t("history.relative.minutesMany", { count: minutes });
+  }
   const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  if (hours < 24) {
+    return hours === 1
+      ? t("history.relative.hourOne")
+      : t("history.relative.hoursMany", { count: hours });
+  }
   const days = Math.round(hours / 24);
-  if (days <= 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  if (days <= 7) {
+    return days === 1
+      ? t("history.relative.dayOne")
+      : t("history.relative.daysMany", { count: days });
+  }
   return "";
 }
 
@@ -62,6 +76,7 @@ export function HistoryPanel({
   onClose,
   onRestored,
 }: HistoryPanelProps) {
+  const { t } = useAppLanguage();
   // History endpoints resolve a canonical mundo-relative target
   // (`personajes/Pert.md`), while the section-scoped review pipeline
   // consumes the section-relative `path` (`Pert.md`).
@@ -91,7 +106,7 @@ export function HistoryPanel({
     const target = restoreTarget;
     if (isCurrentVersion(target, currentRevision, currentContent)) {
       setRestoreTarget(null);
-      setActionError("The selected snapshot is already the current version.");
+      setActionError(t("history.error.alreadyCurrent"));
       return;
     }
 
@@ -101,13 +116,13 @@ export function HistoryPanel({
       base_revision: currentRevision,
       proposed_content: target.content,
       proposed_digest: target.revision,
-      rationale: "Restore a retained file version",
+      rationale: t("history.rationale.restore"),
       is_new_file: false,
     };
 
     review.startReview(proposal);
     setPendingRestore({ target, proposal });
-  }, [currentContent, currentRevision, restoreTarget, review]);
+  }, [currentContent, currentRevision, restoreTarget, review, t]);
 
   // Wait for startReview() to commit before requesting a token. The review
   // hook intentionally reads its proposal from state, so both calls cannot
@@ -143,14 +158,14 @@ export function HistoryPanel({
         const apiError = error as ApiError;
         if (apiError.status === 409) {
           await history.mutate();
-          setActionError("The file changed. History was reloaded; review the restore again.");
+          setActionError(t("history.error.stale"));
         } else {
           setActionError(getErrorMessage(apiError.status, apiError.detail));
         }
         review.reset();
       }
     })();
-  }, [history, onRestored, historyPath, pendingRestore, review]);
+  }, [history, onRestored, historyPath, pendingRestore, review, t]);
 
   if (!open) return null;
 
@@ -170,11 +185,11 @@ export function HistoryPanel({
         <div className="flex items-center justify-between border-b border-edge px-6 py-4">
           <div className="min-w-0">
             <h2 id="history-panel-title" className="font-heading text-h4 text-primary">
-              File history
+              {t("history.title")}
             </h2>
             <p className="truncate text-small text-muted">{path}</p>
           </div>
-          <button type="button" onClick={onClose} aria-label="Close history">
+          <button type="button" onClick={onClose} aria-label={t("history.closeAria")}>
             <Icon name="close" size={20} />
           </button>
         </div>
@@ -191,12 +206,12 @@ export function HistoryPanel({
               <Spinner size="lg" />
             </div>
           ) : entries.length === 0 ? (
-            <p className="py-16 text-center text-body text-muted">No history available.</p>
+            <p className="py-16 text-center text-body text-muted">{t("history.empty")}</p>
           ) : (
             <ul className="flex flex-col gap-2">
               {entries.map((entry) => {
                 const current = isCurrentVersion(entry, currentRevision, currentContent);
-                const relative = formatRelativeTime(entry.created_at);
+                const relative = formatRelativeTime(entry.created_at, t);
                 return (
                   <li
                     key={entry.snapshot_id}
@@ -205,16 +220,16 @@ export function HistoryPanel({
                     <Icon name="history" size={18} className="shrink-0 text-icon-muted" />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-small text-primary">
-                        Version saved on {formatDate(entry.created_at)}
+                        {t("history.versionSavedOn", { date: formatDate(entry.created_at) })}
                       </p>
                       <p className="text-xs text-muted">
                         {relative
-                          ? `Saved ${relative} · ${entry.size} bytes`
-                          : `${entry.size} bytes`}
+                          ? t("history.savedMeta", { relative, size: entry.size })
+                          : t("history.sizeBytes", { size: entry.size })}
                       </p>
                     </div>
                     {current ? (
-                      <span className="text-xs text-muted">Current version</span>
+                      <span className="text-xs text-muted">{t("history.current")}</span>
                     ) : (
                       <Button
                         variant="secondary"
@@ -225,7 +240,7 @@ export function HistoryPanel({
                         }}
                         disabled={history.isRestoring}
                       >
-                        Restore
+                        {t("history.restore")}
                       </Button>
                     )}
                   </li>
@@ -238,9 +253,9 @@ export function HistoryPanel({
 
       {restoreTarget && (
         <ConfirmDialog
-          title="Restore version"
-          message={`Restore snapshot "${restoreTarget.snapshot_id}"? The current version will be preserved in history.`}
-          confirmLabel="Restore"
+          title={t("history.restoreTitle")}
+          message={t("history.restoreMessage", { snapshot: restoreTarget.snapshot_id })}
+          confirmLabel={t("history.restore")}
           isBusy={history.isRestoring || review.isLoading || pendingRestore !== null}
           error={actionError}
           onConfirm={() => void handleRestoreConfirm()}
