@@ -30,10 +30,19 @@ import {
   type IdeaType,
   type IdeaVersionsResponse,
   type PendingCapture,
+  type DiscardedMaterializeRelation,
+  type IdeaMaterializePreviewResult,
+  type MaterializeCollision,
+  type MaterializeSection,
+  type ProposedMaterializeRelation,
   IDEA_TYPES,
+  MATERIALIZE_SECTIONS,
+  previewMaterialize,
 } from "@/api/ideas";
 import { getErrorMessage } from "@/lib/utils";
-import type { ApiError } from "@/api/types";
+import type { ApiError, FileNode, SuccessResponse } from "@/api/types";
+import { createFileConfirmed, requestConfirmation } from "@/api/wiki";
+import { useFileTree } from "@/hooks/useFileTree";
 
 const TYPE_LABELS: Record<IdeaType, string> = {
   personaje: "Personaje",
@@ -54,6 +63,238 @@ const STATUS_LABELS: Record<IdeaStatus, string> = {
   fresh: "Nueva",
   used: "Usada",
 };
+
+const SECTION_LABELS: Record<MaterializeSection, string> = {
+  lore: "Lore",
+  personajes: "Personajes",
+  referencias: "Referencias",
+};
+
+/**
+ * R-IM-01/AD7: the idea type suggests the ficha section. `personaje` and
+ * `relacion` map to `personajes`; everything else defaults to `lore`.
+ * The author can always override the preselection in the picker.
+ */
+function suggestSectionFor(type: IdeaType): MaterializeSection {
+  return type === "personaje" || type === "relacion" ? "personajes" : "lore";
+}
+
+/** Read-only folder tree picker (AD7) — renders `FileNode` dirs, nested. */
+function FolderTree({
+  nodes,
+  selected,
+  onSelect,
+}: {
+  nodes: FileNode[];
+  selected: string;
+  onSelect: (path: string) => void;
+}) {
+  return (
+    <ul className="space-y-0.5">
+      {nodes.filter((n) => n.is_dir).map((dir) => (
+        <FolderTreeBranch
+          key={dir.path}
+          node={dir}
+          selected={selected}
+          onSelect={onSelect}
+        />
+      ))}
+    </ul>
+  );
+}
+
+function FolderTreeBranch({
+  node,
+  selected,
+  onSelect,
+}: {
+  node: FileNode;
+  selected: string;
+  onSelect: (path: string) => void;
+}) {
+  const childDirs = (node.children ?? []).filter((c) => c.is_dir);
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => onSelect(node.path)}
+        aria-pressed={selected === node.path}
+        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-primary transition-colors hover:bg-surface-hover aria-pressed:bg-action/15 aria-pressed:text-action"
+      >
+        <Icon name="folder" size={12} className="shrink-0 opacity-70" />
+        <span className="min-w-0 truncate">{node.name}</span>
+      </button>
+      {childDirs.length > 0 && (
+        <ul className="ml-3 border-l border-edge pl-2">
+          {childDirs.map((child) => (
+            <FolderTreeBranch
+              key={child.path}
+              node={child}
+              selected={selected}
+              onSelect={onSelect}
+            />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+/**
+ * Read-only preview dialog for a materialize draft (AD8). Renders the
+ * server-owned ficha content via MarkdownViewer plus the proposed and
+ * discarded relations. A 409 collision opens the same dialog in collision
+ * mode: no draft exists, only the `suggested_slug` hint. Nothing here is
+ * editable — the ficha becomes editable after creation.
+ */
+function MaterializePreviewDialog({
+  preview,
+  collision,
+  confirming,
+  onConfirm,
+  onClose,
+}: {
+  preview: IdeaMaterializePreviewResult | null;
+  collision: MaterializeCollision | null;
+  confirming: boolean;
+  onConfirm: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !confirming) onClose();
+      }}
+    >
+      <div
+        className="mx-4 flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-edge bg-surface-raised shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Ficha preview"
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
+          <h2 className="font-heading text-h4 text-primary">Ficha preview</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={confirming}
+            className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary disabled:opacity-50"
+            aria-label="Close"
+          >
+            <Icon name="close" size={20} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {collision && !preview ? (
+            <div className="rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-xs text-status-error">
+              <p className="font-medium">The target already exists.</p>
+              <p className="mt-1">
+                Target: <span className="font-mono">{collision.target}</span>
+              </p>
+              <p className="mt-1">
+                Suggested slug:{" "}
+                <span className="font-mono">{collision.suggested_slug}</span>{" "}
+                (→{" "}
+                <span className="font-mono">{collision.suggested_target}</span>)
+              </p>
+            </div>
+          ) : preview ? (
+            <div className="space-y-4">
+              <p className="text-xs text-muted">
+                Target: <span className="font-mono">{preview.target.path}</span>
+              </p>
+              <MarkdownViewer
+                content={preview.content}
+                mundo={preview.target.world}
+                imageFit="contain"
+              />
+              <section aria-label="Proposed relations">
+                <h3 className="mb-1 text-body font-medium text-primary">
+                  Proposed relations
+                </h3>
+                {preview.proposed_relations.length === 0 ? (
+                  <p className="text-xs text-muted">None.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {preview.proposed_relations.map(
+                      (rel: ProposedMaterializeRelation) => (
+                        <li
+                          key={rel.target_id}
+                          className="flex items-baseline gap-2 rounded-md bg-surface px-2.5 py-1.5 text-xs"
+                        >
+                          <span className="shrink-0 font-medium text-primary">
+                            {rel.rel_type}
+                          </span>
+                          <span
+                            className="min-w-0 truncate text-muted"
+                            title={rel.target_id}
+                          >
+                            {rel.title || rel.target_id}
+                          </span>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                )}
+              </section>
+              <section aria-label="Discarded relations">
+                <h3 className="mb-1 text-body font-medium text-primary">
+                  Discarded relations
+                </h3>
+                {preview.discarded_relations.length === 0 ? (
+                  <p className="text-xs text-muted">None.</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {preview.discarded_relations.map(
+                      (rel: DiscardedMaterializeRelation) => (
+                        <li
+                          key={`${rel.target_id}-${rel.reason}`}
+                          className="flex items-baseline gap-2 rounded-md bg-surface px-2.5 py-1.5 text-xs text-status-error"
+                        >
+                          <span className="shrink-0 font-medium">
+                            {rel.target_id}
+                          </span>
+                          <span className="text-muted">{rel.reason}</span>
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                )}
+              </section>
+            </div>
+          ) : null}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={confirming}
+            className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
+          >
+            Close
+          </button>
+          {preview && !collision && (
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={confirming}
+              className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {confirming ? "Creating..." : "Create ficha"}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /**
  * IdeasWorkshop — the global Taller de Ideas (`/ideas`).
@@ -413,36 +654,165 @@ export default function IdeasWorkshop() {
 
   // ── Materialize ("usar en el mundo") ─────────────────────────────────────
   const [materializeWorld, setMaterializeWorld] = useState("");
-  const [materializeCanonRel, setMaterializeCanonRel] = useState("");
-  const [materializing, setMaterializing] = useState(false);
+  const [materializeSection, setMaterializeSection] =
+    useState<MaterializeSection>("lore");
+  const [materializeFolder, setMaterializeFolder] = useState("");
+  const [materializeTitleHint, setMaterializeTitleHint] = useState("");
+  const [preview, setPreview] = useState<IdeaMaterializePreviewResult | null>(null);
+  const [collision, setCollision] = useState<MaterializeCollision | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [markingUsed, setMarkingUsed] = useState(false);
 
-  const handleMaterialize = useCallback(async () => {
+  // Folder tree for the selected world + section (AD7). Null key while no
+  // world is chosen, so the hook stays idle until a world is picked.
+  const { nodes: folderNodes, isLoading: folderLoading } = useFileTree(
+    materializeWorld || undefined,
+    materializeSection,
+  );
+
+  const openMaterialize = useCallback(() => {
+    if (!selectedIdea) return;
+    setActionError(null);
+    setPreview(null);
+    setCollision(null);
+    setMaterializeFor(selectedIdea.slug);
+    setMaterializeWorld("");
+    setMaterializeSection(suggestSectionFor(selectedIdea.type));
+    setMaterializeFolder("");
+    setMaterializeTitleHint("");
+  }, [selectedIdea]);
+
+  const closeMaterialize = useCallback(() => {
+    setMaterializeFor(null);
+    setMaterializeWorld("");
+    setMaterializeSection("lore");
+    setMaterializeFolder("");
+    setMaterializeTitleHint("");
+    setPreview(null);
+    setCollision(null);
+  }, []);
+
+  // "Previsualizar" — POST /materialize-preview. Read-only: the dialog only
+  // shows the server-owned draft; nothing is edited in-dialog (AD8). A 409
+  // collision arrives as an error carrying `collision` at the top level; the
+  // dialog then shows the suggested slug instead of a draft.
+  const handlePreview = useCallback(async () => {
     if (!materializeFor || !materializeWorld) {
-      setActionError("Elegí un mundo para materializar la idea.");
+      setActionError("Select a world to preview the ficha.");
       return;
     }
-    setMaterializing(true);
+    setPreviewing(true);
+    setActionError(null);
+    setCollision(null);
+    try {
+      const result = await previewMaterialize(materializeFor, {
+        world: materializeWorld,
+        section: materializeSection,
+        folder: materializeFolder,
+        ...(materializeTitleHint.trim()
+          ? { title_hint: materializeTitleHint.trim() }
+          : {}),
+      });
+      setPreview(result);
+    } catch (err) {
+      const apiError = err as ApiError & { collision?: MaterializeCollision };
+      if (apiError.collision) {
+        setPreview(null);
+        setCollision(apiError.collision);
+        return;
+      }
+      notifyError(err);
+    } finally {
+      setPreviewing(false);
+    }
+  }, [
+    materializeFor,
+    materializeWorld,
+    materializeSection,
+    materializeFolder,
+    materializeTitleHint,
+    notifyError,
+  ]);
+
+  // Confirm — issue the single-use edit-confirmation token (kind=new,
+  // edit_id=proposal_id, proposed_content=content) and create through the
+  // gated pipeline; the digest binds the exact previewed content (R-IM-05).
+  const handleConfirmPreview = useCallback(async () => {
+    if (!preview || !materializeWorld) return;
+    setConfirming(true);
     setActionError(null);
     try {
-      const result = await materializeIdea(
-        materializeFor,
-        materializeWorld,
-        materializeCanonRel.trim() || undefined,
-      );
+      const { world, section, path } = preview.target;
+      const confirmation = await requestConfirmation(world, section, path, {
+        edit_id: preview.proposal_id,
+        kind: "new",
+        proposed_content: preview.content,
+      });
+      const result = (await createFileConfirmed(world, section, path, {
+        content: preview.content,
+        edit_id: preview.proposal_id,
+        proposed_digest: confirmation.proposed_digest,
+        token: confirmation.token,
+      })) as SuccessResponse & {
+        index_status?: string;
+        retryable?: boolean;
+        message?: string;
+      };
       await mutateDetail();
       await mutateList();
-      setMaterializeFor(null);
-      setMaterializeWorld("");
-      setMaterializeCanonRel("");
+      closeMaterialize();
       showToast(
-        `Idea materializada en ${materializeWorld} (usada en: ${result.used_in.join(", ")}).`,
+        result.index_status
+          ? `Ficha created (index status: ${result.index_status}).`
+          : "Ficha created.",
       );
     } catch (err) {
       notifyError(err);
     } finally {
-      setMaterializing(false);
+      setConfirming(false);
     }
-  }, [materializeCanonRel, materializeFor, materializeWorld, mutateDetail, mutateList, notifyError, showToast]);
+  }, [
+    preview,
+    materializeWorld,
+    mutateDetail,
+    mutateList,
+    closeMaterialize,
+    notifyError,
+    showToast,
+  ]);
+
+  // Legacy fallback (R-IM-10): mark the idea as used in the world WITHOUT
+  // creating a ficha, via the original POST /api/ideas/{slug}/materialize.
+  const handleMarkUsedOnly = useCallback(async () => {
+    if (!materializeFor || !materializeWorld) {
+      setActionError("Select a world to mark the idea as used.");
+      return;
+    }
+    setMarkingUsed(true);
+    setActionError(null);
+    try {
+      const result = await materializeIdea(materializeFor, materializeWorld);
+      await mutateDetail();
+      await mutateList();
+      closeMaterialize();
+      showToast(
+        `Idea marked as used in ${materializeWorld} (used in: ${result.used_in.join(", ")}).`,
+      );
+    } catch (err) {
+      notifyError(err);
+    } finally {
+      setMarkingUsed(false);
+    }
+  }, [
+    materializeFor,
+    materializeWorld,
+    mutateDetail,
+    mutateList,
+    closeMaterialize,
+    notifyError,
+    showToast,
+  ]);
 
   // ── Delete ───────────────────────────────────────────────────────────────
   const [deleting, setDeleting] = useState(false);
@@ -953,10 +1323,7 @@ export default function IdeasWorkshop() {
             {materializeFor !== selectedIdea.slug ? (
               <button
                 type="button"
-                onClick={() => {
-                  setActionError(null);
-                  setMaterializeFor(selectedIdea.slug);
-                }}
+                onClick={openMaterialize}
                 className="flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary"
               >
                 <Icon name="world" size={13} />
@@ -983,37 +1350,86 @@ export default function IdeasWorkshop() {
                   </select>
                 </div>
                 <div>
-                  <label htmlFor="materialize-canon-rel" className="mb-1 block text-xs text-muted">
-                    Ruta canónica (opcional)
+                  <label htmlFor="materialize-section" className="mb-1 block text-xs text-muted">
+                    Section
+                  </label>
+                  <select
+                    id="materialize-section"
+                    value={materializeSection}
+                    onChange={(e) => {
+                      setMaterializeSection(e.target.value as MaterializeSection);
+                      setMaterializeFolder("");
+                    }}
+                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
+                  >
+                    {MATERIALIZE_SECTIONS.map((section) => (
+                      <option key={section} value={section}>
+                        {SECTION_LABELS[section]}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-muted">Folder</label>
+                  <div className="max-h-40 overflow-y-auto rounded-md border border-edge bg-surface px-2 py-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setMaterializeFolder("")}
+                      aria-pressed={materializeFolder === ""}
+                      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-primary transition-colors hover:bg-surface-hover aria-pressed:bg-action/15 aria-pressed:text-action"
+                    >
+                      <Icon name="folder" size={12} className="shrink-0 opacity-70" />
+                      <span>(root)</span>
+                    </button>
+                    {folderLoading ? (
+                      <p className="px-2 py-1 text-xs text-muted">Loading folders...</p>
+                    ) : (
+                      <FolderTree
+                        nodes={folderNodes}
+                        selected={materializeFolder}
+                        onSelect={setMaterializeFolder}
+                      />
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="materialize-title-hint" className="mb-1 block text-xs text-muted">
+                    Title hint (optional)
                   </label>
                   <input
-                    id="materialize-canon-rel"
-                    value={materializeCanonRel}
-                    onChange={(e) => setMaterializeCanonRel(e.target.value)}
-                    placeholder="ej: personajes/arquero.md"
+                    id="materialize-title-hint"
+                    value={materializeTitleHint}
+                    onChange={(e) => setMaterializeTitleHint(e.target.value)}
+                    placeholder="ej: el arquero que no ve"
                     className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
                   />
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => void handleMaterialize()}
-                    disabled={materializing || !materializeWorld}
+                    onClick={() => void handlePreview()}
+                    disabled={previewing || !materializeWorld}
                     className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {materializing ? "Materializando..." : "Materializar"}
+                    {previewing ? "Previewing..." : "Preview"}
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      setMaterializeFor(null);
-                      setMaterializeWorld("");
-                      setMaterializeCanonRel("");
-                    }}
-                    disabled={materializing}
+                    onClick={() => void handleMarkUsedOnly()}
+                    disabled={markingUsed || !materializeWorld}
+                    className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {markingUsed
+                      ? "Marking as used..."
+                      : "Only mark as used (without creating ficha)"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeMaterialize}
+                    disabled={previewing || confirming || markingUsed}
                     className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
                   >
-                    Cancelar
+                    Cancel
                   </button>
                 </div>
               </div>
@@ -1153,6 +1569,21 @@ export default function IdeasWorkshop() {
           content={pdfTarget.content}
           fileName={pdfTarget.fileName}
           mundo=""
+        />
+      )}
+
+      {/* Materialize preview dialog — read-only (AD8); opens on a successful
+          preview or on a 409 collision suggestion (AD5). */}
+      {(preview || collision) && (
+        <MaterializePreviewDialog
+          preview={preview}
+          collision={collision}
+          confirming={confirming}
+          onConfirm={() => void handleConfirmPreview()}
+          onClose={() => {
+            setPreview(null);
+            setCollision(null);
+          }}
         />
       )}
     </EditorLayout>

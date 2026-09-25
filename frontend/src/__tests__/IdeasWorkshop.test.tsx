@@ -6,7 +6,11 @@ import { SWRConfig } from "swr";
 import IdeasWorkshop from "@/pages/IdeasWorkshop";
 import App from "@/App";
 import * as ideasApi from "@/api/ideas";
+import * as wikiApi from "@/api/wiki";
+import type { FileNode } from "@/api/types";
 import type { IdeaDetail } from "@/api/ideas";
+import { useFileTree } from "@/hooks/useFileTree";
+import type { Mock } from "vitest";
 
 vi.mock("@/api/ideas", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/ideas")>();
@@ -19,12 +23,28 @@ vi.mock("@/api/ideas", async (importOriginal) => {
     updateIdea: vi.fn(),
     deleteIdea: vi.fn(),
     materializeIdea: vi.fn(),
+    previewMaterialize: vi.fn(),
     exportIdeaDocx: vi.fn(),
     listPendingCaptures: vi.fn(),
     confirmCapture: vi.fn(),
     discardCapture: vi.fn(),
   };
 });
+
+// The wiki module is spread so the REAL MarkdownViewer keeps working (its
+// getMediaUrl import must stay live); only the gated-create seam is mocked.
+vi.mock("@/api/wiki", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/api/wiki")>();
+  return {
+    ...actual,
+    requestConfirmation: vi.fn(),
+    createFileConfirmed: vi.fn(),
+  };
+});
+
+vi.mock("@/hooks/useFileTree", () => ({
+  useFileTree: vi.fn(),
+}));
 
 vi.mock("@/components/organisms/Navbar", () => ({
   Navbar: () => <div aria-label="navbar" />,
@@ -63,10 +83,14 @@ const createIdeaMock = vi.mocked(ideasApi.createIdea);
 const updateIdeaMock = vi.mocked(ideasApi.updateIdea);
 const deleteIdeaMock = vi.mocked(ideasApi.deleteIdea);
 const materializeIdeaMock = vi.mocked(ideasApi.materializeIdea);
+const previewMaterializeMock = vi.mocked(ideasApi.previewMaterialize);
 const exportIdeaDocxMock = vi.mocked(ideasApi.exportIdeaDocx);
 const listPendingCapturesMock = vi.mocked(ideasApi.listPendingCaptures);
 const confirmCaptureMock = vi.mocked(ideasApi.confirmCapture);
 const discardCaptureMock = vi.mocked(ideasApi.discardCapture);
+const requestConfirmationMock = vi.mocked(wikiApi.requestConfirmation);
+const createFileConfirmedMock = vi.mocked(wikiApi.createFileConfirmed);
+const useFileTreeMock = useFileTree as Mock;
 
 const summary: ideasApi.IdeaSummary = {
   id: "a1",
@@ -92,6 +116,43 @@ const pendingCapture: ideasApi.PendingCapture = {
   created_at: "2026-08-27T13:00:00Z",
   event_ts: "",
   media_kind: "text",
+};
+
+/** Folder tree fixture for the mocked useFileTree hook (AD7 picker). */
+const mockTreeNodes: FileNode[] = [
+  {
+    name: "sistema-stal",
+    path: "sistema-stal",
+    is_dir: true,
+    children: [
+      {
+        name: "poderes",
+        path: "sistema-stal/poderes",
+        is_dir: true,
+        children: [],
+      },
+      { name: "inicio.md", path: "sistema-stal/inicio.md", is_dir: false },
+    ],
+  },
+  { name: "guerras", path: "guerras", is_dir: true, children: [] },
+];
+
+/** Full 200 preview envelope for the happy-path materialize tests. */
+const previewResult: ideasApi.IdeaMaterializePreviewResult = {
+  proposal_id: "materialize-abc",
+  target: {
+    world: "vibrantes",
+    section: "lore",
+    folder: "sistema-stal",
+    slug: "arquero-ciego",
+    path: "sistema-stal/arquero-ciego.md",
+  },
+  content:
+    "---\ntype: concepto\n---\n# El arquero ciego\n\nUn arquero que no ve.",
+  proposed_relations: [
+    { target_id: "Vibrantes::Stal", title: "Stal", rel_type: "involucra" },
+  ],
+  discarded_relations: [{ target_id: "Fantasma", reason: "target_not_found" }],
 };
 
 function renderPage() {
@@ -139,13 +200,23 @@ describe("IdeasWorkshop", () => {
     updateIdeaMock.mockReset();
     deleteIdeaMock.mockReset();
     materializeIdeaMock.mockReset();
+    previewMaterializeMock.mockReset();
     exportIdeaDocxMock.mockReset();
     listPendingCapturesMock.mockReset();
     confirmCaptureMock.mockReset();
     discardCaptureMock.mockReset();
+    requestConfirmationMock.mockReset();
+    createFileConfirmedMock.mockReset();
+    useFileTreeMock.mockReset();
     listIdeasMock.mockResolvedValue({ ideas: [summary], total: 1 });
     getIdeaVersionsMock.mockResolvedValue({ slug: "arquero-ciego", versions: [] });
     listPendingCapturesMock.mockResolvedValue({ captures: [], count: 0 });
+    useFileTreeMock.mockReturnValue({
+      nodes: mockTreeNodes,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
   });
 
   afterEach(() => {
@@ -312,13 +383,23 @@ describe("IdeasWorkshop", () => {
     );
   });
 
-  it("loads the detail and materializes the idea into a world", async () => {
+  it("loads the detail and creates the ficha through preview → gated confirm", async () => {
     const user = userEvent.setup();
     getIdeaMock.mockResolvedValue(detail);
-    materializeIdeaMock.mockResolvedValue({
-      ok: true,
-      used_in: ["vibrantes"],
-      canon_path: null,
+    previewMaterializeMock.mockResolvedValue(previewResult);
+    requestConfirmationMock.mockResolvedValue({
+      token: "token-1",
+      expires_at: "2026-08-26T00:00:00Z",
+      proposed_digest: "digest-1",
+    });
+    createFileConfirmedMock.mockResolvedValue({
+      success: true,
+      path: "lore/sistema-stal/arquero-ciego.md",
+      index_status: "indexed",
+      retryable: false,
+    } as Awaited<ReturnType<typeof wikiApi.createFileConfirmed>> & {
+      index_status?: string;
+      retryable?: boolean;
     });
     renderPage();
 
@@ -330,20 +411,177 @@ describe("IdeasWorkshop", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Un arquero que no ve.")).toBeInTheDocument();
 
+    // Open the picker and select a world + a folder from the tree.
     await user.click(screen.getByRole("button", { name: "Materializar" }));
-    await user.selectOptions(
-      screen.getByLabelText("Mundo"),
-      "vibrantes",
+    await user.selectOptions(screen.getByLabelText("Mundo"), "vibrantes");
+    await user.click(screen.getByRole("button", { name: "sistema-stal" }));
+
+    // Preview posts the picker payload (AD7 picker → previewMaterialize).
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    await waitFor(() =>
+      expect(previewMaterializeMock).toHaveBeenCalledWith("arquero-ciego", {
+        world: "vibrantes",
+        section: "personajes",
+        folder: "sistema-stal",
+      }),
     );
+
+    // Read-only dialog: content + relations render (AD8).
+    const dialog = await screen.findByRole("dialog", { name: "Ficha preview" });
+    expect(
+      within(dialog).getByRole("heading", { name: "El arquero ciego" }),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("involucra")).toBeInTheDocument();
+    expect(within(dialog).getByText("Stal")).toBeInTheDocument();
+    expect(within(dialog).getByText("Fantasma")).toBeInTheDocument();
+    expect(within(dialog).getByText("target_not_found")).toBeInTheDocument();
+
+    // Confirm issues the single-use token (kind=new, edit_id=proposal_id)
+    // and creates through the gated pipeline with digest+token (R-IM-05).
+    await user.click(within(dialog).getByRole("button", { name: "Create ficha" }));
+
+    await waitFor(() =>
+      expect(requestConfirmationMock).toHaveBeenCalledWith(
+        "vibrantes",
+        "lore",
+        "sistema-stal/arquero-ciego.md",
+        {
+          edit_id: "materialize-abc",
+          kind: "new",
+          proposed_content: previewResult.content,
+        },
+      ),
+    );
+    expect(createFileConfirmedMock).toHaveBeenCalledWith(
+      "vibrantes",
+      "lore",
+      "sistema-stal/arquero-ciego.md",
+      {
+        content: previewResult.content,
+        edit_id: "materialize-abc",
+        proposed_digest: "digest-1",
+        token: "token-1",
+      },
+    );
+
+    // index_status from the create response is surfaced (R-IM-06).
+    expect(
+      await screen.findByText(/index status: indexed/),
+    ).toBeInTheDocument();
+  });
+
+  it("preselects the section from the idea type (personaje → personajes) with override", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail); // type: personaje
+    previewMaterializeMock.mockResolvedValue(previewResult);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
     await user.click(screen.getByRole("button", { name: "Materializar" }));
+
+    // personaje → personajes suggested (R-IM-01 scenario), author can change.
+    const sectionSelect = screen.getByLabelText("Section");
+    expect(sectionSelect).toHaveValue("personajes");
+
+    await user.selectOptions(sectionSelect, "referencias");
+    expect(sectionSelect).toHaveValue("referencias");
+  });
+
+  it("suggests lore for a non-character idea type", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue({ ...detail, type: "concepto" });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await user.click(screen.getByRole("button", { name: "Materializar" }));
+
+    expect(screen.getByLabelText("Section")).toHaveValue("lore");
+  });
+
+  it("sends the title hint with the preview payload", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeMock.mockResolvedValue(previewResult);
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await user.click(screen.getByRole("button", { name: "Materializar" }));
+    await user.selectOptions(screen.getByLabelText("Mundo"), "vibrantes");
+    await user.type(screen.getByLabelText("Title hint (optional)"), "el ciego");
+
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    await waitFor(() =>
+      expect(previewMaterializeMock).toHaveBeenCalledWith("arquero-ciego", {
+        world: "vibrantes",
+        section: "personajes",
+        folder: "",
+        title_hint: "el ciego",
+      }),
+    );
+  });
+
+  it("shows the suggested slug when preview returns a 409 collision (AD5)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeMock.mockRejectedValue({
+      status: 409,
+      detail: "El archivo ya existe",
+      collision: {
+        target: "lore/sistema-stal/arquero-ciego.md",
+        suggested_slug: "arquero-ciego-2",
+        suggested_target: "lore/sistema-stal/arquero-ciego-2.md",
+      },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await user.click(screen.getByRole("button", { name: "Materializar" }));
+    await user.selectOptions(screen.getByLabelText("Mundo"), "vibrantes");
+
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Ficha preview" });
+    expect(within(dialog).getByText("The target already exists.")).toBeInTheDocument();
+    expect(within(dialog).getByText("arquero-ciego-2")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("lore/sistema-stal/arquero-ciego-2.md"),
+    ).toBeInTheDocument();
+    // Collision mode is not a draft: no confirm button, no content editing.
+    expect(
+      within(dialog).queryByRole("button", { name: "Create ficha" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("legacy fallback marks the idea as used without creating a ficha (R-IM-10)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    materializeIdeaMock.mockResolvedValue({
+      ok: true,
+      used_in: ["vibrantes"],
+      canon_path: null,
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await user.click(screen.getByRole("button", { name: "Materializar" }));
+    await user.selectOptions(screen.getByLabelText("Mundo"), "vibrantes");
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Only mark as used (without creating ficha)",
+      }),
+    );
 
     await waitFor(() =>
       expect(materializeIdeaMock).toHaveBeenCalledWith(
         "arquero-ciego",
         "vibrantes",
-        undefined,
       ),
     );
+    // The legacy path never touches the preview pipeline.
+    expect(previewMaterializeMock).not.toHaveBeenCalled();
   });
 
   it("renders the idea body as markdown with frontmatter hidden (R-1, S-1.1)", async () => {
@@ -603,6 +841,13 @@ describe("IdeasWorkshop route", () => {
     listIdeasMock.mockResolvedValue({ ideas: [], total: 0 });
     listPendingCapturesMock.mockReset();
     listPendingCapturesMock.mockResolvedValue({ captures: [], count: 0 });
+    useFileTreeMock.mockReset();
+    useFileTreeMock.mockReturnValue({
+      nodes: mockTreeNodes,
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
   });
 
   afterEach(() => {
