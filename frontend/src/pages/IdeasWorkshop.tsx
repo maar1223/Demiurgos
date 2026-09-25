@@ -44,31 +44,32 @@ import type { ApiError, FileNode, SuccessResponse } from "@/api/types";
 import { createFileConfirmed, requestConfirmation } from "@/api/wiki";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
-const TYPE_LABELS: Record<IdeaType, string> = {
-  personaje: "Personaje",
-  relacion: "Relación",
-  ambientacion: "Ambientación",
-  trama: "Trama",
-  concepto: "Concepto",
-  sin_clasificar: "Sin clasificar",
+const TYPE_LABELS: Record<IdeaType, MessageKey> = {
+  personaje: "ideas.type.personaje",
+  relacion: "ideas.type.relacion",
+  ambientacion: "ideas.type.ambientacion",
+  trama: "ideas.type.trama",
+  concepto: "ideas.type.concepto",
+  sin_clasificar: "ideas.type.sinClasificar",
 };
 
-const SOURCE_LABELS: Record<IdeaSource, string> = {
-  telegram: "Telegram",
-  manual: "Manual",
-  assistant: "Asistente",
+const SOURCE_LABELS: Record<IdeaSource, MessageKey> = {
+  telegram: "ideas.source.telegram",
+  manual: "ideas.source.manual",
+  assistant: "ideas.source.assistant",
 };
 
-const STATUS_LABELS: Record<IdeaStatus, string> = {
-  fresh: "Nueva",
-  used: "Usada",
+const STATUS_LABELS: Record<IdeaStatus, MessageKey> = {
+  fresh: "ideas.status.fresh",
+  used: "ideas.status.used",
 };
 
-const SECTION_LABELS: Record<MaterializeSection, string> = {
-  lore: "Lore",
-  personajes: "Personajes",
-  referencias: "Referencias",
+const SECTION_LABELS: Record<MaterializeSection, MessageKey> = {
+  lore: "section.lore",
+  personajes: "section.personajes",
+  referencias: "section.referencias",
 };
 
 /**
@@ -478,13 +479,13 @@ export default function IdeasWorkshop() {
     try {
       await confirmCapture(captureId);
       await mutatePending();
-      showToast("Idea guardada en el Taller de Ideas (procesando...).");
+      showToast(t("ideas.toast.savedPending"));
     } catch (err) {
       notifyError(err);
     } finally {
       setActingCaptureId(null);
     }
-  }, [mutatePending, notifyError, showToast]);
+  }, [mutatePending, notifyError, showToast, t]);
 
   const handleDiscardPending = useCallback(async (captureId: string) => {
     setActingCaptureId(captureId);
@@ -492,13 +493,13 @@ export default function IdeasWorkshop() {
     try {
       await discardCapture(captureId);
       await mutatePending();
-      showToast("Captura descartada.");
+      showToast(t("ideas.toast.discarded"));
     } catch (err) {
       notifyError(err);
     } finally {
       setActingCaptureId(null);
     }
-  }, [mutatePending, notifyError, showToast]);
+  }, [mutatePending, notifyError, showToast, t]);
 
   // ── Create ───────────────────────────────────────────────────────────────
   const [createSlug, setCreateSlug] = useState("");
@@ -521,7 +522,7 @@ export default function IdeasWorkshop() {
     const slug = createSlug.trim();
     const body = createBody.trim();
     if (!slug || !body) {
-      setActionError("Completá el slug y el cuerpo de la idea.");
+      setActionError(t("ideas.error.slugBody"));
       return;
     }
     setCreating(true);
@@ -540,13 +541,13 @@ export default function IdeasWorkshop() {
       await mutateList();
       resetCreateForm();
       setSelectedSlug(created.slug);
-      showToast(`Idea "${created.title || created.slug}" creada.`);
+      showToast(t("ideas.toast.created", { title: created.title || created.slug }));
     } catch (err) {
       notifyError(err);
     } finally {
       setCreating(false);
     }
-  }, [createBody, createSlug, createTags, createTitle, createType, mutateList, notifyError, resetCreateForm, showToast]);
+  }, [createBody, createSlug, createTags, createTitle, createType, mutateList, notifyError, resetCreateForm, showToast, t]);
 
   // ── Reclassify (type correction) ────────────────────────────────────────
   const [reclassifyType, setReclassifyType] = useState<IdeaType>("sin_clasificar");
@@ -571,13 +572,13 @@ export default function IdeasWorkshop() {
       await mutateDetail();
       await mutateList();
       await mutateVersions();
-      showToast(`Idea reclasificada como "${TYPE_LABELS[reclassifyType]}".`);
+      showToast(t("ideas.toast.reclassified", { type: t(TYPE_LABELS[reclassifyType]) }));
     } catch (err) {
       notifyError(err);
     } finally {
       setReclassifying(false);
     }
-  }, [selectedSlug, reclassifyType, selectedIdea?.type, mutateDetail, mutateList, mutateVersions, notifyError, showToast]);
+  }, [selectedSlug, reclassifyType, selectedIdea?.type, mutateDetail, mutateList, mutateVersions, notifyError, showToast, t]);
 
   // ── Edit title ──────────────────────────────────────────────────────────
   const [editTitle, setEditTitle] = useState("");
@@ -597,13 +598,13 @@ export default function IdeasWorkshop() {
       await mutateDetail();
       await mutateList();
       await mutateVersions();
-      showToast(`Título guardado: "${editTitle.trim()}".`);
+      showToast(t("ideas.toast.titleSaved", { title: editTitle.trim() }));
     } catch (err) {
       notifyError(err);
     } finally {
       setSavingTitle(false);
     }
-  }, [selectedSlug, editTitle, selectedIdea?.title, mutateDetail, mutateList, mutateVersions, notifyError, showToast]);
+  }, [selectedSlug, editTitle, selectedIdea?.title, mutateDetail, mutateList, mutateVersions, notifyError, showToast, t]);
 
   // ── Export (PDF / DOCX) ──────────────────────────────────────────────────
   /** "PDF" target — opens ExportPdfDialog with the idea body. `mundo=""` by
@@ -648,7 +649,7 @@ export default function IdeasWorkshop() {
         await mutateDetail();
         await mutateList();
         await mutateVersions();
-        showToast("Imagen adjuntada.");
+        showToast(t("ideas.toast.imageAttached"));
       } catch (err) {
         notifyError(err);
       } finally {
@@ -656,7 +657,7 @@ export default function IdeasWorkshop() {
         input.value = "";
       }
     },
-    [selectedSlug, mutateDetail, mutateList, mutateVersions, notifyError, showToast],
+    [selectedSlug, mutateDetail, mutateList, mutateVersions, notifyError, showToast, t],
   );
 
   // ── Materialize ("usar en el mundo") ─────────────────────────────────────
@@ -834,7 +835,7 @@ export default function IdeasWorkshop() {
 
   const handleDelete = useCallback(async () => {
     if (!selectedSlug) return;
-    if (!window.confirm(`¿Eliminar la idea "${selectedSlug}" del banco global?`)) {
+    if (!window.confirm(t("ideas.deleteConfirm", { slug: selectedSlug }))) {
       return;
     }
     setDeleting(true);
@@ -843,27 +844,27 @@ export default function IdeasWorkshop() {
       await deleteIdea(selectedSlug);
       setSelectedSlug(null);
       await mutateList();
-      showToast(`Idea "${selectedSlug}" eliminada.`);
+      showToast(t("ideas.toast.deleted", { slug: selectedSlug }));
     } catch (err) {
       notifyError(err);
     } finally {
       setDeleting(false);
     }
-  }, [selectedSlug, mutateList, notifyError, showToast]);
+  }, [selectedSlug, mutateList, notifyError, showToast, t]);
 
   // ── Left panel: filters + list + create form ─────────────────────────────
   const sidebar = (
     <div className="flex h-full flex-col">
       <div className="border-b border-edge px-4 py-3">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-heading text-body font-medium text-primary">Ideas</h2>
+          <h2 className="font-heading text-body font-medium text-primary">{t("ideas.title")}</h2>
           <span className="text-xs text-muted">{ideas.length}</span>
         </div>
 
         {/* S-8.1: pending queue counter (shared SWR key with the panel) */}
         {pendingCount > 0 && (
           <div className="mt-2 rounded-md border border-action/30 bg-action/10 px-2.5 py-1.5 text-xs font-medium text-action">
-            Ideas por confirmar ({pendingCount})
+            {t("ideas.pendingCounter", { count: pendingCount })}
           </div>
         )}
 
@@ -874,10 +875,10 @@ export default function IdeasWorkshop() {
             setShowCreate((prev) => !prev);
           }}
           className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover"
-          aria-label="Nueva idea"
+          aria-label={t("ideas.newIdeaAria")}
         >
           <Icon name="plus" size={13} />
-          Nueva idea
+          {t("ideas.newIdea")}
         </button>
       </div>
 
@@ -887,10 +888,10 @@ export default function IdeasWorkshop() {
       {pendingCaptures.length > 0 && (
         <div
           role="region"
-          aria-label="Revisar capturas por confirmar"
+          aria-label={t("ideas.reviewAria")}
           className="border-b border-edge bg-surface/60 px-4 py-3"
         >
-          <h3 className="mb-2 text-xs font-medium text-primary">Por confirmar</h3>
+          <h3 className="mb-2 text-xs font-medium text-primary">{t("ideas.pendingHeading")}</h3>
           <ul className="space-y-2">
             {pendingCaptures.map((capture: PendingCapture) => (
               <li
@@ -917,7 +918,7 @@ export default function IdeasWorkshop() {
                     disabled={actingCaptureId === capture.capture_id}
                     className="flex-1 rounded-md bg-action px-2 py-1 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Guardar como idea
+                    {t("ideas.saveAsIdea")}
                   </button>
                   <button
                     type="button"
@@ -925,7 +926,7 @@ export default function IdeasWorkshop() {
                     disabled={actingCaptureId === capture.capture_id}
                     className="flex-1 rounded-md border border-status-error/30 px-2 py-1 text-xs text-status-error transition-colors hover:bg-status-error/10 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Descartar
+                    {t("ideas.discard")}
                   </button>
                 </div>
               </li>
@@ -937,25 +938,25 @@ export default function IdeasWorkshop() {
       {showCreate && (
         <div
           role="group"
-          aria-label="Crear idea"
+          aria-label={t("ideas.createAria")}
           className="border-b border-edge bg-surface/60 px-4 py-3"
         >
           <div className="space-y-2">
             <div>
               <label htmlFor="idea-slug" className="mb-1 block text-xs text-muted">
-                Slug
+                {t("ideas.slugLabel")}
               </label>
               <input
                 id="idea-slug"
                 value={createSlug}
                 onChange={(e) => setCreateSlug(e.target.value)}
-                placeholder="ej: arquero-ciego"
+                placeholder={t("ideas.slugPlaceholder")}
                 className="w-full rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
             </div>
             <div>
               <label htmlFor="idea-type" className="mb-1 block text-xs text-muted">
-                Tipo
+                {t("ideas.typeLabel")}
               </label>
               <select
                 id="idea-type"
@@ -965,45 +966,45 @@ export default function IdeasWorkshop() {
               >
                 {IDEA_TYPES.map((type) => (
                   <option key={type} value={type}>
-                    {TYPE_LABELS[type]}
+                    {t(TYPE_LABELS[type])}
                   </option>
                 ))}
               </select>
             </div>
             <div>
               <label htmlFor="idea-title" className="mb-1 block text-xs text-muted">
-                Título (opcional)
+                {t("ideas.titleLabel")}
               </label>
               <input
                 id="idea-title"
                 value={createTitle}
                 onChange={(e) => setCreateTitle(e.target.value)}
-                placeholder="ej: prototipo de diosa"
+                placeholder={t("ideas.titlePlaceholder")}
                 className="w-full rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
             </div>
             <div>
               <label htmlFor="idea-tags" className="mb-1 block text-xs text-muted">
-                Etiquetas (separadas por coma)
+                {t("ideas.tagsLabel")}
               </label>
               <input
                 id="idea-tags"
                 value={createTags}
                 onChange={(e) => setCreateTags(e.target.value)}
-                placeholder="ej: arquero, ciego"
+                placeholder={t("ideas.tagsPlaceholder")}
                 className="w-full rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
             </div>
             <div>
               <label htmlFor="idea-body" className="mb-1 block text-xs text-muted">
-                Cuerpo
+                {t("ideas.bodyLabel")}
               </label>
               <textarea
                 id="idea-body"
                 value={createBody}
                 onChange={(e) => setCreateBody(e.target.value)}
                 rows={4}
-                placeholder="Describí la idea..."
+                placeholder={t("ideas.bodyPlaceholder")}
                 className="w-full resize-none rounded-md border border-edge bg-surface-raised px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
             </div>
@@ -1014,7 +1015,7 @@ export default function IdeasWorkshop() {
                 disabled={creating}
                 className="flex-1 rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {creating ? "Creando..." : "Crear idea"}
+                {creating ? t("ideas.creating") : t("ideas.create")}
               </button>
               <button
                 type="button"
@@ -1022,7 +1023,7 @@ export default function IdeasWorkshop() {
                 disabled={creating}
                 className="rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
               >
-                Cancelar
+                {t("ideas.cancel")}
               </button>
             </div>
           </div>
@@ -1040,76 +1041,76 @@ export default function IdeasWorkshop() {
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar por título, slug o etiqueta..."
-            aria-label="Buscar ideas"
+            placeholder={t("ideas.searchPlaceholder")}
+            aria-label={t("ideas.searchAria")}
             className="w-full rounded-md border border-edge bg-surface-raised py-1.5 pl-8 pr-3 text-xs text-primary placeholder:text-muted transition-colors focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
           />
         </div>
         <div className="grid grid-cols-2 gap-1.5">
           <select
-            aria-label="Ordenar ideas"
+            aria-label={t("ideas.sortAria")}
             value={sortKey}
             onChange={(e) => setSortKey(e.target.value as IdeaSortKey)}
             className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
           >
-            <option value="recent">Recientes</option>
-            <option value="oldest">Más antiguas</option>
-            <option value="name">Nombre</option>
-            <option value="type">Tipo</option>
-            <option value="status">Estado</option>
+            <option value="recent">{t("ideas.sort.recent")}</option>
+            <option value="oldest">{t("ideas.sort.oldest")}</option>
+            <option value="name">{t("ideas.sort.name")}</option>
+            <option value="type">{t("ideas.sort.type")}</option>
+            <option value="status">{t("ideas.sort.status")}</option>
           </select>
           {sortKey === "name" || sortKey === "type" || sortKey === "status" ? (
             <select
-              aria-label="Dirección de orden"
+              aria-label={t("ideas.sortDirectionAria")}
               value={sortOrder}
               onChange={(e) => setSortOrder(e.target.value as "asc" | "desc")}
               className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
             >
-              <option value="desc">Descendente</option>
-              <option value="asc">Ascendente</option>
+              <option value="desc">{t("ideas.sort.desc")}</option>
+              <option value="asc">{t("ideas.sort.asc")}</option>
             </select>
           ) : (
             <span className="flex items-center justify-center rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-muted">
-              {sortKey === "recent" ? "Más reciente primero" : "Más antigua primero"}
+              {sortKey === "recent" ? t("ideas.sort.recentFirst") : t("ideas.sort.oldestFirst")}
             </span>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-1.5 border-b border-edge px-4 py-2.5" aria-label="Filtros">
+      <div className="grid grid-cols-3 gap-1.5 border-b border-edge px-4 py-2.5" aria-label={t("ideas.filtersAria")}>
         <select
-          aria-label="Filtrar por tipo"
+          aria-label={t("ideas.filter.typeAria")}
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value as "" | IdeaType)}
           className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
         >
-          <option value="">Tipo</option>
+          <option value="">{t("ideas.filter.typeAll")}</option>
           {IDEA_TYPES.map((type) => (
             <option key={type} value={type}>
-              {TYPE_LABELS[type]}
+              {t(TYPE_LABELS[type])}
             </option>
           ))}
         </select>
         <select
-          aria-label="Filtrar por estado"
+          aria-label={t("ideas.filter.statusAria")}
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value as "" | IdeaStatus)}
           className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
         >
-          <option value="">Estado</option>
-          <option value="fresh">{STATUS_LABELS.fresh}</option>
-          <option value="used">{STATUS_LABELS.used}</option>
+          <option value="">{t("ideas.filter.statusAll")}</option>
+          <option value="fresh">{t(STATUS_LABELS.fresh)}</option>
+          <option value="used">{t(STATUS_LABELS.used)}</option>
         </select>
         <select
-          aria-label="Filtrar por origen"
+          aria-label={t("ideas.filter.sourceAria")}
           value={sourceFilter}
           onChange={(e) => setSourceFilter(e.target.value as "" | IdeaSource)}
           className="w-full rounded-md border border-edge bg-surface-raised px-1.5 py-1 text-xs text-primary focus:border-action focus:outline-none"
         >
-          <option value="">Origen</option>
-          <option value="telegram">{SOURCE_LABELS.telegram}</option>
-          <option value="manual">{SOURCE_LABELS.manual}</option>
-          <option value="assistant">{SOURCE_LABELS.assistant}</option>
+          <option value="">{t("ideas.filter.sourceAll")}</option>
+          <option value="telegram">{t(SOURCE_LABELS.telegram)}</option>
+          <option value="manual">{t(SOURCE_LABELS.manual)}</option>
+          <option value="assistant">{t(SOURCE_LABELS.assistant)}</option>
         </select>
       </div>
 
@@ -1124,14 +1125,14 @@ export default function IdeasWorkshop() {
           </p>
         ) : ideas.length === 0 ? (
           <p className="px-4 py-6 text-center text-xs text-muted">
-            No hay ideas. Creá la primera con "Nueva idea".
+            {t("ideas.empty")}
           </p>
         ) : filteredIdeas.length === 0 ? (
           <p className="px-4 py-6 text-center text-xs text-muted">
-            No hay ideas que coincidan.
+            {t("ideas.emptyFiltered")}
           </p>
         ) : (
-          <ul aria-label="Lista de ideas" className="space-y-0.5 px-2">
+          <ul aria-label={t("ideas.listAria")} className="space-y-0.5 px-2">
             {filteredIdeas.map((idea: IdeaSummary) => (
               <li key={idea.slug}>
                 <button
@@ -1149,7 +1150,7 @@ export default function IdeasWorkshop() {
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium text-primary">{idea.title || idea.slug}</span>
                     <span className="block truncate text-sm text-muted">
-                      {TYPE_LABELS[idea.type]} · {STATUS_LABELS[idea.status]}
+                      {t(TYPE_LABELS[idea.type])} · {t(STATUS_LABELS[idea.status])}
                     </span>
                   </span>
                 </button>
@@ -1179,28 +1180,27 @@ export default function IdeasWorkshop() {
           <div className="flex h-14 w-14 items-center justify-center rounded-full bg-action/10 text-action">
             <Icon name="lightbulb" size={28} />
           </div>
-          <h2 className="font-heading text-h3 text-primary">Banco global de ideas</h2>
+          <h2 className="font-heading text-h3 text-primary">{t("ideas.detail.title")}</h2>
           <p className="max-w-sm text-body text-muted">
-            Seleccioná una idea del listado para verla en detalle, reclasificarla o
-            materializarla en un mundo.
+            {t("ideas.detail.empty")}
           </p>
         </div>
       ) : (
-        <article aria-label={`Idea ${selectedIdea.slug}`}>
+        <article aria-label={t("ideas.detail.articleAria", { slug: selectedIdea.slug })}>
           <header className="mb-4 border-b border-edge pb-4">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="font-heading text-h2 text-primary">{selectedIdea.title || selectedIdea.slug}</h2>
               <span className="rounded-full bg-action/10 px-2.5 py-0.5 text-xs text-action">
-                {TYPE_LABELS[selectedIdea.type]}
+                {t(TYPE_LABELS[selectedIdea.type])}
               </span>
               <span className="rounded-full bg-surface-raised px-2.5 py-0.5 text-xs text-muted">
-                {STATUS_LABELS[selectedIdea.status]}
+                {t(STATUS_LABELS[selectedIdea.status])}
               </span>
               <div className="ml-auto flex items-center gap-2">
                 <button
                   type="button"
                   onClick={handleExportIdeaPdf}
-                  aria-label="Exportar idea a PDF"
+                  aria-label={t("ideas.detail.exportPdfAria")}
                   className="rounded-md border border-edge bg-surface px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action"
                 >
                   <span className="flex items-center gap-1">
@@ -1211,7 +1211,7 @@ export default function IdeasWorkshop() {
                 <button
                   type="button"
                   onClick={() => void handleExportIdeaDocx()}
-                  aria-label="Exportar idea a DOCX"
+                  aria-label={t("ideas.detail.exportDocxAria")}
                   className="rounded-md border border-edge bg-surface px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action"
                 >
                   <span className="flex items-center gap-1">
@@ -1223,22 +1223,22 @@ export default function IdeasWorkshop() {
             </div>
             <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
               <div>
-                <dt className="inline">Origen: </dt>
-                <dd className="inline">{SOURCE_LABELS[selectedIdea.source]}</dd>
+                <dt className="inline">{t("ideas.detail.origin")}</dt>
+                <dd className="inline">{t(SOURCE_LABELS[selectedIdea.source])}</dd>
               </div>
               <div>
-                <dt className="inline">Creada: </dt>
+                <dt className="inline">{t("ideas.detail.created")}</dt>
                 <dd className="inline">{new Date(selectedIdea.timestamp).toLocaleString()}</dd>
               </div>
               {selectedIdea.tags.length > 0 && (
                 <div>
-                  <dt className="inline">Etiquetas: </dt>
+                  <dt className="inline">{t("ideas.detail.tags")}</dt>
                   <dd className="inline">{selectedIdea.tags.join(", ")}</dd>
                 </div>
               )}
               {selectedIdea.used_in.length > 0 && (
                 <div>
-                  <dt className="inline">Usada en: </dt>
+                  <dt className="inline">{t("ideas.detail.usedIn")}</dt>
                   <dd className="inline">{selectedIdea.used_in.join(", ")}</dd>
                 </div>
               )}
@@ -1257,22 +1257,22 @@ export default function IdeasWorkshop() {
           {/* Attach image (POST /api/ideas/{slug}/media) — a <label> styled
               as a button opens the hidden file input; the embed is added to
               the body server-side, so only the three SWR keys refresh. */}
-          <section aria-label="Imagen de la idea" className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
-            <h3 className="mb-2 text-body font-medium text-primary">Imagen</h3>
+          <section aria-label={t("ideas.detail.imageSectionAria")} className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
+            <h3 className="mb-2 text-body font-medium text-primary">{t("ideas.detail.imageHeading")}</h3>
             {selectedIdea.media_path ? (
               <p className="mb-2 text-xs text-muted">
-                Ya tiene imagen adjunta: {selectedIdea.media_path.split("/").pop()}
+                {t("ideas.detail.hasImage", { name: selectedIdea.media_path.split("/").pop() ?? "" })}
               </p>
             ) : (
-              <p className="mb-2 text-xs text-muted">Sin imagen</p>
+              <p className="mb-2 text-xs text-muted">{t("ideas.detail.noImage")}</p>
             )}
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover">
               <Icon name="image" size={13} />
               {attachingMedia
-                ? "Adjuntando..."
+                ? t("ideas.detail.attaching")
                 : selectedIdea.media_path
-                  ? "Reemplazar imagen"
-                  : "Adjuntar imagen"}
+                  ? t("ideas.detail.replaceImage")
+                  : t("ideas.detail.attachImage")}
               <input
                 type="file"
                 accept="image/*"
@@ -1284,14 +1284,14 @@ export default function IdeasWorkshop() {
           </section>
 
           {/* Edit title */}
-          <section aria-label="Título de la idea" className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
-            <h3 className="mb-2 text-body font-medium text-primary">Título</h3>
+          <section aria-label={t("ideas.detail.titleSectionAria")} className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
+            <h3 className="mb-2 text-body font-medium text-primary">{t("ideas.detail.titleHeading")}</h3>
             <div className="flex flex-wrap items-center gap-2">
               <input
                 id="edit-idea-title"
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
-                placeholder="Sin título — se muestra el slug"
+                placeholder={t("ideas.detail.titlePlaceholder")}
                 className="min-w-0 flex-1 rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               />
               <button
@@ -1300,24 +1300,24 @@ export default function IdeasWorkshop() {
                 disabled={savingTitle || editTitle.trim() === (selectedIdea.title ?? "")}
                 className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {savingTitle ? "Guardando..." : "Guardar título"}
+                {savingTitle ? t("ideas.detail.saving") : t("ideas.detail.saveTitle")}
               </button>
             </div>
           </section>
 
           {/* Reclassify */}
-          <section aria-label="Reclasificar idea" className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
-            <h3 className="mb-2 text-body font-medium text-primary">Clasificación</h3>
+          <section aria-label={t("ideas.detail.reclassifyAria")} className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
+            <h3 className="mb-2 text-body font-medium text-primary">{t("ideas.detail.classification")}</h3>
             <div className="flex flex-wrap items-center gap-2">
               <select
-                aria-label="Tipo de la idea"
+                aria-label={t("ideas.detail.typeAria")}
                 value={reclassifyType}
                 onChange={(e) => setReclassifyType(e.target.value as IdeaType)}
                 className="rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
               >
                 {IDEA_TYPES.map((type) => (
                   <option key={type} value={type}>
-                    {TYPE_LABELS[type]}
+                    {t(TYPE_LABELS[type])}
                   </option>
                 ))}
               </select>
@@ -1327,7 +1327,7 @@ export default function IdeasWorkshop() {
                 disabled={reclassifying || reclassifyType === selectedIdea.type}
                 className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {reclassifying ? "Guardando..." : "Guardar tipo"}
+                {reclassifying ? t("ideas.detail.saving") : t("ideas.detail.saveType")}
               </button>
             </div>
           </section>
@@ -1381,7 +1381,7 @@ export default function IdeasWorkshop() {
                   >
                     {MATERIALIZE_SECTIONS.map((section) => (
                       <option key={section} value={section}>
-                        {SECTION_LABELS[section]}
+                        {t(SECTION_LABELS[section])}
                       </option>
                     ))}
                   </select>
@@ -1464,11 +1464,11 @@ export default function IdeasWorkshop() {
               (MarkdownViewer strips frontmatter); this panel is the product
               value: consultable archive of every prior version. */}
           <section
-            aria-label="Historial de versiones"
+            aria-label={t("ideas.detail.versionsAria")}
             className="mb-4 rounded-lg border border-edge bg-surface-raised p-4"
           >
             <h3 className="mb-2 text-body font-medium text-primary">
-              Historial de versiones
+              {t("ideas.detail.versionsHeading")}
             </h3>
             {versionsError ? (
               <p className="text-xs text-status-error">
@@ -1479,17 +1479,17 @@ export default function IdeasWorkshop() {
               </p>
             ) : archivedVersions.length === 0 ? (
               <p className="text-xs text-muted">
-                Sin versiones archivadas. La idea actual es la versión viva.
+                {t("ideas.detail.noVersions")}
               </p>
             ) : (
-              <ul aria-label="Versiones archivadas" className="space-y-1">
+              <ul aria-label={t("ideas.detail.archivedAria")} className="space-y-1">
                 {archivedVersions.map((v) => (
                   <li
                     key={v.version}
                     className="flex items-baseline justify-between gap-2 rounded-md bg-surface px-2.5 py-1.5 text-xs"
                   >
                     <span className="shrink-0 font-medium text-primary">
-                      Versión {v.version}
+                      {t("ideas.detail.version", { version: v.version })}
                     </span>
                     <span
                       className="min-w-0 truncate text-muted"
@@ -1510,10 +1510,10 @@ export default function IdeasWorkshop() {
               onClick={() => void handleDelete()}
               disabled={deleting}
               className="flex items-center gap-1.5 rounded-md border border-status-error/30 px-3 py-1.5 text-xs text-status-error transition-colors hover:bg-status-error/10 disabled:opacity-50"
-              aria-label={`Eliminar idea ${selectedIdea.slug}`}
+              aria-label={t("ideas.detail.deleteAria", { slug: selectedIdea.slug })}
             >
               <Icon name="trash" size={13} />
-              {deleting ? "Eliminando..." : "Eliminar"}
+              {deleting ? t("ideas.detail.deleting") : t("ideas.detail.delete")}
             </button>
           </div>
         </article>
@@ -1524,25 +1524,24 @@ export default function IdeasWorkshop() {
   // ── Right panel: persistent assistant (null-mundo) ───────────────────────
   const contextPanel = (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4">
-      <h2 className="mb-2 text-body font-medium text-primary">Contexto</h2>
+      <h2 className="mb-2 text-body font-medium text-primary">{t("ideas.context.heading")}</h2>
       <p className="text-xs leading-relaxed text-muted">
-        El Taller de Ideas es un banco global, sin mundo activo. Las ideas son
-        arquetipos reutilizables que podés materializar en cualquier mundo.
+        {t("ideas.context.body")}
       </p>
       <dl className="mt-4 space-y-2 text-xs text-muted">
         <div className="flex justify-between">
-          <dt>Ideas en el banco</dt>
+          <dt>{t("ideas.context.bankCount")}</dt>
           <dd className="text-primary">{ideas.length}</dd>
         </div>
         {selectedIdea && (
           <>
             <div className="flex justify-between">
-              <dt>Idea seleccionada</dt>
+              <dt>{t("ideas.context.selected")}</dt>
               <dd className="text-primary">{selectedIdea.slug}</dd>
             </div>
             <div className="flex justify-between">
-              <dt>Estado</dt>
-              <dd className="text-primary">{STATUS_LABELS[selectedIdea.status]}</dd>
+              <dt>{t("ideas.context.status")}</dt>
+              <dd className="text-primary">{t(STATUS_LABELS[selectedIdea.status])}</dd>
             </div>
           </>
         )}
