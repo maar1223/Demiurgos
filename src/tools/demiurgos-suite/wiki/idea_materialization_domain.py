@@ -222,10 +222,14 @@ def build_grounding_candidates(
 
     The reader must expose ``search(query)`` returning ranked hits and
     ``read(path)`` returning a full entity mapping, like
-    ``_GuidedGraphReader`` (api_server.py:5263-5277). Only entities with a
-    non-empty canonical ``id`` are advertised (``graph_indexer._entity_from_file``
-    sets ``id`` only when ``is_canonical_id``, :212-215); legacy entities with
-    empty ids are never advertised. Rank order (the reader's ``search("*")``
+    ``_GuidedGraphReader`` (api_server.py:5263-5277). When the reader exposes
+    the ``entities()`` enumeration seam (real index, R-IM-03/06), it is used
+    directly — ``search("*")`` returns ``[]`` against the real index by
+    design, so the search/read pair would silently see an empty world. Only
+    entities with a non-empty canonical ``id`` are advertised
+    (``graph_indexer._entity_from_file`` sets ``id`` only when
+    ``is_canonical_id``, :212-215); legacy entities with empty ids are never
+    advertised. Rank order (the reader's enumeration / ``search("*")``
     order) is preserved; gathering stops at ``MAX_CANDIDATES`` or
     ``MAX_CANDIDATE_PAYLOAD_CHARS`` serialized chars, whichever comes first,
     dropping the lowest-ranked remainder. An empty world yields an empty list
@@ -233,11 +237,7 @@ def build_grounding_candidates(
     """
     candidates: list[dict[str, str]] = []
     payload_chars = 0
-    for hit in _reader_search(reader):
-        path = hit.get("path") if isinstance(hit, Mapping) else None
-        if not isinstance(path, str) or not path:
-            continue
-        entity = _reader_read(reader, path)
+    for entity in _iter_entity_mappings(reader):
         if not isinstance(entity, Mapping):
             continue
         canonical_id = entity.get("id")
@@ -440,8 +440,47 @@ def _parse_frontmatter(content: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Reader seam (AD6)
+# Reader seam (AD6) — the reader is the caller's injected seam
 # ---------------------------------------------------------------------------
+
+
+def _reader_entities(reader: object) -> list[Any] | None:
+    """Full entity mappings from the injected reader's ``entities()`` seam.
+
+    The reader is the caller's seam; ``_GuidedGraphReader`` exposes the real
+    index enumeration (R-IM-03/06 grounding). Returns None when the reader
+    does not expose the method so callers fall back to the legacy
+    ``search("*")`` + ``read(path)`` pattern (readers without the seam keep
+    their exact previous behavior).
+    """
+    entities = getattr(reader, "entities", None)
+    if not callable(entities):
+        return None
+    items = entities()
+    return list(items) if isinstance(items, (list, tuple)) else None
+
+
+def _iter_entity_mappings(reader: object) -> Iterable[Any]:
+    """Yield full entity mappings from the reader, enumeration-first.
+
+    Prefers the real ``entities()`` seam (full entities in index insertion
+    order); falls back to the legacy ``search("*")`` + ``read(path)`` pair so
+    readers without the new method behave exactly as before. Failures
+    propagate so a broken graph is never silently mistaken for an empty world
+    (fail loud, not empty).
+    """
+    enumerated = _reader_entities(reader)
+    if enumerated is not None:
+        for entity in enumerated:
+            yield entity
+        return
+    for hit in _reader_search(reader):
+        path = hit.get("path") if isinstance(hit, Mapping) else None
+        if not isinstance(path, str) or not path:
+            continue
+        entity = _reader_read(reader, path)
+        if entity is not None:
+            yield entity
 
 
 def _reader_search(reader: object) -> list[Any]:

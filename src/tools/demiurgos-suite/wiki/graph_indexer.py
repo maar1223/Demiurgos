@@ -759,6 +759,21 @@ class EntityGraphIndex:
 
         return True
 
+    def entities(self) -> list[dict[str, Any]]:
+        """Enumerate ALL indexed entities, in cache insertion order (read-only).
+
+        Unlike ``search`` this never filters, scores or truncates: it returns
+        a shallow copy of every cached entity dict under the index lock,
+        preserving the ``_scan_mundo`` build order (section order, sorted
+        files). It is the only reliable "give me the whole world" query —
+        ``search("*")`` and ``search("")`` both return ``[]`` by design
+        (zero-token / zero-score fast paths), so grounding and id-enumeration
+        callers MUST use this method (R-IM-03/06). Thread-safe; the returned
+        dicts are copies and must not be mutated back into the cache.
+        """
+        with self._lock:
+            return [dict(entity) for entity in self._cache["entities"].values()]
+
     def get_entity(self, path: str) -> EntityDetail | None:
         """Return full entity with backlinks and forward links.
 

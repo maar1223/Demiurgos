@@ -5354,6 +5354,27 @@ class _GuidedGraphReader:
     def search(self, query: str) -> list[dict]:
         return [vars(hit) for hit in self._index.search(query)]
 
+    def entities(self) -> list[dict]:
+        """Enumerate ALL indexed entities (index cache insertion order).
+
+        Prefers the real index ``entities()`` seam (R-IM-03/06 grounding);
+        falls back to the legacy ``search("*")`` + ``read(path)`` walk for
+        index seams (test fakes) that predate the method. Read-only; the
+        returned dicts are copies.
+        """
+        enumerate_all = getattr(self._index, "entities", None)
+        if callable(enumerate_all):
+            return list(enumerate_all())
+        entities: list[dict] = []
+        for hit in self.search("*"):
+            path = hit.get("path") if isinstance(hit, dict) else None
+            if not isinstance(path, str) or not path:
+                continue
+            entity = self.read(path)
+            if entity is not None:
+                entities.append(entity)
+        return entities
+
     def read(self, entity_path: str) -> dict | None:
         entity = self._index.get_entity(entity_path)
         return vars(entity) if entity is not None else None
@@ -8087,18 +8108,15 @@ def export_idea_docx(slug: str, request: Request):
 def _materialize_existing_ids(reader: _GuidedGraphReader) -> list[str]:
     """Existing canonical entity ids in the world, via the diskless reader seam.
 
-    Uses the same ``search("*")`` -> ``read(path)`` pattern as the grounding
-    candidates (AD6): only entities with a non-empty canonical ``id`` count
-    (``graph_indexer._entity_from_file`` sets ``id`` only when
-    ``is_canonical_id``), so relation validation against this set mirrors
-    ``set_graph_relation``'s id-only gate (R-IM-03).
+    Uses the reader's ``entities()`` enumeration (the real index seam,
+    R-IM-03/06) instead of ``search("*")``, which returns ``[]`` against the
+    real index by design (zero-score fast path). Only entities with a
+    non-empty canonical ``id`` count (``graph_indexer._entity_from_file``
+    sets ``id`` only when ``is_canonical_id``), so relation validation
+    against this set mirrors ``set_graph_relation``'s id-only gate (R-IM-03).
     """
     ids: list[str] = []
-    for hit in reader.search("*"):
-        path = hit.get("path") if isinstance(hit, dict) else None
-        if not isinstance(path, str) or not path:
-            continue
-        entity = reader.read(path)
+    for entity in reader.entities():
         if not isinstance(entity, dict):
             continue
         canonical_id = entity.get("id")

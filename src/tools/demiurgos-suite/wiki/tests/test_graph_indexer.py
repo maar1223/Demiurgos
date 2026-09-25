@@ -406,5 +406,56 @@ class TestIdeasBankCanonSafety(unittest.TestCase):
             self.assertIsNone(index.get_entity("Arquero Ciego"))
 
 
+class TestEntitiesEnumeration(unittest.TestCase):
+    """``entities()`` — the read-only whole-world enumeration seam (WU9/BUG-B).
+
+    ``search("*")`` and ``search("")`` both return [] by design (zero-token /
+    zero-score fast paths), so grounding/id-enumeration callers (R-IM-03/06)
+    use ``entities()``: every cached entity, in ``_scan_mundo`` build order.
+    """
+
+    def _make_world(self, tmpdir: str) -> tuple[Path, Path]:
+        mundos_path = Path(tmpdir) / "mundos"
+        mundo_dir = mundos_path / "enumworld"
+        (mundo_dir / "lore").mkdir(parents=True, exist_ok=True)
+        return mundos_path, mundo_dir
+
+    def test_entities_returns_all_in_build_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._make_world(tmpdir)
+            _write_okf(mundo_dir, "lore/B.md", "Beta")
+            _write_okf(mundo_dir, "lore/A.md", "Alpha")
+            index = EntityGraphIndex(mundos_path)
+            index.build("enumworld")
+            # search("*") returns [] against a real index (zero-score fast
+            # path) — the enumeration seam is the only whole-world query.
+            self.assertEqual(index.search("*"), [])
+            entities = index.entities()
+            self.assertEqual([e["path"] for e in entities], ["lore/A.md", "lore/B.md"])
+            self.assertEqual([e["id"] for e in entities], ["", ""])
+            self.assertEqual(entities[0]["title"], "Alpha")
+
+    def test_entities_returns_copies_not_cache_references(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._make_world(tmpdir)
+            _write_okf(mundo_dir, "lore/A.md", "Alpha")
+            index = EntityGraphIndex(mundos_path)
+            index.build("enumworld")
+            first = index.entities()[0]
+            first["title"] = "MUTATED"
+            self.assertEqual(index._cache["entities"]["lore/A.md"]["title"], "Alpha")
+
+    def test_entities_reflects_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._make_world(tmpdir)
+            _write_okf(mundo_dir, "lore/A.md", "Alpha")
+            index = EntityGraphIndex(mundos_path)
+            index.build("enumworld")
+            self.assertEqual(len(index.entities()), 1)
+            _write_okf(mundo_dir, "lore/C.md", "Gamma")
+            index.build("enumworld")
+            self.assertEqual([e["path"] for e in index.entities()], ["lore/A.md", "lore/C.md"])
+
+
 if __name__ == "__main__":
     unittest.main()

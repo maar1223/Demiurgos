@@ -413,6 +413,42 @@ def test_candidates_skip_hits_without_path() -> None:
     assert build_grounding_candidates(_PathlessReader([_entity("lore/a/one.md", id="Tema::Uno")])) == []
 
 
+def test_candidates_use_entities_seam_when_search_is_empty() -> None:
+    """BUG-B regression at the domain level: grounding must use the reader's
+    ``entities()`` enumeration seam — ``search("*")`` returns [] against the
+    real index by design, so a reader mirroring that behavior must still
+    yield candidates."""
+    class _RealIndexLikeReader(_FakeReader):
+        def entities(self) -> list[dict]:
+            return [dict(e) for e in self._entities]
+
+        def search(self, query: str) -> list[dict]:
+            return []
+
+    reader = _RealIndexLikeReader([
+        _entity("personajes/rhyz.md", id="Rhyz::Rhyz", title="Rhyz", type="Personaje"),
+    ])
+    assert build_grounding_candidates(reader) == [
+        {"id": "Rhyz::Rhyz", "title": "Rhyz", "type": "Personaje", "summary": ""},
+    ]
+
+
+def test_candidates_prefer_entities_seam_order_when_both_exposed() -> None:
+    """A reader with both seams must enumerate via ``entities()`` (index
+    insertion order), never re-derive from search hits."""
+    class _BothSeamsReader(_FakeReader):
+        def entities(self) -> list[dict]:
+            return [dict(e) for e in reversed(self._entities)]
+
+    reader = _BothSeamsReader([
+        _entity("lore/a/one.md", id="Tema::Uno", title="Uno"),
+        _entity("lore/a/two.md", id="Tema::Dos", title="Dos"),
+    ])
+    # The enumeration seam is authoritative (reversed order proves it is used
+    # instead of the search/read fallback).
+    assert [c["id"] for c in build_grounding_candidates(reader)] == ["Tema::Dos", "Tema::Uno"]
+
+
 # ---------------------------------------------------------------------------
 # validate_relations (task 1.6, R-IM-03 + binding clarification)
 # ---------------------------------------------------------------------------

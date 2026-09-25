@@ -8053,6 +8053,45 @@ class TestMaterializeConfirm:
         assert "based_on: ideas/arquero-ciego" in content
 
     # -----------------------------------------------------------------------
+    # WU9 (BUG-B) — validated relations reach the graph (R-IM-03/06, SC4)
+    # -----------------------------------------------------------------------
+
+    def test_confirm_validated_relations_appear_in_graph_entities(
+            self, client: TestClient, monkeypatch):
+        """R-IM-06 (SC4): a validated AI relation against a REAL index entity
+        survives the confirm and appears as a forward_link of the new entity
+        in GET /api/{mundo}/graph/entities.
+
+        Regression for BUG-B: grounding candidates and existing_ids must come
+        from the real index enumeration (``entities()``), never from
+        ``search("*")`` — which returns ``[]`` against the real index by
+        design, so every AI relation used to be discarded as
+        ``target_not_found`` and no validated relation ever reached the graph.
+        """
+        _write_idea()
+        personajes = api_server.MUNDOS_DIR / "test_mundo" / "personajes"
+        personajes.mkdir(parents=True, exist_ok=True)
+        (personajes / "rhyz.md").write_text(
+            "---\nid: Rhyz::Rhyz\ntitle: Rhyz\ntype: Personaje\nstatus: stable\n"
+            "schema_version: 1\nrelaciones: []\n---\n# Rhyz\n", encoding="utf-8")
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(
+            request, relations=[{"target_id": "Rhyz::Rhyz", "rel_type": "aliado-de"}]))
+        monkeypatch.setattr(
+            api_server, "_GUIDED_REINDEX",
+            ReindexCoordinator(api_server._mundos_dir(), lambda w: api_server._get_graph(w)),
+        )
+        preview = _materialize_preview(client, section="personajes", folder="")
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["proposed_relations"] == [
+            {"target_id": "Rhyz::Rhyz", "title": "Rhyz", "rel_type": "aliado-de"},
+        ]
+        resp = self._confirm(client, preview.json(), section="personajes", path="arquero-ciego.md")
+        assert resp.status_code == 200 and resp.json()["index_status"] == "indexed"
+        graph = client.get("/api/test_mundo/graph/entities").json()
+        by_path = {entity["path"]: entity for entity in graph["entities"]}
+        assert by_path["personajes/arquero-ciego.md"]["forward_links"] == ["Rhyz::Rhyz"]
+
+    # -----------------------------------------------------------------------
     # WU9 (BUG-A) — confirm marks the idea used (R-CG-04, SC5/AC7)
     # -----------------------------------------------------------------------
 
