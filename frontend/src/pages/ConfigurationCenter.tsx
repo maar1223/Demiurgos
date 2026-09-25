@@ -1,4 +1,5 @@
 import type { CardState, ReadinessSnapshot } from "@/api/types";
+import type { MessageKey, TFunction } from "@/i18n/messages";
 
 /**
  * Configuration Center (OC12) — shared surface contract.
@@ -16,11 +17,11 @@ import type { CardState, ReadinessSnapshot } from "@/api/types";
 /** Panel relocated from the standalone page (ONB-4.3, WU-4c2). */
 export { MigrationPanel } from "@/components/organisms/MigrationPanel";
 
-export const STATE_META: Record<CardState, { label: string; badge: "default" | "success" | "warning" | "error" }> = {
-  pending: { label: "Pendiente", badge: "default" },
-  configured: { label: "Configurado", badge: "success" },
-  requires_connection: { label: "Requiere conexión", badge: "warning" },
-  error: { label: "Error", badge: "error" },
+export const STATE_META: Record<CardState, { labelKey: MessageKey; badge: "default" | "success" | "warning" | "error" }> = {
+  pending: { labelKey: "configCenter.state.pending", badge: "default" },
+  configured: { labelKey: "configCenter.state.configured", badge: "success" },
+  requires_connection: { labelKey: "configCenter.state.requiresConnection", badge: "warning" },
+  error: { labelKey: "configCenter.state.error", badge: "error" },
 };
 
 /**
@@ -55,30 +56,30 @@ export const DEFERRED_CARD_KEYS: ReadonlySet<string> = new Set(["import"]);
 /** Essential local readiness badges (OC11/OC21): World + local editor.
  *  No longer rendered by the Profile Preferencias surface (product-owner
  *  decision): kept exported for the shared contract tests. */
-export const ESSENTIAL_BADGES: { key: string; title: string }[] = [
-  { key: "world", title: "Mundos" },
-  { key: "editor", title: "Editor local" },
+export const ESSENTIAL_BADGES: { key: string; titleKey: MessageKey }[] = [
+  { key: "world", titleKey: "configCenter.essential.world" },
+  { key: "editor", titleKey: "configCenter.essential.editor" },
 ];
 
 interface CardAction {
-  label: string;
+  labelKey: MessageKey;
   to: string;
 }
 
 interface CardDef {
   key: string;
-  title: string;
-  description: string;
+  titleKey: MessageKey;
+  descriptionKey: MessageKey;
   action: CardAction | null;
 }
 
 export const CARD_DEFS: CardDef[] = [
-  { key: "identity", title: "Identidad", description: "Cuenta local: contraseña o palabras claves para recuperación autorizada.", action: { label: "Ir a Perfil", to: "/perfil" } },
-  { key: "assistant", title: "Asistente de Demiurgos", description: "Modelo compartido de la plataforma (multimodal, validado).", action: { label: "Configurar", to: "/perfil" } },
-  { key: "telegram", title: "Telegram", description: "Canal de mensajería para captura de ideas.", action: null },
-  { key: "locale", title: "Idioma, región y zona horaria", description: "Localización del paso 0, reconfigurable por separado.", action: { label: "Configurar", to: "/perfil?tab=preferencias" } },
-  { key: "world", title: "Mundos", description: "Crear, importar o restaurar. Entrada al Taller de Mundo.", action: { label: "Abrir Taller de Mundo", to: "/taller-mundo" } },
-  { key: "import", title: "Importar mundo", description: "Importar contenido a un mundo. El importador está operativo: iniciá una nueva importación o retomá una anterior desde el Taller de Mundo.", action: { label: "Ir al Taller de Mundo", to: "/taller-mundo" } },
+  { key: "identity", titleKey: "configCenter.card.identity.title", descriptionKey: "configCenter.card.identity.description", action: { labelKey: "configCenter.card.identity.action", to: "/perfil" } },
+  { key: "assistant", titleKey: "configCenter.card.assistant.title", descriptionKey: "configCenter.card.assistant.description", action: { labelKey: "configCenter.card.assistant.action", to: "/perfil" } },
+  { key: "telegram", titleKey: "configCenter.card.telegram.title", descriptionKey: "configCenter.card.telegram.description", action: null },
+  { key: "locale", titleKey: "configCenter.card.locale.title", descriptionKey: "configCenter.card.locale.description", action: { labelKey: "configCenter.card.locale.action", to: "/perfil?tab=preferencias" } },
+  { key: "world", titleKey: "configCenter.card.world.title", descriptionKey: "configCenter.card.world.description", action: { labelKey: "configCenter.card.world.action", to: "/taller-mundo" } },
+  { key: "import", titleKey: "configCenter.card.import.title", descriptionKey: "configCenter.card.import.description", action: { labelKey: "configCenter.card.import.action", to: "/taller-mundo" } },
 ];
 
 /**
@@ -109,9 +110,22 @@ export function cardState(cards: Record<string, CardState>, key: string): CardSt
  * "Pendiente / no apto" when no multimodal model has passed the three
  * proofs — it never claims configured in that case.
  */
-export function cardLabel(key: string, state: CardState): string {
-  if (key === "assistant" && state === "pending") return "Pendiente / no apto";
-  return STATE_META[state].label;
+export function cardLabelKey(key: string, state: CardState): MessageKey {
+  if (key === "assistant" && state === "pending") {
+    return "configCenter.state.pendingNotSuitable";
+  }
+  return STATE_META[state].labelKey;
+}
+
+/** Localized visible label for a card. Kept alongside {@link cardLabelKey} so
+ *  callers that already own a translation function render through the
+ *  catalogue instead of a module-level literal. */
+export function cardLabel(
+  key: string,
+  state: CardState,
+  t: TFunction,
+): string {
+  return t(cardLabelKey(key, state));
 }
 
 /**
@@ -123,13 +137,14 @@ export function essentialBadgeFor(
   readiness: ReadinessSnapshot | null,
   cards: Record<string, CardState>,
   key: string,
+  t: TFunction,
 ): { label: string; badge: "default" | "success" | "error" } {
   if (key === "editor") {
     return readiness?.local_editor.ok
-      ? { label: "Listo", badge: "success" }
-      : { label: "No disponible", badge: "error" };
+      ? { label: t("configCenter.state.ready"), badge: "success" }
+      : { label: t("configCenter.state.unavailable"), badge: "error" };
   }
   return cardState(cards, "world") === "configured"
-    ? { label: "Listo", badge: "success" }
-    : { label: "Pendiente", badge: "default" };
+    ? { label: t("configCenter.state.ready"), badge: "success" }
+    : { label: t("configCenter.state.pending"), badge: "default" };
 }

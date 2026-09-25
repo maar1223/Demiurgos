@@ -1140,7 +1140,7 @@ function ConfigurationSection() {
   // The locale surface renders as the inline form below, not as a navigation
   // card, so its readiness state still drives the honest badge (REQ-PIA-12).
   const localeState = cardState(cards, "locale");
-  const localeLabel = cardLabel("locale", localeState);
+  const localeLabel = cardLabel("locale", localeState, t);
   const localeMeta = STATE_META[localeState];
 
   return (

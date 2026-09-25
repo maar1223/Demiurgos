@@ -7,10 +7,11 @@ import {
   ESSENTIAL_BADGES,
   MigrationPanel,
   STATE_META,
-  cardLabel,
+  cardLabelKey,
   cardState,
   essentialBadgeFor,
 } from "@/pages/ConfigurationCenter";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 /**
  * ConfigurationCenter is now a shared exporter module (nav-restructure
@@ -21,6 +22,10 @@ import {
  * state helpers and the re-exported migration panel. The panel has a dedicated
  * suite (MigrationPanel.test.tsx) and the Profile sections are covered by
  * ProfilePage.test.tsx.
+ *
+ * i18n (app-bilingual-i18n): every user-visible string lives in the catalogue
+ * behind a `MessageKey`; assertions resolve through `tEs` so a copy change or
+ * a locale switch never breaks a contract test (UI-REQ-8).
  */
 describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
   afterEach(() => {
@@ -39,12 +44,12 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     ]);
     // Every card carries a title, a description and an explicit action (or null).
     for (const card of CARD_DEFS) {
-      expect(card.title.length).toBeGreaterThan(0);
-      expect(card.description.length).toBeGreaterThan(0);
+      expect(tEs(card.titleKey).length).toBeGreaterThan(0);
+      expect(tEs(card.descriptionKey).length).toBeGreaterThan(0);
     }
     // The import card keeps the operational copy (world-importer slice 2).
     const importCard = CARD_DEFS.find((card) => card.key === "import");
-    expect(importCard?.description).toMatch(/El importador está operativo/i);
+    expect(tEs(importCard!.descriptionKey)).toMatch(/El importador está operativo/i);
 
     // The redundant backup card was removed (product-owner decision): it only
     // pointed at the Respaldo section, which already has its own rail entry.
@@ -55,9 +60,10 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
     expect(CARD_DEFS.some((card) => card.key === "offline")).toBe(false);
     const localeCard = CARD_DEFS.find((card) => card.key === "locale");
     expect(localeCard?.action).toEqual({
-      label: "Configurar",
+      labelKey: "configCenter.card.locale.action",
       to: "/perfil?tab=preferencias",
     });
+    expect(tEs(localeCard!.action!.labelKey)).toBe("Configurar");
   });
 
   it("cardState never overstates deferred capabilities (ONB-3.1/ONB-3.5)", () => {
@@ -88,34 +94,34 @@ describe("ConfigurationCenter shared module (OC12, nav-restructure)", () => {
   });
 
   it("cardLabel reports the OC19 assistant label instead of bare pending", () => {
-    expect(cardLabel("assistant", "pending")).toBe("Pendiente / no apto");
-    expect(cardLabel("assistant", "configured")).toBe("Configurado");
-    expect(cardLabel("telegram", "pending")).toBe("Pendiente");
-    expect(cardLabel("telegram", "requires_connection")).toBe("Requiere conexión");
-    expect(cardLabel("telegram", "error")).toBe("Error");
+    expect(tEs(cardLabelKey("assistant", "pending"))).toBe("Pendiente / no apto");
+    expect(tEs(cardLabelKey("assistant", "configured"))).toBe("Configurado");
+    expect(tEs(cardLabelKey("telegram", "pending"))).toBe("Pendiente");
+    expect(tEs(cardLabelKey("telegram", "requires_connection"))).toBe("Requiere conexión");
+    expect(tEs(cardLabelKey("telegram", "error"))).toBe("Error");
   });
 
   it("essentialBadgeFor reflects local editor and world truth (OC11/OC21)", () => {
     const cards: Record<string, CardState> = { world: "configured" };
     expect(
-      essentialBadgeFor({ local_editor: { probe: "local_editor", ok: true, detail: "ok" } } as never, cards, "editor"),
+      essentialBadgeFor({ local_editor: { probe: "local_editor", ok: true, detail: "ok" } } as never, cards, "editor", tEs),
     ).toEqual({ label: "Listo", badge: "success" });
     expect(
-      essentialBadgeFor({ local_editor: { probe: "local_editor", ok: false, detail: "read-back mismatch" } } as never, cards, "editor"),
+      essentialBadgeFor({ local_editor: { probe: "local_editor", ok: false, detail: "read-back mismatch" } } as never, cards, "editor", tEs),
     ).toEqual({ label: "No disponible", badge: "error" });
     expect(
-      essentialBadgeFor(null, cards, "world"),
+      essentialBadgeFor(null, cards, "world", tEs),
     ).toEqual({ label: "Listo", badge: "success" });
     expect(
-      essentialBadgeFor(null, { world: "pending" }, "world"),
+      essentialBadgeFor(null, { world: "pending" }, "world", tEs),
     ).toEqual({ label: "Pendiente", badge: "default" });
   });
 
   it("exposes the essential badges and state meta", () => {
     expect(ESSENTIAL_BADGES.map((b) => b.key)).toEqual(["world", "editor"]);
-    expect(STATE_META.pending.label).toBe("Pendiente");
+    expect(tEs(STATE_META.pending.labelKey)).toBe("Pendiente");
     expect(STATE_META.configured.badge).toBe("success");
-    expect(STATE_META.requires_connection.label).toBe("Requiere conexión");
+    expect(tEs(STATE_META.requires_connection.labelKey)).toBe("Requiere conexión");
     expect(STATE_META.error.badge).toBe("error");
   });
 
