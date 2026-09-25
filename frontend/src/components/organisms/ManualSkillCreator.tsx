@@ -5,6 +5,7 @@ import {
 } from "@/api/methodologies";
 import { Button } from "@/components/atoms/Button";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /**
  * Manual authoring mode — markdown draft form (REQ-CC-2).
@@ -14,6 +15,7 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
  * selector — publishing a draft never activates anything for a world.
  */
 export function ManualSkillCreator() {
+  const { t } = useAppLanguage();
   const [skillId, setSkillId] = useState("");
   const [version, setVersion] = useState("");
   const [name, setName] = useState("");
@@ -40,7 +42,7 @@ export function ManualSkillCreator() {
       setName("");
       setSource("");
     } catch {
-      setError("La metodología no pasó la validación del compilador.");
+      setError(t("skillCreate.error"));
     } finally {
       setBusy(false);
     }
@@ -49,7 +51,7 @@ export function ManualSkillCreator() {
   return (
     <div className="rounded-lg border border-edge/20 bg-surface-raised/40 p-4">
       <h3 className="font-heading text-h4 text-primary">
-        Publicar un borrador
+        {t("skillCreate.title")}
       </h3>
       {error && <ErrorBanner message={error} className="mt-3" />}
       <form
@@ -69,7 +71,7 @@ export function ManualSkillCreator() {
             />
           </label>
           <label className="flex flex-col gap-1 text-small text-muted">
-            Versión
+            {t("skillCreate.version")}
             <input
               className="rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
               value={version}
@@ -77,7 +79,7 @@ export function ManualSkillCreator() {
             />
           </label>
           <label className="flex flex-col gap-1 text-small text-muted">
-            Nombre
+            {t("skillCreate.name")}
             <input
               className="rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
               value={name}
@@ -86,7 +88,7 @@ export function ManualSkillCreator() {
           </label>
         </div>
         <label className="flex flex-col gap-1 text-small text-muted">
-          Fuente (Markdown)
+          {t("skillCreate.source")}
           <textarea
             className="min-h-24 rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
             value={source}
@@ -94,7 +96,7 @@ export function ManualSkillCreator() {
           />
         </label>
         <Button type="submit" size="sm" disabled={busy}>
-          Publicar borrador
+          {t("skillCreate.submit")}
         </Button>
       </form>
     </div>

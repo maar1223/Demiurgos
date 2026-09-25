@@ -13,6 +13,8 @@ import {
   CLASIFICACION_VARIANT,
   TRUST_VARIANT,
 } from "@/components/molecules/InventoryRow";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { TFunction } from "@/i18n/messages";
 
 function shortId(id: string): string {
   return id.length > 14 ? `${id.slice(0, 14)}…` : id;
@@ -23,10 +25,13 @@ function shortId(id: string): string {
  *  server's full verdict; when integrity fails the compiler never ran, so the
  *  badge reads "sin revisar" instead of blaming the compiler. */
 function VerdictBadges({ verdict }: { verdict: PackageVerdict }) {
+  const { t } = useAppLanguage();
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Badge variant={verdict.checksum_valid ? "success" : "error"}>
-        {verdict.checksum_valid ? "Checksum OK" : "Checksum corrupto"}
+        {verdict.checksum_valid
+          ? t("skillImport.checksumOk")
+          : t("skillImport.checksumCorrupt")}
       </Badge>
       <Badge
         variant={
@@ -38,19 +43,19 @@ function VerdictBadges({ verdict }: { verdict: PackageVerdict }) {
         }
       >
         {verdict.signature_valid === true
-          ? "Firma verificada"
+          ? t("skillImport.signatureVerified")
           : verdict.signature_present
-            ? "Firma inválida"
-            : "Sin firma"}
+            ? t("skillImport.signatureInvalid")
+            : t("skillImport.noSignature")}
       </Badge>
       <Badge
         variant={verdict.ok ? "success" : verdict.checksum_valid ? "error" : "warning"}
       >
         {verdict.ok
-          ? "Compilación OK"
+          ? t("skillImport.compileOk")
           : verdict.checksum_valid
-            ? "Errores de compilación"
-            : "Compilación sin revisar"}
+            ? t("skillImport.compileErrors")
+            : t("skillImport.compileNotReviewed")}
       </Badge>
     </div>
   );
@@ -59,17 +64,17 @@ function VerdictBadges({ verdict }: { verdict: PackageVerdict }) {
 /** Map a transfer action failure to Author-facing copy (REQ-IMP-6): the
  *  reserved Skill Madre id and the failed re-validation get specific messages;
  *  everything else falls back to the API message. */
-function transferErrorMessage(cause: unknown): string {
+function transferErrorMessage(cause: unknown, t: TFunction): string {
   if (cause instanceof ApiError) {
     if (cause.code === "reserved_skill_id") {
-      return "No se puede importar esta skill: su identidad está reservada por Demiurgos.";
+      return t("skillImport.reservedId");
     }
     if (cause.code === "trust_rejected") {
-      return "El paquete no pasó la revisión de integridad: no se confió.";
+      return t("skillImport.trustRejected");
     }
     return cause.message;
   }
-  return "No se pudo completar la operación de importación.";
+  return t("skillImport.transferFailed");
 }
 
 /**
@@ -80,6 +85,7 @@ function transferErrorMessage(cause: unknown): string {
  * flow never touches world or taller state.
  */
 export function SkillImportPanel() {
+  const { t } = useAppLanguage();
   const [quarantine, setQuarantine] = useState<QuarantineRecord[]>([]);
   const [importing, setImporting] = useState(false);
   const [trustingId, setTrustingId] = useState<string | null>(null);
@@ -107,7 +113,7 @@ export function SkillImportPanel() {
       await importPackage(file);
       await loadQuarantine();
     } catch (cause) {
-      setTransferError(transferErrorMessage(cause));
+      setTransferError(transferErrorMessage(cause, t));
     } finally {
       setImporting(false);
     }
@@ -132,7 +138,7 @@ export function SkillImportPanel() {
         ),
       );
     } catch (cause) {
-      setTransferError(transferErrorMessage(cause));
+      setTransferError(transferErrorMessage(cause, t));
     } finally {
       setTrustingId(null);
     }
@@ -141,16 +147,12 @@ export function SkillImportPanel() {
   return (
     <div className="rounded-lg border border-edge/20 bg-surface-raised/40 p-4">
       <h3 className="font-heading text-h4 text-primary">
-        Importar una skill
+        {t("skillImport.title")}
       </h3>
-      <p className="mt-1 text-small text-muted">
-        La Skill creada fuera del Taller no se ejecuta como válida: entra en
-        cuarentena y recién se habilita cuando pasa la revisión de integridad
-        y vos la confiás.
-      </p>
+      <p className="mt-1 text-small text-muted">{t("skillImport.intro")}</p>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <label className="flex flex-col gap-1 text-small text-muted">
-          Paquete (.zip)
+          {t("skillImport.packageLabel")}
           <input
             type="file"
             accept=".zip,application/zip"
@@ -186,7 +188,9 @@ export function SkillImportPanel() {
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     <VerdictBadges verdict={record.verdict} />
                     <Badge variant={record.trusted ? "success" : "warning"}>
-                      {record.trusted ? "Confiable" : "En cuarentena"}
+                      {record.trusted
+                        ? t("skillImport.trusted")
+                        : t("skillImport.quarantined")}
                     </Badge>
                   </div>
                   {record.verdict.issues.length > 0 && (
@@ -199,8 +203,8 @@ export function SkillImportPanel() {
                   <div className="flex flex-col items-end gap-2">
                     <p className="text-xs text-status-success">
                       {record.draft_id
-                        ? `Confiable — borrador ${shortId(record.draft_id)}`
-                        : "Confiable"}
+                        ? t("skillImport.trustedDraft", { id: shortId(record.draft_id) })
+                        : t("skillImport.trusted")}
                     </p>
                     {/* REQ-IMP-5 (scenario 2): the outside-workshop note also
                         appears in the advanced details of a trusted import,
@@ -208,14 +212,10 @@ export function SkillImportPanel() {
                         compiled, validated version the Author trusted. */}
                     <details className="rounded-md border border-edge bg-surface-raised px-3 py-2">
                       <summary className="cursor-pointer text-xs font-medium text-muted">
-                        Detalles avanzados
+                        {t("skillImport.advanced")}
                       </summary>
                       <div className="mt-2 space-y-1.5 text-xs">
-                        <p className="text-muted">
-                          La Skill creada fuera del Taller no se ejecuta como
-                          válida: el Taller solo ejecuta la versión compilada
-                          y validada que confiaste.
-                        </p>
+                        <p className="text-muted">{t("skillImport.outsideNote")}</p>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <Badge
                             variant={
@@ -224,7 +224,7 @@ export function SkillImportPanel() {
                               ] ?? "default"
                             }
                           >
-                            {record.clasificacion ?? "Sin clasificación"}
+                            {record.clasificacion ?? t("skillImport.noClassification")}
                           </Badge>
                           {record.trust_attributes.map((attr) => (
                             <Badge
@@ -249,7 +249,7 @@ export function SkillImportPanel() {
                     {trustingId === record.package_id ? (
                       <Spinner size="sm" />
                     ) : (
-                      "Confiar"
+                      t("skillImport.trust")
                     )}
                   </Button>
                 )}
