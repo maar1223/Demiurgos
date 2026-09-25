@@ -14,6 +14,7 @@ import { getMediaUrl } from "@/api/wiki";
 import { ApiError } from "@/api/types";
 import { VisionSuggestionCard } from "@/components/molecules/VisionSuggestionCard";
 import type {
+  AppLanguage,
   ClassificationSuggestion,
   EnrichmentStatus,
   FrontmatterState,
@@ -50,6 +51,8 @@ import {
 import { VALID_SECTIONS } from "@/lib/constants";
 import { getErrorMessage } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey, TFunction } from "@/i18n/messages";
 
 // ---------------------------------------------------------------------------
 // World Importer — accessible, preservation-first import workflow (slice 3).
@@ -126,9 +129,15 @@ export function suggestDocumentSection(text: string): string {
   return "lore";
 }
 
-/** Display label for a classifier section (values stay lowercase). */
-function sectionLabel(section: string): string {
-  return section.charAt(0).toUpperCase() + section.slice(1);
+/** Catalogue key for a classifier section's display label (values stay lowercase). */
+const CLASSIFIER_SECTION_KEYS: Record<ClassifierSection, MessageKey> = {
+  lore: "section.lore",
+  personajes: "section.personajes",
+  referencias: "section.referencias",
+};
+
+function sectionKey(section: string): MessageKey {
+  return CLASSIFIER_SECTION_KEYS[section as ClassifierSection] ?? "section.lore";
 }
 
 /** Read the first ``limit`` bytes of a File as text (advisory input).
@@ -178,11 +187,11 @@ function formatBytes(bytes: number): string {
 }
 
 /** Locale-friendly date for history rows (slice 2, IM-2.5). */
-function formatHistoryDate(iso: string): string {
+function formatHistoryDate(iso: string, language: AppLanguage): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("es", {
+  return d.toLocaleString(language, {
     year: "numeric", month: "short", day: "2-digit",
     hour: "2-digit", minute: "2-digit",
   });
@@ -195,19 +204,19 @@ function formatElapsed(seconds: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/** UI copy for import-job states (server enum, kept honest). */
-function historyStateLabel(state: ImportJob["state"]): string {
+/** Catalogue key for import-job states (server enum, kept honest). */
+function historyStateKey(state: ImportJob["state"]): MessageKey {
   switch (state) {
-    case "pending": return "pendiente";
-    case "intaking": return "subiendo";
-    case "analyzing": return "analizando";
-    case "review": return "en revisión";
-    case "approved": return "aprobado";
-    case "executing": return "ejecutando";
-    case "completed": return "completado";
-    case "cancelled": return "cancelado";
-    case "failed": return "falló";
-    case "rolled_back": return "revertido";
+    case "pending": return "importer.state.pending";
+    case "intaking": return "importer.state.intaking";
+    case "analyzing": return "importer.state.analyzing";
+    case "review": return "importer.state.review";
+    case "approved": return "importer.state.approved";
+    case "executing": return "importer.state.executing";
+    case "completed": return "importer.state.completed";
+    case "cancelled": return "importer.state.cancelled";
+    case "failed": return "importer.state.failed";
+    case "rolled_back": return "importer.state.rolledBack";
   }
 }
 
@@ -232,18 +241,18 @@ function historyStateVariant(state: ImportJob["state"]): "default" | "info" | "w
   }
 }
 
-/** UI copy + badge variant for a candidate's frontmatter enrichment state. */
+/** Catalogue key + badge variant for a candidate's frontmatter enrichment state. */
 function frontmatterStateBadge(
   state: FrontmatterState,
-): { label: string; variant: "default" | "success" | "warning" } {
+): { labelKey: MessageKey; variant: "default" | "success" | "warning" } {
   switch (state) {
     case "generated":
-      return { label: "generado", variant: "success" };
+      return { labelKey: "importer.frontmatter.generated", variant: "success" };
     case "fallback":
-      return { label: "respaldo", variant: "warning" };
+      return { labelKey: "importer.frontmatter.fallback", variant: "warning" };
     case "manual":
     default:
-      return { label: "manual", variant: "default" };
+      return { labelKey: "importer.frontmatter.manual", variant: "default" };
   }
 }
 
@@ -278,17 +287,17 @@ function isExcludedSourcePath(relative: string): boolean {
 }
 
 /** Map a thrown error to honest, actionable copy for the importer flow. */
-function importErrorMessage(err: unknown): string {
+function importErrorMessage(err: unknown, t: TFunction): string {
   if (err instanceof ApiError) {
     if (err.status === 401) {
-      return "La sesión expiró. Inicia sesión e intenta de nuevo.";
+      return t("importer.error.sessionExpired");
     }
     if (err.status === 0) {
-      return "No se pudo conectar al servidor. Verificá que esté corriendo.";
+      return t("importer.error.connect");
     }
-    return getErrorMessage(err.status, err.detail) ?? "Error de importación";
+    return getErrorMessage(err.status, err.detail) ?? t("importer.error.generic");
   }
-  return err instanceof Error ? err.message : "Error de importación";
+  return err instanceof Error ? err.message : t("importer.error.generic");
 }
 
 /** Editor link for an executed target like `lore/ciudades/X.md`. */
@@ -328,34 +337,40 @@ function Checklist({
   stage: string;
   pct: number | null;
 }) {
+  const { t } = useAppLanguage();
   const consulting = stage.includes("Consultando asistente");
   const recovering = stage.includes("Recuperando fichas pendientes");
   const fichaMatch = stage.match(/ficha (\d+) de (\d+)/);
   // Sub-step the assistant is on inside "Consultando asistente" (the server
   // emits "resumiendo fichas" / "generando metadatos y relaciones").
   const substep = stage.includes("generando metadatos")
-    ? "generando metadatos y relaciones"
+    ? t("importer.checklist.generating")
     : stage.includes("resumiendo") || (consulting && !fichaMatch)
-      ? "resumiendo fichas"
+      ? t("importer.checklist.summarizing")
       : undefined;
-  const consultDetail = [substep, fichaMatch ? `ficha ${fichaMatch[1]} de ${fichaMatch[2]} del documento` : undefined]
+  const consultDetail = [
+    substep,
+    fichaMatch
+      ? t("importer.checklist.fichaProgress", { index: fichaMatch[1], total: fichaMatch[2] })
+      : undefined,
+  ]
     .filter(Boolean)
     .join(" · ");
   const steps = [
-    { id: "analyze", label: "Analizando contenido", done: true, current: false, detail: undefined as string | undefined },
+    { id: "analyze", label: t("importer.checklist.analyzing"), done: true, current: false, detail: undefined as string | undefined },
     {
       id: "consult",
-      label: "Consultando asistente",
+      label: t("importer.checklist.consulting"),
       done: recovering,
       current: consulting && !recovering,
       detail: consultDetail || undefined,
     },
     {
       id: "recover",
-      label: "Recuperando fichas sin clasificar",
+      label: t("importer.checklist.recovering"),
       done: false,
       current: recovering,
-      detail: recovering ? "último filtro (contexto completo)…" : undefined,
+      detail: recovering ? t("importer.checklist.lastFilter") : undefined,
     },
   ];
 
@@ -390,6 +405,7 @@ function Checklist({
 
 export default function WorldImporter() {
   const navigate = useNavigate();
+  const { language, t } = useAppLanguage();
   const { mundo } = useParams<{ mundo: string }>();
   const { worlds, isLoading: worldsLoading } = useWorlds();
 
@@ -532,7 +548,7 @@ export default function WorldImporter() {
         if (terminal.state === "failed") {
           setStep("result");
           setError(
-            terminal.error || "El análisis falló y la importación quedó bloqueada.",
+            terminal.error || t("importer.error.analysisFailed"),
           );
           return;
         }
@@ -543,7 +559,7 @@ export default function WorldImporter() {
         setResumeIntaking(false);
         setStep("review");
       } catch (monitorErr) {
-        setError(importErrorMessage(monitorErr));
+        setError(importErrorMessage(monitorErr, t));
         setPhaseMessage("");
         setStep("result");
       } finally {
@@ -551,7 +567,7 @@ export default function WorldImporter() {
         setMonitoringAfterTimeout(false);
       }
     },
-    [mundo],
+    [mundo, t],
   );
 
   /**
@@ -623,7 +639,7 @@ export default function WorldImporter() {
           setCandidates(review.candidates);
           setStep("review");
         } catch (err) {
-          setError(importErrorMessage(err));
+          setError(importErrorMessage(err, t));
           setStep("result");
         }
       } else if (existing.state === "intaking") {
@@ -632,19 +648,19 @@ export default function WorldImporter() {
         setStep("select");
         setResumeIntaking(true);
         setResumeNotice(
-          "El archivo ya está subido en el servidor. Podés continuar el análisis directamente sin volver a seleccionar los archivos.",
+          t("importer.notice.intaking"),
         );
       } else if (existing.state === "pending" || existing.state === "analyzing") {
         // The server is still processing this job — monitor it live instead
         // of asking the user to reselect sources.
         setResumeIntaking(false);
         setStep("analyzing");
-        void monitorJob(existing.job_id, "Retomando el análisis en curso…");
+        void monitorJob(existing.job_id, t("importer.error.monitoringResume"));
       } else if (existing.state === "executing") {
         setResumeIntaking(false);
         setStep("select");
         setResumeNotice(
-          "Hay una importación interrumpida. Seleccioná las mismas fuentes y continuá: los archivos ya subidos se retoman sin duplicarse.",
+          t("importer.notice.interrupted"),
         );
       } else {
         // Terminal: completed / failed / cancelled / rolled_back.
@@ -654,7 +670,7 @@ export default function WorldImporter() {
         clearPersistedJob();
       }
     },
-    [mundo, clearPersistedJob, monitorJob],
+    [mundo, clearPersistedJob, monitorJob, t],
   );
 
   useEffect(() => {
@@ -695,7 +711,7 @@ export default function WorldImporter() {
         // not keep retrying on every navigation.
         if (err instanceof ApiError && err.status === 404) {
           clearPersistedJob();
-          setError("La importación guardada ya no existe en el servidor.");
+          setError(t("importer.error.savedJobGone"));
         }
         // Other failures (network / 5xx): leave sessionStorage intact so
         // the user can retry on the next mount.
@@ -706,7 +722,7 @@ export default function WorldImporter() {
     return () => {
       cancelled = true;
     };
-  }, [mundo, worldsLoading, worldExists, restoreJobState, clearPersistedJob]);
+  }, [mundo, worldsLoading, worldExists, restoreJobState, clearPersistedJob, t]);
 
   // --- history loader (slice 2, IM-2.5) ----------------------------------
   //
@@ -771,13 +787,13 @@ export default function WorldImporter() {
         }
         await loadHistory(null);
       } catch (err) {
-        setError(importErrorMessage(err));
+        setError(importErrorMessage(err, t));
         setDeleteTarget(null);
       } finally {
         setDeleting(false);
       }
     },
-    [mundo, jobId, loadHistory, clearPersistedJob],
+    [mundo, jobId, loadHistory, clearPersistedJob, t],
   );
 
   // --- focus management: the step heading receives focus on transitions ---
@@ -875,11 +891,11 @@ export default function WorldImporter() {
     const oversized = selected.find((s) => s.size > IMPORT_MAX_FILE_BYTES);
     if (oversized) {
       setPrecheckError(
-        `"${oversized.relative}" supera el límite de 500 MB por archivo.`,
+        t("importer.precheck.fileTooLarge", { name: oversized.relative }),
       );
     } else if (aggregate > IMPORT_MAX_JOB_BYTES) {
       setPrecheckError(
-        "La selección supera el límite de 5 GB por importación.",
+        t("importer.precheck.jobTooLarge"),
       );
     } else {
       setPrecheckError(null);
@@ -926,7 +942,7 @@ export default function WorldImporter() {
     setAnalyzing(true);
     setError(null);
     setResumeNotice(null);
-    setPhaseMessage("Preparando análisis…");
+    setPhaseMessage(t("importer.phase.preparing"));
     setStep("analyzing");
     setStreamProgress(null);
     setAnalysisProgress(null);
@@ -944,7 +960,7 @@ export default function WorldImporter() {
         // File already uploaded — skip create + stream, go to analyze.
         activeJobId = jobId!;
         setPhaseMessage(
-          "Analizando contenido y consultando asistente (solo lectura)…",
+          t("importer.phase.analyzingReadOnly"),
         );
       } else {
         // Classifier (BLOQUE 1 piece 1): thread the author-chosen sections
@@ -969,7 +985,7 @@ export default function WorldImporter() {
         for (let i = 0; i < count; i += 1) {
           const source = sources[i];
           setPhaseMessage(
-            `Subiendo ${source.relative} (${i + 1} de ${count})…`,
+            t("importer.phase.uploading", { relative: source.relative, index: i + 1, count }),
           );
           await streamImportFile(mundo, created.job_id, source.file, source.relative, (streamed, total) => {
             setStreamProgress({ fileIndex: i, fileCount: count, streamed, total });
@@ -977,7 +993,7 @@ export default function WorldImporter() {
         }
         setStreamProgress(null);
         setPhaseMessage(
-          "Analizando contenido y consultando asistente (solo lectura)…",
+          t("importer.phase.analyzingReadOnly"),
         );
       }
       // Enrichment always runs (the graph needs the resulting metadata); the
@@ -1008,7 +1024,7 @@ export default function WorldImporter() {
       if (analysis.job.state === "failed") {
         setStep("result");
         setError(
-          analysis.job.error || "El análisis falló y la importación quedó bloqueada.",
+          analysis.job.error || t("importer.error.analysisFailed"),
         );
         return;
       }
@@ -1029,10 +1045,10 @@ export default function WorldImporter() {
       if (activeJobId) {
         await monitorJob(
           activeJobId,
-          "Se perdió la conexión mientras el servidor analizaba. Sigo monitoreando el trabajo…",
+          t("importer.error.connectionLostAnalyzing"),
         );
       } else {
-        setError(importErrorMessage(err));
+        setError(importErrorMessage(err, t));
         setPhaseMessage("");
         setStep("result");
       }
@@ -1058,11 +1074,11 @@ export default function WorldImporter() {
         } else {
           setStep("select");
           setResumeNotice(
-            "La importación se reabrió. Seleccioná las fuentes y continuá.",
+            t("importer.notice.reopened"),
           );
         }
       } catch (err) {
-        setError(importErrorMessage(err));
+        setError(importErrorMessage(err, t));
       }
       return;
     }
@@ -1071,7 +1087,7 @@ export default function WorldImporter() {
         // File already on the server spool — skip re-selection and
         // call analyze directly.
         setAnalyzing(true);
-        setPhaseMessage("Analizando contenido (solo lectura)…");
+        setPhaseMessage(t("importer.phase.analyzingShort"));
         setStep("analyzing");
         const stopLiveProgress = startLiveProgressPoll(mundo, jobId);
         try {
@@ -1087,7 +1103,7 @@ export default function WorldImporter() {
           if (analysis.job.state === "failed") {
             setStep("result");
             setError(
-              analysis.job.error || "El análisis falló y la importación quedó bloqueada.",
+              analysis.job.error || t("importer.error.analysisFailed"),
             );
             return;
           }
@@ -1098,7 +1114,7 @@ export default function WorldImporter() {
           setResumeIntaking(false);
           setStep("review");
         } catch (err) {
-          setError(importErrorMessage(err));
+          setError(importErrorMessage(err, t));
           setPhaseMessage("");
           setStep("result");
         } finally {
@@ -1109,7 +1125,7 @@ export default function WorldImporter() {
       }
       setStep("select");
       setResumeNotice(
-        "Seleccioná las mismas fuentes y continuá: los archivos ya subidos se retoman sin duplicarse.",
+        t("importer.notice.reselect"),
       );
       return;
     }
@@ -1124,7 +1140,7 @@ export default function WorldImporter() {
       setJob(cancelled);
       setStep("result");
     } catch (err) {
-      setError(importErrorMessage(err));
+      setError(importErrorMessage(err, t));
     }
   };
 
@@ -1155,16 +1171,14 @@ export default function WorldImporter() {
     const result: ApprovalGroup[] = [
       {
         id: "fichas",
-        label: "Contenido de fichas",
-        description:
-          "Se crearán o actualizarán fichas sin reemplazar tu contenido actual.",
+        label: t("importer.group.fichas.label"),
+        description: t("importer.group.fichas.desc"),
         count: fichas.length,
       },
       {
         id: "imagenes",
-        label: "Imágenes contextuales",
-        description:
-          "Se registran en la galería y se insertan en la sección correspondiente.",
+        label: t("importer.group.images.label"),
+        description: t("importer.group.images.desc"),
         count: imagePlacements.length,
       },
     ];
@@ -1174,15 +1188,14 @@ export default function WorldImporter() {
     if (reviewCount > 0) {
       result.push({
         id: "revisar",
-        label: "Requiere tu decisión",
-        description:
-          "Ítems con validación o ubicación ambigua. No se importan automáticamente: revisalos y decidí si los incluís.",
+        label: t("importer.group.review.label"),
+        description: t("importer.group.review.desc"),
         count: reviewCount,
         requiresReview: true,
       });
     }
     return { groups: result, rejected };
-  }, [candidates]);
+  }, [candidates, t]);
 
   const selectedGroupIds = [...selectedGroups];
   const canApprove = selectedGroupIds.length > 0 && !approval;
@@ -1214,7 +1227,7 @@ export default function WorldImporter() {
       );
       setApproval(granted);
     } catch (err) {
-      setError(importErrorMessage(err));
+      setError(importErrorMessage(err, t));
       // The diagnosis may have changed: re-read the review so the user
       // decides on current facts.
       try {
@@ -1288,7 +1301,7 @@ export default function WorldImporter() {
         // because we only added an "approved" entry optimistically.
         return prev.filter((id) => id !== suggestionId);
       });
-      setError(importErrorMessage(err));
+      setError(importErrorMessage(err, t));
     } finally {
       setDecidingSuggestionId(null);
     }
@@ -1302,7 +1315,7 @@ export default function WorldImporter() {
     if (!mundo || !jobId || !approval) return;
     setImporting(true);
     setError(null);
-    setPhaseMessage("Importando contenido…");
+    setPhaseMessage(t("importer.phase.importing"));
     // The step stays "review" — the importing progress panel renders there.
     try {
       // PR3+ — ``approvedSuggestionIds`` carries BOTH text and vision
@@ -1336,7 +1349,7 @@ export default function WorldImporter() {
         return;
       }
       setApproval(null);
-      setError(importErrorMessage(err));
+      setError(importErrorMessage(err, t));
       setStep("review");
       try {
         const review = await getImportReview(mundo, jobId);
@@ -1362,11 +1375,11 @@ export default function WorldImporter() {
       } else {
         setStep("select");
         setResumeNotice(
-          "Seleccioná las mismas fuentes y continuá: los archivos ya subidos se retoman sin duplicarse.",
+          t("importer.notice.reselect"),
         );
       }
     } catch (err) {
-      setError(importErrorMessage(err));
+      setError(importErrorMessage(err, t));
     }
   };
 
@@ -1378,7 +1391,7 @@ export default function WorldImporter() {
       setJob(rolledBack);
       setStep("result");
     } catch (err) {
-      setError(importErrorMessage(err));
+      setError(importErrorMessage(err, t));
     }
   };
 
@@ -1397,12 +1410,12 @@ export default function WorldImporter() {
 
   const headingText =
     step === "select"
-      ? "Importar contenido"
+      ? t("importer.heading.select")
       : step === "analyzing"
-        ? "Analizando fuentes"
+        ? t("importer.heading.analyzing")
         : step === "review"
-          ? "Revisión e aprobación"
-          : "Resultado de la importación";
+          ? t("importer.heading.review")
+          : t("importer.heading.result");
 
   const folderAttrs: FolderInputAttrs = { webkitdirectory: "", directory: "" };
 
@@ -1419,17 +1432,15 @@ export default function WorldImporter() {
           </h1>
           {mundo && (
             <Badge variant="info">
-              Mundo: {mundo}
+              {t("importer.worldBadge", { mundo })}
             </Badge>
           )}
         </div>
 
         {/* Preservation-first messaging — shown from the start */}
         <div className="mt-3 rounded-lg border border-action/40 bg-action/10 px-4 py-3 text-small text-primary">
-          <span className="font-medium">Tu contenido actual nunca se reemplaza sin tu aprobación explícita.</span>{" "}
-          Las fichas editadas se conservan; se agregan solo las imágenes y
-          referencias faltantes. Los reemplazos autorizados guardan la versión
-          anterior 30 días en la papelera.
+          <span className="font-medium">{t("importer.preservation.title")}</span>{" "}
+          {t("importer.preservation.body")}
         </div>
 
         {error && (
@@ -1449,8 +1460,8 @@ export default function WorldImporter() {
         <div className="col-span-full">
           <EmptyState
             icon="error"
-            message="No existe un mundo con ese nombre."
-            actionLabel="Ir al inicio"
+            message={t("importer.worldMissing")}
+            actionLabel={t("importer.goHome")}
             onAction={() => navigate("/wiki")}
           />
         </div>
@@ -1488,7 +1499,7 @@ export default function WorldImporter() {
                 id="import-history-title"
                 className="font-heading text-body text-primary"
               >
-                Importaciones previas
+                {t("importer.history.title")}
               </h2>
               {historyOutage && (
                 <span
@@ -1497,7 +1508,7 @@ export default function WorldImporter() {
                   aria-live="polite"
                   data-testid="history-outage"
                 >
-                  Datos en caché — el servidor no responde.
+                  {t("importer.history.stale")}
                   <Button
                     variant="ghost"
                     size="sm"
@@ -1505,7 +1516,7 @@ export default function WorldImporter() {
                     disabled={historyLoading}
                   >
                     <Icon name="refresh" size={14} />
-                    Reintentar
+                    {t("importer.retry")}
                   </Button>
                 </span>
               )}
@@ -1514,7 +1525,7 @@ export default function WorldImporter() {
             {historyLoading && history.length === 0 && (
               <div className="mt-3 flex items-center gap-2 text-small text-muted">
                 <Spinner size="sm" />
-                <span>Cargando historial…</span>
+                <span>{t("importer.history.loading")}</span>
               </div>
             )}
 
@@ -1523,7 +1534,7 @@ export default function WorldImporter() {
                 className="mt-3 text-small text-muted"
                 data-testid="history-empty"
               >
-                No hay importaciones previas en este mundo.
+                {t("importer.history.empty")}
               </p>
             )}
 
@@ -1539,17 +1550,17 @@ export default function WorldImporter() {
                   >
                     <div className="min-w-0 flex-1">
                       <p className="text-small font-medium text-primary">
-                        {formatHistoryDate(entry.created_at)}{" "}
+                        {formatHistoryDate(entry.created_at, language)}{" "}
                         <Badge
                           variant={historyStateVariant(entry.state)}
                           className="ml-1"
                         >
-                          {historyStateLabel(entry.state)}
+                          {t(historyStateKey(entry.state))}
                         </Badge>
                       </p>
                       <p className="mt-0.5 text-xs text-muted">
                         {entry.source_kind} · {entry.file_count}{" "}
-                        {entry.file_count === 1 ? "candidato" : "candidatos"}
+                        {t(entry.file_count === 1 ? "importer.history.candidateOne" : "importer.history.candidateMany")}
                       </p>
                     </div>
                     <Button
@@ -1559,7 +1570,7 @@ export default function WorldImporter() {
                       data-testid={`history-open-${entry.job_id}`}
                     >
                       <Icon name="corner-up-right" size={14} />
-                      Abrir
+                      {t("importer.history.open")}
                     </Button>
                     {canDeleteHistoryJob(entry) && (
                       <Button
@@ -1567,10 +1578,10 @@ export default function WorldImporter() {
                         size="sm"
                         onClick={() => setDeleteTarget(entry)}
                         data-testid={`history-delete-${entry.job_id}`}
-                        aria-label={`Eliminar importación ${formatHistoryDate(entry.created_at)}`}
+                        aria-label={t("importer.history.deleteAria", { date: formatHistoryDate(entry.created_at, language) })}
                       >
                         <Icon name="trash" size={14} />
-                        Eliminar
+                        {t("importer.history.delete")}
                       </Button>
                     )}
                   </li>
@@ -1587,7 +1598,7 @@ export default function WorldImporter() {
                   disabled={historyLoading}
                   data-testid="history-load-more"
                 >
-                  {historyLoading ? "Cargando…" : "Cargar más"}
+                  {historyLoading ? t("importer.history.loadingShort") : t("importer.history.loadMore")}
                 </Button>
               </div>
             )}
@@ -1595,14 +1606,14 @@ export default function WorldImporter() {
 
           <fieldset className="mt-4 rounded-lg border border-edge bg-surface-raised p-4">
             <legend className="px-2 text-small font-medium text-muted">
-              Tipo de fuente
+              {t("importer.sourceType")}
             </legend>
             <div className="flex flex-wrap gap-2">
               {(
                 [
-                  { kind: "folder", label: "Carpeta", hint: "Todo su contenido" },
-                  { kind: "loose", label: "Archivos", hint: "Selección múltiple" },
-                  { kind: "zip", label: "Paquete .zip", hint: "Opcional" },
+                  { kind: "folder", label: t("importer.source.folder"), hint: t("importer.source.folderHint") },
+                  { kind: "loose", label: t("importer.source.loose"), hint: t("importer.source.looseHint") },
+                  { kind: "zip", label: t("importer.source.zip"), hint: t("importer.source.zipHint") },
                 ] as { kind: ImportSourceKind; label: string; hint: string }[]
               ).map((option) => (
                 <button
@@ -1632,10 +1643,10 @@ export default function WorldImporter() {
             >
               <Icon name="upload" size={16} />
               {sourceKind === "folder"
-                ? "Seleccionar carpeta"
+                ? t("importer.selectFolder")
                 : sourceKind === "zip"
-                  ? "Seleccionar paquete .zip"
-                  : "Seleccionar archivos"}
+                  ? t("importer.selectZip")
+                  : t("importer.selectFiles")}
             </Button>
             <input
               ref={fileInputRef}
@@ -1645,15 +1656,13 @@ export default function WorldImporter() {
               accept={sourceKind === "zip" ? ".zip" : undefined}
               {...(sourceKind === "folder" ? folderAttrs : {})}
               onChange={handleFilesChange}
-              aria-label="Selección de fuentes"
+              aria-label={t("importer.sourcesAria")}
             />
           </div>
 
           {excludedCount > 0 && (
             <p className="mt-3 text-small text-muted">
-              {excludedCount}{" "}
-              {excludedCount === 1 ? "archivo" : "archivos"} de carpetas del
-              sistema u ocultas se excluyeron (no son contenido importable).
+              {t(excludedCount === 1 ? "importer.excluded.one" : "importer.excluded.many", { count: excludedCount })}
             </p>
           )}
 
@@ -1681,12 +1690,12 @@ export default function WorldImporter() {
                     <select
                       value={s.section}
                       onChange={(e) => handleSectionChange(s.relative, e.target.value)}
-                      aria-label={`Sección de ${s.relative}`}
+                      aria-label={t("importer.sectionOf", { relative: s.relative })}
                       className="rounded border border-edge bg-surface px-1.5 py-0.5 text-xs text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
                     >
                       {CLASSIFIER_SECTIONS.map((opt) => (
                         <option key={opt} value={opt}>
-                          {sectionLabel(opt)}
+                          {t(sectionKey(opt))}
                         </option>
                       ))}
                     </select>
@@ -1707,13 +1716,15 @@ export default function WorldImporter() {
               data-testid={resumeIntaking ? "resume-analyze-btn" : undefined}
             >
               <Icon name={resumeIntaking ? "corner-up-right" : "search"} size={16} />
-              {resumeIntaking ? "Continuar análisis" : "Analizar (solo lectura)"}
+              {resumeIntaking ? t("importer.continueAnalysis") : t("importer.analyzeReadOnly")}
             </Button>
             {sources.length > 0 && (
               <span className="text-small text-muted">
-                {sources.length}{" "}
-                {sources.length === 1 ? "archivo" : "archivos"} ·{" "}
-                {formatBytes(sources.reduce((sum, s) => sum + s.size, 0))}
+                {t("importer.filesSummary", {
+                  count: sources.length,
+                  noun: t(sources.length === 1 ? "importer.fileOne" : "importer.fileMany"),
+                  size: formatBytes(sources.reduce((sum, s) => sum + s.size, 0)),
+                })}
               </span>
             )}
           </div>
@@ -1729,21 +1740,23 @@ export default function WorldImporter() {
                 <p className="text-body text-primary">{phaseMessage}</p>
                 {streamProgress && (
                   <p className="mt-1 text-small text-muted">
-                    {formatBytes(streamProgress.streamed)} de{" "}
-                    {formatBytes(streamProgress.total)} · archivo{" "}
-                    {streamProgress.fileIndex + 1} de{" "}
-                    {streamProgress.fileCount}
+                    {t("importer.streamSummary", {
+                      streamed: formatBytes(streamProgress.streamed),
+                      total: formatBytes(streamProgress.total),
+                      index: streamProgress.fileIndex + 1,
+                      count: streamProgress.fileCount,
+                    })}
                   </p>
                 )}
                 {analysisProgress && !streamProgress && (
                   <>
                     <p className="mt-1 text-small text-muted">
-                      Etapa: {analysisProgress.stage}
+                      {t("importer.stage", { stage: analysisProgress.stage })}
                     </p>
                     <p className="mt-1 text-small text-muted">
                       {monitoringAfterTimeout
-                        ? "Reconectando con el servidor…"
-                        : `Tiempo transcurrido: ${formatElapsed(elapsedSec)}`}
+                        ? t("importer.reconnecting")
+                        : t("importer.elapsed", { elapsed: formatElapsed(elapsedSec) })}
                     </p>
                   </>
                 )}
@@ -1756,7 +1769,7 @@ export default function WorldImporter() {
                 aria-valuemin={0}
                 aria-valuemax={streamProgress.total}
                 aria-valuenow={streamProgress.streamed}
-                aria-label="Progreso de subida"
+                aria-label={t("importer.uploadProgressAria")}
               >
                 <div
                   className="h-full bg-action transition-all"
@@ -1777,7 +1790,7 @@ export default function WorldImporter() {
             <div className="mt-5">
               <Button variant="ghost" onClick={handleCancel}>
                 <Icon name="stop" size={16} />
-                Cancelar análisis
+                {t("importer.cancelAnalysis")}
               </Button>
             </div>
           </div>
@@ -1787,8 +1800,7 @@ export default function WorldImporter() {
       {!worldsLoading && !restoring && mundo && worldExists && step === "review" && (
         <div className="col-span-full">
           <p className="text-body text-muted">
-            El análisis es de solo lectura. Elegí qué aprobar y luego confirmá
-            la importación: escribir es una acción explícita y separada.
+            {t("importer.review.intro")}
           </p>
 
           {/* Importador-auto-frontmatter (Phase 4) — on-screen H1-H5 authoring
@@ -1800,7 +1812,7 @@ export default function WorldImporter() {
             data-testid="authoring-guide"
           >
             <summary className="flex cursor-pointer items-center justify-between gap-2 px-4 py-3 text-small font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50 [&::-webkit-details-marker]:hidden">
-              <span>Guía de estructura H1–H5</span>
+              <span>{t("importer.guide.summary")}</span>
               <Icon
                 name="chevron-down"
                 size={14}
@@ -1809,31 +1821,22 @@ export default function WorldImporter() {
             </summary>
             <div className="border-t border-edge px-4 py-3 text-xs text-muted">
               <p className="text-primary">
-                El análisis arma una jerarquía real a partir de los encabezados
-                del documento. Cada ficha conserva su texto original completo.
+                {t("importer.guide.intro")}
               </p>
               <ul className="mt-2 list-disc space-y-1 pl-4">
                 <li>
-                  <span className="text-primary">H1</span> — raíz/índice del
-                  mundo. Toda sección H1 queda como carpeta raíz, incluso si
-                  está vacía (el andamiaje intencional se preserva, nunca se
-                  borra).
+                  <span className="text-primary">H1</span> {t("importer.guide.h1Body")}
                 </li>
                 <li>
-                  <span className="text-primary">H2–H5</span> — encabezados
-                  anidados bajo su H1. Un encabezado con subsecciones se
-                  convierte en una <span className="text-primary">ficha</span>{" "}
-                  (carpeta con sus fichas hijas).
+                  <span className="text-primary">H2–H5</span> {t("importer.guide.h2Body")}
                 </li>
                 <li>
-                  <span className="text-primary">Texto sin subsecciones</span>{" "}
-                  — el texto plano de un encabezado sin hijos queda en la ficha
-                  padre, nunca se descarta ni se crea una ficha vacía.
+                  <span className="text-primary">{t("importer.guide.plainLabel")}</span>{" "}
+                  {t("importer.guide.plainBody")}
                 </li>
                 <li>
-                  <span className="text-primary">Sin encabezados</span> — si
-                  el documento no tiene encabezados útiles, se crea una sola
-                  ficha implícita con el nombre del archivo.
+                  <span className="text-primary">{t("importer.guide.noHeadingsLabel")}</span>{" "}
+                  {t("importer.guide.noHeadingsBody")}
                 </li>
               </ul>
             </div>
@@ -1848,17 +1851,17 @@ export default function WorldImporter() {
           {/* Impact summary */}
           <div className="mt-4 grid grid-cols-1 gap-3 tablet:grid-cols-3">
             <SummaryTile
-              label="Candidatos"
+              label={t("importer.summary.candidates")}
               value={String(candidates.length)}
             />
             <SummaryTile
-              label="Imágenes contextuales"
+              label={t("importer.summary.images")}
               value={String(
                 candidates.flatMap((c) => c.images).filter((i) => i.placement_status !== "skip").length,
               )}
             />
             <SummaryTile
-              label="Requieren decisión"
+              label={t("importer.summary.needDecision")}
               value={String(groups.groups.find((g) => g.id === "revisar")?.count ?? 0)}
             />
           </div>
@@ -1867,12 +1870,12 @@ export default function WorldImporter() {
             <div className="mt-6">
               <EmptyState
                 icon="empty"
-                message="El análisis no encontró contenido analizable en las fuentes seleccionadas."
+                message={t("importer.empty.noContent")}
               />
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={handleChangeSources}>
                   <Icon name="chevron-left" size={16} />
-                  Cambiar fuentes
+                  {t("importer.changeSources")}
                 </Button>
                 {job && (
                   <Button
@@ -1881,7 +1884,7 @@ export default function WorldImporter() {
                     data-testid="review-delete-job"
                   >
                     <Icon name="trash" size={16} />
-                    Eliminar este job
+                    {t("importer.deleteJob")}
                   </Button>
                 )}
               </div>
@@ -1893,7 +1896,7 @@ export default function WorldImporter() {
             <>
               <fieldset className="mt-6 rounded-lg border border-edge bg-surface-raised p-4">
                 <legend className="px-2 text-small font-medium text-muted">
-                  Grupos de aprobación
+                  {t("importer.groups.legend")}
                 </legend>
                 <div className="flex flex-col gap-3">
                   {groups.groups.map((group) => (
@@ -1918,7 +1921,7 @@ export default function WorldImporter() {
                           {group.label} ({group.count})
                           {group.requiresReview && (
                             <Badge variant="warning" className="ml-2">
-                              revisión
+                              {t("importer.group.reviewBadge")}
                             </Badge>
                           )}
                         </span>
@@ -1933,11 +1936,7 @@ export default function WorldImporter() {
                   ))}
                   {groups.rejected.length > 0 && (
                     <p className="text-small text-muted">
-                      {groups.rejected.length}{" "}
-                      {groups.rejected.length === 1
-                        ? "candidato descartado"
-                        : "candidatos descartados"}{" "}
-                      por validación — no se pueden aprobar.
+                      {t(groups.rejected.length === 1 ? "importer.group.rejected.one" : "importer.group.rejected.many", { count: groups.rejected.length })}
                     </p>
                   )}
                 </div>
@@ -1945,7 +1944,7 @@ export default function WorldImporter() {
 
               {/* Candidate detail review (expandable) */}
               <h2 className="mt-6 font-heading text-h4 text-primary">
-                Detalle de candidatos
+                {t("importer.candidates.title")}
               </h2>
               <div className="mt-2 flex flex-col gap-3">
                 {candidates.map((candidate) => (
@@ -1965,8 +1964,7 @@ export default function WorldImporter() {
                 {!approval ? (
                   <>
                     <p className="text-small text-muted">
-                      La aprobación se liga al diagnóstico completo revisado.
-                      Cualquier cambio en las fuentes la invalida.
+                      {t("importer.approval.bound")}
                     </p>
                     {approvedSuggestionIds.length > 0 && (
                       <p
@@ -1975,10 +1973,7 @@ export default function WorldImporter() {
                       >
                         <Icon name="lightbulb" size={14} />
                         <span className="ml-2">
-                          {approvedSuggestionIds.length}{" "}
-                          sugerencia{approvedSuggestionIds.length === 1 ? "" : "s"}{" "}
-                          aprobada{approvedSuggestionIds.length === 1 ? "" : "s"} se
-                          aplicarán al importar.
+                          {t(approvedSuggestionIds.length === 1 ? "importer.approval.suggestions.one" : "importer.approval.suggestions.many", { count: approvedSuggestionIds.length })}
                         </span>
                       </p>
                     )}
@@ -1988,7 +1983,7 @@ export default function WorldImporter() {
                         onClick={handleApprove}
                         disabled={!canApprove}
                       >
-                        Aprobar grupos seleccionados
+                        {t("importer.approval.approveGroups")}
                       </Button>
                     </div>
                   </>
@@ -1997,14 +1992,11 @@ export default function WorldImporter() {
                     <p className="text-small text-primary" role="status">
                       <Icon name="check" size={16} />
                       <span className="ml-2">
-                        Aprobaste {selectedGroupIds.length}{" "}
-                        {selectedGroupIds.length === 1 ? "grupo" : "grupos"}.
+                        {t(selectedGroupIds.length === 1 ? "importer.approval.approved.one" : "importer.approval.approved.many", { count: selectedGroupIds.length })}
                       </span>
                     </p>
                     <p className="mt-2 text-small text-muted">
-                      La importación escribirá en tu mundo. Las versiones
-                      anteriores de fichas reemplazadas quedan en la papelera
-                      30 días.
+                      {t("importer.approval.writeWarning")}
                     </p>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button
@@ -2014,22 +2006,21 @@ export default function WorldImporter() {
                         aria-describedby="import-write-warning"
                       >
                         <Icon name="save" size={16} />
-                        Importar
+                        {t("importer.approval.import")}
                       </Button>
                       <Button
                         variant="ghost"
                         onClick={() => setApproval(null)}
                         disabled={importing}
                       >
-                        Cambiar selección
+                        {t("importer.approval.changeSelection")}
                       </Button>
                     </div>
                     <p
                       id="import-write-warning"
                       className="mt-2 text-xs text-muted"
                     >
-                      Esta acción es permanente: crea o actualiza fichas en tu
-                      mundo y registra imágenes en la galería.
+                      {t("importer.approval.permanent")}
                     </p>
                   </>
                 )}
@@ -2038,7 +2029,7 @@ export default function WorldImporter() {
               <div className="mt-4">
                 <Button variant="ghost" onClick={handleChangeSources}>
                   <Icon name="chevron-left" size={16} />
-                  Cambiar fuentes
+                  {t("importer.changeSources")}
                 </Button>
               </div>
             </>
@@ -2074,9 +2065,9 @@ export default function WorldImporter() {
 
       {deleteTarget && (
         <ConfirmDialog
-          title="Eliminar importación"
-          message={`¿Eliminar la importación ${deleteTarget.job_id}? Esta acción es permanente y no se puede deshacer.`}
-          confirmLabel="Eliminar"
+          title={t("importer.delete.title")}
+          message={t("importer.delete.message", { id: deleteTarget.job_id })}
+          confirmLabel={t("importer.delete.confirm")}
           confirmVariant="danger"
           isBusy={deleting}
           onConfirm={() => void handleDeleteJob(deleteTarget)}
@@ -2119,6 +2110,7 @@ function CandidateCard({
   ) => void;
   decidingSuggestionId: string | null;
 }) {
+  const { t } = useAppLanguage();
   const ambiguousImages = candidate.images.filter(
     (i) => i.placement_status === "ambiguous",
   );
@@ -2162,25 +2154,25 @@ function CandidateCard({
             <span
               data-testid={`frontmatter-state-${candidate.candidate_id}`}
             >
-              <Badge variant={fmBadge.variant}>{fmBadge.label}</Badge>
+              <Badge variant={fmBadge.variant}>{t(fmBadge.labelKey)}</Badge>
             </span>
           )}
-          {hasIssues && <Badge variant="warning">validación</Badge>}
+          {hasIssues && <Badge variant="warning">{t("importer.candidate.validation")}</Badge>}
           {ambiguousImages.length > 0 && (
-            <Badge variant="warning">ubicación ambigua</Badge>
+            <Badge variant="warning">{t("importer.candidate.ambiguous")}</Badge>
           )}
           {unresolvedMediaSpans.length > 0 && (
             <span data-testid={`media-warning-${candidate.candidate_id}`}>
               <Badge variant="warning">
-                {unresolvedMediaSpans.length} media sin resolver
+                {t("importer.candidate.unresolvedMedia", { count: unresolvedMediaSpans.length })}
               </Badge>
             </span>
           )}
           {candidate.images.length > 0 && candidate.images.length - ambiguousImages.length > 0 && (
-            <Badge variant="info">{candidate.images.length} img</Badge>
+            <Badge variant="info">{t("importer.candidate.imagesCount", { count: candidate.images.length })}</Badge>
           )}
           {suggestions.length > 0 && (
-            <Badge variant="info">{suggestions.length} sugerencia{suggestions.length === 1 ? "" : "s"}</Badge>
+            <Badge variant="info">{t(suggestions.length === 1 ? "importer.candidate.suggestions.one" : "importer.candidate.suggestions.many", { count: suggestions.length })}</Badge>
           )}
           <Icon name="chevron-down" size={14} className="transition-transform group-open:rotate-180" />
         </span>
@@ -2188,12 +2180,12 @@ function CandidateCard({
       <div className="border-t border-edge px-4 py-3">
         <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-small tablet:grid-cols-2">
           <div>
-            <dt className="text-xs text-muted">Origen</dt>
+            <dt className="text-xs text-muted">{t("importer.candidate.origin")}</dt>
             <dd className="text-primary">{candidate.provenance.source_path}</dd>
           </div>
           {candidate.canonical_id && (
             <div data-testid={`canonical-id-${candidate.candidate_id}`}>
-              <dt className="text-xs text-muted">Identidad canónica</dt>
+              <dt className="text-xs text-muted">{t("importer.candidate.canonicalId")}</dt>
               <dd className="break-words font-mono text-primary">
                 {candidate.canonical_id}
               </dd>
@@ -2201,7 +2193,7 @@ function CandidateCard({
           )}
           {candidate.provenance.heading_path && (
             <div>
-              <dt className="text-xs text-muted">Sección de origen</dt>
+              <dt className="text-xs text-muted">{t("importer.candidate.originSection")}</dt>
               <dd className="text-primary">
                 {candidate.provenance.heading_path}
               </dd>
@@ -2209,21 +2201,21 @@ function CandidateCard({
           )}
           {candidate.provenance.nearby_text_anchor && (
             <div>
-              <dt className="text-xs text-muted">Contexto cercano</dt>
+              <dt className="text-xs text-muted">{t("importer.candidate.nearbyContext")}</dt>
               <dd className="truncate text-muted" title={candidate.provenance.nearby_text_anchor}>
                 {candidate.provenance.nearby_text_anchor}
               </dd>
             </div>
           )}
           <div>
-            <dt className="text-xs text-muted">Tamaño</dt>
+            <dt className="text-xs text-muted">{t("importer.candidate.size")}</dt>
             <dd className="text-primary">{formatBytes(candidate.size_bytes)}</dd>
           </div>
         </dl>
 
         {candidate.content_preview && (
           <div className="mt-3">
-            <p className="text-xs text-muted">Vista previa</p>
+            <p className="text-xs text-muted">{t("importer.candidate.preview")}</p>
             <pre className="mt-1 max-h-40 overflow-y-auto whitespace-pre-wrap rounded-md border border-edge bg-surface p-3 text-xs text-muted">
               {candidate.content_preview}
             </pre>
@@ -2237,7 +2229,7 @@ function CandidateCard({
             warnings (excluded from the gallery, never failing the ficha). */}
         {candidate.summary && (
           <div className="mt-3" data-testid={`summary-${candidate.candidate_id}`}>
-            <p className="text-xs text-muted">Resumen</p>
+            <p className="text-xs text-muted">{t("importer.candidate.summary")}</p>
             <p className="mt-1 text-xs text-primary">{candidate.summary}</p>
           </div>
         )}
@@ -2247,21 +2239,21 @@ function CandidateCard({
             className="mt-3 rounded-md border border-edge bg-surface p-3"
             data-testid={`frontmatter-${candidate.candidate_id}`}
           >
-            <p className="text-xs text-muted">Frontmatter propuesto</p>
+            <p className="text-xs text-muted">{t("importer.candidate.frontmatter")}</p>
             <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-small tablet:grid-cols-2">
               <div>
-                <dt className="text-xs text-muted">Título</dt>
+                <dt className="text-xs text-muted">{t("importer.candidate.title")}</dt>
                 <dd className="text-primary">{candidate.frontmatter.title}</dd>
               </div>
               <div>
-                <dt className="text-xs text-muted">Tipo</dt>
+                <dt className="text-xs text-muted">{t("importer.candidate.type")}</dt>
                 <dd className="text-primary">
                   {candidate.frontmatter.type || "—"}
                 </dd>
               </div>
               {candidate.frontmatter.description && (
                 <div className="tablet:col-span-2">
-                  <dt className="text-xs text-muted">Descripción</dt>
+                  <dt className="text-xs text-muted">{t("importer.candidate.description")}</dt>
                   <dd className="text-primary">
                     {candidate.frontmatter.description}
                   </dd>
@@ -2269,7 +2261,7 @@ function CandidateCard({
               )}
               {candidate.frontmatter.relaciones.length > 0 && (
                 <div className="tablet:col-span-2">
-                  <dt className="text-xs text-muted">Relaciones</dt>
+                  <dt className="text-xs text-muted">{t("importer.candidate.relations")}</dt>
                   <dd className="flex flex-wrap gap-1">
                     {candidate.frontmatter.relaciones.map((rel) => (
                       <span
@@ -2289,16 +2281,16 @@ function CandidateCard({
         {candidate.media_diagnostics.length > 0 && (
           <div className="mt-3" data-testid={`media-diagnostics-${candidate.candidate_id}`}>
             <p className="text-xs text-muted">
-              Imágenes referenciadas{" "}
+              {t("importer.candidate.referencedImages")}{" "}
               {resolvedMediaCount > 0 && (
                 <span className="text-status-success">
-                  · {resolvedMediaCount} resuelta{resolvedMediaCount === 1 ? "" : "s"}
+                  · {t(resolvedMediaCount === 1 ? "importer.candidate.resolved.one" : "importer.candidate.resolved.many", { count: resolvedMediaCount })}
                 </span>
               )}
               {unresolvedMediaSpans.length > 0 && (
                 <span className="text-action">
                   {" "}
-                  · {unresolvedMediaSpans.length} sin resolver
+                  · {t(unresolvedMediaSpans.length === 1 ? "importer.candidate.unresolvedCount.one" : "importer.candidate.unresolvedCount.many", { count: unresolvedMediaSpans.length })}
                 </span>
               )}
             </p>
@@ -2313,8 +2305,7 @@ function CandidateCard({
                   </span>
                   {diag.status === "unresolved" && (
                     <span className="ml-2 text-xs text-action">
-                      no hay definición — se conserva tal cual, no se registra
-                      en la galería
+                      {t("importer.candidate.noDefinition")}
                     </span>
                   )}
                   {diag.status === "resolved" && (
@@ -2331,7 +2322,7 @@ function CandidateCard({
         {hasIssues && (
           <div className="mt-3 rounded-md border border-action/40 bg-action/5 p-3">
             <p className="text-xs font-medium text-action">
-              Validación OKF pendiente
+              {t("importer.candidate.okfPending")}
             </p>
             <ul className="mt-1 list-disc pl-4 text-xs text-muted">
               {candidate.okf_issues.map((issue, index) => (
@@ -2348,8 +2339,7 @@ function CandidateCard({
         {candidate.images.length > 0 && (
           <div className="mt-3">
             <p className="text-xs text-muted">
-              Imágenes contextuales — se insertan en la sección correspondiente,
-              en orden de origen, sin reordenar lo existente.
+              {t("importer.candidate.imagesIntro")}
             </p>
             <ul className="mt-2 flex flex-col gap-2">
               {candidate.images.map((placement) => (
@@ -2369,8 +2359,7 @@ function CandidateCard({
         {textSuggestions.length > 0 && (
           <div className="mt-3" data-testid={`suggestions-${candidate.candidate_id}`}>
             <p className="text-xs text-muted">
-              Sugerencias del asistente — son orientativas. Aprobá o rechazá
-              cada una antes de importar.
+              {t("importer.candidate.textSuggestionsIntro")}
             </p>
             <ul className="mt-2 flex flex-col gap-2">
               {textSuggestions.map((suggestion) => (
@@ -2400,9 +2389,7 @@ function CandidateCard({
             data-testid={`vision-suggestions-${candidate.candidate_id}`}
           >
             <p className="text-xs text-muted">
-              Imágenes analizadas con visión — orientativas. Aprobá las que
-              quieras registrar en la galería; la descripción se usará como
-              texto alternativo.
+              {t("importer.candidate.visionSuggestionsIntro")}
             </p>
             <ul className="mt-2 flex flex-col gap-2">
               {visionSuggestions.map((suggestion) => (
@@ -2425,6 +2412,7 @@ function CandidateCard({
 
 /** Slice 2 — visually distinct enrichment status banner. */
 function EnrichmentStatusBanner({ status }: { status: EnrichmentStatus }) {
+  const { t } = useAppLanguage();
   if (status === "disabled") return null;
   if (status === "ok") {
     return (
@@ -2437,9 +2425,9 @@ function EnrichmentStatusBanner({ status }: { status: EnrichmentStatus }) {
       >
         <Icon name="lightbulb" size={16} />
         <span className="ml-2 font-medium">
-          Asistente: sugerencias listas para revisar.
+          {t("importer.enrich.ok.title")}
         </span>{" "}
-        Cada sugerencia requiere tu aprobación antes de aplicarse.
+        {t("importer.enrich.ok.body")}
       </div>
     );
   }
@@ -2453,10 +2441,7 @@ function EnrichmentStatusBanner({ status }: { status: EnrichmentStatus }) {
         data-enrichment-status="no_suggestions"
       >
         <Icon name="lightbulb" size={16} />
-        <span className="ml-2">
-          El asistente respondió pero no produjo sugerencias aplicables.
-          La importación sigue siendo válida sin cambios.
-        </span>
+        <span className="ml-2">{t("importer.enrich.none")}</span>
       </div>
     );
   }
@@ -2473,10 +2458,9 @@ function EnrichmentStatusBanner({ status }: { status: EnrichmentStatus }) {
     >
       <Icon name="error" size={16} />
       <span className="ml-2 font-medium">
-        El asistente no respondió.
+        {t("importer.enrich.error.title")}
       </span>{" "}
-      El análisis sigue siendo válido: se omitió el enriquecimiento para no
-      bloquear la importación.
+      {t("importer.enrich.error.body")}
     </div>
   );
 }
@@ -2519,6 +2503,7 @@ function SuggestionCard({
     decision: "approve" | "reject",
   ) => void;
 }) {
+  const { t } = useAppLanguage();
   const isClassification = suggestion.__type__ === "classification";
   const cls = isClassification ? (suggestion as ClassificationSuggestion) : null;
   const rel = !isClassification ? (suggestion as RelationshipSuggestion) : null;
@@ -2527,7 +2512,7 @@ function SuggestionCard({
   );
   const providerLabel =
     (isClassification ? cls!.provenance : rel!.provenance)?.provider ??
-    "asistente";
+    t("importer.provider.assistant");
   const modelLabel =
     (isClassification ? cls!.provenance : rel!.provenance)?.model ?? "";
 
@@ -2547,11 +2532,11 @@ function SuggestionCard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant={isClassification ? "info" : "default"}>
-            {isClassification ? "clasificación" : "relación"}
+            {isClassification ? t("importer.suggestion.kind.classification") : t("importer.suggestion.kind.relationship")}
           </Badge>
           <span className="text-small font-medium text-primary">
             {isClassification
-              ? `tipo: ${cls!.type || "(sin tipo)"}`
+              ? t("importer.suggestion.type", { type: cls!.type || t("importer.suggestion.noType") })
               : `${rel!.relationship_type} → ${relationshipTargetLabel(rel!)}`}
           </span>
           {isClassification && cls!.tags.length > 0 && (
@@ -2564,8 +2549,8 @@ function SuggestionCard({
             </span>
           )}
         </div>
-        <span className="text-xs text-muted" title="confianza del asistente">
-          confianza {confidencePct}%
+        <span className="text-xs text-muted" title={t("importer.suggestion.confidenceTitle")}>
+          {t("importer.suggestion.confidence", { pct: confidencePct })}
         </span>
       </div>
       {(isClassification ? cls!.evidence : rel!.evidence) && (
@@ -2577,7 +2562,7 @@ function SuggestionCard({
       )}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs text-muted">
-          Origen: {providerLabel}
+          {t("importer.suggestion.origin", { provider: providerLabel })}
           {modelLabel && ` · ${modelLabel}`}
         </span>
         <div className="flex gap-2">
@@ -2586,28 +2571,28 @@ function SuggestionCard({
             size="sm"
             disabled={busy || decision === "approved"}
             onClick={() => onDecision(candidateId, suggestion.id, "approve")}
-            aria-label={`Aprobar sugerencia ${suggestion.id}`}
+            aria-label={t("importer.suggestion.approveAria", { id: suggestion.id })}
             data-testid={`suggestion-approve-${suggestion.id}`}
           >
             <Icon name="check" size={14} />
-            Aprobar
+            {t("importer.suggestion.approve")}
           </Button>
           <Button
             variant={decision === "rejected" ? "primary" : "ghost"}
             size="sm"
             disabled={busy || decision === "rejected"}
             onClick={() => onDecision(candidateId, suggestion.id, "reject")}
-            aria-label={`Rechazar sugerencia ${suggestion.id}`}
+            aria-label={t("importer.suggestion.rejectAria", { id: suggestion.id })}
             data-testid={`suggestion-reject-${suggestion.id}`}
           >
             <Icon name="close" size={14} />
-            Rechazar
+            {t("importer.suggestion.reject")}
           </Button>
         </div>
       </div>
       {decision === "rejected" && (
         <p className="text-xs text-muted">
-          Sugerencia rechazada — no se aplicará al importar.
+          {t("importer.suggestion.rejected")}
         </p>
       )}
     </li>
@@ -2621,8 +2606,9 @@ function ImagePlacementRow({
   placement: ImportImagePlacement;
   mundo: string;
 }) {
+  const { t } = useAppLanguage();
   const ambiguous = placement.placement_status === "ambiguous";
-  const markdown = `![${placement.alt_text || "imagen"}](${placement.relative_media_path})`;
+  const markdown = `![${placement.alt_text || t("importer.image.altFallback")}](${placement.relative_media_path})`;
   const cleanPath = placement.relative_media_path.replace(
     /#(left|right|center|sm|lg)(?:-(sm|lg))?$/i,
     "",
@@ -2637,7 +2623,11 @@ function ImagePlacementRow({
   const contextText = placement.context_text ?? "";
   const warnings = placement.warnings ?? [];
   const anchorLabel =
-    anchorType === "inline" ? "alineada" : anchorType === "anchor" ? "anclada" : "";
+    anchorType === "inline"
+      ? t("importer.image.anchor.inline")
+      : anchorType === "anchor"
+        ? t("importer.image.anchor.block")
+        : "";
 
   return (
     <li
@@ -2658,14 +2648,14 @@ function ImagePlacementRow({
           {placement.relative_media_path}
           {ambiguous && (
             <Badge variant="warning" className="ml-2">
-              requiere revisión
+              {t("importer.image.needsReview")}
             </Badge>
           )}
         </p>
         {(documentOrder > 0 || anchorLabel || structuralPath) && (
           <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
             {documentOrder > 0 && (
-              <span aria-label={`Orden de origen: ${documentOrder}`}>
+              <span aria-label={t("importer.image.sourceOrderAria", { order: documentOrder })}>
                 #{documentOrder}
               </span>
             )}
@@ -2683,23 +2673,23 @@ function ImagePlacementRow({
         )}
         {headingPath && (
           <p className="mt-1 text-xs text-muted">
-            Sección: {headingPath}
+            {t("importer.image.section", { path: headingPath })}
           </p>
         )}
         {contextText && (
           <p className="mt-1 truncate text-xs text-muted" title={contextText}>
-            Contexto: {contextText}
+            {t("importer.image.context", { text: contextText })}
           </p>
         )}
         <p className="mt-1 text-xs text-muted">
           {placement.target_ficha
-            ? `Ficha destino: ${placement.target_ficha}`
-            : "Ficha destino: por confirmar"}
+            ? t("importer.image.target", { target: placement.target_ficha })
+            : t("importer.image.targetPending")}
         </p>
         {warnings.length > 0 && (
           <ul
             className="mt-2 flex flex-col gap-1 rounded-md border border-action/40 bg-action/5 p-2"
-            aria-label="Advertencias de imagen"
+            aria-label={t("importer.image.warningsAria")}
           >
             {warnings.map((warning, index) => (
               <li key={index} className="text-xs text-action">
@@ -2708,7 +2698,7 @@ function ImagePlacementRow({
             ))}
           </ul>
         )}
-        <p className="mt-2 text-xs text-muted">Markdown resultante</p>
+        <p className="mt-2 text-xs text-muted">{t("importer.image.markdownResult")}</p>
         <code className="mt-0.5 block overflow-x-auto rounded bg-surface px-2 py-1 text-xs text-muted">
           {markdown}
         </code>
@@ -2739,16 +2729,17 @@ function ResultPanel({
   onNewImport: () => void;
   onNavigateEditor: (target: string) => void;
 }) {
+  const { t } = useAppLanguage();
   if (!job) {
     return (
       <div className="col-span-full">
         <div className="rounded-lg border border-edge bg-surface-raised p-6">
           <p className="text-body text-muted">
-            La importación no se pudo completar y no hay un estado recuperable.
+            {t("importer.result.noState")}
           </p>
           <div className="mt-4">
             <Button variant="secondary" onClick={onNewImport}>
-              Nueva importación
+              {t("importer.result.newImport")}
             </Button>
           </div>
         </div>
@@ -2787,45 +2778,45 @@ function ResultPanel({
         )}
       >
         <h2 className="font-heading text-h4 text-primary">
-          {success && "Importación completada"}
-          {cancelled && "Importación cancelada"}
-          {failed && "La importación no se completó"}
-          {rolledBack && "Importación revertida"}
-          {!success && !cancelled && !failed && !rolledBack && "Estado intermedio"}
+          {success && t("importer.result.completed")}
+          {cancelled && t("importer.result.cancelled")}
+          {failed && t("importer.result.failed")}
+          {rolledBack && t("importer.result.rolledBack")}
+          {!success && !cancelled && !failed && !rolledBack && t("importer.result.intermediate")}
         </h2>
 
         {success && (
           <div className="mt-3" role="status" aria-live="polite">
             <p className="text-body text-primary">
-              El contenido aprobado se importó a {mundo}.
+              {t("importer.result.completedBody", { mundo })}
             </p>
             {outcomes.length > 0 && (
               <ul className="mt-3 flex flex-wrap gap-2 text-small">
                 {summary.added > 0 && (
                   <li className="rounded bg-surface px-2 py-1 text-primary">
-                    {summary.added} fichas creadas
+                    {t("importer.result.added", { count: summary.added })}
                   </li>
                 )}
                 {summary.replaced > 0 && (
                   <li className="rounded bg-surface px-2 py-1 text-primary">
-                    {summary.replaced} reemplazadas
+                    {t("importer.result.replaced", { count: summary.replaced })}
                   </li>
                 )}
                 {summary.kept > 0 && (
                   <li className="rounded bg-surface px-2 py-1 text-muted">
-                    {summary.kept} sin cambios
+                    {t("importer.result.kept", { count: summary.kept })}
                   </li>
                 )}
                 {summary.skipped > 0 && (
                   <li className="rounded bg-surface px-2 py-1 text-muted">
-                    {summary.skipped} omitidas (ya presentes)
+                    {t("importer.result.skipped", { count: summary.skipped })}
                   </li>
                 )}
               </ul>
             )}
             {papeleraEntries.length > 0 && (
               <p className="mt-3 text-small text-muted">
-                Versiones anteriores guardadas en la papelera (30 días).
+                {t("importer.result.trashNotice")}
               </p>
             )}
           </div>
@@ -2833,29 +2824,27 @@ function ResultPanel({
 
         {cancelled && (
           <p className="mt-3 text-body text-muted" role="status">
-            El análisis se canceló en un límite seguro: nada se escribió en tu
-            mundo. Podés reanudar la revisión cuando quieras.
+            {t("importer.result.cancelledBody")}
           </p>
         )}
 
         {failed && (
           <div className="mt-3">
             <p className="text-body text-muted">
-              {job.error || "El análisis o la importación falló y quedó bloqueada."}
+              {job.error || t("importer.error.analysisOrImportFailed")}
             </p>
           </div>
         )}
 
         {rolledBack && (
           <p className="mt-3 text-body text-muted" role="status">
-            La importación quedó marcada como revertida; el registro y la
-            auditoría se conservan.
+            {t("importer.result.rolledBackBody")}
           </p>
         )}
 
         {!success && !cancelled && !failed && !rolledBack && (
           <p className="mt-3 text-body text-muted">
-            La importación quedó en estado {state}. Reanudala para continuar.
+            {t("importer.result.intermediateBody", { state })}
           </p>
         )}
       </div>
@@ -2863,7 +2852,7 @@ function ResultPanel({
       {outcomes.length > 0 && (
         <div className="mt-4">
           <h3 className="font-heading text-h4 text-primary">
-            Resultado por ítem
+            {t("importer.result.perItem")}
           </h3>
           <ul className="mt-2 flex flex-col gap-2">
             {outcomes.map((outcome) => (
@@ -2886,7 +2875,7 @@ function ResultPanel({
                       {outcome.action}
                     </Badge>
                     {outcome.papelera_entry && (
-                      <Badge variant="info">papelera</Badge>
+                      <Badge variant="info">{t("importer.result.trashBadge")}</Badge>
                     )}
                   </span>
                 </div>
@@ -2904,9 +2893,7 @@ function ResultPanel({
       {summary.errors > 0 && (
         <div className="mt-4 rounded-lg border border-action/40 bg-action/5 p-4" role="alert">
           <p className="text-small text-primary">
-            {summary.errors} ítem{summary.errors === 1 ? "" : "s"} requieren
-            revisión o fallaron. Revisá el detalle por ítem y decidí el
-            siguiente paso.
+            {t(summary.errors === 1 ? "importer.result.errors.one" : "importer.result.errors.many", { count: summary.errors })}
           </p>
         </div>
       )}
@@ -2921,29 +2908,29 @@ function ResultPanel({
             }}
           >
             <Icon name="corner-up-right" size={16} />
-            Ir al editor
+            {t("importer.result.goEditor")}
           </Button>
         )}
         {cancelled && (
           <Button variant="secondary" onClick={onResume}>
             <Icon name="corner-up-right" size={16} />
-            Reanudar revisión
+            {t("importer.result.resumeReview")}
           </Button>
         )}
         {failed && (
           <Button variant="secondary" onClick={onRetryAnalyze}>
             <Icon name="corner-up-right" size={16} />
-            Reintentar
+            {t("importer.retry")}
           </Button>
         )}
         {(success || rolledBack) && (
           <Button variant="ghost" onClick={onRollback} disabled={rolledBack}>
             <Icon name="history" size={16} />
-            {rolledBack ? "Ya revertida" : "Revertir importación"}
+            {rolledBack ? t("importer.result.alreadyRolledBack") : t("importer.result.rollback")}
           </Button>
         )}
         <Button variant="ghost" onClick={onNewImport}>
-          Nueva importación
+          {t("importer.result.newImport")}
         </Button>
       </div>
     </div>

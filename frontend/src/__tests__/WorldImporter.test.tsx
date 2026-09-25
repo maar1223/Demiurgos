@@ -47,6 +47,7 @@ vi.mock("@/api/importer", () => ({
   ],
 }));
 
+import { tEs } from "@/__tests__/i18nTestUtils";
 import { useWorlds } from "@/hooks/useWorlds";
 import {
   analyzeImportJob,
@@ -164,7 +165,7 @@ async function selectFileAndAnalyze(fileName = "planos.md") {
   const input = screen.getByLabelText("Selección de fuentes");
   fireEvent.change(input, { target: { files: [new File(["abc"], fileName)] } });
   fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-  await screen.findByRole("heading", { name: "Revisión e aprobación" });
+  await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 }
 
 describe("WorldImporter — accessible, preservation-first workflow (slice 3)", () => {
@@ -401,7 +402,7 @@ describe("WorldImporter — accessible, preservation-first workflow (slice 3)", 
     await selectFileAndAnalyze();
 
     expect(document.activeElement?.textContent).toContain(
-      "Revisión e aprobación",
+      tEs("importer.heading.review"),
     );
   });
 
@@ -516,7 +517,7 @@ describe("WorldImporter — accessible, preservation-first workflow (slice 3)", 
     expect(dropdown).toHaveValue("personajes");
 
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
     expect(createImportJob).toHaveBeenCalledWith(
       "mundo",
       expect.objectContaining({
@@ -540,7 +541,7 @@ describe("WorldImporter — accessible, preservation-first workflow (slice 3)", 
     await waitFor(() => expect(dropdown).toHaveValue("referencias"));
 
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
     expect(createImportJob).toHaveBeenCalledWith(
       "mundo",
       expect.objectContaining({
@@ -695,7 +696,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     fireEvent.click(screen.getByTestId("history-open-j-review"));
 
     // Drives the page to the review step with the server-side candidates.
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
     expect(getImportReview).toHaveBeenCalledWith("mundo", "j-review");
   });
 
@@ -798,7 +799,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     renderImporter();
     await screen.findByTestId("history-open-j-empty");
     fireEvent.click(screen.getByTestId("history-open-j-empty"));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     // Empty review shows the "Eliminar este job" button.
     fireEvent.click(screen.getByTestId("review-delete-job"));
@@ -944,7 +945,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     // Enrichment banner is shown when status is "ok".
     expect(screen.getByTestId("enrichment-banner")).toHaveAttribute(
@@ -979,7 +980,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     const card = screen.getByTestId("suggestion-rel-1");
 
@@ -1009,7 +1010,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     expect(screen.getByTestId("suggestion-rel-1")).toHaveTextContent(
       "habita-en → 7d2078e270c244f78b6f740a517f2dc2",
@@ -1028,7 +1029,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     // Approve the suggestion via the per-card button.
     fireEvent.click(screen.getByTestId("suggestion-approve-cls-1"));
@@ -1103,7 +1104,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     fireEvent.click(screen.getByTestId("suggestion-reject-cls-drop"));
 
@@ -1152,7 +1153,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     // The vision card renders inside the candidate detail with its own
     // section, alongside the text suggestion family.
@@ -1199,7 +1200,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     // Approve the image via the per-card button (same decisions endpoint
     // as text suggestions — the vision id is just another suggestion id).
@@ -1276,7 +1277,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     fireEvent.click(screen.getByTestId("suggestion-reject-vision:abc"));
 
@@ -1308,7 +1309,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     const banner = screen.getByTestId("enrichment-banner");
     expect(banner).toHaveAttribute("data-enrichment-status", "error");
@@ -1325,7 +1326,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     expect(screen.queryByTestId("enrichment-banner")).not.toBeInTheDocument();
   });
@@ -1347,7 +1348,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     const input = screen.getByLabelText("Selección de fuentes");
     fireEvent.change(input, { target: { files: [new File(["abc"], "planos.md")] } });
     fireEvent.click(screen.getByRole("button", { name: /Analizar/ }));
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     fireEvent.click(screen.getByTestId("suggestion-approve-cls-1"));
 
@@ -1415,7 +1416,7 @@ describe("WorldImporter — history + recovery (slice 2)", () => {
     // and go straight to analyzeImportJob.
     fireEvent.click(resumeBtn);
 
-    await screen.findByRole("heading", { name: "Revisión e aprobación" });
+    await screen.findByRole("heading", { name: tEs("importer.heading.review") });
 
     // createImportJob and streamImportFile were NEVER called — the file
     // was already on the server spool.
