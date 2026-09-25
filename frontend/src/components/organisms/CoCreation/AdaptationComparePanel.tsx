@@ -3,8 +3,10 @@ import { Badge } from "@/components/atoms/Badge";
 import { Icon } from "@/components/atoms/Icon";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
 import { ProvenanceBadge } from "@/components/organisms/CoCreation/ProvenanceBadge";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { diffLines, mergeChangedRows, splitLines } from "@/lib/diff";
 import { cn } from "@/lib/utils";
+import type { MessageKey } from "@/i18n/messages";
 import type {
   DerivedFrom,
   DraftPayload,
@@ -13,14 +15,14 @@ import type {
 } from "@/api/types";
 
 /** TW13 compare sections — the typed canvas keys (REQ-CC-18). */
-export const COMPARE_SECTIONS: { key: keyof DraftPayload; label: string }[] = [
-  { key: "name", label: "Nombre" },
-  { key: "description", label: "Descripción" },
-  { key: "purpose", label: "Propósito" },
-  { key: "scope", label: "Alcance" },
-  { key: "main_flow", label: "Flujo principal" },
-  { key: "branches", label: "Ramas" },
-  { key: "rules", label: "Reglas" },
+export const COMPARE_SECTIONS: { key: keyof DraftPayload; label: MessageKey }[] = [
+  { key: "name", label: "cocreation.section.name" },
+  { key: "description", label: "cocreation.section.description" },
+  { key: "purpose", label: "cocreation.section.purpose" },
+  { key: "scope", label: "cocreation.section.scope" },
+  { key: "main_flow", label: "cocreation.section.main_flow" },
+  { key: "branches", label: "cocreation.section.branches" },
+  { key: "rules", label: "cocreation.section.rules" },
 ];
 
 /** Classify one section against the original: conservado | modificado |
@@ -119,11 +121,11 @@ export function parseSourceSections(source: string): Partial<DraftPayload> {
   return parsed;
 }
 
-const CLASSIFICATION_LABELS: Record<SectionClassification, string> = {
-  conservado: "Conservado",
-  modificado: "Modificado",
-  añadido: "Añadido",
-  eliminado: "Eliminado",
+const CLASSIFICATION_LABELS: Record<SectionClassification, MessageKey> = {
+  conservado: "cocreation.classification.conservado",
+  modificado: "cocreation.classification.modificado",
+  añadido: "cocreation.classification.anadido",
+  eliminado: "cocreation.classification.eliminado",
 };
 
 const CLASSIFICATION_VARIANT: Record<
@@ -166,6 +168,7 @@ export function AdaptationComparePanel({
   onClose,
   canvas,
 }: AdaptationComparePanelProps) {
+  const { t } = useAppLanguage();
   const originalSections = useMemo(
     () => parseSourceSections(original?.source ?? ""),
     [original],
@@ -206,11 +209,13 @@ export function AdaptationComparePanel({
               id="adaptation-compare-title"
               className="font-heading text-h4 text-primary"
             >
-              Comparar adaptación
+              {t("cocreation.compare.title")}
             </h2>
             <p className="mt-0.5 truncate text-small text-muted">
-              Original {original?.skill_id}@{original?.version} vs borrador
-              derivado
+              {t("cocreation.compare.subtitle", {
+                skillId: original?.skill_id ?? "",
+                version: original?.version ?? "",
+              })}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -218,7 +223,7 @@ export function AdaptationComparePanel({
             <button
               type="button"
               onClick={onClose}
-              aria-label="Cerrar comparación"
+              aria-label={t("cocreation.compare.closeAria")}
               className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
             >
               <Icon name="close" size={20} />
@@ -228,9 +233,9 @@ export function AdaptationComparePanel({
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-6">
           {/* Per-section classification (REQ-CC-18). */}
-          <section aria-label="Clasificación por sección">
+          <section aria-label={t("cocreation.compare.classificationAria")}>
             <h3 className="text-xs font-medium uppercase tracking-wide text-muted">
-              Clasificación por sección
+              {t("cocreation.compare.classification")}
             </h3>
             <ul className="mt-2 flex flex-wrap gap-2">
               {classifications.map((section) => (
@@ -238,11 +243,13 @@ export function AdaptationComparePanel({
                   key={section.key}
                   className="flex items-center gap-1.5 rounded-md border border-edge bg-surface px-2.5 py-1.5"
                 >
-                  <span className="text-xs text-primary">{section.label}</span>
+                  <span className="text-xs text-primary">
+                    {t(section.label)}
+                  </span>
                   <Badge
                     variant={CLASSIFICATION_VARIANT[section.classification]}
                   >
-                    {CLASSIFICATION_LABELS[section.classification]}
+                    {t(CLASSIFICATION_LABELS[section.classification])}
                   </Badge>
                 </li>
               ))}
@@ -254,7 +261,7 @@ export function AdaptationComparePanel({
             <div className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-edge bg-surface">
               <div className="flex items-center justify-between border-b border-edge px-3 py-2">
                 <h3 className="text-xs font-medium text-muted">
-                  Original (solo lectura)
+                  {t("cocreation.compare.original")}
                 </h3>
                 <Icon name="diff" size={14} className="text-icon-muted" />
               </div>
@@ -263,7 +270,7 @@ export function AdaptationComparePanel({
                   <MarkdownViewer content={original.source} />
                 ) : (
                   <p className="text-sm text-muted">
-                    No se pudo cargar el original publicado.
+                    {t("cocreation.compare.originalLoadError")}
                   </p>
                 )}
               </div>
@@ -275,7 +282,7 @@ export function AdaptationComparePanel({
             >
               <div className="flex items-center justify-between border-b border-edge px-3 py-2">
                 <h3 className="text-xs font-medium text-muted">
-                  Derivado (editable)
+                  {t("cocreation.compare.derived")}
                 </h3>
                 <Icon name="edit" size={14} className="text-icon-muted" />
               </div>

@@ -6,6 +6,7 @@ import {
   normalizePendingQuestion,
 } from "@/components/organisms/CoCreation/CoCreationCanvas";
 import type { DraftPayload } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 const payload: DraftPayload = {
   name: "Eneagrama",
@@ -55,7 +56,9 @@ describe("CoCreationCanvas", () => {
     expect(screen.getByDisplayValue("Clasificar y derivar arcos")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Rama A")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Regla 1")).toBeInTheDocument();
-    expect(screen.getByText("Preguntas pendientes")).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.canvas.pendingQuestions")),
+    ).toBeInTheDocument();
   });
 
   it("fires onChange with the section patch on edit (REQ-CC-11)", () => {
@@ -76,13 +79,24 @@ describe("CoCreationCanvas", () => {
     const user = userEvent.setup();
     const props = renderCanvas();
 
-    await user.type(screen.getByLabelText("Nueva rama"), "Rama C");
-    await user.click(screen.getByRole("button", { name: "Añadir rama" }));
+    await user.type(
+      screen.getByLabelText(tEs("cocreation.canvas.newItem", { label: "rama" })),
+      "Rama C",
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: tEs("cocreation.canvas.addItemAria", { label: "rama" }),
+      }),
+    );
     expect(props.onChange).toHaveBeenLastCalledWith(
       expect.objectContaining({ branches: ["Rama A", "Rama B", "Rama C"] }),
     );
 
-    await user.click(screen.getByRole("button", { name: "Quitar rama 2" }));
+    await user.click(
+      screen.getByRole("button", {
+        name: tEs("cocreation.canvas.removeItem", { label: "rama", index: 2 }),
+      }),
+    );
     // The parent owns the payload (mock does not re-render), so the list is
     // still ["Rama A", "Rama B"]: removing index 1 sends ["Rama A"].
     expect(props.onChange).toHaveBeenLastCalledWith(
@@ -102,14 +116,18 @@ describe("CoCreationCanvas", () => {
       screen.queryByRole("textbox", { name: /pregunta/i }),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Aceptar" }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("cocreation.canvas.accept") }),
+    );
     expect(props.onPendingQuestionStatus).toHaveBeenCalledWith(
       0,
       "aceptada_por_autor",
     );
 
     // The accepted entry renders its state badge and no buttons.
-    expect(screen.getAllByText("Aceptada por el autor").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(tEs("cocreation.warning.aceptada_por_autor")).length,
+    ).toBeGreaterThan(0);
   });
 
   it("normalizes legacy plain-string pending questions", () => {
@@ -126,8 +144,12 @@ describe("CoCreationCanvas", () => {
     const user = userEvent.setup();
     const props = renderCanvas({ canUndo: true, canRedo: true });
 
-    await user.click(screen.getByRole("button", { name: "Deshacer edición" }));
-    await user.click(screen.getByRole("button", { name: "Rehacer edición" }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("cocreation.canvas.undoAria") }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: tEs("cocreation.canvas.redoAria") }),
+    );
     expect(props.onUndo).toHaveBeenCalledTimes(1);
     expect(props.onRedo).toHaveBeenCalledTimes(1);
   });
@@ -136,16 +158,16 @@ describe("CoCreationCanvas", () => {
     renderCanvas({ canUndo: false, canRedo: false });
 
     expect(
-      screen.getByRole("button", { name: "Deshacer edición" }),
+      screen.getByRole("button", { name: tEs("cocreation.canvas.undoAria") }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Rehacer edición" }),
+      screen.getByRole("button", { name: tEs("cocreation.canvas.redoAria") }),
     ).toBeDisabled();
   });
 
   it("surfaces the autosave status and errors in the toolbar", () => {
     renderCanvas({ isSaving: true });
-    expect(screen.getByText("Guardando…")).toBeInTheDocument();
+    expect(screen.getByText(tEs("cocreation.canvas.saving"))).toBeInTheDocument();
 
     renderCanvas({ isSaving: false, saveError: "revision_conflict" });
     expect(screen.getByRole("alert")).toHaveTextContent("revision_conflict");
@@ -157,7 +179,7 @@ describe("CoCreationCanvas", () => {
     expect(screen.getByDisplayValue("Eneagrama")).toBeDisabled();
     expect(screen.getByDisplayValue("Rama A")).toBeDisabled();
     expect(
-      screen.queryByRole("button", { name: "Aceptar" }),
+      screen.queryByRole("button", { name: tEs("cocreation.canvas.accept") }),
     ).not.toBeInTheDocument();
   });
 
@@ -165,7 +187,7 @@ describe("CoCreationCanvas", () => {
     renderCanvas({ payload: null });
 
     expect(
-      screen.getByText(/El lienzo todavía no tiene contenido/),
+      screen.getByText(tEs("cocreation.canvas.noContent")),
     ).toBeInTheDocument();
   });
 
@@ -185,13 +207,19 @@ describe("CoCreationCanvas", () => {
     try {
       renderCanvas({ payload: adjuntosPayload });
 
-      expect(screen.getByText("Ejemplares")).toBeInTheDocument();
+      expect(
+        screen.getByText(tEs("cocreation.canvas.exemplars")),
+      ).toBeInTheDocument();
       expect(screen.getByText("mapa.md")).toBeInTheDocument();
       expect(screen.getByText("fauna.md")).toBeInTheDocument();
       expect(screen.getByText("mundo")).toBeInTheDocument();
       expect(screen.getByText("region")).toBeInTheDocument();
-      expect(screen.getByText("1024 bytes")).toBeInTheDocument();
-      expect(screen.getByText("2048 bytes")).toBeInTheDocument();
+      expect(
+        screen.getByText(tEs("cocreation.canvas.bytes", { bytes: 1024 })),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(tEs("cocreation.canvas.bytes", { bytes: 2048 })),
+      ).toBeInTheDocument();
       // `sha256` is metadata the UI must NOT surface, and the section never
       // fetches carrier bytes to render.
       expect(screen.queryByText("a".repeat(64))).not.toBeInTheDocument();
@@ -205,7 +233,9 @@ describe("CoCreationCanvas", () => {
   it("shows the empty state when the payload has no exemplars (legacy payload parses, REQ-CC-24)", () => {
     renderCanvas();
 
-    expect(screen.getByText(/No hay ejemplares cargados/)).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.canvas.noExemplars")),
+    ).toBeInTheDocument();
   });
 
   it("uploads an exemplar with the selected file and nivel (REQ-CC-24)", async () => {
@@ -213,9 +243,17 @@ describe("CoCreationCanvas", () => {
     const props = renderCanvas();
     const file = new File(["# Mapa"], "mapa.md", { type: "text/markdown" });
 
-    await user.upload(screen.getByLabelText("Ejemplar (.md)"), file);
-    await user.type(screen.getByLabelText("Nivel del ejemplar"), "mundo");
-    await user.click(screen.getByRole("button", { name: "Subir ejemplar" }));
+    await user.upload(
+      screen.getByLabelText(tEs("cocreation.canvas.exemplarLabel")),
+      file,
+    );
+    await user.type(
+      screen.getByLabelText(tEs("cocreation.canvas.exemplarNivel")),
+      "mundo",
+    );
+    await user.click(
+      screen.getByRole("button", { name: tEs("cocreation.canvas.uploadAria") }),
+    );
 
     expect(props.onUploadAdjunto).toHaveBeenCalledWith(file, "mundo");
   });
@@ -225,7 +263,9 @@ describe("CoCreationCanvas", () => {
     const props = renderCanvas({ payload: adjuntosPayload });
 
     await user.click(
-      screen.getByRole("button", { name: "Quitar ejemplar 1" }),
+      screen.getByRole("button", {
+        name: tEs("cocreation.canvas.removeExemplar", { index: 1 }),
+      }),
     );
 
     expect(props.onRemoveAdjunto).toHaveBeenCalledWith("mapa.md");
@@ -235,10 +275,14 @@ describe("CoCreationCanvas", () => {
     renderCanvas({ payload: adjuntosPayload, disabled: true });
 
     expect(
-      screen.queryByRole("button", { name: "Subir ejemplar" }),
+      screen.queryByRole("button", {
+        name: tEs("cocreation.canvas.uploadAria"),
+      }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Quitar ejemplar 1" }),
+      screen.queryByRole("button", {
+        name: tEs("cocreation.canvas.removeExemplar", { index: 1 }),
+      }),
     ).not.toBeInTheDocument();
   });
 });

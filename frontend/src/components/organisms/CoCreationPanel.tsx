@@ -27,7 +27,9 @@ import {
 import { DraftHistoryPanel } from "@/components/organisms/CoCreation/DraftHistoryPanel";
 import { AdaptationComparePanel } from "@/components/organisms/CoCreation/AdaptationComparePanel";
 import { ProvenanceBadge } from "@/components/organisms/CoCreation/ProvenanceBadge";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { cn } from "@/lib/utils";
+import type { MessageKey, TFunction } from "@/i18n/messages";
 
 /**
  * Co-creation surface for the Skill Madre (Fase 4 — MVP + Fase 5a TW12/TW13).
@@ -57,28 +59,30 @@ import { cn } from "@/lib/utils";
  * (REQ-CC-20) — the frontend never fabricates `derived_from`.
  */
 
-const MILESTONE_LABELS: Record<string, string> = {
-  proposito: "Propósito",
-  alcance: "Alcance",
-  flujo_principal: "Flujo principal",
-  ramas_reglas: "Ramas y reglas",
-  borrador_listo: "Borrador listo",
-  revision_publicacion: "Revisión y publicación",
+const MILESTONE_LABELS: Record<string, MessageKey> = {
+  proposito: "cocreation.milestone.proposito",
+  alcance: "cocreation.milestone.alcance",
+  flujo_principal: "cocreation.milestone.flujo_principal",
+  ramas_reglas: "cocreation.milestone.ramas_reglas",
+  borrador_listo: "cocreation.milestone.borrador_listo",
+  revision_publicacion: "cocreation.milestone.revision_publicacion",
 };
 
-const PHASE_LABELS: Record<string, string> = {
-  conversation: "Conversación",
-  materialized: "Materializado",
-  review: "Revisión",
-  complete: "Completo",
+const PHASE_LABELS: Record<string, MessageKey> = {
+  conversation: "cocreation.phase.conversation",
+  materialized: "cocreation.phase.materialized",
+  review: "cocreation.phase.review",
+  complete: "cocreation.phase.complete",
 };
 
-function milestoneLabel(name: string): string {
-  return MILESTONE_LABELS[name] ?? name;
+function milestoneLabel(t: TFunction, name: string): string {
+  const key = MILESTONE_LABELS[name];
+  return key ? t(key) : name;
 }
 
-function phaseLabel(phase: string): string {
-  return PHASE_LABELS[phase] ?? phase;
+function phaseLabel(t: TFunction, phase: string): string {
+  const key = PHASE_LABELS[phase];
+  return key ? t(key) : phase;
 }
 
 function shortId(id: string): string {
@@ -105,25 +109,25 @@ type ReviewPayload = DraftPayload & {
  *  `DraftPayload` section keys. A section the Author touched in the canvas
  *  reads "decidido"; untouched sections read "propuesto". Kernel invariants
  *  (permisos/dependencias) always read "exigido". */
-const REVIEW_SECTIONS: { key: keyof ReviewPayload; label: string }[] = [
-  { key: "name", label: "Nombre" },
-  { key: "description", label: "Descripción" },
-  { key: "purpose", label: "Propósito" },
-  { key: "scope", label: "Alcance" },
-  { key: "main_flow", label: "Flujo principal" },
-  { key: "branches", label: "Ramas" },
-  { key: "rules", label: "Reglas" },
-  { key: "taller", label: "Taller" },
-  { key: "etiquetas", label: "Etiquetas" },
+const REVIEW_SECTIONS: { key: keyof ReviewPayload; label: MessageKey }[] = [
+  { key: "name", label: "cocreation.section.name" },
+  { key: "description", label: "cocreation.section.description" },
+  { key: "purpose", label: "cocreation.section.purpose" },
+  { key: "scope", label: "cocreation.section.scope" },
+  { key: "main_flow", label: "cocreation.section.main_flow" },
+  { key: "branches", label: "cocreation.section.branches" },
+  { key: "rules", label: "cocreation.section.rules" },
+  { key: "taller", label: "cocreation.section.taller" },
+  { key: "etiquetas", label: "cocreation.section.etiquetas" },
 ];
 
 /** Full legend phrases (canonical copy — the per-row badges show the short
  *  "Decidido"/"Propuesto"/"Exigido" forms). */
 const ATTRIBUTION_LABELS = {
-  decidido: "decidido por el Autor",
-  propuesto: "propuesto por el Asistente",
-  exigido: "exigido por Demiurgos",
-} as const;
+  decidido: "cocreation.attribution.decidido",
+  propuesto: "cocreation.attribution.propuesto",
+  exigido: "cocreation.attribution.exigido",
+} as const satisfies Record<string, MessageKey>;
 
 /** Render one review value: lists join compactly, blanks read "—". */
 function renderReviewValue(value: unknown): string {
@@ -147,6 +151,7 @@ interface CoCreationMilestoneSidebarProps {
 export function CoCreationMilestoneSidebar({
   state,
 }: CoCreationMilestoneSidebarProps) {
+  const { t } = useAppLanguage();
   const { session } = state;
   const milestones: CoCreationMilestone[] = session?.progress ?? [];
 
@@ -154,12 +159,10 @@ export function CoCreationMilestoneSidebar({
     <div className="flex h-full flex-col gap-4 px-3 py-4">
       <div>
         <h2 className="text-small font-medium uppercase tracking-wide text-muted">
-          Progreso
+          {t("cocreation.progress")}
         </h2>
         {milestones.length === 0 ? (
-          <p className="mt-2 text-xs text-muted">
-            Todavía no hay una sesión activa.
-          </p>
+          <p className="mt-2 text-xs text-muted">{t("cocreation.noSession")}</p>
         ) : (
           <ol className="mt-3 space-y-2">
             {milestones.map((milestone) => (
@@ -184,7 +187,7 @@ export function CoCreationMilestoneSidebar({
                     <span className="inline-block h-3.5 w-3.5 rounded-full border border-edge" />
                   )}
                 </span>
-                <span>{milestoneLabel(milestone.name)}</span>
+                <span>{milestoneLabel(t, milestone.name)}</span>
               </li>
             ))}
           </ol>
@@ -194,33 +197,35 @@ export function CoCreationMilestoneSidebar({
       {session && (
         <div className="rounded-lg border border-edge bg-surface px-3 py-3">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-xs font-medium text-muted">Sesión</h3>
+            <h3 className="text-xs font-medium text-muted">
+              {t("cocreation.session.title")}
+            </h3>
             <ProvenanceBadge derivedFrom={session.derived_from} />
           </div>
           <dl className="mt-2 space-y-1.5 text-xs text-primary">
             <div className="flex items-center justify-between gap-2">
-              <dt className="text-muted">Sesión</dt>
+              <dt className="text-muted">{t("cocreation.session.label")}</dt>
               <dd className="font-mono">{shortId(session.session_id)}</dd>
             </div>
             <div className="flex items-center justify-between gap-2">
-              <dt className="text-muted">Fase</dt>
+              <dt className="text-muted">{t("cocreation.session.phase")}</dt>
               <dd>
                 <Badge variant={session.phase === "complete" ? "success" : "default"}>
-                  {phaseLabel(session.phase)}
+                  {phaseLabel(t, session.phase)}
                 </Badge>
               </dd>
             </div>
             <div className="flex items-center justify-between gap-2">
-              <dt className="text-muted">Preguntas</dt>
+              <dt className="text-muted">{t("cocreation.session.questions")}</dt>
               <dd>{session.question_count}</dd>
             </div>
             <div className="flex items-center justify-between gap-2">
-              <dt className="text-muted">Mundo</dt>
-              <dd>{session.world ?? "Transversal"}</dd>
+              <dt className="text-muted">{t("cocreation.session.world")}</dt>
+              <dd>{session.world ?? t("cocreation.session.transversal")}</dd>
             </div>
             {session.draft_id && (
               <div className="flex items-center justify-between gap-2">
-                <dt className="text-muted">Borrador</dt>
+                <dt className="text-muted">{t("cocreation.session.draft")}</dt>
                 <dd className="font-mono">{shortId(session.draft_id)}</dd>
               </div>
             )}
@@ -236,7 +241,7 @@ export function CoCreationMilestoneSidebar({
           onClick={() => state.reset()}
           className="w-full"
         >
-          Nueva sesión
+          {t("cocreation.newSession")}
         </Button>
       </div>
     </div>
@@ -254,6 +259,7 @@ interface CoCreationPanelProps {
 }
 
 export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
+  const { t } = useAppLanguage();
   const [input, setInput] = useState("");
   const [scopeWorld, setScopeWorld] = useState("");
   const [activateWorld, setActivateWorld] = useState("");
@@ -291,10 +297,14 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
   const compatibles = reviewPayload.talleres_compatibles ?? [];
   const dependencies = [
     ...(compatibles.length > 0 ? [compatibles.join(", ")] : []),
-    ...(session?.world ? [`Mundo: ${session.world}`] : []),
+    ...(session?.world
+      ? [t("cocreation.review.dependenciesWorld", { world: session.world })]
+      : []),
   ];
   const dependenciesText =
-    dependencies.length > 0 ? dependencies.join(" · ") : "ninguna";
+    dependencies.length > 0
+      ? dependencies.join(" · ")
+      : t("cocreation.review.dependenciesNone");
 
   const submit = () => {
     if (!input.trim() || isLoading) return;
@@ -376,15 +386,15 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-xs text-muted">
             {authoringMode === "guided"
-              ? "Una pregunta por vez, guiada por el Co-creador de skills. Vos aprobás cada paso."
+              ? t("cocreation.intro.guided")
               : authoringMode === "manual"
-                ? "Escribí el markdown de tu skill directamente."
-                : "Importá un .zip para revisión y cuarentena."}
+                ? t("cocreation.intro.manual")
+                : t("cocreation.intro.import")}
           </p>
           {session && authoringMode === "guided" && (
             <div
               role="tablist"
-              aria-label="Superficie de co-creación"
+              aria-label={t("cocreation.tabs.surfaceAria")}
               className="inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
             >
               <button
@@ -399,7 +409,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                     : "text-muted hover:bg-surface-hover hover:text-primary",
                 )}
               >
-                Conversación
+                {t("cocreation.tabs.chat")}
               </button>
               <button
                 type="button"
@@ -413,7 +423,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                     : "text-muted hover:bg-surface-hover hover:text-primary",
                 )}
               >
-                Lienzo
+                {t("cocreation.tabs.canvas")}
               </button>
             </div>
           )}
@@ -423,7 +433,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
             chat/canvas toggle above only applies in guided mode (SC-CC-1.4). */}
         <div
           role="tablist"
-          aria-label="Modo de creación"
+          aria-label={t("cocreation.tabs.modeAria")}
           className="mt-3 inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
         >
           <button
@@ -438,7 +448,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                 : "text-muted hover:bg-surface-hover hover:text-primary",
             )}
           >
-            Guiada
+            {t("cocreation.tabs.guided")}
           </button>
           <button
             type="button"
@@ -452,7 +462,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                 : "text-muted hover:bg-surface-hover hover:text-primary",
             )}
           >
-            Manual
+            {t("cocreation.tabs.manual")}
           </button>
           <button
             type="button"
@@ -466,7 +476,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                 : "text-muted hover:bg-surface-hover hover:text-primary",
             )}
           >
-            Importar
+            {t("cocreation.tabs.import")}
           </button>
         </div>
       </div>
@@ -483,10 +493,10 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                   variant="ghost"
                   size="sm"
                   onClick={() => void openCompare()}
-                  title="Comparar el borrador derivado con la versión publicada original"
+                  title={t("cocreation.canvas.compareTitle")}
                 >
                   <Icon name="diff" size={14} />
-                  Comparar con el original
+                  {t("cocreation.canvas.compare")}
                 </Button>
               )}
               <Button
@@ -494,10 +504,10 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                 variant="ghost"
                 size="sm"
                 onClick={openHistory}
-                title="Ver los autoguardados del lienzo"
+                title={t("cocreation.canvas.historyTitle")}
               >
                 <Icon name="history" size={14} />
-                Historial
+                {t("cocreation.canvas.history")}
               </Button>
             </div>
           </div>
@@ -509,20 +519,21 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
             {!session ? (
               <div className="mx-auto max-w-xl">
                 <p className="text-sm text-primary">
-                  Describí la skill que querés crear. El Co-creador de skills te va guiando
-                  con una pregunta por vez, del propósito al borrador.
+                  {t("cocreation.start.intro")}
                 </p>
                 <label className="mt-4 block text-xs text-muted">
-                  Alcance de la skill
+                  {t("cocreation.start.scopeLabel")}
                   <select
                     value={scopeWorld}
                     onChange={(event) => setScopeWorld(event.target.value)}
                     className="mt-1 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary focus:border-action focus:outline-none"
                   >
-                    <option value="">Transversal (sin mundo)</option>
+                    <option value="">
+                      {t("cocreation.start.crossWorld")}
+                    </option>
                     {worlds.map((world) => (
                       <option key={world} value={world}>
-                        Mundo específico: {world}
+                        {t("cocreation.start.specificWorld", { world })}
                       </option>
                     ))}
                   </select>
@@ -569,36 +580,36 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
             {canMaterialize && (
               <div className="mt-4 rounded-lg border border-edge bg-surface p-4">
                 <h3 className="text-sm font-medium text-primary">
-                  Borrador listo — confirmá los datos
+                  {t("cocreation.materialize.heading")}
                 </h3>
                 <p className="mt-1 text-xs text-muted">
-                  El Co-creador de skills ya juntó propósito, alcance y flujo. Confirmá el
-                  nombre y los metadatos para materializar el borrador en la
-                  biblioteca (todavía no se publica nada).
+                  {t("cocreation.materialize.body")}
                 </p>
                 <div className="mt-3 grid gap-3">
                   <label className="block text-xs text-muted">
-                    Nombre
+                    {t("cocreation.materialize.name")}
                     <input
                       value={name}
                       onChange={(event) => setName(event.target.value)}
-                      placeholder="Nombre de la skill"
+                      placeholder={t("cocreation.materialize.namePlaceholder")}
                       className="mt-1 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-action focus:outline-none"
                     />
                   </label>
                   <label className="block text-xs text-muted">
-                    Descripción
+                    {t("cocreation.materialize.description")}
                     <textarea
                       value={description}
                       onChange={(event) => setDescription(event.target.value)}
-                      placeholder="Descripción breve"
+                      placeholder={t(
+                        "cocreation.materialize.descriptionPlaceholder",
+                      )}
                       rows={2}
                       className="mt-1 w-full resize-none rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-action focus:outline-none"
                     />
                   </label>
                   <div className="grid grid-cols-2 gap-3">
                     <label className="block text-xs text-muted">
-                      Taller
+                      {t("cocreation.materialize.taller")}
                       <select
                         value={taller}
                         onChange={(event) => setTaller(event.target.value)}
@@ -612,11 +623,13 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                       </select>
                     </label>
                     <label className="block text-xs text-muted">
-                      Etiquetas
+                      {t("cocreation.materialize.etiquetas")}
                       <input
                         value={etiquetas}
                         onChange={(event) => setEtiquetas(event.target.value)}
-                        placeholder="plot, narrativa"
+                        placeholder={t(
+                          "cocreation.materialize.etiquetasPlaceholder",
+                        )}
                         className="mt-1 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-action focus:outline-none"
                       />
                     </label>
@@ -629,7 +642,11 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                   disabled={isLoading}
                   className="mt-4"
                 >
-                  {isLoading ? <Spinner size="sm" /> : "Generar borrador"}
+                  {isLoading ? (
+                    <Spinner size="sm" />
+                  ) : (
+                    t("cocreation.materialize.generate")
+                  )}
                 </Button>
               </div>
             )}
@@ -639,22 +656,27 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                 <div className="rounded-lg border border-edge bg-surface p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <h3 className="text-sm font-medium text-primary">
-                      Revisión y publicación
+                      {t("cocreation.review.heading")}
                     </h3>
                     <ProvenanceBadge derivedFrom={session?.derived_from} />
                   </div>
                   <p className="mt-1 text-xs text-muted">
-                    Revisá el borrador tal como quedó: esto es exactamente lo
-                    que se publica al aprobar.
+                    {t("cocreation.review.body")}
                   </p>
                   {/* TW16 attribution legend (REQ-TW16-3): decidido = the
                       Author edited the section in the canvas; propuesto =
                       untouched; exigido = kernel invariants Demiurgos
                       enforces. */}
                   <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                    <Badge variant="success">{ATTRIBUTION_LABELS.decidido}</Badge>
-                    <Badge variant="default">{ATTRIBUTION_LABELS.propuesto}</Badge>
-                    <Badge variant="info">{ATTRIBUTION_LABELS.exigido}</Badge>
+                    <Badge variant="success">
+                      {t(ATTRIBUTION_LABELS.decidido)}
+                    </Badge>
+                    <Badge variant="default">
+                      {t(ATTRIBUTION_LABELS.propuesto)}
+                    </Badge>
+                    <Badge variant="info">
+                      {t(ATTRIBUTION_LABELS.exigido)}
+                    </Badge>
                   </div>
                   <dl className="mt-3 space-y-2 text-sm">
                     {REVIEW_SECTIONS.map(({ key, label }) => {
@@ -664,27 +686,35 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                           key={key}
                           className="flex items-center justify-between gap-3"
                         >
-                          <dt className="text-muted">{label}</dt>
+                          <dt className="text-muted">{t(label)}</dt>
                           <dd className="flex min-w-0 items-center gap-2 text-right">
                             <span className="truncate text-primary">
                               {renderReviewValue(reviewPayload[key])}
                             </span>
                             <Badge variant={decided ? "success" : "default"}>
-                              {decided ? "Decidido" : "Propuesto"}
+                              {decided
+                                ? t("cocreation.attribution.decididoShort")
+                                : t("cocreation.attribution.propuestoShort")}
                             </Badge>
                           </dd>
                         </div>
                       );
                     })}
                     <div className="flex items-center justify-between gap-3">
-                      <dt className="text-muted">Permisos</dt>
+                      <dt className="text-muted">
+                        {t("cocreation.review.permissions")}
+                      </dt>
                       <dd className="flex items-center gap-2 text-right text-primary">
-                        No puede declarar permisos: el sistema lo impide
-                        <Badge variant="info">Exigido</Badge>
+                        {t("cocreation.review.permissionsValue")}
+                        <Badge variant="info">
+                          {t("cocreation.attribution.exigidoShort")}
+                        </Badge>
                       </dd>
                     </div>
                     <div className="flex items-center justify-between gap-3">
-                      <dt className="text-muted">Dependencias</dt>
+                      <dt className="text-muted">
+                        {t("cocreation.review.dependencies")}
+                      </dt>
                       <dd className="text-right text-primary">
                         {dependenciesText}
                       </dd>
@@ -695,12 +725,14 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                       avanzados". */}
                   <details className="mt-3 rounded-md border border-edge bg-surface-raised px-3 py-2">
                     <summary className="cursor-pointer text-xs font-medium text-muted">
-                      Detalles avanzados
+                      {t("cocreation.review.advanced")}
                     </summary>
                     <dl className="mt-2 space-y-1.5 text-xs">
                       {session.draft_id && (
                         <div className="flex items-center justify-between gap-3">
-                          <dt className="text-muted">Borrador</dt>
+                          <dt className="text-muted">
+                            {t("cocreation.review.draft")}
+                          </dt>
                           <dd className="font-mono text-primary">
                             {shortId(session.draft_id)}
                           </dd>
@@ -708,7 +740,9 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                       )}
                       {reviewPayload.skill_id && (
                         <div className="flex items-center justify-between gap-3">
-                          <dt className="text-muted">Identificador</dt>
+                          <dt className="text-muted">
+                            {t("cocreation.review.identifier")}
+                          </dt>
                           <dd className="font-mono text-primary">
                             {reviewPayload.skill_id}
                           </dd>
@@ -716,7 +750,9 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                       )}
                       {reviewPayload.version && (
                         <div className="flex items-center justify-between gap-3">
-                          <dt className="text-muted">Versión</dt>
+                          <dt className="text-muted">
+                            {t("cocreation.review.version")}
+                          </dt>
                           <dd className="font-mono text-primary">
                             {reviewPayload.version}
                           </dd>
@@ -727,8 +763,10 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                   {state.published && (
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-status-success/30 bg-status-success/10 px-3 py-2 text-xs text-status-success">
                       <span>
-                        Publicada la versión {state.published.published.version} —{" "}
-                        {state.published.published.skill_id}
+                        {t("cocreation.review.published", {
+                          version: state.published.published.version,
+                          skillId: state.published.published.skill_id,
+                        })}
                       </span>
                       <Button
                         type="button"
@@ -736,16 +774,18 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                         size="sm"
                         onClick={adaptPublished}
                         disabled={isLoading}
-                        title="Derivar una versión editable de esta publicación (obligatorio para skills Oficiales)"
+                        title={t("cocreation.review.adaptTitle")}
                       >
-                        Adaptar
+                        {t("cocreation.review.adapt")}
                       </Button>
                     </div>
                   )}
                   {state.activation && (
                     <p className="mt-2 rounded-md border border-status-success/30 bg-status-success/10 px-3 py-2 text-xs text-status-success">
-                      Activada en «{state.activation.activation.world}» (versión{" "}
-                      {state.activation.activation.version})
+                      {t("cocreation.review.activated", {
+                        world: state.activation.activation.world,
+                        version: state.activation.activation.version,
+                      })}
                     </p>
                   )}
                 </div>
@@ -759,21 +799,27 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                       disabled={isLoading || hasIssues}
                       title={
                         hasIssues
-                          ? "Corregí los errores de compilación antes de publicar."
-                          : "Publicar la versión inmutable"
+                          ? t("cocreation.review.publishTitleIssues")
+                          : t("cocreation.review.publishTitleOk")
                       }
                     >
-                      {isLoading ? <Spinner size="sm" /> : "Publicar"}
+                      {isLoading ? (
+                        <Spinner size="sm" />
+                      ) : (
+                        t("cocreation.review.publish")
+                      )}
                     </Button>
                     <label className="flex items-center gap-2 text-xs text-muted">
-                      Activar en
+                      {t("cocreation.review.activateIn")}
                       <select
                         value={activateWorld || activeWorld}
                         onChange={(event) => setActivateWorld(event.target.value)}
                         disabled={isLoading || !state.published}
                         className="rounded-lg border border-edge bg-surface px-2 py-1.5 text-sm text-primary focus:border-action focus:outline-none disabled:opacity-50"
                       >
-                        <option value="">Elegí un mundo</option>
+                        <option value="">
+                          {t("cocreation.review.chooseWorld")}
+                        </option>
                         {worlds.map((world) => (
                           <option key={world} value={world}>
                             {world}
@@ -791,7 +837,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                           isLoading || !state.published || !(activateWorld || activeWorld)
                         }
                       >
-                        Activar
+                        {t("cocreation.review.activate")}
                       </Button>
                     </label>
                   </div>
@@ -804,7 +850,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                 role="alert"
                 className="mt-3 rounded-md border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error"
               >
-                {error} No se guardó nada. Reintentá cuando quieras.
+                {error} {t("cocreation.review.error")}
               </div>
             )}
           </div>
@@ -813,7 +859,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
             {!session ? (
               <div className="flex items-end gap-2">
                 <textarea
-                  aria-label="Idea de skill"
+                  aria-label={t("cocreation.chat.inputAria")}
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
                   onKeyDown={(event) => {
@@ -824,7 +870,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                   }}
                   disabled={isLoading}
                   rows={2}
-                  placeholder="Describí la skill que querés crear..."
+                  placeholder={t("cocreation.chat.placeholderStart")}
                   className="min-w-0 flex-1 resize-none rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-action focus:outline-none disabled:opacity-50"
                 />
                 <Button
@@ -834,13 +880,17 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                   disabled={isLoading || !input.trim()}
                   className="h-9"
                 >
-                  {isLoading ? <Spinner size="sm" /> : "Crear skill"}
+                  {isLoading ? (
+                    <Spinner size="sm" />
+                  ) : (
+                    t("cocreation.chat.create")
+                  )}
                 </Button>
               </div>
             ) : (
               <div className="flex items-end gap-2">
                 <textarea
-                  aria-label="Respuesta de co-creación"
+                  aria-label={t("cocreation.chat.responseAria")}
                   value={input}
                   onChange={(event) => setInput(event.target.value)}
                   onKeyDown={(event) => {
@@ -853,8 +903,8 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                   rows={2}
                   placeholder={
                     inReview || complete
-                      ? "La conversación está en revisión."
-                      : "Respondé la pregunta..."
+                      ? t("cocreation.chat.placeholderInReview")
+                      : t("cocreation.chat.placeholderRespond")
                   }
                   className="min-w-0 flex-1 resize-none rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-action focus:outline-none disabled:opacity-50"
                 />
@@ -865,7 +915,11 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                   disabled={isLoading || !input.trim() || inReview || complete}
                   className="h-9"
                 >
-                  {isLoading ? <Spinner size="sm" /> : "Enviar"}
+                  {isLoading ? (
+                    <Spinner size="sm" />
+                  ) : (
+                    t("cocreation.chat.send")
+                  )}
                 </Button>
               </div>
             )}
@@ -930,6 +984,7 @@ function questionEntries(payload: unknown): PendingQuestion[] {
 export function CoCreationContextPanel({
   state,
 }: CoCreationContextPanelProps) {
+  const { t } = useAppLanguage();
   const { session } = state;
   const issues = session?.compile_issues ?? [];
   const warnings = session?.warnings ?? [];
@@ -946,15 +1001,16 @@ export function CoCreationContextPanel({
   return (
     <div className="flex h-full flex-col gap-4 overflow-y-auto px-3 py-4">
       <div className="rounded-lg border border-edge bg-surface px-3 py-3">
-        <h3 className="text-xs font-medium text-muted">Contexto de mundo</h3>
+        <h3 className="text-xs font-medium text-muted">
+          {t("cocreation.context.worldTitle")}
+        </h3>
         {session?.world ? (
           <p className="mt-2 text-sm text-primary">
-            La sesión está ligada a «{session.world}»: el Co-creador de skills solo usa
-            el contexto autorizado de ese mundo.
+            {t("cocreation.context.worldBound", { world: session.world })}
           </p>
         ) : (
           <p className="mt-2 text-sm text-primary">
-            Skill transversal: sin vínculo a ningún mundo.
+            {t("cocreation.context.worldNone")}
           </p>
         )}
       </div>
@@ -965,18 +1021,19 @@ export function CoCreationContextPanel({
           stay visible. */}
       <details className="rounded-lg border border-edge bg-surface px-3 py-2">
         <summary className="cursor-pointer text-xs font-medium text-muted">
-          Detalles avanzados
+          {t("cocreation.context.advanced")}
         </summary>
         <div className="mt-3 space-y-3">
           {session?.draft_id && (
             <div className="rounded-lg border border-edge bg-surface px-3 py-3">
-              <h3 className="text-xs font-medium text-muted">Borrador</h3>
+              <h3 className="text-xs font-medium text-muted">
+                {t("cocreation.context.draftTitle")}
+              </h3>
               <p className="mt-2 font-mono text-xs text-primary">
                 {session.draft_id}
               </p>
               <p className="mt-1 text-xs text-muted">
-                Materializado por el Co-creador de skills desde las respuestas
-                estructuradas.
+                {t("cocreation.context.draftBody")}
               </p>
             </div>
           )}
@@ -990,28 +1047,33 @@ export function CoCreationContextPanel({
             )}
           >
             <div className="flex items-center justify-between gap-2">
-              <h3 className="text-xs font-medium text-muted">Validación</h3>
+              <h3 className="text-xs font-medium text-muted">
+                {t("cocreation.context.validation")}
+              </h3>
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 onClick={() => void state.validateCanvas()}
                 disabled={!session?.draft_payload || state.isValidating}
-                title="Renderizar y compilar el lienzo (no crea ni publica nada)"
+                title={t("cocreation.context.validateTitle")}
               >
-                {state.isValidating ? <Spinner size="sm" /> : "Validar"}
+                {state.isValidating ? (
+                  <Spinner size="sm" />
+                ) : (
+                  t("cocreation.context.validate")
+                )}
               </Button>
             </div>
             {session?.compile_issues === null && !state.validation && (
               <p className="mt-2 text-xs text-muted">
-                Todavía no se compiló ningún borrador.
+                {t("cocreation.context.notCompiled")}
               </p>
             )}
             {issues.length > 0 && (
               <>
                 <p className="mt-2 text-xs text-status-error">
-                  El borrador tiene errores de compilación. Corregí la
-                  conversación y volvé a generar el borrador.
+                  {t("cocreation.context.issues")}
                 </p>
                 <ul className="mt-2 space-y-2">
                   {issues.map((issue, index) => (
@@ -1035,26 +1097,27 @@ export function CoCreationContextPanel({
               session?.compile_issues !== null &&
               !state.validation && (
                 <p className="mt-2 text-xs text-status-success">
-                  El borrador compila correctamente.
+                  {t("cocreation.context.clean")}
                 </p>
               )}
             {state.validation && (
               <div className="mt-2 space-y-2">
                 {state.validation.issues.length > 0 ? (
                   <p className="text-xs text-status-error">
-                    El lienzo tiene {state.validation.issues.length} problema(s)
-                    de compilación.
+                    {t("cocreation.context.canvasIssues", {
+                      count: state.validation.issues.length,
+                    })}
                   </p>
                 ) : (
                   <p className="text-xs text-status-success">
-                    El lienzo compila correctamente.
+                    {t("cocreation.context.canvasClean")}
                   </p>
                 )}
                 {/* Compiled contract preview: the deterministic render of the
                     payload (server-returned; validation never mutates state). */}
                 <details className="rounded-md border border-edge bg-surface px-2.5 py-2">
                   <summary className="cursor-pointer text-xs font-medium text-muted">
-                    Contrato compilado
+                    {t("cocreation.context.compiledContract")}
                   </summary>
                   <div className="mt-2 max-h-64 overflow-y-auto rounded-md border border-edge/60 bg-surface-raised px-2 py-1">
                     <MarkdownViewer content={state.validation.source_preview} />
@@ -1068,10 +1131,12 @@ export function CoCreationContextPanel({
 
       {/* TW12 3-state warnings (REQ-CC-13). */}
       <div className="rounded-lg border border-edge bg-surface px-3 py-3">
-        <h3 className="text-xs font-medium text-muted">Advertencias</h3>
+        <h3 className="text-xs font-medium text-muted">
+          {t("cocreation.context.warnings")}
+        </h3>
         {warnings.length === 0 ? (
           <p className="mt-2 text-xs text-muted">
-            Sin advertencias en este borrador.
+            {t("cocreation.context.noWarnings")}
           </p>
         ) : (
           <ul className="mt-2 space-y-2">
@@ -1083,7 +1148,7 @@ export function CoCreationContextPanel({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="font-medium text-primary">{warning.code}</p>
                   <Badge variant={WARNING_STATE_VARIANT[warning.state]}>
-                    {WARNING_STATE_LABELS[warning.state]}
+                    {t(WARNING_STATE_LABELS[warning.state])}
                   </Badge>
                 </div>
                 <p className="mt-0.5 text-primary">{warning.message}</p>
@@ -1098,7 +1163,7 @@ export function CoCreationContextPanel({
                       size="sm"
                       onClick={() => transitionWarning(index, "resuelta")}
                     >
-                      Marcar resuelta
+                      {t("cocreation.context.markResolved")}
                     </Button>
                     <Button
                       type="button"
@@ -1108,7 +1173,7 @@ export function CoCreationContextPanel({
                         transitionWarning(index, "aceptada_por_autor")
                       }
                     >
-                      Aceptar
+                      {t("cocreation.context.accept")}
                     </Button>
                   </div>
                 )}
@@ -1121,10 +1186,12 @@ export function CoCreationContextPanel({
       {/* TW12 pending questions — chat-owned, Author-only transitions
           (REQ-CC-14). */}
       <div className="rounded-lg border border-edge bg-surface px-3 py-3">
-        <h3 className="text-xs font-medium text-muted">Preguntas pendientes</h3>
+        <h3 className="text-xs font-medium text-muted">
+          {t("cocreation.context.pendingQuestions")}
+        </h3>
         {questions.length === 0 ? (
           <p className="mt-2 text-xs text-muted">
-            No hay preguntas pendientes.
+            {t("cocreation.context.noPendingQuestions")}
           </p>
         ) : (
           <ul className="mt-2 space-y-2">
@@ -1136,7 +1203,7 @@ export function CoCreationContextPanel({
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="min-w-0 flex-1 text-primary">{question.text}</p>
                   <Badge variant={WARNING_STATE_VARIANT[question.state]}>
-                    {WARNING_STATE_LABELS[question.state]}
+                    {t(WARNING_STATE_LABELS[question.state])}
                   </Badge>
                 </div>
                 {question.state === "pendiente" && (
@@ -1147,7 +1214,7 @@ export function CoCreationContextPanel({
                       size="sm"
                       onClick={() => transitionQuestion(index, "resuelta")}
                     >
-                      Marcar resuelta
+                      {t("cocreation.context.markResolved")}
                     </Button>
                     <Button
                       type="button"
@@ -1157,7 +1224,7 @@ export function CoCreationContextPanel({
                         transitionQuestion(index, "aceptada_por_autor")
                       }
                     >
-                      Aceptar
+                      {t("cocreation.context.accept")}
                     </Button>
                   </div>
                 )}

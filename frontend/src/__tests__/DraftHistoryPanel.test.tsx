@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DraftHistoryPanel } from "@/components/organisms/CoCreation/DraftHistoryPanel";
 import type { DraftHistoryEntry } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 const entries: DraftHistoryEntry[] = [
   { revision: 1, source: "chat", ts: "2026-09-03T10:00:00Z" },
@@ -37,29 +38,62 @@ describe("DraftHistoryPanel", () => {
   it("lists snapshots with revision, source and timestamp (REQ-CC-15)", () => {
     renderPanel();
 
-    expect(screen.getByText("Revisión 1 · Chat")).toBeInTheDocument();
-    expect(screen.getByText("Revisión 2 · Autoguardado")).toBeInTheDocument();
-    expect(screen.getByText("Revisión 3 · Autor")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        tEs("cocreation.history.revision", {
+          revision: 1,
+          source: tEs("cocreation.history.source.chat"),
+        }),
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        tEs("cocreation.history.revision", {
+          revision: 2,
+          source: tEs("cocreation.history.source.autosave"),
+        }),
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        tEs("cocreation.history.revision", {
+          revision: 3,
+          source: tEs("cocreation.history.source.author"),
+        }),
+      ),
+    ).toBeInTheDocument();
   });
 
   it("marks the current revision and hides its restore button", () => {
     renderPanel();
 
-    expect(screen.getByText("Versión actual")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Restaurar" })).toHaveLength(2);
+    expect(
+      screen.getByText(tEs("cocreation.history.current")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("button", { name: tEs("cocreation.history.restore") }),
+    ).toHaveLength(2);
   });
 
   it("restores only through the confirmation dialog (REQ-CC-15)", async () => {
     const user = userEvent.setup();
     const props = renderPanel();
 
-    await user.click(screen.getAllByRole("button", { name: "Restaurar" })[0]);
+    await user.click(
+      screen.getAllByRole("button", {
+        name: tEs("cocreation.history.restore"),
+      })[0],
+    );
     expect(
-      screen.getByText(/¿Restaurar el autoguardado de la revisión 1\?/),
+      screen.getByText(
+        tEs("cocreation.history.restoreMessage", { revision: 1 }),
+      ),
     ).toBeInTheDocument();
 
     // The dialog's confirm button renders last (portal).
-    const restoreButtons = screen.getAllByRole("button", { name: "Restaurar" });
+    const restoreButtons = screen.getAllByRole("button", {
+      name: tEs("cocreation.history.restore"),
+    });
     await user.click(restoreButtons[restoreButtons.length - 1]);
     expect(props.onRestore).toHaveBeenCalledWith(1);
     expect(props.onClose).toHaveBeenCalled();
@@ -71,8 +105,14 @@ describe("DraftHistoryPanel", () => {
       onRestore: vi.fn().mockRejectedValue(new Error("conflict")),
     });
 
-    await user.click(screen.getAllByRole("button", { name: "Restaurar" })[0]);
-    const restoreButtons = screen.getAllByRole("button", { name: "Restaurar" });
+    await user.click(
+      screen.getAllByRole("button", {
+        name: tEs("cocreation.history.restore"),
+      })[0],
+    );
+    const restoreButtons = screen.getAllByRole("button", {
+      name: tEs("cocreation.history.restore"),
+    });
     await user.click(restoreButtons[restoreButtons.length - 1]);
 
     expect(props.onRestore).toHaveBeenCalledWith(1);
@@ -85,8 +125,14 @@ describe("DraftHistoryPanel", () => {
     const user = userEvent.setup();
     const props = renderPanel();
 
-    await user.click(screen.getAllByRole("button", { name: "Restaurar" })[0]);
-    await user.click(screen.getByRole("button", { name: "Cancelar" }));
+    await user.click(
+      screen.getAllByRole("button", {
+        name: tEs("cocreation.history.restore"),
+      })[0],
+    );
+    await user.click(
+      screen.getByRole("button", { name: tEs("common.cancel") }),
+    );
 
     expect(props.onRestore).not.toHaveBeenCalled();
     expect(props.onClose).not.toHaveBeenCalled();
@@ -96,7 +142,7 @@ describe("DraftHistoryPanel", () => {
     renderPanel({ entries: [] });
 
     expect(
-      screen.getByText(/Todavía no hay autoguardados/),
+      screen.getByText(tEs("cocreation.history.empty")),
     ).toBeInTheDocument();
   });
 });

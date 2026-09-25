@@ -1,4 +1,5 @@
 import { Badge } from "@/components/atoms/Badge";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { DerivedFrom } from "@/api/types";
 import { cn } from "@/lib/utils";
 
@@ -42,12 +43,16 @@ export function ProvenanceBadge({
   parentVersion,
   className,
 }: ProvenanceBadgeProps) {
+  const { t } = useAppLanguage();
   const source = resolveSource(derivedFrom, parentSkillId, parentVersion);
   if (!source) return null;
 
   return (
     <Badge variant="info" className={cn("gap-1", className)}>
-      Deriva de {source.skill_id}@{source.version}
+      {t("cocreation.provenance", {
+        skillId: source.skill_id,
+        version: source.version,
+      })}
     </Badge>
   );
 }

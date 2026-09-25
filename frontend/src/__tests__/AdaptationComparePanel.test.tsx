@@ -9,6 +9,7 @@ import type {
   DraftPayload,
   PublishedMethodologyDetail,
 } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 const originalSource = `# Eneagrama
 
@@ -117,16 +118,24 @@ describe("AdaptationComparePanel", () => {
     renderPanel();
 
     // scope changed -> modificado; branches extended -> modificado
-    expect(screen.getAllByText("Modificado").length).toBeGreaterThanOrEqual(2);
-    expect(screen.getAllByText("Conservado").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(tEs("cocreation.classification.modificado")).length,
+    ).toBeGreaterThanOrEqual(2);
+    expect(
+      screen.getAllByText(tEs("cocreation.classification.conservado")).length,
+    ).toBeGreaterThan(0);
   });
 
   it("renders the original read-only and the derived side editable", () => {
     renderPanel();
 
     // Original column: the published source renders via MarkdownViewer.
-    expect(screen.getByText("Original (solo lectura)")).toBeInTheDocument();
-    expect(screen.getByText("Derivado (editable)")).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.compare.original")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.compare.derived")),
+    ).toBeInTheDocument();
     // The derived side is the injected editable canvas node.
     expect(screen.getByTestId("derived-canvas")).toBeInTheDocument();
   });
@@ -134,12 +143,18 @@ describe("AdaptationComparePanel", () => {
   it("shows the TW14 provenance badge on the derivation", () => {
     renderPanel();
 
-    expect(screen.getByText("Deriva de eneagrama@1.2.0")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        tEs("cocreation.provenance", { skillId: "eneagrama", version: "1.2.0" }),
+      ),
+    ).toBeInTheDocument();
   });
 
   it("renders nothing when closed", () => {
     renderPanel({ isOpen: false });
 
-    expect(screen.queryByText("Comparar adaptación")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(tEs("cocreation.compare.title")),
+    ).not.toBeInTheDocument();
   });
 });

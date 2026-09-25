@@ -8,6 +8,7 @@ import {
 } from "@/components/organisms/CoCreationPanel";
 import type { UseCoCreationReturn } from "@/hooks/useCoCreation";
 import type { CoCreationSession } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 const mockCreateDraft = vi.hoisted(() => vi.fn());
 const mockPublish = vi.hoisted(() => vi.fn());
@@ -116,20 +117,27 @@ describe("CoCreationMilestoneSidebar", () => {
     };
     render(<CoCreationMilestoneSidebar state={state} />);
 
-    expect(screen.getByText("Propósito")).toBeInTheDocument();
-    expect(screen.getByText("Alcance")).toBeInTheDocument();
-    expect(screen.getByText("Flujo principal")).toBeInTheDocument();
-    expect(screen.getByText("Ramas y reglas")).toBeInTheDocument();
-    expect(screen.getByText("Borrador listo")).toBeInTheDocument();
-    expect(screen.getByText("Revisión y publicación")).toBeInTheDocument();
+    expect(screen.getByText(tEs("cocreation.milestone.proposito"))).toBeInTheDocument();
+    expect(screen.getByText(tEs("cocreation.milestone.alcance"))).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.milestone.flujo_principal")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.milestone.ramas_reglas")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.milestone.borrador_listo")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.milestone.revision_publicacion")),
+    ).toBeInTheDocument();
     // Exactly the server-owned "actual" milestone is the current step.
-    expect(screen.getByText("Alcance").closest("li")).toHaveAttribute(
-      "aria-current",
-      "step",
-    );
-    expect(screen.getByText("Propósito").closest("li")).not.toHaveAttribute(
-      "aria-current",
-    );
+    expect(
+      screen.getByText(tEs("cocreation.milestone.alcance")).closest("li"),
+    ).toHaveAttribute("aria-current", "step");
+    expect(
+      screen.getByText(tEs("cocreation.milestone.proposito")).closest("li"),
+    ).not.toHaveAttribute("aria-current");
   });
 
   it("resets the session from the sidebar", async () => {
@@ -140,7 +148,9 @@ describe("CoCreationMilestoneSidebar", () => {
     };
     render(<CoCreationMilestoneSidebar state={state} />);
 
-    await user.click(screen.getByRole("button", { name: "Nueva sesión" }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("cocreation.newSession") }),
+    );
 
     expect(state.reset).toHaveBeenCalledTimes(1);
   });
@@ -157,10 +167,12 @@ describe("CoCreationPanel", () => {
     render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
 
     await user.type(
-      screen.getByRole("textbox", { name: "Idea de skill" }),
+      screen.getByRole("textbox", { name: tEs("cocreation.chat.inputAria") }),
       "Quiero una skill de eneagrama",
     );
-    await user.click(screen.getByRole("button", { name: "Crear skill" }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("cocreation.chat.create") }),
+    );
 
     expect(state.create).toHaveBeenCalledWith(
       "Quiero una skill de eneagrama",
@@ -197,8 +209,12 @@ describe("CoCreationPanel", () => {
     };
     render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
 
-    expect(screen.getByText(/Borrador listo — confirmá los datos/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Generar borrador" }));
+    expect(
+      screen.getByText(tEs("cocreation.materialize.heading")),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: tEs("cocreation.materialize.generate") }),
+    );
 
     expect(state.materialize).toHaveBeenCalledTimes(1);
   });
@@ -215,7 +231,9 @@ describe("CoCreationPanel", () => {
     };
     render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
 
-    const tallerSelect = screen.getByLabelText("Taller");
+    const tallerSelect = screen.getByLabelText(
+      tEs("cocreation.materialize.taller"),
+    );
     expect(
       within(tallerSelect)
         .getAllByRole("option")
@@ -246,7 +264,7 @@ describe("CoCreationPanel", () => {
     };
     render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
 
-    expect(screen.getByRole("button", { name: "Publicar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: tEs("cocreation.review.publish") })).toBeDisabled();
   });
 
   it("enables publish only when the draft has zero issues", async () => {
@@ -264,7 +282,7 @@ describe("CoCreationPanel", () => {
     };
     render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
 
-    const publish = screen.getByRole("button", { name: "Publicar" });
+    const publish = screen.getByRole("button", { name: tEs("cocreation.review.publish") });
     expect(publish).toBeEnabled();
     await user.click(publish);
 
@@ -339,28 +357,52 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     );
 
     // Canonical legend phrases (REQ-TW16-3).
-    expect(screen.getByText("decidido por el Autor")).toBeInTheDocument();
-    expect(screen.getByText("propuesto por el Asistente")).toBeInTheDocument();
-    expect(screen.getByText("exigido por Demiurgos")).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.attribution.decidido")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.attribution.propuesto")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.attribution.exigido")),
+    ).toBeInTheDocument();
 
     // Purpose was touched in the canvas → Decidido; name untouched → Propuesto.
-    const purposeRow = screen.getByText("Propósito").closest("div") as HTMLElement;
-    expect(within(purposeRow).getByText("Decidido")).toBeInTheDocument();
-    const nameRow = screen.getByText("Nombre").closest("div") as HTMLElement;
-    expect(within(nameRow).getByText("Propuesto")).toBeInTheDocument();
+    const purposeRow = screen
+      .getByText(tEs("cocreation.section.purpose"))
+      .closest("div") as HTMLElement;
+    expect(
+      within(purposeRow).getByText(
+        tEs("cocreation.attribution.decididoShort"),
+      ),
+    ).toBeInTheDocument();
+    const nameRow = screen
+      .getByText(tEs("cocreation.section.name"))
+      .closest("div") as HTMLElement;
+    expect(
+      within(nameRow).getByText(tEs("cocreation.attribution.propuestoShort")),
+    ).toBeInTheDocument();
   });
 
   it("renders permissions as an exigido invariant and dependencies from the world", () => {
     render(<CoCreationPanel state={reviewState()} worlds={["Vibrantes"]} />);
 
     expect(
-      screen.getByText("No puede declarar permisos: el sistema lo impide"),
+      screen.getByText(tEs("cocreation.review.permissionsValue")),
     ).toBeInTheDocument();
     const permissionsRow = screen
-      .getByText("Permisos")
+      .getByText(tEs("cocreation.review.permissions"))
       .closest("div") as HTMLElement;
-    expect(within(permissionsRow).getByText("Exigido")).toBeInTheDocument();
-    expect(screen.getByText("Mundo: Vibrantes")).toBeInTheDocument();
+    expect(
+      within(permissionsRow).getByText(
+        tEs("cocreation.attribution.exigidoShort"),
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        tEs("cocreation.review.dependenciesWorld", { world: "Vibrantes" }),
+      ),
+    ).toBeInTheDocument();
   });
 
   it("renders dependencies as 'ninguna' without compatibles or a world", () => {
@@ -379,7 +421,9 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     };
     render(<CoCreationPanel state={state} worlds={[]} />);
 
-    expect(screen.getByText("ninguna")).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.review.dependenciesNone")),
+    ).toBeInTheDocument();
   });
 
   it("hides internals by default and reveals them on expand (REQ-TW16-6)", async () => {
@@ -390,7 +434,7 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     // "Detalles avanzados" <details> — closed by default, so they are not
     // part of the visible review.
     const details = screen
-      .getByText("Detalles avanzados")
+      .getByText(tEs("cocreation.review.advanced"))
       .closest("details") as HTMLElement;
     expect(details).not.toHaveAttribute("open");
     const internalPanel = within(details);
@@ -398,7 +442,7 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     expect(internalPanel.getByText("co-created-eneagrama")).toBeInTheDocument();
     expect(internalPanel.getByText("0.1.0")).toBeInTheDocument();
 
-    await user.click(screen.getByText("Detalles avanzados"));
+    await user.click(screen.getByText(tEs("cocreation.review.advanced")));
     expect(details).toHaveAttribute("open");
   });
 
@@ -407,8 +451,8 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     const state = reviewState();
     render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
 
-    expect(screen.getByRole("button", { name: "Publicar" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Publicar" }));
+    expect(screen.getByRole("button", { name: tEs("cocreation.review.publish") })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: tEs("cocreation.review.publish") }));
 
     expect(state.publish).toHaveBeenCalledTimes(1);
   });
@@ -424,20 +468,20 @@ describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
     render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
 
     expect(
-      screen.getByRole("textbox", { name: "Idea de skill" }),
+      screen.getByRole("textbox", { name: tEs("cocreation.chat.inputAria") }),
     ).toBeInTheDocument();
 
-    const toggle = screen.getByRole("tablist", { name: "Modo de creación" });
-    expect(within(toggle).getByRole("tab", { name: "Guiada" })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    expect(within(toggle).getByRole("tab", { name: "Manual" })).toHaveAttribute(
-      "aria-selected",
-      "false",
-    );
+    const toggle = screen.getByRole("tablist", {
+      name: tEs("cocreation.tabs.modeAria"),
+    });
     expect(
-      within(toggle).getByRole("tab", { name: "Importar" }),
+      within(toggle).getByRole("tab", { name: tEs("cocreation.tabs.guided") }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      within(toggle).getByRole("tab", { name: tEs("cocreation.tabs.manual") }),
+    ).toHaveAttribute("aria-selected", "false");
+    expect(
+      within(toggle).getByRole("tab", { name: tEs("cocreation.tabs.import") }),
     ).toHaveAttribute("aria-selected", "false");
   });
 
@@ -445,7 +489,9 @@ describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
     const user = userEvent.setup();
     render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
 
-    await user.click(screen.getByRole("tab", { name: "Manual" }));
+    await user.click(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.manual") }),
+    );
 
     expect(screen.getByText("Publicar un borrador")).toBeInTheDocument();
     expect(screen.getByLabelText("Skill ID")).toBeInTheDocument();
@@ -457,7 +503,9 @@ describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
     ).toBeInTheDocument();
     // The guided chat surface is not mounted in manual mode.
     expect(
-      screen.queryByRole("textbox", { name: "Idea de skill" }),
+      screen.queryByRole("textbox", {
+        name: tEs("cocreation.chat.inputAria"),
+      }),
     ).not.toBeInTheDocument();
   });
 
@@ -465,7 +513,9 @@ describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
     const user = userEvent.setup();
     render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
 
-    await user.click(screen.getByRole("tab", { name: "Importar" }));
+    await user.click(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.import") }),
+    );
 
     expect(await screen.findByText("Importar una skill")).toBeInTheDocument();
     expect(screen.getByLabelText(/Paquete/)).toBeInTheDocument();
@@ -476,17 +526,21 @@ describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
     render(<CoCreationPanel state={baseState()} worlds={["Vibrantes"]} />);
 
     await user.type(
-      screen.getByRole("textbox", { name: "Idea de skill" }),
+      screen.getByRole("textbox", { name: tEs("cocreation.chat.inputAria") }),
       "Quiero una skill de eneagrama",
     );
 
-    await user.click(screen.getByRole("tab", { name: "Manual" }));
+    await user.click(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.manual") }),
+    );
     expect(screen.getByText("Publicar un borrador")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Guiada" }));
+    await user.click(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.guided") }),
+    );
 
     expect(
-      screen.getByRole("textbox", { name: "Idea de skill" }),
+      screen.getByRole("textbox", { name: tEs("cocreation.chat.inputAria") }),
     ).toHaveValue("Quiero una skill de eneagrama");
   });
 
@@ -496,26 +550,36 @@ describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
     render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
 
     // Switch the guided surface to the canvas (TW12).
-    await user.click(screen.getByRole("tab", { name: "Lienzo" }));
-    expect(screen.getByRole("tab", { name: "Lienzo" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    await user.click(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.canvas") }),
     );
-    expect(screen.getByRole("button", { name: "Historial" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.canvas") }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.getByRole("button", { name: tEs("cocreation.canvas.history") }),
+    ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Manual" }));
+    await user.click(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.manual") }),
+    );
     expect(screen.getByText("Publicar un borrador")).toBeInTheDocument();
     // The chat/canvas toggle is a guided-only surface.
     expect(
-      screen.queryByRole("tablist", { name: "Superficie de co-creación" }),
+      screen.queryByRole("tablist", {
+        name: tEs("cocreation.tabs.surfaceAria"),
+      }),
     ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Guiada" }));
-    expect(screen.getByRole("tab", { name: "Lienzo" })).toHaveAttribute(
-      "aria-selected",
-      "true",
+    await user.click(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.guided") }),
     );
-    expect(screen.getByRole("button", { name: "Historial" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.canvas") }),
+    ).toHaveAttribute("aria-selected", "true");
+    expect(
+      screen.getByRole("button", { name: tEs("cocreation.canvas.history") }),
+    ).toBeInTheDocument();
   });
 
   it("shows the guided intro line (UC-3 S1)", () => {
@@ -523,9 +587,7 @@ describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
 
     // Guided mode is the default: the intro must read exactly per spec UC-3 S1.
     expect(
-      screen.getByText(
-        "Una pregunta por vez, guiada por el Co-creador de skills. Vos aprobás cada paso.",
-      ),
+      screen.getByText(tEs("cocreation.intro.guided")),
     ).toBeInTheDocument();
   });
 
@@ -535,19 +597,21 @@ describe("CoCreationPanel — authoring sub-modes (REQ-CC-1)", () => {
 
     // guided (default)
     expect(
-      screen.getByText(
-        "Una pregunta por vez, guiada por el Co-creador de skills. Vos aprobás cada paso.",
-      ),
+      screen.getByText(tEs("cocreation.intro.guided")),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Manual" }));
+    await user.click(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.manual") }),
+    );
     expect(
-      screen.getByText("Escribí el markdown de tu skill directamente."),
+      screen.getByText(tEs("cocreation.intro.manual")),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("tab", { name: "Importar" }));
+    await user.click(
+      screen.getByRole("tab", { name: tEs("cocreation.tabs.import") }),
+    );
     expect(
-      screen.getByText("Importá un .zip para revisión y cuarentena."),
+      screen.getByText(tEs("cocreation.intro.import")),
     ).toBeInTheDocument();
   });
 });
@@ -574,17 +638,19 @@ describe("CoCreationContextPanel", () => {
 
     // Compiler codes + fields collapse under the closed "Detalles avanzados".
     const details = screen
-      .getByText("Detalles avanzados")
+      .getByText(tEs("cocreation.context.advanced"))
       .closest("details") as HTMLElement;
     expect(details).not.toHaveAttribute("open");
     const internalPanel = within(details);
     expect(internalPanel.getByText("AUTH_CLAIM")).toBeInTheDocument();
 
-    await user.click(screen.getByText("Detalles avanzados"));
+    await user.click(screen.getByText(tEs("cocreation.context.advanced")));
     expect(details).toHaveAttribute("open");
     expect(internalPanel.getByText("Autoridad no permitida")).toBeInTheDocument();
     expect(internalPanel.getByText("delta")).toBeInTheDocument();
-    expect(internalPanel.getByText(/errores de compilación/)).toBeInTheDocument();
+    expect(
+      internalPanel.getByText(tEs("cocreation.context.issues")),
+    ).toBeInTheDocument();
   });
 
   it("reports a clean compile when there are no issues (under Detalles avanzados)", async () => {
@@ -602,9 +668,11 @@ describe("CoCreationContextPanel", () => {
     };
     render(<CoCreationContextPanel state={state} />);
 
-    await user.click(screen.getByText("Detalles avanzados"));
+    await user.click(screen.getByText(tEs("cocreation.context.advanced")));
 
-    expect(screen.getByText(/compila correctamente/)).toBeInTheDocument();
+    expect(
+      screen.getByText(tEs("cocreation.context.clean")),
+    ).toBeInTheDocument();
   });
 
   it("shows the world binding for a world-scoped session", () => {
@@ -614,6 +682,10 @@ describe("CoCreationContextPanel", () => {
     };
     render(<CoCreationContextPanel state={state} />);
 
-    expect(screen.getByText(/ligada a «Vibrantes»/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        tEs("cocreation.context.worldBound", { world: "Vibrantes" }),
+      ),
+    ).toBeInTheDocument();
   });
 });

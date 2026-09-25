@@ -3,6 +3,8 @@ import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 import type { DraftHistoryEntry } from "@/api/types";
 
 interface DraftHistoryPanelProps {
@@ -19,10 +21,10 @@ interface DraftHistoryPanelProps {
   onRefresh: () => void;
 }
 
-const SOURCE_LABELS: Record<DraftHistoryEntry["source"], string> = {
-  author: "Autor",
-  chat: "Chat",
-  autosave: "Autoguardado",
+const SOURCE_LABELS: Record<DraftHistoryEntry["source"], MessageKey> = {
+  author: "cocreation.history.source.author",
+  chat: "cocreation.history.source.chat",
+  autosave: "cocreation.history.source.autosave",
 };
 
 function formatDate(value: string): string {
@@ -50,6 +52,7 @@ export function DraftHistoryPanel({
   error,
   onRefresh,
 }: DraftHistoryPanelProps) {
+  const { t } = useAppLanguage();
   const [restoreTarget, setRestoreTarget] = useState<DraftHistoryEntry | null>(
     null,
   );
@@ -67,9 +70,7 @@ export function DraftHistoryPanel({
       setRestoreTarget(null);
       onClose();
     } catch {
-      setActionError(
-        "No se pudo restaurar la versión. Revisá que la sesión no haya cambiado y reintentá.",
-      );
+      setActionError(t("cocreation.history.restoreError"));
       setRestoreFailed(true);
     }
   };
@@ -93,16 +94,16 @@ export function DraftHistoryPanel({
               id="draft-history-title"
               className="font-heading text-h4 text-primary"
             >
-              Historial del lienzo
+              {t("cocreation.history.title")}
             </h2>
             <p className="truncate text-small text-muted">
-              Autoguardados inmutables del borrador (máx. 50 por sesión).
+              {t("cocreation.history.subtitle")}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Cerrar historial"
+            aria-label={t("cocreation.history.closeAria")}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
           >
             <Icon name="close" size={20} />
@@ -128,7 +129,7 @@ export function DraftHistoryPanel({
               disabled={isLoading}
             >
               <Icon name="refresh" size={14} />
-              Actualizar
+              {t("cocreation.history.refresh")}
             </Button>
           </div>
 
@@ -138,7 +139,7 @@ export function DraftHistoryPanel({
             </div>
           ) : entries.length === 0 ? (
             <p className="py-16 text-center text-body text-muted">
-              Todavía no hay autoguardados en esta sesión.
+              {t("cocreation.history.empty")}
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
@@ -156,7 +157,10 @@ export function DraftHistoryPanel({
                     />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-small text-primary">
-                        Revisión {entry.revision} · {SOURCE_LABELS[entry.source]}
+                        {t("cocreation.history.revision", {
+                          revision: entry.revision,
+                          source: t(SOURCE_LABELS[entry.source]),
+                        })}
                       </p>
                       <p className="text-xs text-muted">
                         {formatDate(entry.ts)}
@@ -164,7 +168,7 @@ export function DraftHistoryPanel({
                     </div>
                     {current ? (
                       <span className="shrink-0 text-xs text-muted">
-                        Versión actual
+                        {t("cocreation.history.current")}
                       </span>
                     ) : (
                       <Button
@@ -178,7 +182,7 @@ export function DraftHistoryPanel({
                         }}
                         disabled={isRestoring}
                       >
-                        Restaurar
+                        {t("cocreation.history.restore")}
                       </Button>
                     )}
                   </li>
@@ -191,9 +195,11 @@ export function DraftHistoryPanel({
 
       {restoreTarget && (
         <ConfirmDialog
-          title="Restaurar versión"
-          message={`¿Restaurar el autoguardado de la revisión ${restoreTarget.revision}? La versión actual queda preservada en el historial.`}
-          confirmLabel="Restaurar"
+          title={t("cocreation.history.restoreTitle")}
+          message={t("cocreation.history.restoreMessage", {
+            revision: restoreTarget.revision,
+          })}
+          confirmLabel={t("cocreation.history.restore")}
           isBusy={isRestoring}
           error={restoreFailed ? actionError : null}
           onConfirm={() => void confirmRestore()}

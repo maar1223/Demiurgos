@@ -3,6 +3,8 @@ import { Button } from "@/components/atoms/Button";
 import { Badge } from "@/components/atoms/Badge";
 import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 import type {
   DraftPayload,
   MethodologyAdjunto,
@@ -10,11 +12,11 @@ import type {
   WarningState,
 } from "@/api/types";
 
-/** Warning/pending-question state -> human label (Spanish voseo UI copy). */
-export const WARNING_STATE_LABELS: Record<WarningState, string> = {
-  pendiente: "Pendiente",
-  resuelta: "Resuelta",
-  aceptada_por_autor: "Aceptada por el autor",
+/** Warning/pending-question state -> catalogue key for the human label. */
+export const WARNING_STATE_LABELS: Record<WarningState, MessageKey> = {
+  pendiente: "cocreation.warning.pendiente",
+  resuelta: "cocreation.warning.resuelta",
+  aceptada_por_autor: "cocreation.warning.aceptada_por_autor",
 };
 
 /** State -> Badge variant for pending questions and warnings. */
@@ -46,6 +48,7 @@ interface ListEditorProps {
  *  (documented lossy reverse-parse boundary); this editor lets the Author
  *  reclassify items between the two lists after derivation. */
 function ListEditor({ label, items, onChange, disabled }: ListEditorProps) {
+  const { t } = useAppLanguage();
   const [draft, setDraft] = useState("");
 
   const update = (index: number, value: string) => {
@@ -80,7 +83,10 @@ function ListEditor({ label, items, onChange, disabled }: ListEditorProps) {
               <button
                 type="button"
                 onClick={() => remove(index)}
-                aria-label={`Quitar ${label.toLowerCase()} ${index + 1}`}
+                aria-label={t("cocreation.canvas.removeItem", {
+                  label: label.toLowerCase(),
+                  index: index + 1,
+                })}
                 className="shrink-0 rounded-md border border-edge p-1.5 text-icon-muted transition-colors hover:border-status-error/40 hover:text-status-error"
               >
                 <Icon name="trash" size={14} />
@@ -101,8 +107,12 @@ function ListEditor({ label, items, onChange, disabled }: ListEditorProps) {
                 add();
               }
             }}
-            placeholder={`Añadir ${label.toLowerCase()}...`}
-            aria-label={`Nueva ${label.toLowerCase()}`}
+            placeholder={t("cocreation.canvas.addItemPlaceholder", {
+              label: label.toLowerCase(),
+            })}
+            aria-label={t("cocreation.canvas.newItem", {
+              label: label.toLowerCase(),
+            })}
             className="min-w-0 flex-1 rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-action focus:outline-none"
           />
           <Button
@@ -111,9 +121,11 @@ function ListEditor({ label, items, onChange, disabled }: ListEditorProps) {
             size="sm"
             onClick={add}
             disabled={!draft.trim()}
-            aria-label={`Añadir ${label.toLowerCase()}`}
+            aria-label={t("cocreation.canvas.addItemAria", {
+              label: label.toLowerCase(),
+            })}
           >
-            Añadir
+            {t("cocreation.canvas.add")}
           </Button>
         </div>
       )}
@@ -175,6 +187,7 @@ export function CoCreationCanvas({
 }: CoCreationCanvasProps) {
   // Exemplar add-form state (REQ-CC-24). Hooks stay before the early return
   // below so the component keeps a stable hook order with no payload.
+  const { t } = useAppLanguage();
   const [adjuntoFile, setAdjuntoFile] = useState<File | null>(null);
   const [adjuntoNivel, setAdjuntoNivel] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -194,10 +207,7 @@ export function CoCreationCanvas({
   if (!payload) {
     return (
       <div className="flex h-full items-center justify-center p-6">
-        <p className="text-sm text-muted">
-          El lienzo todavía no tiene contenido. Conversá con el Co-creador de skills para
-          empezar a estructurar el borrador.
-        </p>
+        <p className="text-sm text-muted">{t("cocreation.canvas.noContent")}</p>
       </div>
     );
   }
@@ -219,10 +229,10 @@ export function CoCreationCanvas({
             size="sm"
             onClick={onUndo}
             disabled={!canUndo || disabled}
-            aria-label="Deshacer edición"
+            aria-label={t("cocreation.canvas.undoAria")}
           >
             <Icon name="chevron-left" size={14} />
-            Deshacer
+            {t("cocreation.canvas.undo")}
           </Button>
           <Button
             type="button"
@@ -230,20 +240,20 @@ export function CoCreationCanvas({
             size="sm"
             onClick={onRedo}
             disabled={!canRedo || disabled}
-            aria-label="Rehacer edición"
+            aria-label={t("cocreation.canvas.redoAria")}
           >
-            Rehacer
+            {t("cocreation.canvas.redo")}
             <Icon name="corner-up-right" size={14} />
           </Button>
         </div>
         <div className="flex items-center gap-2 text-xs">
           {isSaving ? (
             <span className="flex items-center gap-1.5 text-muted">
-              <Spinner size="sm" /> Guardando…
+              <Spinner size="sm" /> {t("cocreation.canvas.saving")}
             </span>
           ) : (
             <span className="flex items-center gap-1 text-status-success">
-              <Icon name="check" size={14} /> Guardado
+              <Icon name="check" size={14} /> {t("cocreation.canvas.saved")}
             </span>
           )}
           {saveError && (
@@ -257,7 +267,7 @@ export function CoCreationCanvas({
       <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-4 py-4">
         <div className="grid gap-4">
           <label className="block text-xs text-muted">
-            Nombre
+            {t("cocreation.canvas.name")}
             <input
               type="text"
               value={payload.name}
@@ -267,7 +277,7 @@ export function CoCreationCanvas({
             />
           </label>
           <label className="block text-xs text-muted">
-            Descripción
+            {t("cocreation.canvas.description")}
             <textarea
               value={payload.description}
               onChange={(event) => onChange({ description: event.target.value })}
@@ -277,7 +287,7 @@ export function CoCreationCanvas({
             />
           </label>
           <label className="block text-xs text-muted">
-            Propósito
+            {t("cocreation.canvas.purpose")}
             <textarea
               value={payload.purpose}
               onChange={(event) => onChange({ purpose: event.target.value })}
@@ -287,7 +297,7 @@ export function CoCreationCanvas({
             />
           </label>
           <label className="block text-xs text-muted">
-            Alcance
+            {t("cocreation.canvas.scope")}
             <textarea
               value={payload.scope}
               onChange={(event) => onChange({ scope: event.target.value })}
@@ -297,7 +307,7 @@ export function CoCreationCanvas({
             />
           </label>
           <label className="block text-xs text-muted">
-            Flujo principal
+            {t("cocreation.canvas.mainFlow")}
             <textarea
               value={payload.main_flow}
               onChange={(event) => onChange({ main_flow: event.target.value })}
@@ -310,10 +320,12 @@ export function CoCreationCanvas({
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="rounded-lg border border-edge bg-surface px-3 py-3">
-            <h3 className="text-xs font-medium text-muted">Ramas</h3>
+            <h3 className="text-xs font-medium text-muted">
+              {t("cocreation.canvas.branches")}
+            </h3>
             <div className="mt-2">
               <ListEditor
-                label="Rama"
+                label={t("cocreation.canvas.branch")}
                 items={payload.branches}
                 onChange={(branches) => onChange({ branches })}
                 disabled={disabled}
@@ -321,10 +333,12 @@ export function CoCreationCanvas({
             </div>
           </div>
           <div className="rounded-lg border border-edge bg-surface px-3 py-3">
-            <h3 className="text-xs font-medium text-muted">Reglas</h3>
+            <h3 className="text-xs font-medium text-muted">
+              {t("cocreation.canvas.rules")}
+            </h3>
             <div className="mt-2">
               <ListEditor
-                label="Regla"
+                label={t("cocreation.canvas.rule")}
                 items={payload.rules}
                 onChange={(rules) => onChange({ rules })}
                 disabled={disabled}
@@ -336,11 +350,12 @@ export function CoCreationCanvas({
         {/* Ejemplares — Author exemplar pins (REQ-CC-24). Metadata only: the
             section renders path/nivel/bytes and NEVER fetches carrier bytes. */}
         <div className="rounded-lg border border-edge bg-surface px-3 py-3">
-          <h3 className="text-xs font-medium text-muted">Ejemplares</h3>
+          <h3 className="text-xs font-medium text-muted">
+            {t("cocreation.canvas.exemplars")}
+          </h3>
           {adjuntos.length === 0 ? (
             <p className="mt-2 text-xs text-muted">
-              No hay ejemplares cargados. Cargá archivos .md para acompañar la
-              skill.
+              {t("cocreation.canvas.noExemplars")}
             </p>
           ) : (
             <ul className="mt-2 space-y-2">
@@ -354,14 +369,18 @@ export function CoCreationCanvas({
                     <p className="truncate text-sm text-primary">
                       {adjunto.path}
                     </p>
-                    <p className="text-xs text-muted">{adjunto.bytes} bytes</p>
+                    <p className="text-xs text-muted">
+                      {t("cocreation.canvas.bytes", { bytes: adjunto.bytes })}
+                    </p>
                   </div>
                   <Badge variant="default">{adjunto.nivel}</Badge>
                   {!disabled && (
                     <button
                       type="button"
                       onClick={() => onRemoveAdjunto(adjunto.path)}
-                      aria-label={`Quitar ejemplar ${index + 1}`}
+                      aria-label={t("cocreation.canvas.removeExemplar", {
+                        index: index + 1,
+                      })}
                       className="shrink-0 rounded-md border border-edge p-1.5 text-icon-muted transition-colors hover:border-status-error/40 hover:text-status-error"
                     >
                       <Icon name="trash" size={14} />
@@ -374,7 +393,7 @@ export function CoCreationCanvas({
           {!disabled && (
             <div className="mt-3 flex flex-wrap items-end gap-2">
               <label className="min-w-40 flex-1 text-xs text-muted">
-                Ejemplar (.md)
+                {t("cocreation.canvas.exemplarLabel")}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -387,13 +406,13 @@ export function CoCreationCanvas({
                 />
               </label>
               <label className="min-w-40 flex-1 text-xs text-muted">
-                Nivel del ejemplar
+                {t("cocreation.canvas.exemplarNivel")}
                 <input
                   type="text"
                   value={adjuntoNivel}
                   onChange={(event) => setAdjuntoNivel(event.target.value)}
                   disabled={isUploadingAdjunto}
-                  placeholder="Nivel del ejemplar…"
+                  placeholder={t("cocreation.canvas.exemplarNivelPlaceholder")}
                   className="mt-1 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary placeholder:text-muted focus:border-action focus:outline-none disabled:opacity-60"
                 />
               </label>
@@ -405,10 +424,10 @@ export function CoCreationCanvas({
                 disabled={
                   !adjuntoFile || !adjuntoNivel.trim() || isUploadingAdjunto
                 }
-                aria-label="Subir ejemplar"
+                aria-label={t("cocreation.canvas.uploadAria")}
               >
                 <Icon name="upload" size={14} />
-                Subir
+                {t("cocreation.canvas.upload")}
               </Button>
             </div>
           )}
@@ -418,12 +437,11 @@ export function CoCreationCanvas({
             transitions (REQ-CC-14). */}
         <div className="rounded-lg border border-edge bg-surface px-3 py-3">
           <h3 className="text-xs font-medium text-muted">
-            Preguntas pendientes
+            {t("cocreation.canvas.pendingQuestions")}
           </h3>
           {questions.length === 0 ? (
             <p className="mt-2 text-xs text-muted">
-              No hay preguntas pendientes. El Co-creador de skills las agrega durante la
-              conversación.
+              {t("cocreation.canvas.noPendingQuestions")}
             </p>
           ) : (
             <ul className="mt-2 space-y-2">
@@ -437,7 +455,7 @@ export function CoCreationCanvas({
                       {question.text}
                     </p>
                     <Badge variant={WARNING_STATE_VARIANT[question.state]}>
-                      {WARNING_STATE_LABELS[question.state]}
+                      {t(WARNING_STATE_LABELS[question.state])}
                     </Badge>
                   </div>
                   {question.state === "pendiente" && !disabled && (
@@ -450,7 +468,7 @@ export function CoCreationCanvas({
                           onPendingQuestionStatus(index, "resuelta")
                         }
                       >
-                        Marcar resuelta
+                        {t("cocreation.canvas.markResolved")}
                       </Button>
                       <Button
                         type="button"
@@ -460,7 +478,7 @@ export function CoCreationCanvas({
                           onPendingQuestionStatus(index, "aceptada_por_autor")
                         }
                       >
-                        Aceptar
+                        {t("cocreation.canvas.accept")}
                       </Button>
                     </div>
                   )}
