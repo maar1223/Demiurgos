@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { tEs } from "@/__tests__/i18nTestUtils";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
@@ -188,7 +189,7 @@ describe("AssistantSettingsPanel", () => {
     renderPanel();
     await screen.findByRole("heading", { name: "Conexión" });
 
-    await user.selectOptions(screen.getByLabelText("Elegí un proveedor"), "opencode-go");
+    await user.selectOptions(screen.getByLabelText(tEs("assistantSettings.providerLabel")), "opencode-go");
 
     expect(screen.getByLabelText("Endpoint")).toHaveValue("https://opencode.ai/zen/go/v1");
   });

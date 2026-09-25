@@ -5,6 +5,7 @@ import {
   labelClass,
   modelDescription,
 } from "@/components/organisms/assistantSettingsShared";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export interface AssistantModelStepProps {
   /** The connection step completed, so discovery is unlocked. */
@@ -39,6 +40,7 @@ export function AssistantModelStep({
   onSelectModel,
   onUseManualModel,
 }: AssistantModelStepProps) {
+  const { t } = useAppLanguage();
   // The active model is always selectable, even when the server catalog does
   // not list it (the live Zen Go catalog drifts from the bundled one).
   const options =
@@ -48,28 +50,29 @@ export function AssistantModelStep({
 
   return (
     <section>
-      <h4 className="font-heading text-body text-primary">Modelo</h4>
+      <h4 className="font-heading text-body text-primary">
+        {t("assistantSettings.model")}
+      </h4>
 
       {!validated ? (
         <p className="text-small text-muted">
-          Validá la conexión para habilitar el descubrimiento.
+          {t("assistantSettings.validateToDiscover")}
         </p>
       ) : (
         <>
           {usingStoredKey && (
             <p className="mb-3 text-small text-muted">
-              Usando la clave guardada. No hace falta volver a escribirla para
-              cambiar de modelo.
+              {t("assistantSettings.usingStoredKey")}
             </p>
           )}
           <Button variant="secondary" onClick={onDiscover} disabled={busy}>
-            {busy ? "Buscando…" : "Descubrir modelos"}
+            {busy ? t("assistantSettings.discovering") : t("assistantSettings.discover")}
           </Button>
           {error && <p className="mt-2 text-small text-status-error">{error}</p>}
 
           {options.length > 0 && (
             <select
-              aria-label="Modelo descubierto"
+              aria-label={t("assistantSettings.modelAria")}
               className={`${inputClass} mt-3`}
               value={selectedModel?.id ?? ""}
               onChange={(event) => onSelectModel(event.target.value)}
@@ -86,7 +89,7 @@ export function AssistantModelStep({
             className={`${labelClass} mt-3`}
             htmlFor="assistant-manual-model"
           >
-            ID de modelo manual
+            {t("assistantSettings.manualModelLabel")}
           </label>
           <input
             id="assistant-manual-model"
@@ -100,15 +103,15 @@ export function AssistantModelStep({
             variant="secondary"
             onClick={onUseManualModel}
           >
-            Usar modelo manual
+            {t("assistantSettings.useManualModel")}
           </Button>
 
           {selectedModel && (
             <p className="mt-3 text-small text-muted">
-              {modelDescription(selectedModel)} ·{" "}
+              {modelDescription(selectedModel, t)} ·{" "}
               {selectedModel.pricing
-                ? "Precio informado"
-                : "Precio no disponible"}
+                ? t("assistantSettings.pricingReported")
+                : t("assistantSettings.pricingUnavailable")}
             </p>
           )}
         </>

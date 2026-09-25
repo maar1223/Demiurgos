@@ -3,6 +3,7 @@ import type {
   AssistantProbeResult,
   AssistantSettingsStatus,
 } from "@/api/types";
+import type { TFunction } from "@/i18n/messages";
 
 /** Outcome of the connection-validation call, owned by the panel. */
 export type Validation = "idle" | "validated" | "failed";
@@ -53,26 +54,34 @@ export function bothProbesPassed(
 
 export function stateLabel(
   state: AssistantSettingsStatus["runtime_state"],
+  t: TFunction,
 ): string {
   return state === "active"
-    ? "Activo"
+    ? t("assistantSettings.stateLabel.active")
     : state === "pending-reload"
-      ? "Guardado, sin verificar"
-      : "Guardado, no activo";
+      ? t("assistantSettings.stateLabel.pendingReload")
+      : t("assistantSettings.stateLabel.inactive");
 }
 
 /** Contextual explanation for each runtime state, shown after a successful save. */
 export function stateContext(
   state: AssistantSettingsStatus["runtime_state"],
+  t: TFunction,
 ): string {
   return state === "active"
-    ? "La configuración ya está aplicada y el asistente la está usando."
+    ? t("assistantSettings.stateContext.active")
     : state === "pending-reload"
-      ? "La configuración se guardó, pero el asistente todavía no la confirmó para esta versión."
-      : "La configuración se guardó, pero el asistente no está activo en este momento.";
+      ? t("assistantSettings.stateContext.pendingReload")
+      : t("assistantSettings.stateContext.inactive");
 }
 
-export function modelDescription(model: AssistantModelOption | null): string {
-  if (!model || model.capability === "unknown") return "Capacidad desconocida";
-  return model.capability === "multimodal" ? "Multimodal" : "Solo texto";
+export function modelDescription(
+  model: AssistantModelOption | null,
+  t: TFunction,
+): string {
+  if (!model || model.capability === "unknown")
+    return t("assistantSettings.capability.unknown");
+  return model.capability === "multimodal"
+    ? t("assistantSettings.capability.multimodal")
+    : t("assistantSettings.capability.text");
 }

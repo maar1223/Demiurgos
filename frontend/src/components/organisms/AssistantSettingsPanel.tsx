@@ -34,20 +34,22 @@ import {
   stateLabel,
   type Validation,
 } from "@/components/organisms/assistantSettingsShared";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 type Step = "connection" | "models" | "probes";
 
-const steps: { id: Step; label: string }[] = [
-  { id: "connection", label: "Conexión" },
-  { id: "models", label: "Modelo" },
-  { id: "probes", label: "Pruebas" },
+const steps: { id: Step; labelKey: MessageKey }[] = [
+  { id: "connection", labelKey: "assistantSettings.step.connection" },
+  { id: "models", labelKey: "assistantSettings.step.model" },
+  { id: "probes", labelKey: "assistantSettings.step.probes" },
 ];
 
 /** Why the footer cannot advance yet. The honest reason belongs in the footer
  *  helper text (the idea-capture pattern), never in the error slot. */
-const blockedReasons: Record<Step, string | null> = {
-  connection: "Validá la conexión para continuar.",
-  models: "Elegí o descubrí un modelo para continuar.",
+const blockedReasons: Record<Step, MessageKey | null> = {
+  connection: "assistantSettings.blocked.connection",
+  models: "assistantSettings.blocked.models",
   probes: null,
 };
 
@@ -60,6 +62,7 @@ export function AssistantSettingsPanel({
    *  `runtime_state` so a fresh object every render cannot loop the parent. */
   onStatus?: (status: ConnectionStatusSummary) => void;
 }) {
+  const { t } = useAppLanguage();
   const navigate = useNavigate();
   const authenticated = auth.status?.authenticated ?? false;
   const [status, setStatus] = useState<AssistantSettingsStatus | null>(null);
@@ -98,7 +101,7 @@ export function AssistantSettingsPanel({
         setModels(next.models);
         setSelectedModel(next.model_metadata);
       })
-      .catch((cause: unknown) => active && setError(errorText(cause, "No se pudo cargar la configuración")))
+      .catch((cause: unknown) => active && setError(errorText(cause, t("assistantSettings.loadError"))))
       .finally(() => active && setLoading(false));
     return () => {
       active = false;
@@ -115,32 +118,32 @@ export function AssistantSettingsPanel({
     if (!onStatus || runtimeState === undefined) return;
     onStatus(
       runtimeState === "active"
-        ? { label: "Activo", variant: "success" }
+        ? { label: t("assistantSettings.state.active"), variant: "success" }
         : runtimeState === "pending-reload"
-          ? { label: "Sin verificar", variant: "warning" }
-          : { label: "No activo", variant: "info" },
+          ? { label: t("assistantSettings.state.unverified"), variant: "warning" }
+          : { label: t("assistantSettings.state.inactive"), variant: "info" },
     );
   }, [onStatus, runtimeState]);
 
   if (auth.isLoading || loading) {
-    return <div className="flex items-center gap-2 py-6 text-small text-muted"><Spinner size="sm" /> Cargando configuración…</div>;
+    return <div className="flex items-center gap-2 py-6 text-small text-muted"><Spinner size="sm" /> {t("assistantSettings.checking")}</div>;
   }
   if (auth.error) {
-    return <p className="text-small text-muted">No se pudo comprobar la sesión. Verifica la conexión con el servidor e intenta de nuevo.</p>;
+    return <p className="text-small text-muted">{t("assistantSettings.sessionCheckError")}</p>;
   }
   if (auth.status?.enabled && !authenticated) {
     if (auth.status.mode === "local-dev") {
-      return <div><p className="text-small text-muted">Inicia la sesión local para configurar el asistente.</p><Button className="mt-3" variant="secondary" onClick={() => void auth.start?.()}>Iniciar sesión local</Button></div>;
+      return <div><p className="text-small text-muted">{t("assistantSettings.startLocalHint")}</p><Button className="mt-3" variant="secondary" onClick={() => void auth.start?.()}>{t("assistantSettings.startLocal")}</Button></div>;
     }
     // Credentials vault mode: the login surface is the app-level AuthGate.
     return (
       <div>
-        <p className="text-small text-muted">Tu sesión venció. Inicia sesión de nuevo para configurar el asistente.</p>
-        <Button className="mt-3" variant="secondary" onClick={() => navigate("/")}>Iniciar sesión</Button>
+        <p className="text-small text-muted">{t("assistantSettings.sessionExpired")}</p>
+        <Button className="mt-3" variant="secondary" onClick={() => navigate("/")}>{t("assistantSettings.signIn")}</Button>
       </div>
     );
   }
-  if (!status) return <p className="text-small text-status-error">{error ?? "No se pudo cargar la configuración"}</p>;
+  if (!status) return <p className="text-small text-status-error">{error ?? t("assistantSettings.loadError")}</p>;
 
   const localProvider = LOCAL_PROVIDERS.has(provider);
 
@@ -188,13 +191,13 @@ export function AssistantSettingsPanel({
     setError(null);
     try {
       const result = await validateAssistantConnection(candidate());
-      if (result.outcome !== "validated") throw new Error(result.message ?? "No se pudo validar la conexión");
+      if (result.outcome !== "validated") throw new Error(result.message ?? t("assistantSettings.validateFailed"));
       setValidation("validated");
       setTextProbe(null);
       setVisionProbe(null);
     } catch (cause) {
       setValidation("failed");
-      setError(errorText(cause, "No se pudo validar la conexión"));
+      setError(errorText(cause, t("assistantSettings.validateFailed")));
     } finally {
       setBusy(false);
     }
@@ -207,7 +210,7 @@ export function AssistantSettingsPanel({
     try {
       const result = await discoverAssistantModels(candidate());
       if (result.outcome !== "discovered" || !result.models.length) {
-        throw new Error(result.message ?? "No usable models were returned");
+        throw new Error(result.message ?? t("assistantSettings.noUsableModels"));
       }
       setModels(result.models);
       setSelectedModel(result.models[0]);
@@ -218,7 +221,7 @@ export function AssistantSettingsPanel({
       setSelectedModel(null);
       setTextProbe(null);
       setVisionProbe(null);
-      setError(errorText(cause, "No usable models were returned"));
+      setError(errorText(cause, t("assistantSettings.noUsableModels")));
     } finally {
       setBusy(false);
     }
@@ -262,7 +265,7 @@ export function AssistantSettingsPanel({
           setVisionProbe({
             outcome: "provider_failure",
             oracle: "causal-vision",
-            message: errorText(cause, "No se pudo probar la visión"),
+            message: errorText(cause, t("assistantSettings.visionProbeError")),
           });
         }
       }
@@ -270,7 +273,7 @@ export function AssistantSettingsPanel({
       setTextProbe({
         outcome: "provider_failure",
         oracle: "text-marker",
-        message: errorText(cause, "No se pudo probar el modelo"),
+        message: errorText(cause, t("assistantSettings.textProbeError")),
       });
     } finally {
       setRunningProbe(null);
@@ -296,7 +299,7 @@ export function AssistantSettingsPanel({
       if (apiKeyInputRef.current) apiKeyInputRef.current.value = "";
       setSaved(true);
     } catch (cause) {
-      setError(errorText(cause, "No se pudo guardar la configuración"));
+      setError(errorText(cause, t("assistantSettings.saveError")));
     } finally {
       setBusy(false);
     }
@@ -331,7 +334,7 @@ export function AssistantSettingsPanel({
       apiKeyValueRef.current = "";
       if (apiKeyInputRef.current) apiKeyInputRef.current.value = "";
     } catch (cause) {
-      setError(errorText(cause, "No se pudo eliminar la clave"));
+      setError(errorText(cause, t("assistantSettings.clearKeyError")));
     } finally {
       setBusy(false);
     }
@@ -366,7 +369,11 @@ export function AssistantSettingsPanel({
 
   const canAdvance =
     currentIndex < steps.length - 1 && canReachStep(currentIndex + 1);
-  const blockedReason = canAdvance ? null : blockedReasons[step];
+  const blockedReason = canAdvance
+    ? null
+    : blockedReasons[step]
+      ? t(blockedReasons[step] as MessageKey)
+      : null;
   // A completed or current step stays revisitable; a future one does not.
   // `saved` locks the sequence so the confirmation cannot be navigated away.
   const canSelect = (index: number) =>
@@ -388,7 +395,7 @@ export function AssistantSettingsPanel({
       ? blockedReason
       : probesDone
         ? null
-        : "Ejecutá las pruebas de texto y visión para guardar.";
+        : t("assistantSettings.footer.runProbes");
 
   const move = (direction: 1 | -1) => {
     if (saved) return;
@@ -401,15 +408,16 @@ export function AssistantSettingsPanel({
   return (
     <div>
       <WizardProgress
-        steps={steps}
+        steps={steps.map((entry) => ({ id: entry.id, label: t(entry.labelKey) }))}
         current={currentIndex}
-        ariaLabel="Pasos de configuración"
+        ariaLabel={t("assistantSettings.wizardAria")}
         states={stepStates}
         onSelect={(index) => goTo(steps[index].id)}
         canSelect={canSelect}
       />
       <p className="mt-3 text-small text-muted">
-        Estado: <strong>{stateLabel(status.runtime_state)}</strong>
+        {t("assistantSettings.runtimeState")}{" "}
+        <strong>{stateLabel(status.runtime_state, t)}</strong>
       </p>
 
       <div className="mt-5 space-y-4">
@@ -476,7 +484,7 @@ export function AssistantSettingsPanel({
           onClick={() => move(-1)}
           disabled={currentIndex === 0 || busy || saved}
         >
-          Atrás
+          {t("assistantSettings.back")}
         </Button>
         <div className="flex flex-col items-end gap-1">
           {currentIndex < steps.length - 1 && (
@@ -486,7 +494,7 @@ export function AssistantSettingsPanel({
               disabled={!canAdvance || busy}
               aria-describedby={footerHint ? "assistant-footer-hint" : undefined}
             >
-              Siguiente
+              {t("assistantSettings.next")}
             </Button>
           )}
           {footerHint && (

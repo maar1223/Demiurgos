@@ -7,6 +7,7 @@ import {
   providers,
   type Validation,
 } from "@/components/organisms/assistantSettingsShared";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export interface AssistantConnectionStepProps {
   provider: string;
@@ -45,11 +46,14 @@ export function AssistantConnectionStep({
   onValidate,
   onClearKey,
 }: AssistantConnectionStepProps) {
+  const { t } = useAppLanguage();
   return (
     <section>
-      <h4 className="font-heading text-body text-primary">Conexión</h4>
+      <h4 className="font-heading text-body text-primary">
+        {t("assistantSettings.connection")}
+      </h4>
       <label className={labelClass} htmlFor="assistant-provider">
-        Elegí un proveedor
+        {t("assistantSettings.providerLabel")}
       </label>
       <select
         id="assistant-provider"
@@ -64,12 +68,11 @@ export function AssistantConnectionStep({
         ))}
       </select>
       <p className="mt-2 text-small text-muted">
-        OpenCode Go es la opción recomendada. Ollama y LM Studio son locales y
-        no requieren clave. Los endpoints compatibles requieren una URL propia.
+        {t("assistantSettings.providerHint")}
       </p>
 
       <label className={`${labelClass} mt-4`} htmlFor="assistant-base-url">
-        Endpoint
+        {t("assistantSettings.endpointLabel")}
       </label>
       <input
         id="assistant-base-url"
@@ -82,7 +85,7 @@ export function AssistantConnectionStep({
       {!localProvider && (
         <>
           <label className={`${labelClass} mt-3`} htmlFor="assistant-api-key">
-            Clave API
+            {t("assistantSettings.apiKeyLabel")}
           </label>
           <SecretInput
             ref={apiKeyInputRef}
@@ -93,14 +96,13 @@ export function AssistantConnectionStep({
             onChange={(event) => onApiKeyChange(event.target.value)}
             placeholder={
               keyConfigured
-                ? "Clave ya configurada — dejá vacío para usar la almacenada"
-                : "Ingresá tu clave"
+                ? t("assistantSettings.apiKeyPlaceholderConfigured")
+                : t("assistantSettings.apiKeyPlaceholder")
             }
           />
           {keyConfigured && (
             <p className="mt-1 text-small text-muted">
-              Ya hay una clave guardada para este proveedor. Podés cambiar de
-              modelo sin reescribirla.
+              {t("assistantSettings.apiKeyStoredHint")}
             </p>
           )}
         </>
@@ -108,17 +110,19 @@ export function AssistantConnectionStep({
 
       <div className="mt-3 flex flex-wrap gap-2">
         <Button variant="secondary" onClick={onValidate} disabled={busy}>
-          {busy ? "Validando…" : "Validar conexión"}
+          {busy ? t("assistantSettings.validating") : t("assistantSettings.validate")}
         </Button>
         {keyConfigured && (
           <Button variant="secondary" onClick={onClearKey} disabled={busy}>
-            Eliminar clave
+            {t("assistantSettings.clearKey")}
           </Button>
         )}
       </div>
 
       {validation === "validated" && (
-        <p className="mt-2 text-small text-status-success">Conexión validada.</p>
+        <p className="mt-2 text-small text-status-success">
+          {t("assistantSettings.validated")}
+        </p>
       )}
       {error && <p className="mt-2 text-small text-status-error">{error}</p>}
     </section>

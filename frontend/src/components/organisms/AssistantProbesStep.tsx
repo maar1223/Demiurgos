@@ -4,6 +4,7 @@ import {
   bothProbesPassed,
   type Validation,
 } from "@/components/organisms/assistantSettingsShared";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /** Which probe is in flight, so the combined button can label itself honestly. */
 export type RunningProbe = "text" | "vision" | null;
@@ -39,59 +40,65 @@ export function AssistantProbesStep({
   onRunProbes,
   onSave,
 }: AssistantProbesStepProps) {
+  const { t } = useAppLanguage();
   const canRun = !busy && selectedModel !== null && validation === "validated";
   const canSave =
     !busy && selectedModel !== null && bothProbesPassed(textProbe, visionProbe);
 
   return (
     <section>
-      <h4 className="font-heading text-body text-primary">Pruebas</h4>
+      <h4 className="font-heading text-body text-primary">
+        {t("assistantSettings.probes")}
+      </h4>
       <p className="mt-1 text-small text-muted">
-        El modelo debe superar la prueba de texto y, si pasa, la prueba causal
-        de visión (verifica que realmente ve la imagen, no que la memorizó).
+        {t("assistantSettings.probesHint")}
       </p>
       <Button variant="secondary" onClick={onRunProbes} disabled={!canRun}>
         {runningProbe === "text"
-          ? "Probando texto…"
+          ? t("assistantSettings.probingText")
           : runningProbe === "vision"
-            ? "Probando visión…"
-            : "Probar texto + visión"}
+            ? t("assistantSettings.probingVision")
+            : t("assistantSettings.runProbes")}
       </Button>
 
       <div className="mt-3 space-y-3">
         <div>
-          <p className="text-small text-muted">Prueba de texto</p>
+          <p className="text-small text-muted">{t("assistantSettings.textProbe")}</p>
           {textProbe ? (
             <p
               aria-live="polite"
               className={`mt-1 text-small ${probeOutcomeClass(textProbe.outcome)}`}
             >
               {textProbe.outcome === "passed"
-                ? "Prueba de texto superada."
-                : (textProbe.message ?? "La prueba de texto no pasó.")}
+                ? t("assistantSettings.textProbePassed")
+                : (textProbe.message ?? t("assistantSettings.textProbeFailed"))}
             </p>
           ) : (
-            <p className="mt-1 text-small text-muted">Sin ejecutar.</p>
+            <p className="mt-1 text-small text-muted">
+              {t("assistantSettings.notRun")}
+            </p>
           )}
         </div>
 
         <div>
-          <p className="text-small text-muted">Prueba de visión</p>
+          <p className="text-small text-muted">{t("assistantSettings.visionProbe")}</p>
           {visionProbe ? (
             <p
               aria-live="polite"
               className={`mt-1 text-small ${probeOutcomeClass(visionProbe.outcome)}`}
             >
               {visionProbe.outcome === "passed"
-                ? "Prueba de visión superada."
-                : (visionProbe.message ?? "La prueba de visión no pasó.")}
+                ? t("assistantSettings.visionProbePassed")
+                : (visionProbe.message ?? t("assistantSettings.visionProbeFailed"))}
             </p>
           ) : textProbe && textProbe.outcome !== "passed" ? (
             <p aria-live="polite" className="mt-1 text-small text-muted">
-              La visión no se ejecutó porque la prueba de texto no pasó.
+              {t("assistantSettings.visionSkipped")}
             </p>
           ) : (
-            <p className="mt-1 text-small text-muted">Sin ejecutar.</p>
+            <p className="mt-1 text-small text-muted">
+              {t("assistantSettings.notRun")}
+            </p>
           )}
         </div>
       </div>
@@ -102,7 +109,7 @@ export function AssistantProbesStep({
         onClick={onSave}
         disabled={!canSave}
       >
-        {busy ? "Guardando…" : "Guardar configuración"}
+        {busy ? t("assistantSettings.saving") : t("assistantSettings.saveConfig")}
       </Button>
       {error && <p className="mt-2 text-small text-status-error">{error}</p>}
     </section>
