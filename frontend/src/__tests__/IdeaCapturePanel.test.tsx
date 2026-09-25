@@ -15,6 +15,7 @@ import {
   type AuthSessionController,
 } from "@/components/organisms/IdeaCapturePanel";
 import { ApiError, type IdeaCaptureStatus } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 vi.mock("@/api/ideaCapture", () => ({
   getIdeaCaptureStatus: vi.fn(),
@@ -78,7 +79,7 @@ function renderPanel(auth: AuthSessionController) {
  *  Only valid when the Continue button is enabled (e.g. token already set). */
 async function goToStep(user: ReturnType<typeof userEvent.setup>, target: number) {
   for (let i = 0; i < target; i++) {
-    await user.click(await screen.findByRole("button", { name: "Continuar" }));
+    await user.click(await screen.findByRole("button", { name: tEs("ideaCapture.continue") }));
   }
 }
 
@@ -108,7 +109,7 @@ describe("IdeaCapturePanel — wizard navigation", () => {
     );
 
     expect(screen.getByText(/Sesión local no iniciada/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Iniciar sesión local" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.startLocal") }));
     expect(start).toHaveBeenCalledOnce();
     expect(mocked.getIdeaCaptureStatus).not.toHaveBeenCalled();
   });
@@ -128,7 +129,7 @@ describe("IdeaCapturePanel — wizard navigation", () => {
 
     expect(screen.getByText(/Tu sesión venció/i)).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Iniciar sesión local" }),
+      screen.queryByRole("button", { name: tEs("ideaCapture.startLocal") }),
     ).not.toBeInTheDocument();
     expect(mocked.getIdeaCaptureStatus).not.toHaveBeenCalled();
   });
@@ -156,13 +157,13 @@ describe("IdeaCapturePanel — wizard navigation", () => {
   it("shows a 4-step progress indicator and only the current step's content", async () => {
     renderPanel(makeAuth());
     // Wait until the status has loaded (step 0 content rendered).
-    await screen.findByRole("heading", { name: "Conectá tu bot de Telegram" });
+    await screen.findByRole("heading", { name: tEs("ideaCapture.connectTitle") });
 
     for (const label of [
-      "Conectar bot",
-      "Detectar chat",
-      "Revisar",
-      "Finalizar",
+      tEs("ideaCapture.step.connect"),
+      tEs("ideaCapture.step.chat"),
+      tEs("ideaCapture.step.review"),
+      tEs("ideaCapture.step.finish"),
     ]) {
       expect(screen.getByText(label)).toBeInTheDocument();
     }
@@ -171,10 +172,10 @@ describe("IdeaCapturePanel — wizard navigation", () => {
     // Step 0 content visible; the rest are hidden (only the progress label
     // for later steps exists, never their content).
     expect(
-      screen.getByRole("heading", { name: "Conectá tu bot de Telegram" }),
+      screen.getByRole("heading", { name: tEs("ideaCapture.connectTitle") }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Detectá el chat que recibirá tus ideas" }),
+      screen.queryByRole("heading", { name: tEs("ideaCapture.chatTitle") }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("heading", { name: "Elegí el mundo de captura" }),
@@ -185,15 +186,15 @@ describe("IdeaCapturePanel — wizard navigation", () => {
     const user = userEvent.setup();
     renderPanel(makeAuth());
 
-    const cont = await screen.findByRole("button", { name: "Continuar" });
+    const cont = await screen.findByRole("button", { name: tEs("ideaCapture.continue") });
     expect(cont).toBeDisabled();
-    expect(screen.getByText(/Guardá el token para continuar/i)).toBeInTheDocument();
+    expect(screen.getByText(tEs("ideaCapture.saveTokenToContinue"))).toBeInTheDocument();
 
-    await user.type(await screen.findByLabelText("Token del bot"), "123:AA");
-    await user.click(screen.getByRole("button", { name: "Guardar token" }));
+    await user.type(await screen.findByLabelText(tEs("ideaCapture.tokenAria")), "123:AA");
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.saveToken") }));
 
     expect(
-      await screen.findByRole("button", { name: "Continuar" }),
+      await screen.findByRole("button", { name: tEs("ideaCapture.continue") }),
     ).toBeEnabled();
   });
 
@@ -206,24 +207,24 @@ describe("IdeaCapturePanel — wizard navigation", () => {
 
     await goToStep(user, 1);
     expect(
-      screen.getByRole("heading", { name: "Detectá el chat que recibirá tus ideas" }),
+      screen.getByRole("heading", { name: tEs("ideaCapture.chatTitle") }),
     ).toBeInTheDocument();
 
     await goToStep(user, 1);
     expect(
-      screen.getByRole("heading", { name: "Revisá tu configuración" }),
+      screen.getByRole("heading", { name: tEs("ideaCapture.reviewTitle") }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Volver" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.back") }));
     expect(
-      screen.getByRole("heading", { name: "Detectá el chat que recibirá tus ideas" }),
+      screen.getByRole("heading", { name: tEs("ideaCapture.chatTitle") }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Volver" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.back") }));
     expect(
-      screen.getByRole("heading", { name: "Conectá tu bot de Telegram" }),
+      screen.getByRole("heading", { name: tEs("ideaCapture.connectTitle") }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Volver" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: tEs("ideaCapture.back") })).toBeDisabled();
   });
 });
 
@@ -241,11 +242,11 @@ describe("IdeaCapturePanel — Conectar bot (token)", () => {
     const user = userEvent.setup();
     renderPanel(makeAuth());
 
-    const tokenInput = await screen.findByLabelText("Token del bot");
+    const tokenInput = await screen.findByLabelText(tEs("ideaCapture.tokenAria"));
     expect(tokenInput).toHaveAttribute("type", "password");
 
-    const reveal = screen.getByRole("button", { name: "Mostrar" });
-    const copy = screen.getByRole("button", { name: "Copiar" });
+    const reveal = screen.getByRole("button", { name: tEs("secret.show") });
+    const copy = screen.getByRole("button", { name: tEs("secret.copy") });
     // Nothing typed yet → not editing → reveal/copy disabled.
     expect(reveal).toBeDisabled();
     expect(copy).toBeDisabled();
@@ -255,7 +256,7 @@ describe("IdeaCapturePanel — Conectar bot (token)", () => {
 
     await user.click(reveal);
     expect(tokenInput).toHaveAttribute("type", "text");
-    await user.click(screen.getByRole("button", { name: "Ocultar" }));
+    await user.click(screen.getByRole("button", { name: tEs("secret.hide") }));
     expect(tokenInput).toHaveAttribute("type", "password");
   });
 
@@ -270,12 +271,12 @@ describe("IdeaCapturePanel — Conectar bot (token)", () => {
     });
     renderPanel(makeAuth());
 
-    const tokenInput = await screen.findByLabelText("Token del bot");
+    const tokenInput = await screen.findByLabelText(tEs("ideaCapture.tokenAria"));
     await user.type(tokenInput, "987:BB");
-    await user.click(screen.getByRole("button", { name: "Copiar" }));
+    await user.click(screen.getByRole("button", { name: tEs("secret.copy") }));
 
     expect(writeText).toHaveBeenCalledWith("987:BB");
-    expect(await screen.findByText("Copiado")).toBeInTheDocument();
+    expect(await screen.findByText(tEs("secret.copied"))).toBeInTheDocument();
   });
 
   it("saves the token, wipes the input, and confirms without echoing the value", async () => {
@@ -283,9 +284,9 @@ describe("IdeaCapturePanel — Conectar bot (token)", () => {
     const user = userEvent.setup();
     renderPanel(makeAuth());
 
-    const tokenInput = await screen.findByLabelText("Token del bot");
+    const tokenInput = await screen.findByLabelText(tEs("ideaCapture.tokenAria"));
     await user.type(tokenInput, "123:AA-secret");
-    await user.click(screen.getByRole("button", { name: "Guardar token" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.saveToken") }));
 
     expect(mocked.setIdeaCaptureToken).toHaveBeenCalledWith("123:AA-secret");
     expect(await screen.findByText(/Token guardado en .env/i)).toBeInTheDocument();
@@ -305,9 +306,9 @@ describe("IdeaCapturePanel — Conectar bot (token)", () => {
     expect(
       await screen.findByText(/Configurado en .env/i, { selector: "p" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reemplazar token" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: tEs("ideaCapture.replaceToken") })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Eliminar token" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.deleteToken") }));
     await user.click(
       screen.getByRole("button", { name: "¿Confirmar eliminación?" }),
     );
@@ -333,7 +334,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     const { unmount } = renderPanel(makeAuth());
     // Step 0 with no token → the detect button (step 1) is unreachable.
     expect(
-      screen.queryByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.queryByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     ).not.toBeInTheDocument();
     unmount();
 
@@ -342,7 +343,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     renderPanel(makeAuth());
     await goToStep(user, 1);
     expect(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     ).toBeInTheDocument();
   });
 
@@ -369,7 +370,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     await goToStep(user, 1);
 
     await user.click(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     );
 
     expect(mocked.discoverChatCandidates).toHaveBeenCalledOnce();
@@ -397,9 +398,9 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     await goToStep(user, 1);
 
     await user.click(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     );
-    await user.click(await screen.findByRole("button", { name: "Autorizar" }));
+    await user.click(await screen.findByRole("button", { name: tEs("ideaCapture.authorize") }));
 
     expect(mocked.authorizeChat).toHaveBeenCalledWith({
       chat_id: 111,
@@ -435,39 +436,39 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     await goToStep(user, 1);
 
     await user.click(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     );
     await user.click(
-      await screen.findByRole("button", { name: "Autorizar grupo" }),
+      await screen.findByRole("button", { name: tEs("ideaCapture.authorizeGroup") }),
     );
 
     // Nothing typed, nothing confirmed -> client-side fail-closed, no API call.
     expect(
-      screen.getByText("Ingresá al menos un ID de remitente entero para el grupo."),
+      screen.getByText(tEs("ideaCapture.groupSenderError")),
     ).toBeInTheDocument();
     expect(mocked.authorizeChat).not.toHaveBeenCalled();
 
     await user.type(
-      screen.getByLabelText("Remitentes del grupo -100"),
+      screen.getByLabelText(tEs("ideaCapture.sendersAria", { id: -100 })),
       "5, 6",
     );
     await user.click(
-      screen.getByRole("button", { name: "Autorizar grupo" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.authorizeGroup") }),
     );
 
     // Senders present but no explicit confirmation -> still refused.
     expect(
       screen.getByText(
-        "Confirmá explícitamente que autorizás solo a los remitentes listados.",
+        tEs("ideaCapture.groupConfirmError"),
       ),
     ).toBeInTheDocument();
     expect(mocked.authorizeChat).not.toHaveBeenCalled();
 
     await user.click(
-      screen.getByLabelText("Confirmar autorización del grupo -100"),
+      screen.getByLabelText(tEs("ideaCapture.groupConfirmAria", { id: -100 })),
     );
     await user.click(
-      screen.getByRole("button", { name: "Autorizar grupo" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.authorizeGroup") }),
     );
 
     expect(mocked.authorizeChat).toHaveBeenCalledWith({
@@ -492,7 +493,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     await goToStep(user, 1);
 
     await user.click(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     );
 
     expect(
@@ -511,7 +512,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     await goToStep(user, 1);
 
     await user.click(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     );
 
     expect(
@@ -533,7 +534,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     await goToStep(user, 1);
 
     await user.click(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     );
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
@@ -563,7 +564,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     await goToStep(user, 1);
 
     await user.click(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     );
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
@@ -586,7 +587,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     await goToStep(user, 1);
 
     await user.click(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     );
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
@@ -604,7 +605,7 @@ describe("IdeaCapturePanel — Detectar chat", () => {
     await goToStep(user, 1);
 
     await user.click(
-      screen.getByRole("button", { name: "Ya lo envié — Detectar chat" }),
+      screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }),
     );
 
     expect(await screen.findByText(/Internal Server Error/)).toBeInTheDocument();
@@ -628,7 +629,7 @@ describe("IdeaCapturePanel — sin elegir mundo (Taller de Ideas)", () => {
     await goToStep(user, 2);
 
     expect(
-      screen.getByRole("heading", { name: "Revisá tu configuración" }),
+      screen.getByRole("heading", { name: tEs("ideaCapture.reviewTitle") }),
     ).toBeInTheDocument();
     // No world select, no world label, no world step content.
     expect(screen.queryByLabelText("Mundo activo")).not.toBeInTheDocument();
@@ -643,10 +644,10 @@ describe("IdeaCapturePanel — sin elegir mundo (Taller de Ideas)", () => {
     await goToStep(user, 3);
 
     expect(
-      screen.getByRole("heading", { name: "Finalizá y arrancá la captura" }),
+      screen.getByRole("heading", { name: tEs("ideaCapture.finishTitle") }),
     ).toBeInTheDocument();
     // The destination copy names the Taller de Ideas, not a world.
-    expect(screen.getByText(/Taller de Ideas/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(tEs("ideaCapture.ideasWorkshop")))).toBeInTheDocument();
   });
 
   it("shows the Taller de Ideas as the capture destination in Revisar", async () => {
@@ -656,9 +657,9 @@ describe("IdeaCapturePanel — sin elegir mundo (Taller de Ideas)", () => {
     await goToStep(user, 2);
 
     // Destination row + explanatory note both name the Taller de Ideas.
-    expect(screen.getAllByText("Taller de Ideas").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(tEs("ideaCapture.ideasWorkshop")).length).toBeGreaterThan(0);
     expect(
-      screen.getByText(/no elegís mundo al capturar/i),
+      screen.getByText(new RegExp(tEs("ideaCapture.reviewBodyPart2"))),
     ).toBeInTheDocument();
   });
 });
@@ -681,12 +682,12 @@ describe("IdeaCapturePanel — Revisar y configuración avanzada", () => {
     await goToStep(user, 2);
 
     expect(
-      screen.getByRole("heading", { name: "Revisá tu configuración" }),
+      screen.getByRole("heading", { name: tEs("ideaCapture.reviewTitle") }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Token configurado")).toBeInTheDocument();
-    expect(screen.getByText("1 chat(s)")).toBeInTheDocument();
+    expect(screen.getByText(tEs("ideaCapture.tokenConfiguredShort"))).toBeInTheDocument();
+    expect(screen.getByText(tEs("ideaCapture.chatCount", { count: 1 }))).toBeInTheDocument();
     // Destination row + explanatory note both name the Taller de Ideas.
-    expect(screen.getAllByText("Taller de Ideas").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(tEs("ideaCapture.ideasWorkshop")).length).toBeGreaterThan(0);
   });
 
   it("flags fail-closed in review when no chat is authorized", async () => {
@@ -695,7 +696,7 @@ describe("IdeaCapturePanel — Revisar y configuración avanzada", () => {
     renderPanel(makeAuth());
     await goToStep(user, 2);
 
-    expect(screen.getByText("Ninguno (fail-closed)")).toBeInTheDocument();
+    expect(screen.getByText(tEs("ideaCapture.noneFailClosed"))).toBeInTheDocument();
     expect(screen.getAllByText(/se rechaza TODO el ingreso/i).length).toBeGreaterThan(0);
   });
 
@@ -705,7 +706,7 @@ describe("IdeaCapturePanel — Revisar y configuración avanzada", () => {
     renderPanel(makeAuth());
     await goToStep(user, 2);
 
-    const summary = screen.getByText("Configuración avanzada (opcional)");
+    const summary = screen.getByText(tEs("ideaCapture.advancedToggle"));
     expect(summary).toBeInTheDocument();
     expect(screen.queryByLabelText("Chats privados autorizados")).not.toBeInTheDocument();
 
@@ -721,7 +722,7 @@ describe("IdeaCapturePanel — Revisar y configuración avanzada", () => {
     renderPanel(makeAuth());
     await goToStep(user, 2);
 
-    await user.click(screen.getByText("Configuración avanzada (opcional)"));
+    await user.click(screen.getByText(tEs("ideaCapture.advancedToggle")));
 
     const privateInput = await screen.findByLabelText("Chats privados autorizados");
     await user.type(privateInput, "111, 222");
@@ -780,7 +781,7 @@ describe("IdeaCapturePanel — Finalizar", () => {
     renderPanel(makeAuth());
     await goToStep(user, 3);
 
-    await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.saveConfig") }));
 
     // The saved config never carries a world: capture goes to the Taller de
     // Ideas automatically.
@@ -806,12 +807,14 @@ describe("IdeaCapturePanel — Finalizar", () => {
     renderPanel(makeAuth());
     await goToStep(user, 3);
 
-    await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.saveConfig") }));
 
     expect(
       await screen.findByText(/no inicia Telegram automáticamente/i),
     ).toBeInTheDocument();
-    expect(screen.getByText(/ejecutá el comando en tu terminal/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(tEs("ideaCapture.nextStepBody"))),
+    ).toBeInTheDocument();
   });
 
   it("shows the fail-closed blocked reasons after saving when serve cannot run", async () => {
@@ -829,7 +832,7 @@ describe("IdeaCapturePanel — Finalizar", () => {
     renderPanel(makeAuth());
     await goToStep(user, 3);
 
-    await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.saveConfig") }));
 
     expect(
       await screen.findByText(/Las listas de autorización están vacías \(fail-closed\)/),
@@ -863,13 +866,13 @@ describe("IdeaCapturePanel — Finalizar", () => {
     await goToStep(user, 3);
 
     // Break the private ids through the advanced disclosure on the review step.
-    await user.click(screen.getByRole("button", { name: "Volver" }));
-    await user.click(screen.getByText("Configuración avanzada (opcional)"));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.back") }));
+    await user.click(screen.getByText(tEs("ideaCapture.advancedToggle")));
     const privateInput = await screen.findByLabelText("Chats privados autorizados");
     await user.clear(privateInput);
     await user.type(privateInput, "abc");
-    await user.click(screen.getByRole("button", { name: "Continuar" }));
-    await user.click(screen.getByRole("button", { name: "Guardar configuración" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.continue") }));
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.saveConfig") }));
 
     expect(
       screen.getByText("IDs privados: enteros separados por coma", {

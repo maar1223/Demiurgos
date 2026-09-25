@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { tEs } from "@/__tests__/i18nTestUtils";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import ProfilePage from "@/pages/ProfilePage";
@@ -451,19 +452,19 @@ describe("ProfilePage emphasis rule (REQ-PIA-08)", () => {
 
     // --- idea-capture wizard: open its row, then step 0 (connect) → step 3
     await openConnection("Captura de ideas");
-    await screen.findByRole("heading", { name: "Conectá tu bot de Telegram" });
+    await screen.findByRole("heading", { name: tEs("ideaCapture.connectTitle") });
     await expectAtMostOnePrimary();
 
-    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
-    await screen.findByRole("heading", { name: "Detectá el chat que recibirá tus ideas" });
+    fireEvent.click(screen.getByRole("button", { name: tEs("ideaCapture.continue") }));
+    await screen.findByRole("heading", { name: tEs("ideaCapture.chatTitle") });
     await expectAtMostOnePrimary();
 
-    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
-    await screen.findByRole("heading", { name: "Revisá tu configuración" });
+    fireEvent.click(screen.getByRole("button", { name: tEs("ideaCapture.continue") }));
+    await screen.findByRole("heading", { name: tEs("ideaCapture.reviewTitle") });
     await expectAtMostOnePrimary();
 
-    fireEvent.click(screen.getByRole("button", { name: "Continuar" }));
-    await screen.findByRole("heading", { name: "Finalizá y arrancá la captura" });
+    fireEvent.click(screen.getByRole("button", { name: tEs("ideaCapture.continue") }));
+    await screen.findByRole("heading", { name: tEs("ideaCapture.finishTitle") });
     // The idea-capture final commit is the visible view's only primary.
     await waitFor(() => expect(primaryLabels()).toEqual(["Guardar configuración"]));
   });

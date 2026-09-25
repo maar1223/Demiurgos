@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { SkillImportPanel } from "@/components/organisms/SkillImportPanel";
 import { ApiError } from "@/api/types";
 import type { QuarantineRecord } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 const mockImportPackage = vi.hoisted(() => vi.fn());
 const mockListQuarantine = vi.hoisted(() => vi.fn());
@@ -43,7 +44,7 @@ describe("SkillImportPanel", () => {
   it("shows the import section with the outside-workshop integrity copy", async () => {
     render(<SkillImportPanel />);
 
-    expect(await screen.findByText("Importar una skill")).toBeInTheDocument();
+    expect(await screen.findByText(tEs("skillImport.title"))).toBeInTheDocument();
     expect(
       screen.getByText(
         /La Skill creada fuera del Taller no se ejecuta como válida/,
@@ -55,7 +56,7 @@ describe("SkillImportPanel", () => {
     mockListQuarantine.mockResolvedValue({ entries: [quarantineRecord()] });
     const user = userEvent.setup();
     render(<SkillImportPanel />);
-    await screen.findByText("Importar una skill");
+    await screen.findByText(tEs("skillImport.title"));
 
     const file = new File(["pkg"], "skill.zip", { type: "application/zip" });
     await user.upload(screen.getByLabelText(/Paquete/), file);
@@ -64,10 +65,10 @@ describe("SkillImportPanel", () => {
       // The component relies on the API default `origin = "community"`.
       expect(mockImportPackage).toHaveBeenCalledWith(file);
     });
-    expect(await screen.findByText("Checksum OK")).toBeInTheDocument();
-    expect(screen.getByText("Firma verificada")).toBeInTheDocument();
-    expect(screen.getByText("Compilación OK")).toBeInTheDocument();
-    expect(screen.getByText("En cuarentena")).toBeInTheDocument();
+    expect(await screen.findByText(tEs("skillImport.checksumOk"))).toBeInTheDocument();
+    expect(screen.getByText(tEs("skillImport.signatureVerified"))).toBeInTheDocument();
+    expect(screen.getByText(tEs("skillImport.compileOk"))).toBeInTheDocument();
+    expect(screen.getByText(tEs("skillImport.quarantined"))).toBeInTheDocument();
   });
 
   it("trusts a quarantined package and reflects the promoted draft", async () => {
@@ -82,7 +83,7 @@ describe("SkillImportPanel", () => {
     const user = userEvent.setup();
     render(<SkillImportPanel />);
 
-    await user.click(await screen.findByRole("button", { name: "Confiar" }));
+    await user.click(await screen.findByRole("button", { name: tEs("skillImport.trust") }));
 
     await waitFor(() => {
       expect(mockTrustQuarantine).toHaveBeenCalledWith("pkg-abc123");
@@ -93,7 +94,7 @@ describe("SkillImportPanel", () => {
       await screen.findByText(/borrador draft-imported/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Confiar" }),
+      screen.queryByRole("button", { name: tEs("skillImport.trust") }),
     ).not.toBeInTheDocument();
   });
 
@@ -105,7 +106,7 @@ describe("SkillImportPanel", () => {
     const user = userEvent.setup();
     render(<SkillImportPanel />);
 
-    await user.click(await screen.findByRole("button", { name: "Confiar" }));
+    await user.click(await screen.findByRole("button", { name: tEs("skillImport.trust") }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
       /reservada por Demiurgos/,

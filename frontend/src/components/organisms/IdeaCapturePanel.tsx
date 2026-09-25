@@ -21,6 +21,8 @@ import type {
   IdeaCaptureStatus,
 } from "@/api/types";
 import { ApiError } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 /** Unified session controller surfaced by useAuthSession — passed in so the
  *  panel stays decoupled from the hook and easy to test. `start`/`logout`
@@ -42,12 +44,12 @@ interface GroupRow {
  *  as the progress indicator entry (technical identifiers stay out of copy).
  *  Capture NEVER asks for a world: ideas always land in the global Taller de
  *  Ideas bank; the world is chosen later, when materializing an idea. */
-const STEPS = [
-  { id: "connect", label: "Conectar bot" },
-  { id: "chat", label: "Detectar chat" },
-  { id: "review", label: "Revisar" },
-  { id: "finish", label: "Finalizar" },
-] as const;
+const STEPS: readonly { id: string; labelKey: MessageKey }[] = [
+  { id: "connect", labelKey: "ideaCapture.step.connect" },
+  { id: "chat", labelKey: "ideaCapture.step.chat" },
+  { id: "review", labelKey: "ideaCapture.step.review" },
+  { id: "finish", labelKey: "ideaCapture.step.finish" },
+];
 
 const LAST_STEP = STEPS.length - 1;
 
@@ -116,7 +118,12 @@ export function IdeaCapturePanel({
    *  loop the parent. */
   onStatus?: (status: ConnectionStatusSummary) => void;
 }) {
+  const { t } = useAppLanguage();
   const authenticated = auth.status?.authenticated ?? false;
+  const progressSteps = STEPS.map((entry) => ({
+    id: entry.id,
+    label: t(entry.labelKey),
+  }));
 
   // ------------------------------------------------------------------ data
   const [status, setStatus] = useState<IdeaCaptureStatus | null>(null);
@@ -129,7 +136,7 @@ export function IdeaCapturePanel({
     getIdeaCaptureStatus()
       .then(setStatus)
       .catch((cause: unknown) =>
-        setLoadError(errorText(cause, "No se pudo cargar la configuración")),
+        setLoadError(errorText(cause, t("ideaCapture.loadError"))),
       )
       .finally(() => setLoading(false));
   }, []);
@@ -185,11 +192,11 @@ export function IdeaCapturePanel({
   useEffect(() => {
     if (!onStatus) return;
     if (!hasToken) {
-      onStatus({ label: "Sin token", variant: "warning" });
+      onStatus({ label: t("ideaCapture.status.noToken"), variant: "warning" });
     } else if (authorizedCount === 0) {
-      onStatus({ label: "Sin chats autorizados", variant: "warning" });
+      onStatus({ label: t("ideaCapture.status.noChats"), variant: "warning" });
     } else {
-      onStatus({ label: "Listo", variant: "success" });
+      onStatus({ label: t("ideaCapture.status.ready"), variant: "success" });
     }
   }, [onStatus, hasToken, authorizedCount]);
 
@@ -203,9 +210,9 @@ export function IdeaCapturePanel({
       await setIdeaCaptureToken(value);
       setTokenDraft("");
       setStatus((prev) => (prev ? { ...prev, has_token: true } : prev));
-      setTokenMessage("Token guardado en .env — no se vuelve a mostrar.");
+      setTokenMessage(t("ideaCapture.tokenSaved"));
     } catch (cause) {
-      setTokenError(errorText(cause, "No se pudo guardar el token"));
+      setTokenError(errorText(cause, t("ideaCapture.tokenSaveError")));
     } finally {
       setTokenBusy(false);
     }
@@ -225,9 +232,9 @@ export function IdeaCapturePanel({
       setConfirmingClear(false);
       setTokenDraft("");
       setStatus((prev) => (prev ? { ...prev, has_token: false } : prev));
-      setTokenMessage("Token eliminado de .env.");
+      setTokenMessage(t("ideaCapture.tokenRemoved"));
     } catch (cause) {
-      setTokenError(errorText(cause, "No se pudo eliminar el token"));
+      setTokenError(errorText(cause, t("ideaCapture.tokenRemoveError")));
     } finally {
       setTokenBusy(false);
     }
@@ -269,10 +276,10 @@ export function IdeaCapturePanel({
           code: cause.code,
           message:
             cause.message ||
-            errorText(cause, "No se pudieron detectar los chats"),
+            errorText(cause, t("ideaCapture.discoverError")),
         });
       } else {
-        setDiscoverError(errorText(cause, "No se pudieron detectar los chats"));
+        setDiscoverError(errorText(cause, t("ideaCapture.discoverError")));
       }
     } finally {
       setDiscovering(false);
@@ -291,11 +298,11 @@ export function IdeaCapturePanel({
       });
       setStatus(next);
       setDiscoverNotice(
-        next.message || "Chat privado autorizado. Estado actualizado.",
+        next.message || t("ideaCapture.privateAuthorized"),
       );
       setDiscoverResult(null);
     } catch (cause) {
-      setDiscoverError(errorText(cause, "No se pudo autorizar el chat"));
+      setDiscoverError(errorText(cause, t("ideaCapture.authorizeError")));
     } finally {
       setAuthorizingId(null);
     }
@@ -306,13 +313,11 @@ export function IdeaCapturePanel({
     const draft = groupDrafts[candidate.id];
     const senders = parseIdList(draft?.senders ?? "");
     if (senders === null || senders.length === 0) {
-      setDiscoverError("Ingresá al menos un ID de remitente entero para el grupo.");
+      setDiscoverError(t("ideaCapture.groupSenderError"));
       return;
     }
     if (!draft?.confirmed) {
-      setDiscoverError(
-        "Confirmá explícitamente que autorizás solo a los remitentes listados.",
-      );
+      setDiscoverError(t("ideaCapture.groupConfirmError"));
       return;
     }
     setAuthorizingId(candidate.id);
@@ -327,11 +332,11 @@ export function IdeaCapturePanel({
       });
       setStatus(next);
       setDiscoverNotice(
-        next.message || "Grupo autorizado con remitentes explícitos. Estado actualizado.",
+        next.message || t("ideaCapture.groupAuthorized"),
       );
       setDiscoverResult(null);
     } catch (cause) {
-      setDiscoverError(errorText(cause, "No se pudo autorizar el grupo"));
+      setDiscoverError(errorText(cause, t("ideaCapture.groupAuthorizeError")));
     } finally {
       setAuthorizingId(null);
     }
@@ -344,7 +349,7 @@ export function IdeaCapturePanel({
 
     const privateChatIds = parseIdList(privateText);
     if (privateChatIds === null) {
-      setFormError("IDs privados: enteros separados por coma");
+      setFormError(t("ideaCapture.privateIdsError"));
       return;
     }
     const groups: Record<string, number[]> = {};
@@ -352,19 +357,19 @@ export function IdeaCapturePanel({
       const chat = row.chat.trim();
       if (!chat) continue;
       if (!/^-?\d+$/.test(chat)) {
-        setFormError(`Grupo "${chat}": el ID debe ser un entero`);
+        setFormError(t("ideaCapture.groupIntegerError", { chat }));
         return;
       }
       const senders = parseIdList(row.senders);
       if (senders === null) {
-        setFormError(`Grupo ${chat}: los remitentes deben ser enteros separados por coma`);
+        setFormError(t("ideaCapture.groupSendersError", { chat }));
         return;
       }
       groups[chat] = senders;
     }
     for (const [key, value] of Object.entries(limits)) {
       if (!Number.isInteger(value) || value < 1) {
-        setFormError(`limits.${key}: debe ser un entero positivo`);
+        setFormError(t("ideaCapture.limitError", { key }));
         return;
       }
     }
@@ -379,9 +384,9 @@ export function IdeaCapturePanel({
       const next = await saveIdeaCaptureConfig(config);
       setStatus(next);
       setSaved(true);
-      setFormNotice("Configuración guardada.");
+      setFormNotice(t("ideaCapture.configSaved"));
     } catch (cause) {
-      setFormError(errorText(cause, "No se pudo guardar la configuración"));
+      setFormError(errorText(cause, t("ideaCapture.configSaveError")));
     } finally {
       setSaving(false);
     }
@@ -394,7 +399,7 @@ export function IdeaCapturePanel({
   if (auth.isLoading) {
     return (
       <div className="flex items-center gap-2 py-6 text-small text-muted">
-        <Spinner size="sm" /> Comprobando sesión…
+        <Spinner size="sm" /> {t("ideaCapture.checkingSession")}
       </div>
     );
   }
@@ -403,8 +408,7 @@ export function IdeaCapturePanel({
     return (
       <div className="rounded-lg border border-edge bg-surface-raised p-4">
         <p className="text-small text-muted">
-          No se pudo comprobar la sesión. Verifica la conexión con el servidor
-          e intenta de nuevo.
+          {t("ideaCapture.sessionCheckError")}
         </p>
         {auth.error.message && (
           <p className="mt-2 text-small text-status-error">{auth.error.message}</p>
@@ -418,15 +422,14 @@ export function IdeaCapturePanel({
       return (
         <div className="rounded-lg border border-edge bg-surface-raised p-4">
           <p className="text-small text-muted">
-            Sesión local no iniciada. Inicia sesión para ver y editar la
-            configuración de captura de ideas.
+            {t("ideaCapture.localNotStarted")}
           </p>
           <Button
             variant="secondary"
             onClick={() => void auth.start?.()}
             className="mt-3"
           >
-            Iniciar sesión local
+            {t("ideaCapture.startLocal")}
           </Button>
         </div>
       );
@@ -436,8 +439,7 @@ export function IdeaCapturePanel({
     return (
       <div className="rounded-lg border border-edge bg-surface-raised p-4">
         <p className="text-small text-muted">
-          Tu sesión venció. Inicia sesión de nuevo para ver y editar la
-          configuración de captura de ideas.
+          {t("ideaCapture.sessionExpired")}
         </p>
       </div>
     );
@@ -464,10 +466,10 @@ export function IdeaCapturePanel({
     <div className="space-y-5">
       {/* Operational distinction: discovery is migration-only; Hermes owns ingress. */}
       <div className="rounded-lg border border-edge bg-surface-raised p-3 text-small text-muted">
-        <span className="font-medium text-primary">Cómo funciona:</span>{" "}
-         configurá el bot y descubrí tu chat mientras Hermes está detenido. La{" "}
-         <strong>captura de producción la inicia Hermes</strong> cuando ejecutes
-         el comando — el panel nunca inicia Telegram automáticamente.
+        <span className="font-medium text-primary">{t("ideaCapture.howTitle")}</span>{" "}
+        {t("ideaCapture.howPart1")}{" "}
+        <strong>{t("ideaCapture.howStrong")}</strong>{" "}
+        {t("ideaCapture.howPart2")}
       </div>
 
       {loadError && (
@@ -478,26 +480,26 @@ export function IdeaCapturePanel({
 
       {loading && !status && (
         <div className="flex items-center gap-2 py-4 text-small text-muted">
-          <Spinner size="sm" /> Cargando configuración…
+          <Spinner size="sm" /> {t("ideaCapture.loadingConfig")}
         </div>
       )}
 
       {status && (
         <>
           {/* --------------------------------------------------- progress */}
-          <WizardProgress steps={STEPS} current={step} />
+          <WizardProgress steps={progressSteps} current={step} />
 
           {/* -------------------------------------------------- step content */}
           <div className="rounded-lg border border-edge bg-surface-raised p-5">
             {step === 0 && (
-              <section aria-label="Conectar bot">
+              <section aria-label={t("ideaCapture.connectSectionAria")}>
                 <h4 className="font-heading text-body text-primary">
-                  Conectá tu bot de Telegram
+                  {t("ideaCapture.connectTitle")}
                 </h4>
                 <p className="mt-1 text-small text-muted">
                   {hasToken
-                    ? "Token configurado en .env. No se vuelve a mostrar: pegá un valor nuevo para reemplazarlo."
-                    : "Pegá el token de BotFather. Se guarda solo en el .env del servidor y nunca se expone."}
+                    ? t("ideaCapture.tokenConfigured")
+                    : t("ideaCapture.tokenMissing")}
                 </p>
                 <div className="mt-3">
                   <SecretInput
@@ -509,14 +511,14 @@ export function IdeaCapturePanel({
                     }}
                     placeholder={
                       hasToken
-                        ? "•••••••• (configurado — valor oculto)"
-                        : "123456789:AA… (token de BotFather)"
+                        ? t("ideaCapture.tokenPlaceholderConfigured")
+                        : t("ideaCapture.tokenPlaceholder")
                     }
                     autoComplete="off"
                     spellCheck={false}
-                    aria-label="Token del bot"
+                    aria-label={t("ideaCapture.tokenAria")}
                     disabled={tokenBusy}
-                    onCopyError={() => setTokenError("No se pudo copiar el token")}
+                    onCopyError={() => setTokenError(t("ideaCapture.copyError"))}
                     className={inputClass}
                   />
                 </div>
@@ -526,7 +528,11 @@ export function IdeaCapturePanel({
                     onClick={() => void handleTokenSave()}
                     disabled={!tokenDraft.trim() || tokenBusy}
                   >
-                    {tokenBusy ? "Guardando…" : hasToken ? "Reemplazar token" : "Guardar token"}
+                    {tokenBusy
+                      ? t("ideaCapture.saving")
+                      : hasToken
+                        ? t("ideaCapture.replaceToken")
+                        : t("ideaCapture.saveToken")}
                   </Button>
                   {hasToken && (
                     <Button
@@ -534,7 +540,9 @@ export function IdeaCapturePanel({
                       onClick={() => void handleClearToken()}
                       disabled={tokenBusy}
                     >
-                      {confirmingClear ? "¿Confirmar eliminación?" : "Eliminar token"}
+                      {confirmingClear
+                        ? t("ideaCapture.confirmDelete")
+                        : t("ideaCapture.deleteToken")}
                     </Button>
                   )}
                 </div>
@@ -548,16 +556,16 @@ export function IdeaCapturePanel({
             )}
 
             {step === 1 && (
-              <section aria-label="Detectar chat">
+              <section aria-label={t("ideaCapture.chatSectionAria")}>
                 <h4 className="font-heading text-body text-primary">
-                  Detectá el chat que recibirá tus ideas
+                  {t("ideaCapture.chatTitle")}
                 </h4>
                 <p className="mt-1 text-small text-muted">
-                  Enviá <code className="text-icon-muted">/start</code> (o cualquier
-                  mensaje) a tu bot en Telegram y después tocá{" "}
-                  <em>Ya lo envié — Detectar chat</em>. La detección es de solo
-                  lectura: no confirma ni consume mensajes pendientes, y no
-                  muestra el contenido de los mensajes.
+                  {t("ideaCapture.chatIntro1")}{" "}
+                  <code className="text-icon-muted">/start</code>{" "}
+                  {t("ideaCapture.chatIntro2")}{" "}
+                  <em>{t("ideaCapture.discoverCta")}</em>
+                  {t("ideaCapture.chatIntro3")}
                 </p>
                 <div className="mt-3 flex items-center gap-2">
                   <Button
@@ -565,7 +573,7 @@ export function IdeaCapturePanel({
                     onClick={() => void handleDiscover()}
                     disabled={discovering}
                   >
-                    {discovering ? "Detectando…" : "Ya lo envié — Detectar chat"}
+                    {discovering ? t("ideaCapture.discovering") : t("ideaCapture.discoverCta")}
                   </Button>
                   {discovering && <Spinner size="sm" />}
                 </div>
@@ -578,7 +586,7 @@ export function IdeaCapturePanel({
                     className="mt-3 rounded-lg border border-action/40 bg-action/10 p-3 text-small"
                   >
                     <p className="text-detail">
-                      <strong>No se pudieron detectar los chats.</strong>
+                      <strong>{t("ideaCapture.discoverFailedTitle")}</strong>
                     </p>
                     <p className="mt-1 text-muted">
                       {discoverRemediation.message}
@@ -586,26 +594,24 @@ export function IdeaCapturePanel({
                     {discoverRemediation.code === "webhook_conflict" && (
                       <div className="mt-2">
                         <p className="text-muted">
-                          <strong>Webhook activo:</strong> Telegram no permite
-                          usar getUpdates mientras el bot tenga un webhook
-                          configurado (suele quedar de una configuración
-                          anterior). Para desbloquear la detección eliminá el
-                          webhook manualmente:
+                          <strong>{t("ideaCapture.webhookTitle")}</strong>{" "}
+                          {t("ideaCapture.webhookBody")}
                         </p>
                         <ul className="mt-1 list-disc pl-5 text-muted">
                           <li>
-                            En <strong>BotFather</strong>: <code>/deletewebhook</code>
+                            {t("ideaCapture.webhookBotfather")}{" "}
+                            <strong>BotFather</strong>: <code>/deletewebhook</code>
                           </li>
                           <li>
-                            O con el método <code>deleteWebhook</code> de la Bot
-                            API usando el token de este panel.
+                            {t("ideaCapture.webhookApiBefore")}{" "}
+                            <code>deleteWebhook</code>{" "}
+                            {t("ideaCapture.webhookApiAfter")}
                           </li>
                         </ul>
                         <p className="mt-2 text-muted">
-                          Este panel nunca borra el webhook automáticamente: la
-                          eliminación es una decisión tuya. Cuando lo hayas
-                          eliminado, tocá <em>Ya lo envié — Detectar chat</em>{" "}
-                          de nuevo.
+                          {t("ideaCapture.webhookDecision")}{" "}
+                          <em>{t("ideaCapture.discoverCta")}</em>{" "}
+                          {t("ideaCapture.webhookDecisionTail")}
                         </p>
                       </div>
                     )}
@@ -630,10 +636,10 @@ export function IdeaCapturePanel({
                             >
                               <div className="min-w-0">
                                 <p className="truncate text-small text-primary">
-                                  {candidate.title || "Chat privado (sin nombre)"}
+                                  {candidate.title || t("ideaCapture.privateNoName")}
                                 </p>
                                 <p className="text-xs text-muted">
-                                  Chat privado — autorización de un clic
+                                  {t("ideaCapture.privateOneClick")}
                                 </p>
                               </div>
                               <Button
@@ -642,8 +648,8 @@ export function IdeaCapturePanel({
                                 disabled={authorizingId !== null}
                               >
                                 {authorizingId === candidate.id
-                                  ? "Autorizando…"
-                                  : "Autorizar"}
+                                  ? t("ideaCapture.authorizing")
+                                  : t("ideaCapture.authorize")}
                               </Button>
                             </li>
                           ) : (
@@ -652,10 +658,10 @@ export function IdeaCapturePanel({
                               className="rounded-md border border-edge bg-surface-raised p-3"
                             >
                               <p className="truncate text-small text-primary">
-                                {candidate.title || "Grupo (sin título)"}
+                                {candidate.title || t("ideaCapture.groupNoTitle")}
                               </p>
                               <p className="text-xs text-muted">
-                                Grupo — la autorización es explícita (fail-closed)
+                                {t("ideaCapture.groupExplicit")}
                               </p>
                               <div className="mt-2 space-y-2">
                                 <input
@@ -671,8 +677,8 @@ export function IdeaCapturePanel({
                                       },
                                     }))
                                   }
-                                  placeholder="IDs de remitentes autorizados"
-                                  aria-label={`Remitentes del grupo ${candidate.id}`}
+                                  placeholder={t("ideaCapture.sendersPlaceholder")}
+                                  aria-label={t("ideaCapture.sendersAria", { id: candidate.id })}
                                   className={inputClass}
                                 />
                                 <label className="flex items-center gap-2 text-small text-muted">
@@ -688,10 +694,10 @@ export function IdeaCapturePanel({
                                         },
                                       }))
                                     }
-                                    aria-label={`Confirmar autorización del grupo ${candidate.id}`}
+                                    aria-label={t("ideaCapture.groupConfirmAria", { id: candidate.id })}
                                     className="accent-action"
                                   />
-                                  Confirmo que autorizo solo a estos remitentes
+                                  {t("ideaCapture.groupConfirmLabel")}
                                 </label>
                                 <Button
                                   variant="secondary"
@@ -699,8 +705,8 @@ export function IdeaCapturePanel({
                                   disabled={authorizingId !== null}
                                 >
                                   {authorizingId === candidate.id
-                                    ? "Autorizando…"
-                                    : "Autorizar grupo"}
+                                    ? t("ideaCapture.authorizing")
+                                    : t("ideaCapture.authorizeGroup")}
                                 </Button>
                               </div>
                             </li>
@@ -712,64 +718,68 @@ export function IdeaCapturePanel({
                 )}
                 {failClosed ? (
                   <div className="mt-3 rounded-lg border border-action/40 bg-action/10 p-3 text-small text-detail">
-                     <strong>Fail-closed:</strong> con listas de autorización
-                     vacías se rechaza TODO el ingreso y Hermes no arranca la captura.
-                    Autorizá explícitamente un chat privado o un grupo (o usá la
-                    entrada manual en <em>Revisar → Configuración avanzada</em>).
+                     <strong>{t("ideaCapture.failClosedStrong")}</strong>{" "}
+                     {t("ideaCapture.failClosedBody")}{" "}
+                     <em>{t("ideaCapture.reviewAdvanced")}</em>
+                     {t("ideaCapture.failClosedTail")}
                   </div>
                 ) : (
                   <p className="mt-3 text-small text-status-success">
-                    Autorización activa: {countAuthorized(privateText, groupRows)}{" "}
-                    chat(s) autorizado(s).
+                    {t("ideaCapture.authActive", {
+                      count: countAuthorized(privateText, groupRows),
+                    })}
                   </p>
                 )}
                 <p className="mt-3 text-small text-muted">
-                  ¿Problemas o necesitás el ID numérico? Podés usar la entrada
-                  manual avanzada en <em>Revisar → Configuración avanzada</em>.
+                  {t("ideaCapture.problemsHint1")}{" "}
+                  <em>{t("ideaCapture.reviewAdvanced")}</em>
+                  {t("ideaCapture.problemsHintTail")}
                 </p>
               </section>
             )}
 
             {step === 2 && (
-              <section aria-label="Revisar">
+              <section aria-label={t("ideaCapture.reviewSectionAria")}>
                 <h4 className="font-heading text-body text-primary">
-                  Revisá tu configuración
+                  {t("ideaCapture.reviewTitle")}
                 </h4>
                 <dl className="mt-3 space-y-2 text-small">
                   <div className="flex items-center justify-between gap-3">
-                    <dt className="text-muted">Bot de Telegram</dt>
+                    <dt className="text-muted">{t("ideaCapture.botTelegram")}</dt>
                     <dd className="text-primary">
-                      {hasToken ? "Token configurado" : "Sin token"}
+                      {hasToken ? t("ideaCapture.tokenConfiguredShort") : t("ideaCapture.status.noToken")}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <dt className="text-muted">Chat autorizado</dt>
+                    <dt className="text-muted">{t("ideaCapture.authorizedChat")}</dt>
                     <dd className="text-primary">
                       {failClosed
-                        ? "Ninguno (fail-closed)"
-                        : `${countAuthorized(privateText, groupRows)} chat(s)`}
+                        ? t("ideaCapture.noneFailClosed")
+                        : t("ideaCapture.chatCount", {
+                            count: countAuthorized(privateText, groupRows),
+                          })}
                     </dd>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <dt className="text-muted">Destino</dt>
-                    <dd className="text-primary">Taller de Ideas</dd>
+                    <dt className="text-muted">{t("ideaCapture.destination")}</dt>
+                    <dd className="text-primary">{t("ideaCapture.ideasWorkshop")}</dd>
                   </div>
                 </dl>
                 <p className="mt-3 text-small text-muted">
-                  Las ideas capturadas van siempre al <strong>Taller de Ideas</strong>{" "}
-                  global: no elegís mundo al capturar. El mundo se define recién
-                  cuando materializás una idea desde el taller.
+                  {t("ideaCapture.reviewBodyPart1")}{" "}
+                  <strong>{t("ideaCapture.reviewBodyStrong")}</strong>{" "}
+                  {t("ideaCapture.reviewBodyPart2")}
                 </p>
 
                 {failClosed && (
                   <div className="mt-3 rounded-lg border border-action/40 bg-action/10 p-3 text-small text-detail">
-                     <strong>Fail-closed:</strong> sin chats autorizados se
-                     rechaza TODO el ingreso y Hermes no arranca la captura.
+                     <strong>{t("ideaCapture.failClosedStrong")}</strong>{" "}
+                     {t("ideaCapture.failClosedShortBody")}
                   </div>
                 )}
                 {!status.validation.ok && (
                   <div className="mt-3 rounded-lg border border-status-error/40 bg-status-error/10 p-3 text-small text-status-error">
-                    <strong>Errores de validación:</strong>
+                    <strong>{t("ideaCapture.validationErrors")}</strong>
                     <ul className="mt-1 list-disc pl-5">
                       {status.validation.errors.map((error) => (
                         <li key={error}>{error}</li>
@@ -787,7 +797,7 @@ export function IdeaCapturePanel({
                     aria-controls="ic-advanced-panel"
                     className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-small font-medium text-icon-muted hover:text-primary"
                   >
-                    Configuración avanzada (opcional)
+                    {t("ideaCapture.advancedToggle")}
                     <Icon
                       name={advancedOpen ? "chevron-down" : "chevron-right"}
                       size={16}
@@ -800,7 +810,7 @@ export function IdeaCapturePanel({
                     >
                       <div>
                         <label htmlFor="ic-private-chats" className={labelClass}>
-                          Chats privados autorizados
+                          {t("ideaCapture.privateChatsLabel")}
                         </label>
                         <input
                           id="ic-private-chats"
@@ -813,7 +823,7 @@ export function IdeaCapturePanel({
                       </div>
 
                       <div>
-                        <span className={labelClass}>Grupos autorizados (chat → remitentes)</span>
+                        <span className={labelClass}>{t("ideaCapture.groupsLabel")}</span>
                         <div className="space-y-2">
                           {groupRows.map((row, index) => (
                             <div key={index} className="flex items-center gap-2">
@@ -825,8 +835,8 @@ export function IdeaCapturePanel({
                                   next[index] = { ...next[index], chat: event.target.value };
                                   setGroupRows(next);
                                 }}
-                                placeholder="ID del grupo"
-                                aria-label={`ID del grupo ${index + 1}`}
+                                placeholder={t("ideaCapture.groupIdPlaceholder")}
+                                aria-label={t("ideaCapture.groupIdAria", { id: index + 1 })}
                                 className={inputClass}
                               />
                               <input
@@ -837,8 +847,8 @@ export function IdeaCapturePanel({
                                   next[index] = { ...next[index], senders: event.target.value };
                                   setGroupRows(next);
                                 }}
-                                placeholder="IDs de remitentes autorizados"
-                                aria-label={`Remitentes del grupo ${index + 1}`}
+                                placeholder={t("ideaCapture.sendersPlaceholder")}
+                                aria-label={t("ideaCapture.sendersAria", { id: index + 1 })}
                                 className={inputClass}
                               />
                               <button
@@ -846,7 +856,7 @@ export function IdeaCapturePanel({
                                 onClick={() =>
                                   setGroupRows(groupRows.filter((_, i) => i !== index))
                                 }
-                                aria-label={`Quitar grupo ${index + 1}`}
+                                aria-label={t("ideaCapture.removeGroupAria", { id: index + 1 })}
                                 className="shrink-0 rounded-md p-2 text-status-error hover:bg-surface-hover"
                               >
                                 <Icon name="trash" size={16} />
@@ -857,7 +867,7 @@ export function IdeaCapturePanel({
                             variant="secondary"
                             onClick={() => setGroupRows([...groupRows, { chat: "", senders: "" }])}
                           >
-                            <Icon name="plus" size={14} /> Agregar grupo
+                            <Icon name="plus" size={14} /> {t("ideaCapture.addGroup")}
                           </Button>
                         </div>
                       </div>
@@ -865,10 +875,10 @@ export function IdeaCapturePanel({
                       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                         {(
                           [
-                            ["limits.image_mb", "Límite imagen (MB)", limits.image_mb],
-                            ["limits.audio_mb", "Límite audio (MB)", limits.audio_mb],
-                            ["limits.audio_minutes", "Audio (min)", limits.audio_minutes],
-                            ["limits.raw_retention_days", "Retención bruta (días)", limits.raw_retention_days],
+                            ["limits.image_mb", t("ideaCapture.limitImage"), limits.image_mb],
+                            ["limits.audio_mb", t("ideaCapture.limitAudio"), limits.audio_mb],
+                            ["limits.audio_minutes", t("ideaCapture.limitAudioMinutes"), limits.audio_minutes],
+                            ["limits.raw_retention_days", t("ideaCapture.limitRetention"), limits.raw_retention_days],
                           ] as const
                         ).map(([key, label, value]) => (
                           <div key={key}>
@@ -906,15 +916,14 @@ export function IdeaCapturePanel({
             )}
 
             {step === 3 && (
-              <section aria-label="Finalizar">
+              <section aria-label={t("ideaCapture.finishSectionAria")}>
                 <h4 className="font-heading text-body text-primary">
-                  Finalizá y arrancá la captura
+                  {t("ideaCapture.finishTitle")}
                 </h4>
                 <p className="mt-1 text-small text-muted">
-                  Guardá la configuración y después ejecutá el comando del
-                  gateway Hermes en tu terminal para empezar a capturar ideas.
-                  Tus ideas se guardan en el <strong>Taller de Ideas</strong>{" "}
-                  (sin elegir mundo). El panel no inicia Telegram automáticamente.
+                  {t("ideaCapture.finishBody1")}{" "}
+                  <strong>{t("ideaCapture.finishBodyStrong")}</strong>{" "}
+                  {t("ideaCapture.finishBody2")}
                 </p>
                 <div className="mt-3">
                   <Button
@@ -922,7 +931,7 @@ export function IdeaCapturePanel({
                     onClick={() => void handleSaveConfig()}
                     disabled={saving}
                   >
-                    {saving ? "Guardando…" : "Guardar configuración"}
+                    {saving ? t("ideaCapture.saving") : t("ideaCapture.saveConfig")}
                   </Button>
                 </div>
                 {formError && (
@@ -934,15 +943,15 @@ export function IdeaCapturePanel({
                 {saved && status && (
                   <div className="mt-3 space-y-3">
                     <div className="rounded-lg border border-status-success/40 bg-status-success/10 p-3 text-small text-status-success">
-                      <strong>Listo.</strong> La configuración quedó guardada.
-                      Ahora arrancá la captura ejecutando el comando exacto:
+                      <strong>{t("ideaCapture.doneStrong")}</strong>{" "}
+                      {t("ideaCapture.doneBody")}
                     </div>
                     <pre className="overflow-x-auto rounded-md border border-edge bg-surface p-3 text-small text-status-success">
                       {status.serve.command}
                     </pre>
                     {status.serve.runnable ? (
                       <p className="text-small text-status-success">
-                        Listo para ejecutar Hermes.
+                        {t("ideaCapture.readyToRun")}
                       </p>
                     ) : (
                       <ul className="list-disc pl-5 text-small text-status-error">
@@ -952,16 +961,15 @@ export function IdeaCapturePanel({
                       </ul>
                     )}
                     <p className="text-small text-muted">
-                      <strong>Próximo paso:</strong> ejecutá el comando en tu
-                      terminal. Hermes debe ser el único supervisor de Telegram;
-                      no ejecutes el serve de compatibilidad en paralelo.
+                      <strong>{t("ideaCapture.nextStepStrong")}</strong>{" "}
+                      {t("ideaCapture.nextStepBody")}
                     </p>
                   </div>
                 )}
                 {status && (
                   <div className="mt-4 rounded-md border border-edge bg-surface-raised p-3">
                     <h4 className="font-heading text-small text-primary">
-                      Limitaciones actuales
+                      {t("ideaCapture.limitationsTitle")}
                     </h4>
                     <ul className="mt-2 list-disc pl-5 text-small text-muted">
                       {status.limitations.map((limitation) => (
@@ -983,7 +991,7 @@ export function IdeaCapturePanel({
               onClick={goBack}
               disabled={step === 0 || busy}
             >
-              <Icon name="chevron-left" size={16} /> Volver
+              <Icon name="chevron-left" size={16} /> {t("ideaCapture.back")}
             </Button>
             {step < LAST_STEP && (
               <div className="flex flex-col items-end gap-1">
@@ -992,11 +1000,11 @@ export function IdeaCapturePanel({
                   onClick={goNext}
                   disabled={!canContinue || busy}
                 >
-                  Continuar <Icon name="chevron-right" size={16} />
+                  {t("ideaCapture.continue")} <Icon name="chevron-right" size={16} />
                 </Button>
                 {step === 0 && !hasToken && (
                   <span className="text-xs text-muted">
-                    Guardá el token para continuar.
+                    {t("ideaCapture.saveTokenToContinue")}
                   </span>
                 )}
               </div>
