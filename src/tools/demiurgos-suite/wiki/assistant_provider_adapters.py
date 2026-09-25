@@ -263,10 +263,12 @@ class ProviderRegistry:
                 status, body = self._request(candidate, url)
             except (httpx.TimeoutException, TimeoutError):
                 error = {"outcome": "failed", "category": "timeout", "provider": candidate.provider,
+                         "code": "provider.discovery_timeout",
                          "message": "Model discovery timed out."}
                 continue
             except (httpx.HTTPError, OSError):
                 error = {"outcome": "failed", "category": "transport", "provider": candidate.provider,
+                         "code": "provider.discovery_unreachable",
                          "message": "Model discovery could not reach the provider."}
                 continue
             if status >= 400:
@@ -282,6 +284,7 @@ class ProviderRegistry:
             return collected, None
         return [], error or {"outcome": "failed", "category": "invalid-response",
                              "provider": candidate.provider,
+                             "code": "provider.discovery_empty",
                              "message": "The provider returned no usable model list."}
 
     def _loaded_ids(self, candidate: ProviderCandidate) -> list[str] | None:
@@ -317,6 +320,7 @@ class ProviderRegistry:
         if candidate is None:
             provider = payload.get("provider") if isinstance(payload.get("provider"), str) else "unknown"
             result = {"outcome": "failed", "category": "invalid-request", "provider": provider,
+                      "code": "provider.invalid_request",
                       "message": "Provide a supported provider, endpoint, and API key."}
             if self.telemetry:
                 self.telemetry({"outcome": "failed", "latency_ms": 0, "adapter": provider,
@@ -337,8 +341,16 @@ class ProviderRegistry:
             else:
                 self._record("success", candidate, None, started)
                 return {"outcome": "validated", "category": "ok", "provider": candidate.provider}
+        code_by_category = {
+            "timeout": "provider.validate_timeout",
+            "transport": "provider.validate_unreachable",
+            "authentication": "provider.auth_rejected",
+            "provider": "provider.connection_rejected",
+        }
         self._record("failed", candidate, category, started)
-        return {"outcome": "failed", "category": category, "provider": candidate.provider, "message": message}
+        return {"outcome": "failed", "category": category, "provider": candidate.provider,
+                "code": code_by_category.get(category, "provider.connection_rejected"),
+                "message": message}
 
     def discover(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         validation = self.validate(payload)

@@ -40,6 +40,8 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+from error_codes import problem, register_error_handlers
+
 from PIL import Image
 
 from assistant_activity import (
@@ -336,6 +338,12 @@ app.add_middleware(
 # mutating ``/api/*`` with 503 while a restore owns the data root (REQ-RS-3).
 app.add_middleware(DataChangeNotifierMiddleware)
 
+# UI-bound errors carry stable codes + params (AD-4/AD-5): routes raise
+# ``problem("import.job_not_found")`` and this handler renders
+# ``{"detail": <en>, "code": ..., "params": ...}``. English ``detail`` stays
+# for logs/CLI; un-migrated sites keep their current HTTPException body.
+register_error_handlers(app)
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -615,7 +623,7 @@ def onboarding_step0(body: OnboardingStep0Request, request: Request):
     if _vault_active():
         principal = _resolve_principal(request)
         if principal is None:
-            return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+            raise problem("auth.required")
     registry = _local_state()
     try:
         next_state = _commit_step0(
@@ -624,7 +632,7 @@ def onboarding_step0(body: OnboardingStep0Request, request: Request):
             normalize_locale=normalize_locale,
         )
     except ValueError as exc:
-        return JSONResponse(status_code=422, content={"detail": str(exc)})
+        raise problem("locale.invalid", detail=str(exc)) from exc
     registry.atomic_commit(next_state)
     return _onboarding_status_from(registry.snapshot(), world_names=_world_names())
 
@@ -642,7 +650,7 @@ def create_world(body: WorldCreateRequest, request: Request):
     if _vault_active():
         principal = _resolve_principal(request)
         if principal is None:
-            return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+            raise problem("auth.required")
     result = _create_world(_mundos_dir(), body.name, lore_skeleton=body.lore_skeleton)
     if result.kind == WorldResultKind.CREATED:
         registry = _local_state()
@@ -950,7 +958,7 @@ def delete_world(name: str, body: WorldDeleteRequest, request: Request):
     if _resolve_principal(request) is None:
         raise HTTPException(status_code=401, detail="Autenticación requerida")
     if _resolve_mundo_dir(name) is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     if body.confirm_name.strip().lower() != name.strip().lower():
         raise HTTPException(
             status_code=400,
@@ -969,7 +977,7 @@ def delete_world(name: str, body: WorldDeleteRequest, request: Request):
     try:
         entry = world_recycle_bin.move_to_trash(name, trash_root=_world_trash_root(), mundos_dir=_mundos_dir())
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado") from exc
+        raise problem("world.not_found") from exc
     _hide_world_data(name)
     logger.info("DELETE /api/worlds/%s -> trash", name)
     return entry.as_dict()
@@ -4500,7 +4508,7 @@ def _write_content(mundo: str, section: str, path: str, body: dict,
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
     if _resolve_mundo_dir(mundo) is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     full = _resolve_mundo_path(mundo, f"{section}/{path}")
     if full is None:
         raise HTTPException(status_code=400, detail="Path traversal detectado")
@@ -4757,7 +4765,7 @@ def diff_preview(mundo: str, section: str, path: str, body: dict):
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
     if _resolve_mundo_dir(mundo) is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     full = _resolve_path(mundo, section, path)
     original_content = ""
     if full is not None:
@@ -4822,7 +4830,7 @@ def delete_file(mundo: str, section: str, path: str):
     if section not in VALID_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección inválida")
     if _resolve_mundo_dir(mundo) is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     if not path or not path.strip():
         raise HTTPException(status_code=400, detail="Ruta vacía")
     full = _resolve_mundo_path(mundo, f"{section}/{path}")
@@ -4905,7 +4913,7 @@ def restore_papelera(mundo: str, body: dict):
         raise HTTPException(status_code=400, detail="Sección requerida")
     mundo_dir = _resolve_mundo_dir(mundo)
     if mundo_dir is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     entry_dir = _trash_entry_dir(mundo_dir, section, entry_id)
     meta = _read_trash_meta(entry_dir)
     original_path = meta.get("original_path")
@@ -4957,7 +4965,7 @@ def purge_papelera(mundo: str, entry_id: str = "", section: str = ""):
     """Purge one entry (entry_id + section) or the whole trash (no params)."""
     mundo_dir = _resolve_mundo_dir(mundo)
     if mundo_dir is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     if not entry_id:
         root = _trash_root(mundo_dir)
         count = 0
@@ -4994,7 +5002,7 @@ def move_path(mundo: str, body: dict):
         raise HTTPException(status_code=400, detail="Se requieren los campos 'from' y 'to'")
 
     if _resolve_mundo_dir(mundo) is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
 
     full_from = _resolve_mundo_path(mundo, from_path)
     if full_from is None:
@@ -5033,7 +5041,7 @@ def duplicate_path(mundo: str, body: dict):
         raise HTTPException(status_code=400, detail="Se requiere el campo 'from'")
 
     if _resolve_mundo_dir(mundo) is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
 
     full = _resolve_mundo_path(mundo, from_path)
     if full is None:
@@ -5266,7 +5274,7 @@ def set_file_status(mundo: str, section: str, body: dict):
         raise HTTPException(status_code=400, detail="Sección inválida")
     mundo_dir = _resolve_mundo_dir(mundo)
     if mundo_dir is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     path = body.get("path")
     if not isinstance(path, str) or not path.strip():
         raise HTTPException(status_code=400, detail="Se requiere el campo 'path'")
@@ -5331,10 +5339,10 @@ def relationships_reconcile(world_id: str):
     a missing world returns 404.
     """
     if _resolve_mundo_dir(world_id) is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     idx = _get_graph(world_id)
     if idx is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     from wiki.inter_doc_relationships import run_post_process  # type: ignore[import-untyped]
 
     result = run_post_process(world_id, idx, _sync_hermes_enricher)
@@ -5601,10 +5609,10 @@ def set_graph_relation(mundo: str, body: dict):
 
     mundo_dir = _resolve_mundo_dir(mundo)
     if mundo_dir is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     idx = _get_graph(mundo)
     if idx is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
 
     full = _resolve_mundo_path(mundo, source_path)
     if full is None:
@@ -5835,7 +5843,7 @@ async def upload_media(
 ):
     """Upload an image file. Compresses to JPEG and generates a thumbnail."""
     if _resolve_mundo_dir(mundo) is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
 
     # 1. Read file bytes
     image_bytes = await file.read()
@@ -5935,7 +5943,7 @@ def delete_media(
     """
     mundo_base = _resolve_mundo_dir(mundo)
     if mundo_base is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     bases = _get_media_bases(mundo)
     base_prefixes = [str(b.resolve()) + os.sep for b in bases]
 
@@ -7766,7 +7774,7 @@ async def ai_edit_suggest(mundo: str, body: dict, request: Request):
     if not isinstance(prompt, str) or not prompt.strip():
         raise HTTPException(status_code=400, detail="prompt requerido")
     if _resolve_mundo_dir(mundo) is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     full = _resolve_mundo_path(mundo, f"{section}/{path}")
     if full is None:
         raise HTTPException(status_code=400, detail="Path traversal detectado")
@@ -8146,7 +8154,7 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         raise HTTPException(status_code=404, detail=str(exc))
     mundo_dir = _resolve_mundo_dir(body.world)
     if mundo_dir is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     if body.section not in _MATERIALIZE_SECTIONS:
         raise HTTPException(status_code=400, detail="Sección no fichable")
     folder = body.folder
@@ -8163,7 +8171,7 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         return JSONResponse(status_code=503, content={"status": "unavailable", "retryable": True})
     idx = _get_graph(body.world)
     if idx is None:
-        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+        raise problem("world.not_found")
     reader = _GuidedGraphReader(idx)
     candidates = build_grounding_candidates(reader)
     title = (idea.title or "").strip() or idea.slug

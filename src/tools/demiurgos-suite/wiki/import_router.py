@@ -27,8 +27,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel
+
+from error_codes import problem
 
 from import_models import (
     ImportJob,
@@ -253,19 +255,19 @@ def create_import_router(
     def guard(request: Request) -> Any:
         principal = require_principal(request)
         if principal is None:
-            raise HTTPException(status_code=401, detail="Authentication required.")
+            raise problem("auth.required")
         return principal
 
     def resolve_world(mundo: str) -> Path:
         world_dir = mundos_dir() / mundo
         resolved = world_dir.resolve()
         if not resolved.is_dir() or resolved.parent != mundos_dir().resolve():
-            raise HTTPException(status_code=404, detail="Mundo no encontrado")
+            raise problem("world.not_found")
         if normalize_world_name(mundo) is None:
             # Same safe-name authority as create_world: reject spaces / unsafe
             # names so the import route never accepts a world the world-authority
             # would refuse to create (world-authority / _SAFE_WORLD consistency).
-            raise HTTPException(status_code=404, detail="Mundo no encontrado")
+            raise problem("world.not_found")
         return resolved
 
     def spool_for(job_id: str, world: str) -> BoundedSpool:
@@ -276,16 +278,18 @@ def create_import_router(
         principal = guard(request)
         resolve_world(mundo)
         if body.source_kind not in {"folder", "loose", "zip"}:
-            raise HTTPException(status_code=400, detail="Invalid source_kind")
+            raise problem("import.invalid_source")
         for path in body.files:
             try:
                 reject_unsafe_path(path)
             except UnsafePathError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
+                raise problem("import.unsafe_path", path=path, detail=str(exc)) from exc
         for relative, section in body.sections.items():
             if section not in CLASSIFIER_SECTIONS:
-                raise HTTPException(
-                    status_code=400,
+                raise problem(
+                    "import.invalid_section",
+                    relative=relative,
+                    section=section,
                     detail=f"Invalid section for {relative}: {section!r}",
                 )
         job = ImportJob(
@@ -331,7 +335,7 @@ def create_import_router(
                 limit=limit, cursor=cursor,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise problem("import.invalid_cursor", detail=str(exc)) from exc
         return JobPage(
             jobs=[j.model_dump_redacted() for j in jobs],
             next_cursor=next_cursor,
@@ -343,13 +347,13 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         if job.state not in INTAKE_STATES:
-            raise HTTPException(status_code=409, detail="Job not in an intake state")
+            raise problem("import.bad_state", state=job.state.value)
         if not _store.acquire_lease(job_id, str(principal), job.state):
-            raise HTTPException(status_code=409, detail="Job busy (lease held)")
+            raise problem("import.job_busy")
         try:
             spool = spool_for(job_id, mundo)
             data = base64.b64decode(body.data_b64) if body.data_b64 else b""
@@ -360,7 +364,7 @@ def create_import_router(
                                   state=ImportJobState.INTAKING)
         except (UnsafePathError, ValueError) as exc:
             _store.add_event(job_id, f"stream_error:{type(exc).__name__}")
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+            raise problem("import.unsafe_path", detail=str(exc)) from exc
         finally:
             _store.release_lease(job_id, str(principal))
         return {"job_id": job_id, "offset": body.offset + len(data)}
@@ -371,11 +375,11 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         if not _store.acquire_lease(job_id, str(principal), job.state):
-            raise HTTPException(status_code=409, detail="Job busy or not intaking")
+            raise problem("import.job_busy", detail="Job busy or not intaking")
         try:
             spool = spool_for(job_id, mundo)
 
@@ -1052,9 +1056,9 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         return {"job": job.model_dump_redacted()}
 
     @router.get("/{job_id}/review")
@@ -1072,9 +1076,9 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         candidates = _store.candidates_for(job_id)
         suggestions_by_candidate: dict[str, list[dict[str, Any]]] = {}
         enrichment_statuses: list[str] = []
@@ -1107,17 +1111,18 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         accepted = 0
         # Map suggestion_id -> (candidate_id, decision) for O(1) lookup.
         decisions_by_candidate: dict[str, list[tuple[str, str]]] = {}
         for item in body.decisions:
             decision = (item.decision or "").strip().lower()
             if decision not in {"approve", "reject"}:
-                raise HTTPException(
-                    status_code=400,
+                raise problem(
+                    "import.invalid_decision",
+                    decision=item.decision,
                     detail=f"invalid decision: {item.decision!r}")
             # Find the candidate that owns this suggestion by scanning the
             # stored enrichment payloads. The list is small per batch.
@@ -1147,22 +1152,22 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         # A failed/terminal job can never be approved (1.2).
         if job.state != ImportJobState.REVIEW:
-            raise HTTPException(status_code=409,
-                                detail=f"Cannot approve job in state {job.state.value}")
+            raise problem("import.bad_state", state=job.state.value,
+                          detail=f"Cannot approve job in state {job.state.value}")
         if _service is None:
-            raise HTTPException(status_code=501,
-                                detail="Gated approval service not configured")
+            raise problem("import.not_configured", operation="approve",
+                          detail="Gated approval service not configured")
         try:
             approval = _service.issue_approval(
                 job, str(getattr(principal, "id", str(principal))),
                 list(body.group_ids), list(body.suggestion_ids))
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise problem("import.approval_denied", detail=str(exc)) from exc
         return {"approval_id": approval.approval_id,
                 "token": approval.token, "digest": approval.digest,
                 "expires_at": approval.expires_at}
@@ -1173,19 +1178,19 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         if _service is None:
-            raise HTTPException(status_code=501,
-                                detail="Execution service not configured")
+            raise problem("import.not_configured", operation="execute",
+                          detail="Execution service not configured")
         try:
             outcomes = _service.execute(
                 job, str(getattr(principal, "id", str(principal))),
                 body.digest, body.token,
                 list(body.suggestion_ids))
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise problem("import.execute_failed", detail=str(exc)) from exc
         return {"job": _store.get_job(job_id).model_dump_redacted(),
                 "outcomes": [o.model_dump() for o in outcomes]}
 
@@ -1194,9 +1199,9 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         # Cooperative cancel: raise the in-process signal BEFORE transitioning/
         # deleting so a long-running synchronous analyze observes it and stops
         # launching NEW Hermes work + skips persistence (instead of racing the
@@ -1208,7 +1213,8 @@ def create_import_router(
             job = _service.cancel(job, str(getattr(principal, "id", str(principal))))
             return {"job": job.model_dump_redacted()}
         if job.state not in INTAKE_STATES:
-            raise HTTPException(status_code=409, detail="Job not cancellable")
+            raise problem("import.bad_state", state=job.state.value,
+                          detail="Job not cancellable")
         _store.update_job(job_id, expected_revision=job.revision,
                           state=ImportJobState.CANCELLED)
         cancelled = _store.get_job(job_id)
@@ -1224,15 +1230,16 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         if _service is None:
-            raise HTTPException(status_code=501, detail="Resume service not configured")
+            raise problem("import.not_configured", operation="resume",
+                          detail="Resume service not configured")
         try:
             job = _service.resume(job, str(getattr(principal, "id", str(principal))))
         except PermissionError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
+            raise problem("import.resume_denied", detail=str(exc)) from exc
         return {"job": job.model_dump_redacted()}
 
     @router.post("/{job_id}/rollback")
@@ -1240,15 +1247,16 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
         if _service is None:
-            raise HTTPException(status_code=501, detail="Rollback service not configured")
+            raise problem("import.not_configured", operation="rollback",
+                          detail="Rollback service not configured")
         try:
             job = _service.rollback(job, str(getattr(principal, "id", str(principal))))
         except (ValueError, PermissionError) as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            raise problem("import.rollback_failed", detail=str(exc)) from exc
         return {"job": job.model_dump_redacted()}
 
     @router.delete("/{job_id}")
@@ -1265,9 +1273,9 @@ def create_import_router(
         principal = guard(request)
         job = _store.get_job(job_id)
         if job is None or job.world != mundo:
-            raise HTTPException(status_code=404, detail="Import job not found")
+            raise problem("import.job_not_found")
         if job.owner_principal != getattr(principal, "id", str(principal)):
-            raise HTTPException(status_code=403, detail="Not the job owner")
+            raise problem("import.not_owner")
 
         allowed_states = {
             ImportJobState.COMPLETED,
@@ -1278,12 +1286,12 @@ def create_import_router(
             # Allow deleting an empty review (no candidates to lose); a review
             # with candidates is pending approval and must be kept.
             if len(_store.candidates_for(job_id)) > 0:
-                raise HTTPException(
-                    status_code=409,
+                raise problem(
+                    "import.bad_state", state=job.state.value,
                     detail="Cannot delete review job with candidates")
         elif job.state not in allowed_states:
-            raise HTTPException(
-                status_code=409,
+            raise problem(
+                "import.bad_state", state=job.state.value,
                 detail=f"Cannot delete job in state {job.state.value}")
 
         # Best-effort spool cleanup — never masks the DB delete.
