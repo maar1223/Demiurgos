@@ -17,6 +17,7 @@ import {
   validatePayload as validatePayloadApi,
 } from "@/api/coCreation";
 import { ApiError } from "@/api/types";
+import { tStatic } from "@/lib/utils";
 import type {
   CoCreationActivateResult,
   CoCreationDeriveResult,
@@ -307,7 +308,7 @@ export function useCoCreation(
         const message =
           cause instanceof Error
             ? cause.message
-            : "Skill co-creation is unavailable.";
+            : tStatic("cocreation.unavailable");
         setError(message);
         throw cause;
       })
@@ -347,7 +348,7 @@ export function useCoCreation(
       const message =
         cause instanceof Error
           ? cause.message
-          : "No se pudo guardar el lienzo.";
+          : tStatic("cocreation.saveCanvasError");
       setCanvasError(message);
       if (cause instanceof ApiError && cause.code === "revision_conflict") {
         // The server payload moved on (chat turn, another edit source): resync
@@ -442,7 +443,7 @@ export function useCoCreation(
         setCanvasError(
           cause instanceof Error
             ? cause.message
-            : "No se pudo cargar el ejemplar.",
+            : tStatic("cocreation.loadAdjuntoError"),
         );
         return null;
       } finally {
@@ -512,7 +513,7 @@ export function useCoCreation(
       setCanvasError(
         cause instanceof Error
           ? cause.message
-          : "No se pudo validar el borrador.",
+          : tStatic("cocreation.validateDraftError"),
       );
       return null;
     } finally {
@@ -533,7 +534,7 @@ export function useCoCreation(
       setRestoreError(
         cause instanceof Error
           ? cause.message
-          : "No se pudo cargar el historial.",
+          : tStatic("cocreation.loadHistoryError"),
       );
       return [];
     } finally {
@@ -570,7 +571,7 @@ export function useCoCreation(
         setRestoreError(
           cause instanceof Error
             ? cause.message
-            : "No se pudo restaurar la versión.",
+            : tStatic("cocreation.restoreError"),
         );
         return null;
       } finally {
@@ -599,7 +600,7 @@ export function useCoCreation(
         setCanvasError(
           cause instanceof Error
             ? cause.message
-            : "No se pudo actualizar la advertencia.",
+            : tStatic("cocreation.warningError"),
         );
       }
     },
@@ -634,7 +635,7 @@ export function useCoCreation(
         setCanvasError(
           cause instanceof Error
             ? cause.message
-            : "No se pudo actualizar la pregunta.",
+            : tStatic("cocreation.questionError"),
         );
       }
     },
@@ -657,7 +658,7 @@ export function useCoCreation(
         setError(
           cause instanceof Error
             ? cause.message
-            : "No se pudo derivar la skill.",
+            : tStatic("cocreation.deriveError"),
         );
         return null;
       } finally {
@@ -716,7 +717,7 @@ export function useCoCreation(
       setError(
         cause instanceof Error
           ? cause.message
-          : "Skill co-creation is unavailable.",
+          : tStatic("cocreation.unavailable"),
       );
     } finally {
       setIsLoading(false);
@@ -770,7 +771,7 @@ export function useCoCreation(
           const message =
             cause instanceof Error
               ? cause.message
-              : "Skill draft materialization is unavailable.";
+              : tStatic("cocreation.materializeUnavailable");
           setError(message);
           throw cause;
         })
@@ -799,7 +800,7 @@ export function useCoCreation(
         const message =
           cause instanceof Error
             ? cause.message
-            : "Skill publishing is unavailable.";
+            : tStatic("cocreation.publishUnavailable");
         setError(message);
         throw cause;
       })
@@ -831,7 +832,7 @@ export function useCoCreation(
           const message =
             cause instanceof Error
               ? cause.message
-              : "Skill activation is unavailable.";
+              : tStatic("cocreation.activateUnavailable");
           setError(message);
           throw cause;
         })

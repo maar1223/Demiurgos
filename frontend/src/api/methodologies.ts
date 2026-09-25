@@ -200,11 +200,18 @@ async function rawFetch(
       throw error;
     }
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new ApiError(0, "La petición tardó demasiado");
+      throw new ApiError(
+        0,
+        "The request took too long",
+        undefined,
+        "network.timeout",
+      );
     }
     throw new ApiError(
       0,
-      "No se pudo conectar al servidor. Verificá que esté corriendo.",
+      "Could not connect to the server. Make sure it is running.",
+        undefined,
+        "network.unreachable",
     );
   }
 }

@@ -8,6 +8,7 @@ import {
   startGuidedCharacter,
 } from "@/api/guidedCharacter";
 import type { GuidedCharacterSession } from "@/api/types";
+import { tStatic } from "@/lib/utils";
 
 const STORAGE_KEY = "demiurgos-guided-character-session";
 
@@ -56,7 +57,9 @@ export function useGuidedCharacter(world: string) {
         return next;
       })
       .catch((cause) => {
-        const message = cause instanceof Error ? cause.message : "Guided creation is unavailable.";
+        const message = cause instanceof Error
+          ? cause.message
+          : tStatic("guided.unavailable");
         setError(message);
         throw cause;
       })

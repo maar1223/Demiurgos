@@ -1,7 +1,12 @@
 import { ApiError, type AppLanguage } from "@/api/types";
 import { readCachedLocale } from "@/hooks/useAppLocale";
 import { localizeApiError } from "@/i18n/errors";
-import { translate, type TFunction } from "@/i18n/messages";
+import {
+  translate,
+  type MessageKey,
+  type TFunction,
+  type TParams,
+} from "@/i18n/messages";
 
 /**
  * Merges class names, filtering out falsy values.
@@ -53,4 +58,14 @@ export function getErrorMessage(
     new ApiError(status, detail ?? `HTTP ${status}`, detail, code, params),
     t,
   );
+}
+/**
+ * Synchronous catalogue lookup bound to the cached locale, for non-React
+ * modules (api/hooks) that must produce localized fallback copy at action
+ * time. Interactive surfaces that must follow an instant switch should
+ * prefer the `t` from `useAppLanguage()` instead.
+ */
+export function tStatic(key: MessageKey, params?: TParams): string {
+  const language: AppLanguage = readCachedLocale().ui === "en" ? "en" : "es";
+  return translate(language, key, params);
 }

@@ -145,7 +145,10 @@ export async function waitForJobTerminal(
   let lastError: unknown = null;
   for (;;) {
     if (Date.now() >= deadline) {
-      throw lastError ?? new ApiError(0, "El análisis sigue en curso en el servidor");
+      throw (
+        lastError ??
+        new ApiError(0, "Analysis is still running on the server", undefined, "import.job_busy")
+      );
     }
     try {
       const { job } = await getImportJob(mundo, jobId);
