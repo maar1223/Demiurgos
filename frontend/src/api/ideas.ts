@@ -91,6 +91,59 @@ export interface IdeaMaterializeResult {
   canon_path: string | null;
 }
 
+/** Graph-indexed sections a ficha can be materialized into (R-IM-01). */
+export const MATERIALIZE_SECTIONS = ["lore", "personajes", "referencias"] as const;
+export type MaterializeSection = (typeof MATERIALIZE_SECTIONS)[number];
+
+/** POST /api/ideas/{slug}/materialize-preview payload (R-IM-01). */
+export interface IdeaMaterializePreviewInput {
+  world: string;
+  section: MaterializeSection;
+  /** Section-relative folder path; "" = the section root. */
+  folder: string;
+  title_hint?: string;
+}
+
+/** Resolved target of a materialize preview; `path` is section-relative
+ *  (e.g. `subdir/arquero-ciego.md` or `arquero-ciego.md` for the root). */
+export interface IdeaMaterializeTarget {
+  world: string;
+  section: string;
+  folder: string;
+  slug: string;
+  path: string;
+}
+
+/** One AI-proposed relation that survived target/vocabulary validation. */
+export interface ProposedMaterializeRelation {
+  target_id: string;
+  title: string;
+  rel_type: string;
+}
+
+/** One AI-proposed relation dropped before the preview (R-IM-03). */
+export interface DiscardedMaterializeRelation {
+  target_id: string;
+  reason: "target_not_found" | "rel_type_out_of_vocabulary";
+}
+
+/** 409 collision suggestion (AD5): `suggested_slug` follows the -2 rule. */
+export interface MaterializeCollision {
+  target: string;
+  suggested_slug: string;
+  suggested_target: string;
+}
+
+/** POST /api/ideas/{slug}/materialize-preview response (200). */
+export interface IdeaMaterializePreviewResult {
+  proposal_id: string;
+  target: IdeaMaterializeTarget;
+  content: string;
+  proposed_relations: ProposedMaterializeRelation[];
+  discarded_relations: DiscardedMaterializeRelation[];
+  collision?: MaterializeCollision;
+}
+
 /** One archived version of an idea (R-10) — number + archive path. */
 export interface IdeaVersionSummary {
   version: number;
@@ -181,6 +234,57 @@ export function materializeIdea(
     body: JSON.stringify({ world, ...(canonRel ? { canon_rel: canonRel } : {}) }),
     ...CREDENTIALS,
   });
+}
+
+/**
+ * POST /api/ideas/{slug}/materialize-preview — preview an AI-authored ficha
+ * for this idea in a world folder. Read-only: zero canon writes (R-IM-04).
+ *
+ * Uses raw fetch on purpose: the 409 collision payload sits at the TOP level
+ * of the error body (`{detail, collision}`) and apiFetch would drop it; the
+ * collision is attached to the thrown ApiError so the picker can offer the
+ * `suggested_slug` (AD5). The provider-unavailable 503 body
+ * (`{status:"unavailable", retryable:true}`) is likewise mapped to a
+ * readable message instead of a bare `HTTP 503`.
+ */
+export async function previewMaterialize(
+  slug: string,
+  input: IdeaMaterializePreviewInput,
+): Promise<IdeaMaterializePreviewResult> {
+  const response = await fetch(ideasUrl([slug, "materialize-preview"]), {
+    method: "POST",
+    body: JSON.stringify(input),
+    ...CREDENTIALS,
+  });
+
+  if (!response.ok) {
+    let detail: string | undefined;
+    let collision: MaterializeCollision | undefined;
+    let unavailable = false;
+    try {
+      const body = await response.json();
+      detail = body.detail;
+      collision = body.collision;
+      unavailable = body.status === "unavailable";
+    } catch {
+      // ignore parse errors on error responses
+    }
+    const error = new ApiError(
+      response.status,
+      detail ??
+        (unavailable
+          ? "Materialization provider is unavailable."
+          : `HTTP ${response.status}`),
+      detail,
+    );
+    if (collision) {
+      (error as ApiError & { collision?: MaterializeCollision }).collision =
+        collision;
+    }
+    throw error;
+  }
+
+  return (await response.json()) as IdeaMaterializePreviewResult;
 }
 
 /**

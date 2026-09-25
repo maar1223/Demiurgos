@@ -10,6 +10,7 @@ import {
   listIdeas,
   listPendingCaptures,
   materializeIdea,
+  previewMaterialize,
   updateIdea,
 } from "@/api/ideas";
 import type { IdeaDetail } from "@/api/ideas";
@@ -200,6 +201,139 @@ describe("ideas bank API", () => {
         body: JSON.stringify({ world: "vibrantes", canon_rel: "personajes/arquero.md" }),
       }),
     );
+  });
+
+  it("previews materialization with POST /materialize-preview and the picker payload", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        proposal_id: "materialize-abc",
+        target: {
+          world: "vibrantes",
+          section: "lore",
+          folder: "sistema-stal-poderes-vibrantes",
+          slug: "arquero-ciego",
+          path: "sistema-stal-poderes-vibrantes/arquero-ciego.md",
+        },
+        content: "---\ntype: concepto\n---\n# El arquero ciego",
+        proposed_relations: [
+          { target_id: "Vibrantes::Stal", title: "Stal", rel_type: "involucra" },
+        ],
+        discarded_relations: [],
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await previewMaterialize("arquero-ciego", {
+      world: "vibrantes",
+      section: "lore",
+      folder: "sistema-stal-poderes-vibrantes",
+      title_hint: "El arquero ciego",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ideas/arquero-ciego/materialize-preview",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+        body: JSON.stringify({
+          world: "vibrantes",
+          section: "lore",
+          folder: "sistema-stal-poderes-vibrantes",
+          title_hint: "El arquero ciego",
+        }),
+      }),
+    );
+    expect(result.proposal_id).toBe("materialize-abc");
+    expect(result.target.path).toBe(
+      "sistema-stal-poderes-vibrantes/arquero-ciego.md",
+    );
+    expect(result.proposed_relations[0]).toEqual({
+      target_id: "Vibrantes::Stal",
+      title: "Stal",
+      rel_type: "involucra",
+    });
+  });
+
+  it("preview omits title_hint when not provided", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({
+          proposal_id: "materialize-abc",
+          target: { world: "vibrantes", section: "personajes", folder: "", slug: "arquero-ciego", path: "arquero-ciego.md" },
+          content: "# Body",
+          proposed_relations: [],
+          discarded_relations: [],
+        }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    await previewMaterialize("arquero-ciego", {
+      world: "vibrantes",
+      section: "personajes",
+      folder: "",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ideas/arquero-ciego/materialize-preview",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ world: "vibrantes", section: "personajes", folder: "" }),
+      }),
+    );
+  });
+
+  it("preview surfaces the 409 collision suggestion on the thrown error (AD5)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          detail: "El archivo ya existe",
+          collision: {
+            target: "lore/sistema-stal-poderes-vibrantes/arquero-ciego.md",
+            suggested_slug: "arquero-ciego-2",
+            suggested_target: "lore/sistema-stal-poderes-vibrantes/arquero-ciego-2.md",
+          },
+        },
+        409,
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    await expect(
+      previewMaterialize("arquero-ciego", {
+        world: "vibrantes",
+        section: "lore",
+        folder: "sistema-stal-poderes-vibrantes",
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      collision: {
+        target: "lore/sistema-stal-poderes-vibrantes/arquero-ciego.md",
+        suggested_slug: "arquero-ciego-2",
+        suggested_target:
+          "lore/sistema-stal-poderes-vibrantes/arquero-ciego-2.md",
+      },
+    });
+  });
+
+  it("preview maps the provider-unavailable 503 body to a readable message (R-IM-09)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({ status: "unavailable", retryable: true }, 503),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    await expect(
+      previewMaterialize("arquero-ciego", {
+        world: "vibrantes",
+        section: "lore",
+        folder: "",
+      }),
+    ).rejects.toMatchObject({
+      status: 503,
+      message: "Materialization provider is unavailable.",
+    });
   });
 
   it("lists pending captures from the idea-capture queue (S-7.1)", async () => {
