@@ -11,7 +11,7 @@ import { askAssistant } from "@/api/wiki";
 import type { GuidedCharacterSession, SemanticDecisionEnvelope } from "@/api/types";
 
 vi.mock("@/hooks/useAppLanguage", () => ({
-  useAppLanguage: vi.fn(() => "es"),
+  useAppLanguage: vi.fn(() => ({ language: "es", t: (key: string) => key })),
 }));
 
 vi.mock("@/api/assistantActivity", async (importOriginal) => {

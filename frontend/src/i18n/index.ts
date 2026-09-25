@@ -17,7 +17,5 @@ export {
   useLocale,
   type LocaleContextValue,
 } from "@/i18n/LocaleProvider";
-export { useAppLanguage } from "@/hooks/useAppLanguage";
+export { useAppLanguage, useTranslation } from "@/hooks/useAppLanguage";
 export { useAppLocale } from "@/hooks/useAppLocale";
-// `useTranslation` (useAppLanguage alias, AD-3) joins this barrel in WU-1
-// commit 2 (task 1.7) alongside the `{ language, t }` hook shape.

@@ -8,7 +8,7 @@ import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { semanticBlockedText } from "@/lib/semanticIntent";
 
 vi.mock("@/hooks/useAppLanguage", () => ({
-  useAppLanguage: vi.fn(() => "es"),
+  useAppLanguage: vi.fn(() => ({ language: "es", t: (key: string) => key })),
 }));
 
 function streamResponse(events: string, requestId = "request-1"): Response {

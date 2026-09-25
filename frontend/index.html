@@ -29,6 +29,25 @@
         }
       })();
     </script>
+    <script>
+      // Anti-FOUC: apply the persisted locale to <html lang> before the first
+      // paint, mirroring the theme script above. LocaleProvider seeds from the
+      // same cache, so the first React render already matches. The static
+      // lang="es" stays as the no-cache default.
+      (function () {
+        try {
+          var raw = localStorage.getItem("demiurgos-locale");
+          if (raw) {
+            var locale = JSON.parse(raw);
+            if (locale && (locale.ui === "es" || locale.ui === "en")) {
+              document.documentElement.lang = locale.ui;
+            }
+          }
+        } catch (e) {
+          // corrupt/blocked storage — keep the static lang="es" default.
+        }
+      })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

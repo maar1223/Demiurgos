@@ -11,6 +11,9 @@ vi.mock("@/hooks/useAppLanguage", () => ({ useAppLanguage: vi.fn() }));
 const useGuidedCharacterMock = vi.mocked(useGuidedCharacter);
 const useAppLanguageMock = vi.mocked(useAppLanguage);
 
+/** The hook now returns `{ language, t }` (AD-3); `t` is not exercised yet. */
+const lang = (language: string) => ({ language: language as "es" | "en", t: (key: string) => key });
+
 const baseState = () => ({
   session: {
     protocol_version: "guided-character-v1",
@@ -46,7 +49,7 @@ const baseState = () => ({
 describe("GuidedCharacterPanel", () => {
   beforeEach(() => {
     useGuidedCharacterMock.mockReturnValue(baseState());
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
   it("renders one focused prompt and hides provider provenance", () => {
@@ -87,7 +90,7 @@ describe("GuidedCharacterPanel", () => {
   });
 
   it("uses English copy when the configured language is en", () => {
-    useAppLanguageMock.mockReturnValue("en");
+    useAppLanguageMock.mockReturnValue(lang("en"));
     const state = baseState();
     useGuidedCharacterMock.mockReturnValue(state);
     render(<GuidedCharacterPanel world="Vibrantes" />);
@@ -120,7 +123,7 @@ describe("GuidedCharacterPanel", () => {
   });
 
   it("renders an English blocked-safe outcome for an unsupported phase", () => {
-    useAppLanguageMock.mockReturnValue("en");
+    useAppLanguageMock.mockReturnValue(lang("en"));
     useGuidedCharacterMock.mockReturnValue({
       ...baseState(),
       session: {

@@ -301,7 +301,7 @@ function ChatScreen({
 
   const messages = activeSession?.messages ?? [];
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
-  const appLanguage = useAppLanguage();
+  const { language: appLanguage } = useAppLanguage();
   const isSpanish = appLanguage === "es";
   const latestUserPrompt = [...messages]
     .reverse()

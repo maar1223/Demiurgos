@@ -1,4 +1,7 @@
-import { useAppLocale } from "@/hooks/useAppLocale";
+import { useContext } from "react";
+import { LocaleContext } from "@/i18n/LocaleProvider";
+import { translate, type TFunction } from "@/i18n/messages";
+import { readCachedLocale } from "@/hooks/useAppLocale";
 import type { AppLanguage } from "@/api/types";
 
 /** Safe frontend default when the config endpoint is unreachable. */
@@ -9,12 +12,19 @@ function resolveLanguage(value: string): AppLanguage {
 }
 
 /**
- * The configured global UI language. Prefers the G7/OC3 locale (independent
- * UI domain from GET /api/locale) and falls back to the legacy /api/config
- * projection. Falls back to the project default (es) when unreachable.
- * Returns synchronously on first render, then refines once locale loads.
+ * The single chrome driver (AD-3, UI-REQ-2): the active UI language plus the
+ * `t` helper resolving every chrome string through the catalogue. Reads the
+ * LocaleProvider context; outside the provider it falls back to a synchronous
+ * `t` bound to the cached locale (isolated tests / SSR).
  */
-export function useAppLanguage(): AppLanguage {
-  const locale = useAppLocale();
-  return resolveLanguage(locale.ui);
+export function useAppLanguage(): { language: AppLanguage; t: TFunction } {
+  const context = useContext(LocaleContext);
+  if (context) {
+    return { language: context.language, t: context.t };
+  }
+  const language = resolveLanguage(readCachedLocale().ui);
+  return { language, t: (key, params) => translate(language, key, params) };
 }
+
+/** Primary name for new code (AD-3); the same value as `useAppLanguage`. */
+export const useTranslation = useAppLanguage;

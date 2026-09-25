@@ -28,6 +28,9 @@ vi.mock("@/hooks/useWhisper", () => ({
 const useSessionsMock = vi.mocked(useAIAssistantSessions);
 const useAppLanguageMock = vi.mocked(useAppLanguage);
 
+/** The hook now returns `{ language, t }` (AD-3); `t` is not exercised yet. */
+const lang = (language: string) => ({ language: language as "es" | "en", t: (key: string) => key });
+
 type SessionsState = ReturnType<typeof useAIAssistantSessions>;
 
 const createSessionsState = (
@@ -67,7 +70,7 @@ const createSessionsState = (
 describe("AIAssistantSidebar edit action", () => {
   beforeEach(() => {
     useSessionsMock.mockReturnValue(createSessionsState());
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
   it("uses the latest user prompt, active session, and contextual file", async () => {
@@ -123,7 +126,7 @@ describe("AIAssistantSidebar edit action", () => {
 describe("AIAssistantSidebar activity and evidence", () => {
   beforeEach(() => {
     useSessionsMock.mockReturnValue(createSessionsState());
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
   it("keeps the assistant answer while the activity panel is gated", () => {
@@ -240,7 +243,7 @@ describe("AIAssistantSidebar activity and evidence", () => {
 describe("AIAssistantSidebar single conversation", () => {
   beforeEach(() => {
     useSessionsMock.mockReturnValue(createSessionsState());
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
   it("keeps the normal chat surface in the personajes section", () => {
@@ -269,7 +272,7 @@ describe("AIAssistantSidebar single conversation", () => {
       explanation: "no guided proposal will start",
     },
   ])("uses the configured $language UI language, ignoring the $prompt prompt", async ({ language, prompt, yes, no, value, explanation }) => {
-    useAppLanguageMock.mockReturnValue(language);
+    useAppLanguageMock.mockReturnValue(lang(language));
     const sendMessage = vi.fn();
     useSessionsMock.mockReturnValue(createSessionsState({
       sendMessage,
@@ -382,7 +385,7 @@ describe("AIAssistantSidebar single conversation", () => {
 
   it("localizes the proposal detail actions and review button in the configured language", () => {
     const onGuidedReview = vi.fn();
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
     useSessionsMock.mockReturnValue(createSessionsState({
       activeSession: {
         id: "session-42",
@@ -420,7 +423,7 @@ describe("AIAssistantSidebar single conversation", () => {
   });
 
   it("keeps English copy for the guided review surface when configured en", () => {
-    useAppLanguageMock.mockReturnValue("en");
+    useAppLanguageMock.mockReturnValue(lang("en"));
     useSessionsMock.mockReturnValue(createSessionsState({
       activeSession: {
         id: "session-42",
@@ -500,7 +503,7 @@ describe("AIAssistantSidebar single conversation", () => {
   });
 
   it("uses Spanish confirmation labels from the configured language, not the prompt", () => {
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
     useSessionsMock.mockReturnValue(createSessionsState({
       activeSession: {
         id: "session-42",
@@ -547,7 +550,7 @@ describe("AIAssistantSidebar null-mundo (global context)", () => {
         },
       }),
     );
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
   it("renders a world-agnostic context without a mundo prop", () => {
@@ -574,7 +577,7 @@ describe("AIAssistantSidebar null-mundo (global context)", () => {
 describe("AIAssistantSidebar semantic decision UX", () => {
   beforeEach(() => {
     useSessionsMock.mockReturnValue(createSessionsState());
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
   it("surfaces a server-owned proposal_ready review as an explicit action", async () => {
@@ -673,7 +676,7 @@ describe("AIAssistantSidebar semantic decision UX", () => {
 
 describe("AIAssistantSidebar new conversation", () => {
   beforeEach(() => {
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
   it("creates a new session from the chat header button", async () => {
@@ -723,7 +726,7 @@ describe("AIAssistantSidebar new conversation", () => {
 
 describe("AIAssistantSidebar guided consent suggestion", () => {
   beforeEach(() => {
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
   it("renders the in-chat consent card with the composer enabled", () => {
@@ -782,7 +785,7 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
 
 describe("AIAssistantSidebar malformed guided session", () => {
   beforeEach(() => {
-    useAppLanguageMock.mockReturnValue("es");
+    useAppLanguageMock.mockReturnValue(lang("es"));
   });
 
   it("renders the normal chat UI when guided lacks candidate", () => {

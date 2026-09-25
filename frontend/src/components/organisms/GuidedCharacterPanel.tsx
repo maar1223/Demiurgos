@@ -18,7 +18,7 @@ const SUPPORTED_PHASES = new Set([
 export function GuidedCharacterPanel({ world }: GuidedCharacterPanelProps) {
   const [input, setInput] = useState("");
   const guided = useGuidedCharacter(world);
-  const appLanguage = useAppLanguage();
+  const { language: appLanguage } = useAppLanguage();
   const isSpanish = appLanguage === "es";
   const session = guided.session;
   const messages = session?.messages ?? [];

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { getLocale } from "@/api/config";
+import { useContext } from "react";
+import { LocaleContext } from "@/i18n/LocaleProvider";
 import type { LocaleSettings } from "@/api/types";
 
 /** Safe frontend default when the locale endpoint is unreachable (UTC storage, es UI). */
@@ -29,30 +29,13 @@ export function readCachedLocale(): LocaleSettings {
 
 /**
  * G7/OC3 runtime locale: independent UI/conversation/content languages plus
- * region override and IANA timezone. Sourced from the backend (authoritative);
- * a local cache keeps the first render stable offline. Timestamps are stored
- * UTC; the IANA zone governs presentation only.
+ * region override and IANA timezone. Reads the `LocaleProvider` context
+ * (AD-2): the provider owns the state, seeds it from the cache, refines it
+ * from the backend and re-renders the whole tree on any change, so every
+ * consumer follows the same value. Falls back to the cached/safe default when
+ * no provider is mounted (isolated tests / SSR).
  */
 export function useAppLocale(): LocaleSettings {
-  const [locale, setLocale] = useState<LocaleSettings>(readCachedLocale);
-
-  useEffect(() => {
-    let active = true;
-    void getLocale()
-      .then((value) => {
-        if (!active) return;
-        setLocale(value);
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(STORAGE_KEY, JSON.stringify(value));
-        }
-      })
-      .catch(() => {
-        // offline/failure — keep the cached/safe default; never invent values
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  return locale;
+  const context = useContext(LocaleContext);
+  return context?.locale ?? readCachedLocale();
 }

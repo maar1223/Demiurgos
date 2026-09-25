@@ -255,7 +255,7 @@ export function useAIAssistantSessions(
   const [error, setError] = useState<string | null>(null);
   const [activity, setActivity] = useState<AssistantActivityState>(INITIAL_ACTIVITY);
   const activityAbortRef = useRef<AbortController | null>(null);
-  const language = useAppLanguage();
+  const { language } = useAppLanguage();
 
   // Persist sessions whenever they change
   useEffect(() => {
