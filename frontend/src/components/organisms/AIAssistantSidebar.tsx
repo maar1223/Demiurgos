@@ -14,6 +14,7 @@ import {
 } from "@/api/assistantActivity";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { TFunction } from "@/i18n/messages";
 import { semanticBlockedText } from "@/lib/semanticIntent";
 import type { EditProposal } from "@/api/types";
 import { useWhisper } from "@/hooks/useWhisper";
@@ -39,20 +40,6 @@ interface AIAssistantSidebarProps {
 }
 
 type Screen = "chat" | "history";
-
-const SUGGESTIONS = [
-  "¿Quién es Rhyz?",
-  "Explicame el sistema Stal",
-  "¿Qué es el Flud?",
-  "Contame sobre Ekkor",
-];
-
-/** World-agnostic suggestions for the null-mundo (global ideas) context. */
-const GLOBAL_SUGGESTIONS = [
-  "Dame una idea de personaje",
-  "Proponé una trama",
-  "¿Qué concepto puedo desarrollar?",
-];
 
 const SAFE_SOURCE_ROOTS = new Set([
   "lore",
@@ -82,16 +69,22 @@ function safeActivityWarning(value: string | undefined): string | null {
   return value && SAFE_ACTIVITY_WARNINGS.has(value) ? value : null;
 }
 
-function activityStatusLabel(status: "running" | "succeeded" | "failed"): string {
-  if (status === "running") return "En curso";
-  if (status === "succeeded") return "Confirmado";
-  return "Falló";
+function activityStatusLabel(
+  status: "running" | "succeeded" | "failed",
+  t: TFunction,
+): string {
+  if (status === "running") return t("assistant.activity.status.running");
+  if (status === "succeeded") return t("assistant.activity.status.succeeded");
+  return t("assistant.activity.status.failed");
 }
 
-function activityOperationLabel(operation: "Search world" | "Read world"): string {
-  if (operation === "Search world") return "Search world";
-  if (operation === "Read world") return "Read world";
-  return "World activity";
+function activityOperationLabel(
+  operation: "Search world" | "Read world",
+  t: TFunction,
+): string {
+  if (operation === "Search world") return t("assistant.activity.operation.searchWorld");
+  if (operation === "Read world") return t("assistant.activity.operation.readWorld");
+  return t("assistant.activity.operation.worldActivity");
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,6 +137,7 @@ interface ActivityEvidenceProps {
 }
 
 function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidenceProps) {
+  const { t } = useAppLanguage();
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const sources = evidence.sources.filter(isSafeEvidencePath);
   const warnings = Array.from(
@@ -155,29 +149,29 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
 
   return (
     <section
-      aria-label="Actividad y evidencia"
+      aria-label={t("assistant.activity.sectionAria")}
       className="mb-3 rounded-lg border border-edge bg-surface/70 px-3 py-2.5 text-xs"
     >
       <div className="flex items-center justify-between gap-2">
-        <h3 className="font-medium text-primary">Actividad y evidencia</h3>
+        <h3 className="font-medium text-primary">{t("assistant.activity.title")}</h3>
         {activity.status === "running" && (
-          <span className="text-action">Consultando fuentes</span>
+          <span className="text-action">{t("assistant.activity.queryingSources")}</span>
         )}
       </div>
 
       {activity.items.length > 0 && (
-        <ul aria-label="Actividad del asistente" className="mt-2 space-y-1.5">
+        <ul aria-label={t("assistant.activity.listAria")} className="mt-2 space-y-1.5">
           {activity.items.map((item) => (
             <li key={item.item_id} className="flex items-center justify-between gap-2">
               <span className="text-muted">
-                {activityOperationLabel(item.operation)}
+                {activityOperationLabel(item.operation, t)}
               </span>
               <span
                 className={cn(
                   item.status === "failed" ? "text-status-error" : "text-muted",
                 )}
               >
-                {activityStatusLabel(item.status)}
+                {activityStatusLabel(item.status, t)}
               </span>
             </li>
           ))}
@@ -200,7 +194,7 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
             onClick={() => setSourcesOpen((open) => !open)}
             className="text-left text-muted hover:text-primary"
           >
-            Fuentes confirmadas ({sources.length})
+            {t("assistant.activity.confirmedSources", { count: sources.length })}
           </button>
           {sourcesOpen && (
             <ul className="mt-1.5 space-y-1 pl-3 text-muted">
@@ -216,13 +210,13 @@ function ActivityEvidence({ activity, evidence, isSending }: ActivityEvidencePro
         <p className="mt-2 border-t border-edge pt-2 text-muted">
           {activity.availability === "unavailable"
             ? activity.availabilityReason === "file_evidence_contract_unverified"
-              ? "Hermes no expone un contrato verificable de archivos consultados; no se muestran fuentes sin evidencia."
-              : "La actividad de consulta no está disponible; no se muestran fuentes sin evidencia verificable."
+              ? t("assistant.activity.unavailableContract")
+              : t("assistant.activity.unavailable")
             : isSending
-              ? "La actividad de fuentes se mostrará si el canal seguro está disponible."
+              ? t("assistant.activity.safeChannel")
             : activity.status === "running"
-              ? "Esperando eventos de consulta verificados..."
-              : "No hay fuentes del mundo confirmadas."}
+              ? t("assistant.activity.waiting")
+              : t("assistant.activity.noSources")}
         </p>
       )}
     </section>
@@ -301,12 +295,23 @@ function ChatScreen({
 
   const messages = activeSession?.messages ?? [];
   const confirmationPending = activeSession?.guided?.phase === "confirmation";
-  const { language: appLanguage } = useAppLanguage();
+  const { language: appLanguage, t } = useAppLanguage();
   const isSpanish = appLanguage === "es";
   const latestUserPrompt = [...messages]
     .reverse()
     .find((message) => message.role === "user")?.content.trim();
-  const suggestions = mundo ? SUGGESTIONS : GLOBAL_SUGGESTIONS;
+  const suggestions = mundo
+    ? [
+        t("assistant.suggestion.rhyz"),
+        t("assistant.suggestion.stal"),
+        t("assistant.suggestion.flud"),
+        t("assistant.suggestion.ekkor"),
+      ]
+    : [
+        t("assistant.suggestion.global.character"),
+        t("assistant.suggestion.global.plot"),
+        t("assistant.suggestion.global.concept"),
+      ];
   const canProposeEdit = Boolean(
     onProposeEdit &&
       section &&
@@ -316,14 +321,14 @@ function ChatScreen({
       !isSending,
   );
   const proposeEditDisabledReason = !mundo
-    ? "El asistente global no edita archivos de un mundo."
+    ? t("assistant.propose.disabled.noWorld")
     : !section || !filePath
-      ? "Abrí un archivo para proponer una edición."
+      ? t("assistant.propose.disabled.noFile")
       : !latestUserPrompt
-        ? "Escribí y enviá una solicitud al asistente primero."
+        ? t("assistant.propose.disabled.noPrompt")
         : isSending
-          ? "Esperá a que termine la respuesta del asistente."
-          : "Proponer una edición usando la última solicitud enviada.";
+          ? t("assistant.propose.disabled.sending")
+          : t("assistant.propose.enabled");
   const hasAssistantAnswer = messages.some((message) => message.role === "assistant");
   const hasGuidedCandidate = Boolean(
     activeSession?.guided && (
@@ -378,17 +383,17 @@ function ChatScreen({
             onClick={handleLightbulb}
             disabled={confirmationPending || isSending}
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-primary hover:bg-surface-hover transition-colors shrink-0 disabled:opacity-40"
-            title="Ideas para esta sección"
-            aria-label="Ideas para esta sección"
+            title={t("assistant.header.ideasTitle")}
+            aria-label={t("assistant.header.ideasTitle")}
           >
             <Icon name="lightbulb" size={14} />
           </button>
           <div className="min-w-0">
             <h2 className="text-body font-medium text-primary truncate">
-              Asistente IA
+              {t("assistant.header.title")}
             </h2>
             <p className="text-xs text-muted truncate">
-              {mundo ?? "Banco global de ideas"}
+              {mundo ?? t("assistant.header.globalContext")}
             </p>
           </div>
         </div>
@@ -398,8 +403,8 @@ function ChatScreen({
             onClick={onNewChat}
             disabled={confirmationPending}
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-primary hover:bg-surface-hover transition-colors shrink-0 disabled:opacity-40"
-            title="Nueva conversación"
-            aria-label="Nueva conversación"
+            title={t("assistant.header.newChat")}
+            aria-label={t("assistant.header.newChat")}
           >
             <Icon name="plus" size={14} />
           </button>
@@ -407,8 +412,8 @@ function ChatScreen({
             type="button"
             onClick={onHistoryClick}
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted hover:text-primary hover:bg-surface-hover transition-colors shrink-0"
-            title="Historial de sesiones"
-            aria-label="Historial de sesiones"
+            title={t("assistant.header.history")}
+            aria-label={t("assistant.header.history")}
           >
             <Icon name="history" size={14} />
           </button>
@@ -425,21 +430,19 @@ function ChatScreen({
             {mundo ? (
               <>
                 <h3 className="mb-1 text-body font-medium text-primary">
-                  Preguntame sobre tu mundo
+                  {t("assistant.empty.worldTitle")}
                 </h3>
                 <p className="mb-4 text-xs text-muted max-w-[200px]">
-                  Conozco todo el lore de{" "}
-                  <strong className="text-primary">{mundo}</strong>.
+                  {t("assistant.empty.worldBody", { world: mundo })}
                 </p>
               </>
             ) : (
               <>
                 <h3 className="mb-1 text-body font-medium text-primary">
-                  Preguntame sobre el banco global
+                  {t("assistant.empty.globalTitle")}
                 </h3>
                 <p className="mb-4 text-xs text-muted max-w-[200px]">
-                  Trabajo con ideas sin atarme a un mundo: personajes,
-                  relaciones, ambientaciones, tramas y conceptos.
+                  {t("assistant.empty.globalBody")}
                 </p>
               </>
             )}
@@ -496,12 +499,10 @@ function ChatScreen({
                className="rounded-lg border border-action/40 bg-action/10 px-3 py-3 text-sm text-primary"
              >
                <h3 id="guided-confirmation-title" className="font-medium">
-                 {isSpanish ? "Confirmación necesaria" : "Confirmation needed"}
+                 {t("assistant.confirm.title")}
                </h3>
                <p className="mt-1 text-xs leading-relaxed text-muted">
-                 {isSpanish
-                   ? "Si elegís No, no comenzará ninguna propuesta guiada ni se creará una candidata o ficha. La sesión se cancelará y cerrará; podés iniciar una nueva solicitud más adelante."
-                   : "If you choose No, no guided proposal will start and no candidate or character sheet will be created. The session will be cancelled and closed; you can start a new request later."}
+                 {t("assistant.confirm.body")}
                </p>
                <div className="mt-3 flex flex-wrap gap-2">
                  <button
@@ -510,7 +511,7 @@ function ChatScreen({
                    disabled={isSending}
                    className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                  >
-                   {isSpanish ? "Sí, comenzar" : "Yes, start"}
+                   {t("assistant.confirm.yes")}
                  </button>
                  <button
                    type="button"
@@ -518,7 +519,7 @@ function ChatScreen({
                    disabled={isSending}
                    className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
                  >
-                   {isSpanish ? "No, cancelar" : "No, cancel"}
+                   {t("assistant.confirm.no")}
                  </button>
                </div>
              </section>
@@ -529,31 +530,29 @@ function ChatScreen({
                aria-labelledby="guided-consent-title"
                className="rounded-lg border border-action/40 bg-action/10 px-3 py-3 text-sm text-primary"
              >
-               <h3 id="guided-consent-title" className="font-medium">
-                 {isSpanish ? "Flujo guiado" : "Guided flow"}
-               </h3>
-               <p className="mt-1 text-xs leading-relaxed text-muted">
-                 {isSpanish
-                   ? "Parece que querés crear un personaje. ¿Abrimos el flujo guiado?"
-                   : "It looks like you want to create a character. Shall we open the guided flow?"}
-               </p>
+                <h3 id="guided-consent-title" className="font-medium">
+                  {t("assistant.consent.title")}
+                </h3>
+                <p className="mt-1 text-xs leading-relaxed text-muted">
+                  {t("assistant.consent.body")}
+                </p>
                <div className="mt-3 flex flex-wrap gap-2">
                  <button
                    type="button"
                    onClick={() => void resolveGuidedConsent(true)}
                    disabled={isSending}
-                   className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
-                 >
-                   {isSpanish ? "Sí, empecemos" : "Yes, let's start"}
-                 </button>
-                 <button
-                   type="button"
-                   onClick={() => void resolveGuidedConsent(false)}
-                   disabled={isSending}
-                   className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                 >
-                   {isSpanish ? "Seguir charlando" : "Keep chatting"}
-                 </button>
+                    className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {t("assistant.consent.yes")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void resolveGuidedConsent(false)}
+                    disabled={isSending}
+                    className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {t("assistant.consent.no")}
+                  </button>
                </div>
              </section>
            )}
@@ -561,12 +560,12 @@ function ChatScreen({
            {activeSession?.guided?.proposal && (
             <div className="rounded-lg border border-edge bg-surface px-3 py-2 text-sm text-primary">
               <p className="text-xs text-muted">
-                {isSpanish ? "Detalle sugerido" : "Suggested detail"}
+                {t("assistant.proposal.title")}
               </p>
               <p className="mt-1">{activeSession.guided.proposal.label}: {activeSession.guided.proposal.value}</p>
               <div className="mt-3 flex gap-2">
-                <button type="button" onClick={() => void resolveGuidedProposal(false)} disabled={isSending} className="rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted disabled:opacity-50">{isSpanish ? "Rechazar" : "Reject"}</button>
-                <button type="button" onClick={() => void resolveGuidedProposal(true)} disabled={isSending} className="rounded-md bg-action px-2.5 py-1.5 text-xs text-action-text disabled:opacity-50">{isSpanish ? "Aceptar" : "Accept"}</button>
+                <button type="button" onClick={() => void resolveGuidedProposal(false)} disabled={isSending} className="rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted disabled:opacity-50">{t("assistant.proposal.reject")}</button>
+                <button type="button" onClick={() => void resolveGuidedProposal(true)} disabled={isSending} className="rounded-md bg-action px-2.5 py-1.5 text-xs text-action-text disabled:opacity-50">{t("assistant.proposal.accept")}</button>
               </div>
             </div>
           )}
@@ -575,11 +574,11 @@ function ChatScreen({
             <button
               type="button"
               onClick={() => void handleGuidedReview()}
-              aria-label={isSpanish ? "Revisar y aprobar el diff del personaje" : "Review and approve character diff"}
+              aria-label={t("assistant.review.action")}
               className="flex w-full items-center gap-2 rounded-lg border border-action/50 bg-action/10 px-3 py-2 text-left text-sm font-medium text-primary transition-colors hover:border-action hover:bg-action/20 focus:outline-none focus:ring-2 focus:ring-action/60 active:bg-action/25 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Icon name="edit" size={16} />
-              <span>{isSpanish ? "Revisar y aprobar el diff del personaje" : "Review and approve character diff"}</span>
+              <span>{t("assistant.review.action")}</span>
             </button>
           )}
 
@@ -608,7 +607,7 @@ function ChatScreen({
       {activity.blocked && !isSending && (
         <div
           role="alert"
-          aria-label={isSpanish ? "Asistente no disponible" : "Assistant unavailable"}
+          aria-label={t("assistant.blocked.aria")}
           className="mx-4 mb-2 rounded-md border border-action/30 bg-action/10 px-3 py-1.5 text-xs leading-relaxed text-primary"
         >
           {semanticBlockedText(isSpanish ? "es" : "en")}
@@ -622,7 +621,7 @@ function ChatScreen({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Escribí tu pregunta..."
+            placeholder={t("assistant.composer.placeholder")}
             rows={2}
             className="min-w-0 flex-1 resize-none rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
             disabled={confirmationPending || isSending}
@@ -642,10 +641,10 @@ function ChatScreen({
               )}
               aria-label={
                 whisperIsRecording
-                  ? "Detener grabación"
+                  ? t("assistant.mic.stop")
                   : whisperIsTranscribing
-                    ? "Transcribiendo..."
-                    : "Grabar nota de voz"
+                    ? t("assistant.mic.transcribing")
+                    : t("assistant.mic.record")
               }
             >
               {whisperIsTranscribing ? (
@@ -663,7 +662,7 @@ function ChatScreen({
               onClick={handleSend}
               disabled={confirmationPending || isSending || !input.trim()}
               className="flex h-9 w-9 items-center justify-center rounded-lg bg-action text-action-text hover:bg-action-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-              aria-label="Enviar"
+              aria-label={t("assistant.send.aria")}
             >
               {isSending ? (
                 <Spinner size="sm" />
@@ -679,18 +678,18 @@ function ChatScreen({
             onClick={handleProposeEdit}
             disabled={!canProposeEdit}
             title={proposeEditDisabledReason}
-            aria-label="Proponer edición"
+            aria-label={t("assistant.propose.aria")}
             className="flex items-center gap-1.5 rounded-md border border-edge px-2.5 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Icon name="edit" size={13} />
-            Proponer edición
+            {t("assistant.propose.label")}
           </button>
           {!canProposeEdit && (
             <span className="text-xs text-muted">{proposeEditDisabledReason}</span>
           )}
         </div>
         <p className="mt-1 text-xs text-muted">
-          Enter para enviar · Shift+Enter para nueva línea
+          {t("assistant.composer.hint")}
         </p>
       </div>
     </>
@@ -716,6 +715,7 @@ function HistoryScreen({
   createSession,
   onChatClick,
 }: HistoryScreenProps) {
+  const { t } = useAppLanguage();
   const totalMessages = sessions.reduce(
     (acc, s) => acc + s.messages.length,
     0,
@@ -742,17 +742,17 @@ function HistoryScreen({
             <Icon name="history" size={16} />
           </div>
           <h2 className="text-body font-medium text-primary truncate">
-            Historial
+            {t("assistant.history.title")}
           </h2>
         </div>
         <button
           type="button"
           onClick={handleNewSession}
           className="flex items-center gap-1 rounded-md bg-action px-2.5 py-1.5 text-xs font-medium text-action-text hover:bg-action-hover transition-colors shrink-0"
-          aria-label="Nueva sesión"
+          aria-label={t("assistant.history.newAria")}
         >
           <Icon name="plus" size={12} />
-          Nueva Sesión
+          {t("assistant.history.new")}
         </button>
       </div>
 
@@ -760,7 +760,7 @@ function HistoryScreen({
         {sessions.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center px-4">
             <p className="text-xs text-muted">
-              No hay sesiones todavía.
+              {t("assistant.history.empty")}
             </p>
           </div>
         ) : (
@@ -787,8 +787,10 @@ function HistoryScreen({
                     {session.title}
                   </p>
                   <p className="text-xs text-inherit opacity-50 mt-0.5">
-                    {session.messages.length} mensaje
-                    {session.messages.length !== 1 ? "s" : ""}
+                    {session.messages.length}{" "}
+                    {session.messages.length === 1
+                      ? t("assistant.count.messageOne")
+                      : t("assistant.count.messageMany")}
                   </p>
                 </div>
                 <span className="text-xs text-inherit opacity-40 shrink-0">
@@ -802,9 +804,18 @@ function HistoryScreen({
 
       <div className="border-t border-edge px-4 py-2 shrink-0">
         <p className="text-xs text-muted text-center">
-          Mostrando {sessions.length} sesion
-          {sessions.length !== 1 ? "es" : ""} ·{" "}
-          {totalMessages} mensaje{totalMessages !== 1 ? "s" : ""} en total
+          {t("assistant.history.footer", {
+            sessions: sessions.length,
+            sessionWord:
+              sessions.length === 1
+                ? t("assistant.count.sessionOne")
+                : t("assistant.count.sessionMany"),
+            messages: totalMessages,
+            messageWord:
+              totalMessages === 1
+                ? t("assistant.count.messageOne")
+                : t("assistant.count.messageMany"),
+          })}
         </p>
       </div>
     </>

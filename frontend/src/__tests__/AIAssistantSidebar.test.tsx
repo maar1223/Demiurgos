@@ -4,6 +4,8 @@ import userEvent from "@testing-library/user-event";
 import { AIAssistantSidebar } from "@/components/organisms/AIAssistantSidebar";
 import { useAIAssistantSessions } from "@/hooks/useAIAssistantSessions";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { translate } from "@/i18n/messages";
+import { tEs } from "@/__tests__/i18nTestUtils";
 import type { GuidedCharacterSession } from "@/api/types";
 
 vi.mock("@/hooks/useAIAssistantSessions", () => ({
@@ -28,8 +30,12 @@ vi.mock("@/hooks/useWhisper", () => ({
 const useSessionsMock = vi.mocked(useAIAssistantSessions);
 const useAppLanguageMock = vi.mocked(useAppLanguage);
 
-/** The hook now returns `{ language, t }` (AD-3); `t` is not exercised yet. */
-const lang = (language: string) => ({ language: language as "es" | "en", t: (key: string) => key });
+/** The hook returns `{ language, t }` (AD-3); `t` resolves the real catalogue. */
+const lang = (language: "es" | "en") => ({
+  language,
+  t: (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) =>
+    translate(language, key, params),
+});
 
 type SessionsState = ReturnType<typeof useAIAssistantSessions>;
 
@@ -118,7 +124,7 @@ describe("AIAssistantSidebar edit action", () => {
     expect(action).toBeDisabled();
     expect(action).toHaveAttribute(
       "title",
-      "Escribí y enviá una solicitud al asistente primero.",
+      tEs("assistant.propose.disabled.noPrompt"),
     );
   });
 });
@@ -493,7 +499,9 @@ describe("AIAssistantSidebar single conversation", () => {
     );
     expect(screen.getByRole("button", { name: "Sí, comenzar" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "No, cancelar" })).toBeEnabled();
-    expect(screen.getByPlaceholderText("Escribí tu pregunta...")).toBeDisabled();
+    expect(
+      screen.getByPlaceholderText(tEs("assistant.composer.placeholder")),
+    ).toBeDisabled();
 
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "Sí, comenzar" }));
@@ -557,7 +565,7 @@ describe("AIAssistantSidebar null-mundo (global context)", () => {
     render(<AIAssistantSidebar />);
 
     expect(screen.getByText("Banco global de ideas")).toBeInTheDocument();
-    expect(screen.getByText("Preguntame sobre el banco global")).toBeInTheDocument();
+    expect(screen.getByText(tEs("assistant.empty.globalTitle"))).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Dame una idea de personaje" }),
     ).toBeInTheDocument();
@@ -742,13 +750,13 @@ describe("AIAssistantSidebar guided consent suggestion", () => {
 
     render(<AIAssistantSidebar mundo="Vibrantes" />);
 
-    expect(
-      screen.getByText("Parece que querés crear un personaje. ¿Abrimos el flujo guiado?"),
-    ).toBeInTheDocument();
+    expect(screen.getByText(tEs("assistant.consent.body"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sí, empecemos" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Seguir charlando" })).toBeEnabled();
     // The suggestion creates no guided session: the composer stays enabled.
-    expect(screen.getByPlaceholderText("Escribí tu pregunta...")).toBeEnabled();
+    expect(
+      screen.getByPlaceholderText(tEs("assistant.composer.placeholder")),
+    ).toBeEnabled();
   });
 
   it("wires accept and decline through the sessions hook", async () => {
