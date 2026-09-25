@@ -20,15 +20,6 @@ const VERB_TOKENS = new Set(forbidden.verbs.map((token) => token.toLowerCase()))
 const EXPRESSIONS = forbidden.expressions.map((token) => token.toLowerCase());
 const IMPERATIVE_STEMS = new Set(forbidden.imperativeStems);
 
-/**
- * Known mojibake defect owned by WU-2 (task 2.7): the double-encoded default
- * title at `useAIAssistantSessions.ts:102`/`:298` plus the leading BOM. It is
- * excluded from the source scan until 2.7 fixes it; remove this entry then.
- */
-const MOJIBAKE_SOURCE_EXCLUSIONS = new Set([
-  "/src/hooks/useAIAssistantSessions.ts",
-]);
-
 /** Every app-source file (raw text) plus frontend/index.html. */
 const SOURCE_FILES = import.meta.glob("/src/**/*.{ts,tsx,json}", {
   eager: true,
@@ -103,7 +94,6 @@ describe("catalogue guard (UI-REQ-7)", () => {
   it("rejects mojibake in app source files (UI-SCN-7.3)", () => {
     const offenders: string[] = [];
     for (const [file, content] of Object.entries(SOURCE_FILES)) {
-      if (MOJIBAKE_SOURCE_EXCLUSIONS.has(file)) continue;
       const hit = mojibakeHit(content);
       if (hit !== null) offenders.push(`${file}: ${hit}`);
     }

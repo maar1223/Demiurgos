@@ -8,11 +8,23 @@ import {
 import { AssistantActivityUnavailable, streamAssistantActivity } from "@/api/assistantActivity";
 import { acceptGuidedConsent, declineGuidedConsent } from "@/api/guidedCharacter";
 import { askAssistant } from "@/api/wiki";
-import type { GuidedCharacterSession, SemanticDecisionEnvelope } from "@/api/types";
+import { CATALOGUE } from "@/i18n/messages";
+import type { AppLanguage, GuidedCharacterSession, SemanticDecisionEnvelope } from "@/api/types";
 
+const mockUseAppLanguage = vi.fn();
 vi.mock("@/hooks/useAppLanguage", () => ({
-  useAppLanguage: vi.fn(() => ({ language: "es", t: (key: string) => key })),
+  useAppLanguage: () => mockUseAppLanguage(),
 }));
+
+/** Real catalogue-backed `t` so default titles are the actual localized copy. */
+function mockLanguage(language: AppLanguage): void {
+  const es = CATALOGUE.es as Record<string, string>;
+  const en = CATALOGUE.en as Record<string, string>;
+  mockUseAppLanguage.mockReturnValue({
+    language,
+    t: (key: string) => (language === "en" ? en : es)[key] ?? key,
+  });
+}
 
 vi.mock("@/api/assistantActivity", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/api/assistantActivity")>();
@@ -31,6 +43,10 @@ vi.mock("@/api/guidedCharacter", async (importOriginal) => {
 
 const SESSIONS_KEY = "demiurgos-ai-sessions";
 const ACTIVE_KEY = "demiurgos-ai-sessions-active";
+
+beforeEach(() => {
+  mockLanguage("es");
+});
 
 function makeSession(id: string, title = "Session title"): Session {
   return { id, title, messages: [], createdAt: Date.now() };
@@ -515,5 +531,143 @@ describe("useAIAssistantSessions persisted session sanitization", () => {
     window.localStorage.setItem(SESSIONS_KEY, JSON.stringify({ nope: true }));
 
     expect(() => renderHook(() => useAIAssistantSessions("Vibrantes"))).not.toThrow();
+  });
+});
+
+describe("useAIAssistantSessions default-title defect (AD-12, SES-REQ-1/2)", () => {
+  const streamMock = vi.mocked(streamAssistantActivity);
+  const allowedDecision = {
+    accepted: true,
+    events: [],
+    answer: "Hola",
+    terminalStatus: "succeeded" as const,
+    semanticDecision: {
+      kind: "semantic_decision" as const,
+      request_id: "r1",
+      state: "allow" as const,
+      action: "answer" as const,
+      unavailable: false,
+      continuation: null,
+    },
+  };
+
+  /** Legacy double-encoded mojibake title, built via escapes so the source
+   *  mojibake guard never flags the test itself. */
+  const MOJIBAKE_TITLE = "Nueva sesi\u251c\u2502n";
+
+  beforeEach(() => {
+    streamMock.mockReset();
+    streamMock.mockResolvedValue(allowedDecision);
+    window.localStorage.clear();
+  });
+
+  it("creates a session with the correct neutral-Spanish default title (SES-SCN-1.1)", () => {
+    const { result } = renderHook(() => useAIAssistantSessions("mundo"));
+    act(() => {
+      result.current.createSession();
+    });
+
+    const created = result.current.sessions[0];
+    expect(created.title).toBe("Nueva sesión");
+    expect(created.title).not.toContain("\u251c");
+    expect(created.titleIsDefault).toBe(true);
+  });
+
+  it("creates a session with the English default title from the catalogue (SES-SCN-1.2)", () => {
+    mockLanguage("en");
+    const { result } = renderHook(() => useAIAssistantSessions("mundo"));
+    act(() => {
+      result.current.createSession();
+    });
+
+    expect(result.current.sessions[0].title).toBe("New session");
+    expect(result.current.sessions[0].titleIsDefault).toBe(true);
+  });
+
+  it("replaces the default title on the first message in Spanish (SES-SCN-2.1)", async () => {
+    const { result } = renderHook(() => useAIAssistantSessions("mundo"));
+    act(() => {
+      result.current.createSession();
+    });
+    expect(result.current.sessions[0].title).toBe("Nueva sesión");
+
+    await act(async () => {
+      await result.current.sendMessage("cómo crear un personaje");
+    });
+
+    expect(result.current.sessions[0].title).toBe("cómo crear un personaje");
+    expect(result.current.sessions[0].titleIsDefault).toBe(false);
+    expect(result.current.sessions[0].title).not.toContain("Nueva sesión");
+  });
+
+  it("replaces the default title on the first message in English (SES-SCN-2.2)", async () => {
+    mockLanguage("en");
+    const { result } = renderHook(() => useAIAssistantSessions("mundo"));
+    act(() => {
+      result.current.createSession();
+    });
+    expect(result.current.sessions[0].title).toBe("New session");
+
+    await act(async () => {
+      await result.current.sendMessage("how to create a character");
+    });
+
+    expect(result.current.sessions[0].title).toBe("how to create a character");
+    expect(result.current.sessions[0].titleIsDefault).toBe(false);
+  });
+
+  it("migrates a legacy mojibake draft and replaces it on first message (SES-SCN-2.3)", async () => {
+    seedSessions([
+      { id: "legacy", title: MOJIBAKE_TITLE, messages: [], createdAt: Date.now() },
+    ]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("legacy"));
+
+    const { result } = renderHook(() => useAIAssistantSessions("mundo"));
+    // The visible mojibake is migrated to the localized default + flagged.
+    expect(result.current.sessions[0].title).toBe("Nueva sesión");
+    expect(result.current.sessions[0].titleIsDefault).toBe(true);
+
+    await act(async () => {
+      await result.current.sendMessage("primer mensaje");
+    });
+
+    expect(result.current.sessions[0].title).toBe("primer mensaje");
+    expect(result.current.sessions[0].title).not.toContain("\u251c");
+  });
+
+  it("preserves accented characters in derived titles (SES-SCN-2.4)", async () => {
+    const { result } = renderHook(() => useAIAssistantSessions("mundo"));
+    act(() => {
+      result.current.createSession();
+    });
+
+    await act(async () => {
+      await result.current.sendMessage("cómo crear un personaje ñato");
+    });
+
+    const title = result.current.sessions[0].title;
+    expect(title).toBe("cómo crear un personaje ñato");
+    expect(title).not.toContain("\u251c");
+    expect(title).not.toContain("\ufffd");
+  });
+
+  it("never overwrites a manually re-titled session (SES-SCN-2.5)", async () => {
+    seedSessions([
+      {
+        id: "titled",
+        title: "Mi aventura",
+        messages: [{ role: "user", content: "hola" }],
+        createdAt: Date.now(),
+      },
+    ]);
+    window.localStorage.setItem(ACTIVE_KEY, JSON.stringify("titled"));
+
+    const { result } = renderHook(() => useAIAssistantSessions("mundo"));
+    await act(async () => {
+      await result.current.sendMessage("segundo mensaje");
+    });
+
+    expect(result.current.sessions[0].title).toBe("Mi aventura");
+    expect(result.current.sessions[0].titleIsDefault).not.toBe(true);
   });
 });

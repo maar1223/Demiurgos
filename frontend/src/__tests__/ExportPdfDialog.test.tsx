@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ExportPdfDialog } from "@/components/organisms/ExportPdfDialog";
+import { CATALOGUE } from "@/i18n/messages";
 
 function renderDialog(
   overrides: Partial<{
@@ -100,7 +101,6 @@ describe("ExportPdfDialog", () => {
   });
 
   it("sets document.title to the ficha basename before printing and restores after", async () => {
-    const originalTitle = document.title;
     const user = userEvent.setup();
     const { onClose } = renderDialog();
 
@@ -115,7 +115,9 @@ describe("ExportPdfDialog", () => {
       window.onafterprint?.(new Event("afterprint"));
     });
 
-    expect(document.title).toBe(originalTitle);
+    // The locale title is restored (UI-SCN-5.2) — the temporary export
+    // mutation never permanently desyncs document.title.
+    expect(document.title).toBe(CATALOGUE.es["document.title"]);
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(window.onafterprint).toBeNull();
   });

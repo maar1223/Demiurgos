@@ -4,6 +4,9 @@ import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import { MarkdownBody } from "@/components/organisms/MarkdownViewer";
+import { readCachedLocale } from "@/hooks/useAppLocale";
+import { translate } from "@/i18n/messages";
+import type { AppLanguage } from "@/api/types";
 
 interface ExportPdfDialogProps {
   open: boolean;
@@ -69,11 +72,15 @@ export function ExportPdfDialog({
   // ref — so StrictMode update semantics can never call window.print twice.
   useEffect(() => {
     if (!printing) return;
-    const originalTitle = document.title;
     document.title = `${fileNameWithoutExt} — ${mundo}`;
 
     const restore = () => {
-      document.title = originalTitle;
+      // Re-sync with the ACTIVE locale title (UI-SCN-5.2): the temporary
+      // export mutation must never permanently desync the locale title, so
+      // the restore reads the current cached locale instead of a title
+      // captured before printing (which could be stale after a switch).
+      const language: AppLanguage = readCachedLocale().ui === "en" ? "en" : "es";
+      document.title = translate(language, "document.title");
       setPrinting(false);
       onCloseRef.current();
     };

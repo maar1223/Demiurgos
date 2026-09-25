@@ -32,6 +32,13 @@ export interface Message {
 export interface Session {
   id: string;
   title: string;
+  /**
+   * Structural marker that the title is the localized default (AD-12): set on
+   * creation, cleared when a derived title replaces it. Replaces the brittle
+   * string-identity comparison (`title === "Nueva sesión"`) so automatic
+   * replacement fires for ANY language and for legacy mojibake drafts.
+   */
+  titleIsDefault?: boolean;
   messages: Message[];
   createdAt: number;
   guided?: GuidedCharacterSession;
@@ -97,12 +104,52 @@ function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-function truncateTitle(text: string): string {
-  const cleaned = text.replace(/[^a-zA-Z0-9├í├⌐├¡├│├║├▒├╝┬┐┬í\s]/g, "").trim();
-  if (cleaned.length === 0) return "Nueva sesi├│n";
+/**
+ * Title values that identify a "default" session title across languages and
+ * legacy persisted data. The double-encoded mojibake draft (the legacy
+ * "Nueva sesion" default with the box-drawing lead bytes U+251C U+2502) is
+ * written with escape sequences so the catalogue guard's mojibake scan never
+ * flags the migration marker itself.
+ */
+const DEFAULT_TITLE_MARKERS = [
+  "Nueva sesión",
+  "Nueva sesi\u251c\u2502n",
+  "New session",
+];
+
+function isDefaultTitle(title: string, titleIsDefault?: boolean): boolean {
+  if (titleIsDefault === true) return true;
+  return DEFAULT_TITLE_MARKERS.includes(title);
+}
+
+/**
+ * Derive a session title from the first message. Unicode-aware: letters and
+ * numbers from ANY script survive (accents included — SES-SCN-2.4), while
+ * punctuation/emoji are stripped. An empty result falls back to the
+ * localized default title.
+ */
+function truncateTitle(text: string, defaultTitle: string): string {
+  const cleaned = text.replace(/[^\p{L}\p{N}\s]/gu, "").trim();
+  if (cleaned.length === 0) return defaultTitle;
   return cleaned.length > MAX_SESSION_TITLE_LENGTH
     ? cleaned.slice(0, MAX_SESSION_TITLE_LENGTH) + "..."
     : cleaned;
+}
+
+/**
+ * Migrate legacy persisted drafts whose title is a known default marker
+ * (including the mojibake default) to the CURRENT locale's default title,
+ * flagged structurally so automatic replacement fires on the first message.
+ */
+function migrateLegacyDefaultTitles(
+  sessions: Session[],
+  defaultTitle: string,
+): Session[] {
+  return sessions.map((session) =>
+    session.titleIsDefault === true || !DEFAULT_TITLE_MARKERS.includes(session.title)
+      ? session
+      : { ...session, title: defaultTitle, titleIsDefault: true },
+  );
 }
 
 function isRecordLike(value: unknown): value is Record<string, unknown> {
@@ -237,7 +284,16 @@ export function useAIAssistantSessions(
   // polluted by — any mundo-scoped session.
   const contextMundo = mundo ?? GLOBAL_ASSISTANT_CONTEXT;
   const worldScoped = Boolean(mundo);
-  const [sessions, setSessions] = useState<Session[]>(() => loadSessions());
+  const { language, t } = useAppLanguage();
+  // Localized default session title (AD-12): correct in every language and
+  // never the double-encoded mojibake literal.
+  const defaultTitle = t("assistant.session.defaultTitle");
+  // Legacy persisted drafts (including mojibake-default ones) are migrated to
+  // the current locale's default and flagged so replacement fires on the
+  // first message (SES-REQ-2).
+  const [sessions, setSessions] = useState<Session[]>(() =>
+    migrateLegacyDefaultTitles(loadSessions(), defaultTitle),
+  );
   // Restore the last active session so the open conversation survives
   // remounts (the sidebar unmounts when the editor switches tabs). The
   // persisted id is validated against the sessions restored for this mount:
@@ -255,7 +311,6 @@ export function useAIAssistantSessions(
   const [error, setError] = useState<string | null>(null);
   const [activity, setActivity] = useState<AssistantActivityState>(INITIAL_ACTIVITY);
   const activityAbortRef = useRef<AbortController | null>(null);
-  const { language } = useAppLanguage();
 
   // Persist sessions whenever they change
   useEffect(() => {
@@ -275,7 +330,7 @@ export function useAIAssistantSessions(
 
   const createSession = useCallback(() => {
     // A conversation that never received a message is not a real conversation:
-    // reuse the existing empty draft instead of stacking empty "Nueva sesi├│n"
+    // reuse the existing empty draft instead of stacking empty default-title
     // entries every time the user taps "Nueva conversación" / "+ Nueva Sesión".
     const activeEmpty = activeSessionId
       ? sessions.find((s) => s.id === activeSessionId && s.messages.length === 0)
@@ -295,14 +350,15 @@ export function useAIAssistantSessions(
     const id = generateId();
     const session: Session = {
       id,
-      title: "Nueva sesi├│n",
+      title: defaultTitle,
+      titleIsDefault: true,
       messages: [],
       createdAt: Date.now(),
     };
     setSessions([session, ...sessions]);
     setActiveSessionId(id);
     setError(null);
-  }, [activeSessionId, sessions]);
+  }, [activeSessionId, sessions, defaultTitle]);
 
   const switchSession = useCallback((id: string) => {
     setActiveSessionId(id);
@@ -325,7 +381,7 @@ export function useAIAssistantSessions(
         const id = generateId();
         const newSession: Session = {
           id,
-          title: truncateTitle(trimmed),
+          title: truncateTitle(trimmed, defaultTitle),
           messages: [],
           createdAt: Date.now(),
         };
@@ -343,10 +399,12 @@ export function useAIAssistantSessions(
             ? {
                 ...s,
                 messages: [...s.messages, userMessage],
-                title:
-                  s.title === "Nueva sesión"
-                    ? truncateTitle(trimmed)
-                    : s.title,
+                // Structural default-title check: fires for every language
+                // and for legacy mojibake drafts (AD-12, SES-REQ-2).
+                title: isDefaultTitle(s.title, s.titleIsDefault)
+                  ? truncateTitle(trimmed, defaultTitle)
+                  : s.title,
+                titleIsDefault: false,
                 // Sending another message counts as "keep chatting": the
                 // pending suggestion is dismissed (REQ-GFC-06).
                 consentToken: undefined,
@@ -524,7 +582,7 @@ export function useAIAssistantSessions(
         setIsSending(false);
       }
     },
-    [activeSession, activeSessionId, isSending, mundo, contextMundo, section, filePath, language],
+    [activeSession, activeSessionId, isSending, mundo, contextMundo, section, filePath, language, defaultTitle],
   );
 
   const resolveGuidedProposal = useCallback(async (accept: boolean) => {
