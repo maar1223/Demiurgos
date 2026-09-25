@@ -4716,6 +4716,22 @@ def create_file(mundo: str, section: str, path: str, body: dict, request: Reques
         )
         result.update({"index_status": reconciliation.index_status, "retryable": reconciliation.retryable,
                        "message": reconciliation.message})
+        # R-CG-04: on confirm the idea MUST accumulate the world slug in
+        # used_in[] (deduped) and transition to status: used. This happens
+        # only AFTER the ficha is durable and reconciled, and the metadata
+        # update is best-effort: a failure (idea deleted in the race window,
+        # disk error) must never corrupt or roll back the written ficha, so
+        # it is logged and the confirm still succeeds. canon_rel is NOT
+        # passed: the new ficha already carries based_on: ideas/{slug} from
+        # the server-owned skeleton, and re-rendering it through the bank
+        # would drift its bytes from the reconciled digest.
+        try:
+            IdeasBank().materialize(str(materialize_pending["slug"]), mundo)
+        except Exception as exc:  # noqa: BLE001 — best-effort metadata after durable write
+            logger.warning(
+                "materialize-confirm: failed to mark idea %s used in world %s: %s",
+                materialize_pending["slug"], mundo, exc,
+            )
         # Single use: the proposal is consumed on the first confirmed write.
         _MATERIALIZE_PENDING_PROPOSALS.pop(body["edit_id"], None)
     if pending is not None:

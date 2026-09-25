@@ -7560,6 +7560,7 @@ def _write_idea(slug: str = "arquero-ciego", *, type: str = "personaje",
         f"id: idea-{slug}\n"
         f"slug: {slug}\n"
         f"type: {type}\n"
+        "source: manual\n"
         f"status: fresh\n"
         f"title: {title}\n"
         "tags: []\n"
@@ -8050,3 +8051,27 @@ class TestMaterializeConfirm:
         assert target.is_file()
         content = target.read_text(encoding="utf-8")
         assert "based_on: ideas/arquero-ciego" in content
+
+    # -----------------------------------------------------------------------
+    # WU9 (BUG-A) — confirm marks the idea used (R-CG-04, SC5/AC7)
+    # -----------------------------------------------------------------------
+
+    def test_confirm_marks_idea_used_across_worlds(self, client: TestClient, monkeypatch):
+        """R-CG-04 (SC5): confirming the ficha updates the idea — the world
+        slug accumulates in used_in[] (deduped) and status becomes used.
+
+        Regression for BUG-A: create_file's materialize branch never called
+        IdeasBank.materialize, so after a successful preview→confirm the idea
+        still showed used_in: [] and status: fresh.
+        """
+        _write_idea()
+        (api_server.MUNDOS_DIR / "test_mundo_b" / "lore").mkdir(parents=True, exist_ok=True)
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        for world in ("test_mundo", "test_mundo_b"):
+            preview = _materialize_preview(client, world=world)
+            assert preview.status_code == 200, preview.text
+            resp = self._confirm(client, preview.json(), mundo=world)
+            assert resp.status_code == 200, resp.text
+        idea = (api_server.PROJECT_ROOT / "ideas" / "arquero-ciego.md").read_text(encoding="utf-8")
+        assert "used_in:" in idea and "test_mundo" in idea and "test_mundo_b" in idea
+        assert "status: used" in idea
