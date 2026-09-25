@@ -10,6 +10,8 @@ import * as wikiApi from "@/api/wiki";
 import type { FileNode } from "@/api/types";
 import type { IdeaDetail } from "@/api/ideas";
 import { useFileTree } from "@/hooks/useFileTree";
+import { DEFAULT_LOCALE } from "@/hooks/useAppLocale";
+import { tEn, tEs } from "@/__tests__/i18nTestUtils";
 import type { Mock } from "vitest";
 
 vi.mock("@/api/ideas", async (importOriginal) => {
@@ -412,12 +414,19 @@ describe("IdeasWorkshop", () => {
     expect(screen.getByText("Un arquero que no ve.")).toBeInTheDocument();
 
     // Open the picker and select a world + a folder from the tree.
-    await user.click(screen.getByRole("button", { name: "Materializar" }));
-    await user.selectOptions(screen.getByLabelText("Mundo"), "vibrantes");
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.button") }),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(tEs("ideas.materialize.worldLabel")),
+      "vibrantes",
+    );
     await user.click(screen.getByRole("button", { name: "sistema-stal" }));
 
     // Preview posts the picker payload (AD7 picker → previewMaterialize).
-    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    );
 
     await waitFor(() =>
       expect(previewMaterializeMock).toHaveBeenCalledWith("arquero-ciego", {
@@ -428,7 +437,9 @@ describe("IdeasWorkshop", () => {
     );
 
     // Read-only dialog: content + relations render (AD8).
-    const dialog = await screen.findByRole("dialog", { name: "Ficha preview" });
+    const dialog = await screen.findByRole("dialog", {
+      name: tEs("ideas.preview.title"),
+    });
     expect(
       within(dialog).getByRole("heading", { name: "El arquero ciego" }),
     ).toBeInTheDocument();
@@ -439,7 +450,9 @@ describe("IdeasWorkshop", () => {
 
     // Confirm issues the single-use token (kind=new, edit_id=proposal_id)
     // and creates through the gated pipeline with digest+token (R-IM-05).
-    await user.click(within(dialog).getByRole("button", { name: "Create ficha" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: tEs("ideas.preview.create") }),
+    );
 
     await waitFor(() =>
       expect(requestConfirmationMock).toHaveBeenCalledWith(
@@ -467,7 +480,9 @@ describe("IdeasWorkshop", () => {
 
     // index_status from the create response is surfaced (R-IM-06).
     expect(
-      await screen.findByText(/index status: indexed/),
+      await screen.findByText(
+        tEs("ideas.materialize.toast.createdIndex", { status: "indexed" }),
+      ),
     ).toBeInTheDocument();
   });
 
@@ -478,10 +493,10 @@ describe("IdeasWorkshop", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
-    await user.click(screen.getByRole("button", { name: "Materializar" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideas.materialize.button") }));
 
     // personaje → personajes suggested (R-IM-01 scenario), author can change.
-    const sectionSelect = screen.getByLabelText("Section");
+    const sectionSelect = screen.getByLabelText(tEs("ideas.materialize.sectionLabel"));
     expect(sectionSelect).toHaveValue("personajes");
 
     await user.selectOptions(sectionSelect, "referencias");
@@ -494,9 +509,9 @@ describe("IdeasWorkshop", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
-    await user.click(screen.getByRole("button", { name: "Materializar" }));
+    await user.click(screen.getByRole("button", { name: tEs("ideas.materialize.button") }));
 
-    expect(screen.getByLabelText("Section")).toHaveValue("lore");
+    expect(screen.getByLabelText(tEs("ideas.materialize.sectionLabel"))).toHaveValue("lore");
   });
 
   it("sends the title hint with the preview payload", async () => {
@@ -506,11 +521,16 @@ describe("IdeasWorkshop", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
-    await user.click(screen.getByRole("button", { name: "Materializar" }));
-    await user.selectOptions(screen.getByLabelText("Mundo"), "vibrantes");
-    await user.type(screen.getByLabelText("Title hint (optional)"), "el ciego");
+    await user.click(screen.getByRole("button", { name: tEs("ideas.materialize.button") }));
+    await user.selectOptions(screen.getByLabelText(tEs("ideas.materialize.worldLabel")), "vibrantes");
+    await user.type(
+      screen.getByLabelText(tEs("ideas.materialize.titleHintLabel")),
+      "el ciego",
+    );
 
-    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    );
 
     await waitFor(() =>
       expect(previewMaterializeMock).toHaveBeenCalledWith("arquero-ciego", {
@@ -537,20 +557,26 @@ describe("IdeasWorkshop", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
-    await user.click(screen.getByRole("button", { name: "Materializar" }));
-    await user.selectOptions(screen.getByLabelText("Mundo"), "vibrantes");
+    await user.click(screen.getByRole("button", { name: tEs("ideas.materialize.button") }));
+    await user.selectOptions(screen.getByLabelText(tEs("ideas.materialize.worldLabel")), "vibrantes");
 
-    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    );
 
-    const dialog = await screen.findByRole("dialog", { name: "Ficha preview" });
-    expect(within(dialog).getByText("The target already exists.")).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", {
+      name: tEs("ideas.preview.title"),
+    });
+    expect(
+      within(dialog).getByText(tEs("ideas.preview.collisionTitle")),
+    ).toBeInTheDocument();
     expect(within(dialog).getByText("arquero-ciego-2")).toBeInTheDocument();
     expect(
       within(dialog).getByText("lore/sistema-stal/arquero-ciego-2.md"),
     ).toBeInTheDocument();
     // Collision mode is not a draft: no confirm button, no content editing.
     expect(
-      within(dialog).queryByRole("button", { name: "Create ficha" }),
+      within(dialog).queryByRole("button", { name: tEs("ideas.preview.create") }),
     ).not.toBeInTheDocument();
   });
 
@@ -565,12 +591,12 @@ describe("IdeasWorkshop", () => {
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
-    await user.click(screen.getByRole("button", { name: "Materializar" }));
-    await user.selectOptions(screen.getByLabelText("Mundo"), "vibrantes");
+    await user.click(screen.getByRole("button", { name: tEs("ideas.materialize.button") }));
+    await user.selectOptions(screen.getByLabelText(tEs("ideas.materialize.worldLabel")), "vibrantes");
 
     await user.click(
       screen.getByRole("button", {
-        name: "Only mark as used (without creating ficha)",
+        name: tEs("ideas.materialize.markUsedOnly"),
       }),
     );
 
@@ -832,6 +858,47 @@ describe("IdeasWorkshop", () => {
       screen.getByRole("dialog", { name: /exportar ficha a pdf/i }),
     ).toBeInTheDocument();
     expect(screen.getByText("Un arquero que no ve.")).toBeInTheDocument();
+  });
+
+  it("renders the materialize preview chrome in English for the en locale (UI-REQ-2)", async () => {
+    // Seed the cached locale so the hook fallback resolves `en` (renderPage
+    // has no LocaleProvider). Cleaned up so later tests keep the es default.
+    window.localStorage.setItem(
+      "demiurgos-locale",
+      JSON.stringify({ ...DEFAULT_LOCALE, ui: "en" }),
+    );
+    try {
+      const user = userEvent.setup();
+      getIdeaMock.mockResolvedValue(detail);
+      previewMaterializeMock.mockResolvedValue(previewResult);
+      renderPage();
+
+      await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+      await user.click(
+        screen.getByRole("button", { name: tEn("ideas.materialize.button") }),
+      );
+      await user.selectOptions(
+        screen.getByLabelText(tEn("ideas.materialize.worldLabel")),
+        "vibrantes",
+      );
+      await user.click(
+        screen.getByRole("button", { name: tEn("ideas.materialize.preview") }),
+      );
+
+      const dialog = await screen.findByRole("dialog", {
+        name: tEn("ideas.preview.title"),
+      });
+      expect(
+        within(dialog).getByRole("button", { name: tEn("ideas.preview.create") }),
+      ).toBeInTheDocument();
+      // Both the header icon button and the footer button carry this label.
+      expect(
+        within(dialog).getAllByRole("button", { name: tEn("ideas.preview.close") })
+          .length,
+      ).toBeGreaterThan(0);
+    } finally {
+      window.localStorage.removeItem("demiurgos-locale");
+    }
   });
 });
 

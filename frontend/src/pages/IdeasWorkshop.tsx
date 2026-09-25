@@ -43,6 +43,7 @@ import { getErrorMessage } from "@/lib/utils";
 import type { ApiError, FileNode, SuccessResponse } from "@/api/types";
 import { createFileConfirmed, requestConfirmation } from "@/api/wiki";
 import { useFileTree } from "@/hooks/useFileTree";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 const TYPE_LABELS: Record<IdeaType, string> = {
   personaje: "Personaje",
@@ -160,6 +161,7 @@ function MaterializePreviewDialog({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const { t } = useAppLanguage();
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
@@ -172,17 +174,19 @@ function MaterializePreviewDialog({
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label="Ficha preview"
+        aria-label={t("ideas.preview.title")}
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-edge px-6 py-4">
-          <h2 className="font-heading text-h4 text-primary">Ficha preview</h2>
+          <h2 className="font-heading text-h4 text-primary">
+            {t("ideas.preview.title")}
+          </h2>
           <button
             type="button"
             onClick={onClose}
             disabled={confirming}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary disabled:opacity-50"
-            aria-label="Close"
+            aria-label={t("ideas.preview.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -192,12 +196,13 @@ function MaterializePreviewDialog({
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
           {collision && !preview ? (
             <div className="rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-xs text-status-error">
-              <p className="font-medium">The target already exists.</p>
+              <p className="font-medium">{t("ideas.preview.collisionTitle")}</p>
               <p className="mt-1">
-                Target: <span className="font-mono">{collision.target}</span>
+                {t("ideas.preview.targetLabel")}{" "}
+                <span className="font-mono">{collision.target}</span>
               </p>
               <p className="mt-1">
-                Suggested slug:{" "}
+                {t("ideas.preview.suggestedSlug")}{" "}
                 <span className="font-mono">{collision.suggested_slug}</span>{" "}
                 (→{" "}
                 <span className="font-mono">{collision.suggested_target}</span>)
@@ -206,19 +211,20 @@ function MaterializePreviewDialog({
           ) : preview ? (
             <div className="space-y-4">
               <p className="text-xs text-muted">
-                Target: <span className="font-mono">{preview.target.path}</span>
+                {t("ideas.preview.targetLabel")}{" "}
+                <span className="font-mono">{preview.target.path}</span>
               </p>
               <MarkdownViewer
                 content={preview.content}
                 mundo={preview.target.world}
                 imageFit="contain"
               />
-              <section aria-label="Proposed relations">
+              <section aria-label={t("ideas.preview.proposedRelations")}>
                 <h3 className="mb-1 text-body font-medium text-primary">
-                  Proposed relations
+                  {t("ideas.preview.proposedRelations")}
                 </h3>
                 {preview.proposed_relations.length === 0 ? (
-                  <p className="text-xs text-muted">None.</p>
+                  <p className="text-xs text-muted">{t("ideas.preview.none")}</p>
                 ) : (
                   <ul className="space-y-1">
                     {preview.proposed_relations.map(
@@ -242,12 +248,12 @@ function MaterializePreviewDialog({
                   </ul>
                 )}
               </section>
-              <section aria-label="Discarded relations">
+              <section aria-label={t("ideas.preview.discardedRelations")}>
                 <h3 className="mb-1 text-body font-medium text-primary">
-                  Discarded relations
+                  {t("ideas.preview.discardedRelations")}
                 </h3>
                 {preview.discarded_relations.length === 0 ? (
-                  <p className="text-xs text-muted">None.</p>
+                  <p className="text-xs text-muted">{t("ideas.preview.none")}</p>
                 ) : (
                   <ul className="space-y-1">
                     {preview.discarded_relations.map(
@@ -278,7 +284,7 @@ function MaterializePreviewDialog({
             disabled={confirming}
             className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
           >
-            Close
+            {t("ideas.preview.close")}
           </button>
           {preview && !collision && (
             <button
@@ -287,7 +293,7 @@ function MaterializePreviewDialog({
               disabled={confirming}
               className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {confirming ? "Creating..." : "Create ficha"}
+              {confirming ? t("ideas.preview.creating") : t("ideas.preview.create")}
             </button>
           )}
         </div>
@@ -308,6 +314,7 @@ function MaterializePreviewDialog({
  */
 export default function IdeasWorkshop() {
   const { worlds } = useWorlds();
+  const { t } = useAppLanguage();
 
   // ── Filters ──────────────────────────────────────────────────────────────
   const [typeFilter, setTypeFilter] = useState<"" | IdeaType>("");
@@ -699,7 +706,7 @@ export default function IdeasWorkshop() {
   // dialog then shows the suggested slug instead of a draft.
   const handlePreview = useCallback(async () => {
     if (!materializeFor || !materializeWorld) {
-      setActionError("Select a world to preview the ficha.");
+      setActionError(t("ideas.materialize.error.selectWorldPreview"));
       return;
     }
     setPreviewing(true);
@@ -733,6 +740,7 @@ export default function IdeasWorkshop() {
     materializeFolder,
     materializeTitleHint,
     notifyError,
+    t,
   ]);
 
   // Confirm — issue the single-use edit-confirmation token (kind=new,
@@ -764,8 +772,10 @@ export default function IdeasWorkshop() {
       closeMaterialize();
       showToast(
         result.index_status
-          ? `Ficha created (index status: ${result.index_status}).`
-          : "Ficha created.",
+          ? t("ideas.materialize.toast.createdIndex", {
+              status: result.index_status,
+            })
+          : t("ideas.materialize.toast.created"),
       );
     } catch (err) {
       notifyError(err);
@@ -780,13 +790,14 @@ export default function IdeasWorkshop() {
     closeMaterialize,
     notifyError,
     showToast,
+    t,
   ]);
 
   // Legacy fallback (R-IM-10): mark the idea as used in the world WITHOUT
   // creating a ficha, via the original POST /api/ideas/{slug}/materialize.
   const handleMarkUsedOnly = useCallback(async () => {
     if (!materializeFor || !materializeWorld) {
-      setActionError("Select a world to mark the idea as used.");
+      setActionError(t("ideas.materialize.error.selectWorldMark"));
       return;
     }
     setMarkingUsed(true);
@@ -797,7 +808,10 @@ export default function IdeasWorkshop() {
       await mutateList();
       closeMaterialize();
       showToast(
-        `Idea marked as used in ${materializeWorld} (used in: ${result.used_in.join(", ")}).`,
+        t("ideas.materialize.toast.used", {
+          world: materializeWorld,
+          usedIn: result.used_in.join(", "),
+        }),
       );
     } catch (err) {
       notifyError(err);
@@ -812,6 +826,7 @@ export default function IdeasWorkshop() {
     closeMaterialize,
     notifyError,
     showToast,
+    t,
   ]);
 
   // ── Delete ───────────────────────────────────────────────────────────────
@@ -1318,8 +1333,10 @@ export default function IdeasWorkshop() {
           </section>
 
           {/* Materialize */}
-          <section aria-label="Usar idea en un mundo" className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
-            <h3 className="mb-2 text-body font-medium text-primary">Usar en un mundo</h3>
+          <section aria-label={t("ideas.materialize.sectionAria")} className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
+            <h3 className="mb-2 text-body font-medium text-primary">
+              {t("ideas.materialize.heading")}
+            </h3>
             {materializeFor !== selectedIdea.slug ? (
               <button
                 type="button"
@@ -1327,13 +1344,13 @@ export default function IdeasWorkshop() {
                 className="flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary"
               >
                 <Icon name="world" size={13} />
-                Materializar
+                {t("ideas.materialize.button")}
               </button>
             ) : (
               <div className="space-y-2">
                 <div>
                   <label htmlFor="materialize-world" className="mb-1 block text-xs text-muted">
-                    Mundo
+                    {t("ideas.materialize.worldLabel")}
                   </label>
                   <select
                     id="materialize-world"
@@ -1341,7 +1358,7 @@ export default function IdeasWorkshop() {
                     onChange={(e) => setMaterializeWorld(e.target.value)}
                     className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
                   >
-                    <option value="">Elegí un mundo...</option>
+                    <option value="">{t("ideas.materialize.worldPlaceholder")}</option>
                     {worlds.map((world) => (
                       <option key={world.name} value={world.name}>
                         {world.name}
@@ -1351,7 +1368,7 @@ export default function IdeasWorkshop() {
                 </div>
                 <div>
                   <label htmlFor="materialize-section" className="mb-1 block text-xs text-muted">
-                    Section
+                    {t("ideas.materialize.sectionLabel")}
                   </label>
                   <select
                     id="materialize-section"
@@ -1370,7 +1387,9 @@ export default function IdeasWorkshop() {
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-muted">Folder</label>
+                  <label className="mb-1 block text-xs text-muted">
+                    {t("ideas.materialize.folderLabel")}
+                  </label>
                   <div className="max-h-40 overflow-y-auto rounded-md border border-edge bg-surface px-2 py-1.5">
                     <button
                       type="button"
@@ -1379,10 +1398,12 @@ export default function IdeasWorkshop() {
                       className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-primary transition-colors hover:bg-surface-hover aria-pressed:bg-action/15 aria-pressed:text-action"
                     >
                       <Icon name="folder" size={12} className="shrink-0 opacity-70" />
-                      <span>(root)</span>
+                      <span>{t("ideas.materialize.root")}</span>
                     </button>
                     {folderLoading ? (
-                      <p className="px-2 py-1 text-xs text-muted">Loading folders...</p>
+                      <p className="px-2 py-1 text-xs text-muted">
+                        {t("ideas.materialize.loadingFolders")}
+                      </p>
                     ) : (
                       <FolderTree
                         nodes={folderNodes}
@@ -1394,13 +1415,13 @@ export default function IdeasWorkshop() {
                 </div>
                 <div>
                   <label htmlFor="materialize-title-hint" className="mb-1 block text-xs text-muted">
-                    Title hint (optional)
+                    {t("ideas.materialize.titleHintLabel")}
                   </label>
                   <input
                     id="materialize-title-hint"
                     value={materializeTitleHint}
                     onChange={(e) => setMaterializeTitleHint(e.target.value)}
-                    placeholder="ej: el arquero que no ve"
+                    placeholder={t("ideas.materialize.titleHintPlaceholder")}
                     className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
                   />
                 </div>
@@ -1411,7 +1432,9 @@ export default function IdeasWorkshop() {
                     disabled={previewing || !materializeWorld}
                     className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {previewing ? "Previewing..." : "Preview"}
+                    {previewing
+                      ? t("ideas.materialize.previewing")
+                      : t("ideas.materialize.preview")}
                   </button>
                   <button
                     type="button"
@@ -1420,8 +1443,8 @@ export default function IdeasWorkshop() {
                     className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {markingUsed
-                      ? "Marking as used..."
-                      : "Only mark as used (without creating ficha)"}
+                      ? t("ideas.materialize.markingUsed")
+                      : t("ideas.materialize.markUsedOnly")}
                   </button>
                   <button
                     type="button"
@@ -1429,7 +1452,7 @@ export default function IdeasWorkshop() {
                     disabled={previewing || confirming || markingUsed}
                     className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
                   >
-                    Cancel
+                    {t("ideas.materialize.cancel")}
                   </button>
                 </div>
               </div>

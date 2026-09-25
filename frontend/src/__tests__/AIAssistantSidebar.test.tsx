@@ -567,7 +567,9 @@ describe("AIAssistantSidebar null-mundo (global context)", () => {
     expect(screen.getByText("Banco global de ideas")).toBeInTheDocument();
     expect(screen.getByText(tEs("assistant.empty.globalTitle"))).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Dame una idea de personaje" }),
+      screen.getByRole("button", {
+        name: tEs("assistant.suggestion.global.character"),
+      }),
     ).toBeInTheDocument();
     // No file to edit in the global context — the edit action explains why.
     expect(
