@@ -6,6 +6,7 @@ import { completeRecovery, getAuthStatus, recoverAccount } from "@/api/wiki";
 import type { AuthSessionStatus } from "@/api/types";
 import { useCredentialsAuth } from "@/hooks/useCredentialsAuth";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { reloadPage } from "@/lib/reloadPage";
 
 /**
@@ -29,6 +30,7 @@ import { reloadPage } from "@/lib/reloadPage";
  * dismissible at ~14d and NEVER a hard block.
  */
 export default function LoginScreen() {
+  const { t } = useAppLanguage();
   const [status, setStatus] = useState<AuthSessionStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [statusError, setStatusError] = useState<Error | null>(null);
@@ -53,7 +55,7 @@ export default function LoginScreen() {
           setStatusError(
             cause instanceof Error
               ? cause
-              : new Error("No se pudo consultar la sesión"),
+              : new Error(t("login.error.status")),
           );
         }
       })
@@ -77,7 +79,7 @@ export default function LoginScreen() {
       setLocalActionError(
         cause instanceof Error
           ? cause.message
-          : "No se pudo iniciar sesión",
+          : t("login.error.local"),
       );
     } finally {
       setLocalActionLoading(false);
@@ -89,7 +91,7 @@ export default function LoginScreen() {
       <div className="flex min-h-screen items-center justify-center bg-surface">
         <div className="flex flex-col items-center gap-4">
           <Spinner size="lg" />
-          <p className="text-body text-muted">Verificando sesión…</p>
+          <p className="text-body text-muted">{t("login.checking")}</p>
         </div>
       </div>
     );
@@ -99,10 +101,10 @@ export default function LoginScreen() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface px-4">
         <div className="w-full max-w-md rounded-lg border border-status-error/30 bg-surface-raised p-6">
-          <h1 className="font-heading text-h3 text-status-error">Error de conexión</h1>
+          <h1 className="font-heading text-h3 text-status-error">{t("login.connectionError")}</h1>
           <p className="mt-3 text-body text-primary">{statusError.message}</p>
           <p className="mt-3 text-small text-muted">
-            Verificá que el servidor esté corriendo y recargá la página.
+            {t("login.serverHint")}
           </p>
         </div>
       </div>
@@ -117,16 +119,16 @@ export default function LoginScreen() {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface px-4">
         <div className="w-full max-w-md rounded-lg border border-edge bg-surface-raised p-6">
-          <h1 className="font-heading text-h3 text-primary">Autenticación desactivada</h1>
+          <h1 className="font-heading text-h3 text-primary">{t("login.disabled.title")}</h1>
           <p className="mt-3 text-body text-muted">
-            La autenticación está desactivada. No es necesario iniciar sesión.
+            {t("login.disabled.body")}
           </p>
           <p className="mt-3 text-small text-muted">
-            Si querés habilitar la autenticación, configurá{" "}
+            {t("login.disabled.hint")}{" "}
             <code className="rounded bg-surface px-1.5 py-0.5 text-icon-muted">
               DEMIURGOS_AUTH_MODE
             </code>{" "}
-            en <code className="rounded bg-surface px-1.5 py-0.5 text-icon-muted">.env</code>.
+            {t("login.disabled.hintTail")}{" "}<code className="rounded bg-surface px-1.5 py-0.5 text-icon-muted">.env</code>.
           </p>
         </div>
       </div>
@@ -147,9 +149,9 @@ export default function LoginScreen() {
           <ReauthBanner onDismiss={() => setReauthDismissed(true)} />
         )}
 
-        <h1 className="font-heading text-h3 text-primary">Bienvenido a Demiurgos</h1>
+        <h1 className="font-heading text-h3 text-primary">{t("login.welcome")}</h1>
         <p className="mt-3 text-body text-muted">
-          Iniciá sesión para acceder al Taller de Mundo y todas sus capacidades.
+          {t("login.intro")}
         </p>
 
         {status.authenticated ? (
@@ -161,20 +163,22 @@ export default function LoginScreen() {
               >
                 <p className="text-small text-primary">
                   {creds.reauthDue
-                    ? "Reingreso recomendado: hoy"
-                    : `Reingreso recomendado en ${creds.daysUntilReauth} día${creds.daysUntilReauth === 1 ? "" : "s"}`}
+                    ? t("login.reauthToday")
+                    : creds.daysUntilReauth === 1
+                      ? t("login.reauthInDaysOne")
+                      : t("login.reauthInDaysMany", {
+                          days: creds.daysUntilReauth,
+                        })}
                 </p>
                 <p className="mt-2 text-small text-muted">
-                  Si no reingresas tu contraseña, la sesión de Demiurgos se
-                  cerrará. Y si olvidaste tu contraseña, solo vas a poder
-                  recuperarla con tus palabras claves.
+                  {t("login.reauthWarning")}
                 </p>
               </div>
             )}
-            <p className="text-small text-status-success">Sesión activa</p>
+            <p className="text-small text-status-success">{t("login.sessionActive")}</p>
             <p className="mt-1 text-small text-muted">{status.label}</p>
             <p className="mt-3 text-small text-muted">
-              Redirigiendo a la aplicación…
+              {t("login.redirecting")}
             </p>
           </div>
         ) : creds.enabled ? (
@@ -208,20 +212,17 @@ export default function LoginScreen() {
 /** Dismissible soft re-auth reminder (R-AC-04, S-AC-04a/c). Never a hard
  *  block — dismissing only hides the banner for this page view. */
 function ReauthBanner({ onDismiss }: { onDismiss: () => void }) {
+  const { t } = useAppLanguage();
   return (
     <div
       role="alert"
       className="mb-5 rounded-lg border border-action/40 bg-action/10 p-3"
     >
       <div className="flex items-start justify-between gap-3">
-        <p className="text-small text-primary">
-          Si no reingresas tu contraseña, la sesión de Demiurgos se cerrará. Y
-          si olvidaste tu contraseña, solo vas a poder recuperarla con tus
-          palabras claves.
-        </p>
+        <p className="text-small text-primary">{t("login.reauthWarning")}</p>
         <button
           type="button"
-          aria-label="Descartar aviso"
+          aria-label={t("login.dismissAria")}
           onClick={onDismiss}
           className="shrink-0 rounded px-1.5 text-small text-muted hover:text-primary"
         >
@@ -259,6 +260,7 @@ function CredentialsLogin({
   onLogin,
   onClearError,
 }: CredentialsLoginProps) {
+  const { t } = useAppLanguage();
   const [password, setPassword] = useState("");
   const [rememberMe, setRememberMe] = useState(false);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
@@ -286,13 +288,13 @@ function CredentialsLogin({
         {hasPassword !== false && (
           <>
             <label htmlFor="credentials-password" className="sr-only">
-              Contraseña
+              {t("login.password")}
             </label>
             <input
               id="credentials-password"
               type="password"
               autoComplete="current-password"
-              placeholder="Contraseña"
+              placeholder={t("login.password")}
               value={password}
               onChange={(event) => {
                 setPassword(event.target.value);
@@ -310,7 +312,7 @@ function CredentialsLogin({
             onChange={(event) => setRememberMe(event.target.checked)}
             className="h-4 w-4 rounded border-edge bg-surface accent-status-success"
           />
-          Recordarme por 30 días
+          {t("login.rememberMe")}
         </label>
 
         <Button
@@ -322,16 +324,16 @@ function CredentialsLogin({
           {loginLoading ? (
             <span className="flex items-center justify-center gap-2">
               <Spinner size="sm" />
-              Iniciando sesión…
+              {t("login.signingIn")}
             </span>
           ) : (
-            "Entrar"
+            t("login.enter")
           )}
         </Button>
       </div>
 
       <p className="mt-3 text-center text-small text-muted">
-        La sesión es local y segura. No requiere credenciales externas.
+        {t("login.localNote")}
       </p>
 
       {loginError && (
@@ -342,11 +344,11 @@ function CredentialsLogin({
 
       {noAccount && (
         <p className="mt-3 text-small text-muted">
-          ¿Primera vez?{" "}
+          {t("login.noAccount")}{" "}
           <Link to="/onboarding" className="text-icon-muted underline">
-            Configurá tu cuenta
+            {t("login.configureAccount")}
           </Link>{" "}
-          para poder entrar.
+          {t("login.noAccountTail")}
         </p>
       )}
 
@@ -356,7 +358,7 @@ function CredentialsLogin({
           onClick={() => setRecoveryOpen(true)}
           className="text-small text-icon-muted underline hover:text-primary"
         >
-          ¿Olvidaste tu contraseña?
+          {t("login.forgotPassword")}
         </button>
       </div>
     </form>
@@ -375,6 +377,7 @@ function RecoveryFlow({
   currentUsername?: string;
   onClose: () => void;
 }) {
+  const { t } = useAppLanguage();
   const [words, setWords] = useState("");
   const [recoveryToken, setRecoveryToken] = useState<string | null>(null);
   const [newUsername, setNewUsername] = useState(currentUsername ?? "");
@@ -394,7 +397,7 @@ function RecoveryFlow({
       setError(
         cause instanceof Error
           ? cause.message
-          : "No se pudieron verificar las palabras de recuperación",
+          : t("login.recovery.wordsError"),
       );
     } finally {
       setBusy(false);
@@ -417,7 +420,7 @@ function RecoveryFlow({
       setError(
         cause instanceof Error
           ? cause.message
-          : "No se pudieron actualizar las credenciales",
+          : t("login.recovery.credentialsError"),
       );
     } finally {
       setBusy(false);
@@ -432,7 +435,7 @@ function RecoveryFlow({
           className="rounded-lg border border-status-success/40 bg-surface/50 p-3"
         >
           <p className="text-small text-status-success">
-            Credenciales actualizadas. Iniciá sesión con tus nuevos datos.
+            {t("login.recovery.done")}
           </p>
         </div>
         <Button
@@ -440,7 +443,7 @@ function RecoveryFlow({
           onClick={onClose}
           className="mt-4 w-full"
         >
-          Volver al inicio de sesión
+          {t("login.recovery.back")}
         </Button>
       </div>
     );
@@ -450,20 +453,19 @@ function RecoveryFlow({
     return (
       <form onSubmit={handleRecover} className="mt-6">
         <h2 className="font-heading text-body text-primary">
-          Recuperar cuenta
+          {t("login.recovery.title")}
         </h2>
         <p className="mt-1 text-small text-muted">
-          Ingresá tus palabras claves para demostrar que la cuenta es tuya y
-          poder cambiar el usuario o la contraseña.
+          {t("login.recovery.intro")}
         </p>
         <label htmlFor="recovery-words" className="sr-only">
-          Palabras claves
+          {t("login.recovery.words")}
         </label>
         <input
           id="recovery-words"
           type="text"
           autoComplete="off"
-          placeholder="Palabras claves"
+          placeholder={t("login.recovery.words")}
           value={words}
           onChange={(event) => setWords(event.target.value)}
           className="mt-3 w-full rounded-lg border border-edge bg-surface px-3 py-2 text-body text-primary placeholder:text-muted focus:border-icon-muted focus:outline-none"
@@ -474,7 +476,7 @@ function RecoveryFlow({
           disabled={busy || words.trim() === ""}
           className="mt-3 w-full"
         >
-          {busy ? "Verificando…" : "Recuperar"}
+          {busy ? t("login.recovery.verifying") : t("login.recovery.submit")}
         </Button>
         {error && (
           <p className="mt-3 text-small text-status-error" role="alert">
@@ -487,7 +489,7 @@ function RecoveryFlow({
             onClick={onClose}
             className="text-small text-icon-muted underline hover:text-primary"
           >
-            Volver al inicio de sesión
+            {t("login.recovery.back")}
           </button>
         </div>
       </form>
@@ -497,15 +499,14 @@ function RecoveryFlow({
   return (
     <form onSubmit={handleComplete} className="mt-6">
       <h2 className="font-heading text-body text-primary">
-        Cambiar usuario o contraseña
+        {t("login.recovery.changeTitle")}
       </h2>
       <p className="mt-1 text-small text-muted">
-        Completá al menos un campo. La contraseña es opcional: si la dejás
-        vacía y ya existe, se conserva.
+        {t("login.recovery.changeIntro")}
       </p>
 
       <label htmlFor="recovery-username" className="mt-3 block text-small text-primary">
-        Usuario
+        {t("login.recovery.username")}
         <input
           id="recovery-username"
           type="text"
@@ -517,7 +518,7 @@ function RecoveryFlow({
       </label>
 
       <label htmlFor="recovery-password" className="mt-3 block text-small text-primary">
-        Nueva contraseña (opcional)
+        {t("login.recovery.newPassword")}
         <input
           id="recovery-password"
           type="password"
@@ -534,7 +535,7 @@ function RecoveryFlow({
         disabled={busy}
         className="mt-4 w-full"
       >
-        {busy ? "Guardando…" : "Guardar cambios"}
+        {busy ? t("login.recovery.saving") : t("login.recovery.save")}
       </Button>
       {error && (
         <p className="mt-3 text-small text-status-error" role="alert">
@@ -547,7 +548,7 @@ function RecoveryFlow({
           onClick={onClose}
           className="text-small text-icon-muted underline hover:text-primary"
         >
-          Volver al inicio de sesión
+          {t("login.recovery.back")}
         </button>
       </div>
     </form>
@@ -574,10 +575,11 @@ function LocalDevLogin({
   actionError,
   onLogin,
 }: LocalDevLoginProps) {
+  const { t } = useAppLanguage();
   if (isLoading) {
     return (
       <div className="mt-6 flex items-center gap-2 text-small text-muted">
-        <Spinner size="sm" /> Verificando sesión local…
+        <Spinner size="sm" /> {t("login.local.checking")}
       </div>
     );
   }
@@ -590,10 +592,10 @@ function LocalDevLogin({
     <div className="mt-6">
       {authenticated ? (
         <div>
-          <p className="text-small text-status-success">Sesión local activa</p>
+          <p className="text-small text-status-success">{t("login.local.active")}</p>
           <p className="mt-1 text-small text-muted">{label}</p>
           <p className="mt-3 text-small text-muted">
-            Redirigiendo a la aplicación…
+            {t("login.redirecting")}
           </p>
         </div>
       ) : (
@@ -607,14 +609,14 @@ function LocalDevLogin({
             {actionLoading ? (
               <span className="flex items-center justify-center gap-2">
                 <Spinner size="sm" />
-                Iniciando sesión…
+                {t("login.signingIn")}
               </span>
             ) : (
-              "Iniciar sesión local"
+              t("login.local.start")
             )}
           </Button>
           <p className="mt-3 text-center text-small text-muted">
-            La sesión es local y segura. No requiere credenciales externas.
+            {t("login.localNote")}
           </p>
         </div>
       )}

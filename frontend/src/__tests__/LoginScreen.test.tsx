@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import LoginScreen from "@/pages/LoginScreen";
 import { reloadPage } from "@/lib/reloadPage";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 /**
  * jsdom's Location.reload is an own non-configurable property that cannot be
@@ -218,7 +219,7 @@ describe("LoginScreen (credentials vault mode)", () => {
     await user.click(await screen.findByRole("button", { name: "Entrar" }));
 
     expect(
-      await screen.findByRole("link", { name: /configurá tu cuenta/i }),
+      await screen.findByRole("link", { name: tEs("login.configureAccount") }),
     ).toBeInTheDocument();
   });
 

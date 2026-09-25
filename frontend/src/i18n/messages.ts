@@ -867,6 +867,62 @@ export const messages = {
     "backup.notice.wrote":
       "Se escribió una copia local en la carpeta elegida.",
 
+    "login.checking": "Verificando sesión…",
+    "login.connectionError": "Error de conexión",
+    "login.serverHint":
+      "Verifica que el servidor esté corriendo y recarga la página.",
+    "login.disabled.title": "Autenticación desactivada",
+    "login.disabled.body":
+      "La autenticación está desactivada. No es necesario iniciar sesión.",
+    "login.disabled.hint": "Si quieres habilitar la autenticación, configura",
+    "login.disabled.hintTail": "en",
+    "login.welcome": "Bienvenido a Demiurgos",
+    "login.intro":
+      "Inicia sesión para acceder al Taller de Mundo y todas sus capacidades.",
+    "login.reauthToday": "Reingreso recomendado: hoy",
+    "login.reauthInDaysOne": "Reingreso recomendado en 1 día",
+    "login.reauthInDaysMany": "Reingreso recomendado en {days} días",
+    "login.reauthWarning":
+      "Si no reingresas tu contraseña, la sesión de Demiurgos se cerrará. Y si olvidaste tu contraseña, solo vas a poder recuperarla con tus palabras claves.",
+    "login.sessionActive": "Sesión activa",
+    "login.redirecting": "Redirigiendo a la aplicación…",
+    "login.dismissAria": "Descartar aviso",
+    "login.password": "Contraseña",
+    "login.rememberMe": "Recordarme por 30 días",
+    "login.signingIn": "Iniciando sesión…",
+    "login.enter": "Entrar",
+    "login.localNote":
+      "La sesión es local y segura. No requiere credenciales externas.",
+    "login.noAccount": "¿Primera vez?",
+    "login.configureAccount": "Configura tu cuenta",
+    "login.noAccountTail": "para poder entrar.",
+    "login.forgotPassword": "¿Olvidaste tu contraseña?",
+    "login.recovery.title": "Recuperar cuenta",
+    "login.recovery.intro":
+      "Ingresa tus palabras claves para demostrar que la cuenta es tuya y poder cambiar el usuario o la contraseña.",
+    "login.recovery.words": "Palabras claves",
+    "login.recovery.verifying": "Verificando…",
+    "login.recovery.submit": "Recuperar",
+    "login.recovery.wordsError":
+      "No se pudieron verificar las palabras de recuperación",
+    "login.recovery.changeTitle": "Cambiar usuario o contraseña",
+    "login.recovery.changeIntro":
+      "Completa al menos un campo. La contraseña es opcional: si la dejas vacía y ya existe, se conserva.",
+    "login.recovery.username": "Usuario",
+    "login.recovery.newPassword": "Nueva contraseña (opcional)",
+    "login.recovery.save": "Guardar cambios",
+    "login.recovery.saving": "Guardando…",
+    "login.recovery.credentialsError":
+      "No se pudieron actualizar las credenciales",
+    "login.recovery.done":
+      "Credenciales actualizadas. Inicia sesión con tus nuevos datos.",
+    "login.recovery.back": "Volver al inicio de sesión",
+    "login.local.checking": "Verificando sesión local…",
+    "login.local.active": "Sesión local activa",
+    "login.local.start": "Iniciar sesión local",
+    "login.error.status": "No se pudo consultar la sesión",
+    "login.error.local": "No se pudo iniciar sesión",
+
     "error.unknown": "Ocurrió un error inesperado.",
     "error.sessionExpired": "La sesión expiró. Inicia sesión e intenta de nuevo.",
     "error.network.unreachable": "No se pudo conectar al servidor. Verifica que esté corriendo.",
@@ -1742,6 +1798,61 @@ export const messages = {
       "Folder saved. Run a backup to record the first write.",
     "backup.notice.wrote":
       "A local copy was written to the chosen folder.",
+
+    "login.checking": "Checking session…",
+    "login.connectionError": "Connection error",
+    "login.serverHint": "Make sure the server is running and reload the page.",
+    "login.disabled.title": "Authentication disabled",
+    "login.disabled.body":
+      "Authentication is disabled. No sign-in is required.",
+    "login.disabled.hint": "To enable authentication, configure",
+    "login.disabled.hintTail": "in",
+    "login.welcome": "Welcome to Demiurgos",
+    "login.intro":
+      "Sign in to access the World Workshop and all its capabilities.",
+    "login.reauthToday": "Re-entry recommended: today",
+    "login.reauthInDaysOne": "Re-entry recommended in 1 day",
+    "login.reauthInDaysMany": "Re-entry recommended in {days} days",
+    "login.reauthWarning":
+      "If you do not re-enter your password, your Demiurgos session will close. And if you forgot your password, you can only recover it with your recovery words.",
+    "login.sessionActive": "Active session",
+    "login.redirecting": "Redirecting to the application…",
+    "login.dismissAria": "Dismiss notice",
+    "login.password": "Password",
+    "login.rememberMe": "Remember me for 30 days",
+    "login.signingIn": "Signing in…",
+    "login.enter": "Enter",
+    "login.localNote":
+      "The session is local and secure. It requires no external credentials.",
+    "login.noAccount": "First time?",
+    "login.configureAccount": "Set up your account",
+    "login.noAccountTail": "to be able to sign in.",
+    "login.forgotPassword": "Forgot your password?",
+    "login.recovery.title": "Recover account",
+    "login.recovery.intro":
+      "Enter your recovery words to prove the account is yours and be able to change the username or password.",
+    "login.recovery.words": "Recovery words",
+    "login.recovery.verifying": "Verifying…",
+    "login.recovery.submit": "Recover",
+    "login.recovery.wordsError":
+      "The recovery words could not be verified",
+    "login.recovery.changeTitle": "Change username or password",
+    "login.recovery.changeIntro":
+      "Complete at least one field. The password is optional: if you leave it empty and one already exists, it is kept.",
+    "login.recovery.username": "Username",
+    "login.recovery.newPassword": "New password (optional)",
+    "login.recovery.save": "Save changes",
+    "login.recovery.saving": "Saving…",
+    "login.recovery.credentialsError":
+      "The credentials could not be updated",
+    "login.recovery.done":
+      "Credentials updated. Sign in with your new details.",
+    "login.recovery.back": "Back to sign-in",
+    "login.local.checking": "Checking local session…",
+    "login.local.active": "Local session active",
+    "login.local.start": "Start local session",
+    "login.error.status": "The session could not be checked",
+    "login.error.local": "Could not sign in",
 
     "error.unknown": "An unexpected error occurred.",
     "error.sessionExpired": "The session expired. Sign in and try again.",
