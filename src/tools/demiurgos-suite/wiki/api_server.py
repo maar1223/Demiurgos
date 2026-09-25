@@ -83,6 +83,23 @@ from convergence_injection import (
 )
 from guided_character_persistence import ReindexCoordinator
 from guided_character_provider import HermesGuidedProvider, guided_capabilities
+# Idea-materialization seam (AD2): a strict envelope + bounded prompt over the
+# same runs-adapter seam as the guided provider. The provider performs no
+# writes; MaterializationResponse.from_provider owns fail-closed validation.
+from idea_materialization_protocol import (
+    CancellationToken as MaterializationCancellationToken,
+    DEADLINE_MS,
+    PROTOCOL_VERSION as MATERIALIZATION_PROTOCOL_VERSION,
+    MaterializationRequest,
+    MaterializationResponse,
+)
+from idea_materialization_domain import (
+    build_ficha_skeleton,
+    build_grounding_candidates,
+    suggest_free_slug,
+    validate_relations,
+)
+from idea_materialization_provider import HermesMaterializationProvider
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore
 from co_creation_protocol import (
     Capabilities as CoCreationCapabilities,
@@ -2051,6 +2068,10 @@ _GUIDED_SESSIONS: Any = _LazyBinding(
     lambda: DurableGuidedSessionStore(db_path=_GUIDED_SESSIONS_DB)
 )
 _GUIDED_PROVIDER = None
+# Idea-materialization provider seam (AD2): wired to the runs adapter below
+# (same pattern as _GUIDED_PROVIDER); declared here so routes/helpers defined
+# before the wiring can reference it, and tests replace it after import.
+_MATERIALIZE_PROVIDER = None
 _GUIDED_CAPABILITIES: Capabilities | None = None
 _GUIDED_PROBE_LOCK = asyncio.Lock()
 # Active methodology/version pin. Phase 3 wires this to the compiled
@@ -2223,6 +2244,27 @@ _GUIDED_REINDEX: Any = _LazyBinding(
 _GUIDED_INDEX_REQUESTS: dict[str, tuple[str, str, str]] = {}
 # Review records are diskless until the existing confirmed create route succeeds.
 _GUIDED_PENDING_PROPOSALS: dict[str, dict[str, str | int]] = {}
+
+# Materialize preview store (AD3): pending idea-materialization proposals keyed
+# by ``proposal_id = f"materialize-{uuid.uuid4().hex}"``. Diskless until the
+# existing confirmed create route succeeds; TTL mirrors the confirmation store
+# (``_CONFIRM_TTL_SECONDS``, :3839) so the proposal and its token expire
+# together. Record shape: {proposal_id, principal_id, world, section, folder,
+# slug, target, content, digest, operation_id, created_at, expires_at}.
+_MATERIALIZE_PENDING_PROPOSALS: dict[str, dict] = {}
+_MATERIALIZE_TTL_SECONDS = 600
+
+# Graph-indexed sections a materialize preview may target (mirrors
+# ``graph_indexer._SCAN_SECTIONS``, graph_indexer.py:56). ``media`` is NOT
+# ficha-eligible and is rejected (R-IM-01).
+_MATERIALIZE_SECTIONS: frozenset[str] = frozenset({"lore", "personajes", "referencias"})
+
+
+def _prune_materialize_proposals() -> None:
+    """Drop expired materialize proposals (mirror ``_prune_expired_confirmations``)."""
+    now = datetime.now(timezone.utc)
+    for key in [k for k, r in _MATERIALIZE_PENDING_PROPOSALS.items() if r["expires_at"] <= now]:
+        _MATERIALIZE_PENDING_PROPOSALS.pop(key, None)
 
 
 def _invalidate_guided_proposal(session_id: str) -> None:
@@ -5969,6 +6011,10 @@ ACTIVITY_ADAPTER = HermesRunsActivityAdapter(
     client_provider=_get_hermes_client,
 )
 _GUIDED_PROVIDER = HermesGuidedProvider(ACTIVITY_ADAPTER)
+# Idea-materialization provider (AD2): the SAME runs-adapter seam, one Hermes
+# run per preview. Strict envelope validation is server-side (fail closed);
+# tests replace this module attribute after import.
+_MATERIALIZE_PROVIDER = HermesMaterializationProvider(ACTIVITY_ADAPTER)
 # Skill Madre provider (kernel-owned, co-creation-v1 envelope). Same adapter
 # seam as the guided provider; tests replace it after import.
 _CO_CREATION_PROVIDER = HermesCoCreationProvider(ACTIVITY_ADAPTER)
@@ -7993,6 +8039,7 @@ def export_idea_docx(slug: str, request: Request):
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
     return _docx_file_response(data, f"{slug}.docx")
+
 
 app.include_router(
     create_assistant_settings_router(

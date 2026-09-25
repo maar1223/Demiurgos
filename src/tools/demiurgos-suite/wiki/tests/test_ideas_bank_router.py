@@ -22,7 +22,11 @@ for _p in (str(_WIKI),):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from ideas_bank_router import create_ideas_bank_router  # noqa: E402
+from ideas_bank_router import (
+    IdeaMaterializePreviewRequest,
+    IdeaMaterializeRequest,
+    create_ideas_bank_router,
+)  # noqa: E402
 
 
 class _FakePrincipal:
@@ -393,6 +397,55 @@ def test_materialize_with_canon_rel(client: TestClient, tmp_path: Path) -> None:
 def test_materialize_missing_is_404(client: TestClient) -> None:
     resp = client.post("/api/ideas/no-existe/materialize", json={"world": "vibrantes"})
     assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# PR5 (task 4.3) — materialize request models
+# ---------------------------------------------------------------------------
+
+def test_idea_materialize_request_accepts_legacy_and_optional_fields() -> None:
+    """The legacy payload keeps working; section/folder/title_hint are optional."""
+    legacy = IdeaMaterializeRequest(world="vibrantes", canon_rel="lore/El_Arquero.md")
+    assert legacy.world == "vibrantes"
+    assert legacy.canon_rel == "lore/El_Arquero.md"
+    assert legacy.section is None and legacy.folder is None and legacy.title_hint is None
+    extended = IdeaMaterializeRequest(
+        world="Vibrantes", section="personajes", folder="", title_hint="El Arquero",
+    )
+    assert extended.section == "personajes"
+    assert extended.folder == ""
+    assert extended.title_hint == "El Arquero"
+
+
+def test_idea_materialize_preview_request_requires_world_and_section() -> None:
+    """The preview payload mandates world + section; folder/title_hint default."""
+    preview = IdeaMaterializePreviewRequest(world="Vibrantes", section="personajes")
+    assert preview.world == "Vibrantes"
+    assert preview.section == "personajes"
+    assert preview.folder == ""
+    assert preview.title_hint is None
+    with pytest.raises(Exception):
+        IdeaMaterializePreviewRequest(world="Vibrantes")
+    with pytest.raises(Exception):
+        IdeaMaterializePreviewRequest(section="personajes")
+
+
+def test_legacy_materialize_route_ignores_preview_fields(client: TestClient) -> None:
+    """R-IM-10: the legacy route stays unchanged when sent the new optional
+    fields — behavior is identical to the legacy payload."""
+    _create(client)
+    resp = client.post(
+        "/api/ideas/arquero-ciego/materialize",
+        json={"world": "vibrantes", "section": "lore", "folder": "tema",
+              "title_hint": "El Arquero Ciego"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["used_in"] == ["vibrantes"]
+    idea = client.get("/api/ideas/arquero-ciego").json()
+    assert idea["used_in"] == ["vibrantes"]
+    assert idea["status"] == "used"
 
 
 # ---------------------------------------------------------------------------

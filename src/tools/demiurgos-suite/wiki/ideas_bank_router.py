@@ -60,10 +60,35 @@ class IdeaUpdateRequest(BaseModel):
 
 
 class IdeaMaterializeRequest(BaseModel):
-    """POST /api/ideas/{slug}/materialize payload (R-CG-04)."""
+    """POST /api/ideas/{slug}/materialize payload (R-CG-04, legacy/fallback).
+
+    ``section``/``folder``/``title_hint`` are accepted (and ignored by the
+    legacy inert-metadata route) so the frontend may share one payload shape
+    across the legacy and preview flows; the legacy route behavior is
+    unchanged (R-IM-10).
+    """
 
     world: str
     canon_rel: str | None = None
+    section: str | None = None
+    folder: str | None = None
+    title_hint: str | None = None
+
+
+class IdeaMaterializePreviewRequest(BaseModel):
+    """POST /api/ideas/{slug}/materialize-preview payload (R-IM-01).
+
+    ``world`` must resolve to an existing world directory exactly (case-
+    sensitive, traversal-safe); ``section`` must be one of the graph-indexed
+    sections ``lore|personajes|referencias`` (``media`` is not ficha-eligible);
+    ``folder`` is a traversal-safe relative path inside the section (empty =
+    the section root); ``title_hint`` optionally steers the AI-authored title.
+    """
+
+    world: str
+    section: str
+    folder: str = ""
+    title_hint: str | None = None
 
 
 def create_ideas_bank_router(
@@ -277,6 +302,7 @@ __all__ = [
     "IDEA_STATUSES",
     "IDEA_TYPES",
     "IdeaCreateRequest",
+    "IdeaMaterializePreviewRequest",
     "IdeaMaterializeRequest",
     "IdeaUpdateRequest",
     "create_ideas_bank_router",
