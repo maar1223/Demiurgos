@@ -11,6 +11,7 @@ import {
   ACTIVE_WORLD_STORAGE_KEY,
   setCurrentWorld,
 } from "@/lib/currentWorld";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 vi.mock("@/hooks/useWorlds", () => ({
   useWorlds: vi.fn(),
@@ -552,7 +553,7 @@ describe("ToolWorkshop", () => {
     await user.click(screen.getByRole("tab", { name: "Crear skill" }));
     expect(
       screen.getByText(
-        "Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez.",
+        tEs("toolworkshop.subtitle.coCrear"),
       ),
     ).toBeInTheDocument();
 
@@ -601,7 +602,7 @@ describe("ToolWorkshop", () => {
       "true",
     );
     expect(
-      screen.getByText("Explorá y activá skills publicadas por mundo."),
+      screen.getByText(tEs("toolworkshop.subtitle.library")),
     ).toBeInTheDocument();
   });
 
@@ -613,7 +614,7 @@ describe("ToolWorkshop", () => {
 
     expect(
       screen.getByText(
-        "Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez.",
+        tEs("toolworkshop.subtitle.coCrear"),
       ),
     ).toBeInTheDocument();
   });
@@ -710,7 +711,7 @@ describe("ToolWorkshop", () => {
     });
     expect(
       screen.getByText(
-        "Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez.",
+        tEs("toolworkshop.subtitle.coCrear"),
       ),
     ).toBeInTheDocument();
   });

@@ -670,6 +670,106 @@ export const messages = {
     "cocreation.classification.eliminado": "Eliminado",
     "cocreation.provenance": "Deriva de {skillId}@{version}",
 
+    "methodology.library.sectionAria": "Metodologías de mi mundo",
+    "methodology.library.search": "Buscar",
+    "methodology.library.searchPlaceholder": "Buscar por nombre o skill_id",
+    "methodology.library.empty":
+      "Todavía no hay metodologías publicadas. Escribe un borrador y publícalo para activarlo por mundo.",
+    "methodology.library.emptyCta": "Crear tu primera skill",
+    "methodology.library.noResults": "Sin resultados",
+    "methodology.detail.sectionAria": "Detalle de metodología",
+    "methodology.detail.empty":
+      "Selecciona una metodología en el explorador para ver su detalle.",
+    "methodology.detail.loadError":
+      "No se pudo cargar el detalle de la metodología.",
+    "methodology.detail.unauthorized":
+      "No se pudo cargar el contenido publicado (requiere autenticación).",
+    "methodology.detail.adjuntos": "Adjuntos",
+    "methodology.detail.adjuntosAria": "Adjuntos",
+    "methodology.state.sectionAria":
+      "Estado y acciones de la metodología",
+    "methodology.state.empty":
+      "Selecciona una metodología para ver su estado y sus acciones.",
+    "methodology.state.versions": "Versiones",
+    "methodology.state.noVersions":
+      "No hay versiones publicadas de {skillId}.",
+    "methodology.state.selected": "Seleccionada",
+    "methodology.state.activeIn": "Activa en {worlds}",
+    "methodology.state.origin": "Origen",
+    "methodology.state.rootSkill":
+      "Skill raíz (no derivada de otra metodología).",
+    "methodology.state.compatibleTalleres": "Talleres compatibles",
+    "methodology.state.scopeTitle": "Alcance de taller",
+    "methodology.state.conflict": "Conflicto",
+    "methodology.state.etiquetas": "Etiquetas",
+    "methodology.state.actions": "Acciones",
+    "methodology.state.deactivate": "Desactivar",
+    "methodology.state.deactivateTitle":
+      "Quita esta versión de las nuevas sesiones del mundo seleccionado.",
+    "methodology.state.activate": "Activar",
+    "methodology.state.activateTitle":
+      "Activa esta versión para nuevas sesiones en el mundo seleccionado.",
+    "methodology.state.adapt": "Adaptar",
+    "methodology.state.adaptTitle":
+      "Deriva una versión editable de esta publicación.",
+    "methodology.state.compare": "Comparar",
+    "methodology.state.export": "Exportar",
+    "methodology.state.exportError":
+      "No se pudo exportar la metodología.",
+    "methodology.state.companionLabel": "Metodología de chat en {world}",
+    "methodology.state.companionOff": "Apagar",
+    "methodology.state.latencyNotice":
+      "Las charlas de IA en este mundo pueden tardar un poco más mientras haya skills de metodología de chat activas.",
+    "methodology.state.clear": "Limpiar",
+    "methodology.compare.title": "Comparación",
+    "methodology.compare.field": "Campo",
+    "methodology.compare.name": "Nombre",
+    "methodology.compare.version": "Versión",
+    "methodology.compare.taller": "Taller",
+    "methodology.compare.category": "Categoría funcional",
+    "methodology.compare.tags": "Etiquetas",
+    "methodology.compare.description": "Descripción",
+    "methodology.compare.classification": "Clasificación",
+    "methodology.compare.unclassified": "Sin clasificación",
+    "methodology.compare.dash": "—",
+    "methodology.global.sectionAria": "Biblioteca global de metodologías",
+    "methodology.global.search": "Buscar",
+    "methodology.global.searchPlaceholder":
+      "Buscar por nombre, descripción, skill_id o etiqueta",
+    "methodology.global.empty": "No hay metodologías publicadas",
+    "methodology.global.noResults": "Sin resultados",
+    "methodology.global.loadError":
+      "No se pudo cargar el inventario global de metodologías.",
+    "methodology.global.versionOne": "1 versión",
+    "methodology.global.versionMany": "{count} versiones",
+    "methodology.global.noTaller": "Sin taller",
+    "toolworkshop.subtitle.coCrear":
+      "Co-crea una skill conversando con el Co-creador de skills, una pregunta por vez.",
+    "toolworkshop.subtitle.library":
+      "Explora y activa skills publicadas por mundo.",
+    "toolworkshop.tabs.aria": "Vistas de la biblioteca de herramientas",
+    "toolworkshop.tabs.library": "Biblioteca",
+    "toolworkshop.tabs.coCrear": "Crear skill",
+    "toolworkshop.status.loadError":
+      "No se pudo cargar la biblioteca de metodologías.",
+    "toolworkshop.status.activateError":
+      "No se pudo activar la versión para este mundo.",
+    "toolworkshop.status.deactivateError":
+      "No se pudo desactivar la versión para este mundo.",
+    "toolworkshop.status.companionError":
+      "No se pudo actualizar la skill de metodología de chat para este mundo.",
+    "toolworkshop.worlds.loadError":
+      "No se pudo cargar la lista de mundos. Verifica que el servidor esté corriendo.",
+    "relaciones.title": "Relaciones y Canon",
+    "relaciones.intro":
+      "Grafo de entidades del mundo, estados de certeza y conexiones.",
+    "relaciones.tabsAria": "Secciones de Relaciones y Canon",
+    "relaciones.tab.grafo": "Grafo",
+    "relaciones.tab.conflictos": "Conflictos",
+    "relaciones.tab.propuestas": "Propuestas",
+    "relaciones.missingParams":
+      "Faltan parámetros de ruta. Selecciona un mundo desde la página principal.",
+
     "error.unknown": "Ocurrió un error inesperado.",
     "error.sessionExpired": "La sesión expiró. Inicia sesión e intenta de nuevo.",
     "error.network.unreachable": "No se pudo conectar al servidor. Verifica que esté corriendo.",
@@ -1352,6 +1452,103 @@ export const messages = {
     "cocreation.classification.anadido": "Added",
     "cocreation.classification.eliminado": "Removed",
     "cocreation.provenance": "Derived from {skillId}@{version}",
+
+    "methodology.library.sectionAria": "Methodologies of my world",
+    "methodology.library.search": "Search",
+    "methodology.library.searchPlaceholder": "Search by name or skill_id",
+    "methodology.library.empty":
+      "No published methodologies yet. Write a draft and publish it to activate it per world.",
+    "methodology.library.emptyCta": "Create your first skill",
+    "methodology.library.noResults": "No results",
+    "methodology.detail.sectionAria": "Methodology detail",
+    "methodology.detail.empty":
+      "Select a methodology in the explorer to view its detail.",
+    "methodology.detail.loadError":
+      "The methodology detail could not be loaded.",
+    "methodology.detail.unauthorized":
+      "The published content could not be loaded (authentication required).",
+    "methodology.detail.adjuntos": "Attachments",
+    "methodology.detail.adjuntosAria": "Attachments",
+    "methodology.state.sectionAria": "Methodology status and actions",
+    "methodology.state.empty":
+      "Select a methodology to view its status and actions.",
+    "methodology.state.versions": "Versions",
+    "methodology.state.noVersions": "No published versions of {skillId}.",
+    "methodology.state.selected": "Selected",
+    "methodology.state.activeIn": "Active in {worlds}",
+    "methodology.state.origin": "Origin",
+    "methodology.state.rootSkill":
+      "Root skill (not derived from another methodology).",
+    "methodology.state.compatibleTalleres": "Compatible workshops",
+    "methodology.state.scopeTitle": "Workshop scope",
+    "methodology.state.conflict": "Conflict",
+    "methodology.state.etiquetas": "Tags",
+    "methodology.state.actions": "Actions",
+    "methodology.state.deactivate": "Deactivate",
+    "methodology.state.deactivateTitle":
+      "Removes this version from new sessions of the selected world.",
+    "methodology.state.activate": "Activate",
+    "methodology.state.activateTitle":
+      "Activates this version for new sessions in the selected world.",
+    "methodology.state.adapt": "Adapt",
+    "methodology.state.adaptTitle":
+      "Derives an editable version of this publication.",
+    "methodology.state.compare": "Compare",
+    "methodology.state.export": "Export",
+    "methodology.state.exportError": "The methodology could not be exported.",
+    "methodology.state.companionLabel": "Chat methodology in {world}",
+    "methodology.state.companionOff": "Turn off",
+    "methodology.state.latencyNotice":
+      "AI chats in this world may take a bit longer while chat methodology skills are active.",
+    "methodology.state.clear": "Clear",
+    "methodology.compare.title": "Comparison",
+    "methodology.compare.field": "Field",
+    "methodology.compare.name": "Name",
+    "methodology.compare.version": "Version",
+    "methodology.compare.taller": "Workshop",
+    "methodology.compare.category": "Functional category",
+    "methodology.compare.tags": "Tags",
+    "methodology.compare.description": "Description",
+    "methodology.compare.classification": "Classification",
+    "methodology.compare.unclassified": "Unclassified",
+    "methodology.compare.dash": "—",
+    "methodology.global.sectionAria": "Global methodology library",
+    "methodology.global.search": "Search",
+    "methodology.global.searchPlaceholder":
+      "Search by name, description, skill_id, or tag",
+    "methodology.global.empty": "No published methodologies",
+    "methodology.global.noResults": "No results",
+    "methodology.global.loadError":
+      "The global methodology inventory could not be loaded.",
+    "methodology.global.versionOne": "1 version",
+    "methodology.global.versionMany": "{count} versions",
+    "methodology.global.noTaller": "No workshop",
+    "toolworkshop.subtitle.coCrear":
+      "Co-create a skill by chatting with the skill Co-creator, one question at a time.",
+    "toolworkshop.subtitle.library":
+      "Explore and activate skills published per world.",
+    "toolworkshop.tabs.aria": "Tool library views",
+    "toolworkshop.tabs.library": "Library",
+    "toolworkshop.tabs.coCrear": "Create skill",
+    "toolworkshop.status.loadError":
+      "The methodology library could not be loaded.",
+    "toolworkshop.status.activateError":
+      "The version could not be activated for this world.",
+    "toolworkshop.status.deactivateError":
+      "The version could not be deactivated for this world.",
+    "toolworkshop.status.companionError":
+      "The chat methodology skill could not be updated for this world.",
+    "toolworkshop.worlds.loadError":
+      "The world list could not be loaded. Make sure the server is running.",
+    "relaciones.title": "Relations and Canon",
+    "relaciones.intro":
+      "World entity graph, certainty states, and connections.",
+    "relaciones.tabsAria": "Relations and Canon sections",
+    "relaciones.tab.grafo": "Graph",
+    "relaciones.tab.conflictos": "Conflicts",
+    "relaciones.tab.propuestas": "Proposals",
+    "relaciones.missingParams":
+      "Missing route parameters. Select a world from the main page.",
 
     "error.unknown": "An unexpected error occurred.",
     "error.sessionExpired": "The session expired. Sign in and try again.",

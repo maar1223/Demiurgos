@@ -28,6 +28,8 @@ import type { Lens } from "@/components/organisms/LensToggle";
 import type { MethodologyInventoryItem, MethodologyStatus } from "@/api/types";
 import { markCompanionLatencyNotified } from "@/lib/companionLatency";
 import { getCurrentWorld, subscribeCurrentWorld } from "@/lib/currentWorld";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 import {
   getCurrentTaller,
   setCurrentTaller,
@@ -81,6 +83,7 @@ function useActiveTaller(): string {
  * - 🟢 Data: sidebar explorer + detail body + state/actions panel
  */
 export default function ToolWorkshop() {
+  const { t } = useAppLanguage();
   const { worlds, isLoading, error, mutate } = useWorlds();
   /** Activation target world. Initialized from the Navbar-persisted global
    *  world and kept in sync with it (same subscribe pattern as
@@ -114,7 +117,7 @@ export default function ToolWorkshop() {
    *  after activations; shared by the sidebar tree and the right state panel
    *  (no per-skill endpoint exists — filtering is client-side). */
   const [status, setStatus] = useState<MethodologyStatus | null>(null);
-  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusErrorKey, setStatusErrorKey] = useState<MessageKey | null>(null);
   const [busy, setBusy] = useState(false);
   /** World whose first-activation latency notice is active (R-UI notice): set
    *  only on the FIRST-ever successful companion activation in that world. */
@@ -131,11 +134,11 @@ export default function ToolWorkshop() {
   const coCreation = useCoCreation();
 
   const loadStatus = useCallback(async () => {
-    setStatusError(null);
+    setStatusErrorKey(null);
     try {
       setStatus(await getMethodologyStatus());
     } catch {
-      setStatusError("No se pudo cargar la biblioteca de metodologías.");
+      setStatusErrorKey("toolworkshop.status.loadError");
     }
   }, []);
 
@@ -152,12 +155,12 @@ export default function ToolWorkshop() {
         return;
       }
       setBusy(true);
-      setStatusError(null);
+      setStatusErrorKey(null);
       try {
         await activateMethodology(world, skillId, version);
         await loadStatus();
       } catch {
-        setStatusError("No se pudo activar la versión para este mundo.");
+        setStatusErrorKey("toolworkshop.status.activateError");
       } finally {
         setBusy(false);
       }
@@ -174,12 +177,12 @@ export default function ToolWorkshop() {
         return;
       }
       setBusy(true);
-      setStatusError(null);
+      setStatusErrorKey(null);
       try {
         await deactivateMethodology(world);
         await loadStatus();
       } catch {
-        setStatusError("No se pudo desactivar la versión para este mundo.");
+        setStatusErrorKey("toolworkshop.status.deactivateError");
       } finally {
         setBusy(false);
       }
@@ -198,7 +201,7 @@ export default function ToolWorkshop() {
       }
       const previousCompanions = status?.companions?.[world] ?? [];
       setBusy(true);
-      setStatusError(null);
+      setStatusErrorKey(null);
       try {
         if (on) {
           await activateCompanion(world, skillId, version);
@@ -214,7 +217,7 @@ export default function ToolWorkshop() {
           setLatencyNoticeWorld(world);
         }
       } catch {
-        setStatusError("No se pudo actualizar la skill de metodología de chat para este mundo.");
+        setStatusErrorKey("toolworkshop.status.companionError");
       } finally {
         setBusy(false);
       }
@@ -272,14 +275,14 @@ export default function ToolWorkshop() {
   };
 
   const tabs = [
-    { key: "taller", label: "Biblioteca" },
-    { key: "co-crear", label: "Crear skill" },
+    { key: "taller", label: t("toolworkshop.tabs.library") },
+    { key: "co-crear", label: t("toolworkshop.tabs.coCrear") },
   ] as const;
 
   const tablist = (
     <div
       role="tablist"
-      aria-label="Vistas de la biblioteca de herramientas"
+      aria-label={t("toolworkshop.tabs.aria")}
       className="inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
     >
       {tabs.map((tab) => (
@@ -307,7 +310,7 @@ export default function ToolWorkshop() {
         <EditorLayout
           header={
             <ToolWorkshopHeader
-              subtitle="Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez."
+              subtitle={t("toolworkshop.subtitle.coCrear")}
               tablist={tablist}
             />
           }
@@ -323,7 +326,7 @@ export default function ToolWorkshop() {
         <EditorLayout
           header={
             <ToolWorkshopHeader
-              subtitle="Explorá y activá skills publicadas por mundo."
+              subtitle={t("toolworkshop.subtitle.library")}
               tablist={tablist}
             />
           }
@@ -338,7 +341,7 @@ export default function ToolWorkshop() {
               onTallerChange={setCurrentTaller}
               onRequestCreateWorld={() => setCreatingWorld(true)}
               status={status}
-              statusError={statusError}
+              statusError={statusErrorKey ? t(statusErrorKey) : null}
               onStatusRetry={() => void loadStatus()}
               selected={selected}
               onSelect={setSelected}
@@ -379,7 +382,7 @@ export default function ToolWorkshop() {
             </div>
           ) : error ? (
             <ErrorBanner
-              message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
+              message={t("toolworkshop.worlds.loadError")}
               onRetry={() => mutate()}
             />
           ) : (
@@ -396,9 +399,9 @@ export default function ToolWorkshop() {
 
       {pendingSwitch && (
         <ConfirmDialog
-          title="Cambiar mundo activo"
-          message={`¿Querés cambiar el mundo activo a «${pendingSwitch}»?`}
-          confirmLabel="Cambiar"
+          title={t("nav.world.confirm.title")}
+          message={t("nav.world.confirm.message", { name: pendingSwitch })}
+          confirmLabel={t("nav.world.confirm.confirm")}
           onConfirm={confirmSwitch}
           onClose={() => setPendingSwitch(null)}
         />

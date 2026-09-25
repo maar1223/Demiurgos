@@ -10,11 +10,12 @@ import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { InventoryRow } from "@/components/molecules/InventoryRow";
 import { InventoryFilterBar } from "@/components/molecules/InventoryFilterBar";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey, TFunction } from "@/i18n/messages";
 
-const EMPTY_INVENTORY_MESSAGE = "No hay metodologías publicadas";
-const NO_RESULTS_MESSAGE = "Sin resultados";
-const LOAD_ERROR_MESSAGE =
-  "No se pudo cargar el inventario global de metodologías.";
+const EMPTY_INVENTORY_MESSAGE: MessageKey = "methodology.global.empty";
+const NO_RESULTS_MESSAGE: MessageKey = "methodology.global.noResults";
+const LOAD_ERROR_MESSAGE: MessageKey = "methodology.global.loadError";
 /** Server-side filter re-query debounce (ms). Keeps the filter bar mounted
  *  and focused while the user types (one request after the last keystroke). */
 const FILTER_DEBOUNCE_MS = 300;
@@ -27,9 +28,11 @@ function sameVersion(
   return a.skill_id === b.skill_id && a.version === b.version;
 }
 
-/** Spanish pluralized version count for the group header (TW7). */
-function versionCountLabel(count: number): string {
-  return count === 1 ? "1 versión" : `${count} versiones`;
+/** Localized pluralized version count for the group header (TW7). */
+function versionCountLabel(t: TFunction, count: number): string {
+  return count === 1
+    ? t("methodology.global.versionOne")
+    : t("methodology.global.versionMany", { count });
 }
 
 /** Compare-selection reducer shared with the page (the right panel's
@@ -76,9 +79,10 @@ export function GlobalMethodologyLibrary({
   onSelect,
   compareSelection = [],
 }: GlobalMethodologyLibraryProps) {
+  const { t } = useAppLanguage();
   const [items, setItems] = useState<MethodologyInventoryItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [search, setSearch] = useState("");
   const [filters, setFilters] = useState<InventoryFilters>({});
   /** skill_ids whose multi-version disclosure group is collapsed. Absent ⇒
@@ -99,13 +103,13 @@ export function GlobalMethodologyLibrary({
 
   const load = useCallback(async (activeFilters: InventoryFilters) => {
     setLoading(true);
-    setError(null);
+    setLoadFailed(false);
     try {
       const { items: nextItems } =
         await getMethodologyInventory(activeFilters);
       setItems(nextItems);
     } catch {
-      setError(LOAD_ERROR_MESSAGE);
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -160,18 +164,18 @@ export function GlobalMethodologyLibrary({
 
   return (
     <section
-      aria-label="Biblioteca global de metodologías"
+      aria-label={t("methodology.global.sectionAria")}
       className="space-y-4"
     >
       <InventoryFilterBar filters={filters} onChange={setFilters} />
 
       <label className="flex flex-col gap-1 text-small text-muted">
-        Buscar
+        {t("methodology.global.search")}
         <input
           type="search"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
-          placeholder="Buscar por nombre, descripción, skill_id o etiqueta"
+          placeholder={t("methodology.global.searchPlaceholder")}
           className="rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
         />
       </label>
@@ -183,12 +187,15 @@ export function GlobalMethodologyLibrary({
         <div className="flex justify-center py-16">
           <Spinner size="lg" />
         </div>
-      ) : error ? (
-        <ErrorBanner message={error} onRetry={() => void load(filters)} />
+      ) : loadFailed ? (
+        <ErrorBanner
+          message={t(LOAD_ERROR_MESSAGE)}
+          onRetry={() => void load(filters)}
+        />
       ) : items.length === 0 ? (
-        <EmptyState icon="empty" message={EMPTY_INVENTORY_MESSAGE} />
+        <EmptyState icon="empty" message={t(EMPTY_INVENTORY_MESSAGE)} />
       ) : visibleItems.length === 0 ? (
-        <EmptyState icon="search" message={NO_RESULTS_MESSAGE} />
+        <EmptyState icon="search" message={t(NO_RESULTS_MESSAGE)} />
       ) : (
         <ul className="space-y-2">
           {Array.from(groups.entries()).map(([skillId, versions]) =>
@@ -232,8 +239,9 @@ export function GlobalMethodologyLibrary({
                       </span>
                       <span className="block break-words text-xs text-muted">
                         {versions[0].skill_id} ·{" "}
-                        {versions[0].taller ?? "Sin taller"} ·{" "}
-                        {versionCountLabel(versions.length)}
+                        {versions[0].taller ??
+                          t("methodology.global.noTaller")}{" "}
+                        · {versionCountLabel(t, versions.length)}
                       </span>
                     </span>
                   </button>

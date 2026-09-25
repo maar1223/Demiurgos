@@ -5,14 +5,16 @@ import GraphView from "@/components/GraphView";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Icon } from "@/components/atoms/Icon";
 import { GENERIC_TEASER_LABEL } from "@/lib/constants";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 import { cn } from "@/lib/utils";
 
 type TabKey = "grafo" | "conflictos" | "propuestas";
 
-const TABS: readonly { key: TabKey; label: string }[] = [
-  { key: "grafo", label: "Grafo" },
-  { key: "conflictos", label: "Conflictos" },
-  { key: "propuestas", label: "Propuestas" },
+const TABS: readonly { key: TabKey; label: MessageKey }[] = [
+  { key: "grafo", label: "relaciones.tab.grafo" },
+  { key: "conflictos", label: "relaciones.tab.conflictos" },
+  { key: "propuestas", label: "relaciones.tab.propuestas" },
 ];
 
 /**
@@ -23,6 +25,7 @@ const TABS: readonly { key: TabKey; label: string }[] = [
  * and render a "Próximamente" placeholder (no data, no actions).
  */
 export default function RelacionesCanon() {
+  const { t } = useAppLanguage();
   const { mundo } = useParams<{ mundo: string }>();
   const [activeTab, setActiveTab] = useState<TabKey>("grafo");
 
@@ -30,17 +33,15 @@ export default function RelacionesCanon() {
     <WikiHomeLayout>
       <div className="col-span-full">
         <h1 className="font-heading text-h3 text-primary">
-          Relaciones y Canon
+          {t("relaciones.title")}
         </h1>
-        <p className="mt-2 text-body text-muted">
-          Grafo de entidades del mundo, estados de certeza y conexiones.
-        </p>
+        <p className="mt-2 text-body text-muted">{t("relaciones.intro")}</p>
       </div>
 
       <div className="col-span-full">
         <div
           role="tablist"
-          aria-label="Secciones de Relaciones y Canon"
+          aria-label={t("relaciones.tabsAria")}
           className="mb-4 flex gap-2 border-b border-edge"
         >
           {TABS.map((tab) => (
@@ -57,7 +58,7 @@ export default function RelacionesCanon() {
                   : "border-transparent text-muted hover:text-primary",
               )}
             >
-              {tab.label}
+              {t(tab.label)}
             </button>
           ))}
         </div>
@@ -68,7 +69,7 @@ export default function RelacionesCanon() {
           ) : (
             <EmptyState
               icon="error"
-              message="Faltan parámetros de ruta. Seleccioná un mundo desde la página principal."
+              message={t("relaciones.missingParams")}
             />
           )
         ) : (

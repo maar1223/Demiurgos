@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MethodologyDetailView } from "@/components/organisms/MethodologyDetailView";
 import { ApiError } from "@/api/types";
 import type { PublishedMethodologyDetail } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 const mockGetPublishedDetail = vi.hoisted(() => vi.fn());
 const mockGetAdjuntoContent = vi.hoisted(() => vi.fn());
@@ -102,7 +103,7 @@ describe("MethodologyDetailView (SC-SB-3)", () => {
     render(<MethodologyDetailView selected={null} />);
 
     expect(
-      screen.getByText(/Seleccioná una metodología en el explorador/),
+      screen.getByText(tEs("methodology.detail.empty")),
     ).toBeInTheDocument();
     expect(mockGetPublishedDetail).not.toHaveBeenCalled();
   });

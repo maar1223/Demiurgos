@@ -4,6 +4,7 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { TallerTree } from "@/components/organisms/TallerTree";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { groupSkillsByState } from "@/lib/tallerStates";
 
 /** Page-level methodology selection (REQ-SB-5). Structural type. */
@@ -57,6 +58,7 @@ export function MethodologyLibrary({
   onRetry,
   onGoToCoCrear,
 }: MethodologyLibraryProps) {
+  const { t } = useAppLanguage();
   /** Client-side filter over the grouped tree (SC-SB-1.1 "filters"). */
   const [query, setQuery] = useState("");
 
@@ -140,14 +142,17 @@ export function MethodologyLibrary({
     Object.values(filteredGroups ?? {}).every((group) => group.length === 0);
 
   return (
-    <section aria-label="Metodologías de mi mundo" className="space-y-4">
+    <section
+      aria-label={t("methodology.library.sectionAria")}
+      className="space-y-4"
+    >
       <label className="flex flex-col gap-1 text-small text-muted">
-        Buscar
+        {t("methodology.library.search")}
         <input
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
-          placeholder="Buscar por nombre o skill_id"
+          placeholder={t("methodology.library.searchPlaceholder")}
           className="rounded-lg bg-surface px-3 py-2 text-body text-primary outline-none focus:ring-2 focus:ring-action/50"
         />
       </label>
@@ -155,12 +160,12 @@ export function MethodologyLibrary({
       {isEmpty ? (
         <EmptyState
           icon="empty"
-          message="Todavía no hay metodologías publicadas. Escribí un borrador y publicalo para activarlo por mundo."
-          actionLabel="Crear tu primera skill"
+          message={t("methodology.library.empty")}
+          actionLabel={t("methodology.library.emptyCta")}
           onAction={onGoToCoCrear}
         />
       ) : noResults ? (
-        <EmptyState icon="search" message="Sin resultados" />
+        <EmptyState icon="search" message={t("methodology.library.noResults")} />
       ) : (
         <TallerTree
           groups={filteredGroups ?? groups!}

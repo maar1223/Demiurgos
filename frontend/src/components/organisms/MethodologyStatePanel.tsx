@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/organisms/EmptyState";
 import { ProvenanceBadge } from "@/components/organisms/CoCreation/ProvenanceBadge";
 import { MethodologyComparePanel } from "@/components/molecules/MethodologyComparePanel";
 import type { Lens } from "@/components/organisms/LensToggle";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { GLOBAL_ASSISTANT_CONTEXT } from "@/hooks/useAIAssistantSessions";
 import { computeSkillState } from "@/lib/tallerStates";
 import {
@@ -97,15 +98,16 @@ export function MethodologyStatePanel({
   compareSelection,
   onCompareClear,
 }: MethodologyStatePanelProps) {
+  const { t } = useAppLanguage();
   /** Export failure feedback (REQ-IMP-1): the right panel owns the inline
    *  alert the catalog rows used to render. */
-  const [exportError, setExportError] = useState<string | null>(null);
+  const [exportFailed, setExportFailed] = useState(false);
 
   if (!selected) {
     return (
       <EmptyState
         icon="empty"
-        message="Selecciona una metodología para ver su estado y sus acciones."
+        message={t("methodology.state.empty")}
       />
     );
   }
@@ -170,11 +172,11 @@ export function MethodologyStatePanel({
   /** Wraps the download so a rejection surfaces the inline alert instead of
    *  failing silently (REQ-IMP-1). */
   const handleExport = async (item: MethodologyInventoryItem) => {
-    setExportError(null);
+    setExportFailed(false);
     try {
       await onExportar(item);
     } catch {
-      setExportError("No se pudo exportar la metodología.");
+      setExportFailed(true);
     }
   };
 
@@ -195,17 +197,19 @@ export function MethodologyStatePanel({
 
   return (
     <section
-      aria-label="Estado y acciones de la metodología"
+      aria-label={t("methodology.state.sectionAria")}
       className="space-y-6"
     >
       {/* Versions + world activations (SC-SB-4) */}
       <div className="rounded-lg border border-edge bg-surface-raised p-4">
         <h3 className="font-heading text-small font-semibold text-primary">
-          Versiones
+          {t("methodology.state.versions")}
         </h3>
         {versions.length === 0 ? (
           <p className="mt-2 text-small text-muted">
-            No hay versiones publicadas de {selected.skill_id}.
+            {t("methodology.state.noVersions", {
+              skillId: selected.skill_id,
+            })}
           </p>
         ) : (
           <ul className="mt-3 space-y-2">
@@ -239,11 +243,15 @@ export function MethodologyStatePanel({
                       v{version.version}
                     </span>
                     {isCurrent && (
-                      <Badge variant="info">Seleccionada</Badge>
+                      <Badge variant="info">
+                        {t("methodology.state.selected")}
+                      </Badge>
                     )}
                     {activeWorlds.length > 0 && (
                       <span className="text-action" data-flow-type={worldFlowType}>
-                        Activa en {activeWorlds.join(", ")}
+                        {t("methodology.state.activeIn", {
+                          worlds: activeWorlds.join(", "),
+                        })}
                       </span>
                     )}
                   </button>
@@ -257,7 +265,7 @@ export function MethodologyStatePanel({
       {/* Provenance (SC-SB-4.3) */}
       <div className="rounded-lg border border-edge bg-surface-raised p-4">
         <h3 className="font-heading text-small font-semibold text-primary">
-          Origen
+          {t("methodology.state.origin")}
         </h3>
         <div className="mt-2">
           <ProvenanceBadge
@@ -267,7 +275,7 @@ export function MethodologyStatePanel({
         </div>
         {!entry?.parent_skill_id && (
           <p className="mt-2 text-small text-muted">
-            Skill raíz (no derivada de otra metodología).
+            {t("methodology.state.rootSkill")}
           </p>
         )}
       </div>
@@ -276,7 +284,7 @@ export function MethodologyStatePanel({
       {talleresCompatibles.length > 0 && (
         <div className="rounded-lg border border-edge bg-surface-raised p-4">
           <h3 className="font-heading text-small font-semibold text-primary">
-            Talleres compatibles
+            {t("methodology.state.compatibleTalleres")}
           </h3>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {talleresCompatibles.map((taller) => (
@@ -294,7 +302,7 @@ export function MethodologyStatePanel({
       {isTransversal && (
         <div className="rounded-lg border border-edge bg-surface-raised p-4">
           <h3 className="font-heading text-small font-semibold text-primary">
-            Alcance de taller
+            {t("methodology.state.scopeTitle")}
           </h3>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <span data-axis={AXIS_SCOPE} className="inline-flex">
@@ -312,7 +320,7 @@ export function MethodologyStatePanel({
       {isBlocked && entry && activeTaller != null && (
         <div className="rounded-lg border border-edge bg-surface-raised p-4">
           <h3 className="font-heading text-small font-semibold text-primary">
-            Conflicto
+            {t("methodology.state.conflict")}
           </h3>
           <div className="mt-2 flex items-start gap-2">
             <Tooltip
@@ -336,7 +344,7 @@ export function MethodologyStatePanel({
       {etiquetas.length > 0 && (
         <div className="rounded-lg border border-edge bg-surface-raised p-4">
           <h3 className="font-heading text-small font-semibold text-primary">
-            Etiquetas
+            {t("methodology.state.etiquetas")}
           </h3>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {etiquetas.map((tag) => (
@@ -351,7 +359,7 @@ export function MethodologyStatePanel({
       {/* Lens-specific actions (SC-SB-4.1/4.2) */}
       <div className="rounded-lg border border-edge bg-surface-raised p-4">
         <h3 className="font-heading text-small font-semibold text-primary">
-          Acciones
+          {t("methodology.state.actions")}
         </h3>
         <div className="mt-3 flex flex-wrap gap-2">
           {isMiMundo ? (
@@ -362,9 +370,9 @@ export function MethodologyStatePanel({
                   size="sm"
                   disabled={!world || isIdeasGlobal || busy}
                   onClick={() => onDeactivate(selected.skill_id, selected.version)}
-                  title="Quita esta versión de las nuevas sesiones del mundo seleccionado."
+                  title={t("methodology.state.deactivateTitle")}
                 >
-                  Desactivar
+                  {t("methodology.state.deactivate")}
                 </Button>
               ) : (
                 <Button
@@ -372,18 +380,18 @@ export function MethodologyStatePanel({
                   size="sm"
                   disabled={!world || isIdeasGlobal || busy}
                   onClick={() => onActivate(selected.skill_id, selected.version)}
-                  title="Activa esta versión para nuevas sesiones en el mundo seleccionado."
+                  title={t("methodology.state.activateTitle")}
                 >
-                  Activar
+                  {t("methodology.state.activate")}
                 </Button>
               )}
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={() => onAdaptar(item)}
-                title="Deriva una versión editable de esta publicación."
+                title={t("methodology.state.adaptTitle")}
               >
-                Adaptar
+                {t("methodology.state.adapt")}
               </Button>
             </>
           ) : (
@@ -392,30 +400,30 @@ export function MethodologyStatePanel({
                 variant="secondary"
                 size="sm"
                 onClick={() => onAdaptar(item)}
-                title="Deriva una versión editable de esta publicación."
+                title={t("methodology.state.adaptTitle")}
               >
-                Adaptar
+                {t("methodology.state.adapt")}
               </Button>
               <Button variant="secondary" size="sm" onClick={() => onComparar(item)}>
-                Comparar
+                {t("methodology.state.compare")}
               </Button>
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={() => void handleExport(item)}
               >
-                Exportar
+                {t("methodology.state.export")}
               </Button>
             </>
           )}
         </div>
 
-        {exportError && (
+        {exportFailed && (
           <p
             role="alert"
             className="mt-3 rounded-md border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error"
           >
-            {exportError}
+            {t("methodology.state.exportError")}
           </p>
         )}
 
@@ -426,12 +434,14 @@ export function MethodologyStatePanel({
           <div className="mt-4 space-y-3 border-t border-edge pt-4">
             <div className="flex items-center justify-between gap-3">
               <span className="text-small font-medium text-primary">
-                Metodología de chat en {world}
+                {t("methodology.state.companionLabel", { world: world ?? "" })}
               </span>
               <Switch
                 checked={isCompanion}
                 disabled={!world || busy}
-                aria-label={`Metodología de chat en ${world}`}
+                aria-label={t("methodology.state.companionLabel", {
+                  world: world ?? "",
+                })}
                 onChange={(on) =>
                   onToggleCompanion?.(selected.skill_id, selected.version, on)
                 }
@@ -459,7 +469,7 @@ export function MethodologyStatePanel({
                         )
                       }
                     >
-                      Apagar
+                      {t("methodology.state.companionOff")}
                     </Button>
                   </li>
                 ))}
@@ -467,8 +477,7 @@ export function MethodologyStatePanel({
             )}
             {latencyNoticeWorld === world && (
               <p className="text-small text-muted">
-                Las charlas de IA en este mundo pueden tardar un poco más
-                mientras haya skills de metodología de chat activas.
+                {t("methodology.state.latencyNotice")}
               </p>
             )}
           </div>
@@ -482,7 +491,7 @@ export function MethodologyStatePanel({
         <div className="space-y-2">
           <div className="flex justify-end">
             <Button variant="ghost" size="sm" onClick={onCompareClear}>
-              Limpiar
+              {t("methodology.state.clear")}
             </Button>
           </div>
           <MethodologyComparePanel

@@ -11,6 +11,7 @@ import { AdjuntoViewerModal } from "@/components/organisms/AdjuntoViewerModal";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface MethodologySelection {
   skill_id: string;
@@ -44,10 +45,11 @@ interface MethodologyDetailViewProps {
 export function MethodologyDetailView({
   selected,
 }: MethodologyDetailViewProps) {
+  const { t } = useAppLanguage();
   const [detail, setDetail] = useState<PublishedMethodologyDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [unauthorized, setUnauthorized] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   /** The exemplar currently open in the viewer; `null` keeps it closed. */
   const [selectedAdjunto, setSelectedAdjunto] = useState<MethodologyAdjunto | null>(
@@ -63,14 +65,14 @@ export function MethodologyDetailView({
       setDetail(null);
       setLoading(false);
       setUnauthorized(false);
-      setError(null);
+      setLoadFailed(false);
       return;
     }
 
     let cancelled = false;
     setLoading(true);
     setUnauthorized(false);
-    setError(null);
+    setLoadFailed(false);
 
     getPublishedDetail(selected.skill_id, selected.version)
       .then((nextDetail) => {
@@ -85,7 +87,7 @@ export function MethodologyDetailView({
         if (err instanceof ApiError && err.status === 401) {
           setUnauthorized(true);
         } else {
-          setError("No se pudo cargar el detalle de la metodología.");
+          setLoadFailed(true);
         }
       });
 
@@ -98,7 +100,7 @@ export function MethodologyDetailView({
     return (
       <EmptyState
         icon="empty"
-        message="Seleccioná una metodología en el explorador para ver su detalle."
+        message={t("methodology.detail.empty")}
       />
     );
   }
@@ -116,7 +118,7 @@ export function MethodologyDetailView({
   if (unauthorized) {
     return (
       <section
-        aria-label="Detalle de metodología"
+        aria-label={t("methodology.detail.sectionAria")}
         className="space-y-6"
       >
         <div className="rounded-lg border border-edge bg-surface-raised p-4">
@@ -127,17 +129,17 @@ export function MethodologyDetailView({
             {selected.skill_id}@{selected.version}
           </p>
           <p className="mt-3 text-small text-muted">
-            No se pudo cargar el contenido publicado (requiere autenticación).
+            {t("methodology.detail.unauthorized")}
           </p>
         </div>
       </section>
     );
   }
 
-  if (error) {
+  if (loadFailed) {
     return (
       <ErrorBanner
-        message={error}
+        message={t("methodology.detail.loadError")}
         onRetry={() => setReloadKey((key) => key + 1)}
       />
     );
@@ -151,7 +153,10 @@ export function MethodologyDetailView({
   const adjuntos = detail.adjuntos ?? [];
 
   return (
-    <section aria-label="Detalle de metodología" className="space-y-6">
+    <section
+      aria-label={t("methodology.detail.sectionAria")}
+      className="space-y-6"
+    >
       <header className="rounded-lg border border-edge bg-surface-raised p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
@@ -177,10 +182,12 @@ export function MethodologyDetailView({
 
       {adjuntos.length > 0 && (
         <section
-          aria-label="Adjuntos"
+          aria-label={t("methodology.detail.adjuntosAria")}
           className="rounded-lg border border-edge bg-surface-raised p-4"
         >
-          <h3 className="font-heading text-h4 text-primary">Adjuntos</h3>
+          <h3 className="font-heading text-h4 text-primary">
+            {t("methodology.detail.adjuntos")}
+          </h3>
           {/* Metadata only here (path + nivel + bytes); activating a row opens
               the viewer, which fetches and renders the carrier's markdown. */}
           <ul className="mt-3 space-y-2">

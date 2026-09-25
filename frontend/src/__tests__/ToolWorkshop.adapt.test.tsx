@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import ToolWorkshop from "@/pages/ToolWorkshop";
 import type { Mock } from "vitest";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 vi.mock("@/hooks/useWorlds", () => ({
   useWorlds: vi.fn(),
@@ -200,7 +201,7 @@ describe("ToolWorkshop — TW13 adaptation entry on published rows", () => {
     });
     expect(
       screen.getByText(
-        "Co-creá una skill conversando con el Co-creador de skills, una pregunta por vez.",
+        tEs("toolworkshop.subtitle.coCrear"),
       ),
     ).toBeInTheDocument();
     expect(recoverCoCreationSession).toHaveBeenCalledWith("adaptation-session");
