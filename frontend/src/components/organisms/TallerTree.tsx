@@ -10,9 +10,12 @@ import { Tooltip } from "@/components/atoms/Tooltip";
 import type { GroupedSkills, SkillState } from "@/lib/tallerStates";
 import {
   activationChip,
+  AXIS_TERM_KEYS,
   companionChip,
   conflictExplanation,
 } from "@/lib/vocabularyAxes";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 interface TallerTreeProps {
   groups: GroupedSkills;
@@ -40,7 +43,7 @@ interface TallerTreeProps {
  *  world activation, spec REQ-TRE-5). */
 interface GroupDef {
   key: keyof GroupedSkills;
-  label: string;
+  labelKey: MessageKey;
   state: SkillState | "sin-taller";
 }
 
@@ -49,29 +52,30 @@ interface GroupDef {
  *  Group labels are byte-frozen (spec R7) — they carry the scope/conflict
  *  vocabulary at group level. */
 const GROUP_ORDER: GroupDef[] = [
-  { key: "activas", label: "En uso · funciona solo en este taller", state: "activa" },
+  { key: "activas", labelKey: "tallerTree.group.activas", state: "activa" },
   {
     key: "transversalesActivas",
-    label: "En uso · funciona también en otros talleres",
+    labelKey: "tallerTree.group.transversalesActivas",
     state: "transversal-activa",
   },
-  { key: "inactivas", label: "Apagada · funciona solo en este taller", state: "inactiva" },
+  { key: "inactivas", labelKey: "tallerTree.group.inactivas", state: "inactiva" },
   {
     key: "transversalesInactivas",
-    label: "Apagada · funciona también en otros talleres",
+    labelKey: "tallerTree.group.transversalesInactivas",
     state: "transversal-inactiva",
   },
-  { key: "bloqueadas", label: "En conflicto · su taller de origen ya tiene una activa", state: "bloqueada" },
-  { key: "sinTaller", label: "Sin taller", state: "sin-taller" },
+  { key: "bloqueadas", labelKey: "tallerTree.group.bloqueadas", state: "bloqueada" },
+  { key: "sinTaller", labelKey: "tallerTree.group.sinTaller", state: "sin-taller" },
 ];
 
 /** One attributed row chip (spec R1): the registry term plus its axis
  *  attribution, surfaced as a `data-axis` marker for tests and assistive
  *  tooling. Axes 1+2 only — scope/conflict live in tooltips/panel (R3). */
 function AxisBadge({ chip }: { chip: ReturnType<typeof activationChip> }) {
+  const { t } = useAppLanguage();
   return (
     <span data-axis={chip.axis} className="inline-flex">
-      <Badge variant={chip.variant}>{chip.term}</Badge>
+      <Badge variant={chip.variant}>{t(AXIS_TERM_KEYS[chip.term])}</Badge>
     </span>
   );
 }
@@ -104,6 +108,7 @@ function SkillRow({
   onSelect,
   selected,
 }: SkillRowProps) {
+  const { t } = useAppLanguage();
   /** Selection highlight is skill-level (REQ-TRE-12): a version picked in the
    *  right-panel "Versiones" block highlights this skill's single explorer row
    *  even when it is not the rendered representative. Version-exact meaning
@@ -128,7 +133,9 @@ function SkillRow({
         <p className="break-words text-small text-muted">
           {skill.skill_id}@{skill.version}
           {isActive && world && (
-            <span className="ml-2 text-action">• Activa en {world}</span>
+            <span className="ml-2 text-action">
+              {t("tallerTree.activeIn", { world })}
+            </span>
           )}
         </p>
       </button>
@@ -138,7 +145,7 @@ function SkillRow({
         {state === "bloqueada" && (
           <Tooltip
             id={`conflict-${skill.skill_id}@${skill.version}`}
-            content={conflictExplanation(activeTaller, skill.taller)}
+            content={conflictExplanation(activeTaller, skill.taller, t)}
           >
             <Icon
               name="error"
@@ -171,6 +178,7 @@ export function TallerTree({
   onSelect,
   selected,
 }: TallerTreeProps) {
+  const { t } = useAppLanguage();
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(GROUP_ORDER.map((group) => [group.key, true])),
   );
@@ -199,7 +207,7 @@ export function TallerTree({
                   size={14}
                   className="shrink-0 text-muted"
                 />
-                {group.label}
+                {t(group.labelKey)}
               </button>
             </h3>
             {isOpen && (

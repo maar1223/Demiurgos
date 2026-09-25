@@ -1,7 +1,8 @@
 import {
+  isOperationalTaller,
   OPERATIONAL_TALLER_LABELS,
-  type OperationalTaller,
 } from "@/lib/constants";
+import type { MessageKey, TFunction } from "@/i18n/messages";
 import type { SkillState } from "@/lib/tallerStates";
 
 /**
@@ -36,6 +37,22 @@ export const AXIS_TERMS: Record<string, VocabularyAxis> = {
 /** Committed placeholder for the no-activation slot (spec R4/R-COPY-1):
  *  never "Inactiva", never "—". */
 export const NO_ACTIVATION_PLACEHOLDER = "Sin activación en este flujo";
+
+/**
+ * Canonical (Spanish) axis term → catalogue key. The registry above and the
+ * chip builders keep the canonical term as the stable contract (spec R1
+ * "Registry-sourced chips"); renderers resolve the display string through
+ * `t(AXIS_TERM_KEYS[chip.term])` so both locales share one source of truth.
+ */
+export const AXIS_TERM_KEYS: Record<string, MessageKey> = {
+  Activa: "axis.term.activa",
+  Inactiva: "axis.term.inactiva",
+  "Metodología en chat": "axis.term.metodologiaEnChat",
+  "Método en chat": "axis.term.metodoEnChat",
+  Transversal: "axis.term.transversal",
+  Bloqueada: "axis.term.bloqueada",
+  [NO_ACTIVATION_PLACEHOLDER]: "axis.noActivation",
+};
 
 /** A visible attributed chip; `variant` mirrors the Badge atom palette. */
 export interface AxisChip {
@@ -87,21 +104,28 @@ export function companionChip(): AxisChip {
   return { axis: AXIS_COMPANION, term: "Método en chat", variant: "info" };
 }
 
-/** Display label for a Taller key (short key → OPERATIONAL_TALLER_LABELS
+/** Display label for a Taller key (short key → localized `OPERATIONAL_TALLER_LABELS`
  *  label, raw value fallback for unknown keys — e.g. imported free-form
  *  talleres). */
-function tallerLabel(taller: string | null | undefined): string {
+function tallerLabel(taller: string | null | undefined, t: TFunction): string {
   if (taller == null) return "";
-  return OPERATIONAL_TALLER_LABELS[taller as OperationalTaller] ?? taller;
+  return isOperationalTaller(taller)
+    ? t(OPERATIONAL_TALLER_LABELS[taller])
+    : taller;
 }
 
 /** Axis-4 (conflicto) tooltip/panel copy — exact REQ-TRE-6 S1 copy, taller
- *  names interpolated via OPERATIONAL_TALLER_LABELS. Registry-sourced (R3):
- *  conflict vocabulary renders ONLY into tooltips / panel blocks, never a
- *  primary badge. Neutral Spanish (R-COPY-3): no voseo. */
+ *  names interpolated through the catalogue. Registry-sourced (R3): conflict
+ *  vocabulary renders ONLY into tooltips / panel blocks, never a primary
+ *  badge. Neutral Spanish (R-COPY-3): no voseo. The `es` catalogue value is
+ *  the locked canonical sentence. */
 export function conflictExplanation(
   activeTaller: string,
   skillTaller: string | null | undefined,
+  t: TFunction,
 ): string {
-  return `Esta skill es transversal de ${tallerLabel(activeTaller)} pero su taller primario (${tallerLabel(skillTaller)}) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.`;
+  return t("axis.conflict.explanation", {
+    active: tallerLabel(activeTaller, t),
+    primary: tallerLabel(skillTaller, t),
+  });
 }

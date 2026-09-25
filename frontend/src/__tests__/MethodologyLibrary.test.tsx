@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
 import { conflictExplanation } from "@/lib/vocabularyAxes";
+import { tEs } from "@/__tests__/i18nTestUtils";
 import type { MethodologyStatus } from "@/api/types";
 
 const status: MethodologyStatus = {
@@ -306,7 +307,7 @@ describe("MethodologyLibrary", () => {
     expect(blockedTooltip).not.toBeNull();
     expect(
       within(blockedTooltip as HTMLElement).getByText(
-        conflictExplanation("Mundo", "Ideas"),
+        conflictExplanation("Mundo", "Ideas", tEs),
       ),
     ).toBeInTheDocument();
 

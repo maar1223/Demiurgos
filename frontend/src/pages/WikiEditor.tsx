@@ -469,8 +469,8 @@ export default function WikiEditor() {
         const parent = parentPath(to);
         const targetLabel = parent
           ? `${parent}/`
-          : `${SECTION_LABELS[section as Section]}/`;
-        setToast({ message: `Movido a ${targetLabel}`, kind: "success" });
+          : `${t(SECTION_LABELS[section as Section])}/`;
+        setToast({ message: t("wikiEditor.movedTo", { target: targetLabel }), kind: "success" });
         setMovedPath(to);
         if (
           filePath &&
@@ -506,7 +506,9 @@ export default function WikiEditor() {
         await moveNode(mundo, `${section}/${path}`, `${destSection}/${path}`);
         await retryTree();
         setToast({
-          message: `Movido a ${MOVE_DESTINATION_LABELS[destSection]}/`,
+          message: t("wikiEditor.movedTo", {
+            target: `${t(MOVE_DESTINATION_LABELS[destSection])}/`,
+          }),
           kind: "success",
         });
         if (filePath && (filePath === path || filePath.startsWith(path + "/"))) {

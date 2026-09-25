@@ -7,6 +7,7 @@ import {
   NAV_LINKS,
 } from "@/lib/constants";
 import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
+import { tEs } from "@/__tests__/i18nTestUtils";
 import type { WorldInfo } from "@/api/types";
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
 import { getAuthStatus, logoutSession } from "@/api/wiki";
@@ -118,7 +119,7 @@ describe("Navbar", () => {
     expect(screen.getByAltText("Demiurgos")).toBeInTheDocument();
     for (const link of NAV_LINKS) {
       expect(
-        screen.getByRole("button", { name: link.label }),
+        screen.getByRole("button", { name: tEs(link.label) }),
       ).toBeInTheDocument();
     }
     // No current world → the selector shows the fallback label
@@ -130,7 +131,7 @@ describe("Navbar", () => {
     renderNavbar({ worlds });
 
     for (const link of availableLinks) {
-      await user.click(screen.getByRole("button", { name: link.label }));
+      await user.click(screen.getByRole("button", { name: tEs(link.label) }));
       expect(screen.getByTestId("path")).toHaveTextContent(link.to);
     }
   });
@@ -146,7 +147,7 @@ describe("Navbar", () => {
   it("places Taller de Ideas between Taller de Herramientas and Taller de Mundo", () => {
     const availableLabels = NAV_LINKS.filter(
       (link) => link.availability === "available",
-    ).map((link) => link.label);
+    ).map((link) => tEs(link.label));
     expect(availableLabels).toEqual([
       "Taller de Herramientas",
       "Taller de Ideas",

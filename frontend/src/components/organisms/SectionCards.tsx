@@ -4,6 +4,7 @@ import { CardMenu, type CardAction } from "@/components/organisms/CardMenu";
 import { getMediaUrl } from "@/api/wiki";
 import { cn } from "@/lib/utils";
 import { STATUS_META } from "@/lib/status";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import {
   canDropToGridBackground,
   isFolderDropValid,
@@ -435,6 +436,7 @@ function CardButton({
   movedPath?: string | null;
   busyPath?: string | null;
 }) {
+  const { t } = useAppLanguage();
   const isDir = node.is_dir;
   const badge =
     !isDir || node.children === undefined ? null : dirBadge(node);
@@ -567,7 +569,7 @@ function CardButton({
       {statusMeta && (
         <span className="group absolute right-3 top-3">
           <span
-            aria-label={statusMeta.label}
+            aria-label={t(statusMeta.labelKey)}
             className={cn(
               "block h-3 w-3 rounded-full border-2",
               statusMeta.dotClass,
@@ -577,7 +579,7 @@ function CardButton({
             aria-hidden="true"
             className="pointer-events-none absolute right-0 top-full z-20 mt-1.5 whitespace-nowrap rounded-md border border-edge bg-surface-raised px-2 py-1 text-xs text-primary opacity-0 shadow-lg transition-opacity duration-75 group-hover:opacity-100"
           >
-            {statusMeta.label}
+            {t(statusMeta.labelKey)}
           </span>
         </span>
       )}

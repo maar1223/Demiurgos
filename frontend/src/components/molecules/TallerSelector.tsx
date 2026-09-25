@@ -7,6 +7,7 @@ import {
   OPERATIONAL_TALLER_LABELS,
   type OperationalTaller,
 } from "@/lib/constants";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface TallerSelectorProps {
   /** Currently active Taller SHORT KEY (Mundo | Ideas). */
@@ -35,10 +36,11 @@ export function TallerSelector({
   onTallerChange,
   fullWidth = false,
 }: TallerSelectorProps) {
+  const { t } = useAppLanguage();
   const [open, setOpen] = useState(false);
 
   const triggerLabel = isOperationalTaller(activeTaller)
-    ? OPERATIONAL_TALLER_LABELS[activeTaller]
+    ? t(OPERATIONAL_TALLER_LABELS[activeTaller])
     : activeTaller;
 
   const handleSelect = (taller: OperationalTaller) => {
@@ -89,7 +91,7 @@ export function TallerSelector({
                   taller === activeTaller ? "text-action" : "text-primary"
                 }`}
               >
-                {OPERATIONAL_TALLER_LABELS[taller]}
+                {t(OPERATIONAL_TALLER_LABELS[taller])}
               </button>
             ))}
           </div>

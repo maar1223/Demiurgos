@@ -10,6 +10,7 @@ import {
   MOVE_DESTINATION_LABELS,
   type MoveDestinationSection,
 } from "@/lib/constants";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { FileNode } from "@/api/types";
 
 interface MoveModalProps {
@@ -32,6 +33,7 @@ interface MoveModalProps {
  * z-50, role dialog, aria-modal, Escape/overlay click).
  */
 export function MoveModal({ mundo, source, onConfirm, onClose }: MoveModalProps) {
+  const { t } = useAppLanguage();
   const [activeSection, setActiveSection] =
     useState<MoveDestinationSection>("lore");
   const [selectedDir, setSelectedDir] = useState<string>("");
@@ -99,7 +101,7 @@ export function MoveModal({ mundo, source, onConfirm, onClose }: MoveModalProps)
             >
               <button
                 type="button"
-                aria-label={`Seleccionar ${dir.name}`}
+                aria-label={t("move.selectDirAria", { name: dir.name })}
                 onClick={() => selectDir(dir.path)}
                 className={cn(
                   "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left",
@@ -154,13 +156,13 @@ export function MoveModal({ mundo, source, onConfirm, onClose }: MoveModalProps)
             id="move-modal-title"
             className="font-heading text-h4 text-primary"
           >
-            Mover a…
+            {t("move.title")}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -169,7 +171,7 @@ export function MoveModal({ mundo, source, onConfirm, onClose }: MoveModalProps)
         {/* Destination section tabs */}
         <div
           role="tablist"
-          aria-label="Sección de destino"
+          aria-label={t("move.destSectionAria")}
           className="flex shrink-0 border-b border-edge"
         >
           {MOVE_DESTINATION_SECTIONS.map((sec) => (
@@ -187,7 +189,7 @@ export function MoveModal({ mundo, source, onConfirm, onClose }: MoveModalProps)
                   : "text-muted hover:bg-surface-hover hover:text-primary",
               )}
             >
-              {MOVE_DESTINATION_LABELS[sec]}
+              {t(MOVE_DESTINATION_LABELS[sec])}
             </button>
           ))}
         </div>
@@ -202,7 +204,7 @@ export function MoveModal({ mundo, source, onConfirm, onClose }: MoveModalProps)
 
           {error && !isLoading && (
             <ErrorBanner
-              message="No se pudo cargar la sección de destino"
+              message={t("move.loadError")}
               className="mb-3"
             />
           )}
@@ -221,7 +223,7 @@ export function MoveModal({ mundo, source, onConfirm, onClose }: MoveModalProps)
                       : "text-muted",
                   )}
                 >
-                  {MOVE_DESTINATION_LABELS[activeSection]} (raíz)
+                  {t("move.root", { label: t(MOVE_DESTINATION_LABELS[activeSection]) })}
                 </button>
                 {crumbParts.map((part, idx) => {
                   const path = crumbParts.slice(0, idx + 1).join("/");
@@ -249,7 +251,7 @@ export function MoveModal({ mundo, source, onConfirm, onClose }: MoveModalProps)
               {/* Directory tree (dirs only, source subtree excluded) */}
               {topDirs.length === 0 ? (
                 <p className="py-8 text-center text-small text-muted">
-                  No hay carpetas para elegir en esta sección.
+                  {t("move.empty")}
                 </p>
               ) : (
                 renderDirs(topDirs)
@@ -261,10 +263,10 @@ export function MoveModal({ mundo, source, onConfirm, onClose }: MoveModalProps)
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            Cancelar
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" size="sm" onClick={handleConfirm}>
-            Mover aquí
+            {t("move.submit")}
           </Button>
         </div>
       </div>

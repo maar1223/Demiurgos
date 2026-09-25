@@ -7,6 +7,7 @@ import {
   MOVE_DESTINATION_LABELS,
   type MoveDestinationSection,
 } from "@/lib/constants";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface MoveToSectionDialogProps {
   /** The node being moved: section is where it lives, path is section-relative. */
@@ -32,6 +33,7 @@ export function MoveToSectionDialog({
   onConfirm,
   onClose,
 }: MoveToSectionDialogProps) {
+  const { t } = useAppLanguage();
   const [selected, setSelected] = useState<MoveDestinationSection | null>(
     null,
   );
@@ -70,13 +72,13 @@ export function MoveToSectionDialog({
             id="move-section-dialog-title"
             className="font-heading text-h4 text-primary"
           >
-            Mover a sección
+            {t("move.section.title")}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -85,8 +87,8 @@ export function MoveToSectionDialog({
         {/* Body */}
         <div className="px-6 py-4">
           <p className="text-body text-primary">
-            <span className="font-medium text-action">{nodeName}</span> se
-            moverá a otra sección del taller del mundo.
+            <span className="font-medium text-action">{nodeName}</span>{" "}
+            {t("move.section.body")}
           </p>
 
           {/* Irreversibility warning — cross-section moves have no undo */}
@@ -95,16 +97,13 @@ export function MoveToSectionDialog({
             className="mt-3 flex items-start gap-2 rounded-lg border border-status-error/30 bg-status-error/10 p-3 text-small text-status-error"
           >
             <Icon name="error" size={16} className="mt-0.5 shrink-0" />
-            <span>
-              El cambio de sección es un movimiento del taller de mundos y no
-              se puede deshacer.
-            </span>
+            <span>{t("move.section.warning")}</span>
           </div>
 
           {/* Destination sections — every workshop section except the current */}
           <div
             role="radiogroup"
-            aria-label="Sección de destino"
+            aria-label={t("move.destSectionAria")}
             className="mt-4 flex flex-col gap-2"
           >
             {destinations.map((sec) => {
@@ -129,7 +128,7 @@ export function MoveToSectionDialog({
                     size={16}
                     className={isSelected ? "text-action" : "text-muted"}
                   />
-                  <span>{MOVE_DESTINATION_LABELS[sec]}</span>
+                  <span>{t(MOVE_DESTINATION_LABELS[sec])}</span>
                 </button>
               );
             })}
@@ -139,7 +138,7 @@ export function MoveToSectionDialog({
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
           <Button variant="ghost" size="sm" onClick={onClose}>
-            Cancelar
+            {t("common.cancel")}
           </Button>
           <Button
             variant="primary"
@@ -147,7 +146,7 @@ export function MoveToSectionDialog({
             disabled={!selected}
             onClick={() => selected && onConfirm(selected)}
           >
-            Confirmar
+            {t("common.confirm")}
           </Button>
         </div>
       </div>

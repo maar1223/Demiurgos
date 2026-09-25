@@ -15,14 +15,17 @@ import { computeSkillState } from "@/lib/tallerStates";
 import {
   AXIS_SCOPE,
   AXIS_TERMS,
+  AXIS_TERM_KEYS,
   conflictExplanation,
 } from "@/lib/vocabularyAxes";
 
 /** Registry scope term (axis-3) — reverse lookup so the panel never hardcodes
  *  axis vocabulary (spec R3: scope/conflict terms render only from the
  *  registry). */
-const SCOPE_TERM =
-  Object.entries(AXIS_TERMS).find(([, axis]) => axis === AXIS_SCOPE)?.[0] ?? "";
+const SCOPE_TERM_KEY =
+  AXIS_TERM_KEYS[
+    Object.entries(AXIS_TERMS).find(([, axis]) => axis === AXIS_SCOPE)?.[0] ?? ""
+  ];
 
 interface MethodologySelection {
   skill_id: string;
@@ -306,7 +309,7 @@ export function MethodologyStatePanel({
           </h3>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <span data-axis={AXIS_SCOPE} className="inline-flex">
-              <Badge variant="default">{SCOPE_TERM}</Badge>
+              <Badge variant="default">{t(SCOPE_TERM_KEY)}</Badge>
             </span>
           </div>
         </div>
@@ -325,7 +328,7 @@ export function MethodologyStatePanel({
           <div className="mt-2 flex items-start gap-2">
             <Tooltip
               id={`conflicto-panel-${entry.skill_id}@${entry.version}`}
-              content={conflictExplanation(activeTaller, entry.taller)}
+              content={conflictExplanation(activeTaller, entry.taller, t)}
             >
               <Icon
                 name="error"
@@ -334,7 +337,7 @@ export function MethodologyStatePanel({
               />
             </Tooltip>
             <p className="text-small text-muted">
-              {conflictExplanation(activeTaller, entry.taller)}
+              {conflictExplanation(activeTaller, entry.taller, t)}
             </p>
           </div>
         </div>

@@ -104,7 +104,7 @@ export default function WikiWorld() {
             <SectionCard
               key={section}
               section={section}
-              label={SECTION_LABELS[section]}
+              label={t(SECTION_LABELS[section])}
               fileCount={getCount(world, section)}
               onClick={() => handleSectionClick(section)}
             />

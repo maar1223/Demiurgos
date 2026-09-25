@@ -4,7 +4,6 @@ import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import GraphView from "@/components/GraphView";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Icon } from "@/components/atoms/Icon";
-import { GENERIC_TEASER_LABEL } from "@/lib/constants";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { MessageKey } from "@/i18n/messages";
 import { cn } from "@/lib/utils";
@@ -78,9 +77,7 @@ export default function RelacionesCanon() {
             className="flex flex-col items-center justify-center gap-2 rounded-xl border border-edge bg-surface-raised py-24"
           >
             <Icon name="lightbulb" size={32} className="text-muted" />
-            <p className="text-body text-muted">
-              {GENERIC_TEASER_LABEL}
-            </p>
+            <p className="text-body text-muted">{t("nav.soon")}</p>
           </div>
         )}
       </div>

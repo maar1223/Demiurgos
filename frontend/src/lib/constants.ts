@@ -1,12 +1,16 @@
+import type { MessageKey } from "@/i18n/messages";
+
 export const API_BASE_URL = import.meta.env.VITE_API_URL ?? "";
 
 export const VALID_SECTIONS = ["lore", "personajes", "referencias"] as const;
 export type Section = (typeof VALID_SECTIONS)[number];
 
-export const SECTION_LABELS: Record<Section, string> = {
-  lore: "Lore",
-  personajes: "Personajes",
-  referencias: "Referencias",
+/** Section → catalogue key. Resolve with `t(...)` at render time so the label
+ *  follows the active locale. */
+export const SECTION_LABELS: Record<Section, MessageKey> = {
+  lore: "section.lore",
+  personajes: "section.personajes",
+  referencias: "section.referencias",
 };
 
 /**
@@ -23,10 +27,14 @@ export const MOVE_DESTINATION_SECTIONS = [
 export type MoveDestinationSection =
   (typeof MOVE_DESTINATION_SECTIONS)[number];
 
-export const MOVE_DESTINATION_LABELS: Record<MoveDestinationSection, string> = {
-  lore: "Lore",
-  personajes: "Personajes",
-  referencias: "Referencias",
+/** Move-destination → catalogue key; resolve with `t(...)`. */
+export const MOVE_DESTINATION_LABELS: Record<
+  MoveDestinationSection,
+  MessageKey
+> = {
+  lore: "section.lore",
+  personajes: "section.personajes",
+  referencias: "section.referencias",
 };
 
 export const ROUTES = {
@@ -45,7 +53,8 @@ export const ROUTES = {
 export type NavAvailability = "available" | "teaser";
 
 export interface NavLink {
-  label: string;
+  /** Catalogue key for the visible label; resolve with `t(...)`. */
+  label: MessageKey;
   to: string;
   /** `available` surfaces navigate; `teaser` modules are future/paid and
    * render as non-actionable "Próximamente" items. */
@@ -54,8 +63,8 @@ export interface NavLink {
   rightmost?: boolean;
 }
 
-/** Label of the single generic future-module teaser in the Core navbar. */
-export const GENERIC_TEASER_LABEL = "Próximamente" as const;
+/** Catalogue key of the single generic future-module teaser. */
+export const GENERIC_TEASER_KEY: MessageKey = "nav.soon";
 
 /**
  * Core-only navigation contract (workshop-navigation spec): the free Core
@@ -72,9 +81,9 @@ export const GENERIC_TEASER_LABEL = "Próximamente" as const;
  * always renders last.
  */
 export const NAV_LINKS: readonly NavLink[] = [
-  { label: "Taller de Herramientas", to: ROUTES.TALLER_HERRAMIENTAS, availability: "available" },
-  { label: "Taller de Ideas", to: ROUTES.IDEAS, availability: "available" },
-  { label: "Taller de Mundo", to: ROUTES.TALLER_MUNDO, availability: "available" },
+  { label: "nav.links.tallerHerramientas", to: ROUTES.TALLER_HERRAMIENTAS, availability: "available" },
+  { label: "nav.links.tallerIdeas", to: ROUTES.IDEAS, availability: "available" },
+  { label: "nav.links.tallerMundo", to: ROUTES.TALLER_MUNDO, availability: "available" },
 ];
 
 /**
@@ -103,10 +112,11 @@ export const COMPANION_LATENCY_NOTIFIED_KEY =
  */
 export const DEFAULT_TALLER: OperationalTaller = "Mundo";
 
-/** Human-readable label for an Operational Taller key (display-only). */
-export const OPERATIONAL_TALLER_LABELS: Record<OperationalTaller, string> = {
-  Mundo: "Taller de Mundo",
-  Ideas: "Taller de Ideas",
+/** Catalogue key for an Operational Taller display label; resolve with
+ *  `t(...)` at render time. */
+export const OPERATIONAL_TALLER_LABELS: Record<OperationalTaller, MessageKey> = {
+  Mundo: "nav.links.tallerMundo",
+  Ideas: "nav.links.tallerIdeas",
 };
 
 /** Membership guard (OC-1 S1): only operational talleres pass — Herramientas
@@ -120,9 +130,7 @@ export function isOperationalTaller(
   );
 }
 
-export const PLACEHOLDER_TOAST =
-  "Módulo en desarrollo — próximamente" as const;
-export const AI_PLACEHOLDER_TOAST =
-  "Asistente IA — próximamente" as const;
-export const PROFILE_PLACEHOLDER_TOAST =
-  "Perfil — próximamente" as const;
+/** Catalogue keys for the placeholder toasts; resolve with `t(...)`. */
+export const PLACEHOLDER_TOAST: MessageKey = "nav.placeholder";
+export const AI_PLACEHOLDER_TOAST: MessageKey = "nav.placeholderAi";
+export const PROFILE_PLACEHOLDER_TOAST: MessageKey = "nav.placeholderProfile";

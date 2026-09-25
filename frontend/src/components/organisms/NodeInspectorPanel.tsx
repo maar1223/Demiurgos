@@ -2,6 +2,7 @@ import type { GraphEntity } from "@/api/types";
 import { Icon } from "@/components/atoms/Icon";
 import { STATUS_META } from "@/lib/status";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /** Content preview length — long ficha bodies never flood the panel. */
 const CONTENT_PREVIEW_LIMIT = 280;
@@ -58,6 +59,7 @@ export function NodeInspectorPanel({
   onClose,
   mundo,
 }: NodeInspectorPanelProps) {
+  const { t } = useAppLanguage();
   const statusMeta = entity.status ? STATUS_META[entity.status] : null;
   const preview = truncateContent(entity.content);
 
@@ -95,7 +97,7 @@ export function NodeInspectorPanel({
                   statusMeta.chipClass,
                 )}
               >
-                {statusMeta.label}
+                {t(statusMeta.labelKey)}
               </span>
             )}
           </div>
@@ -103,7 +105,7 @@ export function NodeInspectorPanel({
         <button
           type="button"
           onClick={onClose}
-          aria-label="Cerrar panel de inspección"
+          aria-label={t("nodeInspector.closeAria")}
           className="shrink-0 rounded p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
         >
           <Icon name="close" size={16} />
@@ -114,38 +116,44 @@ export function NodeInspectorPanel({
       <div className="flex-1 space-y-4 overflow-y-auto px-4 py-3">
         {/* Path + world context */}
         <div>
-          <span className="text-xs font-medium text-muted">Ruta</span>
+          <span className="text-xs font-medium text-muted">{t("nodeInspector.path")}</span>
           <p className="mt-0.5 break-all text-small text-primary">
             {entity.path}
           </p>
-          <p className="mt-0.5 text-xs text-muted">Mundo: {mundo}</p>
+          <p className="mt-0.5 text-xs text-muted">
+            {t("nodeInspector.world", { world: mundo })}
+          </p>
         </div>
 
         <LinkList
-          title="Referencias"
+          title={t("nodeInspector.references")}
           entries={forwardEntries}
           onNeighborClick={onNeighborClick}
         />
         <LinkList
-          title="Menciones"
+          title={t("nodeInspector.mentions")}
           entries={backEntries}
           onNeighborClick={onNeighborClick}
         />
         <LinkList
-          title="Relaciones"
+          title={t("nodeInspector.relations")}
           entries={relacionEntries}
           onNeighborClick={onNeighborClick}
         />
 
         {/* Content preview (truncated) */}
         <div>
-          <span className="text-xs font-medium text-muted">Contenido</span>
+          <span className="text-xs font-medium text-muted">
+            {t("nodeInspector.content")}
+          </span>
           {preview ? (
             <p className="mt-0.5 whitespace-pre-line text-small text-primary">
               {preview}
             </p>
           ) : (
-            <p className="mt-0.5 text-small text-muted">Sin contenido</p>
+            <p className="mt-0.5 text-small text-muted">
+              {t("nodeInspector.noContent")}
+            </p>
           )}
         </div>
 
@@ -156,7 +164,7 @@ export function NodeInspectorPanel({
           onClick={onOpenFicha}
           className="w-full rounded border border-action bg-action/10 px-3 py-1.5 text-small font-medium text-action transition-colors hover:bg-action/20"
         >
-          Abrir ficha
+          {t("nodeInspector.openFicha")}
         </button>
       </div>
     </aside>
@@ -252,11 +260,12 @@ function LinkList({
   entries: LinkEntry[];
   onNeighborClick: (nodeKey: string) => void;
 }) {
+  const { t } = useAppLanguage();
   return (
     <div>
       <span className="text-xs font-medium text-muted">{title}</span>
       {entries.length === 0 ? (
-        <p className="mt-0.5 text-small text-muted">Ninguna</p>
+        <p className="mt-0.5 text-small text-muted">{t("nodeInspector.none")}</p>
       ) : (
         <ul className="mt-0.5 space-y-0.5">
           {entries.map((entry, index) => (

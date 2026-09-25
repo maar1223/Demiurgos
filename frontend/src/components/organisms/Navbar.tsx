@@ -11,24 +11,17 @@ import { ApiError, type AuthSessionStatus } from "@/api/types";
 import { reloadPage } from "@/lib/reloadPage";
 import type { WorldInfo } from "@/api/types";
 import {
-  GENERIC_TEASER_LABEL,
+  GENERIC_TEASER_KEY,
   NAV_LINKS,
   PLACEHOLDER_TOAST,
   ROUTES,
   type NavLink,
 } from "@/lib/constants";
-
-/** Route → catalogue key for the Core workshop nav labels. */
-const NAV_LABEL_KEYS: Partial<Record<string, MessageKey>> = {
-  [ROUTES.TALLER_HERRAMIENTAS]: "nav.links.tallerHerramientas",
-  [ROUTES.IDEAS]: "nav.links.tallerIdeas",
-  [ROUTES.TALLER_MUNDO]: "nav.links.tallerMundo",
-};
 import { useLocalDevAuth } from "@/hooks/useLocalDevAuth";
+
 import { useCurrentWorld } from "@/hooks/useCurrentWorld";
 import { useTheme } from "@/hooks/useTheme";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
-import type { MessageKey } from "@/i18n/messages";
 import { setCurrentWorld } from "@/lib/currentWorld";
 
 interface NavbarProps {
@@ -55,11 +48,8 @@ interface NavbarProps {
 export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: NavbarProps) {
   const navigate = useNavigate();
   const { t } = useAppLanguage();
-  /** Localized nav label; unknown (teaser) links fall back to their data. */
-  const navLabel = (link: NavLink) => {
-    const key = NAV_LABEL_KEYS[link.to];
-    return key ? t(key) : link.label;
-  };
+  /** Localized nav label. */
+  const navLabel = (link: NavLink) => t(link.label);
   const { world: activeWorld } = useCurrentWorld();
   const resolvedWorld = currentWorld ?? activeWorld ?? undefined;
   // Brand theme: resolvedTheme drives the wordmark/favicon and the toggle
@@ -422,7 +412,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
 
   const handleNavClick = (link: NavLink) => {
     if (isTeaser(link)) {
-      alert(PLACEHOLDER_TOAST);
+      alert(t(PLACEHOLDER_TOAST));
       return;
     }
     setMobileMenuOpen(false);
@@ -592,7 +582,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
                 }`}
               >
                 {navLabel(link)}
-                {isTeaser(link) && link.label !== GENERIC_TEASER_LABEL && (
+                {isTeaser(link) && link.label !== GENERIC_TEASER_KEY && (
                   <span
                     aria-hidden="true"
                     className="ml-1.5 rounded-full bg-surface-raised px-1.5 py-0.5 align-middle text-[10px] uppercase tracking-wide text-muted"
@@ -654,7 +644,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
         <div
           ref={profileRef}
           role="dialog"
-          aria-label="Perfil"
+          aria-label={t("nav.profileAria")}
           className="absolute right-4 top-16 z-50 w-72 rounded-lg border border-edge bg-surface-raised p-4 shadow-xl"
         >
           <div className="flex items-center justify-between gap-3">
@@ -802,7 +792,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
                   }`}
                 >
                   {navLabel(link)}
-                  {isTeaser(link) && link.label !== GENERIC_TEASER_LABEL && (
+                  {isTeaser(link) && link.label !== GENERIC_TEASER_KEY && (
                     <span
                       aria-hidden="true"
                       className="ml-1.5 rounded-full bg-surface-raised px-1.5 py-0.5 align-middle text-[10px] uppercase tracking-wide text-muted"

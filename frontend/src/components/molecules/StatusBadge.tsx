@@ -3,6 +3,7 @@ import { Icon } from "@/components/atoms/Icon";
 import { cn, getErrorMessage } from "@/lib/utils";
 import { STATUS_META } from "@/lib/status";
 import { ApiError, type FichaStatus } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface StatusBadgeProps {
   /** Current OKF status — Borrador (draft) or Canon (stable). */
@@ -20,6 +21,7 @@ interface StatusBadgeProps {
  * until the request succeeds). Closes on outside click and Escape.
  */
 export function StatusBadge({ status, onStatusChange }: StatusBadgeProps) {
+  const { t } = useAppLanguage();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +75,7 @@ export function StatusBadge({ status, onStatusChange }: StatusBadgeProps) {
       <button
         type="button"
         onClick={() => setOpen((prev) => !prev)}
-        aria-label={`Estado: ${meta.label}`}
+        aria-label={t("status.aria", { label: t(meta.labelKey) })}
         aria-haspopup="menu"
         aria-expanded={open}
         className={cn(
@@ -92,14 +94,14 @@ export function StatusBadge({ status, onStatusChange }: StatusBadgeProps) {
         ) : (
           <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
         )}
-        {meta.label}
+        {t(meta.labelKey)}
         <Icon name="chevron-down" size={12} aria-hidden="true" />
       </button>
 
       {open && (
         <div
           role="menu"
-          aria-label={`Estado: ${meta.label}`}
+          aria-label={t("status.aria", { label: t(meta.labelKey) })}
           className="absolute right-0 top-full z-20 mt-1 min-w-36 overflow-hidden rounded-lg border border-edge bg-surface-raised shadow-xl"
         >
           {error && (
@@ -135,7 +137,7 @@ export function StatusBadge({ status, onStatusChange }: StatusBadgeProps) {
                   )}
                   aria-hidden="true"
                 />
-                {optionMeta.label}
+                {t(optionMeta.labelKey)}
               </button>
             );
           })}

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { tEs } from "@/__tests__/i18nTestUtils";
 import {
   AXIS_ACTIVATION,
   AXIS_COMPANION,
@@ -86,13 +87,13 @@ describe("companionChip — axis-2 (metodología en chat) row chip", () => {
 
 describe("conflictExplanation — axis-4 (conflicto) tooltip/panel copy (Final sentence locked — REQ-TRE-6 S1)", () => {
   it("interpolates taller labels into the verbatim conflict copy", () => {
-    expect(conflictExplanation("Mundo", "Ideas")).toBe(
+    expect(conflictExplanation("Mundo", "Ideas", tEs)).toBe(
       "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller de Ideas) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.",
     );
   });
 
   it("falls back to the raw taller value for unknown taller keys", () => {
-    expect(conflictExplanation("Mundo", "Taller Custom")).toBe(
+    expect(conflictExplanation("Mundo", "Taller Custom", tEs)).toBe(
       "Esta skill es transversal de Taller de Mundo pero su taller primario (Taller Custom) ya tiene una skill activa en este mundo. Adapta la skill para resolver el conflicto o actívala en otro mundo.",
     );
   });

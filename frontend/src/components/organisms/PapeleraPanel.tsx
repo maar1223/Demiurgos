@@ -12,6 +12,7 @@ import {
 import type { ApiError, TrashEntry } from "@/api/types";
 import { SECTION_LABELS, type Section } from "@/lib/constants";
 import { getErrorMessage } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface PapeleraPanelProps {
   mundo: string;
@@ -28,24 +29,22 @@ interface PapeleraPanelProps {
   onTtlPurged: (count: number) => void;
 }
 
-const MONTHS = [
-  "ene", "feb", "mar", "abr", "may", "jun",
-  "jul", "ago", "sep", "oct", "nov", "dic",
-];
-
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDeletedAt(iso: string): string {
+function formatDeletedAt(iso: string, language: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const day = d.getDate();
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${day} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${hh}:${mm}`;
+  return d.toLocaleString(language === "en" ? "en-US" : "es-ES", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 /**
@@ -71,6 +70,7 @@ export function PapeleraPanel({
   onPurged,
   onTtlPurged,
 }: PapeleraPanelProps) {
+  const { t, language } = useAppLanguage();
   const [entries, setEntries] = useState<TrashEntry[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -201,13 +201,13 @@ export function PapeleraPanel({
               className="flex items-center gap-2 font-heading text-h4 text-primary"
             >
               <Icon name="trash" size={20} />
-              Papelera
+              {t("trash.title")}
             </h2>
             <button
               type="button"
               onClick={handleClose}
               className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-              aria-label="Cerrar"
+              aria-label={t("common.close")}
             >
               <Icon name="close" size={20} />
             </button>
@@ -239,9 +239,7 @@ export function PapeleraPanel({
             ) : entries.length === 0 ? (
               <div className="flex flex-col items-center gap-3 py-16 text-center">
                 <Icon name="trash" size={40} className="text-muted" />
-                <p className="text-body text-muted">
-                  La papelera está vacía
-                </p>
+                <p className="text-body text-muted">{t("trash.empty")}</p>
               </div>
             ) : (
               <>
@@ -263,12 +261,15 @@ export function PapeleraPanel({
                             {entry.original_path}
                           </p>
                           <p className="text-xs text-muted">
-                            {SECTION_LABELS[entry.section as Section] ??
-                              entry.section}
+                            {entry.section in SECTION_LABELS
+                              ? t(SECTION_LABELS[entry.section as Section])
+                              : entry.section}
                             {" · "}
                             {formatBytes(entry.size)}
                             {" · "}
-                            eliminado el {formatDeletedAt(entry.deleted_at)}
+                            {t("trash.deletedAt", {
+                              date: formatDeletedAt(entry.deleted_at, language),
+                            })}
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
@@ -278,7 +279,7 @@ export function PapeleraPanel({
                             disabled={busy}
                             onClick={() => void handleRestore(entry)}
                           >
-                            Restaurar
+                            {t("trash.restore")}
                           </Button>
                           <Button
                             variant="ghost"
@@ -289,7 +290,7 @@ export function PapeleraPanel({
                               setPurgeTarget(entry);
                             }}
                           >
-                            Purgar
+                            {t("trash.purge")}
                           </Button>
                         </div>
                       </li>
@@ -309,7 +310,7 @@ export function PapeleraPanel({
                       setConfirmEmpty(true);
                     }}
                   >
-                    Vaciar papelera
+                    {t("trash.emptyAction")}
                   </Button>
                 </div>
               </>
@@ -322,9 +323,11 @@ export function PapeleraPanel({
           treatment (REQ-PIA-08). */}
       {purgeTarget && (
         <ConfirmDialog
-          title="Purgar"
-          message={`¿Purgar permanentemente "${purgeTarget.original_path.split("/").pop()}"? Se eliminará sin posibilidad de restaurarlo.`}
-          confirmLabel="Purgar"
+          title={t("trash.purge")}
+          message={t("trash.purgeMessage", {
+            name: purgeTarget.original_path.split("/").pop() ?? purgeTarget.original_path,
+          })}
+          confirmLabel={t("trash.purge")}
           confirmVariant="danger"
           isBusy={busyEntryId === purgeTarget.entry_id}
           error={actionError}
@@ -339,11 +342,12 @@ export function PapeleraPanel({
       {/* Empty-all confirm (stronger — total and irreversible) */}
       {confirmEmpty && (
         <ConfirmDialog
-          title="Vaciar papelera"
-          message={`Se eliminarán permanentemente ${entries.length} ${
-            entries.length === 1 ? "entrada" : "entradas"
-          }. Esta acción no se puede deshacer.`}
-          confirmLabel="Vaciar papelera"
+          title={t("trash.emptyAction")}
+          message={t("trash.emptyMessage", {
+            count: entries.length,
+            unit: entries.length === 1 ? t("trash.entrySingular") : t("trash.entryPlural"),
+          })}
+          confirmLabel={t("trash.emptyAction")}
           confirmVariant="danger"
           isBusy={isEmptying}
           error={actionError}

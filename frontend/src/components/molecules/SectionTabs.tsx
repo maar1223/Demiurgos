@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import { VALID_SECTIONS, SECTION_LABELS, type Section } from "@/lib/constants";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface SectionTabsProps {
   /** Current section from the URL (`lore` | `personajes`) */
@@ -14,10 +15,11 @@ interface SectionTabsProps {
  * to the section root. Visual pattern mirrors TabBar (right panel).
  */
 export function SectionTabs({ activeSection, onSelect }: SectionTabsProps) {
+  const { t } = useAppLanguage();
   return (
     <div
       role="tablist"
-      aria-label="Secciones del mundo"
+      aria-label={t("section.tabsAria")}
       className="flex shrink-0 border-b border-edge"
     >
       {VALID_SECTIONS.map((section) => (
@@ -35,7 +37,7 @@ export function SectionTabs({ activeSection, onSelect }: SectionTabsProps) {
               : "text-muted hover:text-primary hover:bg-surface-hover/50",
           )}
         >
-          {SECTION_LABELS[section]}
+          {t(SECTION_LABELS[section])}
         </button>
       ))}
     </div>
