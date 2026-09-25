@@ -141,6 +141,7 @@ import {
   listTrash,
 } from "@/api/wiki";
 import { ApiError } from "@/api/types";
+import { CATALOGUE } from "@/i18n/messages";
 import type { Mock } from "vitest";
 
 const mockWorlds = [
@@ -2027,9 +2028,7 @@ describe("WikiEditor", () => {
 
     // No file is downloaded — the failure surfaces as an error toast.
     expect(
-      await screen.findByText(
-        "Error interno del servidor. Revisá los logs del backend.",
-      ),
+      await screen.findByText(CATALOGUE.es["error.status.500"]),
     ).toBeInTheDocument();
   });
 

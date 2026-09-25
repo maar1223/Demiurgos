@@ -2,12 +2,47 @@ import { ApiError } from "@/api/types";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 
+/** Stable codes for transport-level failures (AD-4, ERR-REQ-3). */
+const NETWORK_UNREACHABLE_CODE = "network.unreachable";
+const NETWORK_TIMEOUT_CODE = "network.timeout";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Parse the structured error body `{detail, code, params}` (AD-5) into an
+ * `ApiError`. `detail` stays available for logging; the UI never renders it.
+ */
+function parseErrorBody(body: unknown): {
+  detail?: string;
+  code?: string;
+  params?: Record<string, string | number>;
+} {
+  if (!isRecord(body)) return {};
+  const detail = typeof body.detail === "string" ? body.detail : undefined;
+  const code = typeof body.code === "string" && body.code.length > 0 ? body.code : undefined;
+  let params: Record<string, string | number> | undefined;
+  if (isRecord(body.params)) {
+    const cleaned: Record<string, string | number> = {};
+    for (const [key, value] of Object.entries(body.params)) {
+      if (typeof value === "string" || typeof value === "number") {
+        cleaned[key] = value;
+      }
+    }
+    if (Object.keys(cleaned).length > 0) params = cleaned;
+  }
+  return { detail, code, params };
+}
+
 /**
  * Base fetch wrapper with timeout, JSON parsing, and typed error handling.
  *
  * - Adds `Content-Type: application/json` by default.
- * - On HTTP errors (4xx/5xx), parses `{detail}` from FastAPI and throws `ApiError`.
- * - On network error, throws `ApiError(status: 0)`.
+ * - On HTTP errors (4xx/5xx), parses `{detail, code, params}` from FastAPI
+ *   and throws `ApiError`.
+ * - On network error, throws `ApiError(status: 0, code: "network.unreachable")`.
+ * - On timeout, throws `ApiError(status: 0, code: "network.timeout")`.
  * - Uses AbortController for timeout.
  */
 export async function apiFetch<T>(
@@ -32,23 +67,20 @@ export async function apiFetch<T>(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      let detail: string | undefined;
-      let code: string | undefined;
+      let body: unknown;
       try {
-        const body = await response.json();
-        detail = body.detail;
-        if (typeof body.code === "string") {
-          code = body.code;
-        }
+        body = await response.json();
       } catch {
         // ignore parse errors on error responses
       }
+      const { detail, code, params } = parseErrorBody(body);
 
       throw new ApiError(
         response.status,
         detail ?? `HTTP ${response.status}`,
         detail,
         code,
+        params,
       );
     }
 
@@ -66,13 +98,15 @@ export async function apiFetch<T>(
     }
 
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new ApiError(0, "La petición tardó demasiado");
+      throw new ApiError(0, "La petición tardó demasiado", undefined, NETWORK_TIMEOUT_CODE);
     }
 
     // Network error (server down, DNS failure, etc.)
     throw new ApiError(
       0,
-      "No se pudo conectar al servidor. Verificá que esté corriendo.",
+      "No se pudo conectar al servidor. Verifica que esté corriendo.",
+      undefined,
+      NETWORK_UNREACHABLE_CODE,
     );
   }
 }

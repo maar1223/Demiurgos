@@ -1,3 +1,8 @@
+import { ApiError, type AppLanguage } from "@/api/types";
+import { readCachedLocale } from "@/hooks/useAppLocale";
+import { localizeApiError } from "@/i18n/errors";
+import { translate, type TFunction } from "@/i18n/messages";
+
 /**
  * Merges class names, filtering out falsy values.
  * A lightweight alternative to clsx + tailwind-merge.
@@ -28,40 +33,24 @@ export function decodePathSegment(segment: string): string {
 }
 
 /**
- * Maps backend HTTP error codes to user-facing Spanish messages.
+ * Maps backend HTTP errors to localized user-facing copy through the message
+ * catalogue (ERR-REQ-3). Code-aware first (stable backend codes such as
+ * `import.job_not_found`), then status-based catalogue keys; the raw backend
+ * `detail` is NEVER returned as user-facing copy (ERR-REQ-4). The language is
+ * resolved synchronously from the cached locale so the module stays
+ * context-free; interactive surfaces that must follow an instant language
+ * switch should prefer `localizeApiError(error, t)` from the i18n barrel.
  */
-export function getErrorMessage(status: number, detail?: string): string {
-  if (status === 0) {
-    return "No se pudo conectar al servidor. Verificá que esté corriendo.";
-  }
-
-  if (detail) {
-    switch (detail) {
-      case "Path traversal detectado":
-        return "Ruta inválida: acceso fuera del directorio permitido";
-      case "Sección inválida":
-        return "Sección no encontrada. Secciones válidas: Lore, Personajes, Referencias";
-      case "Archivo no encontrado":
-        return "Archivo no encontrado";
-      case "El archivo ya existe":
-        return "El archivo ya existe";
-      default:
-        break;
-    }
-  }
-
-  switch (status) {
-    case 400:
-      return "Solicitud inválida";
-    case 404:
-      return detail ?? "Recurso no encontrado";
-    case 409:
-      return "El archivo ya existe";
-    case 422:
-      return "Error de codificación: el archivo contiene bytes inválidos UTF-8";
-    case 500:
-      return "Error interno del servidor. Revisá los logs del backend.";
-    default:
-      return "Error inesperado";
-  }
+export function getErrorMessage(
+  status: number,
+  detail?: string,
+  code?: string,
+  params?: Record<string, string | number>,
+): string {
+  const language: AppLanguage = readCachedLocale().ui === "en" ? "en" : "es";
+  const t: TFunction = (key, p) => translate(language, key, p);
+  return localizeApiError(
+    new ApiError(status, detail ?? `HTTP ${status}`, detail, code, params),
+    t,
+  );
 }

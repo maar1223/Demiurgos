@@ -47,6 +47,42 @@ describe("apiFetch", () => {
     });
   });
 
+  it("parses the structured {code, params} error body (ERR-REQ-1)", async () => {
+    globalThis.fetch = mockFetch({
+      ok: false,
+      status: 400,
+      body: {
+        detail: "Invalid section for lore/a.md: 'personajes'",
+        code: "import.invalid_section",
+        params: { relative: "lore/a.md", section: "personajes" },
+      },
+    });
+
+    await expect(apiFetch("/test")).rejects.toMatchObject({
+      status: 400,
+      code: "import.invalid_section",
+      params: { relative: "lore/a.md", section: "personajes" },
+    });
+  });
+
+  it("ignores non-serializable params and keeps detail for logs", async () => {
+    globalThis.fetch = mockFetch({
+      ok: false,
+      status: 404,
+      body: {
+        detail: "Import job not found",
+        code: "import.job_not_found",
+        params: { nested: { x: 1 } },
+      },
+    });
+
+    await expect(apiFetch("/test")).rejects.toMatchObject({
+      status: 404,
+      code: "import.job_not_found",
+      detail: "Import job not found",
+    });
+  });
+
   it("throws ApiError on 404 with detail", async () => {
     globalThis.fetch = mockFetch({
       ok: false,
@@ -99,6 +135,7 @@ describe("apiFetch", () => {
 
     await expect(apiFetch("/test")).rejects.toMatchObject({
       status: 0,
+      code: "network.unreachable",
       message: expect.stringContaining("No se pudo conectar"),
     });
   });
@@ -117,6 +154,7 @@ describe("apiFetch", () => {
     // Test the timeout mechanism by checking that AbortError maps correctly.
     await expect(apiFetch("/test", { timeout: 100 })).rejects.toMatchObject({
       status: 0,
+      code: "network.timeout",
       message: "La petición tardó demasiado",
     });
   });

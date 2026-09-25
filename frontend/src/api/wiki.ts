@@ -347,7 +347,18 @@ export async function askAssistant(
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     const detail = isRecord(body) && typeof body.detail === "string" ? body.detail : undefined;
-    throw new ApiError(response.status, detail ?? `HTTP ${response.status}`, detail);
+    const code = isRecord(body) && typeof body.code === "string" && body.code.length > 0
+      ? body.code
+      : undefined;
+    let params: Record<string, string | number> | undefined;
+    if (isRecord(body) && isRecord(body.params)) {
+      const cleaned: Record<string, string | number> = {};
+      for (const [key, value] of Object.entries(body.params)) {
+        if (typeof value === "string" || typeof value === "number") cleaned[key] = value;
+      }
+      if (Object.keys(cleaned).length > 0) params = cleaned;
+    }
+    throw new ApiError(response.status, detail ?? `HTTP ${response.status}`, detail, code, params);
   }
   return (await response.json()) as AiAskResponse;
 }

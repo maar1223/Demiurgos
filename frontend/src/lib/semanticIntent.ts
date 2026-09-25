@@ -1,4 +1,5 @@
 import type { AppLanguage, EditProposal, GuidedCharacterSession } from "@/api/types";
+import { translate } from "@/i18n/messages";
 
 /**
  * Client-side semantic intent mapping.
@@ -12,14 +13,15 @@ import type { AppLanguage, EditProposal, GuidedCharacterSession } from "@/api/ty
  * language (Spanish default) and never exposes provider/internal terms.
  */
 
+/** Localized fail-closed copy, sourced from the catalogue (UI-REQ-2). */
 export const SEMANTIC_BLOCKED_BY_LANGUAGE: Record<AppLanguage, string> = {
-  es: "El Asistente IA no pudo completar la solicitud en este momento. No se realizó ninguna acción ni escritura.",
-  en: "The AI Assistant could not complete the request right now. No action or write was made.",
+  es: translate("es", "assistant.blocked"),
+  en: translate("en", "assistant.blocked"),
 };
 
 /** Localized fail-closed copy; Spanish by default. Never provider/internal terms. */
 export function semanticBlockedText(language: AppLanguage = "es"): string {
-  return SEMANTIC_BLOCKED_BY_LANGUAGE[language];
+  return translate(language, "assistant.blocked");
 }
 
 /** Spanish-default blocked copy (backward-compatible constant). */

@@ -1,7 +1,6 @@
 /**
- * i18n barrel — the public surface for catalogue, provider, and hooks.
- * `localizeApiError` joins this barrel in WU-2 (task 2.5) alongside
- * `frontend/src/i18n/errors.ts`.
+ * i18n barrel — the public surface for catalogue, provider, hooks, and
+ * client-side error localization.
  */
 export {
   messages,
@@ -19,3 +18,4 @@ export {
 } from "@/i18n/LocaleProvider";
 export { useAppLanguage, useTranslation } from "@/hooks/useAppLanguage";
 export { useAppLocale } from "@/hooks/useAppLocale";
+export { errorKey, localizeApiError, localizeErrorCode } from "@/i18n/errors";

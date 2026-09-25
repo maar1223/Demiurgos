@@ -1,5 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { beforeEach, describe, it, expect } from "vitest";
 import { cn, encodePathSegment, decodePathSegment, getErrorMessage } from "@/lib/utils";
+import { CATALOGUE, type MessageKey } from "@/i18n/messages";
 
 describe("cn", () => {
   it("joins class names", () => {
@@ -47,51 +48,47 @@ describe("decodePathSegment", () => {
   });
 });
 
+const es = (key: MessageKey) => CATALOGUE.es[key];
+
 describe("getErrorMessage", () => {
-  it("returns network error for status 0", () => {
-    const msg = getErrorMessage(0);
-    expect(msg).toContain("No se pudo conectar");
+  beforeEach(() => {
+    // No cached locale → the es default (deterministic assertions).
+    window.localStorage.clear();
   });
 
-  it("returns path traversal message for 400 with matching detail", () => {
-    expect(getErrorMessage(400, "Path traversal detectado")).toBe(
-      "Ruta inválida: acceso fuera del directorio permitido",
+  it("returns network copy for status 0", () => {
+    expect(getErrorMessage(0)).toBe(es("error.network.unreachable"));
+  });
+
+  it("resolves a known backend code through the catalogue", () => {
+    expect(getErrorMessage(404, "Import job not found", "import.job_not_found")).toBe(
+      es("error.import.job_not_found"),
     );
   });
 
-  it("returns section not found for 404 with matching detail", () => {
-    expect(getErrorMessage(404, "Sección inválida")).toBe(
-      "Sección no encontrada. Secciones válidas: Lore, Personajes, Referencias",
-    );
+  it("fills structured params into the localized template", () => {
+    expect(
+      getErrorMessage(400, "Invalid section", "import.invalid_section", {
+        relative: "lore/a.md",
+        section: "personajes",
+      }),
+    ).toBe("Sección inválida para lore/a.md: personajes.");
   });
 
-  it("returns file not found for 404 with detail", () => {
-    expect(getErrorMessage(404, "Archivo no encontrado")).toBe(
-      "Archivo no encontrado",
-    );
+  it("falls back to status-based copy when no code is present", () => {
+    expect(getErrorMessage(404)).toBe(es("error.status.404"));
+    expect(getErrorMessage(400)).toBe(es("error.status.400"));
+    expect(getErrorMessage(409)).toBe(es("error.status.409"));
   });
 
-  it("returns file exists for 409 with matching detail", () => {
-    expect(getErrorMessage(409, "El archivo ya existe")).toBe(
-      "El archivo ya existe",
-    );
+  it("never leaks the raw backend detail (ERR-REQ-4)", () => {
+    // The pre-fix behavior returned `detail` verbatim for 404s; now the raw
+    // backend string must never surface as user-facing copy.
+    expect(getErrorMessage(404, "Custom detail")).toBe(es("error.status.404"));
+    expect(getErrorMessage(404, "Custom detail")).not.toContain("Custom detail");
   });
 
-  it("returns encoding error for 422", () => {
-    const msg = getErrorMessage(422);
-    expect(msg).toContain("Error de codificación");
-  });
-
-  it("returns server error for 500", () => {
-    const msg = getErrorMessage(500);
-    expect(msg).toContain("Error interno del servidor");
-  });
-
-  it("returns default for unknown status", () => {
-    expect(getErrorMessage(999)).toBe("Error inesperado");
-  });
-
-  it("returns detail when available for 404", () => {
-    expect(getErrorMessage(404, "Custom detail")).toBe("Custom detail");
+  it("returns the generic copy for unknown statuses", () => {
+    expect(getErrorMessage(999)).toBe(es("error.unknown"));
   });
 });

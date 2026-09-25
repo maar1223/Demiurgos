@@ -1869,14 +1869,17 @@ export interface BackupRestoreStatus {
 
 /** Structured API error. `code` (when present) is a stable machine-readable
  *  remediation key from the backend (e.g. `webhook_conflict` for the
- *  Telegram webhook/getUpdates conflict) so the UI can render specific
- *  guidance instead of a bare message. */
+ *  Telegram webhook/getUpdates conflict, or `import.job_not_found` for the
+ *  world importer) so the UI can render specific guidance instead of a bare
+ *  message. `params` carries the code's structured interpolation values
+ *  (AD-4); the UI resolves both through the locale catalogue at render time. */
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
     public detail?: string,
     public code?: string,
+    public params?: Record<string, string | number>,
   ) {
     super(message);
     this.name = "ApiError";
