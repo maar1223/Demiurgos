@@ -10,6 +10,7 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { WorldInfo } from "@/api/types";
 
 /**
@@ -27,6 +28,7 @@ import type { WorldInfo } from "@/api/types";
  * - 🟢 Data: responsive grid of CategoryCards → `/wiki/:mundo`
  */
 export default function WorldWorkshop() {
+  const { t } = useAppLanguage();
   const navigate = useNavigate();
   const { worlds, isLoading, error, mutate } = useWorlds();
   const { world: activeWorld } = useCurrentWorld();
@@ -59,12 +61,9 @@ export default function WorldWorkshop() {
     <WikiHomeLayout>
       <div className="col-span-full">
         <h1 className="font-heading text-h3 text-primary">
-          Taller de Mundo
+          {t("nav.links.tallerMundo")}
         </h1>
-        <p className="mt-2 text-body text-muted">
-          Construí tu mundo y mantenelo conectado: lore y personajes,
-          con creación de personajes guiada y exportación de ficha a PDF.
-        </p>
+        <p className="mt-2 text-body text-muted">{t("worldworkshop.intro")}</p>
       </div>
 
       {isLoading && (
@@ -76,7 +75,7 @@ export default function WorldWorkshop() {
       {error && !isLoading && (
         <div className="col-span-full px-4 py-8">
           <ErrorBanner
-            message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
+            message={t("wikiHome.loadError")}
             onRetry={() => mutate()}
           />
         </div>
@@ -86,7 +85,7 @@ export default function WorldWorkshop() {
         <div className="col-span-full">
           <EmptyState
             icon="empty"
-            message="No hay mundos disponibles. Creá un mundo primero."
+            message={t("wikiHome.empty")}
           />
         </div>
       )}
@@ -109,7 +108,7 @@ export default function WorldWorkshop() {
                 className="w-full"
               >
                 <Icon name="upload" size={14} />
-                Importar contenido
+                {t("worldworkshop.import")}
               </Button>
             </div>
           ))}

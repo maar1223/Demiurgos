@@ -7,6 +7,7 @@ import { CategoryCard } from "@/components/molecules/CategoryCard";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { WorldInfo } from "@/api/types";
 
 /**
@@ -20,6 +21,7 @@ import type { WorldInfo } from "@/api/types";
  * - 🟢 Data: responsive grid of CategoryCards
  */
 export default function WikiHome() {
+  const { t } = useAppLanguage();
   const navigate = useNavigate();
   const { worlds, isLoading, error, mutate } = useWorlds();
   const { world: activeWorld } = useCurrentWorld();
@@ -53,7 +55,7 @@ export default function WikiHome() {
       {error && !isLoading && (
         <div className="col-span-full px-4 py-8">
           <ErrorBanner
-            message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
+            message={t("wikiHome.loadError")}
             onRetry={() => mutate()}
           />
         </div>
@@ -63,7 +65,7 @@ export default function WikiHome() {
         <div className="col-span-full">
           <EmptyState
             icon="empty"
-            message="No hay mundos disponibles. Creá un mundo primero."
+            message={t("wikiHome.empty")}
           />
         </div>
       )}

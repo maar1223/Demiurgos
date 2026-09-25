@@ -1,11 +1,13 @@
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /**
  * 404 Not Found page with navigation back to Wiki Home.
  */
 export default function NotFound() {
+  const { t } = useAppLanguage();
   const navigate = useNavigate();
 
   return (
@@ -14,12 +16,10 @@ export default function NotFound() {
         <Icon name="error" size={40} />
       </div>
       <h1 className="font-heading text-h2 text-primary">404</h1>
-      <p className="text-body text-muted">
-        Página no encontrada
-      </p>
+      <p className="text-body text-muted">{t("notfound.message")}</p>
       <Button variant="primary" onClick={() => navigate("/wiki")}>
         <Icon name="chevron-left" size={16} />
-        Volver al inicio
+        {t("notfound.back")}
       </Button>
     </div>
   );

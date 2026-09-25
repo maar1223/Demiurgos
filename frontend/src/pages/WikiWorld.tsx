@@ -10,6 +10,7 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { VALID_SECTIONS, SECTION_LABELS, ROUTES, type Section } from "@/lib/constants";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import type { WorldInfo } from "@/api/types";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ import { cn } from "@/lib/utils";
  * - 🟢 Data: responsive grid of SectionCards (lore, personajes)
  */
 export default function WikiWorld() {
+  const { t } = useAppLanguage();
   const navigate = useNavigate();
   const { mundo } = useParams<{ mundo: string }>();
   const { worlds, isLoading, error, mutate } = useWorlds();
@@ -73,7 +75,7 @@ export default function WikiWorld() {
       {error && !isLoading && (
         <div className="col-span-full px-4 py-8">
           <ErrorBanner
-            message="No se pudo cargar la lista de mundos. Verificá que el servidor esté corriendo."
+            message={t("wikiHome.loadError")}
             onRetry={() => mutate()}
           />
         </div>
@@ -83,8 +85,8 @@ export default function WikiWorld() {
         <div className="col-span-full">
           <EmptyState
             icon="error"
-            message="Faltan parámetros de ruta. Seleccioná un mundo desde la página principal."
-            actionLabel="Ir al inicio"
+            message={t("relaciones.missingParams")}
+            actionLabel={t("wikiWorld.goHome")}
             onAction={() => navigate("/wiki")}
           />
         </div>
@@ -128,7 +130,7 @@ export default function WikiWorld() {
               </div>
               <div className="flex items-center justify-between">
                 <h3 className="font-heading text-h4 text-primary transition-colors group-hover:text-action">
-                  Relaciones y Canon
+                  {t("relaciones.title")}
                 </h3>
                 <Icon
                   name="chevron-right"
@@ -137,7 +139,7 @@ export default function WikiWorld() {
                 />
               </div>
               <p className="text-small text-muted">
-                Grafo de entidades, estados de certeza y conexiones
+                {t("wikiWorld.relacionesBody")}
               </p>
             </button>
           )}

@@ -923,6 +923,27 @@ export const messages = {
     "login.error.status": "No se pudo consultar la sesión",
     "login.error.local": "No se pudo iniciar sesión",
 
+    "notfound.message": "Página no encontrada",
+    "notfound.back": "Volver al inicio",
+    "wikiHome.loadError":
+      "No se pudo cargar la lista de mundos. Verifica que el servidor esté corriendo.",
+    "wikiHome.empty":
+      "No hay mundos disponibles. Crea un mundo primero.",
+    "wikiWorld.goHome": "Ir al inicio",
+    "wikiWorld.relacionesBody":
+      "Grafo de entidades, estados de certeza y conexiones",
+    "entityPage.missingMundo":
+      "Falta el parámetro de mundo. Selecciona un mundo desde la página principal.",
+    "entityPage.goHome": "Ir al inicio",
+    "entityPage.noEntity": "Selecciona una entidad para ver sus detalles.",
+    "entityPage.connections": "Conexiones ({count})",
+    "entityPage.noEntityConnections":
+      "Carga una entidad para ver sus conexiones.",
+    "entityPage.noConnections": "Sin conexiones registradas.",
+    "worldworkshop.intro":
+      "Construye tu mundo y mantenlo conectado: lore y personajes, con creación de personajes guiada y exportación de ficha a PDF.",
+    "worldworkshop.import": "Importar contenido",
+
     "error.unknown": "Ocurrió un error inesperado.",
     "error.sessionExpired": "La sesión expiró. Inicia sesión e intenta de nuevo.",
     "error.network.unreachable": "No se pudo conectar al servidor. Verifica que esté corriendo.",
@@ -1853,6 +1874,25 @@ export const messages = {
     "login.local.start": "Start local session",
     "login.error.status": "The session could not be checked",
     "login.error.local": "Could not sign in",
+
+    "notfound.message": "Page not found",
+    "notfound.back": "Back to home",
+    "wikiHome.loadError":
+      "The world list could not be loaded. Make sure the server is running.",
+    "wikiHome.empty": "No worlds available. Create a world first.",
+    "wikiWorld.goHome": "Go home",
+    "wikiWorld.relacionesBody":
+      "Entity graph, certainty states, and connections",
+    "entityPage.missingMundo":
+      "Missing world parameter. Select a world from the main page.",
+    "entityPage.goHome": "Go home",
+    "entityPage.noEntity": "Select an entity to view its details.",
+    "entityPage.connections": "Connections ({count})",
+    "entityPage.noEntityConnections": "Load an entity to view its connections.",
+    "entityPage.noConnections": "No registered connections.",
+    "worldworkshop.intro":
+      "Build your world and keep it connected: lore and characters, with guided character creation and ficha export to PDF.",
+    "worldworkshop.import": "Import content",
 
     "error.unknown": "An unexpected error occurred.",
     "error.sessionExpired": "The session expired. Sign in and try again.",

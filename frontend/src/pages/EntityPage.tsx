@@ -12,6 +12,7 @@ import type { SidebarTab } from "@/components/molecules/TabBar";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { decodePathSegment, encodePathSegment } from "@/lib/utils";
 
 /**
@@ -27,6 +28,7 @@ import { decodePathSegment, encodePathSegment } from "@/lib/utils";
  * - 🟢 Ready: EntityDetail + sidebar connections
  */
 export default function EntityPage() {
+  const { t } = useAppLanguage();
   const navigate = useNavigate();
   const { mundo, "*": splatPath } = useParams<{
     mundo: string;
@@ -93,8 +95,8 @@ export default function EntityPage() {
       <EditorLayout sidebar={null}>
         <EmptyState
           icon="error"
-          message="Falta el parámetro de mundo. Seleccioná un mundo desde la página principal."
-          actionLabel="Ir al inicio"
+          message={t("entityPage.missingMundo")}
+          actionLabel={t("entityPage.goHome")}
           onAction={() => navigate("/wiki")}
         />
       </EditorLayout>
@@ -119,8 +121,8 @@ export default function EntityPage() {
       {!entityName ? (
         <EmptyState
           icon="search"
-          message="Seleccioná una entidad para ver sus detalles."
-          actionLabel="Ir al inicio"
+          message={t("entityPage.noEntity")}
+          actionLabel={t("entityPage.goHome")}
           onAction={() => navigate("/wiki")}
         />
       ) : (
@@ -156,12 +158,13 @@ function ConnectionsPanel({
   links,
   isLoading,
 }: ConnectionsPanelProps) {
+  const { t } = useAppLanguage();
   if (!entityName) {
     return (
       <div className="flex flex-1 items-center px-4">
         <EmptyState
           icon="search"
-          message="Cargá una entidad para ver sus conexiones."
+          message={t("entityPage.noEntityConnections")}
         />
       </div>
     );
@@ -180,7 +183,7 @@ function ConnectionsPanel({
       <div className="flex flex-1 items-center px-4">
         <EmptyState
           icon="search"
-          message="Sin conexiones registradas."
+          message={t("entityPage.noConnections")}
         />
       </div>
     );
@@ -189,7 +192,7 @@ function ConnectionsPanel({
   return (
     <div className="flex-1 overflow-y-auto px-3 py-2">
       <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">
-        Conexiones ({links.length})
+        {t("entityPage.connections", { count: links.length })}
       </p>
       <ul className="space-y-1">
         {links.map((link, i) => {

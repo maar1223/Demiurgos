@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import WorldWorkshop from "@/pages/WorldWorkshop";
 import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 // Mock useWorlds entirely
 vi.mock("@/hooks/useWorlds", () => ({
@@ -98,7 +99,7 @@ describe("WorldWorkshop", () => {
     renderWorldWorkshop();
 
     expect(
-      screen.getByText("No hay mundos disponibles. Creá un mundo primero."),
+      screen.getByText(tEs("wikiHome.empty")),
     ).toBeInTheDocument();
   });
 
