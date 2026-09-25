@@ -2,8 +2,11 @@
 
 Two concerns live here:
 
-1. The global UI language (``DEMIURGOS_LANGUAGE`` from env/.env) used for the
-   current copy — unchanged legacy contract.
+1. Locale resolution (persisted-first, AD-6): the global UI language is read
+   from the persisted ``LocaleSettings`` (``<data_root>/data/local-state.json``);
+   ``DEMIURGOS_LANGUAGE`` from env/``.env`` is only a fallback when no persisted
+   locale exists. Domain-aware resolvers (``ui``/``conversation``/``content``)
+   let the AI path follow the selected locale instead of the environment.
 2. G7/OC3 locale settings: independent UI/conversation/content languages, an
    explicit region override, and an IANA timezone. Timestamps are stored in UTC;
    the IANA zone governs presentation only. A region MAY suggest values but is
@@ -21,7 +24,8 @@ from pathlib import Path
 from typing import Any, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from data_root import resolve_data_root
+from data_root import DataRootNotConfigured, resolve_data_root
+from local_state import LocalState
 
 ENV_NAME = "DEMIURGOS_LANGUAGE"
 DEFAULT_LANGUAGE = "es"
@@ -89,6 +93,10 @@ class LocaleSettings:
     ui: str = "es"
     conversation: str = "es"
     content: str = "es"
+    # AD-7: an explicit domain override. When false (the default, including
+    # every legacy persisted locale without these keys) the domain follows UI.
+    conversation_explicit: bool = False
+    content_explicit: bool = False
     region: str | None = None
     region_explicit: bool = False
     iana_timezone: str = "UTC"
@@ -98,6 +106,8 @@ class LocaleSettings:
             "ui": self.ui,
             "conversation": self.conversation,
             "content": self.content,
+            "conversation_explicit": self.conversation_explicit,
+            "content_explicit": self.content_explicit,
             "region": self.region,
             "region_explicit": self.region_explicit,
             "iana_timezone": self.iana_timezone,
@@ -108,6 +118,8 @@ class LocaleSettings:
         raw_ui = data.get("ui")
         raw_conversation = data.get("conversation")
         raw_content = data.get("content")
+        raw_conversation_explicit = data.get("conversation_explicit", False)
+        raw_content_explicit = data.get("content_explicit", False)
         raw_region = data.get("region")
         raw_explicit = data.get("region_explicit", False)
         raw_tz = data.get("iana_timezone")
@@ -129,6 +141,8 @@ class LocaleSettings:
             ui=ui,
             conversation=conversation,
             content=content,
+            conversation_explicit=bool(raw_conversation_explicit),
+            content_explicit=bool(raw_content_explicit),
             region=region,
             region_explicit=bool(raw_explicit),
             iana_timezone=raw_tz.strip(),
@@ -158,19 +172,116 @@ def read_dotenv_value(env_file: Path, name: str) -> str:
     return ""
 
 
+def _default_state_path() -> Path | None:
+    """The installation-wide local-state file, or None when no data root exists.
+
+    Resolved lazily on every call (never at import time) and fails safe: a
+    missing/unconfigured data root simply means "no persisted locale".
+    """
+    try:
+        return resolve_data_root() / "data" / "local-state.json"
+    except DataRootNotConfigured:
+        return None
+
+
+def read_persisted_locale(*, state_path: Path | None = None) -> LocaleSettings | None:
+    """Read the persisted ``LocaleSettings``, or ``None`` when unavailable.
+
+    The state file is read through :class:`LocalState` so the BOM-safety and
+    schema-version guarantees of the registry apply. A missing, unreadable, or
+    invalid locale never raises here: callers fall back to the env/.env path
+    (fail-safe, same contract as :func:`resolve_ui_language`).
+    """
+    path = Path(state_path) if state_path is not None else _default_state_path()
+    if path is None or not path.is_file():
+        return None
+    try:
+        snapshot = LocalState(path).snapshot()
+    except Exception:
+        return None
+    raw = snapshot.get("locale")
+    if not isinstance(raw, Mapping):
+        return None
+    try:
+        return LocaleSettings.from_dict(raw)
+    except ValueError:
+        return None
+
+
+def effective_languages(settings: LocaleSettings) -> dict[str, str]:
+    """Resolve the effective language per domain (AD-7).
+
+    ``conversation``/``content`` follow ``ui`` unless their ``*_explicit`` flag
+    is set, in which case the persisted domain value is honored.
+    """
+    ui = normalize_ui_language_for_domain(settings.ui)
+    return {
+        "ui": ui,
+        "conversation": (
+            normalize_ui_language_for_domain(settings.conversation)
+            if settings.conversation_explicit
+            else ui
+        ),
+        "content": (
+            normalize_ui_language_for_domain(settings.content)
+            if settings.content_explicit
+            else ui
+        ),
+    }
+
+
+def _env_language(
+    *,
+    env_file: Path | None,
+    environ: Mapping[str, str] | None,
+) -> str:
+    """Legacy env/.env fallback, used only when no persisted locale exists."""
+    env = os.environ if environ is None else environ
+    if env_file is None:
+        try:
+            env_file = resolve_data_root() / ".env"
+        except DataRootNotConfigured:
+            env_file = None
+    raw = env.get(ENV_NAME, "")
+    if not raw and env_file is not None:
+        raw = read_dotenv_value(env_file, ENV_NAME)
+    return normalize_language(raw)
+
+
+def resolve_domain_language(
+    domain: str,
+    *,
+    state_path: Path | None = None,
+    env_file: Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> str:
+    """Resolve one locale domain, persisted-first with env/.env fallback (AD-6).
+
+    The persisted locale is authoritative; env/``.env`` is consulted only when
+    no valid persisted locale exists. Unknown domain names fail closed to the
+    default language rather than inventing a domain.
+    """
+    if domain not in LOCALE_DOMAINS:
+        raise ValueError(f"unknown locale domain: {domain!r}")
+    persisted = read_persisted_locale(state_path=state_path)
+    if persisted is not None:
+        return effective_languages(persisted)[domain]
+    return _env_language(env_file=env_file, environ=environ)
+
+
 def resolve_ui_language(
     *,
     env_file: Path | None = None,
     environ: Mapping[str, str] | None = None,
+    state_path: Path | None = None,
 ) -> str:
-    """Resolve the normalized UI language with a safe default on failure.
+    """Resolve the normalized UI language persisted-first, env fallback.
 
     ``env_file`` defaults to the ``.env`` of the data root, resolved lazily
-    here (WU-2) — never at import time, because the resolver fails loudly when
-    no data root is configured.
+    here — never at import time, because the resolver fails loudly when no
+    data root is configured. When a persisted locale exists it always wins
+    over the environment (LOC-REQ-1).
     """
-    env = os.environ if environ is None else environ
-    if env_file is None:
-        env_file = resolve_data_root() / ".env"
-    raw = env.get(ENV_NAME) or read_dotenv_value(env_file, ENV_NAME)
-    return normalize_language(raw)
+    return resolve_domain_language(
+        "ui", state_path=state_path, env_file=env_file, environ=environ
+    )

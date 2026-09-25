@@ -15,7 +15,7 @@ _WIKI = _HERE.parent
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
-from demiurgos_personality import build_fichas_context  # noqa: E402
+from demiurgos_personality import build_fichas_context, build_identity_prompt  # noqa: E402
 
 
 def test_fichas_context_excludes_order_manifest(tmp_path) -> None:
@@ -60,3 +60,28 @@ def test_fichas_context_excludes_underscore_prefixed_md(tmp_path) -> None:
 
     assert "VISIBLE_FICHA_BODY" in context
     assert "HIDDEN_DRAFT_BODY" not in context
+
+
+# ---------------------------------------------------------------------------
+# PER-REQ-1 / PER-REQ-2: neutral-Spanish identity prompt and locale selection
+# ---------------------------------------------------------------------------
+
+def test_identity_prompt_spanish_is_neutral_without_voseo() -> None:
+    prompt = build_identity_prompt("Aurelia", language="es")
+    for form in ("NO sos", "Respondé", "Usá", "informalo", "ofrecete",
+                 "indicá", "nombrá", "buscá", "usá", "afirmes", "chequear"):
+        assert form not in prompt, f"voseo form {form!r} survived de-voseo"
+
+
+def test_identity_prompt_english_requests_english_output() -> None:
+    prompt = build_identity_prompt("Aurelia", language="en")
+    assert "Answer in English" in prompt
+    assert "You are not Gentle AI" in prompt
+
+
+def test_identity_prompt_preserves_identity_and_multi_world_search() -> None:
+    prompt = build_identity_prompt("Aurelia", language="es")
+    assert "Asistente Demiurgos" in prompt
+    assert "Transparencia de mundo" in prompt
+    assert "otros mundos" in prompt
+    assert "'Aurelia'" in prompt
