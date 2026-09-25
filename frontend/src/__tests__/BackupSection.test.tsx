@@ -29,6 +29,7 @@ import type {
   BackupSnapshot,
 } from "@/api/types";
 import { ApiError } from "@/api/types";
+import { tEs } from "@/__tests__/i18nTestUtils";
 // Raw source of the organism under test — used by the honest-copy scan
 // (REQ-BUI-3) so a literal that no rendered state reaches is still caught.
 import backupSectionSource from "@/components/organisms/BackupSection.tsx?raw";
@@ -169,7 +170,7 @@ const CLEAN_PREVIEW: BackupRestorePreview = {
 const renderSection = async (status: BackupStatus) => {
   mocked.getBackupStatus.mockResolvedValue(status);
   render(<BackupSection />);
-  await screen.findByText("Estado del respaldo");
+  await screen.findByText(tEs("backup.status.title"));
 };
 
 describe("BackupSection", () => {
@@ -207,7 +208,7 @@ describe("BackupSection", () => {
     mocked.getBackupCandidates.mockResolvedValue({ candidates: [CANDIDATE], picker: true });
     await renderSection(PENDING_STATUS);
 
-    expect(screen.getByText(/Aún no elegiste una carpeta/i)).toBeInTheDocument();
+    expect(screen.getByText(tEs("backup.noFolder"))).toBeInTheDocument();
     expect(screen.getByLabelText("Elegir carpeta")).toBeInTheDocument();
     // A suggestion is offered but never auto-selected.
     expect(screen.getByText("/home/author/OneDrive")).toBeInTheDocument();
@@ -245,9 +246,9 @@ describe("BackupSection", () => {
     await renderSection(CHOSEN_STATUS);
 
     expect(screen.getByTestId("backup-destination-path")).toHaveTextContent(DESTINATION.path);
-    expect(screen.getByText("Google Drive")).toBeInTheDocument();
+    expect(screen.getByText(tEs("backup.provider.googleDrive"))).toBeInTheDocument();
     expect(screen.getByText(/sugerida por proximidad · confianza heurística/i)).toBeInTheDocument();
-    expect(screen.getByText("Copia local (espejo)")).toBeInTheDocument();
+    expect(screen.getByText(tEs("backup.mode.mirrored"))).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Backup ahora" })).toBeInTheDocument();
     expect(screen.queryByTestId("backup-last-write")).not.toBeInTheDocument();
   });
@@ -264,7 +265,7 @@ describe("BackupSection", () => {
     expect(screen.queryByTestId("backup-last-write")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Backup ahora" })).not.toBeInTheDocument();
     expect(screen.queryByText("Configurado")).not.toBeInTheDocument();
-    expect(screen.getByText("Error")).toBeInTheDocument();
+    expect(screen.getByText(tEs("backup.badge.error"))).toBeInTheDocument();
   });
 
   it("state 4: the last local write renders the API copy and offers Backup ahora", async () => {
@@ -275,7 +276,7 @@ describe("BackupSection", () => {
       "Escrito en /home/author/Demiurgos — 2026-09-17T10:05:00Z UTC",
     );
     // Real evidence: the card shows Configurado only here.
-    expect(screen.getByText("Configurado")).toBeInTheDocument();
+    expect(screen.getByText(tEs("backup.badge.configured"))).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Backup ahora" }));
     expect(mocked.runBackupNow).toHaveBeenCalledTimes(1);
   });
@@ -286,8 +287,8 @@ describe("BackupSection", () => {
 
     expect(backupCardConfigured({ ...CHOSEN_STATUS, state: "configured" })).toBe(false);
     expect(screen.queryByText("Configurado")).not.toBeInTheDocument();
-    expect(screen.getByText("Pendiente")).toBeInTheDocument();
-    expect(screen.getByText(/Todavía no hay una escritura local registrada/i)).toBeInTheDocument();
+    expect(screen.getByText(tEs("backup.badge.pending"))).toBeInTheDocument();
+    expect(screen.getByText(tEs("backup.noWrite"))).toBeInTheDocument();
     expect(backupCardConfigured(WRITTEN_STATUS)).toBe(true);
     expect(backupCardState(WRITTEN_STATUS)).toBe("configured");
   });
@@ -301,20 +302,24 @@ describe("BackupSection", () => {
     expect(await screen.findByText("2026-09-16T120530Z")).toBeInTheDocument();
     expect(screen.getByText(/Incompleta/)).toBeInTheDocument();
 
-    const list = screen.getByRole("list", { name: "Copias disponibles" });
+    const list = screen.getByRole("list", { name: tEs("backup.restore.listAria") });
     const item = within(list).getByText("2026-09-16T120530Z").closest("li");
-    await user.click(within(item as HTMLElement).getByRole("button", { name: "Previsualizar" }));
+    await user.click(within(item as HTMLElement).getByRole("button", { name: tEs("backup.restore.preview") }));
     expect(mocked.previewBackupRestore).toHaveBeenCalledWith("2026-09-16T120530Z");
 
     // Preview shows the diff counts, then requires an explicit confirmation.
     expect(await screen.findByText("Se agregan")).toBeInTheDocument();
     expect(screen.getByText(/ideas\/a\.md/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Continuar" }));
-    expect(screen.getByText(/¿Confirmás restaurar la copia/i)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Restaurar ahora" }));
+    await user.click(screen.getByRole("button", { name: tEs("backup.restore.continue") }));
+    expect(
+      screen.getByText(tEs("backup.restore.confirm", { snapshot: "2026-09-16T120530Z" })),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: tEs("backup.restore.now") }));
 
     expect(mocked.restoreBackup).toHaveBeenCalledWith("2026-09-16T120530Z");
-    expect(await screen.findByText(/Restauración terminada: ok/)).toBeInTheDocument();
+    expect(
+      await screen.findByText(tEs("backup.restore.result", { status: "ok" })),
+    ).toBeInTheDocument();
   });
 
   it("state 5: preview blockers disable the confirm action", async () => {
@@ -334,7 +339,7 @@ describe("BackupSection", () => {
     await user.click(screen.getByRole("button", { name: "Restaurar…" }));
     const list = await screen.findByRole("list", { name: "Copias disponibles" });
     const item = within(list).getByText("2026-09-16T120530Z").closest("li");
-    await user.click(within(item as HTMLElement).getByRole("button", { name: "Previsualizar" }));
+    await user.click(within(item as HTMLElement).getByRole("button", { name: tEs("backup.restore.preview") }));
 
     expect(await screen.findByText(/conflicting type at member boundary/i)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Continuar" })).not.toBeInTheDocument();
@@ -346,9 +351,11 @@ describe("BackupSection", () => {
     const user = userEvent.setup();
     await renderSection(CHOSEN_STATUS);
 
-    await user.click(screen.getByRole("button", { name: "Restaurar…" }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("backup.restore.open") }),
+    );
     const restoreHeading = await screen.findByRole("heading", {
-      name: "Restaurar desde una copia",
+      name: tEs("backup.restore.heading"),
     });
     // The pane heading is the h4 that closes the h2 → h3 → h4 outline.
     expect(restoreHeading.tagName).toBe("H4");
@@ -392,13 +399,13 @@ describe("BackupSection", () => {
     const state = await screen.findByTestId("backup-session-required");
     // Actionable copy and a concrete way forward — not the machine-ish detail.
     expect(
-      within(state).getByText(/Necesitás iniciar sesión para configurar el respaldo/i),
+      within(state).getByText(tEs("backup.sessionRequired.title")),
     ).toBeInTheDocument();
-    expect(within(state).getByText(/Iniciá sesión y volvé a esta tarjeta/i)).toBeInTheDocument();
+    expect(within(state).getByText(tEs("backup.sessionRequired.body"))).toBeInTheDocument();
     expect(within(state).queryByText("Autenticación requerida")).not.toBeInTheDocument();
     expect(findForbiddenVocabulary(state.textContent ?? "")).toEqual([]);
 
-    await user.click(within(state).getByRole("button", { name: "Iniciar sesión" }));
+    await user.click(within(state).getByRole("button", { name: tEs("backup.sessionRequired.cta") }));
     expect(onRequestSignIn).toHaveBeenCalledTimes(1);
   });
 
@@ -411,7 +418,7 @@ describe("BackupSection", () => {
 
     // No navigation callback here: the copy still states what to do.
     expect(await screen.findByTestId("backup-session-required")).toBeInTheDocument();
-    expect(screen.getByText(/Iniciá sesión y volvé a esta tarjeta/i)).toBeInTheDocument();
+    expect(screen.getByText(tEs("backup.sessionRequired.body"))).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Iniciar sesión" }),
     ).not.toBeInTheDocument();
@@ -455,7 +462,7 @@ describe("BackupSection", () => {
     for (const status of [PENDING_STATUS, CHOSEN_STATUS, STREAMING_STATUS, WRITTEN_STATUS]) {
       mocked.getBackupStatus.mockResolvedValue(status);
       const { unmount } = render(<BackupSection />);
-      await screen.findByText("Estado del respaldo");
+      await screen.findByText(tEs("backup.status.title"));
       expect(findForbiddenVocabulary(document.body.textContent ?? "")).toEqual([]);
       unmount();
     }

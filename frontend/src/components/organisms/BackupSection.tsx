@@ -22,6 +22,8 @@ import type {
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { Spinner } from "@/components/atoms/Spinner";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey, TFunction } from "@/i18n/messages";
 
 /**
  * Respaldo y restauración (REQ-BUI-1/2/3, WU-15) — the Profile → Centro de
@@ -47,29 +49,29 @@ import { Spinner } from "@/components/atoms/Spinner";
  * evidence (a chosen folder AND a recorded successful local write).
  */
 
-const PROVIDER_LABELS: Record<string, string> = {
-  onedrive: "OneDrive",
-  google_drive: "Google Drive",
-  icloud: "iCloud Drive",
-  unknown: "Sin proveedor detectado",
+const PROVIDER_LABELS: Record<string, MessageKey> = {
+  onedrive: "backup.provider.onedrive",
+  google_drive: "backup.provider.googleDrive",
+  icloud: "backup.provider.icloud",
+  unknown: "backup.provider.unknown",
 };
 
-const SOURCE_LABELS: Record<string, string> = {
-  env: "detectada por variable de entorno",
-  registry: "detectada en el registro del sistema",
-  heuristic: "sugerida por proximidad",
-  user: "elegida por ti",
+const SOURCE_LABELS: Record<string, MessageKey> = {
+  env: "backup.source.env",
+  registry: "backup.source.registry",
+  heuristic: "backup.source.heuristic",
+  user: "backup.source.user",
 };
 
-const CONFIDENCE_LABELS: Record<string, string> = {
-  verified: "verificada",
-  heuristic: "heurística",
+const CONFIDENCE_LABELS: Record<string, MessageKey> = {
+  verified: "backup.confidence.verified",
+  heuristic: "backup.confidence.heuristic",
 };
 
-const MODE_LABELS: Record<string, string> = {
-  mirrored: "Copia local (espejo)",
-  streaming: "Ubicación en streaming/virtual",
-  unknown: "Modo local sin verificar",
+const MODE_LABELS: Record<string, MessageKey> = {
+  mirrored: "backup.mode.mirrored",
+  streaming: "backup.mode.streaming",
+  unknown: "backup.mode.unknown",
 };
 
 const inputClass =
@@ -132,10 +134,18 @@ export function backupCardState(status: BackupStatus | null): CardState {
  * The local-write copy. The API builds it (`copy.es`) from the recorded write;
  * the fallback repeats the SAME local-write phrasing, never a delivery claim.
  */
-export function backupWriteCopy(status: BackupStatus): string | null {
+export function backupWriteCopy(
+  status: BackupStatus,
+  t?: TFunction,
+): string | null {
   if (status.copy?.es) return status.copy.es;
   if (!status.last_write) return null;
-  return `Escrito en ${status.last_write.destination} — ${status.last_write.written_at} UTC`;
+  const fallback = `Escrito en ${status.last_write.destination} — ${status.last_write.written_at} UTC`;
+  if (!t) return fallback;
+  return t("backup.writeCopy", {
+    destination: status.last_write.destination,
+    writtenAt: status.last_write.written_at,
+  });
 }
 
 /** Normalize the preview payload: the router nests the report under `conflicts`. */
@@ -151,24 +161,29 @@ export function normalizeConflicts(preview: BackupRestorePreview): BackupConflic
 
 type RestoreStage = "list" | "preview" | "confirm" | "running" | "result";
 
-function providerLabel(provider: string): string {
-  return PROVIDER_LABELS[provider] ?? "Otro proveedor";
+function providerLabel(provider: string, t: TFunction): string {
+  const key = PROVIDER_LABELS[provider];
+  return key ? t(key) : t("backup.provider.other");
 }
 
-function sourceLabel(source: string): string {
-  return SOURCE_LABELS[source] ?? "origen desconocido";
+function sourceLabel(source: string, t: TFunction): string {
+  const key = SOURCE_LABELS[source];
+  return key ? t(key) : t("backup.source.unknown");
 }
 
-function confidenceLabel(confidence: string): string {
-  return CONFIDENCE_LABELS[confidence] ?? "sin verificar";
+function confidenceLabel(confidence: string, t: TFunction): string {
+  const key = CONFIDENCE_LABELS[confidence];
+  return key ? t(key) : t("backup.confidence.unknown");
 }
 
-function modeLabel(mode: string | null): string {
-  if (!mode) return "Sin modo detectado";
-  return MODE_LABELS[mode] ?? "Modo desconocido";
+function modeLabel(mode: string | null, t: TFunction): string {
+  if (!mode) return t("backup.mode.none");
+  const key = MODE_LABELS[mode];
+  return key ? t(key) : t("backup.mode.unknownFallback");
 }
 
 export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
+  const { t } = useAppLanguage();
   const [status, setStatus] = useState<BackupStatus | null>(null);
   const [candidates, setCandidates] = useState<BackupCandidate[]>([]);
   const [pickerPath, setPickerPath] = useState("");
@@ -204,7 +219,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
           setSessionRequired(true);
           return null;
         }
-        setError(errorText(cause, "No se pudo cargar el estado del respaldo"));
+        setError(errorText(cause, t("backup.error.loadStatus")));
         return null;
       });
   }, []);
@@ -236,7 +251,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
           setSessionRequired(true);
           return;
         }
-        setError(errorText(cause, "No se pudo cargar la configuración de respaldo"));
+        setError(errorText(cause, t("backup.error.loadConfig")));
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -259,9 +274,9 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
       setPickerPath("");
       // A verified streaming target is persisted WITH its verdict: the warning
       // state takes over and no run is offered.
-      if (!next.blocked) setNotice("Carpeta guardada. Ejecutá un respaldo para registrar la primera escritura.");
+      if (!next.blocked) setNotice(t("backup.notice.folderSaved"));
     } catch (cause) {
-      setError(errorText(cause, "No se pudo guardar la carpeta elegida"));
+      setError(errorText(cause, t("backup.error.saveFolder")));
     } finally {
       setBusy(false);
     }
@@ -274,9 +289,9 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
     try {
       const next = await runBackupNow();
       setStatus(next);
-      setNotice("Se escribió una copia local en la carpeta elegida.");
+      setNotice(t("backup.notice.wrote"));
     } catch (cause) {
-      setError(errorText(cause, "No se pudo ejecutar el respaldo"));
+      setError(errorText(cause, t("backup.error.run")));
       // The run may have been refused (streaming/quiesced): re-read the truth.
       void loadStatus();
     } finally {
@@ -298,7 +313,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
       const list = await getBackupSnapshots();
       setSnapshots(list.snapshots);
     } catch (cause) {
-      setError(errorText(cause, "No se pudieron listar las copias"));
+      setError(errorText(cause, t("backup.error.list")));
     } finally {
       setBusy(false);
     }
@@ -320,7 +335,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
       setPreview(normalizeConflicts(await previewBackupRestore(snapshotId)));
       setRestoreStage("preview");
     } catch (cause) {
-      setError(errorText(cause, "No se pudo previsualizar la restauración"));
+      setError(errorText(cause, t("backup.error.preview")));
     } finally {
       setBusy(false);
     }
@@ -337,7 +352,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
       // The data root changed: refresh the honest write state and the marker.
       await Promise.all([loadStatus(), loadRestoreStatus()]);
     } catch (cause) {
-      setError(errorText(cause, "No se pudo completar la restauración"));
+      setError(errorText(cause, t("backup.error.restore")));
       setRestoreStage("confirm");
     }
   };
@@ -345,7 +360,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
   if (loading) {
     return (
       <div className="mt-4 flex items-center gap-2 text-small text-muted">
-        <Spinner size="sm" /> Cargando estado del respaldo…
+        <Spinner size="sm" /> {t("backup.loading")}
       </div>
     );
   }
@@ -358,15 +373,14 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
         className="mt-3 rounded-lg border border-edge bg-surface-raised p-4"
       >
         <p className="text-small font-medium text-primary">
-          Necesitás iniciar sesión para configurar el respaldo
+          {t("backup.sessionRequired.title")}
         </p>
         <p className="mt-1 text-small text-muted">
-          La carpeta de respaldo se lee y se escribe con tu sesión local. Iniciá sesión y volvé a
-          esta tarjeta para elegir la carpeta y ejecutar la primera copia.
+          {t("backup.sessionRequired.body")}
         </p>
         {onRequestSignIn && (
           <Button variant="primary" size="sm" className="mt-3" onClick={onRequestSignIn}>
-            Iniciar sesión
+            {t("backup.sessionRequired.cta")}
           </Button>
         )}
       </div>
@@ -376,33 +390,46 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
   if (!status) {
     return (
       <p className="mt-3 text-small text-status-error" role="alert">
-        {error ?? "No se pudo cargar el estado del respaldo"}
+        {error ?? t("backup.error.loadStatus")}
       </p>
     );
   }
 
   const badge = backupCardState(status);
   const badgeVariant = badge === "configured" ? "success" : badge === "error" ? "error" : "default";
-  const badgeLabel = badge === "configured" ? "Configurado" : badge === "error" ? "Error" : "Pendiente";
+  const badgeLabel =
+    badge === "configured"
+      ? t("backup.badge.configured")
+      : badge === "error"
+        ? t("backup.badge.error")
+        : t("backup.badge.pending");
   const hasDestination = status.destination !== null;
-  const writeCopy = backupWriteCopy(status);
+  const writeCopy = backupWriteCopy(status, t);
   const pickerVisible = pickerOpen || !hasDestination;
 
   return (
     <div className="mt-3" aria-live="polite">
       <div className="flex items-center justify-between gap-3">
-        <h3 className="font-heading text-small text-primary">Estado del respaldo</h3>
+        <h3 className="font-heading text-small text-primary">
+          {t("backup.status.title")}
+        </h3>
         <span className="flex items-center gap-2">
           <Badge variant={badgeVariant}>{badgeLabel}</Badge>
-          <span className="sr-only">Estado del respaldo: {badgeLabel}</span>
+          <span className="sr-only">
+            {t("backup.status.aria", { label: badgeLabel })}
+          </span>
         </span>
       </div>
 
       {restorePending && (
         <p className="mt-3 rounded-lg border border-status-error/30 bg-status-error/10 p-3 text-small text-status-error" role="alert">
-          Una restauración anterior quedó sin resolver. La API permanece en modo mantenimiento hasta
-          regularizarla
-          {restoreLeftovers.length > 0 ? ` (residuos: ${restoreLeftovers.join(", ")})` : ""}.
+          {t("backup.restorePending")}
+          {restoreLeftovers.length > 0
+            ? t("backup.restorePending.leftovers", {
+                leftovers: restoreLeftovers.join(", "),
+              })
+            : ""}
+          .
         </p>
       )}
 
@@ -415,36 +442,41 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
 
       {/* State 1 — no folder yet: the picker plus the candidate suggestions. */}
       {!hasDestination && (
-        <p className="mt-3 text-small text-muted">
-          Aún no elegiste una carpeta. Demiurgos escribe la copia localmente en la carpeta que elijas.
-        </p>
+        <p className="mt-3 text-small text-muted">{t("backup.noFolder")}</p>
       )}
 
       {/* States 2/3/4 — the chosen folder and its honest mode verdict. */}
       {hasDestination && status.destination && (
         <dl className="mt-3 space-y-2 border-t border-edge pt-3">
           <div>
-            <dt className="text-small text-muted">Carpeta</dt>
+            <dt className="text-small text-muted">{t("backup.folder")}</dt>
             <dd className="break-all text-small text-primary" data-testid="backup-destination-path">
               {status.destination.path}
             </dd>
           </div>
           <div>
-            <dt className="text-small text-muted">Proveedor</dt>
+            <dt className="text-small text-muted">{t("backup.provider")}</dt>
             <dd className="text-small text-primary">
-              {providerLabel(status.destination.provider)}
+              {providerLabel(status.destination.provider, t)}
             </dd>
           </div>
           <div>
-            <dt className="text-small text-muted">Origen</dt>
+            <dt className="text-small text-muted">{t("backup.origin")}</dt>
             <dd className="text-small text-primary">
-              {sourceLabel(status.destination.source)} · confianza{" "}
-              {confidenceLabel(status.destination.confidence)}
+              {t("backup.originValue", {
+                source: sourceLabel(status.destination.source, t),
+                confidence: confidenceLabel(
+                  status.destination.confidence,
+                  t,
+                ),
+              })}
             </dd>
           </div>
           <div>
-            <dt className="text-small text-muted">Modo</dt>
-            <dd className="text-small text-primary">{modeLabel(status.mode)}</dd>
+            <dt className="text-small text-muted">{t("backup.mode")}</dt>
+            <dd className="text-small text-primary">
+              {modeLabel(status.mode, t)}
+            </dd>
           </div>
         </dl>
       )}
@@ -460,15 +492,14 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
           className="mt-4 rounded-lg border border-status-error/30 bg-status-error/10 p-4"
         >
           <p className="text-small font-medium text-status-error">
-            La carpeta elegida es una ubicación en streaming o virtual.
+            {t("backup.blocked.title")}
           </p>
           <p className="mt-1 text-small text-muted">
-            Los cambios sin sincronizar viven en una caché que puede vaciarse o dañarse, así que
-            Demiurgos no escribió nada. Esa carpeta no es una copia confiable.
+            {t("backup.blocked.body")}
           </p>
           {status.warning && (
             <p className="mt-2 text-small text-primary" data-testid="backup-warning-remedy">
-              Remediación indicada por el servidor: {status.warning}
+              {t("backup.blocked.remedy", { remedy: status.warning })}
             </p>
           )}
         </div>
@@ -481,15 +512,15 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
               </p>
             ) : (
               <p className="text-small text-muted">
-                Todavía no hay una escritura local registrada en esta carpeta.
+                {t("backup.noWrite")}
               </p>
             )}
             <div className="mt-3 flex flex-wrap gap-2">
               <Button onClick={() => void runNow()} disabled={busy}>
-                {busy ? "Ejecutando…" : "Backup ahora"}
+                {busy ? t("backup.run.running") : t("backup.run.now")}
               </Button>
               <Button variant="secondary" onClick={() => setPickerOpen((open) => !open)} disabled={busy}>
-                Elegir otra carpeta
+                {t("backup.chooseOther")}
               </Button>
             </div>
           </div>
@@ -506,7 +537,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
           }}
         >
           <label className={labelClass} htmlFor="backup-destination-path-input">
-            Elegir carpeta
+            {t("backup.picker.label")}
           </label>
           <div className="flex flex-wrap gap-2">
             <input
@@ -514,19 +545,19 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
               className={`${inputClass} sm:max-w-md`}
               value={pickerPath}
               onChange={(event) => setPickerPath(event.target.value)}
-              placeholder="/ruta/a/tu/carpeta"
+              placeholder={t("backup.picker.placeholder")}
               autoComplete="off"
             />
             <Button type="submit" disabled={busy || !pickerPath.trim()}>
-              Usar esta carpeta
+              {t("backup.picker.use")}
             </Button>
           </div>
           <p className="mt-2 text-small text-muted">
-            Escribí la ruta absoluta de una carpeta local, o elegí una sugerencia.
+            {t("backup.picker.hint")}
           </p>
 
           {candidates.length > 0 && (
-            <ul className="mt-3 space-y-2" aria-label="Carpetas sugeridas">
+            <ul className="mt-3 space-y-2" aria-label={t("backup.picker.suggestionsAria")}>
               {candidates.map((candidate) => (
                 <li
                   key={`${candidate.provider}:${candidate.path}`}
@@ -535,8 +566,11 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
                   <span className="min-w-0">
                     <span className="block break-all text-small text-primary">{candidate.path}</span>
                     <span className="block text-small text-muted">
-                      {providerLabel(candidate.provider)} · {sourceLabel(candidate.source)} ·
-                      confianza {confidenceLabel(candidate.confidence)}
+                      {t("backup.candidate.meta", {
+                        provider: providerLabel(candidate.provider, t),
+                        source: sourceLabel(candidate.source, t),
+                        confidence: confidenceLabel(candidate.confidence, t),
+                      })}
                     </span>
                   </span>
                   <Button
@@ -546,7 +580,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
                     onClick={() => void chooseFolder(candidate.path)}
                     disabled={busy}
                   >
-                    Usar esta carpeta
+                    {t("backup.picker.use")}
                   </Button>
                 </li>
               ))}
@@ -560,14 +594,16 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
         <div className="mt-4 border-t border-edge pt-3">
           {!restoreOpen ? (
             <Button variant="secondary" onClick={() => void openRestore()} disabled={busy}>
-              Restaurar…
+              {t("backup.restore.open")}
             </Button>
           ) : (
             <div>
               <div className="flex items-center justify-between gap-3">
-                <h4 className="font-heading text-small text-primary">Restaurar desde una copia</h4>
+                <h4 className="font-heading text-small text-primary">
+                  {t("backup.restore.heading")}
+                </h4>
                 <Button variant="ghost" size="sm" onClick={closeRestore} disabled={busy && restoreStage === "running"}>
-                  Cerrar
+                  {t("backup.restore.close")}
                 </Button>
               </div>
 
@@ -575,12 +611,14 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
                 <div className="mt-2">
                   {busy && snapshots.length === 0 ? (
                     <div className="flex items-center gap-2 text-small text-muted">
-                      <Spinner size="sm" /> Buscando copias…
+                      <Spinner size="sm" /> {t("backup.restore.searching")}
                     </div>
                   ) : snapshots.length === 0 ? (
-                    <p className="text-small text-muted">No hay copias en la carpeta elegida.</p>
+                    <p className="text-small text-muted">
+                      {t("backup.restore.empty")}
+                    </p>
                   ) : (
-                    <ul className="space-y-2" aria-label="Copias disponibles">
+                    <ul className="space-y-2" aria-label={t("backup.restore.listAria")}>
                       {snapshots.map((snapshot) => (
                         <li
                           key={snapshot.snapshot_id}
@@ -589,7 +627,13 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
                           <span>
                             <span className="block text-small text-primary">{snapshot.snapshot_id}</span>
                             <span className="block text-small text-muted">
-                              {snapshot.complete ? "Completa" : "Incompleta"} · {snapshot.entries} entradas
+                              {snapshot.complete
+                                ? t("backup.restore.complete")
+                                : t("backup.restore.incomplete")}{" "}
+                              ·{" "}
+                              {t("backup.restore.entries", {
+                                count: snapshot.entries,
+                              })}
                             </span>
                           </span>
                           <Button
@@ -598,7 +642,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
                             onClick={() => void previewSnapshot(snapshot.snapshot_id)}
                             disabled={busy}
                           >
-                            Previsualizar
+                            {t("backup.restore.preview")}
                           </Button>
                         </li>
                       ))}
@@ -610,24 +654,30 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
               {restoreStage === "preview" && preview && (
                 <div className="mt-2">
                   <p className="text-small text-primary">
-                    La restauración reemplaza el contenido actual del árbol de datos.
+                    {t("backup.restore.warning")}
                   </p>
                   <dl className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <div>
-                      <dt className="text-small text-muted">Se agregan</dt>
+                      <dt className="text-small text-muted">
+                        {t("backup.restore.added")}
+                      </dt>
                       <dd className="text-small text-primary">{preview.counts.added}</dd>
                     </div>
                     <div>
-                      <dt className="text-small text-muted">Se modifican</dt>
+                      <dt className="text-small text-muted">
+                        {t("backup.restore.modified")}
+                      </dt>
                       <dd className="text-small text-primary">{preview.counts.modified}</dd>
                     </div>
                     <div>
-                      <dt className="text-small text-muted">Se quitan</dt>
+                      <dt className="text-small text-muted">
+                        {t("backup.restore.removed")}
+                      </dt>
                       <dd className="text-small text-primary">{preview.counts.removed}</dd>
                     </div>
                   </dl>
                   {preview.examples.length > 0 && (
-                    <ul className="mt-3 space-y-1" aria-label="Cambios de ejemplo">
+                    <ul className="mt-3 space-y-1" aria-label={t("backup.restore.examplesAria")}>
                       {preview.examples.slice(0, 10).map((example) => (
                         <li key={`${example.change}:${example.path}`} className="break-all text-small text-muted">
                           {example.change}: {example.path}
@@ -638,7 +688,7 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
                   {preview.blockers.length > 0 ? (
                     <div className="mt-3" role="alert">
                       <p className="text-small text-status-error">
-                        La restauración está bloqueada:
+                        {t("backup.restore.blocked")}
                       </p>
                       <ul className="mt-1 space-y-1">
                         {preview.blockers.map((blocker) => (
@@ -651,10 +701,10 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
                   ) : (
                     <div className="mt-3 flex flex-wrap gap-2">
                       <Button onClick={() => setRestoreStage("confirm")} disabled={busy}>
-                        Continuar
+                        {t("backup.restore.continue")}
                       </Button>
                       <Button variant="secondary" onClick={closeRestore} disabled={busy}>
-                        Cancelar
+                        {t("backup.restore.cancel")}
                       </Button>
                     </div>
                   )}
@@ -664,15 +714,16 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
               {restoreStage === "confirm" && (
                 <div className="mt-2">
                   <p className="text-small text-primary">
-                    ¿Confirmás restaurar la copia <strong>{selectedSnapshot}</strong>? Se reemplaza el
-                    árbol de datos completo y no se puede deshacer.
+                    {t("backup.restore.confirm", {
+                      snapshot: selectedSnapshot ?? "",
+                    })}
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     <Button onClick={() => void confirmRestore()} disabled={busy}>
-                      Restaurar ahora
+                      {t("backup.restore.now")}
                     </Button>
                     <Button variant="secondary" onClick={() => setRestoreStage("preview")} disabled={busy}>
-                      Volver
+                      {t("backup.restore.back")}
                     </Button>
                   </div>
                 </div>
@@ -680,18 +731,26 @@ export function BackupSection({ onRequestSignIn }: BackupSectionProps = {}) {
 
               {restoreStage === "running" && (
                 <div className="mt-2 flex items-center gap-2 text-small text-muted">
-                  <Spinner size="sm" /> Restaurando la copia {selectedSnapshot}…
+                  <Spinner size="sm" />{" "}
+                  {t("backup.restore.running", {
+                    snapshot: selectedSnapshot ?? "",
+                  })}
                 </div>
               )}
 
               {restoreStage === "result" && restoreResult && (
                 <div className="mt-2" role="status">
                   <p className="text-small text-status-success">
-                    Restauración terminada: {restoreResult.status}
+                    {t("backup.restore.result", {
+                      status: restoreResult.status,
+                    })}
                   </p>
                   <p className="mt-1 text-small text-muted">
-                    Elementos restaurados: {restoreResult.swapped.length}. Bases de datos:{" "}
-                    {restoreResult.databases.length}. Mundos: {restoreResult.worlds.length}.
+                    {t("backup.restore.resultDetail", {
+                      swapped: restoreResult.swapped.length,
+                      databases: restoreResult.databases.length,
+                      worlds: restoreResult.worlds.length,
+                    })}
                   </p>
                   {restoreResult.warnings.length > 0 && (
                     <ul className="mt-2 space-y-1">
