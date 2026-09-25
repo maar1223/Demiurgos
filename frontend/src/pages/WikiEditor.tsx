@@ -5,6 +5,7 @@ import { WorldNotFound } from "@/components/organisms/WorldNotFound";
 import { useFileTree } from "@/hooks/useFileTree";
 import { useFileContent } from "@/hooks/useFileContent";
 import { useImageUpload } from "@/hooks/useImages";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { FileTree } from "@/components/organisms/FileTree";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
@@ -102,6 +103,7 @@ import type { LiveDiffEditorHandle } from "@/components/organisms/LiveDiffEditor
  */
 export default function WikiEditor() {
   const navigate = useNavigate();
+  const { t } = useAppLanguage();
   const { mundo, section, "*": splatPath } = useParams<{
     mundo: string;
     section: string;
@@ -731,11 +733,13 @@ export default function WikiEditor() {
       base_revision: pendingNewFile ? "" : baseRevision ?? "",
       proposed_content: proposedContent,
       proposed_digest: "",
-      rationale: pendingNewFile ? "Create a new Markdown file" : "Review manual changes",
+      rationale: pendingNewFile
+        ? t("wiki.review.rationale.new")
+        : t("wiki.review.rationale.manual"),
       is_new_file: pendingNewFile !== null,
     });
     setSaveError(null);
-  }, [baseRevision, editedContent, filePath, frontmatter, mundo, pendingNewFile, section, startReview]);
+  }, [baseRevision, editedContent, filePath, frontmatter, mundo, pendingNewFile, section, startReview, t]);
 
   const handleReviewContentChange = useCallback(
     (nextContent: string) => {
@@ -761,7 +765,7 @@ export default function WikiEditor() {
     try {
       const response = await review.suggest(prompt, sessionId);
       if (!response.proposal) {
-        setSaveError(response.message ?? "The assistant could not produce a proposal. Use manual editing or chat.");
+        setSaveError(response.message ?? t("wiki.error.noProposal"));
         return;
       }
       const { body: suggestedBody } = splitFrontmatter(response.proposal.proposed_content);
@@ -772,13 +776,13 @@ export default function WikiEditor() {
       const apiError = error as ApiError;
       setSaveError(getErrorMessage(apiError.status, apiError.detail));
     }
-  }, [filePath, review]);
+  }, [filePath, review, t]);
 
   const handleGuidedReview = useCallback(async (proposal: EditProposal) => {
     if (!mundo || !section || !proposal.is_new_file) return;
     const prefix = `${section}/`;
     if (!proposal.target.startsWith(prefix)) {
-      setSaveError("The guided proposal target is outside the current section.");
+      setSaveError(t("wiki.error.guidedOutsideSection"));
       return;
     }
     const path = proposal.target.slice(prefix.length);
@@ -788,7 +792,7 @@ export default function WikiEditor() {
     setPreviewOpen(true);
     review.startReview(proposal);
     setSaveError(null);
-  }, [mundo, review, section]);
+  }, [mundo, review, section, t]);
 
   const handleRejectReview = useCallback(() => {
     review.reject();
@@ -840,7 +844,7 @@ export default function WikiEditor() {
         setEditedContent(nextBody);
         setPreviewOpen(false);
         setIsEditing(true);
-        setSaveError("The file changed while it was under review. It was reloaded; review the changes again.");
+        setSaveError(t("wiki.error.staleReview"));
       } else {
         review.reset();
         setPreviewOpen(false);
@@ -850,7 +854,7 @@ export default function WikiEditor() {
     } finally {
       setIsSaving(false);
     }
-  }, [currentContent, mundo, retryContent, retryTree, review, reviewPath, section]);
+  }, [currentContent, mundo, retryContent, retryTree, review, reviewPath, section, t]);
 
   /**
    * Set OKF status (Borrador/Canon): a dedicated POST rewrites ONLY the
@@ -1146,7 +1150,7 @@ export default function WikiEditor() {
           <span className="min-w-0 max-w-[16rem] shrink-0 truncate text-small text-muted">
             {pendingNewFile.path}
             <span className="ml-2 rounded bg-action/10 px-2 py-0.5 text-xs text-action">
-              New file review
+              {t("wiki.badge.newFileReview")}
             </span>
           </span>
         ) : filePath && file ? (
@@ -1298,7 +1302,7 @@ export default function WikiEditor() {
                   >
                     <span className="flex items-center gap-2">
                       <Icon name="history" size={14} className="shrink-0 text-muted" />
-                      History
+                      {t("wiki.menu.history")}
                     </span>
                   </button>
                   <button
@@ -1497,7 +1501,7 @@ export default function WikiEditor() {
               <div
                 className="mt-4 flex items-center justify-end gap-2"
                 role="group"
-                aria-label="Review actions"
+                aria-label={t("wiki.review.actionsAria")}
               >
                 <Button
                   variant="ghost"
@@ -1505,7 +1509,7 @@ export default function WikiEditor() {
                   onClick={handleRejectReview}
                   disabled={isSaving || review.isLoading}
                 >
-                  Reject
+                  {t("wiki.review.reject")}
                 </Button>
                 <Button
                   variant="primary"
@@ -1513,7 +1517,7 @@ export default function WikiEditor() {
                   onClick={() => void handleAcceptReview()}
                   disabled={isSaving || review.isLoading}
                 >
-                  Accept
+                  {t("wiki.review.accept")}
                 </Button>
               </div>
             )}

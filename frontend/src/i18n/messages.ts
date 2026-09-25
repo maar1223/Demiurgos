@@ -298,6 +298,20 @@ export const messages = {
       "El mundo «{name}» se moverá a un nuevo nombre. Los enlaces viejos siguen funcionando (se redirigen).",
     "profile.mundos.renameDialogConfirm": "Renombrar",
 
+    "wiki.review.rationale.new": "Crear un archivo Markdown nuevo",
+    "wiki.review.rationale.manual": "Revisar cambios manuales",
+    "wiki.error.noProposal":
+      "El asistente no pudo producir una propuesta. Usa la edición manual o el chat.",
+    "wiki.error.guidedOutsideSection":
+      "El destino de la propuesta guiada está fuera de la sección actual.",
+    "wiki.error.staleReview":
+      "El archivo cambió mientras estaba en revisión. Se recargó; revisa los cambios de nuevo.",
+    "wiki.badge.newFileReview": "Revisión de archivo nuevo",
+    "wiki.menu.history": "Historial",
+    "wiki.review.actionsAria": "Acciones de revisión",
+    "wiki.review.reject": "Rechazar",
+    "wiki.review.accept": "Aceptar",
+
     "assistant.suggestion.rhyz": "¿Quién es Rhyz?",
     "assistant.suggestion.stal": "Explícame el sistema Stal",
     "assistant.suggestion.flud": "¿Qué es el Flud?",
@@ -730,6 +744,20 @@ export const messages = {
     "profile.mundos.renameDialogMessage":
       "The world \"{name}\" will move to a new name. Old links keep working (they are redirected).",
     "profile.mundos.renameDialogConfirm": "Rename",
+
+    "wiki.review.rationale.new": "Create a new Markdown file",
+    "wiki.review.rationale.manual": "Review manual changes",
+    "wiki.error.noProposal":
+      "The assistant could not produce a proposal. Use manual editing or chat.",
+    "wiki.error.guidedOutsideSection":
+      "The guided proposal target is outside the current section.",
+    "wiki.error.staleReview":
+      "The file changed while it was under review. It was reloaded; review the changes again.",
+    "wiki.badge.newFileReview": "New file review",
+    "wiki.menu.history": "History",
+    "wiki.review.actionsAria": "Review actions",
+    "wiki.review.reject": "Reject",
+    "wiki.review.accept": "Accept",
 
     "assistant.suggestion.rhyz": "Who is Rhyz?",
     "assistant.suggestion.stal": "Explain the Stal system",

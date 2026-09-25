@@ -611,7 +611,7 @@ describe("WikiEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
     await screen.findByTestId("live-diff-editor");
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] }));
 
     await waitFor(() => {
       expect(requestConfirmation).toHaveBeenCalledWith(
@@ -686,7 +686,7 @@ describe("WikiEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
     await screen.findByTestId("live-diff-editor");
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] }));
 
     // The on-disk file must stay byte-identical: frontmatter block +
     // edited body, exactly as loaded
@@ -721,7 +721,7 @@ describe("WikiEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
     await screen.findByTestId("live-diff-editor");
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] }));
 
     // No frontmatter → no block injected; the body is saved as-is
     await waitFor(() => {
@@ -754,7 +754,7 @@ describe("WikiEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
     await screen.findByTestId("live-diff-editor");
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] }));
 
     // Error banner shown, still editing (edits preserved)
     expect(await screen.findByText(/Error interno del servidor/i)).toBeInTheDocument();
@@ -806,7 +806,7 @@ describe("WikiEditor", () => {
     await user.click(screen.getByRole("button", { name: /vista previa/i }));
     expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Reject" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.reject"] }));
 
     expect(saveFile).not.toHaveBeenCalled();
     expect(saveFileConfirmed).not.toHaveBeenCalled();
@@ -835,7 +835,7 @@ describe("WikiEditor", () => {
     await user.click(screen.getByRole("button", { name: /vista previa/i }));
     expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] }));
 
     await waitFor(() => {
       expect(saveFileConfirmed).toHaveBeenCalledWith(
@@ -879,7 +879,7 @@ describe("WikiEditor", () => {
 
     // The controlled diff must retain the edit until the user accepts it.
     expect(diffEditor).toHaveValue("Manual edit from diff");
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] }));
 
     await waitFor(() => {
       expect(requestConfirmation).toHaveBeenCalledWith(
@@ -928,8 +928,8 @@ describe("WikiEditor", () => {
     await user.click(screen.getByRole("button", { name: "Proponer edición" }));
 
     expect(await screen.findByTestId("live-diff-editor")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Accept" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reject" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.reject"] })).toBeInTheDocument();
     expect(saveFile).not.toHaveBeenCalled();
     expect(saveFileConfirmed).not.toHaveBeenCalled();
     expect(suggestEdit).toHaveBeenCalledWith("Vibrantes", {
@@ -941,7 +941,7 @@ describe("WikiEditor", () => {
     expect(screen.queryByRole("textbox", { name: "AI edit prompt" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "AI suggestion" })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Reject" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.reject"] }));
     expect(requestConfirmation).not.toHaveBeenCalled();
     expect(saveFile).not.toHaveBeenCalled();
     expect(saveFileConfirmed).not.toHaveBeenCalled();
@@ -975,9 +975,11 @@ describe("WikiEditor", () => {
     );
     await user.click(screen.getByRole("button", { name: /revisar cambios/i }));
     await screen.findByTestId("live-diff-editor");
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] }));
 
-    expect(await screen.findByText(/file changed.*review/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(CATALOGUE.es["wiki.error.staleReview"]),
+    ).toBeInTheDocument();
     expect(mutate).toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: /editor de contenido/i })).toHaveValue(
       "# Fresh content",
@@ -1119,7 +1121,12 @@ describe("WikiEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /^imagen$/i }));
     await user.click(screen.getByRole("button", { name: /foto\.jpg/i }));
-    await user.click(screen.getByRole("button", { name: /^aceptar$/i }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: /seleccionar imagen/i })).getByRole(
+        "button",
+        { name: /^aceptar$/i },
+      ),
+    );
 
     expect(textarea).toHaveValue(
       "Hola ![foto](wiki/media/foto.jpg)mundo",
@@ -1158,7 +1165,12 @@ describe("WikiEditor", () => {
       screen.getByRole("combobox", { name: /alineación/i }),
       "left",
     );
-    await user.click(screen.getByRole("button", { name: /^aceptar$/i }));
+    await user.click(
+      within(screen.getByRole("dialog", { name: /seleccionar imagen/i })).getByRole(
+        "button",
+        { name: /^aceptar$/i },
+      ),
+    );
 
     expect(insertTextMock).toHaveBeenCalledWith(
       "![foto](wiki/media/foto.jpg#left)",
@@ -1572,7 +1584,7 @@ describe("WikiEditor", () => {
     expect(createFileConfirmed).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: /revisar creación/i }));
     await screen.findByTestId("live-diff-editor");
-    await user.click(screen.getByRole("button", { name: "Reject" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.reject"] }));
 
     expect(createFile).not.toHaveBeenCalled();
     expect(createFileConfirmed).not.toHaveBeenCalled();
@@ -1592,7 +1604,7 @@ describe("WikiEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /revisar creación/i }));
     await screen.findByTestId("live-diff-editor");
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] }));
 
     await waitFor(() => {
       expect(requestConfirmation).toHaveBeenCalledWith(
@@ -1630,7 +1642,7 @@ describe("WikiEditor", () => {
 
     await user.click(screen.getByRole("button", { name: /revisar creación/i }));
     await screen.findByTestId("live-diff-editor");
-    await user.click(screen.getByRole("button", { name: "Accept" }));
+    await user.click(screen.getByRole("button", { name: CATALOGUE.es["wiki.review.accept"] }));
 
     await waitFor(() => {
       expect(createFileConfirmed).toHaveBeenCalledWith(
@@ -2046,7 +2058,7 @@ describe("WikiEditor", () => {
     // The standalone History toolbar button was folded into the ⋯ options
     // dropdown — it no longer renders directly in the file bar.
     expect(
-      screen.queryByRole("button", { name: "History" }),
+      screen.queryByRole("button", { name: CATALOGUE.es["wiki.menu.history"] }),
     ).not.toBeInTheDocument();
 
     // The ⋯ options dropdown lists History before the destructive
@@ -2054,16 +2066,18 @@ describe("WikiEditor", () => {
     await user.click(screen.getByRole("button", { name: /opciones de ficha/i }));
     const menu = screen.getByRole("menu", { name: /opciones de ficha/i });
     expect(
-      within(menu).getByRole("menuitem", { name: "History" }),
+      within(menu).getByRole("menuitem", { name: CATALOGUE.es["wiki.menu.history"] }),
     ).toBeInTheDocument();
     expect(
       within(menu).getByRole("menuitem", { name: "Eliminar Ficha" }),
     ).toBeInTheDocument();
 
     // Selecting it opens the history panel (same `historyOpen` gate as before).
-    await user.click(within(menu).getByRole("menuitem", { name: "History" }));
+    await user.click(
+      within(menu).getByRole("menuitem", { name: CATALOGUE.es["wiki.menu.history"] }),
+    );
     expect(
-      screen.getByRole("dialog", { name: /file history/i }),
+      screen.getByRole("dialog", { name: CATALOGUE.es["history.title"] }),
     ).toBeInTheDocument();
   });
 
