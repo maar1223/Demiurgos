@@ -27,7 +27,7 @@ from co_creation_protocol import (
     PROTOCOL_VERSION,
     reject_authority_keys,
 )
-from demiurgos_language import resolve_ui_language
+from demiurgos_language import resolve_domain_language
 
 _MAX_QUESTION_OPTIONS = 5
 
@@ -94,7 +94,7 @@ class HermesCoCreationProvider:
         request: CoCreationRequest,
         cancellation: CancellationToken,
     ) -> object:
-        language = "Spanish" if resolve_ui_language() == "es" else "English"
+        language = "Spanish" if resolve_domain_language("conversation") == "es" else "English"
         world_context = request.world or "(transversal — no world binding)"
         milestone_context = (
             f"Current milestone: {request.milestone}." if request.milestone else "Session start."

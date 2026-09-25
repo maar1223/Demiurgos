@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from assistant_activity import HermesActivityRequest, HermesRunsActivityAdapter
-from demiurgos_language import normalize_language, resolve_ui_language
+from demiurgos_language import normalize_language, resolve_domain_language
 
 SemanticState = Literal[
     "allow",
@@ -88,7 +88,7 @@ def unavailable_copy(language: str | None = None) -> str:
     normalized = (
         normalize_language(language)
         if language is not None
-        else resolve_ui_language()
+        else resolve_domain_language("conversation")
     )
     return UNAVAILABLE_COPY_BY_LANGUAGE[normalized]
 

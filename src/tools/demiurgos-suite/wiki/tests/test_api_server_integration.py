@@ -439,3 +439,24 @@ class TestActivityStreamMemory:
         assert turns[1].content == "preserve this answer"
         # The user turn carries the routed skill.
         assert turns[0].skill_id == "narrative-draft"
+
+
+class TestPersistedLocaleIntegration:
+    def test_step0_round_trips_flags_and_drives_config(
+            self, client: TestClient, monkeypatch):
+        """LOC-REQ-1/3: step0 persists the explicit flags, /api/locale returns
+        them, and /api/config follows the persisted locale over the env."""
+        api_server._LOCAL_STATE = None
+        monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
+        posted = client.post("/api/onboarding/step0", json={
+            "ui": "en", "conversation": "es", "content": "en",
+            "conversation_explicit": True, "content_explicit": False,
+            "region": None, "region_explicit": False, "iana_timezone": "UTC",
+        })
+        assert posted.status_code == 200, posted.text
+
+        locale = client.get("/api/locale").json()
+        assert locale["ui"] == "en"
+        assert locale["conversation_explicit"] is True
+        assert locale["content_explicit"] is False
+        assert client.get("/api/config").json() == {"language": "en"}

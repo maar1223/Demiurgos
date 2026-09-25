@@ -5995,6 +5995,57 @@ class TestOnboardingRoutes:
         resp = empty_client.get("/api/onboarding/status")
         assert "step0" not in resp.json()["pending_steps"]
 
+    def test_step0_persists_and_round_trips_explicit_domain_flags(
+            self, empty_client: TestClient, monkeypatch):
+        """AD-7: step0 persists ``*_explicit`` and GET /api/locale returns them."""
+        _principal(monkeypatch)
+        resp = _post_step0(
+            empty_client,
+            ui="en", conversation="es", content="en",
+            conversation_explicit=True, content_explicit=True,
+        )
+        assert resp.status_code == 200, resp.text
+        body = empty_client.get("/api/locale").json()
+        assert body["ui"] == "en"
+        assert body["conversation"] == "es"
+        assert body["content"] == "en"
+        assert body["conversation_explicit"] is True
+        assert body["content_explicit"] is True
+
+    def test_config_endpoint_prefers_persisted_locale_over_env(
+            self, empty_client: TestClient, monkeypatch):
+        """LOC-REQ-1: /api/config is persisted-first, not env-only."""
+        _principal(monkeypatch)
+        monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
+        _post_step0(empty_client, ui="en", conversation="en", content="en")
+        assert empty_client.get("/api/config").json() == {"language": "en"}
+
+    def test_ai_path_language_follows_persisted_locale_not_env(
+            self, empty_client: TestClient, monkeypatch):
+        """AD-6/AD-8: the conversation domain inherits the persisted UI locale.
+
+        With no explicit conversation override, an ``en`` UI locale makes the
+        server-owned guided copy English even while the env still says ``es``.
+        """
+        _principal(monkeypatch)
+        monkeypatch.setenv("DEMIURGOS_LANGUAGE", "es")
+        _post_step0(empty_client, ui="en", conversation="en", content="en")
+        text = api_server._guided_confirmation_text("start")
+        assert text.startswith("I can prepare a guided proposal")
+
+    def test_ai_path_honors_explicit_conversation_override(
+            self, empty_client: TestClient, monkeypatch):
+        """AD-7: an explicit conversation override wins over the UI locale."""
+        _principal(monkeypatch)
+        monkeypatch.setenv("DEMIURGOS_LANGUAGE", "en")
+        _post_step0(
+            empty_client,
+            ui="en", conversation="es", content="en",
+            conversation_explicit=True,
+        )
+        text = api_server._guided_confirmation_text("start")
+        assert text.startswith("Puedo preparar una propuesta guiada")
+
     def test_offline_bootstrap_keeps_local_work_pending_remote(
             self, empty_client: TestClient, monkeypatch):
         _principal(monkeypatch)

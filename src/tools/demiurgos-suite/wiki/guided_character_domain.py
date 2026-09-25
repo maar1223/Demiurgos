@@ -16,7 +16,7 @@ from typing import Any, Mapping, Protocol
 import yaml
 
 from guided_character_protocol import CandidateState, MessageType, SessionState, TypedMessage
-from demiurgos_language import normalize_language, resolve_ui_language
+from demiurgos_language import normalize_language, resolve_domain_language
 
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -168,7 +168,7 @@ def next_required_question(candidate: CandidateState, *, delta: Mapping[str, Any
     the configured UI language. Never a questionnaire: exactly one question.
     """
     known = _candidate_known_fields(candidate, delta)
-    lang = normalize_language(language or resolve_ui_language())
+    lang = normalize_language(language or resolve_domain_language("conversation"))
     if not any(key in known for key in MINIMUM_IDENTITY_FIELDS):
         return _identity_question(lang)
     return _default_question(lang, short=True)[0]
@@ -230,7 +230,7 @@ def route_new_character_intent(author_input: str, *, allow_descriptive_seed: boo
         )
     mode = "fast" if fast_mode else "full"
     depth = "fundamental" if fast_mode else "standard"
-    question, response = _default_question(language or resolve_ui_language(), len(words) <= 4)
+    question, response = _default_question(language or resolve_domain_language("conversation"), len(words) <= 4)
     return GuidedTurn(
         True, question, response, related_creation, mode, depth,
     )
@@ -374,7 +374,7 @@ def extract_related_goal(author_input: str, *, reference_name: str | None = None
     if detected is None or not reference:
         return RelatedGoal(None, reference, "")
     relation_key, matched_term = detected
-    lang = normalize_language(language or resolve_ui_language())
+    lang = normalize_language(language or resolve_domain_language("conversation"))
     return RelatedGoal(
         relation_key,
         reference,

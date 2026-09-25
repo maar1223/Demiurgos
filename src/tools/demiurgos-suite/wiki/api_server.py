@@ -132,7 +132,7 @@ from hermes_co_creation_provider import HermesCoCreationProvider, co_creation_ca
 from demiurgos_language import (
     LocaleSettings,
     normalize_locale,
-    resolve_ui_language,
+    resolve_domain_language,
 )
 from local_state import LocalState
 from account import (
@@ -558,8 +558,9 @@ def health():
 def get_app_config():
     """Non-sensitive global runtime metadata for the frontend.
 
-    Exposes only the normalized UI language (``DEMIURGOS_LANGUAGE`` from the
-    project ``.env`` or the environment); never secrets or paths.
+    Exposes only the normalized UI language, persisted-first (the selected
+    locale) with the project ``.env``/environment as fallback; never secrets
+    or paths.
     """
     return {"language": _configured_language()}
 
@@ -577,6 +578,8 @@ class OnboardingStep0Request(BaseModel):
     ui: str
     conversation: str
     content: str
+    conversation_explicit: bool = False
+    content_explicit: bool = False
     region: str | None = None
     region_explicit: bool = False
     iana_timezone: str = "UTC"
@@ -6021,9 +6024,28 @@ def _load_project_env(name: str) -> str:
     return ""
 
 
+def _locale_state_path() -> Path:
+    """The runtime-authoritative local-state file for this project root."""
+    return _project_root() / "data" / "local-state.json"
+
+
+def _resolve_language(domain: str) -> str:
+    """Resolve one locale domain persisted-first (AD-6/AD-8).
+
+    Reads the same local-state file the onboarding routes persist, so the AI
+    path and ``/api/config`` follow the selected locale instead of the env.
+    """
+    return resolve_domain_language(
+        domain,
+        env_file=_project_root() / ".env",
+        environ=os.environ,
+        state_path=_locale_state_path(),
+    )
+
+
 def _configured_language() -> str:
-    """Normalized global UI language (``DEMIURGOS_LANGUAGE``), safe fallback."""
-    return resolve_ui_language(env_file=_project_root() / ".env", environ=os.environ)
+    """Normalized global UI language, persisted-first with env fallback."""
+    return _resolve_language("ui")
 
 
 _GATEWAY_URL = os.getenv("HERMES_GATEWAY_URL", "http://127.0.0.1:8642/v1/chat/completions")
@@ -7032,21 +7054,40 @@ def _named_reference_context(mundo: str, prompt: str) -> tuple[str, bool, str | 
     return reference.context[:4_000], False, reference.name
 
 
-_GLOBAL_ASSISTANT_IDENTITY = (
-    "[SYSTEM OVERRIDE — IDENTITY] Tu identidad es el Asistente Demiurgos del "
-    "Taller de Ideas, un espacio independiente de cualquier mundo. NO sos "
-    "Gentle AI y NO pertenecés a ningún mundo narrativo concreto. Respondé "
-    "siempre como el Asistente Demiurgos: ayudá a brainstormear, enriquecer y "
-    "desarrollar ideas narrativas genéricas (premisas, personajes, escenarios, "
-    "tramas) sin asumir acceso a ningún mundo."
-)
+_GLOBAL_ASSISTANT_IDENTITY: dict[str, str] = {
+    "es": (
+        "[SYSTEM OVERRIDE — IDENTITY] Tu identidad es el Asistente Demiurgos del "
+        "Taller de Ideas, un espacio independiente de cualquier mundo. No eres "
+        "Gentle AI y no perteneces a ningún mundo narrativo concreto. Responde "
+        "siempre como el Asistente Demiurgos: ayuda a generar, enriquecer y "
+        "desarrollar ideas narrativas genéricas (premisas, personajes, escenarios, "
+        "tramas) sin asumir acceso a ningún mundo."
+    ),
+    "en": (
+        "[SYSTEM OVERRIDE — IDENTITY] Your identity is the Demiurgos Assistant of "
+        "the Ideas Workshop, a space independent from any world. You are not "
+        "Gentle AI and you do not belong to any specific narrative world. Always "
+        "answer as the Demiurgos Assistant: help brainstorm, enrich, and develop "
+        "generic narrative ideas (premises, characters, settings, plots) without "
+        "assuming access to any world."
+    ),
+}
 
-_GLOBAL_ASSISTANT_GUIDANCE = (
-    "[Contexto: sesión global sin mundo. No hay fichas, lore, grafo ni "
-    "archivos de ningún mundo. No inventes hechos de mundos existentes; si la "
-    "persona menciona un mundo concreto, recordale que este asistente trabaja "
-    "sin acceso a ese mundo y proponé ideas genéricas o pedile más contexto.]"
-)
+_GLOBAL_ASSISTANT_GUIDANCE: dict[str, str] = {
+    "es": (
+        "[Contexto: sesión global sin mundo. No hay fichas, lore, grafo ni "
+        "archivos de ningún mundo. No inventes hechos de mundos existentes; si la "
+        "persona menciona un mundo concreto, recuérdale que este asistente trabaja "
+        "sin acceso a ese mundo y propón ideas genéricas o pídele más contexto.]"
+    ),
+    "en": (
+        "[Context: global session without a world. There are no sheets, lore, "
+        "graph, or files from any world. Do not invent facts about existing "
+        "worlds; if the person mentions a specific world, remind them that this "
+        "assistant works without access to that world and propose generic ideas "
+        "or ask for more context.]"
+    ),
+}
 
 
 def _build_ai_ask_prompt(
@@ -7059,20 +7100,21 @@ def _build_ai_ask_prompt(
     from demiurgos_personality import build_identity_prompt, build_graph_context
 
     global_context = mundo == GLOBAL_ASSISTANT_CONTEXT
+    conversation_language = _resolve_language("conversation")
     parts: list[str] = []
 
     # Demiurgos assistant identity: world-grounded for real worlds, or the
     # world-agnostic Taller de Ideas persona for the global context.
     if global_context:
-        parts.append(_GLOBAL_ASSISTANT_IDENTITY)
+        parts.append(_GLOBAL_ASSISTANT_IDENTITY[conversation_language])
     elif mundo:
-        parts.append(build_identity_prompt(mundo))
+        parts.append(build_identity_prompt(mundo, language=conversation_language))
 
     if global_context:
         # World-agnostic: no graph tools, no world lore grounding — the global
         # assistant brainstorms/enriches ideas generically and never claims
         # access to any world's files, graph, or lore.
-        parts.append(_GLOBAL_ASSISTANT_GUIDANCE)
+        parts.append(_GLOBAL_ASSISTANT_GUIDANCE[conversation_language])
     else:
         # Tool usage guidance: use the graph tools, never generic file/lore tools
         parts.append(
@@ -7184,7 +7226,7 @@ def _guided_confirmation_text(kind: str) -> str:
             "es": "No se inició ninguna propuesta de personaje.",
         },
     }
-    return texts[kind][_configured_language()]
+    return texts[kind][_resolve_language("conversation")]
 
 
 def _activity_unavailable(reason_code: str = ACTIVITY_UNAVAILABLE_REASON) -> JSONResponse:

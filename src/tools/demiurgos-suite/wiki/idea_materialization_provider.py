@@ -25,7 +25,7 @@ from assistant_activity import (
     HermesActivityRequest,
     HermesRunsActivityAdapter,
 )
-from demiurgos_language import resolve_ui_language
+from demiurgos_language import resolve_domain_language
 from idea_materialization_protocol import (
     CancellationToken,
     MAX_IDEA_BODY_CHARS,
@@ -86,7 +86,7 @@ def _build_prompt(request: MaterializationRequest) -> str:
     title_hint}``), the already-bounded candidate entity list, the required
     response envelope, and the UI language.
     """
-    language = "Spanish" if resolve_ui_language() == "es" else "English"
+    language = "Spanish" if resolve_domain_language("content") == "es" else "English"
     idea_body = _bounded(request.idea_body, MAX_IDEA_BODY_CHARS)
     title = _bounded(request.title, MAX_TITLE_CHARS)
     tags = ", ".join(request.tags) if request.tags else "(none)"

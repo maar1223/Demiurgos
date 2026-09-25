@@ -18,7 +18,7 @@ from guided_character_protocol import (
     MAX_DEADLINE_MS,
     PROTOCOL_VERSION,
 )
-from demiurgos_language import resolve_ui_language
+from demiurgos_language import resolve_domain_language
 
 _MAX_QUESTION_OPTIONS = 5
 
@@ -92,7 +92,7 @@ class HermesGuidedProvider:
             "mark assumptions clearly. "
             if request.guided_mode == "fast" else ""
         )
-        language = "Spanish" if resolve_ui_language() == "es" else "English"
+        language = "Spanish" if resolve_domain_language("conversation") == "es" else "English"
         if compiled_contract_markdown:
             methodology_context = (
                 "[Active methodology contract (server-pinned, read-only):\n"
