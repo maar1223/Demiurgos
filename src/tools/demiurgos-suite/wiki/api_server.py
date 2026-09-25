@@ -4682,6 +4682,9 @@ def save_file_via_save(mundo: str, section: str, path: str, body: dict, request:
 def create_file(mundo: str, section: str, path: str, body: dict, request: Request):
     """Create a new file — gated by a ``kind=new`` confirmation token."""
     pending = _GUIDED_PENDING_PROPOSALS.get(body.get("edit_id"))
+    # Materialize proposals live in a SEPARATE store (AD3); the two branches
+    # are mutually exclusive and the guided branch below stays unchanged.
+    materialize_pending = None if pending is not None else _MATERIALIZE_PENDING_PROPOSALS.get(body.get("edit_id"))
     if pending is not None:
         principal = _resolve_principal(request)
         target = f"{section}/{path}"
@@ -4690,7 +4693,31 @@ def create_file(mundo: str, section: str, path: str, body: dict, request: Reques
                 or pending["target"] != target or pending["content"] != body.get("content")
                 or pending["digest"] != digest or body.get("proposed_digest") != digest):
             raise HTTPException(status_code=409, detail="Guided proposal is stale or altered")
+    elif materialize_pending is not None:
+        principal = _resolve_principal(request)
+        target = f"{section}/{path}"
+        digest = hashlib.sha256(body.get("content", "").encode("utf-8")).hexdigest()
+        if (principal is None or materialize_pending["principal_id"] != principal.id
+                or materialize_pending["target"] != target
+                or materialize_pending["content"] != body.get("content")
+                or materialize_pending["digest"] != digest
+                or body.get("proposed_digest") != digest):
+            raise HTTPException(status_code=409, detail="Materialize proposal is stale or altered")
     result = _write_content(mundo, section, path, body, request, kind="new")
+    if materialize_pending is not None:
+        full = _resolve_mundo_path(mundo, f"{section}/{path}")
+        if full is None or not full.is_file() or _digest_of(full) != materialize_pending["digest"]:
+            raise HTTPException(status_code=500, detail="Persisted materialize content failed digest verification")
+        operation_id = str(materialize_pending.get("operation_id") or f"materialize-create-{body['edit_id']}")
+        result = dict(result)
+        reconciliation = _GUIDED_REINDEX.reconcile(
+            operation_id=operation_id, mundo=mundo,
+            target=str(materialize_pending["target"]), content_digest=str(materialize_pending["digest"]),
+        )
+        result.update({"index_status": reconciliation.index_status, "retryable": reconciliation.retryable,
+                       "message": reconciliation.message})
+        # Single use: the proposal is consumed on the first confirmed write.
+        _MATERIALIZE_PENDING_PROPOSALS.pop(body["edit_id"], None)
     if pending is not None:
         full = _resolve_mundo_path(mundo, f"{section}/{path}")
         if full is None or not full.is_file() or _digest_of(full) != pending["digest"]:
@@ -7768,7 +7795,7 @@ async def ai_edit_suggest(mundo: str, body: dict, request: Request):
 # ---------------------------------------------------------------------------
 
 from idea_capture_ui import create_idea_capture_router  # noqa: E402
-from ideas_bank_router import create_ideas_bank_router  # noqa: E402
+from ideas_bank_router import IdeaMaterializePreviewRequest, create_ideas_bank_router  # noqa: E402
 from docx_export import _convert_markdown_to_docx, _strip_frontmatter  # noqa: E402
 from ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
 import assistant_settings  # noqa: E402
@@ -8040,6 +8067,175 @@ def export_idea_docx(slug: str, request: Request):
         raise HTTPException(status_code=500, detail=str(exc))
     return _docx_file_response(data, f"{slug}.docx")
 
+
+def _materialize_existing_ids(reader: _GuidedGraphReader) -> list[str]:
+    """Existing canonical entity ids in the world, via the diskless reader seam.
+
+    Uses the same ``search("*")`` -> ``read(path)`` pattern as the grounding
+    candidates (AD6): only entities with a non-empty canonical ``id`` count
+    (``graph_indexer._entity_from_file`` sets ``id`` only when
+    ``is_canonical_id``), so relation validation against this set mirrors
+    ``set_graph_relation``'s id-only gate (R-IM-03).
+    """
+    ids: list[str] = []
+    for hit in reader.search("*"):
+        path = hit.get("path") if isinstance(hit, dict) else None
+        if not isinstance(path, str) or not path:
+            continue
+        entity = reader.read(path)
+        if not isinstance(entity, dict):
+            continue
+        canonical_id = entity.get("id")
+        if isinstance(canonical_id, str) and canonical_id.strip():
+            ids.append(canonical_id)
+    return ids
+
+
+@app.post("/api/ideas/{slug}/materialize-preview")
+async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, request: Request):
+    """Preview materializing a global-bank idea into a world ficha (R-IM-01..09).
+
+    Builds a server-owned ficha skeleton, grounds Hermes on the world's
+    existing canonical entities, strictly validates the AI envelope (fail
+    closed), and stores an in-memory pending proposal for the existing
+    confirmation-gated create route. ZERO canon writes happen here (R-IM-04);
+    the first filesystem write is inside ``_write_content`` after a redeemed
+    single-use token. The provider runs exactly one Hermes run.
+    """
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    principal = _resolve_principal(request)
+    _prune_materialize_proposals()
+    try:
+        idea = IdeasBank().read(slug)
+    except IdeaNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    mundo_dir = _resolve_mundo_dir(body.world)
+    if mundo_dir is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    if body.section not in _MATERIALIZE_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección no fichable")
+    folder = body.folder
+    if folder:
+        if Path(folder).is_absolute() or ".." in Path(folder).parts:
+            raise HTTPException(status_code=400, detail="Path traversal detectado")
+        # Defense-in-depth: the folder must resolve inside the world section
+        # with the canonical containment semantics of _resolve_mundo_path.
+        if _resolve_mundo_path(body.world, f"{body.section}/{folder}") is None:
+            raise HTTPException(status_code=400, detail="Path traversal detectado")
+    provider = _MATERIALIZE_PROVIDER
+    if provider is None:
+        logger.warning("materialize-preview: provider unavailable; fail closed")
+        return JSONResponse(status_code=503, content={"status": "unavailable", "retryable": True})
+    idx = _get_graph(body.world)
+    if idx is None:
+        raise HTTPException(status_code=404, detail="Mundo no encontrado")
+    reader = _GuidedGraphReader(idx)
+    candidates = build_grounding_candidates(reader)
+    title = (idea.title or "").strip() or idea.slug
+    request_id = f"materialize-{uuid.uuid4().hex}"
+    materialize_request = MaterializationRequest(
+        protocol_version=MATERIALIZATION_PROTOCOL_VERSION,
+        request_id=request_id,
+        session_id=request_id,  # stateless single-shot preview: identity = run id
+        world=body.world,
+        section=body.section,
+        folder=folder,
+        slug=idea.slug,
+        title=title,
+        idea_type=idea.type,
+        idea_body=idea.body,
+        tags=tuple(idea.tags),
+        candidates=tuple(candidates),
+        title_hint=body.title_hint,
+        deadline_ms=DEADLINE_MS,
+    )
+    cancellation = MaterializationCancellationToken()
+    try:
+        call = (
+            provider.invoke(materialize_request, cancellation)
+            if hasattr(provider, "invoke") else provider(materialize_request, cancellation)
+        )
+        raw = await asyncio.wait_for(call, DEADLINE_MS / 1000)
+    except asyncio.TimeoutError:
+        cancellation.cancel()
+        logger.warning("materialize-preview: provider timed out; fail closed")
+        return _guided_error_response(StructuredError(
+            ErrorCode.TIMEOUT, "The materialization provider timed out.", True,
+        ))
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.warning("materialize-preview: provider unavailable/invalid; fail closed")
+        return _guided_error_response(StructuredError(
+            ErrorCode.PROVIDER_UNAVAILABLE, "The materialization provider is unavailable.", True,
+        ))
+    parsed = MaterializationResponse.from_provider(raw, materialize_request)
+    if parsed is None:
+        logger.warning("materialize-preview: provider returned malformed output; fail closed")
+        return _guided_error_response(StructuredError(
+            ErrorCode.MALFORMED_OUTPUT, "The provider returned an invalid response.", True,
+        ))
+    kept_relations, discarded_relations = validate_relations(parsed.relations, _materialize_existing_ids(reader))
+    content = build_ficha_skeleton(
+        world_dir=mundo_dir,
+        section=body.section,
+        folder=folder,
+        slug=idea.slug,
+        title=title,
+        body=parsed.body,
+        relations=kept_relations,
+    )
+    target_rel = f"{folder}/{idea.slug}.md" if folder else f"{idea.slug}.md"
+    target = f"{body.section}/{target_rel}"
+    full = _resolve_mundo_path(body.world, target)
+    if full is not None and full.exists():
+        suggested = suggest_free_slug(full)
+        collision = {
+            "target": target,
+            "suggested_slug": suggested.stem,
+            "suggested_target": f"{body.section}/{folder}/{suggested.stem}.md"
+            if folder else f"{body.section}/{suggested.stem}.md",
+        }
+        # AD5: 409 with the additive suggestion payload (the existing 409
+        # strings are never altered). JSONResponse keeps ``collision`` at the
+        # top level exactly as the design pins it.
+        return JSONResponse(status_code=409, content={"detail": "El archivo ya existe", "collision": collision})
+    now = datetime.now(timezone.utc)
+    proposal_id = f"materialize-{uuid.uuid4().hex}"
+    digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+    _MATERIALIZE_PENDING_PROPOSALS[proposal_id] = {
+        "proposal_id": proposal_id,
+        "principal_id": principal.id,
+        "world": body.world,
+        "section": body.section,
+        "folder": folder,
+        "slug": idea.slug,
+        "target": target,
+        "content": content,
+        "digest": digest,
+        "operation_id": f"materialize-create-{proposal_id}",
+        "created_at": now,
+        "expires_at": now + timedelta(seconds=_MATERIALIZE_TTL_SECONDS),
+    }
+    title_by_id = {candidate["id"]: candidate["title"] for candidate in candidates}
+    logger.info(
+        "materialize-preview: world=%s target=%s candidates=%d relations=%d discarded=%d",
+        body.world, target, len(candidates), len(kept_relations), len(discarded_relations),
+    )
+    return {
+        "proposal_id": proposal_id,
+        "target": {
+            "world": body.world, "section": body.section,
+            "folder": folder, "slug": idea.slug, "path": target_rel,
+        },
+        "content": content,
+        "proposed_relations": [
+            {"target_id": rel.target_id, "title": title_by_id.get(rel.target_id, ""), "rel_type": rel.rel_type}
+            for rel in kept_relations
+        ],
+        "discarded_relations": discarded_relations,
+    }
 
 app.include_router(
     create_assistant_settings_router(

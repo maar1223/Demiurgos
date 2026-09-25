@@ -17,6 +17,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import types
 import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -121,6 +122,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     api_server._graph_indices.clear()
     api_server._confirmation_store.clear()
     api_server._GUIDED_PENDING_PROPOSALS.clear()
+    api_server._MATERIALIZE_PENDING_PROPOSALS.clear()
     api_server._GUIDED_CONSENT_TOKENS.clear()
     api_server._GUIDED_INDEX_REQUESTS.clear()
     api_server._METHODOLOGY_LIBRARY = None
@@ -237,6 +239,100 @@ def _gated_create(client: TestClient, path: str, content: str, conf: dict,
                        json={"content": content, "edit_id": edit_id,
                              "proposed_digest": conf["proposed_digest"],
                              "token": conf["token"]})
+
+
+# ---------------------------------------------------------------------------
+# Materialize preview/confirm helpers (PR5, tasks 4.4-4.6)
+# ---------------------------------------------------------------------------
+
+
+class _FakeMaterializeGraph:
+    """EntityGraphIndex seam for a fixed entity list (mirrors _GuidedGraphReader).
+
+    ``_GuidedGraphReader`` wraps every result with ``vars()``
+    (api_server.py:5269-5274) and reads through ``get_entity``, so this fake
+    returns SimpleNamespace objects (they have ``__dict__``) and exposes the
+    index-level ``search``/``get_entity``/``get_links`` API.
+    """
+
+    def __init__(self, entities: list[dict]) -> None:
+        self._entities = {e["path"]: e for e in entities}
+
+    def search(self, query: str) -> list[dict]:
+        return [types.SimpleNamespace(path=p) for p in sorted(self._entities)]
+
+    def get_entity(self, path: str) -> object | None:
+        entity = self._entities.get(path)
+        return types.SimpleNamespace(**entity) if entity is not None else None
+
+    def get_links(self, entity_path: str, kind: str) -> list[dict]:
+        return []
+
+
+class _FakeMaterializeProvider:
+    """Route-level fake for api_server._MATERIALIZE_PROVIDER.
+
+    ``result`` is a fixed object (returned as-is) or a callable
+    ``(request, cancellation) -> object``; every MaterializationRequest is
+    recorded for assertions.
+    """
+
+    def __init__(self, result):
+        self.result = result
+        self.requests = []
+
+    async def invoke(self, request, cancellation):
+        self.requests.append(request)
+        if callable(self.result):
+            return self.result(request, cancellation)
+        return self.result
+
+
+def _materialize_delta(request, *, body: str = "# Cuerpo del arquero\n",
+                       relations: list | None = None) -> dict:
+    """A valid idea-materialization-v1 delta envelope echoing request identity."""
+    return {
+        "protocol_version": request.protocol_version,
+        "request_id": request.request_id,
+        "session_id": request.session_id,
+        "outcome": "delta",
+        "delta": {"body": body, "relations": relations or []},
+    }
+
+
+def _materialize_entity(path: str, *, id: str, title: str = "",
+                        type: str = "concepto", description: str = "") -> dict:
+    return {"path": path, "id": id, "title": title, "type": type, "description": description}
+
+
+def _wire_materialize(monkeypatch, provider_result, entities: list[dict] | None = None):
+    """Wire a fake _MATERIALIZE_PROVIDER (+ optional fake _get_graph) and principal.
+
+    ``provider_result`` is returned as-is when not callable, or invoked as
+    ``(request, cancellation)`` when callable.
+    """
+    _principal(monkeypatch)
+    # IdeasBank resolves the data root through ITS OWN _project_root (data_root
+    # resolver), not api_server.PROJECT_ROOT — point it at the hermetic root so
+    # the preview handler's IdeasBank().read(slug) sees the fixture ideas.
+    monkeypatch.setattr("ideas_bank._project_root", lambda: api_server.PROJECT_ROOT)
+    fake = _FakeMaterializeProvider(provider_result)
+    monkeypatch.setattr(api_server, "_MATERIALIZE_PROVIDER", fake)
+    if entities is not None:
+        monkeypatch.setattr(api_server, "_get_graph", lambda _world: _FakeMaterializeGraph(entities))
+    return fake
+
+
+def _materialize_preview(client: TestClient, slug: str = "arquero-ciego", **overrides):
+    payload = {"world": "test_mundo", "section": "lore", "folder": "subdir"}
+    payload.update(overrides)
+    return client.post(f"/api/ideas/{slug}/materialize-preview", json=payload)
+
+
+def _world_listing() -> list[str]:
+    """Sorted world-relative paths under the fixture world (zero-writes checks)."""
+    world = api_server.MUNDOS_DIR / "test_mundo"
+    return sorted(str(p.relative_to(world)) for p in world.rglob("*"))
 
 
 class TestTreeContract:
@@ -7439,3 +7535,360 @@ class TestPublishedAdjuntoRoute:
         assert response.status_code == 200, response.text
         assert response.content == data
         assert response.headers["content-disposition"] == 'inline; filename="nivel-1.md"'
+
+
+# ---------------------------------------------------------------------------
+# PR5 (task 4.4) — POST /api/ideas/{slug}/materialize-preview
+# ---------------------------------------------------------------------------
+
+
+def _write_idea(slug: str = "arquero-ciego", *, type: str = "personaje",
+                title: str = "Arquero Ciego",
+                body: str = "Un arquero que perdió la vista.") -> Path:
+    """Write an idea file into the CURRENT hermetic ideas bank.
+
+    Written directly (not via the /api/ideas router) because the router's
+    ``IdeasBank`` instance is a process-lifetime singleton whose ``_ideas_root``
+    is pinned to the FIRST test's tmp_path, while the preview handler resolves
+    the current test's root — router-created ideas would 404 in later tests.
+    """
+    ideas_dir = api_server.PROJECT_ROOT / "ideas"
+    ideas_dir.mkdir(parents=True, exist_ok=True)
+    content = (
+        "---\n"
+        f"id: idea-{slug}\n"
+        f"slug: {slug}\n"
+        f"type: {type}\n"
+        f"status: fresh\n"
+        f"title: {title}\n"
+        "tags: []\n"
+        "used_in: []\n"
+        "---\n\n"
+        f"{body}\n"
+    )
+    path = ideas_dir / f"{slug}.md"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+class TestMaterializePreview:
+    """Route-level matrix for the materialize preview endpoint (R-IM-01..09)."""
+
+    def test_valid_picker_accepted_and_zero_writes(self, client: TestClient, monkeypatch):
+        """R-IM-01/02/04: a valid picker resolves the target under
+        mundos/{world}/{section}/, returns a server-built skeleton, stores a
+        pending proposal — and touches no canon bytes."""
+        _write_idea()
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        before = _world_listing()
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["proposal_id"].startswith("materialize-")
+        assert payload["target"] == {
+            "world": "test_mundo", "section": "lore", "folder": "subdir",
+            "slug": "arquero-ciego", "path": "subdir/arquero-ciego.md",
+        }
+        assert payload["content"].startswith("---")
+        assert "type: concepto" in payload["content"]
+        assert "based_on: ideas/arquero-ciego" in payload["content"]
+        assert payload["proposed_relations"] == []
+        assert payload["discarded_relations"] == []
+        assert len(provider.requests) == 1
+        request = provider.requests[0]
+        assert request.world == "test_mundo" and request.slug == "arquero-ciego"
+        assert request.section == "lore" and request.folder == "subdir"
+        assert request.request_id == request.session_id
+        pending = api_server._MATERIALIZE_PENDING_PROPOSALS[payload["proposal_id"]]
+        assert pending["target"] == "lore/subdir/arquero-ciego.md"
+        assert pending["principal_id"] == "tester"
+        assert pending["digest"] == hashlib.sha256(payload["content"].encode("utf-8")).hexdigest()
+        assert pending["expires_at"] > pending["created_at"]
+        # R-IM-04: preview alone leaves mundos/ byte-identical.
+        assert _world_listing() == before
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md").exists()
+
+    def test_preview_requires_auth(self, client: TestClient):
+        _write_idea()
+        resp = _materialize_preview(client)
+        assert resp.status_code == 401
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_non_indexed_section_rejected(self, client: TestClient, monkeypatch):
+        """R-IM-01: media is not ficha-eligible."""
+        _write_idea()
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client, section="media")
+        assert resp.status_code == 400
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_traversal_folder_rejected(self, client: TestClient, monkeypatch):
+        """R-IM-01: a folder escaping the section is rejected."""
+        _write_idea()
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client, folder="../personajes")
+        assert resp.status_code == 400
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_unknown_world_rejected(self, client: TestClient, monkeypatch):
+        """R-IM-01: an unknown world is 404 with no draft."""
+        _write_idea()
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client, world="no-existe")
+        assert resp.status_code == 404
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_suggested_section_from_idea_type_accepted(self, client: TestClient, monkeypatch):
+        """The section SUGGESTION is frontend-owned (AD7); the backend contract
+        is that the suggested graph-indexed section is accepted: personaje →
+        personajes, concepto → lore."""
+        _write_idea(type="personaje")
+        _write_idea(slug="idea-concepto", type="concepto", title="Idea Concepto")
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        personajes = _materialize_preview(client, section="personajes", folder="")
+        assert personajes.status_code == 200, personajes.text
+        assert personajes.json()["target"]["path"] == "arquero-ciego.md"
+        assert "type: Personaje" in personajes.json()["content"]
+        lore = _materialize_preview(client, slug="idea-concepto", section="lore", folder="")
+        assert lore.status_code == 200, lore.text
+        assert lore.json()["target"]["path"] == "idea-concepto.md"
+        assert len(provider.requests) == 2
+
+    def test_provider_none_returns_503_zero_writes(self, client: TestClient, monkeypatch):
+        """R-IM-09: an unwired provider fails closed with zero writes."""
+        _write_idea()
+        _principal(monkeypatch)
+        monkeypatch.setattr("ideas_bank._project_root", lambda: api_server.PROJECT_ROOT)
+        monkeypatch.setattr(api_server, "_MATERIALIZE_PROVIDER", None)
+        before = _world_listing()
+        resp = _materialize_preview(client)
+        assert resp.status_code == 503
+        assert resp.json() == {"status": "unavailable", "retryable": True}
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+        assert _world_listing() == before
+
+    @pytest.mark.parametrize("bad_result", [
+        {"protocol_version": "idea-materialization-v9", "outcome": "delta",
+         "delta": {"body": "# X\n", "relations": []}},
+        "not-json-at-all",
+        {},
+        {"outcome": "delta", "delta": {"body": "# X\n", "relations": []}},
+    ])
+    def test_malformed_or_identity_mismatch_envelope_502(
+            self, client: TestClient, monkeypatch, bad_result):
+        """R-IM-09: malformed or identity-mismatched envelopes fail closed."""
+        _write_idea()
+        _wire_materialize(monkeypatch, bad_result)
+        before = _world_listing()
+        resp = _materialize_preview(client)
+        assert resp.status_code == 502
+        assert resp.json()["code"] == "malformed_output"
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+        assert _world_listing() == before
+
+    @pytest.mark.parametrize("bad_body", [
+        "x" * 6001,                                      # R-IM-02 body bound
+        "---\nid: injected\n---\n# Body\n",              # R-IM-08 frontmatter
+    ])
+    def test_oversized_or_frontmatter_body_502(self, client: TestClient, monkeypatch, bad_body):
+        """Body bound and AI-frontmatter injection fail closed (502)."""
+        _write_idea()
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request, body=bad_body))
+        resp = _materialize_preview(client)
+        assert resp.status_code == 502
+        assert resp.json()["code"] == "malformed_output"
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_relations_over_cap_502(self, client: TestClient, monkeypatch):
+        """AD1: more than MAX_RELATIONS rejects the whole envelope."""
+        _write_idea()
+        relations = [{"target_id": f"id-{i}", "rel_type": "aliado-de"} for i in range(13)]
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request, relations=relations))
+        resp = _materialize_preview(client)
+        assert resp.status_code == 502
+        assert resp.json()["code"] == "malformed_output"
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_invented_target_dropped_and_reported(self, client: TestClient, monkeypatch):
+        """R-IM-03: an invented target_id is dropped, reported and never written."""
+        _write_idea()
+        entities = [
+            _materialize_entity("personajes/rhyz.md", id="Rhyz::Rhyz", title="Rhyz", type="Personaje"),
+        ]
+
+        def result(request, _cancellation):
+            return _materialize_delta(request, relations=[
+                {"target_id": "Rhyz::Rhyz", "rel_type": "aliado-de"},
+                {"target_id": "Personaje::Inventado", "rel_type": "aliado-de"},
+            ])
+
+        _wire_materialize(monkeypatch, result, entities=entities)
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["proposed_relations"] == [
+            {"target_id": "Rhyz::Rhyz", "title": "Rhyz", "rel_type": "aliado-de"}
+        ]
+        assert payload["discarded_relations"] == [
+            {"target_id": "Personaje::Inventado", "reason": "target_not_found"}
+        ]
+        assert "[[Rhyz::Rhyz]]" in payload["content"]
+        assert "Personaje::Inventado" not in payload["content"]
+
+    def test_out_of_vocab_rel_type_dropped_not_502(self, client: TestClient, monkeypatch):
+        """Binding clarification: an out-of-vocabulary rel_type drops THAT
+        relation into discarded_relations — never a whole-envelope failure."""
+        _write_idea()
+        entities = [
+            _materialize_entity("personajes/rhyz.md", id="Rhyz::Rhyz", title="Rhyz", type="Personaje"),
+        ]
+        _wire_materialize(
+            monkeypatch,
+            lambda request, _c: _materialize_delta(request, relations=[
+                {"target_id": "Rhyz::Rhyz", "rel_type": "hechizo-de"},
+            ]),
+            entities=entities,
+        )
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["proposed_relations"] == []
+        assert payload["discarded_relations"] == [
+            {"target_id": "Rhyz::Rhyz", "reason": "rel_type_out_of_vocabulary"}
+        ]
+
+    def test_collision_409_with_slug_2_suggestion(self, client: TestClient, monkeypatch):
+        """AD5: an existing target returns 409 with a -2 suggestion."""
+        _write_idea()
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# Ya existe\n", encoding="utf-8")
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client)
+        assert resp.status_code == 409
+        collision = resp.json()["collision"]
+        assert collision["target"] == "lore/subdir/arquero-ciego.md"
+        assert collision["suggested_slug"] == "arquero-ciego-2"
+        assert collision["suggested_target"] == "lore/subdir/arquero-ciego-2.md"
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+
+# ---------------------------------------------------------------------------
+# PR5 (task 4.5) — confirm through the existing gated create route
+# ---------------------------------------------------------------------------
+
+
+class TestMaterializeConfirm:
+    """Confirm flows through the existing confirmation-gated create pipeline
+    with the materialize pending branch (AD3, R-IM-05/06)."""
+
+    def _preview(self, client: TestClient, monkeypatch, slug: str = "arquero-ciego",
+                 entities: list[dict] | None = None, **overrides) -> dict:
+        _write_idea(slug)
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request), entities=entities)
+        resp = _materialize_preview(client, slug=slug, **overrides)
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    def _confirm(self, client: TestClient, preview: dict, *,
+                 mundo: str = "test_mundo", section: str = "lore", path: str | None = None):
+        path = path or preview["target"]["path"]
+        conf = client.post(
+            f"/api/{mundo}/{section}/edit-confirmation?path={path}",
+            json={"edit_id": preview["proposal_id"], "kind": "new",
+                  "proposed_content": preview["content"]},
+        )
+        assert conf.status_code == 200, conf.text
+        conf = conf.json()
+        return client.post(
+            f"/api/{mundo}/{section}/create?path={path}",
+            json={"content": preview["content"], "edit_id": preview["proposal_id"],
+                  "proposed_digest": conf["proposed_digest"], "token": conf["token"]},
+        )
+
+    def test_confirm_writes_exactly_one_file(self, client: TestClient, monkeypatch):
+        """R-IM-05: confirm writes exactly one ficha at
+        mundos/{world}/{section}/{folder}/{slug}.md and consumes the proposal."""
+        preview = self._preview(client, monkeypatch)
+        resp = self._confirm(client, preview)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["success"] is True
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md"
+        assert target.is_file()
+        assert target.read_text(encoding="utf-8") == preview["content"]
+        matches = list((api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir").glob("arquero-ciego*.md"))
+        assert matches == [target]
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_confirm_token_replay_rejected(self, client: TestClient, monkeypatch):
+        """R-IM-05: the confirmation token is single-use; a replay is rejected.
+
+        The written file is removed first so the replay exercises token
+        single-use itself — against the still-existing file the collision 409
+        fires before redemption (the proposal accepts 403/409 for replay).
+        """
+        preview = self._preview(client, monkeypatch)
+        conf = client.post(
+            "/api/test_mundo/lore/edit-confirmation?path=subdir/arquero-ciego.md",
+            json={"edit_id": preview["proposal_id"], "kind": "new",
+                  "proposed_content": preview["content"]},
+        )
+        assert conf.status_code == 200, conf.text
+        conf = conf.json()
+        url = "/api/test_mundo/lore/create?path=subdir/arquero-ciego.md"
+        payload = {"content": preview["content"], "edit_id": preview["proposal_id"],
+                   "proposed_digest": conf["proposed_digest"], "token": conf["token"]}
+        first = client.post(url, json=payload)
+        assert first.status_code == 200, first.text
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md"
+        assert target.is_file()
+        target.unlink()
+        replay = client.post(url, json=payload)
+        assert replay.status_code == 403
+        assert not target.exists()
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_confirm_creates_missing_personajes_folder(self, client: TestClient, monkeypatch):
+        """R-IM-05: a missing section folder is created as part of the write."""
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "personajes").exists()
+        preview = self._preview(client, monkeypatch, section="personajes", folder="")
+        resp = self._confirm(client, preview, section="personajes", path="arquero-ciego.md")
+        assert resp.status_code == 200, resp.text
+        target = api_server.MUNDOS_DIR / "test_mundo" / "personajes" / "arquero-ciego.md"
+        assert target.is_file()
+        content = target.read_text(encoding="utf-8")
+        assert "type: Personaje" in content
+        assert "schema_version: 1" in content
+
+    def test_confirm_altered_content_rejected(self, client: TestClient, monkeypatch):
+        """Task 4.5/AD3: the pending branch mirrors the guided branch
+        (:4647-4650), so altered content fails the proposal check with 409 and
+        no write occurs (the generic create pipeline's 403 digest protection
+        is covered by TestNewFileParity)."""
+        preview = self._preview(client, monkeypatch)
+        conf = client.post(
+            "/api/test_mundo/lore/edit-confirmation?path=subdir/arquero-ciego.md",
+            json={"edit_id": preview["proposal_id"], "kind": "new",
+                  "proposed_content": preview["content"]},
+        )
+        assert conf.status_code == 200, conf.text
+        conf = conf.json()
+        resp = client.post(
+            "/api/test_mundo/lore/create?path=subdir/arquero-ciego.md",
+            json={"content": "# ALTERED\n", "edit_id": preview["proposal_id"],
+                  "proposed_digest": conf["proposed_digest"], "token": conf["token"]},
+        )
+        assert resp.status_code == 409
+        assert not (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md").exists()
+        # The proposal survives the failed confirm; the token is still redeemable.
+        assert preview["proposal_id"] in api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_confirm_reports_index_status(self, client: TestClient, monkeypatch):
+        """R-IM-06: the create response surfaces index_status/retryable/message."""
+        preview = self._preview(client, monkeypatch)
+        resp = self._confirm(client, preview)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["index_status"] in {"indexed", "pending", "dirty", "failed"}
+        assert isinstance(body["retryable"], bool)
+        assert "message" in body
