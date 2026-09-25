@@ -196,6 +196,11 @@ export interface LocaleSettings {
   ui: string;
   conversation: string;
   content: string;
+  /** AD-7: true when the conversation domain was explicitly overridden
+   *  (the "inherit" option stores false + the current ui value). */
+  conversation_explicit?: boolean;
+  /** AD-7: true when the content domain was explicitly overridden. */
+  content_explicit?: boolean;
   region: string | null;
   region_explicit: boolean;
   iana_timezone: string;
@@ -206,6 +211,10 @@ export interface LocaleInput {
   ui: string;
   conversation: string;
   content: string;
+  /** AD-7: mirror of LocaleSettings.conversation_explicit. */
+  conversation_explicit?: boolean;
+  /** AD-7: mirror of LocaleSettings.content_explicit. */
+  content_explicit?: boolean;
   region?: string | null;
   region_explicit?: boolean;
   iana_timezone: string;

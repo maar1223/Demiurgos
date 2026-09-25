@@ -12,9 +12,11 @@ export const DEFAULT_LOCALE: LocaleSettings = {
   iana_timezone: "UTC",
 };
 
-const STORAGE_KEY = "demiurgos-locale";
+/** localStorage key persisting the resolved G7/OC3 locale (AD-2, AD-10). */
+export const STORAGE_KEY = "demiurgos-locale";
 
-function readCachedLocale(): LocaleSettings {
+/** Synchronous cache read; the first React render matches the persisted value. */
+export function readCachedLocale(): LocaleSettings {
   if (typeof window === "undefined") return DEFAULT_LOCALE;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
