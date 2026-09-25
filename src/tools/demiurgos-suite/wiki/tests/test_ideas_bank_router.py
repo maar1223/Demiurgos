@@ -448,6 +448,23 @@ def test_legacy_materialize_route_ignores_preview_fields(client: TestClient) -> 
     assert idea["status"] == "used"
 
 
+def test_materialize_multi_world_dedupes_used_in(client: TestClient) -> None:
+    """R-CG-04 multi-world accumulation (SC5/AC7) through the implemented
+    seam: the legacy materialize route appends each world exactly once and
+    keeps ``status: used`` — the same accumulation contract the new flow is
+    designed to end with."""
+    _create(client)
+    for world in ("vibrantes", "otro-mundo"):
+        resp = client.post(f"/api/ideas/arquero-ciego/materialize", json={"world": world})
+        assert resp.status_code == 200, resp.text
+    # Materializing into the same world again is deduped.
+    resp = client.post("/api/ideas/arquero-ciego/materialize", json={"world": "vibrantes"})
+    assert resp.status_code == 200, resp.text
+    idea = client.get("/api/ideas/arquero-ciego").json()
+    assert idea["used_in"] == ["vibrantes", "otro-mundo"]
+    assert idea["status"] == "used"
+
+
 # ---------------------------------------------------------------------------
 # Auth guard (mirrors sibling routers: fail closed)
 # ---------------------------------------------------------------------------

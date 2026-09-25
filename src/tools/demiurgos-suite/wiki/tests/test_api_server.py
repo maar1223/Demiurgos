@@ -38,6 +38,7 @@ for _p in (str(_WIKI), str(_SUITE)):
 import api_server  # noqa: E402
 from assistant_activity import assess_hermes_capabilities  # noqa: E402
 import guided_session_store  # noqa: E402
+from guided_character_persistence import ReindexCoordinator, ReindexResult  # noqa: E402
 from guided_session_store import GuidedSessionStore as DurableGuidedSessionStore  # noqa: E402
 from guided_session_store import SESSION_TTL  # noqa: E402
 import idea_capture_ui  # noqa: E402
@@ -7772,6 +7773,39 @@ class TestMaterializePreview:
         assert collision["suggested_target"] == "lore/subdir/arquero-ciego-2.md"
         assert not api_server._MATERIALIZE_PENDING_PROPOSALS
 
+    # -----------------------------------------------------------------------
+    # PR7 (task 6.1) — integration: preview is write-free (R-IM-04)
+    # -----------------------------------------------------------------------
+
+    def test_preview_is_write_free_by_mtime_snapshot(self, client: TestClient, monkeypatch):
+        """R-IM-04 (SC2/AC1): a full preview round-trip leaves mundos/ byte-
+        identical — same file set, same sizes, same mtimes/ctimes — and no
+        pending ficha exists on disk. This is a stronger check than the listing
+        equality in test_valid_picker_accepted_and_zero_writes: it also catches
+        a write that modifies an existing file in place without adding one."""
+        _write_idea()
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        world = api_server.MUNDOS_DIR / "test_mundo"
+
+        def snapshot() -> dict[str, tuple[int, int, int]]:
+            snap: dict[str, tuple[int, int, int]] = {}
+            for path in sorted(world.rglob("*")):
+                if not path.is_file():
+                    continue
+                stat = path.stat()
+                snap[str(path.relative_to(world))] = (stat.st_mtime_ns, stat.st_size, stat.st_ctime_ns)
+            return snap
+
+        before = snapshot()
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert snapshot() == before
+        # No pending ficha file on disk (the pending proposal is in-memory only).
+        pending_target = world / payload["target"]["path"]
+        assert not pending_target.exists()
+        assert not list((world / "lore" / "subdir").glob("arquero-ciego*.md"))
+
 
 # ---------------------------------------------------------------------------
 # PR5 (task 4.5) — confirm through the existing gated create route
@@ -7892,3 +7926,127 @@ class TestMaterializeConfirm:
         assert body["index_status"] in {"indexed", "pending", "dirty", "failed"}
         assert isinstance(body["retryable"], bool)
         assert "message" in body
+
+    # -----------------------------------------------------------------------
+    # PR7 (task 6.2) — confirm → reconcile → graph entities (R-IM-06, SC4/AC5)
+    # -----------------------------------------------------------------------
+
+    def test_confirm_new_entity_appears_in_graph_entities(self, client: TestClient, monkeypatch):
+        """R-IM-06 (SC4): after a confirmed write the new entity is retrievable
+        through GET /api/{mundo}/graph/entities with its server-built id/type.
+
+        The coordinator is rebound per test to the hermetic mundos root: the
+        production _GUIDED_REINDEX is a process-lifetime lazy binding that
+        caches the FIRST test's root, so reconcile against a later tmp_path
+        would report "not persisted" against the stale root (the same reason
+        the PR5 confirm tests only assert index_status membership).
+        """
+        _write_idea()
+        personajes = api_server.MUNDOS_DIR / "test_mundo" / "personajes"
+        personajes.mkdir(parents=True, exist_ok=True)
+        # A real grounding entity so the world index is non-trivial.
+        (personajes / "rhyz.md").write_text(
+            "---\nid: Rhyz::Rhyz\ntitle: Rhyz\ntype: Personaje\nstatus: stable\n"
+            "schema_version: 1\nrelaciones: []\n---\n# Rhyz\n", encoding="utf-8")
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        monkeypatch.setattr(
+            api_server, "_GUIDED_REINDEX",
+            ReindexCoordinator(api_server._mundos_dir(), lambda world: api_server._get_graph(world)),
+        )
+        preview = _materialize_preview(client, section="personajes", folder="")
+        assert preview.status_code == 200, preview.text
+        resp = self._confirm(client, preview.json(), section="personajes", path="arquero-ciego.md")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["index_status"] == "indexed"
+        graph = client.get("/api/test_mundo/graph/entities").json()
+        by_path = {entity["path"]: entity for entity in graph["entities"]}
+        entity = by_path.get("personajes/arquero-ciego.md")
+        assert entity is not None, by_path.keys()
+        assert entity["id"] == "arquero-ciego"
+        assert entity["type"] == "Personaje"
+        assert entity["status"] == "stable"
+        assert entity["relaciones"] == []
+
+    @pytest.mark.parametrize("failed_status", ["dirty", "pending", "failed"])
+    def test_confirm_reindex_failure_reports_status_and_keeps_ficha(
+            self, client: TestClient, monkeypatch, failed_status):
+        """R-IM-06 (SC4): a forced reconciliation failure returns
+        index_status ∈ {dirty,pending,failed} with retryable:true and NEVER
+        rolls back the durable ficha — it stays on disk byte-identical."""
+        _write_idea()
+
+        class _ForcedReindexFailure:
+            def reconcile(self, **kwargs):
+                return ReindexResult(
+                    operation_id=kwargs["operation_id"],
+                    content_digest=kwargs["content_digest"],
+                    index_status=failed_status, retryable=True,
+                    message="forced reindex failure for test",
+                )
+
+        monkeypatch.setattr(api_server, "_GUIDED_REINDEX", _ForcedReindexFailure())
+        preview = self._preview(client, monkeypatch)
+        resp = self._confirm(client, preview)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["index_status"] == failed_status
+        assert body["retryable"] is True
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md"
+        assert target.is_file()
+        assert target.read_text(encoding="utf-8") == preview["content"]
+
+    # -----------------------------------------------------------------------
+    # PR7 (task 6.3) — no-stub confirm + based_on link (R-IM-03/R-CG-04)
+    # -----------------------------------------------------------------------
+
+    def test_confirm_all_invented_relations_writes_empty_relaciones_no_stubs(
+            self, client: TestClient, monkeypatch):
+        """R-IM-03 (SC11/AC9): when every AI relation targets a non-existent
+        entity the ficha is still written with empty/valid relaciones, the
+        discards are reported, and none of the missing targets is created —
+        no stub ficha ever lands on disk or in the graph."""
+        _write_idea()
+        invented = [
+            {"target_id": "Rhyz::Rhyz", "rel_type": "aliado-de"},
+            {"target_id": "Personaje::Inventado", "rel_type": "parentesco-de"},
+        ]
+
+        def result(request, _cancellation):
+            return _materialize_delta(request, relations=invented)
+
+        _wire_materialize(monkeypatch, result)  # entities=None → real index
+        preview = _materialize_preview(client)
+        assert preview.status_code == 200, preview.text
+        payload = preview.json()
+        assert payload["proposed_relations"] == []
+        assert payload["discarded_relations"] == [
+            {"target_id": "Rhyz::Rhyz", "reason": "target_not_found"},
+            {"target_id": "Personaje::Inventado", "reason": "target_not_found"},
+        ]
+        assert "relaciones: []" in payload["content"]
+        assert "Rhyz::Rhyz" not in payload["content"]
+        assert "Personaje::Inventado" not in payload["content"]
+
+        resp = self._confirm(client, payload)
+        assert resp.status_code == 200, resp.text
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md"
+        assert target.is_file()
+        assert target.read_text(encoding="utf-8") == payload["content"]
+        # None of the invented targets was created anywhere under the world.
+        world = api_server.MUNDOS_DIR / "test_mundo"
+        for path in world.rglob("*.md"):
+            assert "rhyz" not in path.name.lower() and "inventado" not in path.name.lower()
+        graph = client.get("/api/test_mundo/graph/entities").json()
+        invented_ids = {"Rhyz::Rhyz", "Personaje::Inventado"}
+        assert not (invented_ids & {entity["id"] for entity in graph["entities"]})
+
+    def test_confirm_ficha_carries_based_on_link(self, client: TestClient, monkeypatch):
+        """R-CG-04: the NEW ficha written by the confirm flow carries
+        based_on: ideas/{slug} in its frontmatter on disk."""
+        preview = self._preview(client, monkeypatch)
+        resp = self._confirm(client, preview)
+        assert resp.status_code == 200, resp.text
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md"
+        assert target.is_file()
+        content = target.read_text(encoding="utf-8")
+        assert "based_on: ideas/arquero-ciego" in content
