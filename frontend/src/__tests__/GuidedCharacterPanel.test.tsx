@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GuidedCharacterPanel } from "@/components/organisms/GuidedCharacterPanel";
 import { useGuidedCharacter } from "@/hooks/useGuidedCharacter";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { translate } from "@/i18n/messages";
 
 vi.mock("@/hooks/useGuidedCharacter", () => ({ useGuidedCharacter: vi.fn() }));
 vi.mock("@/hooks/useAppLanguage", () => ({ useAppLanguage: vi.fn() }));
@@ -11,8 +12,12 @@ vi.mock("@/hooks/useAppLanguage", () => ({ useAppLanguage: vi.fn() }));
 const useGuidedCharacterMock = vi.mocked(useGuidedCharacter);
 const useAppLanguageMock = vi.mocked(useAppLanguage);
 
-/** The hook now returns `{ language, t }` (AD-3); `t` is not exercised yet. */
-const lang = (language: string) => ({ language: language as "es" | "en", t: (key: string) => key });
+/** The hook returns `{ language, t }` (AD-3); `t` resolves the real catalogue. */
+const lang = (language: "es" | "en") => ({
+  language,
+  t: (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) =>
+    translate(language, key, params),
+});
 
 const baseState = () => ({
   session: {
