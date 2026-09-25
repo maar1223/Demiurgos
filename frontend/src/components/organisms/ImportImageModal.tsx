@@ -3,6 +3,7 @@ import { Icon } from "@/components/atoms/Icon";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Button } from "@/components/atoms/Button";
 import { DropZone } from "@/components/atoms/DropZone";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface ImportImageModalProps {
   onFile: (file: File) => void;
@@ -26,6 +27,7 @@ export function ImportImageModal({
   uploadError,
   onClose,
 }: ImportImageModalProps) {
+  const { t } = useAppLanguage();
   const overlayRef = useRef<HTMLDivElement>(null);
   // Name of the file chosen in the current modal session — gates the
   // success/error banners so a stale uploadError from a previous session
@@ -75,13 +77,13 @@ export function ImportImageModal({
             id="import-image-title"
             className="font-heading text-h4 text-primary"
           >
-            Importar Imagen
+            {t("importImage.title")}
           </h2>
           <button
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -95,7 +97,7 @@ export function ImportImageModal({
             <div className="flex items-center gap-3 rounded-lg border border-action/40 bg-action/10 px-4 py-3 text-small text-primary">
               <Spinner size="sm" />
               <span>
-                Subiendo imagen…
+                {t("importImage.uploading")}
                 {fileName && (
                   <span className="text-muted"> ({fileName})</span>
                 )}
@@ -108,14 +110,14 @@ export function ImportImageModal({
               <div className="flex min-w-0 items-center gap-3 text-small text-status-success">
                 <Icon name="check" size={18} />
                 <span>
-                  Imagen subida ✓
+                  {t("importImage.success")}
                   {fileName && (
                     <span className="text-primary"> {fileName}</span>
                   )}
                 </span>
               </div>
               <Button variant="primary" size="sm" onClick={onClose}>
-                Cerrar
+                {t("common.close")}
               </Button>
             </div>
           )}
@@ -123,7 +125,9 @@ export function ImportImageModal({
           {failed && (
             <div className="flex items-center justify-between gap-3 rounded-lg border border-status-error/50 bg-status-error/10 px-4 py-3">
               <div className="min-w-0 text-small text-status-error">
-                <span>Error al subir imagen: {uploadError.message}</span>
+                <span>
+                  {t("importImage.error", { message: uploadError.message })}
+                </span>
                 {fileName && (
                   <span className="block text-xs text-muted">
                     {fileName}
@@ -131,7 +135,7 @@ export function ImportImageModal({
                 )}
               </div>
               <Button variant="secondary" size="sm" onClick={onClose}>
-                Cerrar
+                {t("common.close")}
               </Button>
             </div>
           )}

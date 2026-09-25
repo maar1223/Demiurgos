@@ -1,4 +1,6 @@
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 /** Internal lens of the "Taller" tab (REQ-LEN-1): operational "Mi mundo" vs
  *  read-only "Catálogo total". */
@@ -9,9 +11,9 @@ interface LensToggleProps {
   onChange: (lens: Lens) => void;
 }
 
-const LENS_OPTIONS: { value: Lens; label: string }[] = [
-  { value: "mi-mundo", label: "Mi mundo" },
-  { value: "catalogo-total", label: "Catálogo total" },
+const LENS_OPTIONS: { value: Lens; labelKey: MessageKey }[] = [
+  { value: "mi-mundo", labelKey: "lens.miMundo" },
+  { value: "catalogo-total", labelKey: "lens.catalogoTotal" },
 ];
 
 /**
@@ -22,10 +24,11 @@ const LENS_OPTIONS: { value: Lens; label: string }[] = [
  * it visually from the top-level tablist.
  */
 export function LensToggle({ lens, onChange }: LensToggleProps) {
+  const { t } = useAppLanguage();
   return (
     <div
       role="tablist"
-      aria-label="Lente de la biblioteca"
+      aria-label={t("lens.aria")}
       className="inline-flex gap-1 rounded-lg border border-edge bg-surface-raised p-1"
     >
       {LENS_OPTIONS.map((option) => (
@@ -42,7 +45,7 @@ export function LensToggle({ lens, onChange }: LensToggleProps) {
               : "text-muted hover:bg-surface-hover hover:text-primary",
           )}
         >
-          {option.label}
+          {t(option.labelKey)}
         </button>
       ))}
     </div>

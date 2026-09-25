@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import { Icon, type IconName } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
 import type { FileNode } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 /**
  * Discriminated action union emitted by the card ⋯ menu (S7).
@@ -18,19 +20,19 @@ export type CardAction =
 
 interface CardMenuItem {
   action: CardAction;
-  label: string;
+  labelKey: MessageKey;
   icon?: IconName;
 }
 
 /** File actions (S3): Open, Set cover…, Rename, Move to…, Move to section…, Duplicate, Delete. */
 const FILE_ACTIONS: CardMenuItem[] = [
-  { action: "open", label: "Abrir" },
-  { action: "set-cover", label: "Establecer portada…" },
-  { action: "rename", label: "Renombrar" },
-  { action: "move", label: "Mover a…" },
-  { action: "move-section", label: "Mover a sección…", icon: "corner-up-right" },
-  { action: "duplicate", label: "Duplicar" },
-  { action: "trash", label: "Eliminar" },
+  { action: "open", labelKey: "cardMenu.open" },
+  { action: "set-cover", labelKey: "cardMenu.setCover" },
+  { action: "rename", labelKey: "cardMenu.rename" },
+  { action: "move", labelKey: "cardMenu.move" },
+  { action: "move-section", labelKey: "cardMenu.moveSection", icon: "corner-up-right" },
+  { action: "duplicate", labelKey: "cardMenu.duplicate" },
+  { action: "trash", labelKey: "cardMenu.delete" },
 ];
 
 /**
@@ -40,10 +42,10 @@ const FILE_ACTIONS: CardMenuItem[] = [
  * scope works.
  */
 const DIR_ACTIONS: CardMenuItem[] = [
-  { action: "open", label: "Abrir" },
-  { action: "rename", label: "Renombrar" },
-  { action: "move-section", label: "Mover a sección…", icon: "corner-up-right" },
-  { action: "trash", label: "Eliminar" },
+  { action: "open", labelKey: "cardMenu.open" },
+  { action: "rename", labelKey: "cardMenu.rename" },
+  { action: "move-section", labelKey: "cardMenu.moveSection", icon: "corner-up-right" },
+  { action: "trash", labelKey: "cardMenu.delete" },
 ];
 
 interface CardMenuProps {
@@ -77,6 +79,7 @@ export function CardMenu({
   busyPath,
   error,
 }: CardMenuProps) {
+  const { t } = useAppLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
   const actions = node.is_dir ? DIR_ACTIONS : FILE_ACTIONS;
   const disabled = busyPath === node.path;
@@ -122,7 +125,7 @@ export function CardMenu({
     <div ref={containerRef} className="relative inline-block">
       <button
         type="button"
-        aria-label={`Acciones de ${node.name}`}
+        aria-label={t("cardMenu.triggerAria", { name: node.name })}
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={handleTriggerClick}
@@ -139,7 +142,7 @@ export function CardMenu({
       {open && (
         <div
           role="menu"
-          aria-label={`Acciones de ${node.name}`}
+          aria-label={t("cardMenu.triggerAria", { name: node.name })}
           className={cn(
             "absolute bottom-9 right-0 z-20 min-w-48 overflow-hidden rounded-lg",
             "border border-edge bg-surface-raised shadow-xl",
@@ -153,7 +156,7 @@ export function CardMenu({
               {error}
             </div>
           )}
-          {actions.map(({ action, label, icon }) => (
+          {actions.map(({ action, labelKey, icon }) => (
             <button
               key={action}
               type="button"
@@ -171,7 +174,7 @@ export function CardMenu({
                 {icon && (
                   <Icon name={icon} size={14} className="shrink-0 text-muted" />
                 )}
-                {label}
+                {t(labelKey)}
               </span>
             </button>
           ))}

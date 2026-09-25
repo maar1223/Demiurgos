@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { forwardRef, useImperativeHandle } from "react";
 import WikiEditor from "@/pages/WikiEditor";
 import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
+import { tEs } from "@/__tests__/i18nTestUtils";
 
 // Mock all hooks
 vi.mock("@/hooks/useWorlds", () => ({
@@ -290,7 +291,7 @@ describe("WikiEditor", () => {
     // Scope to the sidebar nav — the same names now also appear in the
     // central section cards
     const tree = within(
-      screen.getByRole("navigation", { name: "File tree" }),
+      screen.getByRole("navigation", { name: tEs("fileTree.treeAria") }),
     );
     expect(tree.getByText("capitulos")).toBeInTheDocument();
     expect(tree.getByText("notas.md")).toBeInTheDocument();
@@ -1203,7 +1204,7 @@ describe("WikiEditor", () => {
       screen.getByRole("dialog", { name: /importar imagen/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/arrastrá una imagen o hacé clic para seleccionar/i),
+      screen.getByText(tEs("dropZone.label")),
     ).toBeInTheDocument();
   });
 
@@ -1487,7 +1488,7 @@ describe("WikiEditor", () => {
     renderWikiEditor();
 
     const tree = within(
-      screen.getByRole("navigation", { name: "File tree" }),
+      screen.getByRole("navigation", { name: tEs("fileTree.treeAria") }),
     );
 
     const dt = new DataTransfer();
@@ -1513,7 +1514,7 @@ describe("WikiEditor", () => {
     renderWikiEditor();
 
     const tree = within(
-      screen.getByRole("navigation", { name: "File tree" }),
+      screen.getByRole("navigation", { name: tEs("fileTree.treeAria") }),
     );
 
     const dt = new DataTransfer();

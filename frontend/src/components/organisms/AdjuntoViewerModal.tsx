@@ -8,6 +8,7 @@ import { Badge } from "@/components/atoms/Badge";
 import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { MarkdownBody } from "@/components/organisms/MarkdownViewer";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 type AdjuntoViewerStatus =
   | "idle"
@@ -60,6 +61,7 @@ export function AdjuntoViewerModal({
   adjunto,
   onClose,
 }: AdjuntoViewerModalProps) {
+  const { t } = useAppLanguage();
   const [status, setStatus] = useState<AdjuntoViewerStatus>("idle");
   const [content, setContent] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
@@ -182,7 +184,7 @@ export function AdjuntoViewerModal({
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -205,7 +207,7 @@ export function AdjuntoViewerModal({
               data-testid="adjunto-unauthorized"
               className="text-small text-muted"
             >
-              Necesitás iniciar sesión para ver este adjunto.
+              {t("adjunto.unauthorized")}
             </p>
           )}
 
@@ -214,13 +216,13 @@ export function AdjuntoViewerModal({
               data-testid="adjunto-unavailable"
               className="text-small text-muted"
             >
-              Este adjunto no está disponible o cambió desde su publicación.
+              {t("adjunto.unavailable")}
             </p>
           )}
 
           {status === "error" && (
             <ErrorBanner
-              message="No se pudo cargar el adjunto."
+              message={t("adjunto.loadError")}
               onRetry={() => setReloadKey((key) => key + 1)}
             />
           )}

@@ -5,6 +5,7 @@ import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface EntityDetailProps {
   /** Current world name */
@@ -28,6 +29,7 @@ interface EntityDetailProps {
  * - 🟢 Ready: header + metadata + prose content
  */
 export function EntityDetail({ mundo, entityName }: EntityDetailProps) {
+  const { t } = useAppLanguage();
   const navigate = useNavigate();
   const { entity, isLoading, error, mutate } = useEntity(mundo, entityName);
 
@@ -45,7 +47,7 @@ export function EntityDetail({ mundo, entityName }: EntityDetailProps) {
     return (
       <div className="px-4 py-8">
         <ErrorBanner
-          message={error.message || "Error al cargar la entidad."}
+          message={error.message || t("entityDetail.loadError")}
           onRetry={() => mutate()}
         />
       </div>
@@ -67,7 +69,7 @@ export function EntityDetail({ mundo, entityName }: EntityDetailProps) {
           <Icon name="search" size={32} />
         </div>
         <div>
-          <p className="text-body text-muted">Entidad no encontrada</p>
+          <p className="text-body text-muted">{t("entityDetail.notFound")}</p>
           <p className="mt-1 text-small text-muted">&ldquo;{entityName}&rdquo;</p>
         </div>
         <Button
@@ -75,7 +77,7 @@ export function EntityDetail({ mundo, entityName }: EntityDetailProps) {
           size="sm"
           onClick={() => navigate(editorPath)}
         >
-          Crear entidad
+          {t("entityDetail.create")}
         </Button>
       </div>
     );
@@ -109,18 +111,21 @@ export function EntityDetail({ mundo, entityName }: EntityDetailProps) {
             </span>
             <span className="inline-flex items-center gap-1">
               <Icon name="file" size={14} />
-              {totalLinks} {totalLinks === 1 ? "conexión" : "conexiones"}
+              {totalLinks}{" "}
+              {totalLinks === 1
+                ? t("entitySearch.connectionSingular")
+                : t("entitySearch.connectionPlural")}
             </span>
             {entity.forward_links.length > 0 && (
               <span className="inline-flex items-center gap-1">
                 <Icon name="chevron-right" size={14} />
-                {entity.forward_links.length} referencias
+                {t("entityDetail.references", { count: entity.forward_links.length })}
               </span>
             )}
             {entity.backlinks.length > 0 && (
               <span className="inline-flex items-center gap-1">
                 <Icon name="chevron-left" size={14} />
-                {entity.backlinks.length} menciones
+                {t("entityDetail.mentions", { count: entity.backlinks.length })}
               </span>
             )}
           </div>

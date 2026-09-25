@@ -1,5 +1,6 @@
 import { Icon } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export type WizardStepState = "done" | "current" | "todo";
 
@@ -46,15 +47,16 @@ export interface WizardProgressProps {
 export function WizardProgress({
   steps,
   current,
-  ariaLabel = "Progreso de la configuración",
+  ariaLabel,
   onSelect,
   canSelect,
   states,
   className,
 }: WizardProgressProps) {
+  const { t } = useAppLanguage();
   return (
     <nav
-      aria-label={ariaLabel}
+      aria-label={ariaLabel ?? t("wizard.aria")}
       className={cn("flex items-center gap-1", className)}
     >
       {steps.map((entry, index) => {

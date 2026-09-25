@@ -9,6 +9,7 @@ import { Button } from "@/components/atoms/Button";
 import { Toast } from "@/components/atoms/Toast";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export type Align = "left" | "right" | "center" | null;
 export type Size = "sm" | "lg" | null;
@@ -61,6 +62,7 @@ export function ImagePicker({
   onClose,
   rawMode = false,
 }: ImagePickerProps) {
+  const { t } = useAppLanguage();
   const { images, total, isLoading, error, mutate } = useImages(mundo);
   const { remove } = useImageDelete(mundo);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -116,7 +118,7 @@ export function ImagePicker({
   };
 
   const showDeleteSuccess = () => {
-    setDeletedMessage("Imagen eliminada");
+    setDeletedMessage(t("imagePicker.deleted"));
     if (deleteTimerRef.current) window.clearTimeout(deleteTimerRef.current);
     deleteTimerRef.current = window.setTimeout(
       () => setDeletedMessage(null),
@@ -136,7 +138,7 @@ export function ImagePicker({
       showDeleteSuccess();
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "No se pudo eliminar la imagen.";
+        err instanceof Error ? err.message : t("imagePicker.deleteError");
       setDeleteError(message);
     } finally {
       setIsDeleting(false);
@@ -173,10 +175,15 @@ export function ImagePicker({
             id="image-picker-title"
             className="font-heading text-h4 text-primary"
           >
-            Seleccionar imagen
+            {t("imagePicker.title")}
             {total > 0 && (
               <span className="ml-2 text-small text-muted font-normal">
-                ({total} {total === 1 ? "imagen" : "imágenes"})
+                {t("imagePicker.count", {
+                  count: total,
+                  unit: total === 1
+                    ? t("imagePicker.imageSingular")
+                    : t("imagePicker.imagePlural"),
+                })}
               </span>
             )}
           </h2>
@@ -184,7 +191,7 @@ export function ImagePicker({
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted hover:text-primary hover:bg-surface-hover transition-colors"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -200,7 +207,7 @@ export function ImagePicker({
 
           {error && !isLoading && (
             <ErrorBanner
-              message={error.message || "Error al cargar imágenes."}
+              message={error.message || t("imagePicker.loadError")}
               onRetry={() => mutate()}
             />
           )}
@@ -208,7 +215,7 @@ export function ImagePicker({
           {!isLoading && !error && images.length === 0 && (
             <EmptyState
               icon="empty"
-              message="No hay imágenes en este mundo."
+              message={t("imagePicker.empty")}
             />
           )}
 
@@ -257,8 +264,8 @@ export function ImagePicker({
                       {isSelected && (
                         <button
                           type="button"
-                          aria-label={`Eliminar ${img.name}`}
-                          title={`Eliminar ${img.name}`}
+                          aria-label={t("imagePicker.deleteAria", { name: img.name })}
+                          title={t("imagePicker.deleteAria", { name: img.name })}
                           onClick={() => openDeleteDialog(img.path)}
                           className="absolute right-2 top-2 rounded-md bg-surface/80 p-1.5 text-icon-muted shadow-md backdrop-blur-sm transition-colors hover:bg-status-error hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-action/50"
                         >
@@ -271,9 +278,7 @@ export function ImagePicker({
               </div>
 
               <p className="mt-4 text-small text-muted">
-                {rawMode
-                  ? "Selecciona la imagen que será la portada."
-                  : "Selecciona una imagen y configura su posición."}
+                {rawMode ? t("imagePicker.rawHint") : t("imagePicker.hint")}
               </p>
             </div>
           )}
@@ -284,7 +289,7 @@ export function ImagePicker({
           {!rawMode && (
             <div className="flex flex-wrap items-center gap-3">
               <label className="flex items-center gap-2 text-small text-muted">
-                Alineación:
+                {t("imagePicker.alignLabel")}
                 <select
                   value={selectedAlign ?? ""}
                   onChange={(e) =>
@@ -296,14 +301,14 @@ export function ImagePicker({
                   }
                   className={selectClasses}
                 >
-                  <option value="">Automática</option>
-                  <option value="left">← Izquierda</option>
-                  <option value="right">→ Derecha</option>
-                  <option value="center">↔ Centro</option>
+                  <option value="">{t("imagePicker.alignAuto")}</option>
+                  <option value="left">{t("imagePicker.alignLeft")}</option>
+                  <option value="right">{t("imagePicker.alignRight")}</option>
+                  <option value="center">{t("imagePicker.alignCenter")}</option>
                 </select>
               </label>
               <label className="flex items-center gap-2 text-small text-muted">
-                Tamaño:
+                {t("imagePicker.sizeLabel")}
                 <select
                   value={selectedSize ?? ""}
                   onChange={(e) =>
@@ -315,9 +320,9 @@ export function ImagePicker({
                   }
                   className={selectClasses}
                 >
-                  <option value="">Mediana</option>
-                  <option value="sm">Chica</option>
-                  <option value="lg">Grande</option>
+                  <option value="">{t("imagePicker.sizeMedium")}</option>
+                  <option value="sm">{t("imagePicker.sizeSmall")}</option>
+                  <option value="lg">{t("imagePicker.sizeLarge")}</option>
                 </select>
               </label>
             </div>
@@ -325,7 +330,7 @@ export function ImagePicker({
 
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={onClose}>
-              Cancelar
+              {t("common.cancel")}
             </Button>
             <Button
               variant="primary"
@@ -333,7 +338,7 @@ export function ImagePicker({
               disabled={!selectedPath}
               onClick={handleAccept}
             >
-              Aceptar
+              {t("imagePicker.accept")}
             </Button>
           </div>
         </div>
@@ -344,9 +349,11 @@ export function ImagePicker({
         the image + thumbnail to the world's papelera via the API. */}
       {deleteTarget && (
         <ConfirmDialog
-          title="Eliminar"
-          message={`¿Eliminar "${deleteTarget.split("/").pop()}"? Se moverá a la papelera.`}
-          confirmLabel="Eliminar"
+          title={t("common.delete")}
+          message={t("imagePicker.deleteMessage", {
+            name: deleteTarget.split("/").pop() ?? deleteTarget,
+          })}
+          confirmLabel={t("common.delete")}
           isBusy={isDeleting}
           error={deleteError}
           onConfirm={handleConfirmDelete}

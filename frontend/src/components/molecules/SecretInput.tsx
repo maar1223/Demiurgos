@@ -7,6 +7,7 @@ import {
   type InputHTMLAttributes,
 } from "react";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export interface SecretInputProps
   extends Omit<InputHTMLAttributes<HTMLInputElement>, "type"> {
@@ -45,6 +46,7 @@ export const SecretInput = forwardRef<HTMLInputElement, SecretInputProps>(
     },
     ref,
   ) {
+    const { t } = useAppLanguage();
     const [revealed, setRevealed] = useState(false);
     const [copied, setCopied] = useState(false);
     // Uncontrolled mode only: tracks whether the field has content so the
@@ -102,7 +104,8 @@ export const SecretInput = forwardRef<HTMLInputElement, SecretInputProps>(
     };
 
     const canAct = hasValue && !disabled;
-    const revealLabel = toggleLabel ?? (revealed ? "Ocultar" : "Mostrar");
+    const revealLabel =
+      toggleLabel ?? (revealed ? t("secret.hide") : t("secret.show"));
 
     return (
       <div className="flex items-center gap-2">
@@ -122,17 +125,17 @@ export const SecretInput = forwardRef<HTMLInputElement, SecretInputProps>(
           aria-label={revealLabel}
           className={actionButtonClass}
         >
-          {revealed ? "Ocultar" : "Mostrar"}
+          {revealed ? t("secret.hide") : t("secret.show")}
         </button>
         {copyable && (
           <button
             type="button"
             onClick={() => void handleCopy()}
             disabled={!canAct}
-            aria-label="Copiar"
+            aria-label={t("secret.copy")}
             className={actionButtonClass}
           >
-            {copied ? "Copiado" : "Copiar"}
+            {copied ? t("secret.copied") : t("secret.copy")}
           </button>
         )}
       </div>

@@ -1,6 +1,7 @@
 import { useRef, type KeyboardEvent } from "react";
 import { Icon, type IconName } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /** One entry of the Perfil section rail: id, user-facing label and glyph. */
 export interface ProfileSectionDef {
@@ -35,6 +36,7 @@ export function ProfileSectionRail({
   activeId,
   onSelect,
 }: ProfileSectionRailProps) {
+  const { t } = useAppLanguage();
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -64,7 +66,7 @@ export function ProfileSectionRail({
   return (
     <div
       role="tablist"
-      aria-label="Secciones del perfil"
+      aria-label={t("profileRail.aria")}
       className="flex gap-1 overflow-x-auto md:w-56 md:flex-col md:gap-1 md:overflow-visible"
     >
       {sections.map((section, index) => {

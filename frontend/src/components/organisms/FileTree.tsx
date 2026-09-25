@@ -14,6 +14,7 @@ import {
   type DropDnd,
 } from "@/lib/dnd";
 import type { FileNode } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface FileTreeProps {
   nodes: FileNode[];
@@ -84,6 +85,7 @@ export function FileTree({
   onMove,
   movedPath = null,
 }: FileTreeProps) {
+  const { t } = useAppLanguage();
   const [query, setQuery] = useState("");
   const filteredNodes = useMemo(
     () => filterFileTree(nodes, query),
@@ -206,7 +208,7 @@ export function FileTree({
     return (
       <div className="px-4 py-4">
         <ErrorBanner
-          message="No se pudo cargar el árbol de archivos."
+          message={t("fileTree.loadError")}
           onRetry={onRetry}
         />
       </div>
@@ -217,7 +219,7 @@ export function FileTree({
     return (
       <EmptyState
         icon="empty"
-        message="Esta sección está vacía"
+        message={t("fileTree.empty")}
       />
     );
   }
@@ -256,8 +258,8 @@ export function FileTree({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar archivos…"
-            aria-label="Buscar archivos"
+            placeholder={t("fileTree.searchPlaceholder")}
+            aria-label={t("fileTree.searchAria")}
             className={cn(
               "w-full rounded-md border border-edge bg-surface-raised",
               "py-1.5 pl-8 pr-3",
@@ -270,7 +272,7 @@ export function FileTree({
             <button
               type="button"
               onClick={() => setQuery("")}
-              aria-label="Limpiar búsqueda"
+              aria-label={t("fileTree.clearSearch")}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-primary"
             >
               <Icon name="close" size={14} />
@@ -283,10 +285,10 @@ export function FileTree({
       {hasQuery && filteredNodes.length === 0 ? (
         <div className="flex flex-col items-center gap-2 py-8 text-center">
           <Icon name="search" size={20} className="text-muted" />
-          <p className="text-small text-muted">Sin resultados</p>
+          <p className="text-small text-muted">{t("fileTree.noResults")}</p>
         </div>
       ) : (
-        <nav aria-label="File tree">
+        <nav aria-label={t("fileTree.treeAria")}>
           <ul className="list-none">
             {filteredNodes.map((node) => (
               <FileTreeNode
@@ -322,7 +324,7 @@ export function FileTree({
         >
           <Icon name="arrow-up" size={14} />
           <span className="min-w-0 truncate">
-            Subir un nivel
+            {t("fileTree.upOneLevel")}
             {upTarget && (
               <span className="ml-1 font-semibold">→ {upTarget}</span>
             )}

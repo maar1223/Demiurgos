@@ -3,6 +3,7 @@ import { Icon } from "@/components/atoms/Icon";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
 import { getCurrentWorld, setCurrentWorld } from "@/lib/currentWorld";
 import type { WorldInfo } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface WorldSelectorProps {
   worlds: WorldInfo[];
@@ -39,6 +40,7 @@ export function WorldSelector({
   onWorldChange,
   onRequestCreate,
 }: WorldSelectorProps) {
+  const { t } = useAppLanguage();
   const [open, setOpen] = useState(false);
   const [pendingWorld, setPendingWorld] = useState<string | null>(null);
 
@@ -74,7 +76,7 @@ export function WorldSelector({
         >
           <Icon name="world" size={14} />
           <span className="max-w-[100px] truncate">
-            {effectiveCurrent ?? "Mundos"}
+            {effectiveCurrent ?? t("worldSelector.fallback")}
           </span>
           <Icon
             name="chevron-down"
@@ -92,7 +94,7 @@ export function WorldSelector({
             <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-edge bg-surface-raised py-1 shadow-xl">
               {worlds.length === 0 ? (
                 <span className="block px-3 py-2 text-small text-muted">
-                  No hay mundos
+                  {t("worldSelector.empty")}
                 </span>
               ) : (
                 <>
@@ -124,7 +126,7 @@ export function WorldSelector({
                         onClick={handleRequestCreate}
                         className="block w-full px-3 py-2 text-left text-small text-action transition-colors hover:bg-surface-hover"
                       >
-                        + Nuevo mundo
+                        {t("worldSelector.create")}
                       </button>
                     </>
                   )}
@@ -137,9 +139,9 @@ export function WorldSelector({
 
       {pendingWorld && (
         <ConfirmDialog
-          title="Cambiar mundo activo"
-          message={`¿Querés cambiar el mundo activo a «${pendingWorld}»?`}
-          confirmLabel="Cambiar"
+          title={t("worldSelector.changeTitle")}
+          message={t("worldSelector.changeMessage", { world: pendingWorld })}
+          confirmLabel={t("worldSelector.changeConfirm")}
           onConfirm={confirmChange}
           onClose={() => setPendingWorld(null)}
         />

@@ -1,6 +1,7 @@
 import { Badge } from "@/components/atoms/Badge";
 import { Icon, type IconName } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /** Short status summary for a connection row: a label plus a Badge variant. */
 export interface ConnectionStatusSummary {
@@ -41,11 +42,12 @@ export function ConnectionsPanel({
   activeId,
   onSelect,
 }: ConnectionsPanelProps) {
+  const { t } = useAppLanguage();
   return (
     <div className="space-y-4">
       <div
         role="group"
-        aria-label="Conexiones externas"
+        aria-label={t("connections.aria")}
         className="overflow-hidden rounded-lg border border-edge bg-surface-raised"
       >
         {connections.map((connection, index) => {

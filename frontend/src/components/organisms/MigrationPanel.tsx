@@ -8,6 +8,8 @@ import {
 import { Badge } from "@/components/atoms/Badge";
 import { Button } from "@/components/atoms/Button";
 import { ConfirmDialog } from "@/components/organisms/ConfirmDialog";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey, TFunction } from "@/i18n/messages";
 
 /**
  * ONB-4.3 (WU-4c2) — Legacy migration approval panel.
@@ -36,6 +38,7 @@ export function MigrationPanel({
   findings: LegacyFinding[];
   onMigrated?: () => void;
 }) {
+  const { t } = useAppLanguage();
   const [confirmTarget, setConfirmTarget] = useState<{
     world: string;
     folders: string[];
@@ -61,7 +64,7 @@ export function MigrationPanel({
       setConfirmTarget(null);
       if (result.status === "completed") onMigrated?.();
     } catch (cause) {
-      setError(errorText(cause));
+      setError(errorText(cause, t));
     } finally {
       setBusy(false);
     }
@@ -70,15 +73,9 @@ export function MigrationPanel({
   return (
     <div className="rounded-lg border border-edge bg-surface-raised p-4">
       <h3 className="font-heading text-body text-primary">
-        Migración de carpetas legacy
+        {t("migration.title")}
       </h3>
-      <p className="mt-1 text-small text-muted">
-        Las carpetas con mayúsculas no son reconocidas como contenido canónico
-        porque las rutas distinguen mayúsculas y minúsculas. La migración es
-        opcional y explícita: mueve solo las carpetas aprobadas, verifica su
-        contenido y registra evidencia de la transacción. Nunca se ejecuta de
-        forma automática.
-      </p>
+      <p className="mt-1 text-small text-muted">{t("migration.intro")}</p>
 
       {outcome && (
         <div
@@ -90,21 +87,17 @@ export function MigrationPanel({
               : "mt-3 rounded-lg border border-action/30 bg-action/10 px-3 py-2 text-small text-action"
           }
         >
-          {outcome.status === "completed" ? (
-            <>
-              Migración completada: las carpetas de {outcome.world} ya usan el
-              árbol canónico en minúsculas. Transacción {outcome.transaction_id}.
-            </>
-          ) : (
-            <>
-              La migración de {outcome.world} se revirtió automáticamente
-              {outcome.restore_verified
-                ? " y los archivos originales fueron restaurados"
-                : ""}
-              {outcome.error ? `. Motivo: ${outcome.error}` : ""}. Transacción{" "}
-              {outcome.transaction_id}.
-            </>
-          )}
+          {outcome.status === "completed"
+            ? t("migration.completed", {
+                world: outcome.world,
+                tx: outcome.transaction_id,
+              })
+            : [
+                t("migration.rolledBackBase", { world: outcome.world }),
+                outcome.restore_verified ? t("migration.rolledBackRestored") : "",
+                outcome.error ? t("migration.rolledBackReason", { error: outcome.error }) : "",
+                t("migration.rolledBackTail", { tx: outcome.transaction_id }),
+              ].join("")}
         </div>
       )}
 
@@ -140,7 +133,7 @@ export function MigrationPanel({
                 });
               }}
             >
-              Migrar carpetas de {finding.world}
+              {t("migration.migrateFolders", { world: finding.world })}
             </Button>
           </li>
         ))}
@@ -148,9 +141,12 @@ export function MigrationPanel({
 
       {confirmTarget && (
         <ConfirmDialog
-          title="Migrar carpetas legacy"
-          message={`¿Migrar las carpetas ${confirmTarget.folders.join(", ")} del mundo ${confirmTarget.world}? Solo las carpetas aprobadas se mueven a su forma canónica en minúsculas; el contenido se verifica y se registra evidencia de la transacción. Esta acción modifica el árbol del mundo.`}
-          confirmLabel="Migrar"
+          title={t("migration.confirmTitle")}
+          message={t("migration.confirmMessage", {
+            folders: confirmTarget.folders.join(", "),
+            world: confirmTarget.world,
+          })}
+          confirmLabel={t("migration.confirmLabel")}
           isBusy={busy}
           error={error}
           onConfirm={() => void run()}
@@ -169,23 +165,25 @@ export function MigrationPanel({
 /** Map a migration failure to honest, retryable guidance. Server error codes
  *  are the stable remediation keys (ApiError.code); an expired/missing
  *  session maps to 401. Never surfaces raw paths or evidence internals. */
-function errorText(cause: unknown): string {
+function errorText(cause: unknown, t: TFunction): string {
   if (cause instanceof ApiError) {
     if (cause.status === 401) {
-      return "La sesión expiró. Inicia sesión e intenta de nuevo.";
+      return t("common.sessionExpired");
     }
     if (cause.code && ERROR_GUIDANCE[cause.code]) {
-      return ERROR_GUIDANCE[cause.code];
+      return t(ERROR_GUIDANCE[cause.code]);
     }
   }
-  return cause instanceof Error ? cause.message : "No se pudo migrar las carpetas legacy";
+  return cause instanceof Error
+    ? cause.message
+    : t("migration.errorFallback");
 }
 
-const ERROR_GUIDANCE: Record<string, string> = {
-  empty_approval: "No se aprobó ninguna carpeta para migrar.",
-  unknown_folder: "Una carpeta aprobada no forma parte del layout legacy detectado.",
-  invalid_world: "El mundo no existe o ya no tiene carpetas legacy detectadas.",
-  collision: "El destino ya está ocupado por otra carpeta. No se movió nada.",
-  symlink_escape: "Una carpeta aprobada es un enlace simbólico fuera del mundo. No se movió nada.",
-  io_error: "Ocurrió un error al escribir los archivos. La migración no se completó.",
+const ERROR_GUIDANCE: Record<string, MessageKey> = {
+  empty_approval: "migration.guidance.emptyApproval",
+  unknown_folder: "migration.guidance.unknownFolder",
+  invalid_world: "migration.guidance.invalidWorld",
+  collision: "migration.guidance.collision",
+  symlink_escape: "migration.guidance.symlinkEscape",
+  io_error: "migration.guidance.ioError",
 };

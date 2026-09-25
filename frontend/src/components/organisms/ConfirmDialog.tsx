@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/atoms/Icon";
 import { Button } from "@/components/atoms/Button";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface ConfirmDialogProps {
   title: string;
@@ -31,13 +32,14 @@ interface ConfirmDialogProps {
 export function ConfirmDialog({
   title,
   message,
-  confirmLabel = "Confirmar",
+  confirmLabel,
   confirmVariant = "primary",
   isBusy = false,
   error = null,
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
+  const { t } = useAppLanguage();
   // Close on Escape key
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -73,7 +75,7 @@ export function ConfirmDialog({
             type="button"
             onClick={onClose}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             <Icon name="close" size={20} />
           </button>
@@ -95,7 +97,7 @@ export function ConfirmDialog({
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={isBusy}>
-            Cancelar
+            {t("common.cancel")}
           </Button>
           <Button
             variant={confirmVariant}
@@ -103,7 +105,7 @@ export function ConfirmDialog({
             onClick={onConfirm}
             disabled={isBusy}
           >
-            {confirmLabel}
+            {confirmLabel ?? t("common.confirm")}
           </Button>
         </div>
       </div>

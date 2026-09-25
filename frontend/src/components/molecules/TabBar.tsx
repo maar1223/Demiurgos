@@ -1,13 +1,15 @@
 import { useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 const STORAGE_KEY = "sidebar-tab";
 
 export type SidebarTab = "asistente" | "contexto";
 
-const TABS: { id: SidebarTab; label: string }[] = [
-  { id: "asistente", label: "Asistente" },
-  { id: "contexto", label: "Contexto" },
+const TABS: { id: SidebarTab; labelKey: MessageKey }[] = [
+  { id: "asistente", labelKey: "tab.asistente" },
+  { id: "contexto", labelKey: "tab.contexto" },
 ];
 
 interface TabBarProps {
@@ -31,6 +33,7 @@ export function TabBar({
   activeTab: controlledTab,
   onTabChange,
 }: TabBarProps) {
+  const { t } = useAppLanguage();
   const [internalTab, setInternalTab] = useState<SidebarTab>(() => {
     if (typeof window === "undefined") return "asistente";
     const stored = sessionStorage.getItem(STORAGE_KEY);
@@ -55,7 +58,7 @@ export function TabBar({
     <div
       className="flex border-b border-edge"
       role="tablist"
-      aria-label="Panel lateral"
+      aria-label={t("tab.aria")}
     >
       {TABS.map((tab) => (
         <button
@@ -72,7 +75,7 @@ export function TabBar({
               : "text-muted hover:text-primary hover:bg-surface-hover/50",
           )}
         >
-          {tab.label}
+          {t(tab.labelKey)}
         </button>
       ))}
     </div>

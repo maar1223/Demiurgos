@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/organisms/EmptyState";
 import { getMediaUrl } from "@/api/wiki";
 import { Icon } from "@/components/atoms/Icon";
 import { splitFrontmatter } from "@/lib/frontmatter";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 export type ImageFit = "contain" | "cover";
 
@@ -63,6 +64,7 @@ export function MarkdownViewer({
   mundo,
   imageFit,
 }: MarkdownViewerProps) {
+  const { t } = useAppLanguage();
   // Hide the YAML frontmatter block — only the body is rendered. Defense
   // in depth: the wiki editor already strips it before display, but this
   // viewer is also used by the entity page, so it must never leak the
@@ -83,7 +85,7 @@ export function MarkdownViewer({
     return (
       <div className="px-4 py-8">
         <ErrorBanner
-          message={error.message || "Error al cargar el archivo."}
+          message={error.message || t("markdown.loadError")}
           onRetry={onRetry}
         />
       </div>
@@ -95,7 +97,7 @@ export function MarkdownViewer({
     return (
       <EmptyState
         icon="file"
-        message="Seleccioná un archivo del panel lateral para ver su contenido."
+        message={t("markdown.noFile")}
       />
     );
   }
@@ -105,7 +107,9 @@ export function MarkdownViewer({
     return (
       <EmptyState
         icon="file"
-        message={`El archivo "${fileName ?? "sin nombre"}" está vacío.`}
+        message={t("markdown.emptyFile", {
+          name: fileName ?? t("markdown.unnamed"),
+        })}
       />
     );
   }
@@ -187,6 +191,7 @@ interface MarkdownImageProps {
  * image (no crop) — used by no-world surfaces like the global idea bank.
  */
 function MarkdownImage({ src, alt, mundo = "", imageFit }: MarkdownImageProps) {
+  const { t } = useAppLanguage();
   const [hasError, setHasError] = useState(false);
   // Bump to force a fresh <img> load after a transient error — the browser can
   // abort a deferred/lazy request mid-flight even though the server served the
@@ -256,7 +261,9 @@ function MarkdownImage({ src, alt, mundo = "", imageFit }: MarkdownImageProps) {
     return (
       <span className="inline-flex items-center gap-2 rounded-lg border border-edge bg-surface-raised px-4 py-3 text-small text-muted">
         <Icon name="image" size={16} />
-        {alt ? `«${alt}» — imagen no disponible` : "Imagen no disponible"}
+        {alt
+          ? t("markdown.imageUnavailableAlt", { alt })
+          : t("markdown.imageUnavailable")}
         {resolvedSrc && (
           <button
             type="button"

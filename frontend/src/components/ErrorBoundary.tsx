@@ -1,6 +1,13 @@
-import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, type ContextType, type ErrorInfo, type ReactNode } from "react";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
+import { LocaleContext } from "@/i18n/LocaleProvider";
+import {
+  translate,
+  type MessageKey,
+  type TParams,
+} from "@/i18n/messages";
+import { readCachedLocale } from "@/hooks/useAppLocale";
 
 export interface ErrorBoundaryProps {
   children: ReactNode;
@@ -32,7 +39,19 @@ interface ErrorBoundaryState {
  * separate follow-up.
  */
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  static contextType = LocaleContext;
+
+  declare context: ContextType<typeof LocaleContext>;
+
   state: ErrorBoundaryState = { error: null };
+
+  /** Localized copy; the class boundary reads the context when present and
+   *  falls back to the cached locale when mounted above the provider. */
+  private t = (key: MessageKey, params?: TParams): string => {
+    if (this.context) return this.context.t(key, params);
+    const ui = readCachedLocale().ui;
+    return translate(ui === "en" ? "en" : "es", key, params);
+  };
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { error };
@@ -66,19 +85,18 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
           <Icon name="error" size={40} />
         </div>
         <div className="max-w-md space-y-2">
-          <h1 className="font-heading text-h2 text-primary">Algo salió mal</h1>
-          <p className="text-body text-muted">
-            La aplicación encontró un error inesperado. Reintentá la operación o
-            recargá la página para volver a empezar.
-          </p>
+          <h1 className="font-heading text-h2 text-primary">
+            {this.t("errorBoundary.title")}
+          </h1>
+          <p className="text-body text-muted">{this.t("errorBoundary.body")}</p>
         </div>
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button variant="primary" onClick={this.reset}>
-            Reintentar
+            {this.t("errorBoundary.retry")}
           </Button>
           <Button variant="secondary" onClick={this.reload}>
             <Icon name="refresh" size={16} />
-            Recargar página
+            {this.t("errorBoundary.reload")}
           </Button>
         </div>
       </div>

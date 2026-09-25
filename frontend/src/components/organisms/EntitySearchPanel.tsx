@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { cn } from "@/lib/utils";
 import type { SearchResult } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface EntitySearchPanelProps {
   /** Current world name for scoping search and wikilinks */
@@ -29,6 +30,7 @@ export function EntitySearchPanel({
   mundo,
   onInsert,
 }: EntitySearchPanelProps) {
+  const { t } = useAppLanguage();
   const [query, setQuery] = useState("");
   const { results, isLoading, error, mutate } = useEntitySearch(mundo, query);
 
@@ -62,7 +64,7 @@ export function EntitySearchPanel({
             type="text"
             value={query}
             onChange={handleInput}
-            placeholder="Buscar entidad…"
+            placeholder={t("entitySearch.placeholder")}
             className={cn(
               "w-full rounded-md border border-edge bg-surface-raised",
               "py-1.5 pl-8 pr-3",
@@ -70,7 +72,7 @@ export function EntitySearchPanel({
               "focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50",
               "transition-colors",
             )}
-            aria-label="Buscar entidad"
+            aria-label={t("entitySearch.searchAria")}
           />
           {/* Inline spinner while loading */}
           {isLoading && (
@@ -87,7 +89,7 @@ export function EntitySearchPanel({
         {error && !isLoading && (
           <div className="px-3 py-2">
             <ErrorBanner
-              message={error.message || "Error al buscar entidades."}
+              message={error.message || t("entitySearch.error")}
               onRetry={() => mutate()}
             />
           </div>
@@ -104,23 +106,21 @@ export function EntitySearchPanel({
         {!isLoading && !error && hasQuery && results.length === 0 && (
           <EmptyState
             icon="search"
-            message="Sin resultados"
+            message={t("entitySearch.noResults")}
           />
         )}
 
         {/* No query — idle state */}
         {!hasQuery && !isLoading && !error && (
           <div className="px-3 py-6 text-center text-small text-muted">
-            <p>Escribí para buscar entidades del mundo.</p>
-            <p className="mt-1 text-xs">
-              Hacé clic en un resultado para insertar un wikilink.
-            </p>
+            <p>{t("entitySearch.idle")}</p>
+            <p className="mt-1 text-xs">{t("entitySearch.idleHint")}</p>
           </div>
         )}
 
         {/* Results list */}
         {results.length > 0 && (
-          <ul className="flex flex-col" role="listbox" aria-label="Resultados de búsqueda">
+          <ul className="flex flex-col" role="listbox" aria-label={t("entitySearch.resultsAria")}>
             {results.map((r) => (
               <SearchResultItem
                 key={r.path}
@@ -145,6 +145,7 @@ interface SearchResultItemProps {
 }
 
 function SearchResultItem({ result, onClick }: SearchResultItemProps) {
+  const { t } = useAppLanguage();
   return (
     <button
       type="button"
@@ -178,7 +179,10 @@ function SearchResultItem({ result, onClick }: SearchResultItemProps) {
       {/* Link count hint */}
       {result.link_count > 0 && (
         <span className="text-xs text-icon-muted">
-          {result.link_count} {result.link_count === 1 ? "conexión" : "conexiones"}
+          {result.link_count}{" "}
+          {result.link_count === 1
+            ? t("entitySearch.connectionSingular")
+            : t("entitySearch.connectionPlural")}
         </span>
       )}
     </button>

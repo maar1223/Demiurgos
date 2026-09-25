@@ -1,4 +1,5 @@
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface SpinnerProps {
   size?: "sm" | "md" | "lg";
@@ -15,6 +16,7 @@ const sizeStyles = {
  * Loading spinner using the icon-muted color from the Demiurgos palette.
  */
 export function Spinner({ size = "md", className }: SpinnerProps) {
+  const { t } = useAppLanguage();
   return (
     <div
       className={cn(
@@ -23,9 +25,9 @@ export function Spinner({ size = "md", className }: SpinnerProps) {
         className,
       )}
       role="status"
-      aria-label="Cargando"
+      aria-label={t("spinner.loading")}
     >
-      <span className="sr-only">Cargando...</span>
+      <span className="sr-only">{t("spinner.loadingDots")}</span>
     </div>
   );
 }

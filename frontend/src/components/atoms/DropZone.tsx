@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { Icon } from "@/components/atoms/Icon";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface DropZoneProps {
   onFile: (file: File) => void;
@@ -16,6 +17,7 @@ interface DropZoneProps {
  * Emits `onFile(file: File)` callback when a file is selected/dropped.
  */
 export function DropZone({ onFile }: DropZoneProps) {
+  const { t } = useAppLanguage();
   const [preview, setPreview] = useState<string | null>(null);
 
   const onDrop = useCallback(
@@ -45,7 +47,7 @@ export function DropZone({ onFile }: DropZoneProps) {
       }`}
       role="button"
       tabIndex={0}
-      aria-label="Arrastrá una imagen o hacé clic para seleccionar"
+      aria-label={t("dropZone.label")}
     >
       <input {...getInputProps()} />
 
@@ -56,7 +58,7 @@ export function DropZone({ onFile }: DropZoneProps) {
           </div>
           <p className="text-body text-primary">{preview}</p>
           <p className="text-small text-muted">
-            Arrastrá otra imagen o hacé clic para cambiar
+            {t("dropZone.change")}
           </p>
         </div>
       ) : (
@@ -72,10 +74,10 @@ export function DropZone({ onFile }: DropZoneProps) {
           </div>
           <div>
             <p className="text-body text-primary">
-              Arrastrá una imagen o hacé clic para seleccionar
+              {t("dropZone.label")}
             </p>
             <p className="mt-1 text-small text-muted">
-              JPG, PNG, GIF, WebP — máximo 10 MB
+              {t("dropZone.accepted")}
             </p>
           </div>
         </div>
