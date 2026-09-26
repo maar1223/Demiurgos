@@ -423,7 +423,7 @@ export default function WikiEditor() {
       if (to === from) {
         setMoveSource(null);
         setToast({
-          message: "El archivo ya está en esa carpeta",
+          message: t("wikiEditor.moveSameFolder"),
           kind: "success",
         });
         return;
@@ -1084,8 +1084,8 @@ export default function WikiEditor() {
       >
         <EmptyState
           icon="error"
-          message="Faltan parámetros de ruta. Seleccioná un mundo desde la página principal."
-          actionLabel="Ir al inicio"
+          message={t("wikiEditor.missingParams")}
+          actionLabel={t("wikiEditor.goHome")}
           onAction={() => navigate("/wiki")}
         />
       </EditorLayout>
@@ -1248,7 +1248,7 @@ export default function WikiEditor() {
             <div ref={optionsRef} className="relative inline-block">
               <button
                 type="button"
-                aria-label="Opciones de ficha"
+                aria-label={t("wikiEditor.optionsAria")}
                 aria-haspopup="menu"
                 aria-expanded={optionsOpen}
                 onClick={() => setOptionsOpen((o) => !o)}
@@ -1259,7 +1259,7 @@ export default function WikiEditor() {
               {optionsOpen && (
                 <div
                   role="menu"
-                  aria-label="Opciones de ficha"
+                  aria-label={t("wikiEditor.optionsAria")}
                   className="absolute top-full right-0 z-20 min-w-48 overflow-hidden rounded-lg border border-edge bg-surface-raised shadow-xl"
                 >
                   <button
@@ -1447,12 +1447,12 @@ export default function WikiEditor() {
         ) : treeError ? (
           <div className="px-4 py-8">
             <ErrorBanner
-              message="No se pudo cargar el contenido de la sección"
+              message={t("wikiEditor.treeLoadError")}
               onRetry={retryTree}
             />
           </div>
         ) : browsingNodes.length === 0 ? (
-          <EmptyState icon="folder" message="La sección está vacía" />
+          <EmptyState icon="folder" message={t("wikiEditor.emptySection")} />
         ) : (
           <SectionCards
             nodes={browsingNodes}

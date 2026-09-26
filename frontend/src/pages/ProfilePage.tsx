@@ -256,13 +256,13 @@ function CuentaSection({
         ) : !localDev.status ? null : localDev.status.authenticated ? (
           <dl className="mt-2 text-small">
             <div className="flex items-baseline justify-between gap-3 border-t border-edge py-2">
-              <dt className="text-muted">Cuenta</dt>
+              <dt className="text-muted">{t("profile.cuenta.account")}</dt>
               <dd className="text-right text-primary">
                 {localDev.status.label ?? t("profile.cuenta.localSession")}
               </dd>
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-edge py-2">
-              <dt className="text-muted">Palabras claves</dt>
+              <dt className="text-muted">{t("profile.cuenta.keywords")}</dt>
               <dd>
                 <Badge variant={unlockedWords !== null ? "success" : "default"}>
                   {unlockedWords !== null

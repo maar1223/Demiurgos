@@ -367,7 +367,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
       setLinks(data.links);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "No se pudo cargar el grafo",
+        err instanceof Error ? err.message : t("graph.loadError"),
       );
     } finally {
       setLoading(false);
@@ -501,7 +501,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
       } catch (err) {
         if (searchRequestId.current !== requestId) return;
         setSearchError(
-          err instanceof Error ? err.message : "No se pudo buscar nodos",
+          err instanceof Error ? err.message : t("graph.searchError"),
         );
         setSearchResults([]);
       } finally {
@@ -709,7 +709,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
       }
       closeModal();
       await load();
-      setToast({ message: "Conexión actualizada", kind: "success" });
+      setToast({ message: t("graph.connectionUpdated"), kind: "success" });
     } catch (err) {
       const message =
         err instanceof Error
@@ -798,14 +798,14 @@ export default function GraphView({ mundo }: GraphViewProps) {
         {!loading && !error && entities.length === 0 && (
           <EmptyState
             icon="empty"
-            message="No hay entidades indexadas para este mundo."
+            message={t("graph.noEntities")}
           />
         )}
 
         {!loading && !error && entities.length > 0 && nodes.length === 0 && (
           <EmptyState
             icon="empty"
-            message="Esta sección no tiene nodos para mostrar."
+            message={t("graph.noNodes")}
           />
         )}
 

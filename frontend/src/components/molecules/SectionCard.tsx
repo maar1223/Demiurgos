@@ -1,19 +1,24 @@
 import { Icon, type IconName } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
+import type { MessageKey } from "@/i18n/messages";
 
 /** Per-section icon and description shown on the card. */
-const SECTION_CARD_META: Record<string, { icon: IconName; description: string }> = {
+const SECTION_CARD_META: Record<
+  string,
+  { icon: IconName; descriptionKey: MessageKey }
+> = {
   lore: {
     icon: "markdown",
-    description: "Ambientación, reglas del mundo e historia",
+    descriptionKey: "sectionCard.lore",
   },
   personajes: {
     icon: "avatar",
-    description: "Fichas de personajes y desarrollo",
+    descriptionKey: "sectionCard.personajes",
   },
   referencias: {
     icon: "folder-open",
-    description: "Material de apoyo e investigaciones",
+    descriptionKey: "sectionCard.referencias",
   },
 };
 
@@ -35,9 +40,10 @@ export function SectionCard({
   fileCount,
   onClick,
 }: SectionCardProps) {
+  const { t } = useAppLanguage();
   const meta = SECTION_CARD_META[section] ?? {
     icon: "file" as const,
-    description: "",
+    descriptionKey: null,
   };
 
   return (
@@ -69,7 +75,9 @@ export function SectionCard({
       </div>
 
       {/* Description */}
-      <p className="text-small text-muted">{meta.description}</p>
+      <p className="text-small text-muted">
+        {meta.descriptionKey ? t(meta.descriptionKey) : ""}
+      </p>
 
       {/* File count */}
       <span className="text-xs text-muted">

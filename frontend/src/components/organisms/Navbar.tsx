@@ -514,7 +514,7 @@ export function Navbar({ worlds: worldsProp, currentWorld, onWorldChange }: Navb
       setTransition(action === "restart" ? "restarting" : "shuttingDown");
     } catch (cause: unknown) {
       setSystemError(
-        cause instanceof Error ? cause.message : "No se pudo completar la operación",
+        cause instanceof Error ? cause.message : t("nav.system.error.operation"),
       );
     } finally {
       setSystemBusy(false);
