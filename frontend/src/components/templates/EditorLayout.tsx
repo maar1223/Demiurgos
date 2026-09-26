@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect, type ReactNode } from "react";
 import { Icon } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface EditorLayoutProps {
   /** Optional in-page header slot. The global Navbar is hoisted to the shared
@@ -47,6 +48,7 @@ export function EditorLayout({
   rightPanel,
   focusMode = false,
 }: EditorLayoutProps) {
+  const { t } = useAppLanguage();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
   const [rightWidth, setRightWidth] = useState<number>(() =>
@@ -127,7 +129,7 @@ export function EditorLayout({
           type="button"
           onClick={() => setSidebarOpen((prev) => !prev)}
           className="fixed bottom-4 left-4 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-action text-action-text shadow-lg hover:bg-action-hover md:hidden"
-          aria-label={sidebarOpen ? "Cerrar panel" : "Abrir panel"}
+          aria-label={sidebarOpen ? t("editorLayout.closePanel") : t("editorLayout.openPanel")}
           aria-expanded={sidebarOpen}
         >
           <Icon name={sidebarOpen ? "close" : "menu"} size={20} />
@@ -150,12 +152,12 @@ export function EditorLayout({
         >
           {/* Mobile close button */}
           <div className="flex items-center justify-between border-b border-edge px-4 py-3 md:hidden">
-            <span className="text-small text-muted">Archivos</span>
+            <span className="text-small text-muted">{t("editorLayout.files")}</span>
             <button
               type="button"
               onClick={() => setSidebarOpen(false)}
               className="text-icon-muted hover:text-primary"
-              aria-label="Cerrar panel"
+              aria-label={t("editorLayout.closePanel")}
             >
               <Icon name="close" size={16} />
             </button>
@@ -176,7 +178,7 @@ className="fixed inset-0 z-20 bg-surface/60 backdrop-blur-sm md:hidden"
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="Redimensionar panel de archivos"
+            aria-label={t("editorLayout.resizeFiles")}
             tabIndex={0}
             onMouseDown={onMouseDownLeft}
             onKeyDown={(e) => {
@@ -208,7 +210,7 @@ className="fixed inset-0 z-20 bg-surface/60 backdrop-blur-sm md:hidden"
             <div
               role="separator"
               aria-orientation="vertical"
-              aria-label="Redimensionar panel"
+              aria-label={t("editorLayout.resizePanel")}
               tabIndex={0}
               onMouseDown={onMouseDown}
               onKeyDown={(e) => {
@@ -246,12 +248,12 @@ className="fixed inset-0 z-20 bg-surface/60 backdrop-blur-sm md:hidden"
             >
               {/* Mobile close button */}
               <div className="flex items-center justify-between border-b border-edge px-4 py-3 md:hidden">
-                <span className="text-small text-muted">Panel</span>
+                <span className="text-small text-muted">{t("editorLayout.panel")}</span>
                 <button
                   type="button"
                   onClick={() => setRightOpen(false)}
                   className="text-icon-muted hover:text-primary"
-                  aria-label="Cerrar panel"
+                  aria-label={t("editorLayout.closePanel")}
                 >
                   <Icon name="close" size={16} />
                 </button>
@@ -279,7 +281,7 @@ className="fixed inset-0 z-20 bg-surface/60 backdrop-blur-sm md:hidden"
                   ? "bg-status-error text-action-text hover:bg-status-error/80"
                   : "bg-action text-action-text hover:bg-action-hover",
               )}
-              aria-label={rightOpen ? "Cerrar panel derecho" : "Abrir panel derecho"}
+              aria-label={rightOpen ? t("editorLayout.closeRightPanel") : t("editorLayout.openRightPanel")}
               aria-expanded={rightOpen}
             >
               <Icon name={rightOpen ? "close" : "lightbulb"} size={20} />

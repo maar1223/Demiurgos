@@ -21,6 +21,7 @@ import NotFound from "@/pages/NotFound";
 import { useOnboardingGate } from "@/hooks/useOnboardingGate";
 import { useAuthGate } from "@/hooks/useAuthGate";
 import { useTheme } from "@/hooks/useTheme";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /** Lazy-loaded entity page — code-split because it's only used on entity routes */
 const EntityPage = lazy(() => import("@/pages/EntityPage"));
@@ -39,12 +40,13 @@ const IdeasWorkshop = lazy(() => import("@/pages/IdeasWorkshop"));
  * When auth is disabled (default), the gate always passes through.
  */
 function AuthGate() {
+  const { t } = useAppLanguage();
   const { loading, needsLogin } = useAuthGate();
 
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface">
-        <span className="text-muted">Verificando autenticación…</span>
+        <span className="text-muted">{t("app.verifyingAuth")}</span>
       </div>
     );
   }
@@ -62,12 +64,13 @@ function AuthGate() {
  * a world are never forced back into onboarding.
  */
 function FirstRunGate() {
+  const { t } = useAppLanguage();
   const { loading, needsOnboarding } = useOnboardingGate();
 
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-surface">
-        <span className="text-muted">Comprobando configuración…</span>
+        <span className="text-muted">{t("app.checkingConfig")}</span>
       </div>
     );
   }
@@ -106,6 +109,7 @@ function FirstRunGate() {
  * by React Router, but is listed before `:section/*` for clarity.
  */
 export default function App() {
+  const { t } = useAppLanguage();
   // Run the theme hook at the app root so the resolved theme (`.dark` class
   // on <html> + favicon swap) stays in sync with localStorage/system for the
   // whole tree, including screens rendered before the Navbar mounts.
@@ -136,7 +140,7 @@ export default function App() {
                   <Suspense
                     fallback={
                       <div className="flex min-h-screen items-center justify-center bg-surface">
-                        <span className="text-muted">Cargando Taller de Ideas…</span>
+                        <span className="text-muted">{t("app.loadingIdeas")}</span>
                       </div>
                     }
                   >
@@ -152,7 +156,7 @@ export default function App() {
                   <Suspense
                     fallback={
                       <div className="flex min-h-screen items-center justify-center bg-surface">
-                        <span className="text-muted">Cargando entidad…</span>
+                        <span className="text-muted">{t("app.loadingEntity")}</span>
                       </div>
                     }
                   >

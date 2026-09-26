@@ -1,4 +1,5 @@
 import type { InventoryFilters } from "@/api/methodologies";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface InventoryFilterBarProps {
   filters: InventoryFilters;
@@ -48,6 +49,7 @@ export function InventoryFilterBar({
   filters,
   onChange,
 }: InventoryFilterBarProps) {
+  const { t } = useAppLanguage();
   const update = (patch: Partial<InventoryFilters>) =>
     onChange({ ...filters, ...patch });
 
@@ -57,7 +59,7 @@ export function InventoryFilterBar({
   return (
     <div className="flex flex-col gap-3">
       <label className="flex flex-col gap-1 text-small text-muted">
-        Clasificación
+        {t("inventory.classification")}
         <select
           className={inputClass}
           value={filters.fundacional ? "Fundacional" : filters.clasificacion ?? ""}
@@ -72,7 +74,7 @@ export function InventoryFilterBar({
             }
           }}
         >
-          <option value="">Todas</option>
+          <option value="">{t("inventory.all")}</option>
           {CLASIFICACION_OPTIONS.map((option) => (
             <option key={option} value={option}>
               {option}
@@ -82,7 +84,7 @@ export function InventoryFilterBar({
       </label>
 
       <label className="flex flex-col gap-1 text-small text-muted">
-        Categoría funcional
+        {t("inventory.functionalCategory")}
         <select
           className={inputClass}
           value={filters.categoria_funcional ?? ""}
@@ -90,7 +92,7 @@ export function InventoryFilterBar({
             update({ categoria_funcional: event.target.value || undefined })
           }
         >
-          <option value="">Todas</option>
+          <option value="">{t("inventory.all")}</option>
           {CATEGORIA_FUNCIONAL_OPTIONS.map((option) => (
             <option key={option} value={option}>
               {option}

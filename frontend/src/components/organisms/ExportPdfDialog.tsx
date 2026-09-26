@@ -43,6 +43,7 @@ export function ExportPdfDialog({
   fileName,
   mundo,
 }: ExportPdfDialogProps) {
+  const lang: AppLanguage = readCachedLocale().ui === "en" ? "en" : "es";
   const [printing, setPrinting] = useState(false);
 
   // Latest onClose in a ref — the print effect runs once per `printing`
@@ -129,7 +130,7 @@ export function ExportPdfDialog({
               type="button"
               onClick={onClose}
               className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
-              aria-label="Cerrar"
+              aria-label={translate(lang, "common.close")}
             >
               <Icon name="close" size={20} />
             </button>

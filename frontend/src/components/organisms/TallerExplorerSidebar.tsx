@@ -8,6 +8,7 @@ import { WorldSelector } from "@/components/molecules/WorldSelector";
 import { GlobalMethodologyLibrary } from "@/components/organisms/GlobalMethodologyLibrary";
 import { LensToggle, type Lens } from "@/components/organisms/LensToggle";
 import { MethodologyLibrary } from "@/components/organisms/MethodologyLibrary";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /** Page-level methodology selection (REQ-SB-5): the `{ skill_id, version }`
  *  pair picked in the "Taller" explorer. Structural type — compatible with
@@ -72,6 +73,7 @@ export function TallerExplorerSidebar({
   compareSelection,
   onGoToCoCrear,
 }: TallerExplorerSidebarProps) {
+  const { t } = useAppLanguage();
   return (
     <div className="flex h-full flex-col">
       {/* Header block (SC-LEN-1.7): the lens toggle lives here, NOT as a
@@ -87,7 +89,7 @@ export function TallerExplorerSidebar({
         {lens === "mi-mundo" && (
           <>
             <div className="space-y-1">
-              <span className="text-xs font-medium text-muted">Mundo</span>
+              <span className="text-xs font-medium text-muted">{t("tallerExplorer.world")}</span>
               <WorldSelector
                 worlds={worlds}
                 currentWorld={world}
@@ -96,7 +98,7 @@ export function TallerExplorerSidebar({
               />
             </div>
             <div className="space-y-1">
-              <span className="text-xs font-medium text-muted">Taller</span>
+              <span className="text-xs font-medium text-muted">{t("tallerExplorer.taller")}</span>
               <TallerSelector activeTaller={activeTaller} onTallerChange={onTallerChange} />
             </div>
           </>

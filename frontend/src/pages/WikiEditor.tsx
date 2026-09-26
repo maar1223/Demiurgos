@@ -1030,7 +1030,7 @@ export default function WikiEditor() {
       value={editedContent ?? ""}
       onChange={(e) => setEditedContent(e.target.value)}
       className="min-h-[400px] w-full resize-y rounded-lg border border-edge bg-surface-raised px-4 py-3 font-mono text-body text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
-      aria-label="Editor de contenido"
+      aria-label={t("wikiEditor.contentEditorAria")}
       spellCheck={false}
     />
   );
@@ -1589,9 +1589,11 @@ export default function WikiEditor() {
       {/* Delete confirmation (S12) — cancel aborts, confirm moves to trash */}
       {trashTarget && (
         <ConfirmDialog
-          title="Eliminar"
-          message={`¿Eliminar "${trashTarget.split("/").pop()}"? Se moverá a la papelera.`}
-          confirmLabel="Eliminar"
+          title={t("common.delete")}
+          message={t("common.deleteMessage", {
+            name: trashTarget.split("/").pop() ?? trashTarget,
+          })}
+          confirmLabel={t("common.delete")}
           isBusy={busyPath === trashTarget}
           error={actionError}
           onConfirm={handleTrashConfirm}

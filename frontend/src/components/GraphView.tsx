@@ -53,6 +53,7 @@ import {
   type FolderNode,
 } from "@/lib/graphFilters";
 import { cn } from "@/lib/utils";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /** Node key: canonical id when present, path fallback for legacy entities. */
 function nodeKey(entity: GraphEntity): string {
@@ -305,6 +306,7 @@ interface GraphViewProps {
  * - Zoom/pan come from React Flow.
  */
 export default function GraphView({ mundo }: GraphViewProps) {
+  const { t } = useAppLanguage();
   const navigate = useNavigate();
   const [entities, setEntities] = useState<GraphEntity[]>([]);
   const [links, setLinks] = useState<EntityLink[]>([]);
@@ -865,7 +867,7 @@ export default function GraphView({ mundo }: GraphViewProps) {
           <div
             role="separator"
             aria-orientation="vertical"
-            aria-label="Redimensionar panel de inspección"
+            aria-label={t("graph.resizeInspector")}
             tabIndex={0}
             onMouseDown={startPanelDrag}
             onKeyDown={(e) => {

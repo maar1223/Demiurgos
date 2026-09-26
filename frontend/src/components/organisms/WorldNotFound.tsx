@@ -7,6 +7,7 @@ import { getWorldAliases } from "@/api/worlds";
 import { WorldPickerDialog } from "@/components/organisms/WorldPickerDialog";
 import { CreateWorldModal } from "@/components/organisms/CreateWorldModal";
 import type { WorldInfo } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface WorldNotFoundProps {
   /** The world name that was in the route but no longer exists. */
@@ -22,6 +23,7 @@ interface WorldNotFoundProps {
  * plain inline "not found" state with a home action as fallback.
  */
 export function WorldNotFound({ mundo }: WorldNotFoundProps) {
+  const { t } = useAppLanguage();
   const navigate = useNavigate();
   const { worlds } = useWorlds();
   const [open, setOpen] = useState(true);
@@ -61,13 +63,15 @@ export function WorldNotFound({ mundo }: WorldNotFoundProps) {
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-surface-raised text-status-error">
           <Icon name="error" size={32} />
         </div>
-        <h2 className="font-heading text-h3 text-primary">Mundo no encontrado</h2>
+        <h2 className="font-heading text-h3 text-primary">
+          {t("worldNotFound.title")}
+        </h2>
         <p className="max-w-md text-body text-muted">
-          No existe un mundo llamado «{mundo}» (fue borrado o el nombre cambió).
+          {t("worldNotFound.body", { world: mundo })}
         </p>
         <Button variant="secondary" onClick={goHome}>
           <Icon name="chevron-left" size={16} />
-          Volver al inicio
+          {t("worldNotFound.goHome")}
         </Button>
       </div>
 
@@ -84,7 +88,7 @@ export function WorldNotFound({ mundo }: WorldNotFoundProps) {
             setCreateOpen(true);
           }}
           onClose={() => setOpen(false)}
-          footerAction={{ label: "Volver al inicio", onAction: goHome }}
+          footerAction={{ label: t("worldNotFound.goHome"), onAction: goHome }}
         />
       )}
 

@@ -3,6 +3,7 @@ import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { cn } from "@/lib/utils";
 import type { VisionSuggestion, VisionVerdict } from "@/api/types";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 /**
  * Vision analysis card for one extracted image (sync-lore-in-importer, PR3+).
@@ -57,7 +58,8 @@ export function VisionSuggestionCard({
   busy,
   onDecision,
 }: VisionSuggestionCardProps) {
-  const providerLabel = suggestion.provenance?.provider ?? "visión";
+  const { t } = useAppLanguage();
+  const providerLabel = suggestion.provenance?.provider ?? t("vision.badge");
   const modelLabel = suggestion.provenance?.model ?? "";
   const confidencePct = Math.round((suggestion.confidence ?? 0) * 100);
 
@@ -86,7 +88,7 @@ export function VisionSuggestionCard({
         ) : (
           <div
             className="flex h-20 w-20 shrink-0 flex-col items-center justify-center gap-1 rounded-md border border-edge bg-surface-raised text-muted"
-            aria-label="Imagen sin vista previa disponible"
+            aria-label={t("vision.previewUnavailable")}
           >
             <Icon name="image" size={20} />
             <span className="px-1 text-center text-[10px] leading-tight">
@@ -100,7 +102,7 @@ export function VisionSuggestionCard({
             <Badge variant={VERDICT_VARIANTS[suggestion.verdict]}>
               {VERDICT_LABELS[suggestion.verdict]}
             </Badge>
-            <Badge variant="info">visión</Badge>
+            <Badge variant="info">{t("vision.badge")}</Badge>
             <span
               className="truncate text-xs text-muted"
               title={suggestion.relative_media_path}
@@ -109,13 +111,13 @@ export function VisionSuggestionCard({
             </span>
             <span
               className="text-xs text-muted"
-              title="confianza del asistente"
+              title={t("vision.confidenceTitle")}
             >
-              confianza {confidencePct}%
+              {t("vision.confidence", { pct: confidencePct })}
             </span>
           </div>
           <p className="mt-1 text-small font-medium text-primary">
-            {suggestion.description || "(sin descripción)"}
+            {suggestion.description || t("vision.noDescription")}
           </p>
           {suggestion.analysis && (
             <p className="mt-0.5 text-xs text-muted">

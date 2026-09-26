@@ -4,6 +4,7 @@ import type { SearchResult } from "@/api/types";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Switch } from "@/components/atoms/Switch";
 import { FolderTreeNode } from "@/components/molecules/FolderTreeNode";
+import { useAppLanguage } from "@/hooks/useAppLanguage";
 
 interface GraphControlsSidebarProps {
   status: GraphStatusFilter;
@@ -51,6 +52,7 @@ export function GraphControlsSidebar({
   folderTree,
   onFitView,
 }: GraphControlsSidebarProps) {
+  const { t } = useAppLanguage();
   /** Controlled single-folder toggle: add or remove `path` from the array. */
   const handleToggleFolder = (path: string) => {
     const next = selectedFolders.includes(path)
@@ -65,21 +67,21 @@ export function GraphControlsSidebar({
       <div className="space-y-3 border-b border-edge px-4 py-3">
         {/* Node search: debounced server-side search with results dropdown */}
         <div className="space-y-1">
-          <span className="text-xs font-medium text-muted">Buscar</span>
+          <span className="text-xs font-medium text-muted">{t("graph.search")}</span>
           <div className="relative">
             <input
               type="text"
               value={searchQuery}
               onChange={(event) => onSearchQueryChange(event.target.value)}
-              placeholder="Nombre o id del nodo…"
-              aria-label="Buscar nodo"
+              placeholder={t("graph.searchPlaceholder")}
+              aria-label={t("graph.searchAria")}
               className="w-full rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary placeholder:text-muted focus:border-action focus:outline-none"
             />
 
             {searchQuery.trim().length > 0 && (
               <div
                 role="listbox"
-                aria-label="Resultados de búsqueda"
+                aria-label={t("graph.resultsAria")}
                 className="absolute left-0 top-full z-10 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-edge bg-surface-raised shadow-lg"
               >
                 {searchError && (
@@ -93,7 +95,7 @@ export function GraphControlsSidebar({
                   </div>
                 )}
                 {!searchError && !searching && searchResults.length === 0 && (
-                  <p className="px-3 py-2 text-xs text-muted">Sin resultados</p>
+                  <p className="px-3 py-2 text-xs text-muted">{t("graph.noResults")}</p>
                 )}
                 {searchResults.map((result) => (
                   <button
@@ -118,18 +120,18 @@ export function GraphControlsSidebar({
 
         {/* Status filter */}
         <div className="space-y-1">
-          <span className="text-xs font-medium text-muted">Estado</span>
+          <span className="text-xs font-medium text-muted">{t("graph.status")}</span>
           <select
-            aria-label="Filtrar por estado"
+            aria-label={t("graph.statusFilterAria")}
             value={status}
             onChange={(event) =>
               onStatusChange(event.target.value as GraphStatusFilter)
             }
             className="w-full rounded border border-edge bg-surface-raised px-2 py-1 text-small text-primary"
           >
-            <option value="all">Todos los estados</option>
-            <option value="draft">Borrador</option>
-            <option value="stable">Canon</option>
+            <option value="all">{t("graph.allStatuses")}</option>
+            <option value="draft">{t("status.draft")}</option>
+            <option value="stable">{t("status.stable")}</option>
           </select>
         </div>
       </div>
@@ -138,13 +140,13 @@ export function GraphControlsSidebar({
       <div className="flex-1 overflow-y-auto px-4 py-4">
         {/* Folder tree: hierarchical multi-select with prefix semantics */}
         <div className="space-y-1">
-          <span className="text-xs font-medium text-muted">Sección</span>
+          <span className="text-xs font-medium text-muted">{t("graph.section")}</span>
           <button
             type="button"
             onClick={() => onSelectedFoldersChange([])}
             className="mb-1 rounded px-1 py-0.5 text-small text-muted transition-colors hover:text-action"
           >
-            Todas las secciones
+            {t("graph.allSections")}
           </button>
           <ul className="list-none">
             {folderTree.map((node) => (
@@ -160,11 +162,11 @@ export function GraphControlsSidebar({
 
         {/* Orphans toggle */}
         <div className="mt-4 flex items-center justify-between gap-2">
-          <span className="text-small text-muted">Mostrar nodos aislados</span>
+          <span className="text-small text-muted">{t("graph.showOrphans")}</span>
           <Switch
             checked={showOrphans}
             onChange={onShowOrphansChange}
-            aria-label="Mostrar nodos aislados"
+            aria-label={t("graph.showOrphans")}
           />
         </div>
 
@@ -174,7 +176,7 @@ export function GraphControlsSidebar({
           onClick={onFitView}
           className="mt-4 w-full rounded border border-edge bg-surface-raised px-3 py-1 text-small text-primary transition-colors hover:border-action"
         >
-          Ver todo
+          {t("graph.fitView")}
         </button>
       </div>
     </aside>

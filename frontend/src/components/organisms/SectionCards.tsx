@@ -606,6 +606,7 @@ function RenameCard({
   onCommit: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useAppLanguage();
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") onCommit();
     else if (e.key === "Escape") onCancel();
@@ -628,7 +629,7 @@ function RenameCard({
         onKeyDown={handleKeyDown}
         onBlur={onCancel}
         autoFocus
-        aria-label="Nuevo nombre"
+        aria-label={t("sectionCards.renameAria")}
         aria-invalid={!!error}
         className={cn(
           "w-full rounded-md border bg-surface-raised px-2 py-1.5 text-small text-primary",
