@@ -25,6 +25,7 @@ from idea_materialization_domain import (  # noqa: E402
     build_ficha_skeleton,
     build_grounding_candidates,
     probe_folder_convention,
+    resolve_file_slug,
     slugify_title,
     suggest_free_slug,
     validate_relations,
@@ -65,20 +66,24 @@ def _skeleton(
     section: str = "lore",
     folder: str = "tema",
     slug: str = "idea-uno",
+    idea_slug: str | None = None,
     title: str = "Idea Uno",
     body: str = "# Cuerpo\n",
     relations: tuple[Relation, ...] = (),
     convention: FolderConvention | None = None,
+    image_rel: str | None = None,
 ) -> str:
     return build_ficha_skeleton(
         world_dir=world,
         section=section,
         folder=folder,
         slug=slug,
+        idea_slug=idea_slug if idea_slug is not None else slug,
         title=title,
         body=body,
         relations=relations,
         convention=convention,
+        image_rel=image_rel,
     )
 
 
@@ -133,6 +138,65 @@ def test_slugify_title_truncates_single_token() -> None:
     slug = slugify_title("x" * (MAX_SLUG_LEN + 50))
     assert len(slug) == MAX_SLUG_LEN
     assert _SLUG_RE.fullmatch(slug)
+
+
+# ---------------------------------------------------------------------------
+# resolve_file_slug (WU-6, iteration 2 — the typed name is the filename)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_file_slug_hint_wins_over_idea_title() -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", "Mi Título", None) == "mi-titulo"
+
+
+def test_resolve_file_slug_uses_idea_title_without_hint() -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", None, None) == "idea-title"
+
+
+def test_resolve_file_slug_blank_hint_falls_through_to_idea_title() -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", "   ", None) == "idea-title"
+
+
+def test_resolve_file_slug_untitled_idea_falls_back_to_idea_slug() -> None:
+    """An untitled idea (``title == slug``) keeps its internal slug as name."""
+    telegram_id = "2026-08-28-524e8b9c9770"
+    assert resolve_file_slug(telegram_id, telegram_id, None, None) == telegram_id
+
+
+def test_resolve_file_slug_empty_title_falls_back_to_idea_slug() -> None:
+    assert resolve_file_slug("", "2026-08-28-524e8b9c9770", None, None) == "2026-08-28-524e8b9c9770"
+
+
+def test_resolve_file_slug_client_slug_overrides_default() -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", "Mi Título", "custom-name") == "custom-name"
+
+
+def test_resolve_file_slug_client_slug_is_normalized() -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", None, "Mi Nombre Raro!") == "mi-nombre-raro"
+
+
+@pytest.mark.parametrize("client_slug", ["", "   ", "!!!"])
+def test_resolve_file_slug_empty_or_empty_normalizing_client_slug_falls_back(client_slug: str) -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", None, client_slug) == "idea-title"
+
+
+def test_resolve_file_slug_client_slug_is_traversal_safe_by_normalization() -> None:
+    """``slugify_title`` strips path separators; the result never escapes."""
+    resolved = resolve_file_slug("Idea Title", "idea-slug", None, "../../etc/passwd")
+    assert resolved == "etc-passwd"
+    assert "/" not in resolved and ".." not in resolved
+
+
+def test_resolve_file_slug_client_slug_is_length_bounded() -> None:
+    resolved = resolve_file_slug("Idea Title", "idea-slug", None, "x" * (MAX_SLUG_LEN + 50))
+    assert len(resolved) == MAX_SLUG_LEN
+    assert _SLUG_RE.fullmatch(resolved)
+
+
+def test_resolve_file_slug_derived_from_hint_is_length_bounded() -> None:
+    resolved = resolve_file_slug("Idea Title", "idea-slug", "Palabra " * 60, None)
+    assert len(resolved) <= MAX_SLUG_LEN
+    assert _SLUG_RE.fullmatch(resolved)
 
 
 # ---------------------------------------------------------------------------
@@ -345,6 +409,121 @@ def test_skeleton_always_emits_type_and_based_on(tmp_path: Path) -> None:
         fm = _frontmatter(content)
         assert fm["type"] == expected_type
         assert fm["based_on"] == "ideas/idea-uno"
+
+
+def test_skeleton_based_on_uses_idea_slug_while_id_follows_slug(tmp_path: Path) -> None:
+    """WU-6 trap 1: the filename slug and the idea link are independent.
+
+    ``id`` follows the file slug (``slug``) while ``based_on`` must keep the
+    idea's internal slug — passing the title-derived filename into ``based_on``
+    would silently corrupt traceability.
+    """
+    conv = FolderConvention("canonical", "Tema", "concepto", "draft", None)
+    content = _skeleton(
+        tmp_path, section="lore", folder="tema",
+        slug="mi-nombre-raro", idea_slug="2026-08-28-524e8b9c9770",
+        title="Mi Nombre Raro", convention=conv,
+    )
+    fm = _frontmatter(content)
+    assert fm["id"] == "Tema::Mi Nombre Raro"
+    assert fm["based_on"] == "ideas/2026-08-28-524e8b9c9770"
+
+
+def test_skeleton_canonical_single_based_on_uses_idea_slug_with_slug_equal_folder(tmp_path: Path) -> None:
+    """WU-6 trap 3: the ``slug == folder`` index branch still keys ``id`` off
+    ``slug`` (title-as-id) while ``based_on`` keeps the separate idea slug."""
+    conv = FolderConvention("canonical-single", "Tema", "concepto", "draft", None)
+    content = _skeleton(
+        tmp_path, section="lore", folder="tema",
+        slug="tema", idea_slug="2026-08-28-524e8b9c9770",
+        title="Tema", convention=conv,
+    )
+    fm = _frontmatter(content)
+    assert fm["id"] == "Tema"
+    assert fm["based_on"] == "ideas/2026-08-28-524e8b9c9770"
+
+
+def test_skeleton_canonical_single_title_derived_slug_fails_index_test_not_fixed(tmp_path: Path) -> None:
+    """WU-6 trap 3: a title-derived slug correctly fails ``slug == folder``, so
+    a child ficha (not the index) keeps the ``Parent::Title`` id — do NOT
+    "fix" this into an index id."""
+    conv = FolderConvention("canonical-single", "Tema", "concepto", "draft", None)
+    content = _skeleton(
+        tmp_path, section="lore", folder="tema",
+        slug="mi-nombre-raro", idea_slug="idea-uno",
+        title="Mi Nombre Raro", convention=conv,
+    )
+    assert _frontmatter(content)["id"] == "Tema::Mi Nombre Raro"
+
+
+# ---------------------------------------------------------------------------
+# build_ficha_skeleton — image injection (CI-1, materialize-carry-idea-image)
+# ---------------------------------------------------------------------------
+
+
+def test_skeleton_image_injected_immediately_after_h1(tmp_path: Path) -> None:
+    content = _skeleton(
+        tmp_path, slug="arquero-ciego", title="Arquero Ciego",
+        body="# Cuerpo del arquero\n\nTexto posterior.\n",
+        image_rel="media/arquero-ciego.jpg",
+    )
+    assert (
+        "# Cuerpo del arquero\n![Arquero Ciego](media/arquero-ciego.jpg)\n\nTexto posterior."
+        in content
+    )
+    assert content.endswith("Texto posterior.\n")
+
+
+def test_skeleton_image_injected_at_start_when_body_has_no_h1(tmp_path: Path) -> None:
+    content = _skeleton(tmp_path, body="Texto sin encabezado.\n", image_rel="media/idea-uno.png")
+    assert "---\n\n![Idea Uno](media/idea-uno.png)\n\nTexto sin encabezado.\n" in content
+
+
+def test_skeleton_image_only_h1_body_has_no_dangling_blank_line(tmp_path: Path) -> None:
+    content = _skeleton(tmp_path, body="# Solo titulo\n", image_rel="media/idea-uno.png")
+    assert content.endswith("# Solo titulo\n![Idea Uno](media/idea-uno.png)\n")
+
+
+def test_skeleton_image_after_h1_collapses_extra_leading_blanks(tmp_path: Path) -> None:
+    content = _skeleton(
+        tmp_path, body="# Titulo\n\n\n\nTexto.\n", image_rel="media/idea-uno.png",
+    )
+    assert "# Titulo\n![Idea Uno](media/idea-uno.png)\n\nTexto." in content
+
+
+def test_skeleton_image_alt_escapes_markdown_brackets(tmp_path: Path) -> None:
+    """A bracket or newline in the title must not break the image syntax."""
+    content = _skeleton(
+        tmp_path, title="Nivel [5]\nde Chaae", body="Texto.\n",
+        image_rel="media/nivel-5.png",
+    )
+    assert "![Nivel \\[5\\] de Chaae](media/nivel-5.png)" in content
+
+
+def test_skeleton_no_image_is_byte_identical_to_current_output(tmp_path: Path) -> None:
+    """CI-1 invariant 4: ``image_rel=None`` emits exactly today's bytes."""
+    conv = FolderConvention("personajes", "", "Personaje", "draft", None)
+    kwargs = dict(
+        section="personajes", folder="", slug="arquero-ciego",
+        title="Arquero Ciego", body="# Cuerpo\n", convention=conv,
+    )
+    default = _skeleton(tmp_path, **kwargs)
+    explicit_none = _skeleton(tmp_path, image_rel=None, **kwargs)
+    assert explicit_none == default
+    assert "![" not in default
+    golden = (
+        "---\n"
+        "id: arquero-ciego\n"
+        "title: Arquero Ciego\n"
+        "type: Personaje\n"
+        "status: draft\n"
+        "relaciones: []\n"
+        "based_on: ideas/arquero-ciego\n"
+        "schema_version: 1\n"
+        "---\n\n"
+        "# Cuerpo\n"
+    )
+    assert default == golden
 
 
 # ---------------------------------------------------------------------------

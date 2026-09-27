@@ -82,13 +82,36 @@ class IdeaMaterializePreviewRequest(BaseModel):
     sensitive, traversal-safe); ``section`` must be one of the graph-indexed
     sections ``lore|personajes|referencias`` (``media`` is not ficha-eligible);
     ``folder`` is a traversal-safe relative path inside the section (empty =
-    the section root); ``title_hint`` optionally steers the AI-authored title.
+    the section root); ``title_hint`` optionally steers the AI-authored title;
+    ``slug`` optionally overrides the derived filename (normalized server-side,
+    never rejected).
     """
 
     world: str
     section: str
     folder: str = ""
     title_hint: str | None = None
+    slug: str | None = None
+
+
+class IdeaMaterializeTargetRequest(BaseModel):
+    """POST /api/ideas/{slug}/materialize-target payload.
+
+    Provider-free counterpart to ``IdeaMaterializePreviewRequest``: resolves
+    the destination ficha path and any existing-file collision without running
+    AI. ``world`` must resolve to an existing world directory exactly
+    (case-sensitive, traversal-safe); ``section`` must be one of the
+    graph-indexed sections ``lore|personajes|referencias``; ``folder`` is a
+    traversal-safe relative path inside the section (empty = the section root);
+    ``title_hint`` and ``slug`` mirror the preview request so the instant
+    destination step resolves exactly the filename the preview will write.
+    """
+
+    world: str
+    section: str
+    folder: str = ""
+    title_hint: str | None = None
+    slug: str | None = None
 
 
 def create_ideas_bank_router(
@@ -304,6 +327,7 @@ __all__ = [
     "IdeaCreateRequest",
     "IdeaMaterializePreviewRequest",
     "IdeaMaterializeRequest",
+    "IdeaMaterializeTargetRequest",
     "IdeaUpdateRequest",
     "create_ideas_bank_router",
 ]

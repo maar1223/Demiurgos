@@ -74,6 +74,7 @@ __all__ = [
     "build_ficha_skeleton",
     "build_grounding_candidates",
     "probe_folder_convention",
+    "resolve_file_slug",
     "slugify_title",
     "suggest_free_slug",
     "validate_relations",
@@ -128,6 +129,32 @@ def slugify_title(title: str) -> str:
     return slug
 
 
+def resolve_file_slug(
+    idea_title: str,
+    idea_slug: str,
+    title_hint: str | None,
+    client_slug: str | None,
+) -> str:
+    """Resolve the on-disk ficha filename slug (WU-6, iteration 2).
+
+    The typed name wins as the visible title: ``title_hint`` first, then the
+    idea's own title, then the idea slug. The filename derives from that title
+    via ``slugify_title`` and falls back to the idea slug when the title has no
+    ASCII alphanumerics. An explicit ``client_slug`` (the editable filename in
+    the instant destination step) overrides the derived name, normalized
+    through ``slugify_title``; an empty or empty-normalizing client slug falls
+    back to the derived default. Because ``slugify_title`` strips everything
+    outside ``[a-z0-9-]``, client input is traversal-safe by construction —
+    normalize, never reject.
+    """
+    ficha_title = (title_hint or "").strip() or (idea_title or "").strip() or idea_slug
+    default_file_slug = slugify_title(ficha_title) or idea_slug
+    if client_slug:
+        normalized = slugify_title(client_slug)
+        return normalized or default_file_slug
+    return default_file_slug
+
+
 def suggest_free_slug(full_path: Path) -> Path:
     """Next free duplicate path: ``{stem}-2{ext}``, ``{stem}-3{ext}``, ...
 
@@ -177,20 +204,33 @@ def build_ficha_skeleton(
     section: str,
     folder: str,
     slug: str,
+    idea_slug: str,
     title: str,
     body: str,
     relations: Sequence[Relation],
     convention: FolderConvention | None = None,
+    image_rel: str | None = None,
 ) -> str:
     """Assemble the server-owned ficha content: frontmatter + AI body (AD4).
 
     Always emits ``id``, ``title``, ``type``, ``status``, ``relaciones`` and
-    ``based_on: ideas/{slug}``; ``type`` presence is mandatory for graph
+    ``based_on: ideas/{idea_slug}``; ``type`` presence is mandatory for graph
     indexing (``graph_indexer._entity_from_file``, :190-196). ``status`` is
     the probed OKF status when valid, else ``draft``. personajes fichas
     additionally carry ``schema_version: 1`` (mirrors ``serialize_ficha``).
     Relations are serialized as ``[[target_id]]`` wikilinks, the form the
     graph indexer resolves (``graph_indexer._entity_from_file``, :216-233).
+
+    ``slug`` drives ``_ficha_id`` (the file-derived identity); ``idea_slug``
+    drives ``based_on`` (the idea link) and stays the idea's own slug even when
+    the filename derives from the title — the two are deliberately separate.
+
+    ``image_rel`` is an optional world-relative media reference (``media/x.jpg``).
+    When set, a Markdown image ``![{title}]({image_rel})`` is injected into the
+    body: immediately after the first line when that line is an H1, else at the
+    very start of the body. Exactly one blank line separates the image line from
+    the following text. When ``image_rel`` is ``None`` the emitted content is
+    byte-identical to the image-less output.
     """
     if convention is None:
         convention = probe_folder_convention(world_dir, section, folder)
@@ -200,7 +240,7 @@ def build_ficha_skeleton(
         "type": convention.type,
         "status": convention.status,
         "relaciones": [f"[[{rel.target_id}]]" for rel in relations],
-        "based_on": f"ideas/{slug}",
+        "based_on": f"ideas/{idea_slug}",
     }
     if convention.convention == "personajes":
         values["schema_version"] = 1
@@ -210,7 +250,35 @@ def build_ficha_skeleton(
         allow_unicode=True,
         default_flow_style=False,
     ).strip()
-    return f"---\n{block}\n---\n\n{body.strip()}\n"
+    stripped_body = body.strip()
+    if image_rel is not None:
+        stripped_body = _inject_image_line(stripped_body, title, image_rel)
+    return f"---\n{block}\n---\n\n{stripped_body}\n"
+
+
+def _inject_image_line(body: str, title: str, image_rel: str) -> str:
+    """Inject a Markdown image line into an already-stripped body (AD4 extension).
+
+    After an H1 first line when the body opens with one (``# ``), else at the
+    very start. The image line and any following text are separated by exactly
+    one blank line; a body with no following text keeps just the image line
+    (the caller appends the single trailing newline).
+    """
+    # The alt text is free-form (idea title or typed hint); a raw ``[``/``]``
+    # or newline would break the Markdown image syntax and silently kill the
+    # image, so the alt is flattened and bracket-escaped.
+    alt = (
+        title.replace("\r", " ").replace("\n", " ")
+        .replace("[", r"\[").replace("]", r"\]")
+    )
+    image_line = f"![{alt}]({image_rel})"
+    if body.startswith("# "):
+        first_line, _, rest = body.partition("\n")
+        rest = rest.lstrip("\n")
+        return f"{first_line}\n{image_line}\n\n{rest}" if rest else f"{first_line}\n{image_line}"
+    if body:
+        return f"{image_line}\n\n{body}"
+    return image_line
 
 
 def build_grounding_candidates(

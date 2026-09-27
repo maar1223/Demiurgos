@@ -98,6 +98,7 @@ from idea_materialization_protocol import (
 from idea_materialization_domain import (
     build_ficha_skeleton,
     build_grounding_candidates,
+    resolve_file_slug,
     suggest_free_slug,
     validate_relations,
 )
@@ -4714,6 +4715,10 @@ def create_file(mundo: str, section: str, path: str, body: dict, request: Reques
                 or materialize_pending["digest"] != digest
                 or body.get("proposed_digest") != digest):
             raise HTTPException(status_code=409, detail="Materialize proposal is stale or altered")
+        # CI-1: copy the idea image BEFORE the first canon write. Any failure
+        # (destination race, missing source, copy error) fails closed with 409
+        # and nothing is written; the proposal is not consumed.
+        _copy_materialize_image(materialize_pending, mundo)
     result = _write_content(mundo, section, path, body, request, kind="new")
     if materialize_pending is not None:
         full = _resolve_mundo_path(mundo, f"{section}/{path}")
@@ -6105,10 +6110,16 @@ ACTIVITY_ADAPTER = HermesRunsActivityAdapter(
     client_provider=_get_hermes_client,
 )
 _GUIDED_PROVIDER = HermesGuidedProvider(ACTIVITY_ADAPTER)
-# Idea-materialization provider (AD2): the SAME runs-adapter seam, one Hermes
-# run per preview. Strict envelope validation is server-side (fail closed);
-# tests replace this module attribute after import.
-_MATERIALIZE_PROVIDER = HermesMaterializationProvider(ACTIVITY_ADAPTER)
+# Idea-materialization provider (AD2): one non-streaming chat-completions
+# request per preview with ``tool_choice: "none"`` (no unused tool schemas).
+# The activity adapter is still injected for the capability probe; strict
+# envelope validation is server-side (fail closed); tests replace this module
+# attribute after import.
+_MATERIALIZE_PROVIDER = HermesMaterializationProvider(
+    ACTIVITY_ADAPTER,
+    chat_url=_GATEWAY_URL,
+    client_provider=_get_hermes_client,
+)
 # Skill Madre provider (kernel-owned, co-creation-v1 envelope). Same adapter
 # seam as the guided provider; tests replace it after import.
 _CO_CREATION_PROVIDER = HermesCoCreationProvider(ACTIVITY_ADAPTER)
@@ -7882,7 +7893,11 @@ async def ai_edit_suggest(mundo: str, body: dict, request: Request):
 # ---------------------------------------------------------------------------
 
 from idea_capture_ui import create_idea_capture_router  # noqa: E402
-from ideas_bank_router import IdeaMaterializePreviewRequest, create_ideas_bank_router  # noqa: E402
+from ideas_bank_router import (  # noqa: E402
+    IdeaMaterializePreviewRequest,
+    IdeaMaterializeTargetRequest,
+    create_ideas_bank_router,
+)
 from docx_export import _convert_markdown_to_docx, _strip_frontmatter  # noqa: E402
 from ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
 import assistant_settings  # noqa: E402
@@ -8175,6 +8190,123 @@ def _materialize_existing_ids(reader: _GuidedGraphReader) -> list[str]:
     return ids
 
 
+def _resolve_materialize_target(
+    world: str, section: str, folder: str, file_slug: str
+) -> tuple[str, dict[str, Any], dict[str, str] | None]:
+    """Resolve a materialize destination and detect an existing-file collision.
+
+    Single source of truth for the target/collision rule shared by
+    ``materialize_preview`` and ``materialize_target`` (AD5): the section-relative
+    *target* (``{section}/{folder}/{file_slug}.md``), the response *target_info*
+    block (``{world, section, folder, slug, path}`` with ``path`` relative to
+    the section) and the additive *collision* payload
+    (``{target, suggested_slug, suggested_target}``) when the target already
+    exists, else ``None``. ``file_slug`` is the RESOLVED filename slug (derived
+    from the title or supplied by the client), never the idea's internal slug;
+    ``target_info["slug"]`` reports exactly that resolved value. Pure
+    resolution — no provider, graph or write.
+    """
+    target_rel = f"{folder}/{file_slug}.md" if folder else f"{file_slug}.md"
+    target = f"{section}/{target_rel}"
+    target_info = {
+        "world": world, "section": section,
+        "folder": folder, "slug": file_slug, "path": target_rel,
+    }
+    full = _resolve_mundo_path(world, target)
+    if full is not None and full.exists():
+        suggested = suggest_free_slug(full)
+        collision = {
+            "target": target,
+            "suggested_slug": suggested.stem,
+            "suggested_target": f"{section}/{folder}/{suggested.stem}.md"
+            if folder else f"{section}/{suggested.stem}.md",
+        }
+        return target, target_info, collision
+    return target, target_info, None
+
+
+# Idea media allowlist (mirrors the ideas media route, ideas_bank_router.py:175).
+_IDEA_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
+
+
+def _resolve_materialize_image(
+    idea: object, *, media_dir: Path, world_dir: Path, file_slug: str,
+) -> dict[str, str] | None:
+    """Resolve an idea's image to a free world-relative destination (READ ONLY).
+
+    Returns ``{"source": <bare name>, "dest": "media/<name><ext>"}`` when the
+    idea carries a usable image, else ``None``. Every failure degrades to
+    "no image" (logged, never raised): no ``media_path``, a path that is not a
+    bare ``media/<name>`` (traversal/separators/empty), a non-allowlisted
+    extension, or a missing/non-file source. The destination is ``file_slug``
+    plus the source extension; when ``<world_dir>/wiki/media/<name>`` already
+    exists the next free ``-2``, ``-3``, … name is picked via
+    ``suggest_free_slug``. This is a read-only check: it never creates the
+    media directory or writes a byte (R-IM-04).
+    """
+    media_path = getattr(idea, "media_path", None)
+    if not isinstance(media_path, str) or not media_path.startswith("media/"):
+        return None
+    source_name = media_path[len("media/"):]
+    if (not source_name or "/" in source_name or "\\" in source_name
+            or ".." in source_name):
+        logger.warning("materialize-preview: unsafe idea media_path %r; treating as no image", media_path)
+        return None
+    if Path(source_name).suffix.lower() not in _IDEA_IMAGE_EXTENSIONS:
+        logger.warning("materialize-preview: non-image idea media_path %r; treating as no image", media_path)
+        return None
+    source = media_dir / source_name
+    if not source.is_file():
+        logger.warning("materialize-preview: missing idea media file %s; treating as no image", source)
+        return None
+    dest_path = world_dir / "wiki" / "media" / f"{file_slug}{Path(source_name).suffix}"
+    if dest_path.exists():
+        dest_path = suggest_free_slug(dest_path)
+    return {"source": source_name, "dest": f"media/{dest_path.name}"}
+
+
+def _copy_materialize_image(pending: dict[str, Any], mundo: str) -> None:
+    """Copy a pending idea image into the world at confirm time (fail closed).
+
+    Runs after the principal/target/content/digest verification and before the
+    first canon write. Raises 409 (naming the image) when the destination
+    appeared after preview, the source is gone, or the copy fails, so NOTHING
+    is written and the proposal is not consumed; the user re-previews to pick a
+    new name. A plain ``shutil.copyfile`` byte copy — an orphan image left by a
+    later ``_write_content`` failure is acceptable and harmless.
+    """
+    media = pending.get("media")
+    if media is None:
+        return
+    source_name = str(media.get("source") or "")
+    dest_rel = str(media.get("dest") or "")
+    dest_name = Path(dest_rel).name
+    world_dir = _resolve_mundo_dir(mundo)
+    if (not source_name or "/" in source_name or "\\" in source_name or ".." in source_name
+            or dest_rel != f"media/{dest_name}" or not dest_name or world_dir is None):
+        raise HTTPException(status_code=409, detail=f"Imagen de la idea inválida: {source_name or dest_rel}")
+    dest_path = world_dir / "wiki" / "media" / dest_name
+    if dest_path.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"La imagen de destino ya existe: {dest_rel}. Vuelve a previsualizar para elegir otro nombre.",
+        )
+    source_path = IdeasBank()._ideas_root / "media" / source_name
+    if not source_path.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail=f"No se encuentra la imagen de la idea: {source_name}. Vuelve a previsualizar.",
+        )
+    try:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_path, dest_path)
+    except Exception as exc:  # noqa: BLE001 — any copy failure must abort the write
+        raise HTTPException(
+            status_code=409,
+            detail=f"No se pudo copiar la imagen de la idea '{source_name}': {exc}",
+        )
+
+
 @app.post("/api/ideas/{slug}/materialize-preview")
 async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, request: Request):
     """Preview materializing a global-bank idea into a world ficha (R-IM-01..09).
@@ -8190,8 +8322,9 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         raise HTTPException(status_code=401, detail="Autenticación requerida")
     principal = _resolve_principal(request)
     _prune_materialize_proposals()
+    bank = IdeasBank()
     try:
-        idea = IdeasBank().read(slug)
+        idea = bank.read(slug)
     except IdeaNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     mundo_dir = _resolve_mundo_dir(body.world)
@@ -8216,7 +8349,17 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         raise problem("world.not_found")
     reader = _GuidedGraphReader(idx)
     candidates = build_grounding_candidates(reader)
+    # WU-6: the visible title (typed hint > idea title > idea slug) drives both
+    # the frontmatter title and the filename, while the provider request keeps
+    # its original idea-derived `title`/`slug` (prompt quality is protected).
+    ficha_title = (body.title_hint or "").strip() or (idea.title or "").strip() or idea.slug
+    file_slug = resolve_file_slug(idea.title, idea.slug, body.title_hint, body.slug)
     title = (idea.title or "").strip() or idea.slug
+    # CI-1: carry the idea's image. Read-only resolution here; the bytes are
+    # copied only at confirm, so a missing/unusable image degrades to no image.
+    media = _resolve_materialize_image(
+        idea, media_dir=bank._ideas_root / "media", world_dir=mundo_dir, file_slug=file_slug,
+    )
     request_id = f"materialize-{uuid.uuid4().hex}"
     materialize_request = MaterializationRequest(
         protocol_version=MATERIALIZATION_PROTOCOL_VERSION,
@@ -8265,22 +8408,17 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         world_dir=mundo_dir,
         section=body.section,
         folder=folder,
-        slug=idea.slug,
-        title=title,
+        slug=file_slug,
+        idea_slug=idea.slug,
+        title=ficha_title,
         body=parsed.body,
         relations=kept_relations,
+        image_rel=media["dest"] if media is not None else None,
     )
-    target_rel = f"{folder}/{idea.slug}.md" if folder else f"{idea.slug}.md"
-    target = f"{body.section}/{target_rel}"
-    full = _resolve_mundo_path(body.world, target)
-    if full is not None and full.exists():
-        suggested = suggest_free_slug(full)
-        collision = {
-            "target": target,
-            "suggested_slug": suggested.stem,
-            "suggested_target": f"{body.section}/{folder}/{suggested.stem}.md"
-            if folder else f"{body.section}/{suggested.stem}.md",
-        }
+    target, target_info, collision = _resolve_materialize_target(
+        world=body.world, section=body.section, folder=folder, file_slug=file_slug,
+    )
+    if collision is not None:
         # AD5: 409 with the additive suggestion payload (the existing 409
         # strings are never altered). JSONResponse keeps ``collision`` at the
         # top level exactly as the design pins it.
@@ -8295,24 +8433,24 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         "section": body.section,
         "folder": folder,
         "slug": idea.slug,
+        "file_slug": file_slug,
         "target": target,
         "content": content,
         "digest": digest,
         "operation_id": f"materialize-create-{proposal_id}",
         "created_at": now,
         "expires_at": now + timedelta(seconds=_MATERIALIZE_TTL_SECONDS),
+        # CI-1: bare source filename + world-relative dest (never absolute).
+        **({"media": {"source": media["source"], "dest": media["dest"]}} if media is not None else {}),
     }
     title_by_id = {candidate["id"]: candidate["title"] for candidate in candidates}
     logger.info(
         "materialize-preview: world=%s target=%s candidates=%d relations=%d discarded=%d",
         body.world, target, len(candidates), len(kept_relations), len(discarded_relations),
     )
-    return {
+    response = {
         "proposal_id": proposal_id,
-        "target": {
-            "world": body.world, "section": body.section,
-            "folder": folder, "slug": idea.slug, "path": target_rel,
-        },
+        "target": target_info,
         "content": content,
         "proposed_relations": [
             {"target_id": rel.target_id, "title": title_by_id.get(rel.target_id, ""), "rel_type": rel.rel_type}
@@ -8320,6 +8458,51 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         ],
         "discarded_relations": discarded_relations,
     }
+    if media is not None:
+        response["media"] = {
+            "src": f"/api/ideas/media/{media['source']}",
+            "dest": media["dest"],
+        }
+    return response
+
+
+@app.post("/api/ideas/{slug}/materialize-target")
+def materialize_target(slug: str, body: IdeaMaterializeTargetRequest, request: Request):
+    """Resolve the destination ficha path + collision for a materialize (no AI).
+
+    Instant, provider-free counterpart to ``materialize-preview``: it runs the
+    same auth/world/section/traversal validation and returns the resolved
+    target (200) or the existing-file collision (409), so the UI can reveal the
+    destination before paying for a generation. It performs no provider call,
+    no graph build, no canon write and no pending-proposal store mutation
+    (resolution only; R-IM-04 preserved).
+    """
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    try:
+        idea = IdeasBank().read(slug)
+    except IdeaNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if _resolve_mundo_dir(body.world) is None:
+        raise problem("world.not_found")
+    if body.section not in _MATERIALIZE_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección no fichable")
+    folder = body.folder
+    if folder:
+        if Path(folder).is_absolute() or ".." in Path(folder).parts:
+            raise HTTPException(status_code=400, detail="Path traversal detectado")
+        # Defense-in-depth: the folder must resolve inside the world section
+        # with the canonical containment semantics of _resolve_mundo_path.
+        if _resolve_mundo_path(body.world, f"{body.section}/{folder}") is None:
+            raise HTTPException(status_code=400, detail="Path traversal detectado")
+    file_slug = resolve_file_slug(idea.title, idea.slug, body.title_hint, body.slug)
+    _target, target_info, collision = _resolve_materialize_target(
+        world=body.world, section=body.section, folder=folder, file_slug=file_slug,
+    )
+    if collision is not None:
+        return JSONResponse(status_code=409, content={"detail": "El archivo ya existe", "collision": collision})
+    return {"target": target_info}
+
 
 app.include_router(
     create_assistant_settings_router(

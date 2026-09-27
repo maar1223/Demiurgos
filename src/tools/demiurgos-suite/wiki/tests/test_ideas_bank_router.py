@@ -25,6 +25,7 @@ for _p in (str(_WIKI),):
 from ideas_bank_router import (
     IdeaMaterializePreviewRequest,
     IdeaMaterializeRequest,
+    IdeaMaterializeTargetRequest,
     create_ideas_bank_router,
 )  # noqa: E402
 
@@ -418,16 +419,41 @@ def test_idea_materialize_request_accepts_legacy_and_optional_fields() -> None:
 
 
 def test_idea_materialize_preview_request_requires_world_and_section() -> None:
-    """The preview payload mandates world + section; folder/title_hint default."""
+    """The preview payload mandates world + section; folder/title_hint/slug default."""
     preview = IdeaMaterializePreviewRequest(world="Vibrantes", section="personajes")
     assert preview.world == "Vibrantes"
     assert preview.section == "personajes"
     assert preview.folder == ""
     assert preview.title_hint is None
+    assert preview.slug is None
+    explicit = IdeaMaterializePreviewRequest(
+        world="Vibrantes", section="personajes", title_hint="El Arquero", slug="el-arquero",
+    )
+    assert explicit.title_hint == "El Arquero"
+    assert explicit.slug == "el-arquero"
     with pytest.raises(Exception):
         IdeaMaterializePreviewRequest(world="Vibrantes")
     with pytest.raises(Exception):
         IdeaMaterializePreviewRequest(section="personajes")
+
+
+def test_idea_materialize_target_request_requires_world_and_section() -> None:
+    """WU-2/WU-6: the target payload mandates world + section; the rest default."""
+    target = IdeaMaterializeTargetRequest(world="Vibrantes", section="personajes")
+    assert target.world == "Vibrantes"
+    assert target.section == "personajes"
+    assert target.folder == ""
+    assert target.title_hint is None
+    assert target.slug is None
+    explicit = IdeaMaterializeTargetRequest(
+        world="Vibrantes", section="personajes", title_hint="El Arquero", slug="el-arquero",
+    )
+    assert explicit.title_hint == "El Arquero"
+    assert explicit.slug == "el-arquero"
+    with pytest.raises(Exception):
+        IdeaMaterializeTargetRequest(world="Vibrantes")
+    with pytest.raises(Exception):
+        IdeaMaterializeTargetRequest(section="personajes")
 
 
 def test_legacy_materialize_route_ignores_preview_fields(client: TestClient) -> None:

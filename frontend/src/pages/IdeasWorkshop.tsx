@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { TabBar, type SidebarTab } from "@/components/molecules/TabBar";
@@ -32,12 +32,14 @@ import {
   type PendingCapture,
   type DiscardedMaterializeRelation,
   type IdeaMaterializePreviewResult,
+  type IdeaMaterializeTarget,
   type MaterializeCollision,
   type MaterializeSection,
   type ProposedMaterializeRelation,
   IDEA_TYPES,
   MATERIALIZE_SECTIONS,
   previewMaterialize,
+  previewMaterializeTarget,
 } from "@/api/ideas";
 import { getErrorMessage } from "@/lib/utils";
 import type { ApiError, FileNode, SuccessResponse } from "@/api/types";
@@ -80,6 +82,9 @@ const SECTION_LABELS: Record<MaterializeSection, MessageKey> = {
 function suggestSectionFor(type: IdeaType): MaterializeSection {
   return type === "personaje" || type === "relacion" ? "personajes" : "lore";
 }
+
+/** Debounce for re-resolving the destination while the filename is edited. */
+const FILENAME_RESOLVE_DEBOUNCE_MS = 400;
 
 /** Read-only folder tree picker (AD7) — renders `FileNode` dirs, nested. */
 function FolderTree({
@@ -143,26 +148,115 @@ function FolderTreeBranch({
 }
 
 /**
- * Read-only preview dialog for a materialize draft (AD8). Renders the
- * server-owned ficha content via MarkdownViewer plus the proposed and
- * discarded relations. A 409 collision opens the same dialog in collision
- * mode: no draft exists, only the `suggested_slug` hint. Nothing here is
- * editable — the ficha becomes editable after creation.
+ * Editable filename field shared by the destination and collision steps. It
+ * holds the name WITHOUT the `.md` extension; the dialog owns the draft and
+ * the debounced re-resolve, this only renders the label + input + hint.
+ * Module-level on purpose: a nested component would remount the input on every
+ * render and steal focus from the typist.
+ */
+function MaterializeFilenameField({
+  value,
+  onChange,
+  onFocus,
+  onBlur,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onFocus: () => void;
+  onBlur: () => void;
+}) {
+  const { t } = useAppLanguage();
+  return (
+    <div>
+      <label
+        htmlFor="materialize-filename"
+        className="mb-1 block text-xs text-muted"
+      >
+        {t("ideas.materialize.filenameLabel")}
+      </label>
+      <input
+        id="materialize-filename"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        spellCheck={false}
+        autoComplete="off"
+        className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 font-mono text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
+      />
+      <p className="mt-1 text-[11px] text-muted">
+        {t("ideas.materialize.filenameHint")}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Materialize dialog (AD8). Four modes by priority:
+ *   1. progress (`previewing`): the AI is writing the ficha; honest copy, a
+ *      live elapsed-seconds counter and a Cancel that aborts the request.
+ *   2. collision (`collision && !preview`): the destination exists; shows the
+ *      `suggested_slug` hint, offers the one-click suggestion AND the same
+ *      editable filename field so a free name can be typed. No generation
+ *      while the collision persists.
+ *   3. destination (`targetPreview && !preview && !collision`): the instantly
+ *      resolved path, the editable filename field (server-normalized on blur)
+ *      plus the primary "Generar contenido" action; a generation error renders
+ *      here as an in-dialog alert with retry available.
+ *   4. content (`preview`): the server-owned draft via MarkdownViewer plus the
+ *      proposed/discarded relations. Nothing here is editable — the ficha
+ *      becomes editable after creation.
+ * The outer shell is shared; only the aria-label/heading follow the mode.
  */
 function MaterializePreviewDialog({
   preview,
+  targetPreview,
   collision,
+  previewing,
+  generationError,
+  elapsedSeconds,
   confirming,
+  filenameDraft,
+  onFilenameChange,
+  onFilenameFocus,
+  onFilenameBlur,
+  onApplySuggestedSlug,
   onConfirm,
+  onGenerate,
+  onCancelGenerate,
   onClose,
 }: {
   preview: IdeaMaterializePreviewResult | null;
+  targetPreview: IdeaMaterializeTarget | null;
   collision: MaterializeCollision | null;
+  previewing: boolean;
+  generationError: string | null;
+  elapsedSeconds: number;
   confirming: boolean;
+  filenameDraft: string;
+  onFilenameChange: (value: string) => void;
+  onFilenameFocus: () => void;
+  onFilenameBlur: () => void;
+  onApplySuggestedSlug: () => void;
   onConfirm: () => void;
+  onGenerate: () => void;
+  onCancelGenerate: () => void;
   onClose: () => void;
 }) {
   const { t } = useAppLanguage();
+  const titleKey = previewing
+    ? "ideas.materialize.progressTitle"
+    : "ideas.preview.title";
+
+  // DISPLAY ONLY: the previewed body references the carried image at its final
+  // world path (`media/<dest>`), but the bytes are copied only on confirm
+  // (R-IM-04), so rendering that path would show a broken image. Point it at
+  // the idea-bank URL instead. The confirm payload keeps the original
+  // `preview.content` — its digest is bound to the world path.
+  const displayContent = preview?.media
+    ? preview.content.split(preview.media.dest).join(preview.media.src)
+    : preview?.content;
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
@@ -175,13 +269,11 @@ function MaterializePreviewDialog({
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={t("ideas.preview.title")}
+        aria-label={t(titleKey)}
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-edge px-6 py-4">
-          <h2 className="font-heading text-h4 text-primary">
-            {t("ideas.preview.title")}
-          </h2>
+          <h2 className="font-heading text-h4 text-primary">{t(titleKey)}</h2>
           <button
             type="button"
             onClick={onClose}
@@ -195,19 +287,76 @@ function MaterializePreviewDialog({
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-          {collision && !preview ? (
-            <div className="rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-xs text-status-error">
-              <p className="font-medium">{t("ideas.preview.collisionTitle")}</p>
-              <p className="mt-1">
+          {previewing ? (
+            <div className="space-y-4">
+              <p className="text-xs text-muted">
+                {t("ideas.materialize.progressBody")}
+              </p>
+              <div className="flex items-center gap-2 rounded-md bg-surface px-3 py-2">
+                <Spinner size="sm" />
+                <span className="text-xs text-muted">
+                  {t("ideas.materialize.elapsedLabel")}
+                </span>
+                <span className="font-mono text-xs text-primary">
+                  {t("ideas.materialize.elapsedSeconds", {
+                    seconds: elapsedSeconds,
+                  })}
+                </span>
+              </div>
+            </div>
+          ) : targetPreview && !preview && !collision ? (
+            <div className="space-y-4">
+              <MaterializeFilenameField
+                value={filenameDraft}
+                onChange={onFilenameChange}
+                onFocus={onFilenameFocus}
+                onBlur={onFilenameBlur}
+              />
+              <p className="text-xs text-muted">
                 {t("ideas.preview.targetLabel")}{" "}
-                <span className="font-mono">{collision.target}</span>
+                <span className="font-mono">{targetPreview.path}</span>
               </p>
-              <p className="mt-1">
-                {t("ideas.preview.suggestedSlug")}{" "}
-                <span className="font-mono">{collision.suggested_slug}</span>{" "}
-                (→{" "}
-                <span className="font-mono">{collision.suggested_target}</span>)
-              </p>
+              {generationError && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error"
+                >
+                  {generationError}
+                </div>
+              )}
+            </div>
+          ) : collision && !preview ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-xs text-status-error">
+                <p className="font-medium">{t("ideas.preview.collisionTitle")}</p>
+                <p className="mt-1">
+                  {t("ideas.preview.targetLabel")}{" "}
+                  <span className="font-mono">{collision.target}</span>
+                </p>
+                <p className="mt-1">
+                  {t("ideas.preview.suggestedSlug")}{" "}
+                  <span className="font-mono">{collision.suggested_slug}</span>{" "}
+                  (→{" "}
+                  <span className="font-mono">{collision.suggested_target}</span>
+                  )
+                </p>
+                <button
+                  type="button"
+                  onClick={onApplySuggestedSlug}
+                  className="mt-2 rounded-md border border-edge px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action"
+                >
+                  {t("ideas.materialize.useSuggestedName")}
+                </button>
+              </div>
+              {/* The name is taken, so the same editable field is exactly what
+                  the author needs: typing a free name re-resolves and clears
+                  the collision through the shared debounce flow. */}
+              <MaterializeFilenameField
+                value={filenameDraft}
+                onChange={onFilenameChange}
+                onFocus={onFilenameFocus}
+                onBlur={onFilenameBlur}
+              />
             </div>
           ) : preview ? (
             <div className="space-y-4">
@@ -216,7 +365,7 @@ function MaterializePreviewDialog({
                 <span className="font-mono">{preview.target.path}</span>
               </p>
               <MarkdownViewer
-                content={preview.content}
+                content={displayContent}
                 mundo={preview.target.world}
                 imageFit="contain"
               />
@@ -279,23 +428,46 @@ function MaterializePreviewDialog({
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={confirming}
-            className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
-          >
-            {t("ideas.preview.close")}
-          </button>
-          {preview && !collision && (
+          {previewing ? (
             <button
               type="button"
-              onClick={onConfirm}
-              disabled={confirming}
-              className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={onCancelGenerate}
+              className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary"
             >
-              {confirming ? t("ideas.preview.creating") : t("ideas.preview.create")}
+              {t("ideas.materialize.cancel")}
             </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={confirming}
+                className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
+              >
+                {t("ideas.preview.close")}
+              </button>
+              {preview && !collision && (
+                <button
+                  type="button"
+                  onClick={onConfirm}
+                  disabled={confirming}
+                  className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {confirming ? t("ideas.preview.creating") : t("ideas.preview.create")}
+                </button>
+              )}
+              {targetPreview && !preview && !collision && (
+                <button
+                  type="button"
+                  onClick={onGenerate}
+                  className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover"
+                >
+                  {generationError
+                    ? t("ideas.materialize.generateAgain")
+                    : t("ideas.materialize.generate")}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -667,10 +839,45 @@ export default function IdeasWorkshop() {
   const [materializeFolder, setMaterializeFolder] = useState("");
   const [materializeTitleHint, setMaterializeTitleHint] = useState("");
   const [preview, setPreview] = useState<IdeaMaterializePreviewResult | null>(null);
+  const [targetPreview, setTargetPreview] = useState<IdeaMaterializeTarget | null>(
+    null,
+  );
   const [collision, setCollision] = useState<MaterializeCollision | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [confirming, setConfirming] = useState(false);
   const [markingUsed, setMarkingUsed] = useState(false);
+  // User-controlled filename draft (without extension). Kept separate from the
+  // server-resolved `targetPreview.slug` so a debounced response never fights
+  // the typist; it snaps to the normalized value on blur.
+  const [filenameDraft, setFilenameDraft] = useState("");
+
+  // In-flight generation, so Cancel (and closing the dialog) can abort it.
+  const generateAbortRef = useRef<AbortController | null>(null);
+  // True while the filename input has focus — the server-normalized slug must
+  // not overwrite what the author is typing.
+  const filenameFocusedRef = useRef(false);
+  // Monotonic request counter: a resolve response is applied only when it is
+  // still the latest request (stale responses are discarded).
+  const resolveRequestRef = useRef(0);
+  // The slug the server last resolved for the current dialog; used to skip the
+  // no-op prefill echo and to avoid duplicate debounced requests.
+  const lastResolvedSlugRef = useRef<string | null>(null);
+  // Gate the debounce effect until the first explicit "Previsualizar".
+  const hasResolvedRef = useRef(false);
+
+  // Live elapsed-seconds counter while the AI writes the ficha. No fake
+  // percentage: the ticking number is the evidence that work is happening.
+  useEffect(() => {
+    if (!previewing) return;
+    setElapsedSeconds(0);
+    const timer = window.setInterval(
+      () => setElapsedSeconds((seconds) => seconds + 1),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [previewing]);
 
   // Folder tree for the selected world + section (AD7). Null key while no
   // world is chosen, so the hook stays idle until a world is picked.
@@ -679,59 +886,236 @@ export default function IdeasWorkshop() {
     materializeSection,
   );
 
+  /** Clear the filename draft + resolve bookkeeping so a previous edit never
+   *  leaks into the next idea or dialog. Bumps the request counter so any
+   *  in-flight resolve from the previous dialog is discarded. */
+  const resetFilenameState = useCallback(() => {
+    setFilenameDraft("");
+    filenameFocusedRef.current = false;
+    hasResolvedRef.current = false;
+    lastResolvedSlugRef.current = null;
+    resolveRequestRef.current += 1;
+  }, []);
+
   const openMaterialize = useCallback(() => {
     if (!selectedIdea) return;
     setActionError(null);
     setPreview(null);
+    setTargetPreview(null);
     setCollision(null);
+    setGenerationError(null);
     setMaterializeFor(selectedIdea.slug);
     setMaterializeWorld("");
     setMaterializeSection(suggestSectionFor(selectedIdea.type));
     setMaterializeFolder("");
     setMaterializeTitleHint("");
-  }, [selectedIdea]);
+    resetFilenameState();
+  }, [selectedIdea, resetFilenameState]);
 
   const closeMaterialize = useCallback(() => {
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
+    setPreviewing(false);
     setMaterializeFor(null);
     setMaterializeWorld("");
     setMaterializeSection("lore");
     setMaterializeFolder("");
     setMaterializeTitleHint("");
     setPreview(null);
+    setTargetPreview(null);
     setCollision(null);
-  }, []);
+    setGenerationError(null);
+    resetFilenameState();
+  }, [resetFilenameState]);
 
-  // "Previsualizar" — POST /materialize-preview. Read-only: the dialog only
-  // shows the server-owned draft; nothing is edited in-dialog (AD8). A 409
-  // collision arrives as an error carrying `collision` at the top level; the
-  // dialog then shows the suggested slug instead of a draft.
-  const handlePreview = useCallback(async () => {
+  /** Close only the dialog (the picker stays open) and abort any generation. */
+  const closeMaterializeDialog = useCallback(() => {
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
+    setPreviewing(false);
+    setPreview(null);
+    setTargetPreview(null);
+    setCollision(null);
+    setGenerationError(null);
+    resetFilenameState();
+  }, [resetFilenameState]);
+
+  /** Build the instant-resolve payload from the live picker state. The client
+   *  slug rides along only when non-empty; otherwise the server derives it from
+   *  the title hint (or the idea) and reports the resolved value back. */
+  const buildTargetInput = useCallback(
+    (clientSlug: string) => {
+      const trimmedHint = materializeTitleHint.trim();
+      const trimmedSlug = clientSlug.trim();
+      return {
+        world: materializeWorld,
+        section: materializeSection,
+        folder: materializeFolder,
+        ...(trimmedHint ? { title_hint: trimmedHint } : {}),
+        ...(trimmedSlug ? { slug: trimmedSlug } : {}),
+      };
+    },
+    [
+      materializeWorld,
+      materializeSection,
+      materializeFolder,
+      materializeTitleHint,
+    ],
+  );
+
+  /** Resolve the destination and apply the response only when this request is
+   *  still the latest one (a stale response is dropped). */
+  const resolveTarget = useCallback(
+    async (clientSlug: string, requestId: number) => {
+      if (!materializeFor || !materializeWorld) return;
+      try {
+        const target = await previewMaterializeTarget(
+          materializeFor,
+          buildTargetInput(clientSlug),
+        );
+        if (requestId !== resolveRequestRef.current) return;
+        setTargetPreview(target);
+        setCollision(null);
+        lastResolvedSlugRef.current = target.slug;
+        // Never fight the typist: mirror the server-normalized slug only when
+        // the field is not focused. On blur the draft snaps to it.
+        if (!filenameFocusedRef.current) setFilenameDraft(target.slug);
+      } catch (err) {
+        if (requestId !== resolveRequestRef.current) return;
+        const apiError = err as ApiError & { collision?: MaterializeCollision };
+        if (apiError.collision) {
+          setCollision(apiError.collision);
+          setTargetPreview(null);
+          // On the first resolve the name is derived, so the field is still
+          // empty: surface the colliding basename (without `.md`) so the
+          // author can see and edit the taken name. A prior edit is preserved.
+          const collidingName =
+            apiError.collision.target
+              .split("/")
+              .pop()
+              ?.replace(/\.md$/i, "") ?? "";
+          if (!clientSlug.trim() && collidingName) {
+            setFilenameDraft(collidingName);
+            lastResolvedSlugRef.current = collidingName;
+          } else {
+            lastResolvedSlugRef.current = clientSlug.trim();
+          }
+          return;
+        }
+        notifyError(err);
+      }
+    },
+    [materializeFor, materializeWorld, buildTargetInput, notifyError],
+  );
+
+  // Step 1 — "Previsualizar" is INSTANT: POST /materialize-target resolves
+  // the destination path and any collision with no AI call. The dialog opens
+  // in destination (or collision) mode; the author decides whether to pay for
+  // a generation after seeing where the ficha will land.
+  const handleResolveTarget = useCallback(async () => {
     if (!materializeFor || !materializeWorld) {
       setActionError(t("ideas.materialize.error.selectWorldPreview"));
       return;
     }
-    setPreviewing(true);
     setActionError(null);
+    setPreview(null);
+    setTargetPreview(null);
     setCollision(null);
+    setGenerationError(null);
+    hasResolvedRef.current = true;
+    const requestId = ++resolveRequestRef.current;
+    await resolveTarget(filenameDraft, requestId);
+  }, [materializeFor, materializeWorld, filenameDraft, resolveTarget, t]);
+
+  // Debounced re-resolution while the author edits the filename (~400 ms).
+  // Skips the prefill echo (draft === last resolved slug) and any edit before
+  // the first explicit "Previsualizar". The timer is cleared on dialog
+  // close/unmount through the effect cleanup.
+  useEffect(() => {
+    if (!hasResolvedRef.current) return;
+    if (!materializeFor || !materializeWorld) return;
+    const trimmed = filenameDraft.trim();
+    if (trimmed === lastResolvedSlugRef.current) return;
+    const requestId = ++resolveRequestRef.current;
+    const timer = window.setTimeout(() => {
+      void resolveTarget(trimmed, requestId);
+    }, FILENAME_RESOLVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [filenameDraft, materializeFor, materializeWorld, resolveTarget]);
+
+  const handleFilenameChange = useCallback((value: string) => {
+    setFilenameDraft(value);
+  }, []);
+
+  const handleFilenameFocus = useCallback(() => {
+    filenameFocusedRef.current = true;
+  }, []);
+
+  const handleFilenameBlur = useCallback(() => {
+    filenameFocusedRef.current = false;
+    // Snap to the exact name the server will write (server truth).
+    if (targetPreview) setFilenameDraft(targetPreview.slug);
+  }, [targetPreview]);
+
+  /** One-click adoption of the 409 `suggested_slug`; re-resolves immediately
+   *  and clears the collision on success. */
+  const handleApplySuggestedSlug = useCallback(() => {
+    if (!collision) return;
+    const suggested = collision.suggested_slug;
+    filenameFocusedRef.current = false;
+    // Optimistic: treat the suggestion as the resolved slug so the debounce
+    // effect does not schedule a duplicate request for the same value.
+    lastResolvedSlugRef.current = suggested;
+    setFilenameDraft(suggested);
+    const requestId = ++resolveRequestRef.current;
+    void resolveTarget(suggested, requestId);
+  }, [collision, resolveTarget]);
+
+  // Step 2 — "Generar contenido" runs the (slow) AI preview from destination
+  // mode only. The AbortController is stored so Cancel aborts the request and
+  // returns to destination mode with no error.
+  const handleGenerateContent = useCallback(async () => {
+    if (!materializeFor || !materializeWorld) return;
+    const controller = new AbortController();
+    generateAbortRef.current = controller;
+    setPreviewing(true);
+    setPreview(null);
+    setGenerationError(null);
+    setActionError(null);
     try {
-      const result = await previewMaterialize(materializeFor, {
-        world: materializeWorld,
-        section: materializeSection,
-        folder: materializeFolder,
-        ...(materializeTitleHint.trim()
-          ? { title_hint: materializeTitleHint.trim() }
-          : {}),
-      });
+      const result = await previewMaterialize(
+        materializeFor,
+        {
+          world: materializeWorld,
+          section: materializeSection,
+          folder: materializeFolder,
+          ...(materializeTitleHint.trim()
+            ? { title_hint: materializeTitleHint.trim() }
+            : {}),
+          // The exact server-resolved filename shown in the destination step.
+          ...(targetPreview?.slug ? { slug: targetPreview.slug } : {}),
+        },
+        controller.signal,
+      );
       setPreview(result);
     } catch (err) {
+      // A user-initiated Cancel is not an error: return to destination mode.
+      if (controller.signal.aborted || (err as Error)?.name === "AbortError") {
+        return;
+      }
       const apiError = err as ApiError & { collision?: MaterializeCollision };
       if (apiError.collision) {
         setPreview(null);
         setCollision(apiError.collision);
         return;
       }
-      notifyError(err);
+      // Surface the localized failure INSIDE the dialog; the page-top banner
+      // is behind the modal and would be invisible.
+      setGenerationError(getErrorMessage(apiError.status, apiError.detail));
     } finally {
+      if (generateAbortRef.current === controller) {
+        generateAbortRef.current = null;
+      }
       setPreviewing(false);
     }
   }, [
@@ -740,9 +1124,14 @@ export default function IdeasWorkshop() {
     materializeSection,
     materializeFolder,
     materializeTitleHint,
-    notifyError,
-    t,
+    targetPreview?.slug,
   ]);
+
+  const handleCancelGenerate = useCallback(() => {
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
+    setPreviewing(false);
+  }, []);
 
   // Confirm — issue the single-use edit-confirmation token (kind=new,
   // edit_id=proposal_id, proposed_content=content) and create through the
@@ -1428,13 +1817,11 @@ export default function IdeasWorkshop() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => void handlePreview()}
+                    onClick={() => void handleResolveTarget()}
                     disabled={previewing || !materializeWorld}
                     className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {previewing
-                      ? t("ideas.materialize.previewing")
-                      : t("ideas.materialize.preview")}
+                    {t("ideas.materialize.preview")}
                   </button>
                   <button
                     type="button"
@@ -1594,18 +1981,27 @@ export default function IdeasWorkshop() {
         />
       )}
 
-      {/* Materialize preview dialog — read-only (AD8); opens on a successful
-          preview or on a 409 collision suggestion (AD5). */}
-      {(preview || collision) && (
+      {/* Materialize dialog — read-only draft (AD8) or 409 collision (AD5).
+          The two-step flow opens it on the instant target resolution and then
+          swaps to progress → content once the author asks for a generation. */}
+      {(preview || targetPreview || collision) && (
         <MaterializePreviewDialog
           preview={preview}
+          targetPreview={targetPreview}
           collision={collision}
+          previewing={previewing}
+          generationError={generationError}
+          elapsedSeconds={elapsedSeconds}
           confirming={confirming}
+          filenameDraft={filenameDraft}
+          onFilenameChange={handleFilenameChange}
+          onFilenameFocus={handleFilenameFocus}
+          onFilenameBlur={handleFilenameBlur}
+          onApplySuggestedSlug={handleApplySuggestedSlug}
           onConfirm={() => void handleConfirmPreview()}
-          onClose={() => {
-            setPreview(null);
-            setCollision(null);
-          }}
+          onGenerate={() => void handleGenerateContent()}
+          onCancelGenerate={handleCancelGenerate}
+          onClose={closeMaterializeDialog}
         />
       )}
     </EditorLayout>

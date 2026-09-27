@@ -11,6 +11,7 @@ import {
   listPendingCaptures,
   materializeIdea,
   previewMaterialize,
+  previewMaterializeTarget,
   updateIdea,
 } from "@/api/ideas";
 import type { IdeaDetail } from "@/api/ideas";
@@ -235,6 +236,7 @@ describe("ideas bank API", () => {
       expect.objectContaining({
         method: "POST",
         credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           world: "vibrantes",
           section: "lore",
@@ -278,9 +280,53 @@ describe("ideas bank API", () => {
       "/api/ideas/arquero-ciego/materialize-preview",
       expect.objectContaining({
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ world: "vibrantes", section: "personajes", folder: "" }),
       }),
     );
+  });
+
+  it("preview forwards the client filename slug when provided (WU-7)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        proposal_id: "materialize-abc",
+        target: {
+          world: "vibrantes",
+          section: "lore",
+          folder: "",
+          slug: "mi-nombre-normalizado",
+          path: "mi-nombre-normalizado.md",
+        },
+        content: "# Body",
+        proposed_relations: [],
+        discarded_relations: [],
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await previewMaterialize("arquero-ciego", {
+      world: "vibrantes",
+      section: "lore",
+      folder: "",
+      title_hint: "Mi Nombre Raro",
+      slug: "Mi Nombre Raro!",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ideas/arquero-ciego/materialize-preview",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          world: "vibrantes",
+          section: "lore",
+          folder: "",
+          title_hint: "Mi Nombre Raro",
+          slug: "Mi Nombre Raro!",
+        }),
+      }),
+    );
+    // The response reports the server-normalized filename, not the raw input.
+    expect(result.target.slug).toBe("mi-nombre-normalizado");
   });
 
   it("preview surfaces the 409 collision suggestion on the thrown error (AD5)", async () => {
@@ -334,6 +380,146 @@ describe("ideas bank API", () => {
       status: 503,
       message: "Materialization provider is unavailable.",
     });
+  });
+
+  it("resolves the materialize target with POST /materialize-target (no AI call)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        target: {
+          world: "vibrantes",
+          section: "lore",
+          folder: "sistema-stal",
+          slug: "arquero-ciego",
+          path: "sistema-stal/arquero-ciego.md",
+        },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await previewMaterializeTarget("arquero-ciego", {
+      world: "vibrantes",
+      section: "lore",
+      folder: "sistema-stal",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ideas/arquero-ciego/materialize-target",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          world: "vibrantes",
+          section: "lore",
+          folder: "sistema-stal",
+        }),
+      }),
+    );
+    expect(result.path).toBe("sistema-stal/arquero-ciego.md");
+    expect(result.slug).toBe("arquero-ciego");
+    // The generate endpoint must never be touched by target resolution.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("materialize-target forwards title_hint and slug when provided (WU-7)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        target: {
+          world: "vibrantes",
+          section: "lore",
+          folder: "sistema-stal",
+          slug: "mi-nombre-raro",
+          path: "sistema-stal/mi-nombre-raro.md",
+        },
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await previewMaterializeTarget("arquero-ciego", {
+      world: "vibrantes",
+      section: "lore",
+      folder: "sistema-stal",
+      title_hint: "Mi Nombre Raro",
+      slug: "Mi Nombre Raro!",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ideas/arquero-ciego/materialize-target",
+      expect.objectContaining({
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          world: "vibrantes",
+          section: "lore",
+          folder: "sistema-stal",
+          title_hint: "Mi Nombre Raro",
+          slug: "Mi Nombre Raro!",
+        }),
+      }),
+    );
+    // The server normalizes the client slug and reports the resolved truth.
+    expect(result.slug).toBe("mi-nombre-raro");
+    expect(result.path).toBe("sistema-stal/mi-nombre-raro.md");
+  });
+
+  it("materialize-target surfaces the 409 collision on the thrown error (AD5)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse(
+        {
+          detail: "El archivo ya existe",
+          collision: {
+            target: "lore/sistema-stal/arquero-ciego.md",
+            suggested_slug: "arquero-ciego-2",
+            suggested_target: "lore/sistema-stal/arquero-ciego-2.md",
+          },
+        },
+        409,
+      ),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    await expect(
+      previewMaterializeTarget("arquero-ciego", {
+        world: "vibrantes",
+        section: "lore",
+        folder: "sistema-stal",
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      collision: {
+        target: "lore/sistema-stal/arquero-ciego.md",
+        suggested_slug: "arquero-ciego-2",
+        suggested_target: "lore/sistema-stal/arquero-ciego-2.md",
+      },
+    });
+  });
+
+  it("preview forwards the abort signal to fetch", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse({
+          proposal_id: "materialize-abc",
+          target: { world: "vibrantes", section: "lore", folder: "", slug: "arquero-ciego", path: "arquero-ciego.md" },
+          content: "# Body",
+          proposed_relations: [],
+          discarded_relations: [],
+        }),
+      );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const controller = new AbortController();
+    await previewMaterialize(
+      "arquero-ciego",
+      { world: "vibrantes", section: "lore", folder: "" },
+      controller.signal,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ideas/arquero-ciego/materialize-preview",
+      expect.objectContaining({ signal: controller.signal }),
+    );
   });
 
   it("lists pending captures from the idea-capture queue (S-7.1)", async () => {

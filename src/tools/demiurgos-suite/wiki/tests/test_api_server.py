@@ -330,6 +330,12 @@ def _materialize_preview(client: TestClient, slug: str = "arquero-ciego", **over
     return client.post(f"/api/ideas/{slug}/materialize-preview", json=payload)
 
 
+def _materialize_target(client: TestClient, slug: str = "arquero-ciego", **overrides):
+    payload = {"world": "test_mundo", "section": "lore", "folder": "subdir"}
+    payload.update(overrides)
+    return client.post(f"/api/ideas/{slug}/materialize-target", json=payload)
+
+
 def _world_listing() -> list[str]:
     """Sorted world-relative paths under the fixture world (zero-writes checks)."""
     world = api_server.MUNDOS_DIR / "test_mundo"
@@ -7596,7 +7602,8 @@ class TestPublishedAdjuntoRoute:
 
 def _write_idea(slug: str = "arquero-ciego", *, type: str = "personaje",
                 title: str = "Arquero Ciego",
-                body: str = "Un arquero que perdió la vista.") -> Path:
+                body: str = "Un arquero que perdió la vista.",
+                media_path: str | None = None) -> Path:
     """Write an idea file into the CURRENT hermetic ideas bank.
 
     Written directly (not via the /api/ideas router) because the router's
@@ -7614,13 +7621,24 @@ def _write_idea(slug: str = "arquero-ciego", *, type: str = "personaje",
         "source: manual\n"
         f"status: fresh\n"
         f"title: {title}\n"
-        "tags: []\n"
+        + (f"media_path: {media_path}\n" if media_path is not None else "")
+        + "tags: []\n"
         "used_in: []\n"
         "---\n\n"
         f"{body}\n"
     )
     path = ideas_dir / f"{slug}.md"
     path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _write_idea_media(name: str = "idea-foto.jpg",
+                      data: bytes = b"\xff\xd8\xff\xe0fake-jpeg") -> Path:
+    """Write a media file into the CURRENT hermetic ``ideas/media`` store."""
+    media_dir = api_server.PROJECT_ROOT / "ideas" / "media"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    path = media_dir / name
+    path.write_bytes(data)
     return path
 
 
@@ -7660,6 +7678,98 @@ class TestMaterializePreview:
         # R-IM-04: preview alone leaves mundos/ byte-identical.
         assert _world_listing() == before
         assert not (api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md").exists()
+
+    # -----------------------------------------------------------------------
+    # WU-6 (iteration 2) — the typed name drives the filename + frontmatter title
+    # -----------------------------------------------------------------------
+
+    def _frontmatter(self, content: str) -> dict:
+        return yaml.safe_load(content.split("---\n", 2)[1])
+
+    def test_title_hint_drives_filename_and_frontmatter_title(self, client: TestClient, monkeypatch):
+        """WU-6: the typed ``title_hint`` names the file and the frontmatter
+        title, while ``based_on`` keeps the IDEA slug untouched."""
+        _write_idea()  # slug=arquero-ciego, title="Arquero Ciego"
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client, title_hint="El Arquero Ciego")
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["target"] == {
+            "world": "test_mundo", "section": "lore", "folder": "subdir",
+            "slug": "el-arquero-ciego", "path": "subdir/el-arquero-ciego.md",
+        }
+        fm = self._frontmatter(payload["content"])
+        assert fm["title"] == "El Arquero Ciego"
+        assert fm["based_on"] == "ideas/arquero-ciego"
+        pending = api_server._MATERIALIZE_PENDING_PROPOSALS[payload["proposal_id"]]
+        assert pending["slug"] == "arquero-ciego"
+        assert pending["file_slug"] == "el-arquero-ciego"
+        assert pending["target"] == "lore/subdir/el-arquero-ciego.md"
+        assert len(provider.requests) == 1
+
+    def test_provider_request_keeps_idea_identity_unchanged(self, client: TestClient, monkeypatch):
+        """WU-6 trap 4: the MaterializationRequest prompt inputs stay exactly
+        today's — idea slug, idea title and the raw title_hint."""
+        _write_idea(title="Título De La Idea")
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client, title_hint="Otro Titulo")
+        assert resp.status_code == 200, resp.text
+        assert len(provider.requests) == 1
+        request = provider.requests[0]
+        assert request.slug == "arquero-ciego"
+        assert request.title == "Título De La Idea"
+        assert request.title_hint == "Otro Titulo"
+        # The filename ignores the unchanged request identity and uses the hint.
+        assert resp.json()["target"]["slug"] == "otro-titulo"
+
+    def test_client_slug_overrides_and_is_normalized(self, client: TestClient, monkeypatch):
+        """WU-6: a client ``slug`` overrides the derived name, normalized
+        through ``slugify_title`` (never rejected)."""
+        _write_idea()
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = client.post("/api/ideas/arquero-ciego/materialize-preview", json={
+            "world": "test_mundo", "section": "lore", "folder": "subdir",
+            "title_hint": "El Arquero Ciego", "slug": "Mi Nombre Raro!",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["target"]["slug"] == "mi-nombre-raro"
+        assert resp.json()["target"]["path"] == "subdir/mi-nombre-raro.md"
+        # The provider still sees the idea identity, never the client slug.
+        assert provider.requests[0].slug == "arquero-ciego"
+
+    def test_empty_normalizing_client_slug_falls_back_to_derived(self, client: TestClient, monkeypatch):
+        """WU-6: an empty/empty-normalizing client slug falls back to the title."""
+        _write_idea()
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = client.post("/api/ideas/arquero-ciego/materialize-preview", json={
+            "world": "test_mundo", "section": "lore", "folder": "subdir",
+            "title_hint": "El Arquero Ciego", "slug": "!!!",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["target"]["slug"] == "el-arquero-ciego"
+
+    def test_untitled_idea_keeps_its_internal_slug_as_filename(self, client: TestClient, monkeypatch):
+        """WU-6: an untitled idea (empty title) still derives from the idea slug."""
+        _write_idea(title="")
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["target"]["slug"] == "arquero-ciego"
+
+    def test_collision_on_derived_name_409_with_slug_2(self, client: TestClient, monkeypatch):
+        """WU-6: a collision on the DERIVED filename still yields 409 + ``-2``."""
+        _write_idea()
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "el-arquero-ciego.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# Ya existe\n", encoding="utf-8")
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client, title_hint="El Arquero Ciego")
+        assert resp.status_code == 409
+        collision = resp.json()["collision"]
+        assert collision["target"] == "lore/subdir/el-arquero-ciego.md"
+        assert collision["suggested_slug"] == "el-arquero-ciego-2"
+        assert collision["suggested_target"] == "lore/subdir/el-arquero-ciego-2.md"
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
 
     def test_preview_requires_auth(self, client: TestClient):
         _write_idea()
@@ -7857,6 +7967,355 @@ class TestMaterializePreview:
         pending_target = world / payload["target"]["path"]
         assert not pending_target.exists()
         assert not list((world / "lore" / "subdir").glob("arquero-ciego*.md"))
+
+
+# ---------------------------------------------------------------------------
+# CI-1 (materialize-carry-idea-image) — preview resolves + injects the image
+# ---------------------------------------------------------------------------
+
+
+class TestMaterializePreviewImage:
+    """Preview-side matrix for carrying an idea image (zero canon writes)."""
+
+    def _media_preview(self, client: TestClient, monkeypatch: pytest.MonkeyPatch, *,
+                       media_name: str = "idea-foto.jpg",
+                       media_path: str | None = "media/idea-foto.jpg",
+                       data: bytes = b"\xff\xd8\xff\xe0fake-jpeg",
+                       **overrides):
+        _write_idea(media_path=media_path)
+        _write_idea_media(media_name, data)
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        return _materialize_preview(client, **overrides)
+
+    def test_preview_injects_reference_and_media_block(self, client: TestClient, monkeypatch):
+        """The assembled content carries the image and the response/pending
+        both expose the src/dest (bare source + world-relative dest)."""
+        resp = self._media_preview(client, monkeypatch)
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["media"] == {
+            "src": "/api/ideas/media/idea-foto.jpg",
+            "dest": "media/arquero-ciego.jpg",
+        }
+        assert "# Cuerpo del arquero\n![Arquero Ciego](media/arquero-ciego.jpg)\n" in payload["content"]
+        pending = api_server._MATERIALIZE_PENDING_PROPOSALS[payload["proposal_id"]]
+        assert pending["media"] == {"source": "idea-foto.jpg", "dest": "media/arquero-ciego.jpg"}
+
+    def test_preview_with_image_is_zero_write(self, client: TestClient, monkeypatch):
+        """R-IM-04: a preview with an image never creates the world media dir."""
+        world = api_server.MUNDOS_DIR / "test_mundo"
+        assert not (world / "wiki").exists()
+        before = _world_listing()
+        resp = self._media_preview(client, monkeypatch)
+        assert resp.status_code == 200, resp.text
+        assert _world_listing() == before
+        assert not (world / "wiki").exists()
+        assert not (world / "wiki" / "media").exists()
+
+    def test_preview_dest_dedupe_picks_next_free_name(self, client: TestClient, monkeypatch):
+        """An existing dest file makes preview choose ``<name>-2.<ext>``."""
+        existing = api_server.MUNDOS_DIR / "test_mundo" / "wiki" / "media" / "arquero-ciego.jpg"
+        existing.parent.mkdir(parents=True, exist_ok=True)
+        existing.write_bytes(b"EXISTING")
+        resp = self._media_preview(client, monkeypatch)
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["media"]["dest"] == "media/arquero-ciego-2.jpg"
+        assert "![Arquero Ciego](media/arquero-ciego-2.jpg)" in payload["content"]
+        # The dedupe probe is read-only: the occupant is untouched.
+        assert existing.read_bytes() == b"EXISTING"
+
+    def test_preview_without_media_has_no_media_key(self, client: TestClient, monkeypatch):
+        """An idea without media_path behaves exactly as today."""
+        _write_idea()
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert "media" not in payload
+        assert "![" not in payload["content"]
+        pending = api_server._MATERIALIZE_PENDING_PROPOSALS[payload["proposal_id"]]
+        assert "media" not in pending
+
+    def test_preview_missing_media_file_degrades_to_no_image(self, client: TestClient, monkeypatch):
+        """A media_path whose file is absent degrades without failing."""
+        _write_idea(media_path="media/missing.jpg")  # file never written
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        assert "media" not in resp.json()
+        assert "![" not in resp.json()["content"]
+
+    def test_preview_non_allowlisted_extension_degrades_to_no_image(self, client: TestClient, monkeypatch):
+        """A non-image extension degrades to no image even when the file exists."""
+        _write_idea(media_path="media/notas.txt")
+        _write_idea_media("notas.txt")
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        assert "media" not in resp.json()
+
+    def test_preview_traversal_media_path_degrades_to_no_image(self, client: TestClient, monkeypatch):
+        """A ``..`` segment in media_path degrades to no image."""
+        _write_idea(media_path="media/../secreto.jpg")
+        _write_idea_media("secreto.jpg")
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        assert "media" not in resp.json()
+
+
+# ---------------------------------------------------------------------------
+# CI-1 — confirm copies the image bytes before the first canon write
+# ---------------------------------------------------------------------------
+
+
+class TestMaterializeConfirmImage:
+    """Confirm-side matrix for carrying an idea image (fail-closed copy)."""
+
+    def _preview(self, client: TestClient, monkeypatch: pytest.MonkeyPatch, *,
+                 media_name: str = "idea-foto.jpg",
+                 media_path: str | None = "media/idea-foto.jpg",
+                 data: bytes = b"\xff\xd8\xff\xe0fake-jpeg") -> dict:
+        _write_idea(media_path=media_path)
+        _write_idea_media(media_name, data)
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    def _confirm(self, client: TestClient, preview: dict):
+        path = preview["target"]["path"]
+        conf = client.post(
+            f"/api/test_mundo/lore/edit-confirmation?path={path}",
+            json={"edit_id": preview["proposal_id"], "kind": "new",
+                  "proposed_content": preview["content"]},
+        )
+        assert conf.status_code == 200, conf.text
+        conf = conf.json()
+        return client.post(
+            f"/api/test_mundo/lore/create?path={path}",
+            json={"content": preview["content"], "edit_id": preview["proposal_id"],
+                  "proposed_digest": conf["proposed_digest"], "token": conf["token"]},
+        )
+
+    def test_confirm_copies_bytes_and_reference_resolves(self, client: TestClient, monkeypatch):
+        """The bytes land at the world dest, the ficha keeps the previewed
+        content (digest verification still passes) and the reference resolves."""
+        data = b"\xff\xd8\xff\xe0unique-jpeg-bytes"
+        preview = self._preview(client, monkeypatch, data=data)
+        resp = self._confirm(client, preview)
+        assert resp.status_code == 200, resp.text
+        world = api_server.MUNDOS_DIR / "test_mundo"
+        dest = world / "wiki" / "media" / "arquero-ciego.jpg"
+        assert dest.is_file()
+        assert dest.read_bytes() == data
+        ficha = world / "lore" / "subdir" / "arquero-ciego.md"
+        assert ficha.is_file()
+        assert ficha.read_text(encoding="utf-8") == preview["content"]
+        assert "![Arquero Ciego](media/arquero-ciego.jpg)" in ficha.read_text(encoding="utf-8")
+        resolved = api_server._resolve_media_path("test_mundo", "media/arquero-ciego.jpg")
+        assert resolved is not None and resolved.is_file()
+        assert resolved.read_bytes() == data
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_confirm_dest_race_fails_closed_with_no_write(self, client: TestClient, monkeypatch):
+        """A destination created after preview -> 409, no ficha, proposal kept."""
+        preview = self._preview(client, monkeypatch)
+        dest = api_server.MUNDOS_DIR / "test_mundo" / "wiki" / "media" / "arquero-ciego.jpg"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"RACE")
+        resp = self._confirm(client, preview)
+        assert resp.status_code == 409, resp.text
+        assert "arquero-ciego.jpg" in resp.json()["detail"]
+        ficha = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md"
+        assert not ficha.exists()
+        assert dest.read_bytes() == b"RACE"
+        assert preview["proposal_id"] in api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_confirm_missing_source_fails_closed(self, client: TestClient, monkeypatch):
+        """The source disappearing after preview -> 409, no ficha, proposal kept."""
+        preview = self._preview(client, monkeypatch)
+        source = api_server.PROJECT_ROOT / "ideas" / "media" / "idea-foto.jpg"
+        source.unlink()
+        resp = self._confirm(client, preview)
+        assert resp.status_code == 409, resp.text
+        assert "idea-foto.jpg" in resp.json()["detail"]
+        ficha = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md"
+        assert not ficha.exists()
+        assert preview["proposal_id"] in api_server._MATERIALIZE_PENDING_PROPOSALS
+
+
+# ---------------------------------------------------------------------------
+# WU-2 — POST /api/ideas/{slug}/materialize-target (instant, provider-free)
+# ---------------------------------------------------------------------------
+
+
+class TestMaterializeTarget:
+    """Route-level matrix for the destination-resolution endpoint (WU-2).
+
+    It mirrors the preview validation order but must never start an AI run:
+    the provider-recording seam is asserted untouched on every path.
+    """
+
+    def test_requires_auth(self, client: TestClient):
+        _write_idea()
+        resp = _materialize_target(client)
+        assert resp.status_code == 401
+        assert resp.json()["detail"] == "Autenticación requerida"
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_unknown_idea_404(self, client: TestClient, monkeypatch):
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client, slug="no-existe")
+        assert resp.status_code == 404
+        assert provider.requests == []
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_unknown_world_404(self, client: TestClient, monkeypatch):
+        _write_idea()
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client, world="no-existe")
+        assert resp.status_code == 404
+        assert provider.requests == []
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_non_indexed_section_400(self, client: TestClient, monkeypatch):
+        _write_idea()
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client, section="media")
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Sección no fichable"
+        assert provider.requests == []
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_traversal_folder_400(self, client: TestClient, monkeypatch):
+        _write_idea()
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client, folder="../personajes")
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Path traversal detectado"
+        assert provider.requests == []
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_happy_path_resolves_path_without_provider(self, client: TestClient, monkeypatch):
+        """200 returns the resolved target and starts no materialization run."""
+        _write_idea()
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        before = _world_listing()
+        resp = _materialize_target(client)
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {
+            "target": {
+                "world": "test_mundo", "section": "lore", "folder": "subdir",
+                "slug": "arquero-ciego", "path": "subdir/arquero-ciego.md",
+            }
+        }
+        # WU-2: the provider seam is untouched and no proposal is stored.
+        assert provider.requests == []
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+        # Resolution is read-only: mundos/ stays byte-identical.
+        assert _world_listing() == before
+
+    def test_happy_path_section_root_path(self, client: TestClient, monkeypatch):
+        """An empty folder resolves to ``{slug}.md`` at the section root."""
+        _write_idea()
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client, folder="")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["target"] == {
+            "world": "test_mundo", "section": "lore", "folder": "",
+            "slug": "arquero-ciego", "path": "arquero-ciego.md",
+        }
+        assert provider.requests == []
+
+    def test_collision_409_with_slug_2_suggestion(self, client: TestClient, monkeypatch):
+        """An existing target returns 409 + the shared collision shape."""
+        _write_idea()
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "arquero-ciego.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# Ya existe\n", encoding="utf-8")
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client)
+        assert resp.status_code == 409
+        body = resp.json()
+        assert body["detail"] == "El archivo ya existe"
+        assert body["collision"] == {
+            "target": "lore/subdir/arquero-ciego.md",
+            "suggested_slug": "arquero-ciego-2",
+            "suggested_target": "lore/subdir/arquero-ciego-2.md",
+        }
+        assert provider.requests == []
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    def test_provider_seam_is_never_invoked(self, client: TestClient, monkeypatch):
+        """WU-2: target resolution must not start a materialization run.
+
+        A valid request resolves 200 while the recording provider seam stays
+        empty — no invoke, no run, no pending proposal.
+        """
+        _write_idea()
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client)
+        assert resp.status_code == 200, resp.text
+        assert provider.requests == []
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
+
+    # -----------------------------------------------------------------------
+    # WU-6 (iteration 2) — the instant step resolves the title-derived name
+    # -----------------------------------------------------------------------
+
+    def test_accepts_title_hint_and_returns_resolved_target(self, client: TestClient, monkeypatch):
+        """WU-6: the target endpoint resolves the title-derived filename."""
+        _write_idea()  # slug=arquero-ciego, title="Arquero Ciego"
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client, title_hint="El Arquero Ciego")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["target"] == {
+            "world": "test_mundo", "section": "lore", "folder": "subdir",
+            "slug": "el-arquero-ciego", "path": "subdir/el-arquero-ciego.md",
+        }
+        assert provider.requests == []
+
+    def test_accepts_client_slug_normalized(self, client: TestClient, monkeypatch):
+        """WU-6: a client ``slug`` overrides and is normalized server-side."""
+        _write_idea()
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = client.post("/api/ideas/arquero-ciego/materialize-target", json={
+            "world": "test_mundo", "section": "lore", "folder": "subdir",
+            "title_hint": "El Arquero Ciego", "slug": "Mi Nombre Raro!",
+        })
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["target"]["slug"] == "mi-nombre-raro"
+        assert resp.json()["target"]["path"] == "subdir/mi-nombre-raro.md"
+        assert provider.requests == []
+
+    def test_untitled_idea_resolves_idea_slug(self, client: TestClient, monkeypatch):
+        """WU-6: an untitled idea resolves its internal slug as filename."""
+        _write_idea(title="")
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["target"]["slug"] == "arquero-ciego"
+
+    def test_collision_on_derived_name_409_with_slug_2(self, client: TestClient, monkeypatch):
+        """WU-6: a collision on the DERIVED name yields 409 + ``-2``."""
+        _write_idea()
+        target = api_server.MUNDOS_DIR / "test_mundo" / "lore" / "subdir" / "el-arquero-ciego.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("# Ya existe\n", encoding="utf-8")
+        provider = _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        resp = _materialize_target(client, title_hint="El Arquero Ciego")
+        assert resp.status_code == 409
+        body = resp.json()
+        assert body["detail"] == "El archivo ya existe"
+        assert body["collision"] == {
+            "target": "lore/subdir/el-arquero-ciego.md",
+            "suggested_slug": "el-arquero-ciego-2",
+            "suggested_target": "lore/subdir/el-arquero-ciego-2.md",
+        }
+        assert provider.requests == []
+        assert not api_server._MATERIALIZE_PENDING_PROPOSALS
 
 
 # ---------------------------------------------------------------------------
