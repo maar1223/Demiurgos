@@ -425,16 +425,19 @@ def test_idea_materialize_request_accepts_legacy_and_optional_fields() -> None:
 
 
 def test_idea_materialize_preview_request_requires_world_and_section() -> None:
-    """The preview payload mandates world + section; folder/title_hint/slug default."""
+    """The preview payload mandates world + section; folder/title/title_hint/slug default."""
     preview = IdeaMaterializePreviewRequest(world="Vibrantes", section="personajes")
     assert preview.world == "Vibrantes"
     assert preview.section == "personajes"
     assert preview.folder == ""
+    assert preview.title is None
     assert preview.title_hint is None
     assert preview.slug is None
     explicit = IdeaMaterializePreviewRequest(
-        world="Vibrantes", section="personajes", title_hint="El Arquero", slug="el-arquero",
+        world="Vibrantes", section="personajes", title="El Arquero",
+        title_hint="El Arquero", slug="el-arquero",
     )
+    assert explicit.title == "El Arquero"
     assert explicit.title_hint == "El Arquero"
     assert explicit.slug == "el-arquero"
     with pytest.raises(Exception):
@@ -444,16 +447,19 @@ def test_idea_materialize_preview_request_requires_world_and_section() -> None:
 
 
 def test_idea_materialize_target_request_requires_world_and_section() -> None:
-    """WU-2/WU-6: the target payload mandates world + section; the rest default."""
+    """WU-2/WU-6 + FT-1: the target payload mandates world + section; the rest default."""
     target = IdeaMaterializeTargetRequest(world="Vibrantes", section="personajes")
     assert target.world == "Vibrantes"
     assert target.section == "personajes"
     assert target.folder == ""
+    assert target.title is None
     assert target.title_hint is None
     assert target.slug is None
     explicit = IdeaMaterializeTargetRequest(
-        world="Vibrantes", section="personajes", title_hint="El Arquero", slug="el-arquero",
+        world="Vibrantes", section="personajes", title="El Arquero",
+        title_hint="El Arquero", slug="el-arquero",
     )
+    assert explicit.title == "El Arquero"
     assert explicit.title_hint == "El Arquero"
     assert explicit.slug == "el-arquero"
     with pytest.raises(Exception):

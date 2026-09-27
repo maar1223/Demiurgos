@@ -223,6 +223,7 @@ describe("ideas bank API", () => {
   it("previews materialization with POST /materialize-preview and the picker payload", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({
+        title: "El arquero ciego",
         proposal_id: "materialize-abc",
         target: {
           world: "vibrantes",
@@ -261,6 +262,7 @@ describe("ideas bank API", () => {
         }),
       }),
     );
+    expect(result.title).toBe("El arquero ciego");
     expect(result.proposal_id).toBe("materialize-abc");
     expect(result.target.path).toBe(
       "sistema-stal-poderes-vibrantes/arquero-ciego.md",
@@ -345,6 +347,48 @@ describe("ideas bank API", () => {
     expect(result.target.slug).toBe("mi-nombre-normalizado");
   });
 
+  it("preview forwards the ficha title and reports the resolved title (FT-2)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        title: "Otro título",
+        proposal_id: "materialize-abc",
+        target: {
+          world: "vibrantes",
+          section: "lore",
+          folder: "",
+          slug: "otro-titulo",
+          path: "otro-titulo.md",
+        },
+        content: "# Body",
+        proposed_relations: [],
+        discarded_relations: [],
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
+
+    const result = await previewMaterialize("arquero-ciego", {
+      world: "vibrantes",
+      section: "lore",
+      folder: "",
+      title: "Otro título",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ideas/arquero-ciego/materialize-preview",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          world: "vibrantes",
+          section: "lore",
+          folder: "",
+          title: "Otro título",
+        }),
+      }),
+    );
+    // The server-owned title is echoed back top-level, not inside `target`.
+    expect(result.title).toBe("Otro título");
+  });
+
   it("preview surfaces the 409 collision suggestion on the thrown error (AD5)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse(
@@ -401,6 +445,7 @@ describe("ideas bank API", () => {
   it("resolves the materialize target with POST /materialize-target (no AI call)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({
+        title: "El Arquero Ciego",
         target: {
           world: "vibrantes",
           section: "lore",
@@ -431,8 +476,9 @@ describe("ideas bank API", () => {
         }),
       }),
     );
-    expect(result.path).toBe("sistema-stal/arquero-ciego.md");
-    expect(result.slug).toBe("arquero-ciego");
+    expect(result.title).toBe("El Arquero Ciego");
+    expect(result.target.path).toBe("sistema-stal/arquero-ciego.md");
+    expect(result.target.slug).toBe("arquero-ciego");
     // The generate endpoint must never be touched by target resolution.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -440,6 +486,7 @@ describe("ideas bank API", () => {
   it("materialize-target forwards title_hint and slug when provided (WU-7)", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse({
+        title: "Mi Nombre Raro",
         target: {
           world: "vibrantes",
           section: "lore",
@@ -475,8 +522,8 @@ describe("ideas bank API", () => {
       }),
     );
     // The server normalizes the client slug and reports the resolved truth.
-    expect(result.slug).toBe("mi-nombre-raro");
-    expect(result.path).toBe("sistema-stal/mi-nombre-raro.md");
+    expect(result.target.slug).toBe("mi-nombre-raro");
+    expect(result.target.path).toBe("sistema-stal/mi-nombre-raro.md");
   });
 
   it("materialize-target surfaces the 409 collision on the thrown error (AD5)", async () => {

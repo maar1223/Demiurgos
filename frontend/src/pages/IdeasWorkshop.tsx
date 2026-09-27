@@ -33,6 +33,7 @@ import {
   type DiscardedMaterializeRelation,
   type IdeaMaterializePreviewResult,
   type IdeaMaterializeTarget,
+  type IdeaMaterializeTargetResult,
   type MaterializeCollision,
   type MaterializeSection,
   type ProposedMaterializeRelation,
@@ -148,45 +149,51 @@ function FolderTreeBranch({
 }
 
 /**
- * Editable filename field shared by the destination and collision steps. It
- * holds the name WITHOUT the `.md` extension; the dialog owns the draft and
- * the debounced re-resolve, this only renders the label + input + hint.
- * Module-level on purpose: a nested component would remount the input on every
- * render and steal focus from the typist.
+ * Editable text field shared by the destination and collision steps. The
+ * title field drives the ficha H1/frontmatter title; the filename field holds
+ * the name WITHOUT the `.md` extension. The dialog owns both drafts and the
+ * debounced re-resolve; this only renders the label + input + optional hint.
+ * Module-level on purpose: a nested component would remount the inputs on
+ * every render and steal focus from the typist.
  */
-function MaterializeFilenameField({
+function MaterializeTextField({
+  id,
+  label,
+  hint,
   value,
   onChange,
   onFocus,
   onBlur,
+  mono = false,
 }: {
+  id: string;
+  label: string;
+  hint?: string;
   value: string;
   onChange: (value: string) => void;
   onFocus: () => void;
   onBlur: () => void;
+  /** Filenames render monospaced; the human title does not. */
+  mono?: boolean;
 }) {
-  const { t } = useAppLanguage();
   return (
     <div>
-      <label
-        htmlFor="materialize-filename"
-        className="mb-1 block text-xs text-muted"
-      >
-        {t("ideas.materialize.filenameLabel")}
+      <label htmlFor={id} className="mb-1 block text-xs text-muted">
+        {label}
       </label>
       <input
-        id="materialize-filename"
+        id={id}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         onFocus={onFocus}
         onBlur={onBlur}
         spellCheck={false}
         autoComplete="off"
-        className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 font-mono text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
+        className={`w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50${
+          mono ? " font-mono" : ""
+        }`}
       />
-      <p className="mt-1 text-[11px] text-muted">
-        {t("ideas.materialize.filenameHint")}
-      </p>
+      {hint && <p className="mt-1 text-[11px] text-muted">{hint}</p>}
     </div>
   );
 }
@@ -588,6 +595,10 @@ function MaterializePreviewDialog({
   materializeError,
   elapsedSeconds,
   confirming,
+  titleDraft,
+  onTitleChange,
+  onTitleFocus,
+  onTitleBlur,
   filenameDraft,
   onFilenameChange,
   onFilenameFocus,
@@ -618,6 +629,10 @@ function MaterializePreviewDialog({
   materializeError: string | null;
   elapsedSeconds: number;
   confirming: boolean;
+  titleDraft: string;
+  onTitleChange: (value: string) => void;
+  onTitleFocus: () => void;
+  onTitleBlur: () => void;
   filenameDraft: string;
   onFilenameChange: (value: string) => void;
   onFilenameFocus: () => void;
@@ -748,11 +763,27 @@ function MaterializePreviewDialog({
             </div>
           ) : targetPreview && !preview && !collision ? (
             <div className="space-y-4">
-              <MaterializeFilenameField
+              {/* The title drives the H1/frontmatter; the filename only names
+                  the file. Editing the title re-derives the filename until the
+                  author edits the filename by hand. */}
+              <MaterializeTextField
+                id="materialize-title"
+                label={t("ideas.materialize.titleLabel")}
+                hint={t("ideas.materialize.titleHint")}
+                value={titleDraft}
+                onChange={onTitleChange}
+                onFocus={onTitleFocus}
+                onBlur={onTitleBlur}
+              />
+              <MaterializeTextField
+                id="materialize-filename"
+                label={t("ideas.materialize.filenameLabel")}
+                hint={t("ideas.materialize.filenameHint")}
                 value={filenameDraft}
                 onChange={onFilenameChange}
                 onFocus={onFilenameFocus}
                 onBlur={onFilenameBlur}
+                mono
               />
               <p className="text-xs text-muted">
                 {t("ideas.preview.targetLabel")}{" "}
@@ -761,6 +792,17 @@ function MaterializePreviewDialog({
             </div>
           ) : collision && !preview ? (
             <div className="space-y-4">
+              {/* The title stays visible/editable here so the H1/frontmatter
+                  title can still be adjusted while resolving the name clash. */}
+              <MaterializeTextField
+                id="materialize-title"
+                label={t("ideas.materialize.titleLabel")}
+                hint={t("ideas.materialize.titleHint")}
+                value={titleDraft}
+                onChange={onTitleChange}
+                onFocus={onTitleFocus}
+                onBlur={onTitleBlur}
+              />
               <div className="rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-xs text-status-error">
                 <p className="font-medium">{t("ideas.preview.collisionTitle")}</p>
                 <p className="mt-1">
@@ -785,11 +827,15 @@ function MaterializePreviewDialog({
               {/* The name is taken, so the same editable field is exactly what
                   the author needs: typing a free name re-resolves and clears
                   the collision through the shared debounce flow. */}
-              <MaterializeFilenameField
+              <MaterializeTextField
+                id="materialize-filename"
+                label={t("ideas.materialize.filenameLabel")}
+                hint={t("ideas.materialize.filenameHint")}
                 value={filenameDraft}
                 onChange={onFilenameChange}
                 onFocus={onFilenameFocus}
                 onBlur={onFilenameBlur}
+                mono
               />
             </div>
           ) : preview ? (
@@ -1437,22 +1483,37 @@ export default function IdeasWorkshop() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [confirming, setConfirming] = useState(false);
   const [markingUsed, setMarkingUsed] = useState(false);
+  // User-controlled ficha title draft. Drives the body H1 and the frontmatter
+  // `title`; while the filename is clean it also drives the file name.
+  const [titleDraft, setTitleDraft] = useState("");
   // User-controlled filename draft (without extension). Kept separate from the
-  // server-resolved `targetPreview.slug` so a debounced response never fights
-  // the typist; it snaps to the normalized value on blur.
+  // server-resolved slug so a debounced response never fights the typist; it
+  // snaps to the normalized value on blur.
   const [filenameDraft, setFilenameDraft] = useState("");
 
   // In-flight generation, so Cancel (and closing the dialog) can abort it.
   const generateAbortRef = useRef<AbortController | null>(null);
-  // True while the filename input has focus — the server-normalized slug must
-  // not overwrite what the author is typing.
+  // True while the title/filename input has focus — the server-resolved value
+  // must not overwrite what the author is typing.
+  const titleFocusedRef = useRef(false);
   const filenameFocusedRef = useRef(false);
+  // True once the author edits the filename by hand. While clean, a title edit
+  // re-derives the filename; once dirty, the manual name is preserved.
+  const filenameDirtyRef = useRef(false);
   // Monotonic request counter: a resolve response is applied only when it is
   // still the latest request (stale responses are discarded).
   const resolveRequestRef = useRef(0);
-  // The slug the server last resolved for the current dialog; used to skip the
+  // The last (title, slug) pair the dialog resolved/displayed; used to skip the
   // no-op prefill echo and to avoid duplicate debounced requests.
-  const lastResolvedSlugRef = useRef<string | null>(null);
+  const lastResolvedRef = useRef<{ title: string; slug: string }>({
+    title: "",
+    slug: "",
+  });
+  // The last server-resolved title; the title field snaps to it on blur.
+  const resolvedTitleRef = useRef("");
+  // The scheduled debounced re-resolve, so a pre-generate resolve can cancel it
+  // (the author asked to generate before the ~400 ms window elapsed).
+  const resolveDebounceRef = useRef<number | null>(null);
   // Gate the debounce effect until the first explicit "Previsualizar".
   const hasResolvedRef = useRef(false);
 
@@ -1475,14 +1536,23 @@ export default function IdeasWorkshop() {
     materializeSection,
   );
 
-  /** Clear the filename draft + resolve bookkeeping so a previous edit never
-   *  leaks into the next idea or dialog. Bumps the request counter so any
-   *  in-flight resolve from the previous dialog is discarded. */
-  const resetFilenameState = useCallback(() => {
+  /** Clear both drafts (title, filename), the dirty/focus flags and the
+   *  resolve bookkeeping so a previous edit never leaks into the next idea or
+   *  dialog. Bumps the request counter so any in-flight resolve from the
+   *  previous dialog is discarded. */
+  const resetMaterializeDrafts = useCallback(() => {
+    setTitleDraft("");
     setFilenameDraft("");
+    resolvedTitleRef.current = "";
+    titleFocusedRef.current = false;
     filenameFocusedRef.current = false;
+    filenameDirtyRef.current = false;
     hasResolvedRef.current = false;
-    lastResolvedSlugRef.current = null;
+    lastResolvedRef.current = { title: "", slug: "" };
+    if (resolveDebounceRef.current !== null) {
+      window.clearTimeout(resolveDebounceRef.current);
+      resolveDebounceRef.current = null;
+    }
     resolveRequestRef.current += 1;
   }, []);
 
@@ -1497,8 +1567,11 @@ export default function IdeasWorkshop() {
     setMaterializeWorld("");
     setMaterializeSection(suggestSectionFor(selectedIdea.type));
     setMaterializeFolder("");
-    resetFilenameState();
-  }, [selectedIdea, resetFilenameState]);
+    resetMaterializeDrafts();
+    // Start the title from the idea title; the server confirms/normalizes it
+    // and its response becomes the field's truth.
+    setTitleDraft(selectedIdea.title ?? "");
+  }, [selectedIdea, resetMaterializeDrafts]);
 
   const closeMaterialize = useCallback(() => {
     generateAbortRef.current?.abort();
@@ -1512,8 +1585,8 @@ export default function IdeasWorkshop() {
     setTargetPreview(null);
     setCollision(null);
     setMaterializeError(null);
-    resetFilenameState();
-  }, [resetFilenameState]);
+    resetMaterializeDrafts();
+  }, [resetMaterializeDrafts]);
 
   /** Close only the dialog (the picker stays open) and abort any generation. */
   const closeMaterializeDialog = useCallback(() => {
@@ -1524,48 +1597,59 @@ export default function IdeasWorkshop() {
     setTargetPreview(null);
     setCollision(null);
     setMaterializeError(null);
-    resetFilenameState();
-  }, [resetFilenameState]);
+    resetMaterializeDrafts();
+  }, [resetMaterializeDrafts]);
 
-  /** Build the instant-resolve payload from the live picker state. The client
-   *  slug rides along only when non-empty; otherwise the server derives it from
-   *  the idea's title and reports the resolved value back. */
-  const buildTargetInput = useCallback(
-    (clientSlug: string) => {
-      const trimmedSlug = clientSlug.trim();
-      return {
-        world: materializeWorld,
-        section: materializeSection,
-        folder: materializeFolder,
-        ...(trimmedSlug ? { slug: trimmedSlug } : {}),
-      };
-    },
-    [materializeWorld, materializeSection, materializeFolder],
-  );
-
-  /** Resolve the destination and apply the response only when this request is
-   *  still the latest one (a stale response is dropped). */
+  /** Resolve the destination (and the resolved title) and apply the response
+   *  only when this request is still the latest one (a stale response is
+   *  dropped). `applyResolvedSlug` controls whether the server-normalized file
+   *  name is mirrored into the draft: a title-driven re-resolve must never
+   *  overwrite a name the author edited by hand. Returns the resolved values so
+   *  "Generar contenido" can use them synchronously; `null` means no fresh
+   *  result (stale request, collision or failure already surfaced). */
   const resolveTarget = useCallback(
-    async (clientSlug: string, requestId: number) => {
-      if (!materializeFor || !materializeWorld) return;
+    async (
+      title: string,
+      clientSlug: string,
+      requestId: number,
+      applyResolvedSlug: boolean,
+    ): Promise<IdeaMaterializeTargetResult | null> => {
+      if (!materializeFor || !materializeWorld) return null;
+      const trimmedTitle = title.trim();
+      const trimmedSlug = clientSlug.trim();
       try {
-        const target = await previewMaterializeTarget(
-          materializeFor,
-          buildTargetInput(clientSlug),
-        );
-        if (requestId !== resolveRequestRef.current) return;
-        setTargetPreview(target);
+        const result = await previewMaterializeTarget(materializeFor, {
+          world: materializeWorld,
+          section: materializeSection,
+          folder: materializeFolder,
+          ...(trimmedTitle ? { title: trimmedTitle } : {}),
+          ...(trimmedSlug ? { slug: trimmedSlug } : {}),
+        });
+        if (requestId !== resolveRequestRef.current) return null;
+        setTargetPreview(result.target);
         setCollision(null);
-        lastResolvedSlugRef.current = target.slug;
-        // Never fight the typist: mirror the server-normalized slug only when
-        // the field is not focused. On blur the draft snaps to it.
-        if (!filenameFocusedRef.current) setFilenameDraft(target.slug);
+        const resolvedTitle = result.title || trimmedTitle;
+        resolvedTitleRef.current = resolvedTitle;
+        lastResolvedRef.current = {
+          title: resolvedTitle,
+          // When the server derived the name, the draft mirrors it; when a
+          // manual name rode along on a title edit, keep the manual value.
+          slug: applyResolvedSlug ? result.target.slug : trimmedSlug,
+        };
+        // Never fight the typist: mirror the server-resolved values only when
+        // the matching field is not focused. On blur the draft snaps to them.
+        if (!titleFocusedRef.current) setTitleDraft(resolvedTitle);
+        if (applyResolvedSlug && !filenameFocusedRef.current) {
+          setFilenameDraft(result.target.slug);
+        }
+        return { title: resolvedTitle, target: result.target };
       } catch (err) {
-        if (requestId !== resolveRequestRef.current) return;
+        if (requestId !== resolveRequestRef.current) return null;
         const apiError = err as ApiError & { collision?: MaterializeCollision };
         if (apiError.collision) {
           setCollision(apiError.collision);
           setTargetPreview(null);
+          if (trimmedTitle) resolvedTitleRef.current = trimmedTitle;
           // On the first resolve the name is derived, so the field is still
           // empty: surface the colliding basename (without `.md`) so the
           // author can see and edit the taken name. A prior edit is preserved.
@@ -1574,24 +1658,37 @@ export default function IdeasWorkshop() {
               .split("/")
               .pop()
               ?.replace(/\.md$/i, "") ?? "";
-          if (!clientSlug.trim() && collidingName) {
+          if (!trimmedSlug && collidingName) {
             setFilenameDraft(collidingName);
-            lastResolvedSlugRef.current = collidingName;
+            lastResolvedRef.current = {
+              title: trimmedTitle,
+              slug: collidingName,
+            };
           } else {
-            lastResolvedSlugRef.current = clientSlug.trim();
+            lastResolvedRef.current = {
+              title: trimmedTitle,
+              slug: trimmedSlug,
+            };
           }
-          return;
+          return null;
         }
         setMaterializeError(apiErrorMessage(err));
+        return null;
       }
     },
-    [materializeFor, materializeWorld, buildTargetInput, apiErrorMessage],
+    [
+      materializeFor,
+      materializeWorld,
+      materializeSection,
+      materializeFolder,
+      apiErrorMessage,
+    ],
   );
 
   // Step 1 — "Previsualizar" is INSTANT: POST /materialize-target resolves
-  // the destination path and any collision with no AI call. The dialog opens
-  // in destination (or collision) mode; the author decides whether to pay for
-  // a generation after seeing where the ficha will land.
+  // the destination path, the resolved title and any collision with no AI call.
+  // The dialog opens in destination (or collision) mode; the author decides
+  // whether to pay for a generation after seeing where the ficha will land.
   const handleResolveTarget = useCallback(async () => {
     if (!materializeFor || !materializeWorld) {
       setMaterializeError(t("ideas.materialize.error.selectWorldPreview"));
@@ -1604,26 +1701,69 @@ export default function IdeasWorkshop() {
     setMaterializeError(null);
     hasResolvedRef.current = true;
     const requestId = ++resolveRequestRef.current;
-    await resolveTarget(filenameDraft, requestId);
-  }, [materializeFor, materializeWorld, filenameDraft, resolveTarget, t]);
+    // A fresh resolve never carries a manual name; the file name is derived
+    // from the title unless the author already edited it in this session.
+    const clientSlug = filenameDirtyRef.current ? filenameDraft : "";
+    await resolveTarget(titleDraft, clientSlug, requestId, true);
+  }, [
+    materializeFor,
+    materializeWorld,
+    titleDraft,
+    filenameDraft,
+    resolveTarget,
+    t,
+  ]);
 
-  // Debounced re-resolution while the author edits the filename (~400 ms).
-  // Skips the prefill echo (draft === last resolved slug) and any edit before
-  // the first explicit "Previsualizar". The timer is cleared on dialog
-  // close/unmount through the effect cleanup.
+  // Debounced re-resolution while the author edits the title (~400 ms) or the
+  // filename. While the filename is clean, a title edit re-derives it (send the
+  // title and NO slug); once dirty, the manual name is preserved (send both).
+  // The guard skips the prefill echo and any edit before the first explicit
+  // "Previsualizar". The timer is cleared on dialog close/unmount.
   useEffect(() => {
     if (!hasResolvedRef.current) return;
     if (!materializeFor || !materializeWorld) return;
-    const trimmed = filenameDraft.trim();
-    if (trimmed === lastResolvedSlugRef.current) return;
+    const title = titleDraft.trim();
+    const filename = filenameDraft.trim();
+    const dirty = filenameDirtyRef.current;
+    const titleChanged = title !== lastResolvedRef.current.title;
+    const filenameChanged = dirty && filename !== lastResolvedRef.current.slug;
+    if (!titleChanged && !filenameChanged) return;
+    // Dirty filename: always send the manual slug (a filename edit, or a title
+    // edit that must not re-derive it). Clean: omit the slug so the server
+    // derives the file name from the title.
+    const slugToSend = dirty ? filename : "";
+    // A filename edit may mirror the server-normalized name; a title edit while
+    // the name is dirty must not overwrite the manual name.
+    const applyResolvedSlug = !dirty || filenameChanged;
     const requestId = ++resolveRequestRef.current;
     const timer = window.setTimeout(() => {
-      void resolveTarget(trimmed, requestId);
+      void resolveTarget(title, slugToSend, requestId, applyResolvedSlug);
     }, FILENAME_RESOLVE_DEBOUNCE_MS);
-    return () => window.clearTimeout(timer);
-  }, [filenameDraft, materializeFor, materializeWorld, resolveTarget]);
+    resolveDebounceRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (resolveDebounceRef.current === timer) resolveDebounceRef.current = null;
+    };
+  }, [titleDraft, filenameDraft, materializeFor, materializeWorld, resolveTarget]);
+
+  const handleTitleChange = useCallback((value: string) => {
+    setTitleDraft(value);
+  }, []);
+
+  const handleTitleFocus = useCallback(() => {
+    titleFocusedRef.current = true;
+  }, []);
+
+  const handleTitleBlur = useCallback(() => {
+    titleFocusedRef.current = false;
+    // Snap to the exact title the server resolved (server truth).
+    if (resolvedTitleRef.current) setTitleDraft(resolvedTitleRef.current);
+  }, []);
 
   const handleFilenameChange = useCallback((value: string) => {
+    // Editing the file name by hand makes it authoritative: later title edits
+    // no longer re-derive it.
+    filenameDirtyRef.current = true;
     setFilenameDraft(value);
   }, []);
 
@@ -1643,19 +1783,59 @@ export default function IdeasWorkshop() {
     if (!collision) return;
     const suggested = collision.suggested_slug;
     filenameFocusedRef.current = false;
-    // Optimistic: treat the suggestion as the resolved slug so the debounce
-    // effect does not schedule a duplicate request for the same value.
-    lastResolvedSlugRef.current = suggested;
+    // The adopted name is now an explicit author choice: keep it on later
+    // title edits. Optimistic so the debounce effect does not duplicate it.
+    filenameDirtyRef.current = true;
+    lastResolvedRef.current = {
+      title: resolvedTitleRef.current || titleDraft.trim(),
+      slug: suggested,
+    };
     setFilenameDraft(suggested);
     const requestId = ++resolveRequestRef.current;
-    void resolveTarget(suggested, requestId);
-  }, [collision, resolveTarget]);
+    void resolveTarget(titleDraft, suggested, requestId, true);
+  }, [collision, resolveTarget, titleDraft]);
 
   // Step 2 — "Generar contenido" runs the (slow) AI preview from destination
-  // mode only. The AbortController is stored so Cancel aborts the request and
-  // returns to destination mode with no error.
+  // mode only. Before spending the AI run it resolves any draft that is still
+  // ahead of the debounced re-resolve, so the generated ficha matches exactly
+  // what the author sees (never a stale title/file name). The AbortController is
+  // stored so Cancel aborts the request and returns to destination mode.
   const handleGenerateContent = useCallback(async () => {
     if (!materializeFor || !materializeWorld) return;
+
+    // What the author currently sees vs. the last resolved (server) values.
+    const title = titleDraft.trim();
+    const filename = filenameDraft.trim();
+    const dirty = filenameDirtyRef.current;
+    const filenameChanged = dirty && filename !== lastResolvedRef.current.slug;
+    const pending =
+      title !== lastResolvedRef.current.title || filenameChanged;
+
+    let generateTitle = resolvedTitleRef.current || title;
+    let generateSlug = targetPreview?.slug;
+
+    if (pending) {
+      // This immediate resolve supersedes any scheduled debounce.
+      if (resolveDebounceRef.current !== null) {
+        window.clearTimeout(resolveDebounceRef.current);
+        resolveDebounceRef.current = null;
+      }
+      const requestId = ++resolveRequestRef.current;
+      const resolved = await resolveTarget(
+        title,
+        dirty ? filename : "",
+        requestId,
+        !dirty || filenameChanged,
+      );
+      if (!resolved) {
+        // A collision switched the dialog to the collision step; a failure is
+        // already visible in the in-dialog alert. Never generate in either case.
+        return;
+      }
+      generateTitle = resolved.title;
+      generateSlug = resolved.target.slug;
+    }
+
     const controller = new AbortController();
     generateAbortRef.current = controller;
     setPreviewing(true);
@@ -1669,8 +1849,10 @@ export default function IdeasWorkshop() {
           world: materializeWorld,
           section: materializeSection,
           folder: materializeFolder,
-          // The exact server-resolved filename shown in the destination step.
-          ...(targetPreview?.slug ? { slug: targetPreview.slug } : {}),
+          // The title the author sees drives the body H1/frontmatter; the slug
+          // is the freshest resolved file name (just re-resolved if pending).
+          ...(generateTitle ? { title: generateTitle } : {}),
+          ...(generateSlug ? { slug: generateSlug } : {}),
         },
         controller.signal,
       );
@@ -1700,7 +1882,10 @@ export default function IdeasWorkshop() {
     materializeWorld,
     materializeSection,
     materializeFolder,
+    titleDraft,
+    filenameDraft,
     targetPreview?.slug,
+    resolveTarget,
   ]);
 
   const handleCancelGenerate = useCallback(() => {
@@ -2481,6 +2666,10 @@ export default function IdeasWorkshop() {
           materializeError={materializeError}
           elapsedSeconds={elapsedSeconds}
           confirming={confirming}
+          titleDraft={titleDraft}
+          onTitleChange={handleTitleChange}
+          onTitleFocus={handleTitleFocus}
+          onTitleBlur={handleTitleBlur}
           filenameDraft={filenameDraft}
           onFilenameChange={handleFilenameChange}
           onFilenameFocus={handleFilenameFocus}

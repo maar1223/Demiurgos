@@ -130,24 +130,23 @@ def slugify_title(title: str) -> str:
 
 
 def resolve_file_slug(
-    idea_title: str,
+    ficha_title: str,
     idea_slug: str,
-    title_hint: str | None,
     client_slug: str | None,
 ) -> str:
-    """Resolve the on-disk ficha filename slug (WU-6, iteration 2).
+    """Resolve the on-disk ficha filename slug (WU-6, iteration 2; FT-1).
 
-    The typed name wins as the visible title: ``title_hint`` first, then the
-    idea's own title, then the idea slug. The filename derives from that title
-    via ``slugify_title`` and falls back to the idea slug when the title has no
-    ASCII alphanumerics. An explicit ``client_slug`` (the editable filename in
-    the instant destination step) overrides the derived name, normalized
-    through ``slugify_title``; an empty or empty-normalizing client slug falls
-    back to the derived default. Because ``slugify_title`` strips everything
-    outside ``[a-z0-9-]``, client input is traversal-safe by construction —
-    normalize, never reject.
+    The caller resolves the visible ficha title (client title > idea title >
+    idea slug) and passes it as *ficha_title*; this helper only turns a title
+    into a filename. The filename derives from *ficha_title* via
+    ``slugify_title`` and falls back to *idea_slug* when the title has no ASCII
+    alphanumerics. An explicit ``client_slug`` (the editable filename in the
+    instant destination step) overrides the derived name, normalized through
+    ``slugify_title``; an empty or empty-normalizing client slug falls back to
+    the derived default. Because ``slugify_title`` strips everything outside
+    ``[a-z0-9-]``, client input is traversal-safe by construction — normalize,
+    never reject.
     """
-    ficha_title = (title_hint or "").strip() or (idea_title or "").strip() or idea_slug
     default_file_slug = slugify_title(ficha_title) or idea_slug
     if client_slug:
         normalized = slugify_title(client_slug)
@@ -225,12 +224,20 @@ def build_ficha_skeleton(
     drives ``based_on`` (the idea link) and stays the idea's own slug even when
     the filename derives from the title — the two are deliberately separate.
 
+    ``title`` is the server-owned ficha title and it owns the body's leading H1
+    (FT-1): after the AI body is stripped and before the image injection, an
+    existing leading H1 is REPLACED with ``# {title}``, or ``# {title}`` is
+    prepended as its own line followed by one blank line when the body has no
+    leading H1. Any later H1 is left untouched. The frontmatter ``title`` and
+    the H1 therefore always agree.
+
     ``image_rel`` is an optional world-relative media reference (``media/x.jpg``).
     When set, a Markdown image ``![{title}]({image_rel})`` is injected into the
-    body: immediately after the first line when that line is an H1, else at the
-    very start of the body. Exactly one blank line separates the image line from
-    the following text. When ``image_rel`` is ``None`` the emitted content is
-    byte-identical to the image-less output.
+    body: immediately after the leading H1 (which the title imposition
+    guarantees exists). Exactly one blank line separates the image line from
+    the following text. When ``image_rel`` is ``None`` and the leading H1
+    already equals ``# {title}`` the emitted content is byte-identical to the
+    image-less output.
     """
     if convention is None:
         convention = probe_folder_convention(world_dir, section, folder)
@@ -250,10 +257,28 @@ def build_ficha_skeleton(
         allow_unicode=True,
         default_flow_style=False,
     ).strip()
-    stripped_body = body.strip()
+    stripped_body = _impose_h1(body.strip(), title)
     if image_rel is not None:
         stripped_body = _inject_image_line(stripped_body, title, image_rel)
     return f"---\n{block}\n---\n\n{stripped_body}\n"
+
+
+def _impose_h1(body: str, title: str) -> str:
+    """Make the server-owned *title* the body's leading H1 (FT-1).
+
+    The AI body may open with its own H1 (which drifts from the title shown
+    above the ficha) or with no heading at all. When the first line is an H1
+    (``# `` prefix) it is REPLACED with ``# {title}``; otherwise ``# {title}``
+    is prepended as its own line followed by exactly one blank line. Any later
+    H1 is left untouched. *body* is expected already stripped, so a body that
+    already opens with ``# {title}`` is returned byte-identical.
+    """
+    first_line, sep, rest = body.partition("\n")
+    if first_line.startswith("# "):
+        return f"# {title}{sep}{rest}"
+    if body:
+        return f"# {title}\n\n{body}"
+    return f"# {title}"
 
 
 def _inject_image_line(body: str, title: str, image_rel: str) -> str:

@@ -330,9 +330,12 @@ export const messages = {
     "ideas.materialize.folderLabel": "Carpeta",
     "ideas.materialize.root": "(raíz)",
     "ideas.materialize.loadingFolders": "Cargando carpetas...",
+    "ideas.materialize.titleLabel": "Título de la ficha",
+    "ideas.materialize.titleHint":
+      "Define el título y el encabezado de la ficha.",
     "ideas.materialize.filenameLabel": "Nombre del archivo (sin .md)",
     "ideas.materialize.filenameHint":
-      "Editable; el servidor lo normaliza al resolver el destino.",
+      "Editable; el servidor lo normaliza al resolver el destino. No cambia el título.",
     "ideas.materialize.useSuggestedName": "Usar el nombre sugerido",
     "ideas.materialize.previewing": "Previsualizando...",
     "ideas.materialize.preview": "Previsualizar",
@@ -2173,9 +2176,12 @@ export const messages = {
     "ideas.materialize.folderLabel": "Folder",
     "ideas.materialize.root": "(root)",
     "ideas.materialize.loadingFolders": "Loading folders...",
+    "ideas.materialize.titleLabel": "Ficha title",
+    "ideas.materialize.titleHint":
+      "Sets the ficha title and its heading.",
     "ideas.materialize.filenameLabel": "File name (without .md)",
     "ideas.materialize.filenameHint":
-      "Editable; the server normalizes it when resolving the target.",
+      "Editable; the server normalizes it when resolving the target. It does not change the title.",
     "ideas.materialize.useSuggestedName": "Use the suggested name",
     "ideas.materialize.previewing": "Previewing...",
     "ideas.materialize.preview": "Preview",

@@ -145,56 +145,53 @@ def test_slugify_title_truncates_single_token() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_file_slug_hint_wins_over_idea_title() -> None:
-    assert resolve_file_slug("Idea Title", "idea-slug", "Mi Título", None) == "mi-titulo"
+def test_resolve_file_slug_derives_from_ficha_title() -> None:
+    """FT-1: the caller resolves the title; the filename derives from it."""
+    assert resolve_file_slug("Mi Título", "idea-slug", None) == "mi-titulo"
 
 
-def test_resolve_file_slug_uses_idea_title_without_hint() -> None:
-    assert resolve_file_slug("Idea Title", "idea-slug", None, None) == "idea-title"
-
-
-def test_resolve_file_slug_blank_hint_falls_through_to_idea_title() -> None:
-    assert resolve_file_slug("Idea Title", "idea-slug", "   ", None) == "idea-title"
+def test_resolve_file_slug_uses_idea_title_as_ficha_title() -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", None) == "idea-title"
 
 
 def test_resolve_file_slug_untitled_idea_falls_back_to_idea_slug() -> None:
     """An untitled idea (``title == slug``) keeps its internal slug as name."""
     telegram_id = "2026-08-28-524e8b9c9770"
-    assert resolve_file_slug(telegram_id, telegram_id, None, None) == telegram_id
+    assert resolve_file_slug(telegram_id, telegram_id, None) == telegram_id
 
 
 def test_resolve_file_slug_empty_title_falls_back_to_idea_slug() -> None:
-    assert resolve_file_slug("", "2026-08-28-524e8b9c9770", None, None) == "2026-08-28-524e8b9c9770"
+    assert resolve_file_slug("", "2026-08-28-524e8b9c9770", None) == "2026-08-28-524e8b9c9770"
 
 
 def test_resolve_file_slug_client_slug_overrides_default() -> None:
-    assert resolve_file_slug("Idea Title", "idea-slug", "Mi Título", "custom-name") == "custom-name"
+    assert resolve_file_slug("Mi Título", "idea-slug", "custom-name") == "custom-name"
 
 
 def test_resolve_file_slug_client_slug_is_normalized() -> None:
-    assert resolve_file_slug("Idea Title", "idea-slug", None, "Mi Nombre Raro!") == "mi-nombre-raro"
+    assert resolve_file_slug("Idea Title", "idea-slug", "Mi Nombre Raro!") == "mi-nombre-raro"
 
 
 @pytest.mark.parametrize("client_slug", ["", "   ", "!!!"])
 def test_resolve_file_slug_empty_or_empty_normalizing_client_slug_falls_back(client_slug: str) -> None:
-    assert resolve_file_slug("Idea Title", "idea-slug", None, client_slug) == "idea-title"
+    assert resolve_file_slug("Idea Title", "idea-slug", client_slug) == "idea-title"
 
 
 def test_resolve_file_slug_client_slug_is_traversal_safe_by_normalization() -> None:
     """``slugify_title`` strips path separators; the result never escapes."""
-    resolved = resolve_file_slug("Idea Title", "idea-slug", None, "../../etc/passwd")
+    resolved = resolve_file_slug("Idea Title", "idea-slug", "../../etc/passwd")
     assert resolved == "etc-passwd"
     assert "/" not in resolved and ".." not in resolved
 
 
 def test_resolve_file_slug_client_slug_is_length_bounded() -> None:
-    resolved = resolve_file_slug("Idea Title", "idea-slug", None, "x" * (MAX_SLUG_LEN + 50))
+    resolved = resolve_file_slug("Idea Title", "idea-slug", "x" * (MAX_SLUG_LEN + 50))
     assert len(resolved) == MAX_SLUG_LEN
     assert _SLUG_RE.fullmatch(resolved)
 
 
-def test_resolve_file_slug_derived_from_hint_is_length_bounded() -> None:
-    resolved = resolve_file_slug("Idea Title", "idea-slug", "Palabra " * 60, None)
+def test_resolve_file_slug_derived_from_title_is_length_bounded() -> None:
+    resolved = resolve_file_slug("Palabra " * 60, "idea-slug", None)
     assert len(resolved) <= MAX_SLUG_LEN
     assert _SLUG_RE.fullmatch(resolved)
 
@@ -355,7 +352,7 @@ def test_skeleton_personajes_emits_slug_id_type_and_schema_version(tmp_path: Pat
     assert fm["status"] == "draft"
     assert fm["based_on"] == "ideas/arquero-ciego"
     assert fm["relaciones"] == []
-    assert "# Cuerpo" in content
+    assert "# Arquero Ciego" in content
 
 
 def test_skeleton_canonical_emits_parent_qualified_id_and_wikilinks(tmp_path: Path) -> None:
@@ -461,34 +458,39 @@ def test_skeleton_canonical_single_title_derived_slug_fails_index_test_not_fixed
 # ---------------------------------------------------------------------------
 
 
-def test_skeleton_image_injected_immediately_after_h1(tmp_path: Path) -> None:
+def test_skeleton_image_injected_immediately_after_imposed_h1(tmp_path: Path) -> None:
+    """FT-1: the AI's own H1 is replaced by the title, and the image follows it."""
     content = _skeleton(
         tmp_path, slug="arquero-ciego", title="Arquero Ciego",
         body="# Cuerpo del arquero\n\nTexto posterior.\n",
         image_rel="media/arquero-ciego.jpg",
     )
     assert (
-        "# Cuerpo del arquero\n![Arquero Ciego](media/arquero-ciego.jpg)\n\nTexto posterior."
+        "# Arquero Ciego\n![Arquero Ciego](media/arquero-ciego.jpg)\n\nTexto posterior."
         in content
     )
+    assert "# Cuerpo del arquero" not in content
     assert content.endswith("Texto posterior.\n")
 
 
-def test_skeleton_image_injected_at_start_when_body_has_no_h1(tmp_path: Path) -> None:
+def test_skeleton_image_injected_after_inserted_h1_when_body_has_none(tmp_path: Path) -> None:
+    """FT-1: a body without an H1 gets one, and the image follows it."""
     content = _skeleton(tmp_path, body="Texto sin encabezado.\n", image_rel="media/idea-uno.png")
-    assert "---\n\n![Idea Uno](media/idea-uno.png)\n\nTexto sin encabezado.\n" in content
+    assert content.endswith(
+        "---\n\n# Idea Uno\n![Idea Uno](media/idea-uno.png)\n\nTexto sin encabezado.\n"
+    )
 
 
 def test_skeleton_image_only_h1_body_has_no_dangling_blank_line(tmp_path: Path) -> None:
     content = _skeleton(tmp_path, body="# Solo titulo\n", image_rel="media/idea-uno.png")
-    assert content.endswith("# Solo titulo\n![Idea Uno](media/idea-uno.png)\n")
+    assert content.endswith("# Idea Uno\n![Idea Uno](media/idea-uno.png)\n")
 
 
 def test_skeleton_image_after_h1_collapses_extra_leading_blanks(tmp_path: Path) -> None:
     content = _skeleton(
         tmp_path, body="# Titulo\n\n\n\nTexto.\n", image_rel="media/idea-uno.png",
     )
-    assert "# Titulo\n![Idea Uno](media/idea-uno.png)\n\nTexto." in content
+    assert "# Idea Uno\n![Idea Uno](media/idea-uno.png)\n\nTexto." in content
 
 
 def test_skeleton_image_alt_escapes_markdown_brackets(tmp_path: Path) -> None:
@@ -501,11 +503,12 @@ def test_skeleton_image_alt_escapes_markdown_brackets(tmp_path: Path) -> None:
 
 
 def test_skeleton_no_image_is_byte_identical_to_current_output(tmp_path: Path) -> None:
-    """CI-1 invariant 4: ``image_rel=None`` emits exactly today's bytes."""
+    """CI-1 invariant 4: with no H1 rewrite, ``image_rel=None`` emits exactly
+    today's bytes (the body already opens with ``# {title}``)."""
     conv = FolderConvention("personajes", "", "Personaje", "draft", None)
     kwargs = dict(
         section="personajes", folder="", slug="arquero-ciego",
-        title="Arquero Ciego", body="# Cuerpo\n", convention=conv,
+        title="Arquero Ciego", body="# Arquero Ciego\n", convention=conv,
     )
     default = _skeleton(tmp_path, **kwargs)
     explicit_none = _skeleton(tmp_path, image_rel=None, **kwargs)
@@ -521,9 +524,72 @@ def test_skeleton_no_image_is_byte_identical_to_current_output(tmp_path: Path) -
         "based_on: ideas/arquero-ciego\n"
         "schema_version: 1\n"
         "---\n\n"
-        "# Cuerpo\n"
+        "# Arquero Ciego\n"
     )
     assert default == golden
+
+
+# ---------------------------------------------------------------------------
+# build_ficha_skeleton — the title owns the H1 (FT-1, ficha-title-owns-h1)
+# ---------------------------------------------------------------------------
+
+
+def test_skeleton_replaces_ai_h1_with_title(tmp_path: Path) -> None:
+    """FT-1: the AI's own leading H1 is discarded and replaced by the title."""
+    content = _skeleton(
+        tmp_path, title="Arquero Ciego",
+        body="# Titulo inventado por la IA\n\nTexto posterior.\n",
+    )
+    assert content.endswith("---\n\n# Arquero Ciego\n\nTexto posterior.\n")
+    assert "Titulo inventado por la IA" not in content
+
+
+def test_skeleton_prepends_h1_when_body_has_none(tmp_path: Path) -> None:
+    """FT-1: a body without a leading H1 gets ``# {title}`` + one blank line."""
+    content = _skeleton(
+        tmp_path, title="Arquero Ciego",
+        body="Texto sin encabezado.\n",
+    )
+    assert content.endswith("---\n\n# Arquero Ciego\n\nTexto sin encabezado.\n")
+
+
+def test_skeleton_h1_equals_frontmatter_title(tmp_path: Path) -> None:
+    """FT-1: the imposed H1 and the frontmatter ``title`` are the same value."""
+    content = _skeleton(tmp_path, title="Arquero Ciego", body="# Otro encabezado\n")
+    fm = _frontmatter(content)
+    assert fm["title"] == "Arquero Ciego"
+    assert f"# {fm['title']}\n" in content
+
+
+def test_skeleton_leaves_later_h1_untouched(tmp_path: Path) -> None:
+    """FT-1: only the leading H1 is rewritten; any later H1 survives."""
+    body = "# Primer encabezado\n\nTexto.\n\n# Segundo encabezado\n\nMas texto.\n"
+    content = _skeleton(tmp_path, title="Arquero Ciego", body=body)
+    assert "# Arquero Ciego\n\nTexto." in content
+    assert "# Segundo encabezado\n\nMas texto." in content
+    assert "# Primer encabezado" not in content
+
+
+def test_skeleton_image_lands_right_after_imposed_h1(tmp_path: Path) -> None:
+    content = _skeleton(
+        tmp_path, title="Arquero Ciego",
+        body="# Otro encabezado\n\nTexto.\n",
+        image_rel="media/arquero-ciego.jpg",
+    )
+    assert content.endswith(
+        "---\n\n# Arquero Ciego\n![Arquero Ciego](media/arquero-ciego.jpg)\n\nTexto.\n"
+    )
+
+
+def test_skeleton_no_rewrite_keeps_bytes_identical(tmp_path: Path) -> None:
+    """FT-1: when the body already opens with ``# {title}`` there is no rewrite
+    and ``image_rel=None`` output stays byte-identical to the previous behavior."""
+    conv = FolderConvention("personajes", "", "Personaje", "draft", None)
+    content = _skeleton(
+        tmp_path, section="personajes", folder="", slug="arquero-ciego",
+        title="Arquero Ciego", body="# Arquero Ciego\n\nTexto.\n", convention=conv,
+    )
+    assert content.endswith("---\n\n# Arquero Ciego\n\nTexto.\n")
 
 
 # ---------------------------------------------------------------------------

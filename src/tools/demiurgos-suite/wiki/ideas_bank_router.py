@@ -83,14 +83,16 @@ class IdeaMaterializePreviewRequest(BaseModel):
     sensitive, traversal-safe); ``section`` must be one of the graph-indexed
     sections ``lore|personajes|referencias`` (``media`` is not ficha-eligible);
     ``folder`` is a traversal-safe relative path inside the section (empty =
-    the section root); ``title_hint`` optionally steers the AI-authored title;
-    ``slug`` optionally overrides the derived filename (normalized server-side,
-    never rejected).
+    the section root); ``title`` is the server-owned ficha title (drives the
+    frontmatter ``title`` and the body H1); ``slug`` optionally overrides the
+    derived filename (normalized server-side, never rejected); ``title_hint``
+    is kept for compatibility and no longer steers the filename.
     """
 
     world: str
     section: str
     folder: str = ""
+    title: str | None = None
     title_hint: str | None = None
     slug: str | None = None
 
@@ -104,13 +106,15 @@ class IdeaMaterializeTargetRequest(BaseModel):
     (case-sensitive, traversal-safe); ``section`` must be one of the
     graph-indexed sections ``lore|personajes|referencias``; ``folder`` is a
     traversal-safe relative path inside the section (empty = the section root);
-    ``title_hint`` and ``slug`` mirror the preview request so the instant
-    destination step resolves exactly the filename the preview will write.
+    ``title`` is the server-owned ficha title and ``slug`` mirrors the preview
+    request so the instant destination step resolves exactly the filename the
+    preview will write; ``title_hint`` is kept for compatibility.
     """
 
     world: str
     section: str
     folder: str = ""
+    title: str | None = None
     title_hint: str | None = None
     slug: str | None = None
 

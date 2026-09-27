@@ -148,6 +148,7 @@ const mockTreeNodes: FileNode[] = [
 
 /** Full 200 preview envelope for the happy-path materialize tests. */
 const previewResult: ideasApi.IdeaMaterializePreviewResult = {
+  title: "El Arquero Ciego",
   proposal_id: "materialize-abc",
   target: {
     world: "vibrantes",
@@ -164,8 +165,22 @@ const previewResult: ideasApi.IdeaMaterializePreviewResult = {
   discarded_relations: [{ target_id: "Fantasma", reason: "target_not_found" }],
 };
 
+/** Raw resolved destination fixture (spread by mocks that vary the slug). */
+const targetPayload: ideasApi.IdeaMaterializeTarget = previewResult.target;
+
 /** Instant target-resolution result for step 1 of the two-step flow. */
-const targetResult: ideasApi.IdeaMaterializeTarget = previewResult.target;
+const targetResult: ideasApi.IdeaMaterializeTargetResult = {
+  title: previewResult.title,
+  target: targetPayload,
+};
+
+/** A target-resolution result cloned with a different resolved slug/path. */
+function resolvedTarget(
+  overrides: Partial<ideasApi.IdeaMaterializeTarget> = {},
+  title: string = previewResult.title,
+): ideasApi.IdeaMaterializeTargetResult {
+  return { title, target: { ...targetPayload, ...overrides } };
+}
 
 /**
  * Preview envelope for an idea that carries an image (CI-2). The body
@@ -547,6 +562,7 @@ describe("IdeasWorkshop", () => {
         world: "vibrantes",
         section: "personajes",
         folder: "sistema-stal",
+        title: "El Arquero Ciego",
       }),
     );
 
@@ -563,7 +579,8 @@ describe("IdeasWorkshop", () => {
           world: "vibrantes",
           section: "personajes",
           folder: "sistema-stal",
-          // The generation uses the same server-resolved filename.
+          // The generation carries the title and the server-resolved filename.
+          title: "El Arquero Ciego",
           slug: "arquero-ciego",
         },
         expect.any(AbortSignal),
@@ -744,11 +761,12 @@ describe("IdeasWorkshop", () => {
     // fail — so this proves the picker no longer sends one.
     previewMaterializeTargetMock.mockImplementation((_ideaSlug, input) => {
       const slug = input.title_hint ? "from-title-hint" : "silpah-lince-de-chaae";
-      return Promise.resolve({
-        ...targetResult,
-        slug,
-        path: `sistema-stal/${slug}.md`,
-      });
+      return Promise.resolve(
+        resolvedTarget(
+          { slug, path: `sistema-stal/${slug}.md` },
+          "Silpah — Lince de Chaae",
+        ),
+      );
     });
     renderPage();
 
@@ -777,9 +795,13 @@ describe("IdeasWorkshop", () => {
           world: "vibrantes",
           section: "personajes",
           folder: "",
+          title: "Silpah — Lince de Chaae",
         },
       ),
     );
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.titleLabel")),
+    ).toHaveValue("Silpah — Lince de Chaae");
     expect(
       within(dialog).getByLabelText(tEs("ideas.materialize.filenameLabel")),
     ).toHaveValue("silpah-lince-de-chaae");
@@ -1048,11 +1070,12 @@ describe("IdeasWorkshop", () => {
       tEs("ideas.materialize.filenameLabel"),
     );
 
-    previewMaterializeTargetMock.mockResolvedValueOnce({
-      ...targetResult,
-      slug: "arquero-nuevo",
-      path: "sistema-stal/arquero-nuevo.md",
-    });
+    previewMaterializeTargetMock.mockResolvedValueOnce(
+      resolvedTarget({
+        slug: "arquero-nuevo",
+        path: "sistema-stal/arquero-nuevo.md",
+      }),
+    );
 
     debouncedFilenameEdit(input, "arquero-nuevo");
 
@@ -1067,6 +1090,7 @@ describe("IdeasWorkshop", () => {
         world: "vibrantes",
         section: "personajes",
         folder: "",
+        title: "El Arquero Ciego",
         slug: "arquero-nuevo",
       },
     );
@@ -1083,11 +1107,12 @@ describe("IdeasWorkshop", () => {
       tEs("ideas.materialize.filenameLabel"),
     );
 
-    previewMaterializeTargetMock.mockResolvedValueOnce({
-      ...targetResult,
-      slug: "mi-nombre-normalizado",
-      path: "sistema-stal/mi-nombre-normalizado.md",
-    });
+    previewMaterializeTargetMock.mockResolvedValueOnce(
+      resolvedTarget({
+        slug: "mi-nombre-normalizado",
+        path: "sistema-stal/mi-nombre-normalizado.md",
+      }),
+    );
 
     vi.useFakeTimers();
     try {
@@ -1125,11 +1150,12 @@ describe("IdeasWorkshop", () => {
       tEs("ideas.materialize.filenameLabel"),
     );
 
-    previewMaterializeTargetMock.mockResolvedValueOnce({
-      ...targetResult,
-      slug: "arquero-nuevo",
-      path: "sistema-stal/arquero-nuevo.md",
-    });
+    previewMaterializeTargetMock.mockResolvedValueOnce(
+      resolvedTarget({
+        slug: "arquero-nuevo",
+        path: "sistema-stal/arquero-nuevo.md",
+      }),
+    );
 
     debouncedFilenameEdit(input, "arquero-nuevo");
     await waitFor(() =>
@@ -1147,7 +1173,10 @@ describe("IdeasWorkshop", () => {
     await waitFor(() =>
       expect(previewMaterializeMock).toHaveBeenCalledWith(
         "arquero-ciego",
-        expect.objectContaining({ slug: "arquero-nuevo" }),
+        expect.objectContaining({
+          title: "El Arquero Ciego",
+          slug: "arquero-nuevo",
+        }),
         expect.any(AbortSignal),
       ),
     );
@@ -1174,11 +1203,12 @@ describe("IdeasWorkshop", () => {
           suggested_target: "personajes/sistema-stal/arquero-nuevo-2.md",
         },
       })
-      .mockResolvedValueOnce({
-        ...targetResult,
-        slug: "arquero-nuevo-2",
-        path: "sistema-stal/arquero-nuevo-2.md",
-      });
+      .mockResolvedValueOnce(
+        resolvedTarget({
+          slug: "arquero-nuevo-2",
+          path: "sistema-stal/arquero-nuevo-2.md",
+        }),
+      );
 
     debouncedFilenameEdit(input, "arquero-nuevo");
 
@@ -1213,6 +1243,7 @@ describe("IdeasWorkshop", () => {
         world: "vibrantes",
         section: "personajes",
         folder: "",
+        title: "El Arquero Ciego",
         slug: "arquero-nuevo-2",
       },
     );
@@ -1277,11 +1308,12 @@ describe("IdeasWorkshop", () => {
           suggested_target: "personajes/sistema-stal/arquero-nuevo-2.md",
         },
       })
-      .mockResolvedValueOnce({
-        ...targetResult,
-        slug: "otro-libre",
-        path: "sistema-stal/otro-libre.md",
-      });
+      .mockResolvedValueOnce(
+        resolvedTarget({
+          slug: "otro-libre",
+          path: "sistema-stal/otro-libre.md",
+        }),
+      );
     debouncedFilenameEdit(input, "arquero-nuevo");
 
     await waitFor(() =>
@@ -1312,6 +1344,7 @@ describe("IdeasWorkshop", () => {
         world: "vibrantes",
         section: "personajes",
         folder: "",
+        title: "El Arquero Ciego",
         slug: "otro-libre",
       },
     );
@@ -1403,8 +1436,10 @@ describe("IdeasWorkshop", () => {
       tEs("ideas.materialize.filenameLabel"),
     );
 
-    let resolveA: (value: ideasApi.IdeaMaterializeTarget) => void = () => {};
-    let resolveB: (value: ideasApi.IdeaMaterializeTarget) => void = () => {};
+    let resolveA: (value: ideasApi.IdeaMaterializeTargetResult) => void =
+      () => {};
+    let resolveB: (value: ideasApi.IdeaMaterializeTargetResult) => void =
+      () => {};
     previewMaterializeTargetMock
       .mockImplementationOnce(
         () =>
@@ -1436,18 +1471,20 @@ describe("IdeasWorkshop", () => {
 
     // B (newer) resolves first, A (older) resolves last and must not win.
     await act(async () => {
-      resolveB({
-        ...targetResult,
-        slug: "nombre-b",
-        path: "sistema-stal/nombre-b.md",
-      });
+      resolveB(
+        resolvedTarget({
+          slug: "nombre-b",
+          path: "sistema-stal/nombre-b.md",
+        }),
+      );
     });
     await act(async () => {
-      resolveA({
-        ...targetResult,
-        slug: "nombre-a",
-        path: "sistema-stal/nombre-a.md",
-      });
+      resolveA(
+        resolvedTarget({
+          slug: "nombre-a",
+          path: "sistema-stal/nombre-a.md",
+        }),
+      );
     });
 
     expect(
@@ -1465,12 +1502,10 @@ describe("IdeasWorkshop", () => {
     // different prefilled value than the fresh derived resolve — the test
     // fails if resetFilenameState never runs.
     previewMaterializeTargetMock.mockImplementation((_ideaSlug, input) => {
-      const name = input.slug?.trim() || targetResult.slug;
-      return Promise.resolve({
-        ...targetResult,
-        slug: name,
-        path: `sistema-stal/${name}.md`,
-      });
+      const name = input.slug?.trim() || targetPayload.slug;
+      return Promise.resolve(
+        resolvedTarget({ slug: name, path: `sistema-stal/${name}.md` }),
+      );
     });
     renderPage();
 
@@ -1517,6 +1552,447 @@ describe("IdeasWorkshop", () => {
     expect(
       reopenedCalls.some(([, reopenInput]) => reopenInput.slug === "otro-nombre"),
     ).toBe(false);
+  });
+
+  it("shows both destination fields with the title prefilled from the resolved title (FT-2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    renderPage();
+
+    const dialog = await openDestinationDialog(user);
+
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.titleLabel")),
+    ).toHaveValue("El Arquero Ciego");
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.filenameLabel")),
+    ).toHaveValue("arquero-ciego");
+  });
+
+  it("re-derives the file name from the title without sending a slug (FT-2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    renderPage();
+
+    const dialog = await openDestinationDialog(user);
+    const titleInput = within(dialog).getByLabelText(
+      tEs("ideas.materialize.titleLabel"),
+    );
+
+    previewMaterializeTargetMock.mockResolvedValueOnce(
+      resolvedTarget(
+        { slug: "otro-titulo", path: "sistema-stal/otro-titulo.md" },
+        "Otro Título",
+      ),
+    );
+
+    debouncedFilenameEdit(titleInput, "Otro Título");
+
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText("sistema-stal/otro-titulo.md"),
+      ).toBeInTheDocument(),
+    );
+    // The request carried the new title and NO slug: the server derives the name.
+    expect(previewMaterializeTargetMock).toHaveBeenLastCalledWith(
+      "arquero-ciego",
+      {
+        world: "vibrantes",
+        section: "personajes",
+        folder: "",
+        title: "Otro Título",
+      },
+    );
+    // The filename field mirrors the server-derived slug.
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.filenameLabel")),
+    ).toHaveValue("otro-titulo");
+  });
+
+  it("updates the title without overwriting a manually edited file name (FT-2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    renderPage();
+
+    const dialog = await openDestinationDialog(user);
+    const titleInput = within(dialog).getByLabelText(
+      tEs("ideas.materialize.titleLabel"),
+    );
+    const filenameInput = within(dialog).getByLabelText(
+      tEs("ideas.materialize.filenameLabel"),
+    );
+
+    // Manual file-name edit marks the name dirty.
+    previewMaterializeTargetMock.mockResolvedValueOnce(
+      resolvedTarget({
+        slug: "mi-nombre-manual",
+        path: "sistema-stal/mi-nombre-manual.md",
+      }),
+    );
+    debouncedFilenameEdit(filenameInput, "mi-nombre-manual");
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText("sistema-stal/mi-nombre-manual.md"),
+      ).toBeInTheDocument(),
+    );
+
+    // A title edit must keep the manual name and carry both values. The mock
+    // returns a title-derived slug to prove the client ignores it while dirty.
+    previewMaterializeTargetMock.mockResolvedValueOnce(
+      resolvedTarget(
+        {
+          slug: "derivado-del-titulo",
+          path: "sistema-stal/derivado-del-titulo.md",
+        },
+        "Título Nuevo",
+      ),
+    );
+    debouncedFilenameEdit(titleInput, "Título Nuevo");
+
+    await waitFor(() =>
+      expect(previewMaterializeTargetMock).toHaveBeenLastCalledWith(
+        "arquero-ciego",
+        {
+          world: "vibrantes",
+          section: "personajes",
+          folder: "",
+          title: "Título Nuevo",
+          slug: "mi-nombre-manual",
+        },
+      ),
+    );
+    // The returned slug never replaces the manual name.
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.filenameLabel")),
+    ).toHaveValue("mi-nombre-manual");
+    // The title shows the server-resolved value.
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.titleLabel")),
+    ).toHaveValue("Título Nuevo");
+  });
+
+  it("does not change the title when only the file name is edited (FT-2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    renderPage();
+
+    const dialog = await openDestinationDialog(user);
+    const filenameInput = within(dialog).getByLabelText(
+      tEs("ideas.materialize.filenameLabel"),
+    );
+
+    previewMaterializeTargetMock.mockResolvedValueOnce(
+      resolvedTarget({
+        slug: "otro-nombre",
+        path: "sistema-stal/otro-nombre.md",
+      }),
+    );
+    debouncedFilenameEdit(filenameInput, "otro-nombre");
+
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText("sistema-stal/otro-nombre.md"),
+      ).toBeInTheDocument(),
+    );
+    // The title is untouched and the request carried the current title + slug.
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.titleLabel")),
+    ).toHaveValue("El Arquero Ciego");
+    expect(previewMaterializeTargetMock).toHaveBeenLastCalledWith(
+      "arquero-ciego",
+      {
+        world: "vibrantes",
+        section: "personajes",
+        folder: "",
+        title: "El Arquero Ciego",
+        slug: "otro-nombre",
+      },
+    );
+  });
+
+  it("generates with the freshly resolved file name when Generate is clicked before the debounce (FT-2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    previewMaterializeMock.mockResolvedValue(previewResult);
+    renderPage();
+
+    const dialog = await openDestinationDialog(user);
+    const filenameInput = within(dialog).getByLabelText(
+      tEs("ideas.materialize.filenameLabel"),
+    );
+
+    // The next resolve returns the NEW name; the one shown is still the stale
+    // "arquero-ciego" until the pre-generate resolve lands.
+    previewMaterializeTargetMock.mockResolvedValueOnce(
+      resolvedTarget({
+        slug: "nombre-nuevo",
+        path: "sistema-stal/nombre-nuevo.md",
+      }),
+    );
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(filenameInput, { target: { value: "nombre-nuevo" } });
+      // Generate BEFORE the ~400 ms debounce elapses.
+      fireEvent.click(
+        within(dialog).getByRole("button", {
+          name: tEs("ideas.materialize.generate"),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await waitFor(() =>
+      expect(previewMaterializeTargetMock).toHaveBeenLastCalledWith(
+        "arquero-ciego",
+        expect.objectContaining({ slug: "nombre-nuevo" }),
+      ),
+    );
+    // The AI run carries the freshly resolved name, never the stale one.
+    await waitFor(() =>
+      expect(previewMaterializeMock).toHaveBeenCalledWith(
+        "arquero-ciego",
+        expect.objectContaining({
+          title: "El Arquero Ciego",
+          slug: "nombre-nuevo",
+        }),
+        expect.any(AbortSignal),
+      ),
+    );
+  });
+
+  it("generates with the freshly resolved title when Generate is clicked before the debounce (FT-2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    previewMaterializeMock.mockResolvedValue(previewResult);
+    renderPage();
+
+    const dialog = await openDestinationDialog(user);
+    const titleInput = within(dialog).getByLabelText(
+      tEs("ideas.materialize.titleLabel"),
+    );
+
+    previewMaterializeTargetMock.mockResolvedValueOnce(
+      resolvedTarget(
+        { slug: "titulo-nuevo", path: "sistema-stal/titulo-nuevo.md" },
+        "Título Nuevo",
+      ),
+    );
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(titleInput, { target: { value: "Título Nuevo" } });
+      fireEvent.click(
+        within(dialog).getByRole("button", {
+          name: tEs("ideas.materialize.generate"),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await waitFor(() =>
+      expect(previewMaterializeMock).toHaveBeenCalledWith(
+        "arquero-ciego",
+        expect.objectContaining({
+          title: "Título Nuevo",
+          slug: "titulo-nuevo",
+        }),
+        expect.any(AbortSignal),
+      ),
+    );
+  });
+
+  it("blocks generation when the pre-generate resolve hits a collision (FT-2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    renderPage();
+
+    const dialog = await openDestinationDialog(user);
+    const filenameInput = within(dialog).getByLabelText(
+      tEs("ideas.materialize.filenameLabel"),
+    );
+
+    previewMaterializeTargetMock.mockRejectedValueOnce({
+      status: 409,
+      detail: "El archivo ya existe",
+      collision: {
+        target: "personajes/sistema-stal/nombre-ocupado.md",
+        suggested_slug: "nombre-ocupado-2",
+        suggested_target: "personajes/sistema-stal/nombre-ocupado-2.md",
+      },
+    });
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.change(filenameInput, { target: { value: "nombre-ocupado" } });
+      fireEvent.click(
+        within(dialog).getByRole("button", {
+          name: tEs("ideas.materialize.generate"),
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The collision step is shown and no AI run is spent.
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText(tEs("ideas.preview.collisionTitle")),
+      ).toBeInTheDocument(),
+    );
+    expect(previewMaterializeMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps the title field in the collision step alongside the filename and suggestion (FT-2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockRejectedValueOnce({
+      status: 409,
+      detail: "El archivo ya existe",
+      collision: {
+        target: "personajes/sistema-stal/arquero-ciego.md",
+        suggested_slug: "arquero-ciego-2",
+        suggested_target: "personajes/sistema-stal/arquero-ciego-2.md",
+      },
+    });
+    renderPage();
+
+    const dialog = await openDestinationDialog(user);
+
+    await waitFor(() =>
+      expect(
+        within(dialog).getByText(tEs("ideas.preview.collisionTitle")),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.titleLabel")),
+    ).toHaveValue("El Arquero Ciego");
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.filenameLabel")),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByRole("button", {
+        name: tEs("ideas.materialize.useSuggestedName"),
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not leak the title or file name between ideas (FT-2)", async () => {
+    const user = userEvent.setup();
+    const other: IdeaDetail = {
+      ...detail,
+      id: "a2",
+      slug: "otra-idea",
+      title: "Otra Idea",
+    };
+    listIdeasMock.mockResolvedValue({
+      ideas: [
+        summary,
+        { ...summary, id: "a2", slug: "otra-idea", title: "Otra Idea" },
+      ],
+      total: 2,
+    });
+    getIdeaMock.mockImplementation((slug) =>
+      Promise.resolve(slug === "otra-idea" ? other : detail),
+    );
+    previewMaterializeTargetMock.mockImplementation((ideaSlug, input) => {
+      const base = ideaSlug === "otra-idea" ? "otra-idea" : "arquero-ciego";
+      const title =
+        input.title?.trim() ||
+        (ideaSlug === "otra-idea" ? "Otra Idea" : "El Arquero Ciego");
+      const name = input.slug?.trim() || base;
+      return Promise.resolve(
+        resolvedTarget({ slug: name, path: `sistema-stal/${name}.md` }, title),
+      );
+    });
+    renderPage();
+
+    // Idea A: dirty both drafts.
+    await user.click(
+      await screen.findByRole("button", { name: /El Arquero Ciego/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.button") }),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(tEs("ideas.materialize.worldLabel")),
+      "vibrantes",
+    );
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    );
+    const dialogA = await screen.findByRole("dialog", {
+      name: tEs("ideas.preview.title"),
+    });
+    debouncedFilenameEdit(
+      within(dialogA).getByLabelText(tEs("ideas.materialize.filenameLabel")),
+      "nombre-de-a",
+    );
+    await waitFor(() =>
+      expect(
+        within(dialogA).getByText("sistema-stal/nombre-de-a.md"),
+      ).toBeInTheDocument(),
+    );
+    debouncedFilenameEdit(
+      within(dialogA).getByLabelText(tEs("ideas.materialize.titleLabel")),
+      "Título de A",
+    );
+    await waitFor(() =>
+      expect(previewMaterializeTargetMock).toHaveBeenLastCalledWith(
+        "arquero-ciego",
+        expect.objectContaining({ title: "Título de A", slug: "nombre-de-a" }),
+      ),
+    );
+
+    // Close the whole materialize flow (destination → picker → closed).
+    await user.keyboard("{Escape}");
+    await screen.findByRole("dialog", {
+      name: tEs("ideas.materialize.heading"),
+    });
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", {
+          name: tEs("ideas.materialize.heading"),
+        }),
+      ).not.toBeInTheDocument(),
+    );
+
+    // Idea B: both fields come from B, not from A.
+    await user.click(screen.getByRole("button", { name: /Otra Idea/ }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.button") }),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(tEs("ideas.materialize.worldLabel")),
+      "vibrantes",
+    );
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    );
+    const dialogB = await screen.findByRole("dialog", {
+      name: tEs("ideas.preview.title"),
+    });
+
+    expect(
+      within(dialogB).getByLabelText(tEs("ideas.materialize.titleLabel")),
+    ).toHaveValue("Otra Idea");
+    expect(
+      within(dialogB).getByLabelText(tEs("ideas.materialize.filenameLabel")),
+    ).toHaveValue("otra-idea");
+    expect(previewMaterializeTargetMock).toHaveBeenLastCalledWith(
+      "otra-idea",
+      expect.not.objectContaining({ slug: "nombre-de-a" }),
+    );
   });
 
   it("legacy fallback marks the idea as used without creating a ficha (R-IM-10)", async () => {

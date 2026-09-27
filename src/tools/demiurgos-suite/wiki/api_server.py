@@ -8190,6 +8190,22 @@ def _materialize_existing_ids(reader: _GuidedGraphReader) -> list[str]:
     return ids
 
 
+def _resolve_ficha_title(
+    client_title: str | None, idea_title: str | None, idea_slug: str
+) -> str:
+    """Resolve the server-owned ficha title (FT-1).
+
+    Single source for the visible title that BOTH the frontmatter ``title`` and
+    the body H1 must equal: the client-supplied title (destination step) wins,
+    then the idea's own title, then the idea slug. Internal whitespace runs
+    collapse to a single space so the H1 and the frontmatter title never differ
+    by stray spacing. The filename is derived separately by
+    ``resolve_file_slug``; changing the file name never changes this value.
+    """
+    raw = (client_title or "").strip() or (idea_title or "").strip() or idea_slug
+    return re.sub(r"\s+", " ", raw).strip()
+
+
 def _resolve_materialize_target(
     world: str, section: str, folder: str, file_slug: str
 ) -> tuple[str, dict[str, Any], dict[str, str] | None]:
@@ -8349,11 +8365,13 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         raise problem("world.not_found")
     reader = _GuidedGraphReader(idx)
     candidates = build_grounding_candidates(reader)
-    # WU-6: the visible title (typed hint > idea title > idea slug) drives both
-    # the frontmatter title and the filename, while the provider request keeps
-    # its original idea-derived `title`/`slug` (prompt quality is protected).
-    ficha_title = (body.title_hint or "").strip() or (idea.title or "").strip() or idea.slug
-    file_slug = resolve_file_slug(idea.title, idea.slug, body.title_hint, body.slug)
+    # FT-1: the resolved ficha title (client title > idea title > idea slug,
+    # whitespace-collapsed) owns BOTH the frontmatter title and the body H1.
+    # The filename derives from it unless a client slug overrides it. The
+    # provider request keeps its original idea-derived `title`/`slug` untouched
+    # (the prompt is protected; the AI's own H1 is discarded by the skeleton).
+    ficha_title = _resolve_ficha_title(body.title, idea.title, idea.slug)
+    file_slug = resolve_file_slug(ficha_title, idea.slug, body.slug)
     title = (idea.title or "").strip() or idea.slug
     # CI-1: carry the idea's image. Read-only resolution here; the bytes are
     # copied only at confirm, so a missing/unusable image degrades to no image.
@@ -8434,6 +8452,7 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         "folder": folder,
         "slug": idea.slug,
         "file_slug": file_slug,
+        "title": ficha_title,
         "target": target,
         "content": content,
         "digest": digest,
@@ -8450,6 +8469,7 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
     )
     response = {
         "proposal_id": proposal_id,
+        "title": ficha_title,
         "target": target_info,
         "content": content,
         "proposed_relations": [
@@ -8495,13 +8515,16 @@ def materialize_target(slug: str, body: IdeaMaterializeTargetRequest, request: R
         # with the canonical containment semantics of _resolve_mundo_path.
         if _resolve_mundo_path(body.world, f"{body.section}/{folder}") is None:
             raise HTTPException(status_code=400, detail="Path traversal detectado")
-    file_slug = resolve_file_slug(idea.title, idea.slug, body.title_hint, body.slug)
+    # FT-1: resolve the server-owned ficha title (client title > idea title >
+    # idea slug); the filename derives from it unless a client slug overrides.
+    ficha_title = _resolve_ficha_title(body.title, idea.title, idea.slug)
+    file_slug = resolve_file_slug(ficha_title, idea.slug, body.slug)
     _target, target_info, collision = _resolve_materialize_target(
         world=body.world, section=body.section, folder=folder, file_slug=file_slug,
     )
     if collision is not None:
         return JSONResponse(status_code=409, content={"detail": "El archivo ya existe", "collision": collision})
-    return {"target": target_info}
+    return {"title": ficha_title, "target": target_info}
 
 
 app.include_router(

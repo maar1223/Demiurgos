@@ -102,6 +102,9 @@ export interface IdeaMaterializePreviewInput {
   /** Section-relative folder path; "" = the section root. */
   folder: string;
   title_hint?: string;
+  /** Resolved ficha title; it drives the body H1 and the frontmatter `title`.
+   *  Omitted falls back server-side to the idea title, then the idea slug. */
+  title?: string;
   /** Optional client filename slug (without extension); the server normalizes
    *  it and reports the resolved value back in `target.slug`/`target.path`. */
   slug?: string;
@@ -116,6 +119,9 @@ export interface IdeaMaterializeTargetInput {
   /** Section-relative folder path; "" = the section root. */
   folder: string;
   title_hint?: string;
+  /** Resolved ficha title; it drives the body H1 and the frontmatter `title`.
+   *  Omitted falls back server-side to the idea title, then the idea slug. */
+  title?: string;
   /** Optional client filename slug (without extension); normalized server-side,
    *  never rejected. `target.slug`/`target.path` are the resolved truth. */
   slug?: string;
@@ -129,6 +135,15 @@ export interface IdeaMaterializeTarget {
   folder: string;
   slug: string;
   path: string;
+}
+
+/** POST /api/ideas/{slug}/materialize-target response: the RESOLVED ficha
+ *  title (drives the body H1 and frontmatter `title`) plus the RESOLVED
+ *  destination. The UI displays both so what the user sees is what will be
+ *  written. */
+export interface IdeaMaterializeTargetResult {
+  title: string;
+  target: IdeaMaterializeTarget;
 }
 
 /** One AI-proposed relation that survived target/vocabulary validation. */
@@ -153,6 +168,8 @@ export interface MaterializeCollision {
 
 /** POST /api/ideas/{slug}/materialize-preview response (200). */
 export interface IdeaMaterializePreviewResult {
+  /** Resolved ficha title (server truth): the body H1 and frontmatter `title`. */
+  title: string;
   proposal_id: string;
   target: IdeaMaterializeTarget;
   content: string;
@@ -322,17 +339,18 @@ export async function previewMaterialize(
 
 /**
  * POST /api/ideas/{slug}/materialize-target — resolve the destination ficha
- * path and detect a collision WITHOUT spending an AI run (instant). Returns
- * the section-relative target; a 409 raises an ApiError carrying `collision`
- * at the top level, exactly like `previewMaterialize`, so the picker can offer
- * the `suggested_slug`. The optional `signal` lets the dialog abort the
- * request when the author cancels.
+ * path, the resolved title and any collision WITHOUT spending an AI run
+ * (instant). Returns `{title, target}` where `target` is the section-relative
+ * destination; a 409 raises an ApiError carrying `collision` at the top level,
+ * exactly like `previewMaterialize`, so the picker can offer the
+ * `suggested_slug`. The optional `signal` lets the dialog abort the request
+ * when the author cancels.
  */
 export async function previewMaterializeTarget(
   slug: string,
   input: IdeaMaterializeTargetInput,
   signal?: AbortSignal,
-): Promise<IdeaMaterializeTarget> {
+): Promise<IdeaMaterializeTargetResult> {
   const response = await fetch(ideasUrl([slug, "materialize-target"]), {
     method: "POST",
     // Raw fetch is only for the top-level `collision` payload; the explicit
@@ -365,8 +383,8 @@ export async function previewMaterializeTarget(
     throw error;
   }
 
-  const body = (await response.json()) as { target: IdeaMaterializeTarget };
-  return body.target;
+  const body = (await response.json()) as IdeaMaterializeTargetResult;
+  return { title: body.title, target: body.target };
 }
 
 /**
