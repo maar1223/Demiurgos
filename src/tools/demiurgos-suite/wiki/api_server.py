@@ -5398,6 +5398,49 @@ class _GuidedGraphReader:
     def links(self, entity_path: str, kind: str) -> list[dict]:
         return self._index.get_links(entity_path, kind)
 
+    def neighbors(self, entity_path: str) -> list[dict]:
+        """One-hop graph neighbourhood: forward links + backlinks, deduped.
+
+        Grounding expands each seed one hop so the entities the idea is
+        *related to* reach the model too (the Chaae defect: the region linked
+        to Pannj, but neither was advertised). Uses the index's PUBLIC
+        ``get_links`` surface for both directions; each raw link record
+        carries only ``{name,type,path}``, so it is resolved to the full
+        entity mapping (the same shape ``entities()``/``read()`` return)
+        because candidates need the canonical ``id`` and ``description``.
+        Dead/unresolved links (``path`` None) are skipped.
+        """
+        result: list[dict] = []
+        seen: set[str] = set()
+        for kind in ("forward", "backlinks"):
+            for link in self._index.get_links(entity_path, kind):
+                path = link.get("path") if isinstance(link, dict) else None
+                if not isinstance(path, str) or not path or path in seen:
+                    continue
+                seen.add(path)
+                entity = self.read(path)
+                if entity is not None:
+                    result.append(entity)
+        return result
+
+    def hubs(self) -> list[dict]:
+        """The world's most connected entities, as full entity mappings.
+
+        Only consulted when a search matched nothing at all (blind map). The
+        index's PUBLIC ``get_links(None, "hubs")`` branch delegates to the
+        private ``EntityGraphIndex._get_hubs`` helper; each raw record is
+        resolved to its full mapping so the fallback can build candidates.
+        """
+        result: list[dict] = []
+        for link in self._index.get_links(None, "hubs"):
+            path = link.get("path") if isinstance(link, dict) else None
+            if not isinstance(path, str) or not path:
+                continue
+            entity = self.read(path)
+            if entity is not None:
+                result.append(entity)
+        return result
+
 
 def _resolve_entity_path(idx: "EntityGraphIndex", name: str) -> str | None:
     """Resolve an entity display name to its graph path. Returns None if not found."""
@@ -8364,7 +8407,11 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
     if idx is None:
         raise problem("world.not_found")
     reader = _GuidedGraphReader(idx)
-    candidates = build_grounding_candidates(reader)
+    # Graph-aware grounding (materialize-graph-grounding): seed from the idea
+    # TITLE, broaden with a bounded body excerpt, then expand one hop. The
+    # domain bounds the body itself (BODY_EXCERPT_CHARS); the payload budget is
+    # only a guard, never a target.
+    candidates = build_grounding_candidates(reader, idea_title=idea.title, idea_body=idea.body)
     # FT-1: the resolved ficha title (client title > idea title > idea slug,
     # whitespace-collapsed) owns BOTH the frontmatter title and the body H1.
     # The filename derives from it unless a client slug overrides it. The

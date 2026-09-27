@@ -7955,6 +7955,22 @@ class TestMaterializePreview:
         assert "[[Rhyz::Rhyz]]" in payload["content"]
         assert "Personaje::Inventado" not in payload["content"]
 
+    def test_preview_grounds_candidates_from_the_graph(self, client: TestClient, monkeypatch):
+        """Integration (materialize-graph-grounding): the handler advertises
+        graph-grounded candidates on the provider request — the seed entity
+        reaches the model instead of an arbitrary file-order slice."""
+        _write_idea()
+        entities = [
+            _materialize_entity("personajes/rhyz.md", id="Rhyz::Rhyz", title="Rhyz", type="Personaje"),
+        ]
+        provider = _wire_materialize(
+            monkeypatch, lambda request, _c: _materialize_delta(request), entities=entities,
+        )
+        resp = _materialize_preview(client)
+        assert resp.status_code == 200, resp.text
+        assert len(provider.requests) == 1
+        assert [c["id"] for c in provider.requests[0].candidates] == ["Rhyz::Rhyz"]
+
     def test_out_of_vocab_rel_type_dropped_not_502(self, client: TestClient, monkeypatch):
         """Binding clarification: an out-of-vocabulary rel_type drops THAT
         relation into discarded_relations — never a whole-envelope failure."""

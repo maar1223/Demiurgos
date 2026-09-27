@@ -18,7 +18,9 @@ inventing one:
   clarification: only canonical-``id`` entities are advertised; a relation is
   kept only when its target exists AND its ``rel_type`` is in the vocabulary,
   anything else is dropped and reported (never a stub, never an envelope
-  failure).
+  failure). Grounding is GRAPH-AWARE (materialize-graph-grounding): the idea
+  title seeds a graph search, the near-best seeds are expanded one hop, and the
+  payload budget is only a guard — never a target to fill.
 """
 
 from __future__ import annotations
@@ -69,8 +71,33 @@ _SECTION_DEFAULT_TYPE: dict[str, str] = {
     "referencias": "referencia",
 }
 
+# Seed selection bounds (materialize-graph-grounding, MG-1). The candidate set
+# is the GRAPH NEIGHBOURHOOD of the idea, so these are deliberately small: the
+# best score sets the relative bar, a handful of near-best hits seed the
+# expansion, and the payload bound only guards the tail.
+#
+# SEED_RATIO is 0.95, not 0.90 (measured tuning against the user's real world).
+# On "Silpah — Lince Relámpago de Chaae" the real scores were 15.06, 13.97,
+# 11.76, 11.69: 13.97/15.06 = 0.928 slipped a noisy second seed ("Eneagrama")
+# past a 0.90 bar, and that seed's one-hop expansion dragged in its 8-entity
+# family (10 candidates, 8 of them noise). At 0.95 the bar is 14.31, so only
+# Chaae seeds and the result is exactly [Region::Chaae, Region::Pannj]. A sweep
+# of the 12 real idea titles showed 0.95 costs no coverage (1 seed for 10, 3 for
+# one genuinely flat cluster, never 0 — the best always enters). Crucially, a
+# strong second candidate that is genuinely related to the top seed still
+# arrives through the 1-hop EXPANSION (that is exactly how Pannj arrives), so
+# seeds only need to be confident anchors — a strict bar is safer than it looks.
+SEED_RATIO = 0.95
+SEED_LIMIT = 5
+# The body is only a fallback broadening signal; a bounded excerpt keeps the
+# query sharp and prevents the idea's full prose from re-introducing noise.
+BODY_EXCERPT_CHARS = 400
+
 __all__ = [
+    "BODY_EXCERPT_CHARS",
     "FolderConvention",
+    "SEED_LIMIT",
+    "SEED_RATIO",
     "VALID_FICHA_STATUSES",
     "build_ficha_skeleton",
     "build_grounding_candidates",
@@ -308,34 +335,125 @@ def _inject_image_line(body: str, title: str, image_rel: str) -> str:
 def build_grounding_candidates(
     reader: object,
     *,
-    section_filter: str | None = None,
+    idea_title: str,
+    idea_body: str = "",
 ) -> list[dict[str, str]]:
-    """Bounded, ranked grounding candidates from an injected graph reader.
+    """Graph-aware grounding candidates from an injected graph reader.
 
-    The reader must expose ``search(query)`` returning ranked hits and
-    ``read(path)`` returning a full entity mapping, like
-    ``_GuidedGraphReader`` (api_server.py:5263-5277). When the reader exposes
-    the ``entities()`` enumeration seam (real index, R-IM-03/06), it is used
-    directly — ``search("*")`` returns ``[]`` against the real index by
-    design, so the search/read pair would silently see an empty world. Only
-    entities with a non-empty canonical ``id`` are advertised
+    WHY the graph is consulted at all: the model can only propose relations to
+    entities it can see. Sending an arbitrary slice of the world (the previous
+    file-order prefix) plainly failed — the entities that mattered were never
+    advertised, so the model correctly proposed nothing. The graph is the
+    authority for "what exists" and "what is related"; the idea title is the
+    sharpest signal for "which" of those entities the idea is about.
+
+    Selection is deterministic and staged:
+
+    1. precise: ``reader.search(idea_title)``;
+    2. broaden (only when stage 1 matched nothing): search the title plus a
+       BOUNDED body excerpt;
+    3. blind map (only when nothing matched): ``reader.hubs()``;
+    4. hybrid seed pick: the best score sets a relative bar
+       (``score >= SEED_RATIO * best``), the best always enters, a small
+       ceiling (``SEED_LIMIT``) caps the seeds, ties break by ``id`` asc;
+    5. one-hop expansion: forward links + backlinks per seed, deduped by id,
+       neighbours ranked by how many seeds connect to them;
+    6. the payload budget is ONLY A GUARD, never a target: we emit the natural
+       neighbourhood and stop at ``MAX_CANDIDATES`` / the byte bound from the
+       TAIL. Because seeds precede neighbours, a neighbour is dropped before a
+       seed — filling the budget must never crowd out a seed again.
+
+    A bad seed is dangerous precisely because the expansion multiplies it: one
+    off-topic entity drags in its whole neighbourhood, so seed selection stays
+    conservative (near-best only) while the budget never drives the choice.
+    Only entities with a non-empty canonical ``id`` are advertised
     (``graph_indexer._entity_from_file`` sets ``id`` only when
-    ``is_canonical_id``, :212-215); legacy entities with empty ids are never
-    advertised. Rank order (the reader's enumeration / ``search("*")``
-    order) is preserved; gathering stops at ``MAX_CANDIDATES`` or
-    ``MAX_CANDIDATE_PAYLOAD_CHARS`` serialized chars, whichever comes first,
-    dropping the lowest-ranked remainder. An empty world yields an empty list
-    — still a valid ficha (R-IM-03 scenario).
+    ``is_canonical_id``); legacy entities with empty ids are never advertised.
+    An empty world yields an empty list (R-IM-03 scenario).
+    """
+    title = str(idea_title or "").strip()
+    body_excerpt = _bounded_body_excerpt(idea_body)
+
+    # Stage 1 — the title is about WHAT the idea is; search it directly.
+    hits: list[Any] = []
+    if title:
+        hits = _usable_search_hits(_reader_search(reader, title))
+    # Stage 2 — only when the title matched nothing: the bounded body excerpt
+    # adds context without dragging in the idea's whole prose. Skipped when it
+    # would merely repeat the title (empty body), which also keeps the query
+    # log deterministic.
+    if not hits:
+        combined = f"{title} {body_excerpt}".strip()
+        if combined and combined != title:
+            hits = _usable_search_hits(_reader_search(reader, combined))
+    if not hits:
+        # Stage 3 — nothing matched: fall back to the world's hubs rather than
+        # the file-order prefix that caused the original defect.
+        return _bounded_candidates(_reader_hubs(reader))
+
+    lookup = _reader_entity_lookup(reader)
+    seeds = _select_seed_hits(hits)
+    seed_entities: list[Mapping[str, Any]] = []
+    seed_paths: list[str] = []
+    for hit in seeds:
+        entity = _resolve_seed_entity(reader, hit, lookup)
+        if entity is None or not _canonical_entity_id(entity):
+            continue
+        seed_entities.append(entity)
+        path = hit.get("path")
+        if isinstance(path, str) and path:
+            seed_paths.append(path)
+
+    # One-hop expansion. A neighbour reached by several seeds is stronger
+    # evidence than one reached by a single seed, so it ranks first; id breaks
+    # ties for a stable, deterministic order.
+    connections: dict[str, int] = {}
+    neighbours: dict[str, Mapping[str, Any]] = {}
+    for path in seed_paths:
+        for neighbour in _reader_neighbors(reader, path):
+            if not isinstance(neighbour, Mapping):
+                continue
+            neighbour_id = _canonical_entity_id(neighbour)
+            if not neighbour_id:
+                continue
+            connections[neighbour_id] = connections.get(neighbour_id, 0) + 1
+            neighbours.setdefault(neighbour_id, neighbour)
+    ordered_neighbours = sorted(
+        neighbours.values(),
+        key=lambda entity: (
+            -connections.get(_canonical_entity_id(entity), 0),
+            _canonical_entity_id(entity),
+        ),
+    )
+
+    # Dedupe by canonical id across seeds and neighbours (seeds keep priority).
+    ordered: list[Mapping[str, Any]] = []
+    seen_ids: set[str] = set()
+    for entity in [*seed_entities, *ordered_neighbours]:
+        canonical_id = _canonical_entity_id(entity)
+        if not canonical_id or canonical_id in seen_ids:
+            continue
+        seen_ids.add(canonical_id)
+        ordered.append(entity)
+    return _bounded_candidates(ordered)
+
+
+def _bounded_candidates(entities: Iterable[Any]) -> list[dict[str, str]]:
+    """Serialize ordered entities into the bounded candidate shape.
+
+    The budget is a GUARD, not a target. Candidates are emitted in the order
+    given (seeds first, then neighbours) and gathering stops only when
+    ``MAX_CANDIDATES`` or ``MAX_CANDIDATE_PAYLOAD_CHARS`` would be exceeded,
+    dropping the TAIL. Callers order seeds before neighbours, so truncation can
+    only ever drop a neighbour — never crowd out a seed.
     """
     candidates: list[dict[str, str]] = []
     payload_chars = 0
-    for entity in _iter_entity_mappings(reader):
+    for entity in entities:
         if not isinstance(entity, Mapping):
             continue
-        canonical_id = entity.get("id")
-        if not isinstance(canonical_id, str) or not canonical_id.strip():
-            continue
-        if section_filter is not None and not str(entity.get("path", "")).startswith(f"{section_filter}/"):
+        canonical_id = _canonical_entity_id(entity)
+        if not canonical_id:
             continue
         title = entity.get("title") or entity.get("name") or ""
         summary = str(entity.get("description") or "")[:MAX_CANDIDATE_SUMMARY_CHARS]
@@ -351,6 +469,91 @@ def build_grounding_candidates(
         candidates.append(candidate)
         payload_chars += len(serialized)
     return candidates
+
+
+def _select_seed_hits(hits: Sequence[Any]) -> list[Mapping[str, Any]]:
+    """Hybrid seed pick from ordered search hits (the "what" of the idea).
+
+    Readers whose hits carry a numeric ``score`` are ranked by it: the best
+    score sets a relative bar (``SEED_RATIO * best``) so only near-best hits
+    become seeds, ordered score desc with ``id`` asc ties, capped at
+    ``SEED_LIMIT``; the best is always kept even if the bar would exclude it.
+    Readers whose hits carry no score (test fakes) fall back to the returned
+    order and treat that order as the ranking. Pathless/duplicate hits are
+    dropped before scoring.
+    """
+    unique: list[Mapping[str, Any]] = []
+    seen_paths: set[str] = set()
+    for hit in _usable_search_hits(hits):
+        path = hit.get("path")
+        if path in seen_paths:
+            continue
+        seen_paths.add(path)
+        unique.append(hit)
+    if not unique:
+        return []
+
+    def _score(hit: Mapping[str, Any]) -> float:
+        return float(hit["score"])
+
+    def _tie_id(hit: Mapping[str, Any]) -> str:
+        identifier = hit.get("id")
+        if isinstance(identifier, str) and identifier:
+            return identifier
+        return str(hit.get("path") or "")
+
+    scored = all(
+        isinstance(hit.get("score"), (int, float)) and not isinstance(hit.get("score"), bool)
+        for hit in unique
+    )
+    if not scored:
+        # Scoreless seam: the returned order IS the ranking.
+        return unique[:SEED_LIMIT]
+
+    best = max(_score(hit) for hit in unique)
+    threshold = SEED_RATIO * best
+    kept = [hit for hit in unique if _score(hit) >= threshold]
+    if not kept:
+        # Defensive: the best always enters, whatever the scores are.
+        kept = [min(unique, key=lambda hit: (-_score(hit), _tie_id(hit)))]
+    kept.sort(key=lambda hit: (-_score(hit), _tie_id(hit)))
+    return kept[:SEED_LIMIT]
+
+
+def _usable_search_hits(hits: Iterable[Any]) -> list[Mapping[str, Any]]:
+    """Keep only search hits that name a real path (required for expansion)."""
+    return [
+        hit
+        for hit in hits
+        if isinstance(hit, Mapping)
+        and isinstance(hit.get("path"), str)
+        and bool(hit.get("path"))
+    ]
+
+
+def _resolve_seed_entity(
+    reader: object,
+    hit: Mapping[str, Any],
+    lookup: Mapping[str, Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
+    """Resolve a search hit to its full entity mapping.
+
+    The real seam (``graph_models.EntityHit``) carries display fields but NOT
+    the canonical ``id``, so the entity is looked up by path — first in the
+    reader's ``entities()`` enumeration, then via ``read(path)``. A hit that
+    already carries its canonical id (fake readers) is used as-is.
+    """
+    if _canonical_entity_id(hit):
+        return hit
+    path = hit.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    entity = lookup.get(path)
+    if isinstance(entity, Mapping):
+        return entity
+    resolved = _reader_read(reader, path)
+    return resolved if isinstance(resolved, Mapping) else None
+
 
 
 def validate_relations(
@@ -541,9 +744,8 @@ def _reader_entities(reader: object) -> list[Any] | None:
 
     The reader is the caller's seam; ``_GuidedGraphReader`` exposes the real
     index enumeration (R-IM-03/06 grounding). Returns None when the reader
-    does not expose the method so callers fall back to the legacy
-    ``search("*")`` + ``read(path)`` pattern (readers without the seam keep
-    their exact previous behavior).
+    does not expose the method; callers then resolve individual seeds through
+    ``read(path)``.
     """
     entities = getattr(reader, "entities", None)
     if not callable(entities):
@@ -552,45 +754,71 @@ def _reader_entities(reader: object) -> list[Any] | None:
     return list(items) if isinstance(items, (list, tuple)) else None
 
 
-def _iter_entity_mappings(reader: object) -> Iterable[Any]:
-    """Yield full entity mappings from the reader, enumeration-first.
+def _reader_entity_lookup(reader: object) -> dict[str, Mapping[str, Any]]:
+    """Index the reader's full entities by ``path`` for seed resolution.
 
-    Prefers the real ``entities()`` seam (full entities in index insertion
-    order); falls back to the legacy ``search("*")`` + ``read(path)`` pair so
-    readers without the new method behave exactly as before. Failures
-    propagate so a broken graph is never silently mistaken for an empty world
-    (fail loud, not empty).
+    Uses the ``entities()`` enumeration seam (the real index, R-IM-03/06) so a
+    scoreless search hit can be upgraded to its full mapping; readers without
+    the seam fall back to ``read(path)`` in ``_resolve_seed_entity``.
     """
+    lookup: dict[str, Mapping[str, Any]] = {}
     enumerated = _reader_entities(reader)
-    if enumerated is not None:
-        for entity in enumerated:
-            yield entity
-        return
-    for hit in _reader_search(reader):
-        path = hit.get("path") if isinstance(hit, Mapping) else None
-        if not isinstance(path, str) or not path:
+    if enumerated is None:
+        return lookup
+    for entity in enumerated:
+        if not isinstance(entity, Mapping):
             continue
-        entity = _reader_read(reader, path)
-        if entity is not None:
-            yield entity
+        path = entity.get("path")
+        if isinstance(path, str) and path and path not in lookup:
+            lookup[path] = entity
+    return lookup
 
 
-def _reader_search(reader: object) -> list[Any]:
-    """Ranked hits from the injected reader (``search("*")`` order).
+def _reader_search(reader: object, query: str) -> list[Any]:
+    """Ranked hits for *query* from the injected reader.
 
     The reader is the caller's seam; failures propagate so a broken graph is
     never silently mistaken for an empty world (fail loud, not empty).
     """
     search = getattr(reader, "search", None)
-    if search is None:
+    if not callable(search):
         return []
-    hits = search("*")
+    hits = search(query)
     return list(hits) if isinstance(hits, (list, tuple)) else []
 
 
 def _reader_read(reader: object, path: str) -> Any:
     """Full entity mapping for *path* from the injected reader."""
     read = getattr(reader, "read", None)
-    if read is None:
+    if not callable(read):
         return None
     return read(path)
+
+
+def _reader_neighbors(reader: object, path: str) -> list[Any]:
+    """One-hop neighbours of *path* from the injected reader."""
+    neighbors = getattr(reader, "neighbors", None)
+    if not callable(neighbors):
+        return []
+    items = neighbors(path)
+    return list(items) if isinstance(items, (list, tuple)) else []
+
+
+def _reader_hubs(reader: object) -> list[Any]:
+    """Most connected entities from the injected reader (blind-map fallback)."""
+    hubs = getattr(reader, "hubs", None)
+    if not callable(hubs):
+        return []
+    items = hubs()
+    return list(items) if isinstance(items, (list, tuple)) else []
+
+
+def _canonical_entity_id(entity: object) -> str:
+    """Non-empty canonical ``id`` of an entity mapping, else ``""``."""
+    canonical_id = entity.get("id") if isinstance(entity, Mapping) else None
+    return canonical_id if isinstance(canonical_id, str) and canonical_id.strip() else ""
+
+
+def _bounded_body_excerpt(body: str) -> str:
+    """First ``BODY_EXCERPT_CHARS`` chars of *body*, whitespace-collapsed."""
+    return " ".join(str(body or "").split())[:BODY_EXCERPT_CHARS]

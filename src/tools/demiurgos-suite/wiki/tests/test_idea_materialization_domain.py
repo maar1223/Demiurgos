@@ -21,7 +21,9 @@ import pytest  # noqa: E402
 import yaml  # noqa: E402
 
 from idea_materialization_domain import (  # noqa: E402
+    BODY_EXCERPT_CHARS,
     FolderConvention,
+    SEED_LIMIT,
     build_ficha_skeleton,
     build_grounding_candidates,
     probe_folder_convention,
@@ -87,20 +89,49 @@ def _skeleton(
     )
 
 
-class _FakeReader:
-    """Ranked entity source mirroring ``_GuidedGraphReader``'s search/read seam."""
+class _GraphFakeReader:
+    """Deterministic in-memory graph-reader fake (no real index, no randomness).
 
-    def __init__(self, entities: list[dict]) -> None:
-        self._entities = list(entities)
+    ``hits`` maps an exact query to its ranked hit list, ``neighbours`` maps a
+    seed path to its full neighbour entities, ``hubs`` is the blind-map
+    fallback, and ``entities`` supplies full mappings so scoreless hits (the
+    real ``EntityHit`` shape) resolve to a canonical ``id``.
+    """
+
+    def __init__(self, *, hits=None, entities=None, neighbours=None, hubs=None) -> None:
+        self._hits = {query: [dict(h) for h in value] for query, value in (hits or {}).items()}
+        self._entities = {entity["path"]: dict(entity) for entity in (entities or [])}
+        self._neighbours = {
+            path: [dict(entity) for entity in value] for path, value in (neighbours or {}).items()
+        }
+        self._hubs = [dict(entity) for entity in (hubs or [])]
+        self.search_queries: list[str] = []
 
     def search(self, query: str) -> list[dict]:
-        return [{"path": e["path"]} for e in self._entities]
+        self.search_queries.append(query)
+        return [dict(hit) for hit in self._hits.get(query, [])]
 
     def read(self, path: str) -> dict | None:
-        for entity in self._entities:
-            if entity["path"] == path:
-                return dict(entity)
-        return None
+        entity = self._entities.get(path)
+        return dict(entity) if entity is not None else None
+
+    def entities(self) -> list[dict]:
+        return [dict(entity) for entity in self._entities.values()]
+
+    def neighbors(self, path: str) -> list[dict]:
+        return [dict(entity) for entity in self._neighbours.get(path, [])]
+
+    def hubs(self) -> list[dict]:
+        return [dict(entity) for entity in self._hubs]
+
+
+def _hit(path: str, score: float | None = None, **extra) -> dict:
+    """A ranked search hit; omitted ``score`` exercises the scoreless seam."""
+    hit: dict = {"path": path}
+    if score is not None:
+        hit["score"] = score
+    hit.update(extra)
+    return hit
 
 
 def _entity(path: str, *, id: str = "", title: str = "", type: str = "concepto",
@@ -598,100 +629,240 @@ def test_skeleton_no_rewrite_keeps_bytes_identical(tmp_path: Path) -> None:
 
 
 def test_candidates_empty_world_is_empty_list() -> None:
-    assert build_grounding_candidates(_FakeReader([])) == []
+    assert build_grounding_candidates(_GraphFakeReader(), idea_title="Nada") == []
 
 
 def test_candidates_skip_entities_without_canonical_id() -> None:
-    reader = _FakeReader([
-        _entity("lore/a/one.md", id="Tema::Uno", title="Uno"),
-        _entity("lore/a/two.md", id="", title="Dos"),
-        _entity("lore/a/three.md", id="Tema::Tres", title="Tres"),
-    ])
-    candidates = build_grounding_candidates(reader)
-    assert [c["id"] for c in candidates] == ["Tema::Uno", "Tema::Tres"]
+    reader = _GraphFakeReader(
+        hits={"Tema": [_hit("lore/a/two.md", 5.0)]},
+        entities=[_entity("lore/a/two.md", id="", title="Dos")],
+    )
+    assert build_grounding_candidates(reader, idea_title="Tema") == []
 
 
 def test_candidates_shape_and_summary_truncated_to_160() -> None:
-    reader = _FakeReader([
-        _entity("lore/a/one.md", id="Tema::Uno", title="Uno", type="lugar", description="d" * 200),
-    ])
-    assert build_grounding_candidates(reader) == [
+    reader = _GraphFakeReader(
+        hits={"Uno": [_hit("lore/a/one.md", 9.0)]},
+        entities=[
+            _entity("lore/a/one.md", id="Tema::Uno", title="Uno", type="lugar", description="d" * 200)
+        ],
+    )
+    assert build_grounding_candidates(reader, idea_title="Uno") == [
         {"id": "Tema::Uno", "title": "Uno", "type": "lugar", "summary": "d" * 160},
     ]
 
 
-def test_candidates_preserve_rank_order_and_cap_at_max_candidates() -> None:
-    reader = _FakeReader([
-        _entity(f"lore/a/e{i}.md", id=f"Tema::E{i}", title=f"E{i}") for i in range(30)
-    ])
-    candidates = build_grounding_candidates(reader)
-    assert len(candidates) == MAX_CANDIDATES
-    assert [c["id"] for c in candidates] == [f"Tema::E{i}" for i in range(25)]
-
-
-def test_candidates_bounded_by_payload_chars_drops_lowest_ranked() -> None:
-    reader = _FakeReader([
-        _entity(f"lore/a/e{i}.md", id=f"Tema::E{i}", title=f"E{i}", description="d" * 160)
-        for i in range(30)
-    ])
-    candidates = build_grounding_candidates(reader)
-    assert len(candidates) < MAX_CANDIDATES
-    payload = sum(len(json.dumps(c, ensure_ascii=False, separators=(",", ":"))) for c in candidates)
-    assert payload <= MAX_CANDIDATE_PAYLOAD_CHARS
-    assert candidates[0]["id"] == "Tema::E0"
-
-
-def test_candidates_section_filter_keeps_matching_paths() -> None:
-    reader = _FakeReader([
-        _entity("lore/a/one.md", id="Tema::Uno", title="Uno"),
-        _entity("personajes/Daest.md", id="daest", title="Daest", type="Personaje"),
-    ])
-    candidates = build_grounding_candidates(reader, section_filter="lore")
-    assert [c["id"] for c in candidates] == ["Tema::Uno"]
-
-
 def test_candidates_skip_hits_without_path() -> None:
-    class _PathlessReader(_FakeReader):
-        def search(self, query: str) -> list[dict]:
-            return [{"name": "no-path"}]
-
-    assert build_grounding_candidates(_PathlessReader([_entity("lore/a/one.md", id="Tema::Uno")])) == []
+    reader = _GraphFakeReader(hits={"Idea": [{"name": "sin-ruta"}]})
+    assert build_grounding_candidates(reader, idea_title="Idea") == []
 
 
-def test_candidates_use_entities_seam_when_search_is_empty() -> None:
-    """BUG-B regression at the domain level: grounding must use the reader's
-    ``entities()`` enumeration seam — ``search("*")`` returns [] against the
-    real index by design, so a reader mirroring that behavior must still
-    yield candidates."""
-    class _RealIndexLikeReader(_FakeReader):
-        def entities(self) -> list[dict]:
-            return [dict(e) for e in self._entities]
+def test_seed_relative_bar_keeps_only_near_best() -> None:
+    """Measured Chaae gap: scores 15.06 / 11.76 / 11.69 → only 15.06 seeds
+    (11.76 < SEED_RATIO * 15.06)."""
+    entities = [
+        _entity("lore/chaae.md", id="Region::Chaae", title="Chaae"),
+        _entity("lore/a.md", id="Region::A", title="A"),
+        _entity("lore/b.md", id="Region::B", title="B"),
+    ]
+    reader = _GraphFakeReader(
+        hits={"Chaae": [_hit("lore/chaae.md", 15.06), _hit("lore/a.md", 11.76), _hit("lore/b.md", 11.69)]},
+        entities=entities,
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Chaae")
+    assert [c["id"] for c in candidates] == ["Region::Chaae"]
 
-        def search(self, query: str) -> list[dict]:
-            return []
 
-    reader = _RealIndexLikeReader([
-        _entity("personajes/rhyz.md", id="Rhyz::Rhyz", title="Rhyz", type="Personaje"),
-    ])
-    assert build_grounding_candidates(reader) == [
-        {"id": "Rhyz::Rhyz", "title": "Rhyz", "type": "Personaje", "summary": ""},
+def test_measured_silpah_bar_admits_only_chaae_as_seed() -> None:
+    """Regression on the REAL measured shape ("Silpah — Lince Relámpago de
+    Chaae"): 13.97/15.06 = 0.928 is under SEED_RATIO=0.95, so Eneagrama is NOT
+    a seed and its 8-entity family never enters; Chaae's genuine neighbour
+    Pannj still arrives through the 1-hop expansion."""
+    chaae = _entity("lore/chaae.md", id="Region::Chaae", title="Chaae")
+    eneagrama = _entity("lore/eneagrama.md", id="Canon::Eneagrama", title="Eneagrama")
+    pannj = _entity("lore/pannj.md", id="Region::Pannj", title="Pannj")
+    other = _entity("lore/x.md", id="Tema::X", title="X")
+    reader = _GraphFakeReader(
+        hits={"Silpah": [
+            _hit("lore/chaae.md", 15.06),
+            _hit("lore/eneagrama.md", 13.97),
+            _hit("lore/pannj.md", 11.76),
+            _hit("lore/x.md", 11.69),
+        ]},
+        entities=[chaae, eneagrama, pannj, other],
+        neighbours={"lore/chaae.md": [pannj]},
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Silpah")
+    ids = [c["id"] for c in candidates]
+    # 0.95 * 15.06 = 14.31 → only Chaae seeds; Eneagrama would advertise a
+    # canonical id if it had seeded, so its absence proves it did not.
+    assert ids == ["Region::Chaae", "Region::Pannj"]
+    assert "Canon::Eneagrama" not in ids
+    assert reader.search_queries == ["Silpah"]
+
+
+def test_seed_bar_still_admits_a_genuinely_close_pair() -> None:
+    """The strict bar must not collapse a real cluster: 15.00/15.06 = 0.996 is
+    well above 0.95, so both hits seed and their neighbours follow."""
+    a = _entity("lore/a.md", id="Tema::A", title="A")
+    b = _entity("lore/b.md", id="Tema::B", title="B")
+    near = _entity("lore/na.md", id="Tema::NA", title="NA")
+    reader = _GraphFakeReader(
+        hits={"Cluster": [_hit("lore/a.md", 15.06), _hit("lore/b.md", 15.00)]},
+        entities=[a, b, near],
+        neighbours={"lore/a.md": [near]},
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Cluster")
+    assert [c["id"] for c in candidates] == ["Tema::A", "Tema::B", "Tema::NA"]
+
+
+def test_seed_weak_flat_distribution_still_yields_the_best() -> None:
+    """A flat/weak distribution still returns a candidate set; the best always
+    enters (the list is never empty when there is at least one hit)."""
+    entities = [
+        _entity("lore/x.md", id="Tema::X", title="X"),
+        _entity("lore/y.md", id="Tema::Y", title="Y"),
+        _entity("lore/z.md", id="Tema::Z", title="Z"),
+    ]
+    reader = _GraphFakeReader(
+        hits={"Vago": [_hit("lore/x.md", 0.4), _hit("lore/y.md", 0.3), _hit("lore/z.md", 0.2)]},
+        entities=entities,
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Vago")
+    assert [c["id"] for c in candidates] == ["Tema::X"]
+
+
+def test_seed_ceiling_caps_seeds_at_seed_limit() -> None:
+    entities = [_entity(f"lore/e{i}.md", id=f"Tema::E{i}", title=f"E{i}") for i in range(8)]
+    hits = [_hit(f"lore/e{i}.md", 1.0) for i in range(8)]
+    reader = _GraphFakeReader(hits={"Tope": hits}, entities=entities)
+    candidates = build_grounding_candidates(reader, idea_title="Tope")
+    assert len(candidates) == SEED_LIMIT
+    assert [c["id"] for c in candidates] == [f"Tema::E{i}" for i in range(SEED_LIMIT)]
+
+
+def test_neighbours_added_deduped_and_shared_ranks_first() -> None:
+    """Seeds expand one hop; a neighbour reached by several seeds outranks a
+    single-seed neighbour, duplicates collapse, and ties break by id asc."""
+    s1 = _entity("lore/s1.md", id="Tema::S1", title="S1")
+    s2 = _entity("lore/s2.md", id="Tema::S2", title="S2")
+    shared = _entity("lore/shared.md", id="Tema::NShared", title="Shared")
+    n1 = _entity("lore/n1.md", id="Tema::N1", title="N1")
+    n2 = _entity("lore/n2.md", id="Tema::N2", title="N2")
+    reader = _GraphFakeReader(
+        hits={"Idea": [_hit("lore/s1.md", 10.0), _hit("lore/s2.md", 9.5)]},
+        entities=[s1, s2, shared, n1, n2],
+        neighbours={"lore/s1.md": [shared, n1], "lore/s2.md": [shared, n2]},
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Idea")
+    assert [c["id"] for c in candidates] == [
+        "Tema::S1", "Tema::S2", "Tema::NShared", "Tema::N1", "Tema::N2",
     ]
 
 
-def test_candidates_prefer_entities_seam_order_when_both_exposed() -> None:
-    """A reader with both seams must enumerate via ``entities()`` (index
-    insertion order), never re-derive from search hits."""
-    class _BothSeamsReader(_FakeReader):
-        def entities(self) -> list[dict]:
-            return [dict(e) for e in reversed(self._entities)]
+def test_no_hits_falls_back_to_hubs() -> None:
+    entities = [
+        _entity("lore/h1.md", id="Tema::H1", title="H1"),
+        _entity("lore/h2.md", id="Tema::H2", title="H2"),
+    ]
+    reader = _GraphFakeReader(entities=entities, hubs=entities)
+    candidates = build_grounding_candidates(reader, idea_title="Sin coincidencias")
+    assert [c["id"] for c in candidates] == ["Tema::H1", "Tema::H2"]
+    # Only stage 1 ran: the body is empty, so broadening would repeat the title.
+    assert reader.search_queries == ["Sin coincidencias"]
 
-    reader = _BothSeamsReader([
-        _entity("lore/a/one.md", id="Tema::Uno", title="Uno"),
-        _entity("lore/a/two.md", id="Tema::Dos", title="Dos"),
-    ])
-    # The enumeration seam is authoritative (reversed order proves it is used
-    # instead of the search/read fallback).
-    assert [c["id"] for c in build_grounding_candidates(reader)] == ["Tema::Dos", "Tema::Uno"]
+
+def test_empty_title_uses_bounded_body_stage() -> None:
+    body = "  Una   region   fértil  " + "palabra " * 100  # long → must be bounded
+    collapsed = " ".join(body.split())[:BODY_EXCERPT_CHARS]
+    entities = [_entity("lore/c.md", id="Tema::C", title="C")]
+    reader = _GraphFakeReader(hits={collapsed: [_hit("lore/c.md", 7.0)]}, entities=entities)
+    candidates = build_grounding_candidates(reader, idea_title="", idea_body=body)
+    assert [c["id"] for c in candidates] == ["Tema::C"]
+    assert reader.search_queries == [collapsed]
+
+
+def test_scoreless_hits_fall_back_to_returned_order() -> None:
+    entities = [
+        _entity("lore/second.md", id="Tema::Second", title="Second"),
+        _entity("lore/first.md", id="Tema::First", title="First"),
+    ]
+    reader = _GraphFakeReader(
+        hits={"Idea": [_hit("lore/second.md"), _hit("lore/first.md")]},
+        entities=entities,
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Idea")
+    assert [c["id"] for c in candidates] == ["Tema::Second", "Tema::First"]
+
+
+def test_ordering_is_stable_and_ties_break_by_id() -> None:
+    entities = [
+        _entity("lore/b.md", id="Tema::B", title="B"),
+        _entity("lore/a.md", id="Tema::A", title="A"),
+    ]
+    reader = _GraphFakeReader(
+        hits={"Empate": [_hit("lore/b.md", 2.0), _hit("lore/a.md", 2.0)]},
+        entities=entities,
+    )
+    first = build_grounding_candidates(reader, idea_title="Empate")
+    second = build_grounding_candidates(reader, idea_title="Empate")
+    assert first == second
+    assert [c["id"] for c in first] == ["Tema::A", "Tema::B"]
+
+
+def test_guard_drops_the_tail_never_a_seed(monkeypatch) -> None:
+    """A tiny payload budget fits the seed but not the neighbour: the guard
+    truncates the TAIL, so the seed survives and only the neighbour is cut."""
+    seed = _entity("lore/seed.md", id="Tema::Seed", title="Seed")
+    neighbour = _entity("lore/nb.md", id="Tema::Neighbour", title="Neighbour")
+    reader = _GraphFakeReader(
+        hits={"Idea": [_hit("lore/seed.md", 9.0)]},
+        entities=[seed, neighbour],
+        neighbours={"lore/seed.md": [neighbour]},
+    )
+    seed_payload = len(json.dumps(
+        {"id": "Tema::Seed", "title": "Seed", "type": "concepto", "summary": ""},
+        ensure_ascii=False, separators=(",", ":"),
+    ))
+    monkeypatch.setattr(
+        "idea_materialization_domain.MAX_CANDIDATE_PAYLOAD_CHARS", seed_payload
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Idea")
+    assert [c["id"] for c in candidates] == ["Tema::Seed"]
+
+
+def test_measured_shape_is_a_small_neighbourhood_including_chaae() -> None:
+    """Silpah-shaped fixture: search ranks Chaae first with a clear gap, so the
+    result is the small seed+neighbour set (measured 4 entities) — NOT the
+    world enumeration — and it contains Chaae's canonical id."""
+    chaae = _entity("lore/silpah/chaae.md", id="Region::Chaae", title="Chaae")
+    dos = _entity("lore/silpah/dos.md", id="Region::Dos", title="Dos")
+    pannj = _entity("lore/silpah/pannj.md", id="Region::Pannj", title="Pannj")
+    tres = _entity("lore/silpah/tres.md", id="Region::Tres", title="Tres")
+    others = [
+        _entity("lore/ayagars/reptiles.md", id="Ayagars::Reptiles", title="Reptiles Vibrantes"),
+        *[_entity(f"lore/ayagars/e{i}.md", id=f"Ayagars::E{i}", title=f"E{i}") for i in range(8)],
+    ]
+    reader = _GraphFakeReader(
+        hits={"Silpah": [
+            _hit("lore/silpah/chaae.md", 15.06),
+            _hit("lore/silpah/dos.md", 14.5),
+            _hit("lore/silpah/pannj.md", 11.76),
+            *[_hit(f"lore/ayagars/e{i}.md", 1.0) for i in range(8)],
+        ]},
+        entities=[chaae, dos, pannj, tres, *others],
+        neighbours={"lore/silpah/chaae.md": [pannj], "lore/silpah/dos.md": [tres]},
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Silpah")
+    ids = [c["id"] for c in candidates]
+    assert "Region::Chaae" in ids
+    # Seeds (>= 0.9 * 15.06 = 13.554): Chaae + Dos; Pannj is 11.76 so it enters
+    # only as Chaae's neighbour. Then one-hop neighbours by connection count.
+    assert ids == ["Region::Chaae", "Region::Dos", "Region::Pannj", "Region::Tres"]
+    assert len(candidates) < MAX_CANDIDATES
+    payload = sum(len(json.dumps(c, ensure_ascii=False, separators=(",", ":"))) for c in candidates)
+    assert payload <= MAX_CANDIDATE_PAYLOAD_CHARS
+    assert reader.search_queries == ["Silpah"]
 
 
 # ---------------------------------------------------------------------------
