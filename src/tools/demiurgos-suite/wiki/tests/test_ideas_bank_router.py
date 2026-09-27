@@ -10,6 +10,7 @@ mundos/, never scanned as canon).
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -214,6 +215,11 @@ def test_get_versions_returns_history_ascending(client: TestClient) -> None:
     assert all(
         v["path"].endswith(f"arquero-ciego-v{v['version']}.md") for v in versions
     )
+    # DM-2: each version carries its archive mtime as ISO-8601 UTC (parseable).
+    for v in versions:
+        assert v["created_at"]
+        parsed = datetime.fromisoformat(v["created_at"])
+        assert parsed.tzinfo is not None
 
 
 def test_get_versions_empty_when_no_archives(client: TestClient) -> None:

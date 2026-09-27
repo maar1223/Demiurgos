@@ -29,6 +29,7 @@ vi.mock("@/api/ideas", async (importOriginal) => {
     previewMaterialize: vi.fn(),
     previewMaterializeTarget: vi.fn(),
     exportIdeaDocx: vi.fn(),
+    attachIdeaMedia: vi.fn(),
     listPendingCaptures: vi.fn(),
     confirmCapture: vi.fn(),
     discardCapture: vi.fn(),
@@ -92,6 +93,7 @@ const previewMaterializeTargetMock = vi.mocked(
   ideasApi.previewMaterializeTarget,
 );
 const exportIdeaDocxMock = vi.mocked(ideasApi.exportIdeaDocx);
+const attachIdeaMediaMock = vi.mocked(ideasApi.attachIdeaMedia);
 const listPendingCapturesMock = vi.mocked(ideasApi.listPendingCaptures);
 const confirmCaptureMock = vi.mocked(ideasApi.confirmCapture);
 const discardCaptureMock = vi.mocked(ideasApi.discardCapture);
@@ -271,6 +273,38 @@ function unstubObjectUrl() {
   delete urlApi.revokeObjectURL;
 }
 
+/** ISO timestamps for the archived-version fixtures (DM-2 date label). */
+const V1_DATE = "2026-08-25T15:00:00+00:00";
+const V2_DATE = "2026-08-26T09:00:00+00:00";
+
+/** The locale-aware `dd/mm/aaaa` label the UI renders for the es default. */
+function esVersionDate(iso: string): string {
+  return new Intl.DateTimeFormat("es", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).format(new Date(iso));
+}
+
+/** Open the `⋯` options menu for the selected idea. */
+async function openActionsMenu(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    await screen.findByRole("button", {
+      name: tEs("ideas.detail.actionsMenuAria"),
+    }),
+  );
+  return screen.findByRole("menu", {
+    name: tEs("ideas.detail.actionsMenuAria"),
+  });
+}
+
+/** Expand the `Detalles de la idea` collapsible. */
+async function expandDetails(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(
+    screen.getByRole("button", { name: tEs("ideas.detail.detailsHeading") }),
+  );
+}
+
 describe("IdeasWorkshop", () => {
   beforeEach(() => {
     listIdeasMock.mockReset();
@@ -283,6 +317,7 @@ describe("IdeasWorkshop", () => {
     previewMaterializeMock.mockReset();
     previewMaterializeTargetMock.mockReset();
     exportIdeaDocxMock.mockReset();
+    attachIdeaMediaMock.mockReset();
     listPendingCapturesMock.mockReset();
     confirmCaptureMock.mockReset();
     discardCaptureMock.mockReset();
@@ -676,54 +711,81 @@ describe("IdeasWorkshop", () => {
     expect(screen.getByLabelText(tEs("ideas.materialize.sectionLabel"))).toHaveValue("lore");
   });
 
-  it("carries the title hint into target resolution and the generation payload (WU-7)", async () => {
+  it("no longer renders the suggested-title field in the materialize picker (DM-1)", async () => {
     const user = userEvent.setup();
     getIdeaMock.mockResolvedValue(detail);
     previewMaterializeTargetMock.mockResolvedValue(targetResult);
-    previewMaterializeMock.mockResolvedValue(previewResult);
     renderPage();
 
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
     await user.click(screen.getByRole("button", { name: tEs("ideas.materialize.button") }));
-    await user.selectOptions(screen.getByLabelText(tEs("ideas.materialize.worldLabel")), "vibrantes");
-    await user.type(
-      screen.getByLabelText(tEs("ideas.materialize.titleHintLabel")),
-      "el ciego",
-    );
 
+    // The picker is open (world control present) but the removed
+    // "Título sugerido (opcional)" input is gone: the idea title is the single
+    // source of truth for the ficha name.
+    expect(
+      screen.getByLabelText(tEs("ideas.materialize.worldLabel")),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText(/Título sugerido/)).not.toBeInTheDocument();
+    expect(document.querySelector("#materialize-title-hint")).toBeNull();
+  });
+
+  it("derives the destination file name from the idea title without a hint (DM-1)", async () => {
+    const user = userEvent.setup();
+    const silpah: IdeaDetail = {
+      ...detail,
+      slug: "silpah-lince-de-chaae",
+      title: "Silpah — Lince de Chaae",
+    };
+    listIdeasMock.mockResolvedValue({ ideas: [silpah], total: 1 });
+    getIdeaMock.mockResolvedValue(silpah);
+    // The server derives the slug from the idea title. If the client still sent
+    // a `title_hint`, this mock would echo it and the assertions below would
+    // fail — so this proves the picker no longer sends one.
+    previewMaterializeTargetMock.mockImplementation((_ideaSlug, input) => {
+      const slug = input.title_hint ? "from-title-hint" : "silpah-lince-de-chaae";
+      return Promise.resolve({
+        ...targetResult,
+        slug,
+        path: `sistema-stal/${slug}.md`,
+      });
+    });
+    renderPage();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Silpah — Lince de Chaae/ }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.button") }),
+    );
+    await user.selectOptions(
+      screen.getByLabelText(tEs("ideas.materialize.worldLabel")),
+      "vibrantes",
+    );
     await user.click(
       screen.getByRole("button", { name: tEs("ideas.materialize.preview") }),
     );
 
-    // Target resolution now derives the filename from the typed title.
+    const dialog = await screen.findByRole("dialog", {
+      name: tEs("ideas.preview.title"),
+    });
+    // The payload carries no title_hint: the idea title drives the name.
     await waitFor(() =>
-      expect(previewMaterializeTargetMock).toHaveBeenCalledWith("arquero-ciego", {
-        world: "vibrantes",
-        section: "personajes",
-        folder: "",
-        title_hint: "el ciego",
-      }),
-    );
-
-    await user.click(
-      await screen.findByRole("button", {
-        name: tEs("ideas.materialize.generate"),
-      }),
-    );
-
-    await waitFor(() =>
-      expect(previewMaterializeMock).toHaveBeenCalledWith(
-        "arquero-ciego",
+      expect(previewMaterializeTargetMock).toHaveBeenCalledWith(
+        "silpah-lince-de-chaae",
         {
           world: "vibrantes",
           section: "personajes",
           folder: "",
-          title_hint: "el ciego",
-          slug: "arquero-ciego",
         },
-        expect.any(AbortSignal),
       ),
     );
+    expect(
+      within(dialog).getByLabelText(tEs("ideas.materialize.filenameLabel")),
+    ).toHaveValue("silpah-lince-de-chaae");
+    expect(
+      within(dialog).getByText("sistema-stal/silpah-lince-de-chaae.md"),
+    ).toBeInTheDocument();
   });
 
   it("shows the suggested slug when target resolution returns a 409 collision (AD5)", async () => {
@@ -1424,7 +1486,8 @@ describe("IdeasWorkshop", () => {
       ).toBeInTheDocument(),
     );
 
-    // Close only the dialog (the picker stays open), then resolve again.
+    // Close the destination step (it returns to the picker step), then
+    // resolve again from the picker.
     await user.click(
       within(dialog).getAllByRole("button", {
         name: tEs("ideas.preview.close"),
@@ -1524,7 +1587,7 @@ describe("IdeasWorkshop", () => {
     expect(screen.queryByText(/media_path:/)).not.toBeInTheDocument();
   });
 
-  it("edits the idea title from the detail panel", async () => {
+  it("edits the idea title from the `⋯` menu dialog (DM-2)", async () => {
     const user = userEvent.setup();
     getIdeaMock.mockResolvedValue(detail);
     updateIdeaMock.mockResolvedValue({ ...detail, title: "Nuevo Título" });
@@ -1533,17 +1596,30 @@ describe("IdeasWorkshop", () => {
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
     await screen.findByRole("heading", { name: "El Arquero Ciego" });
 
-    const titleInput = screen.getByPlaceholderText("Sin título — se muestra el slug");
+    // The title input no longer lives inline; it opens from the options menu.
+    const menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: tEs("ideas.detail.titleHeading") }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: tEs("ideas.detail.titleHeading"),
+    });
+    const titleInput = within(dialog).getByPlaceholderText(
+      "Sin título — se muestra el slug",
+    );
     await user.clear(titleInput);
     await user.type(titleInput, "Nuevo Título");
-    await user.click(screen.getByRole("button", { name: "Guardar título" }));
+    await user.click(
+      within(dialog).getByRole("button", { name: tEs("ideas.detail.saveTitle") }),
+    );
 
     await waitFor(() =>
       expect(updateIdeaMock).toHaveBeenCalledWith("arquero-ciego", { title: "Nuevo Título" }),
     );
   });
 
-  it("reclassifies the idea type via the classification action", async () => {
+  it("reclassifies the idea type from the collapsible metadata section (DM-2)", async () => {
     const user = userEvent.setup();
     getIdeaMock.mockResolvedValue(detail);
     updateIdeaMock.mockResolvedValue({ ...detail, type: "concepto" });
@@ -1552,6 +1628,8 @@ describe("IdeasWorkshop", () => {
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
     await screen.findByRole("heading", { name: "El Arquero Ciego" });
 
+    // Classification lives inside the default-collapsed details section.
+    await expandDetails(user);
     await user.selectOptions(screen.getByLabelText("Tipo de la idea"), "concepto");
     await user.click(screen.getByRole("button", { name: "Guardar tipo" }));
 
@@ -1575,14 +1653,14 @@ describe("IdeasWorkshop", () => {
     await waitFor(() => expect(deleteIdeaMock).toHaveBeenCalledWith("arquero-ciego"));
   });
 
-  it("shows the version history panel with archived versions (R-10, S-10.2)", async () => {
+  it("shows the version history inside the details section with readable labels (DM-2)", async () => {
     const user = userEvent.setup();
     getIdeaMock.mockResolvedValue(detail);
     getIdeaVersionsMock.mockResolvedValue({
       slug: "arquero-ciego",
       versions: [
-        { version: 1, path: "/ideas/versions/arquero-ciego-v1.md" },
-        { version: 2, path: "/ideas/versions/arquero-ciego-v2.md" },
+        { version: 1, path: "/ideas/versions/arquero-ciego-v1.md", created_at: V1_DATE },
+        { version: 2, path: "/ideas/versions/arquero-ciego-v2.md", created_at: V2_DATE },
       ],
     });
     renderPage();
@@ -1590,19 +1668,60 @@ describe("IdeasWorkshop", () => {
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
 
     expect(getIdeaVersionsMock).toHaveBeenCalledWith("arquero-ciego");
+    await expandDetails(user);
     const section = await screen.findByRole("region", {
       name: "Historial de versiones",
     });
-    expect(within(section).getByText("Versión 1")).toBeInTheDocument();
+    // Rows are readable `Versión N · dd/mm/aaaa` labels.
     expect(
-      within(section).getByText("/ideas/versions/arquero-ciego-v1.md"),
+      within(section).getByText(
+        `Versión 1 · ${esVersionDate(V1_DATE)}`,
+      ),
     ).toBeInTheDocument();
-    expect(within(section).getByText("Versión 2")).toBeInTheDocument();
     expect(
-      within(section).getByText("/ideas/versions/arquero-ciego-v2.md"),
+      within(section).getByText(
+        `Versión 2 · ${esVersionDate(V2_DATE)}`,
+      ),
     ).toBeInTheDocument();
+    // The absolute disk path must NOT be rendered as text (DM-2).
+    expect(
+      within(section).queryByText("/ideas/versions/arquero-ciego-v1.md"),
+    ).not.toBeInTheDocument();
     // The live frontmatter version never leaks as plain user text (R-1).
     expect(screen.queryByText(/version: \d/)).not.toBeInTheDocument();
+  });
+
+  it("keeps the copy-path capability as an icon-only action (DM-2)", async () => {
+    const user = userEvent.setup();
+    getIdeaMock.mockResolvedValue(detail);
+    getIdeaVersionsMock.mockResolvedValue({
+      slug: "arquero-ciego",
+      versions: [
+        { version: 1, path: "/ideas/versions/arquero-ciego-v1.md", created_at: V1_DATE },
+      ],
+    });
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await expandDetails(user);
+
+    const copy = await screen.findByRole("button", {
+      name: tEs("ideas.detail.copyPathAria", { version: 1 }),
+    });
+    await user.click(copy);
+
+    await waitFor(() =>
+      expect(writeText).toHaveBeenCalledWith("/ideas/versions/arquero-ciego-v1.md"),
+    );
+    // The path is not visible as text; only the accessible label exposes it.
+    expect(
+      screen.queryByText("/ideas/versions/arquero-ciego-v1.md"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the empty state when the idea has no archived versions", async () => {
@@ -1613,6 +1732,7 @@ describe("IdeasWorkshop", () => {
 
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
 
+    await expandDetails(user);
     const section = await screen.findByRole("region", {
       name: "Historial de versiones",
     });
@@ -1679,7 +1799,111 @@ describe("IdeasWorkshop", () => {
     );
   });
 
-  it("detail header: PDF + DOCX buttons render and DOCX downloads the idea blob", async () => {
+  it("`⋯` menu opens, lists the four items in order, and closes on Escape (DM-2)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    // The primary action is visible next to the menu trigger.
+    expect(
+      screen.getByRole("button", { name: tEs("ideas.materialize.button") }),
+    ).toBeInTheDocument();
+
+    const trigger = screen.getByRole("button", {
+      name: tEs("ideas.detail.actionsMenuAria"),
+    });
+    expect(trigger).toHaveAttribute("aria-haspopup", "menu");
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    const menu = await openActionsMenu(user);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+
+    // Four items, in the approved order (Título · Imagen · ─── · DOCX · PDF).
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent),
+    ).toEqual([
+      tEs("ideas.detail.titleHeading"),
+      tEs("ideas.detail.imageHeading"),
+      tEs("ideas.detail.exportDocxAria"),
+      tEs("ideas.detail.exportPdfAria"),
+    ]);
+
+    // The separator sits between `Imagen` and `Exportar idea a DOCX` (Fix 4).
+    const separator = within(menu).getByRole("separator");
+    expect(separator.previousElementSibling).toHaveTextContent(
+      tEs("ideas.detail.imageHeading"),
+    );
+    expect(separator.nextElementSibling).toHaveTextContent(
+      tEs("ideas.detail.exportDocxAria"),
+    );
+
+    // Escape closes the menu.
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("`⋯` menu closes on an outside click (DM-2)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    await openActionsMenu(user);
+    await user.click(document.body);
+
+    await waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("`Imagen` menu item opens the image dialog and attaches via the API (DM-2)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    attachIdeaMediaMock.mockResolvedValue({
+      ...detail,
+      media_path: "media/arquero-ciego.png",
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    const menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: tEs("ideas.detail.imageHeading") }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: tEs("ideas.detail.imageHeading"),
+    });
+    // The dialog states that attaching replaces + versions the idea.
+    expect(
+      within(dialog).getByText(tEs("ideas.detail.imageDialogReplaceNote")),
+    ).toBeInTheDocument();
+
+    const file = new File(["fakedata"], "img.png", { type: "image/png" });
+    const input = dialog.querySelector<HTMLInputElement>('input[type="file"]');
+    expect(input).not.toBeNull();
+    fireEvent.change(input as HTMLInputElement, {
+      target: { files: [file] },
+    });
+
+    await waitFor(() =>
+      expect(attachIdeaMediaMock).toHaveBeenCalledWith("arquero-ciego", file),
+    );
+  });
+
+  it("`⋯` menu item exports the idea to DOCX (DM-2)", async () => {
     listIdeasMock.mockResolvedValue({ ideas: [summary], total: 1 });
     getIdeaMock.mockResolvedValue(detail);
     exportIdeaDocxMock.mockResolvedValue(
@@ -1695,18 +1919,15 @@ describe("IdeasWorkshop", () => {
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
     await screen.findByRole("heading", { name: "El Arquero Ciego" });
 
-    // Detail header exposes both export buttons (Spanish voseo UI copy).
-    expect(
-      screen.getByRole("button", { name: "Exportar idea a PDF" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Exportar idea a DOCX" }),
-    ).toBeInTheDocument();
+    const menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", {
+        name: tEs("ideas.detail.exportDocxAria"),
+      }),
+    );
 
     // DOCX fetches the idea through the export endpoint and drives the
     // blob-download flow (createObjectURL → anchor click → revoke).
-    await user.click(screen.getByRole("button", { name: "Exportar idea a DOCX" }));
-
     await waitFor(() => {
       expect(exportIdeaDocxMock).toHaveBeenCalledWith("arquero-ciego");
     });
@@ -1716,7 +1937,7 @@ describe("IdeasWorkshop", () => {
     unstubObjectUrl();
   });
 
-  it("detail header: PDF button opens the ExportPdfDialog (mundo='')", async () => {
+  it("`⋯` menu item opens the ExportPdfDialog (mundo='') (DM-2)", async () => {
     listIdeasMock.mockResolvedValue({ ideas: [summary], total: 1 });
     getIdeaMock.mockResolvedValue(detail);
 
@@ -1726,7 +1947,12 @@ describe("IdeasWorkshop", () => {
     await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
     await screen.findByRole("heading", { name: "El Arquero Ciego" });
 
-    await user.click(screen.getByRole("button", { name: "Exportar idea a PDF" }));
+    const menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", {
+        name: tEs("ideas.detail.exportPdfAria"),
+      }),
+    );
 
     // The dialog renders with the idea body; mundo="" keeps the absolute
     // /api/ideas/... image URLs untouched.
@@ -1734,6 +1960,374 @@ describe("IdeasWorkshop", () => {
       screen.getByRole("dialog", { name: /exportar ficha a pdf/i }),
     ).toBeInTheDocument();
     expect(screen.getByText("Un arquero que no ve.")).toBeInTheDocument();
+  });
+
+  it("details collapsible starts collapsed, toggles and exposes aria-expanded (DM-2)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    const toggle = screen.getByRole("button", {
+      name: tEs("ideas.detail.detailsHeading"),
+    });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    // Collapsed by default: the classification control is not rendered.
+    expect(screen.queryByLabelText("Tipo de la idea")).not.toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Tipo de la idea")).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Tipo de la idea")).not.toBeInTheDocument();
+  });
+
+  it("`Usar en un mundo` opens the materialize dialog in picker mode (DM-2)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.button") }),
+    );
+
+    // The picker is now the dialog's initial mode (no stacked modals).
+    const picker = await screen.findByRole("dialog", {
+      name: tEs("ideas.materialize.heading"),
+    });
+    expect(
+      within(picker).getByLabelText(tEs("ideas.materialize.worldLabel")),
+    ).toBeInTheDocument();
+    expect(
+      within(picker).getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    ).toBeInTheDocument();
+    // Legacy fallback stays reachable in the picker step.
+    expect(
+      within(picker).getByRole("button", {
+        name: tEs("ideas.materialize.markUsedOnly"),
+      }),
+    ).toBeInTheDocument();
+
+    // Previsualizar advances the same dialog to destination mode.
+    await user.selectOptions(
+      within(picker).getByLabelText(tEs("ideas.materialize.worldLabel")),
+      "vibrantes",
+    );
+    await user.click(
+      within(picker).getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: tEs("ideas.preview.title") }),
+    ).toBeInTheDocument();
+  });
+
+  // ── Fix 1 — modal-scoped failure surface ────────────────────────────────
+
+  it("shows a title-save failure INSIDE the dialog and clears it on reopen (Fix 1)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    updateIdeaMock.mockRejectedValue({ status: 500, detail: "boom" });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    const menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: tEs("ideas.detail.titleHeading") }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: tEs("ideas.detail.titleHeading"),
+    });
+
+    const input = within(dialog).getByPlaceholderText(
+      "Sin título — se muestra el slug",
+    );
+    await user.clear(input);
+    await user.type(input, "Nuevo Título");
+    await user.click(
+      within(dialog).getByRole("button", { name: tEs("ideas.detail.saveTitle") }),
+    );
+
+    // Visible inside the modal, not hidden behind the overlay.
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      getErrorMessage(500),
+    );
+    // Retry stays available from where the author is.
+    expect(
+      within(dialog).getByRole("button", { name: tEs("ideas.detail.saveTitle") }),
+    ).toBeInTheDocument();
+    // Only one alert: the page banner never mirrors a modal-scoped failure.
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+
+    // Close + reopen clears the modal-scoped error.
+    await user.click(
+      within(dialog).getAllByRole("button", {
+        name: tEs("ideas.preview.close"),
+      })[0],
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: tEs("ideas.detail.titleHeading") }),
+      ).not.toBeInTheDocument(),
+    );
+    const menuAgain = await openActionsMenu(user);
+    await user.click(
+      within(menuAgain).getByRole("menuitem", {
+        name: tEs("ideas.detail.titleHeading"),
+      }),
+    );
+    const reopened = await screen.findByRole("dialog", {
+      name: tEs("ideas.detail.titleHeading"),
+    });
+    expect(within(reopened).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows an image-attach failure INSIDE the dialog and keeps retry available (Fix 1)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    attachIdeaMediaMock.mockRejectedValue({
+      status: 400,
+      detail: "El archivo está vacío.",
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    const menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: tEs("ideas.detail.imageHeading") }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: tEs("ideas.detail.imageHeading"),
+    });
+
+    const file = new File(["fakedata"], "img.png", { type: "image/png" });
+    const input = dialog.querySelector<HTMLInputElement>('input[type="file"]');
+    fireEvent.change(input as HTMLInputElement, { target: { files: [file] } });
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      getErrorMessage(400, "El archivo está vacío."),
+    );
+    // The dialog stays open with the attach control so the author can retry.
+    expect(
+      within(dialog).getByText(tEs("ideas.detail.imageDialogReplaceNote")),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("shows a target-resolve failure INSIDE the materialize dialog (Fix 1)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockRejectedValue({ status: 500, detail: "boom" });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.button") }),
+    );
+    const picker = await screen.findByRole("dialog", {
+      name: tEs("ideas.materialize.heading"),
+    });
+    await user.selectOptions(
+      within(picker).getByLabelText(tEs("ideas.materialize.worldLabel")),
+      "vibrantes",
+    );
+    await user.click(
+      within(picker).getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    );
+
+    expect(await within(picker).findByRole("alert")).toHaveTextContent(
+      getErrorMessage(500),
+    );
+    // Still on the picker step; Previsualizar can be retried.
+    expect(
+      within(picker).getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("shows a legacy mark-as-used failure INSIDE the picker dialog (Fix 1)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    materializeIdeaMock.mockRejectedValue({ status: 400, detail: "boom" });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.button") }),
+    );
+    const picker = await screen.findByRole("dialog", {
+      name: tEs("ideas.materialize.heading"),
+    });
+    await user.selectOptions(
+      within(picker).getByLabelText(tEs("ideas.materialize.worldLabel")),
+      "vibrantes",
+    );
+    await user.click(
+      within(picker).getByRole("button", {
+        name: tEs("ideas.materialize.markUsedOnly"),
+      }),
+    );
+
+    expect(await within(picker).findByRole("alert")).toHaveTextContent(
+      getErrorMessage(400),
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  // ── Fix 2 — single derived modal guard ──────────────────────────────────
+
+  it("disables the `⋯` menu while each modal surface is open (Fix 2)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    const trigger = () =>
+      screen.getByRole("button", { name: tEs("ideas.detail.actionsMenuAria") });
+
+    // Title dialog.
+    let menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: tEs("ideas.detail.titleHeading") }),
+    );
+    await screen.findByRole("dialog", { name: tEs("ideas.detail.titleHeading") });
+    expect(trigger()).toBeDisabled();
+    await user.click(
+      screen.getAllByRole("button", { name: tEs("ideas.preview.close") })[0],
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: tEs("ideas.detail.titleHeading") }),
+      ).not.toBeInTheDocument(),
+    );
+
+    // Image dialog.
+    menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: tEs("ideas.detail.imageHeading") }),
+    );
+    await screen.findByRole("dialog", { name: tEs("ideas.detail.imageHeading") });
+    expect(trigger()).toBeDisabled();
+    await user.click(
+      screen.getAllByRole("button", { name: tEs("ideas.preview.close") })[0],
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: tEs("ideas.detail.imageHeading") }),
+      ).not.toBeInTheDocument(),
+    );
+
+    // Materialize dialog (picker step).
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideas.materialize.button") }),
+    );
+    await screen.findByRole("dialog", { name: tEs("ideas.materialize.heading") });
+    expect(trigger()).toBeDisabled();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: tEs("ideas.materialize.heading") }),
+      ).not.toBeInTheDocument(),
+    );
+
+    // PDF dialog.
+    menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: tEs("ideas.detail.exportPdfAria") }),
+    );
+    await screen.findByRole("dialog", { name: /exportar ficha a pdf/i });
+    expect(trigger()).toBeDisabled();
+  });
+
+  // ── Fix 3 — focus management + Escape parity ────────────────────────────
+
+  it("moves focus into the title dialog and restores it to the trigger on Escape (Fix 3)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    await screen.findByRole("heading", { name: "El Arquero Ciego" });
+
+    const menu = await openActionsMenu(user);
+    await user.click(
+      within(menu).getByRole("menuitem", { name: tEs("ideas.detail.titleHeading") }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: tEs("ideas.detail.titleHeading"),
+    });
+    // Focus moved into the dialog on open.
+    expect(document.activeElement).toBe(dialog);
+
+    const trigger = screen.getByRole("button", {
+      name: tEs("ideas.detail.actionsMenuAria"),
+    });
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: tEs("ideas.detail.titleHeading") }),
+      ).not.toBeInTheDocument(),
+    );
+    // Focus returns to the `⋯` trigger.
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("Escape returns the materialize dialog to the picker, then closes it (Fix 3)", async () => {
+    getIdeaMock.mockResolvedValue(detail);
+    previewMaterializeTargetMock.mockResolvedValue(targetResult);
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.click(await screen.findByRole("button", { name: /El Arquero Ciego/ }));
+    const openButton = screen.getByRole("button", {
+      name: tEs("ideas.materialize.button"),
+    });
+    await user.click(openButton);
+
+    const picker = await screen.findByRole("dialog", {
+      name: tEs("ideas.materialize.heading"),
+    });
+    // Focus moved into the dialog on open.
+    expect(document.activeElement).toBe(picker);
+
+    await user.selectOptions(
+      within(picker).getByLabelText(tEs("ideas.materialize.worldLabel")),
+      "vibrantes",
+    );
+    await user.click(
+      within(picker).getByRole("button", { name: tEs("ideas.materialize.preview") }),
+    );
+    await screen.findByRole("dialog", { name: tEs("ideas.preview.title") });
+
+    // Escape from the destination step returns to the picker (step close).
+    await user.keyboard("{Escape}");
+    expect(
+      await screen.findByRole("dialog", { name: tEs("ideas.materialize.heading") }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("dialog", { name: tEs("ideas.preview.title") }),
+    ).not.toBeInTheDocument();
+
+    // Escape from the picker closes the whole flow and restores focus.
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: tEs("ideas.materialize.heading") }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(document.activeElement).toBe(openButton);
   });
 
   it("renders the materialize preview chrome in English for the en locale (UI-REQ-2)", async () => {

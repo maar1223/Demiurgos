@@ -149,8 +149,16 @@ describe("ideas bank API", () => {
       jsonResponse({
         slug: "arquero-ciego",
         versions: [
-          { version: 1, path: "/ideas/versions/arquero-ciego-v1.md" },
-          { version: 2, path: "/ideas/versions/arquero-ciego-v2.md" },
+          {
+            version: 1,
+            path: "/ideas/versions/arquero-ciego-v1.md",
+            created_at: "2026-08-25T15:00:00+00:00",
+          },
+          {
+            version: 2,
+            path: "/ideas/versions/arquero-ciego-v2.md",
+            created_at: "2026-08-26T09:00:00+00:00",
+          },
         ],
       }),
     );
@@ -164,8 +172,16 @@ describe("ideas bank API", () => {
     );
     expect(result.slug).toBe("arquero-ciego");
     expect(result.versions).toEqual([
-      { version: 1, path: "/ideas/versions/arquero-ciego-v1.md" },
-      { version: 2, path: "/ideas/versions/arquero-ciego-v2.md" },
+      {
+        version: 1,
+        path: "/ideas/versions/arquero-ciego-v1.md",
+        created_at: "2026-08-25T15:00:00+00:00",
+      },
+      {
+        version: 2,
+        path: "/ideas/versions/arquero-ciego-v2.md",
+        created_at: "2026-08-26T09:00:00+00:00",
+      },
     ]);
   });
 

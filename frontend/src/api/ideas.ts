@@ -169,10 +169,12 @@ export interface IdeaMaterializePreviewResult {
   media?: { src: string; dest: string };
 }
 
-/** One archived version of an idea (R-10) — number + archive path. */
+/** One archived version of an idea (R-10) — number + archive path + mtime. */
 export interface IdeaVersionSummary {
   version: number;
   path: string;
+  /** ISO-8601 UTC timestamp of the archive file (DM-2). */
+  created_at: string;
 }
 
 /** GET /api/ideas/{slug}/versions response (R-10, S-10.2). */
