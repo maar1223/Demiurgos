@@ -1255,3 +1255,242 @@ class TestIdeaBankTools:
             result = idea_history("portal")
 
         assert result == {"slug": "portal", "versions": []}
+
+
+# =============================================================================
+# Unit tests — pending_list (read-only parked-capture queue)
+# =============================================================================
+
+# Real schema, frozen from idea_capture.store._SCHEMA. The wiki MCP server
+# reads the same SQLite file, so the fixture must mirror the real column set.
+_CAPTURES_SCHEMA = """
+    CREATE TABLE captures (
+        capture_id TEXT PRIMARY KEY, source TEXT NOT NULL, update_id INTEGER NOT NULL,
+        world TEXT, state TEXT NOT NULL, raw_text TEXT NOT NULL, raw_bytes BLOB NOT NULL,
+        mime TEXT NOT NULL, media_kind TEXT NOT NULL, slug TEXT NOT NULL,
+        attempt INTEGER NOT NULL DEFAULT 0, error TEXT, created_at TEXT NOT NULL,
+        media_path TEXT NOT NULL DEFAULT '', media_duration_seconds REAL,
+        global_ INTEGER NOT NULL DEFAULT 0, event_ts TEXT NOT NULL DEFAULT '',
+        UNIQUE(source, update_id)
+    );
+"""
+
+
+def _seed_capture(
+    conn,
+    *,
+    capture_id: str,
+    state: str,
+    slug: str,
+    raw_text: str,
+    created_at: str,
+    update_id: int = 1,
+    media_kind: str = "text",
+    event_ts: str = "",
+) -> None:
+    """Insert one ``captures`` row with the full, real column set."""
+    conn.execute(
+        "INSERT INTO captures "
+        "(capture_id,source,update_id,world,state,raw_text,raw_bytes,mime,"
+        "media_kind,slug,attempt,error,created_at,media_path,"
+        "media_duration_seconds,global_,event_ts) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            capture_id,
+            "telegram:1:2:default",
+            update_id,
+            None,
+            state,
+            raw_text,
+            b"raw-bytes",
+            "text/plain",
+            media_kind,
+            slug,
+            0,
+            None,
+            created_at,
+            "",
+            None,
+            0,
+            event_ts,
+        ),
+    )
+
+
+class TestPendingList:
+    """pending_list() is registered, takes no parameters, and reads only the
+    AWAITING_CONFIRM rows from the shared captures SQLite (read-only)."""
+
+    def test_pending_list_registered_with_no_parameters(self) -> None:
+        """pending_list is defined on the module and accepts no arguments."""
+        import inspect
+
+        from wiki import graph_mcp_server  # noqa: F811
+
+        assert hasattr(graph_mcp_server, "pending_list")
+        sig = inspect.signature(graph_mcp_server.pending_list)
+        assert list(sig.parameters.keys()) == []
+
+    def test_pending_state_constant_matches_capture_state_literal(self) -> None:
+        """The module literal matches idea_capture.models.CaptureState."""
+        from wiki.graph_mcp_server import _PENDING_STATE  # noqa: F811
+
+        assert _PENDING_STATE == "AWAITING_CONFIRM"
+
+    def test_pending_list_returns_only_pending_rows_ordered(self, tmp_path) -> None:
+        """Only AWAITING_CONFIRM rows are returned, ordered by created_at,
+        each carrying the six fields, with count == 2."""
+        import sqlite3
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import pending_list  # noqa: F811
+
+        db_path = tmp_path / "idea-capture.sqlite3"
+        conn = sqlite3.connect(db_path)
+        conn.executescript(_CAPTURES_SCHEMA)
+        # Insert out of order to prove ORDER BY created_at (not insertion order).
+        _seed_capture(
+            conn,
+            capture_id="c-older",
+            state="AWAITING_CONFIRM",
+            slug="slug-older",
+            raw_text="first parked idea",
+            created_at="2026-01-01T00:00:00+00:00",
+            update_id=1,
+            media_kind="text",
+            event_ts="2026-01-01T00:00:00+00:00",
+        )
+        _seed_capture(
+            conn,
+            capture_id="c-other",
+            state="MATERIALIZED",
+            slug="slug-other",
+            raw_text="already materialized",
+            created_at="2026-01-02T00:00:00+00:00",
+            update_id=2,
+        )
+        _seed_capture(
+            conn,
+            capture_id="c-newer",
+            state="AWAITING_CONFIRM",
+            slug="slug-newer",
+            raw_text="second parked idea",
+            created_at="2026-01-03T00:00:00+00:00",
+            update_id=3,
+            media_kind="voice",
+            event_ts="",
+        )
+        conn.commit()
+        conn.close()
+
+        with patch(
+            "wiki.graph_mcp_server._pending_state_path", return_value=db_path
+        ):
+            result = pending_list()
+
+        assert result["count"] == 2
+        assert [c["capture_id"] for c in result["captures"]] == [
+            "c-older",
+            "c-newer",
+        ]
+        expected_keys = {
+            "capture_id",
+            "slug",
+            "raw_text",
+            "created_at",
+            "event_ts",
+            "media_kind",
+        }
+        for capture in result["captures"]:
+            assert set(capture.keys()) == expected_keys
+        assert result["captures"][1]["media_kind"] == "voice"
+
+    def test_pending_list_missing_db_returns_empty(self, tmp_path) -> None:
+        """An absent database returns {captures: [], count: 0} without raising."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import pending_list  # noqa: F811
+
+        missing = tmp_path / "does-not-exist.sqlite3"
+        with patch(
+            "wiki.graph_mcp_server._pending_state_path", return_value=missing
+        ):
+            result = pending_list()
+
+        assert result == {"captures": [], "count": 0}
+
+    def test_pending_list_read_failure_returns_error_field(self, tmp_path) -> None:
+        """A read failure returns an empty list plus an ``error`` field and
+        never raises (honest degradation)."""
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import pending_list  # noqa: F811
+
+        # A real file that is not a SQLite database -> sqlite3.DatabaseError.
+        not_a_db = tmp_path / "corrupt.sqlite3"
+        not_a_db.write_bytes(b"this is not a sqlite database")
+
+        with patch(
+            "wiki.graph_mcp_server._pending_state_path", return_value=not_a_db
+        ):
+            result = pending_list()
+
+        assert result["captures"] == []
+        assert result["count"] == 0
+        assert result["error"]
+
+    def test_pending_list_reads_db_under_metacharacter_data_root(self, tmp_path) -> None:
+        """A data root whose directory name contains URI metacharacters (``#``,
+        ``%``, space) is still readable — the URI is built via Path.as_uri()."""
+        import sqlite3
+        from unittest.mock import patch
+
+        from wiki.graph_mcp_server import pending_list  # noqa: F811
+
+        data_dir = tmp_path / "weird#root%20 dir" / "data"
+        data_dir.mkdir(parents=True)
+        db_path = data_dir / "idea-capture.sqlite3"
+
+        conn = sqlite3.connect(db_path)
+        conn.executescript(_CAPTURES_SCHEMA)
+        _seed_capture(
+            conn,
+            capture_id="c-hash",
+            state="AWAITING_CONFIRM",
+            slug="slug-hash",
+            raw_text="parked under a hash path",
+            created_at="2026-02-01T00:00:00+00:00",
+            update_id=1,
+        )
+        conn.commit()
+        conn.close()
+
+        assert "#" in str(db_path) and "%" in str(db_path)
+
+        with patch(
+            "wiki.graph_mcp_server._pending_state_path", return_value=db_path
+        ):
+            result = pending_list()
+
+        assert result["count"] == 1
+        assert [c["capture_id"] for c in result["captures"]] == ["c-hash"]
+        assert result["captures"][0]["slug"] == "slug-hash"
+
+    def test_pending_list_unconfigured_data_root_returns_error(self) -> None:
+        """An unconfigured data root degrades to the empty payload plus a
+        truthy error instead of raising DataRootNotConfigured (never raises)."""
+        from unittest.mock import patch
+
+        from wiki import data_root  # noqa: F811
+        from wiki.graph_mcp_server import pending_list  # noqa: F811
+
+        boom = data_root.DataRootNotConfigured("no data root configured")
+
+        with patch(
+            "wiki.graph_mcp_server.data_root.resolve_data_root", side_effect=boom
+        ):
+            result = pending_list()
+
+        assert result["captures"] == []
+        assert result["count"] == 0
+        assert result["error"]

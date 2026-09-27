@@ -26,6 +26,7 @@ Idea-bank tools (world-agnostic, global ``ideas/`` bank — no mundo needed):
   - ideas_search(query)                       → {matches: [IdeaSummary, ...], query}
   - update_idea(slug, body?, title?, tags?, type?, media_path?) → {slug, version, previous_version, archived_at}
   - idea_history(slug)                        → {slug, versions: [{version, path}]}
+  - pending_list()                            → {captures: [...], count: int}
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ import argparse
 import mimetypes
 import re
 import signal
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -50,6 +52,7 @@ if str(_PARENT_DIR) not in sys.path:
 from wiki.graph_indexer import EntityGraphIndex   # noqa: E402
 from wiki.mcp_adapter import GraphMCPAdapter      # noqa: E402
 from wiki.ideas_bank import IdeaNotFound, IdeasBank, InvalidIdea  # noqa: E402
+from wiki import data_root                         # noqa: E402
 
 from mcp.server.fastmcp import FastMCP             # noqa: E402
 
@@ -391,6 +394,65 @@ def idea_history(slug: str) -> dict:
         if match
     ]
     return {"slug": slug, "versions": versions}
+
+
+# ---------------------------------------------------------------------------
+# Pending-capture queue — read-only view of the shared idea-capture SQLite.
+# The parked-capture queue is owned by the idea_capture runtime (Telegram
+# keyboard / web panel). This server reads the SQLite directly instead of
+# importing the heavy idea_capture package (its __init__ pulls the whole
+# adapter/runtime/service chain).
+# ---------------------------------------------------------------------------
+
+# Mirrors idea_capture.models.CaptureState.AWAITING_CONFIRM; kept as a literal
+# so this server does not import the heavy idea_capture package.
+_PENDING_STATE = "AWAITING_CONFIRM"
+
+
+def _pending_state_path() -> Path:
+    """Resolve the shared idea-capture SQLite path from the data root.
+
+    Uses the same resolver ``IdeasBank`` relies on in this process, so the MCP
+    server and the capture runtime agree on ``<data root>/data/...``.
+    """
+    return data_root.resolve_data_root() / "data" / "idea-capture.sqlite3"
+
+
+@mcp.tool()
+def pending_list() -> dict:
+    """List captures parked in AWAITING_CONFIRM (the Taller de Ideas review queue).
+
+    Read-only view of the shared idea-capture SQLite state. Returns
+    {captures: [{capture_id, slug, raw_text, created_at, event_ts, media_kind}],
+    count: N} ordered oldest-first. An absent database returns an empty list;
+    a read failure returns an empty list plus an ``error`` field (never raises).
+    """
+    conn: sqlite3.Connection | None = None
+    try:
+        # Resolve inside the guard: an unconfigured data root raises
+        # DataRootNotConfigured, which must degrade to the empty payload
+        # instead of breaking the "never raises" contract.
+        path = _pending_state_path()
+        if not path.is_file():
+            return {"captures": [], "count": 0}
+        # Read-only URI so this server never writes the schema nor contends
+        # with the capture runtime's writer. ``Path.as_uri()`` percent-encodes
+        # metacharacters (``#``, ``%``, ``?``) that a naive f-string URI would
+        # misparse.
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=10)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT capture_id, slug, raw_text, created_at, event_ts, media_kind "
+            "FROM captures WHERE state=? ORDER BY created_at",
+            (_PENDING_STATE,),
+        ).fetchall()
+        captures = [dict(row) for row in rows]
+        return {"captures": captures, "count": len(captures)}
+    except (data_root.DataRootNotConfigured, OSError, sqlite3.Error) as exc:
+        return {"captures": [], "count": 0, "error": str(exc)}
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------
