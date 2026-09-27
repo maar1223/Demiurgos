@@ -65,6 +65,28 @@ Rename its first parameter to reflect the resolved title: `resolve_file_slug(fic
   - Tests: the title field is prefilled; editing the title updates the file name; editing the file name does NOT change the title; the generate payload carries both.
 - [x] **FT-3 — Verify, build, restart, commit** (parent, bounded actions)
 
+## Iteration 2 — the idea's title owns its body H1 (user-reported)
+
+Reported: the user changed the idea's title to "Silpah — Lince de Chaae" (verified on disk: `title:` is the new value) and the body still reads `# Silpah — félido relámpago de Chaae`. FT-1 imposed the rule only on the MATERIALIZED ficha; the IDEA itself still drifts, because the title and the body H1 are written by different places.
+
+Verified facts:
+- `PATCH /api/ideas/{slug}` already goes through `IdeasBank.update_versioned()` (ideas_bank_router.py:300), so a title save is versioned.
+- `IdeasBank._prepare_update` merges the partial and validates it; it is the ONE place both `update()` and `update_versioned()` share.
+- The world editor does NOT expose a separate ficha title field (the ficha frontmatter is agent-only metadata; the author edits the body, whose H1 IS the displayed title). So the world side has no equivalent drift to fix — this is an ideas-side rule.
+
+### Rule
+When the saved `title` CHANGES, the merged body's LEADING H1 is rewritten to the new title (replace it when the first line is `# ...`, otherwise prepend `# {title}`). A save that does not change the title leaves the body untouched. A body-only save (no `title` in the payload) does not touch the H1.
+
+### Tasks
+- [x] **FT-4 — Backend: a title change rewrites the idea's body H1** (delegated writer)
+  - The rule moved to a neutral `markdown_heading.impose_h1` module (the materialization domain delegates; `ideas_bank` does NOT depend on the materialization domain). Applied in the shared `_prepare_update`.
+  - **Trigger rule is UNCONDITIONAL**: any payload containing `title` normalises the H1, so re-saving an already-changed title self-heals a drifting body. (The first cut only fired when the title changed, which did NOT fix the reported case.)
+  - **Correctness fix found by a parent dry-run on the real data**: the idea body OPENS with the media embed (`IdeasBank.attach_media` prepends it), so the H1 is not the first line. The original rule only inspected line 1 and therefore PREPENDED a second H1, leaving the old one in place. The rule now scans past leading blank/image lines and replaces the H1 where it actually is (or inserts at the top when there is none), with a byte-identical result when the H1 already matches.
+  - The world side needs no equivalent: the ficha frontmatter is agent-only metadata and the editor does not expose a separate title field, so the body H1 IS the displayed title there.
+  - Extract the H1 rule into a NEUTRAL shared helper so both the materialization domain and `ideas_bank` can use it. Do NOT make `ideas_bank` import the materialization domain; create a small dedicated module if no neutral home exists, and have `idea_materialization_domain._impose_h1` delegate to it (behaviour unchanged).
+  - Apply the rule in `IdeasBank._prepare_update` when `title` is present and differs from the current title.
+  - Tests: a title change rewrites the H1 (replace and prepend cases); the same title leaves the body byte-identical; a body-only save leaves the H1 alone; a later H1 is untouched; the change is versioned and the new version carries the consistent H1; the existing `_impose_h1` materialization tests stay green.
+
 ## Constraints
 - Neutral/professional Spanish for UI copy; technical artifacts in English.
 - No new dependency; reuse the existing design tokens.
@@ -73,7 +95,13 @@ Rename its first parameter to reflect the resolved title: `resolve_file_slug(fic
 ## Progress log
 - 2026-09-27: Document created after the user clarified the requirement and chose the two-field model.
 
-## Verification evidence
+## Verification evidence (iteration 2)
+- Backend: `pytest tests/ -q` → **3220 passed, 6 skipped, 0 failed**. Focused (markdown_heading + ideas_bank + router + materialization domain + api) → 662 passed.
+- Parent dry-run and DATA REPAIR: the user's idea `2026-08-28-524e8b9c9770` had `title: Silpah — Lince de Chaae` with `# Silpah — félido relámpago de Chaae` in the body (the body opens with the media embed). Repaired through the app's own bank (`update_versioned`), so it versioned properly: v10 archived with the old H1, v11 written with ONE H1 equal to the title, image line untouched in first position. `ideas/` is gitignored (user data), so the repair is not part of the commit.
+- Runtime: backend restarted (pid 40678); `/api/config` 200, `/api/ideas` 401 (auth gate).
+- Could NOT verify: the world side (no equivalent surface) and the rendered result in a browser.
+
+## Verification evidence (iteration 1)
 - Backend: `pytest tests/ -q` → 1 failed, 3202 passed, 1 skipped. Sole failure is the known pre-existing live E2E. Focused (domain+api+router) → 608 passed.
 - Frontend: `npx vitest run` → 114 files / 1408 passed (i18n guards included); `npm run typecheck` clean; `npm run build` OK.
 - Observed FLAKE (unrelated, pre-existing): `src/__tests__/GraphView.test.tsx > does not select a node when the click starts on a connection handle` failed once with `ResizeObserver is not defined` during a full-suite run; it passes 32/32 alone and the full suite re-ran 1405/1405. Our diff does not touch GraphView, the shared setup, or ResizeObserver; `setup.ts` has no ResizeObserver stub (it stubs `print` and `DataTransfer`). Recommended separate hardening: add a ResizeObserver stub to `src/__tests__/setup.ts`.

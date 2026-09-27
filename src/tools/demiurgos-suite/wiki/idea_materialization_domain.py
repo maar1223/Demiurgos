@@ -40,6 +40,7 @@ from idea_materialization_protocol import (
     Relation,
 )
 from import_enrichment import _REL_VOCAB_DEFAULT
+from markdown_heading import impose_h1
 from okf_contract import is_canonical_id
 
 # Indexer exclusion set (mirrors ``graph_indexer._EXCLUDE_FILES``,
@@ -266,19 +267,17 @@ def build_ficha_skeleton(
 def _impose_h1(body: str, title: str) -> str:
     """Make the server-owned *title* the body's leading H1 (FT-1).
 
-    The AI body may open with its own H1 (which drifts from the title shown
-    above the ficha) or with no heading at all. When the first line is an H1
-    (``# `` prefix) it is REPLACED with ``# {title}``; otherwise ``# {title}``
-    is prepended as its own line followed by exactly one blank line. Any later
-    H1 is left untouched. *body* is expected already stripped, so a body that
-    already opens with ``# {title}`` is returned byte-identical.
+    Thin delegation to the neutral ``markdown_heading.impose_h1`` so the idea
+    bank and this materialization domain share exactly one rule (FT-4). The
+    behaviour is unchanged: the AI body may open with its own H1 (which drifts
+    from the title shown above the ficha) or with no heading at all. When the
+    first line is an H1 (``# `` prefix) it is REPLACED with ``# {title}``;
+    otherwise ``# {title}`` is prepended as its own line followed by exactly
+    one blank line. Any later H1 is left untouched. *body* is expected already
+    stripped, so a body that already opens with ``# {title}`` is returned
+    byte-identical.
     """
-    first_line, sep, rest = body.partition("\n")
-    if first_line.startswith("# "):
-        return f"# {title}{sep}{rest}"
-    if body:
-        return f"# {title}\n\n{body}"
-    return f"# {title}"
+    return impose_h1(body, title)
 
 
 def _inject_image_line(body: str, title: str, image_rel: str) -> str:

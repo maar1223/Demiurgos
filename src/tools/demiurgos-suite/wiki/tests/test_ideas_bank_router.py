@@ -128,6 +128,44 @@ def test_update_title(client: TestClient) -> None:
     assert detail["title"] == "El Nuevo Título"
 
 
+def test_update_title_rewrites_body_h1(client: TestClient) -> None:
+    """FT-4: PATCH with a title returns the updated body carrying the new H1."""
+    _create(client, body="# Titulo viejo\n\nCuerpo de la idea.")
+    resp = client.patch("/api/ideas/arquero-ciego", json={"title": "Titulo nuevo"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["body"] == "# Titulo nuevo\n\nCuerpo de la idea."
+    assert client.get("/api/ideas/arquero-ciego").json()["body"] == (
+        "# Titulo nuevo\n\nCuerpo de la idea."
+    )
+
+
+def test_update_same_title_rewrites_drifting_h1_regression(client: TestClient) -> None:
+    """Regression (user report): the title is ALREADY the new value while the
+    body H1 still holds the old title. A PATCH with the SAME current title
+    must normalise the H1 — no title round-trip workaround needed."""
+    created = client.post(
+        "/api/ideas",
+        json={
+            "slug": "silpah",
+            "type": "personaje",
+            "title": "Silpah — Lince de Chaae",
+            "body": "# Silpah — félido relámpago de Chaae\n\nCuerpo de la idea.",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["title"] == "Silpah — Lince de Chaae"
+
+    resp = client.patch(
+        "/api/ideas/silpah", json={"title": "Silpah — Lince de Chaae"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["title"] == "Silpah — Lince de Chaae"
+    assert resp.json()["body"] == "# Silpah — Lince de Chaae\n\nCuerpo de la idea."
+    assert client.get("/api/ideas/silpah").json()["body"] == (
+        "# Silpah — Lince de Chaae\n\nCuerpo de la idea."
+    )
+
+
 def test_create_without_title_defaults_empty(client: TestClient) -> None:
     idea = _create(client, slug="sin-titulo")
     assert idea["title"] == ""
