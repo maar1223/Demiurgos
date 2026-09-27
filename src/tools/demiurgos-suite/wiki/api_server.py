@@ -4695,13 +4695,26 @@ def create_file(mundo: str, section: str, path: str, body: dict, request: Reques
     """Create a new file — gated by a ``kind=new`` confirmation token."""
     pending = _GUIDED_PENDING_PROPOSALS.get(body.get("edit_id"))
     # Materialize proposals live in a SEPARATE store (AD3); the two branches
-    # are mutually exclusive and the guided branch below stays unchanged.
+    # are mutually exclusive. Both pin the request world to the world the
+    # proposal was generated for.
     materialize_pending = None if pending is not None else _MATERIALIZE_PENDING_PROPOSALS.get(body.get("edit_id"))
     if pending is not None:
         principal = _resolve_principal(request)
         target = f"{section}/{path}"
         digest = hashlib.sha256(body.get("content", "").encode("utf-8")).hexdigest()
-        if (principal is None or pending["principal_id"] != principal.id
+        # The guided record does not carry the world directly, but its session
+        # is the authority on the world the proposal was generated for. Recover
+        # it and pin the confirm to that world — mirroring the serialize route's
+        # ``state.world != mundo`` guard. Fail closed when it cannot be resolved
+        # so a removed/expired session can never widen the write to another
+        # world. This guard runs before any copy or write below.
+        guided_session = (
+            _GUIDED_SESSIONS.recover(str(pending["session_id"]), principal.id)
+            if principal is not None else None
+        )
+        if (principal is None or guided_session is None
+                or guided_session.world != mundo
+                or pending["principal_id"] != principal.id
                 or pending["target"] != target or pending["content"] != body.get("content")
                 or pending["digest"] != digest or body.get("proposed_digest") != digest):
             raise HTTPException(status_code=409, detail="Guided proposal is stale or altered")
@@ -4709,7 +4722,8 @@ def create_file(mundo: str, section: str, path: str, body: dict, request: Reques
         principal = _resolve_principal(request)
         target = f"{section}/{path}"
         digest = hashlib.sha256(body.get("content", "").encode("utf-8")).hexdigest()
-        if (principal is None or materialize_pending["principal_id"] != principal.id
+        if (principal is None or materialize_pending["world"] != mundo
+                or materialize_pending["principal_id"] != principal.id
                 or materialize_pending["target"] != target
                 or materialize_pending["content"] != body.get("content")
                 or materialize_pending["digest"] != digest

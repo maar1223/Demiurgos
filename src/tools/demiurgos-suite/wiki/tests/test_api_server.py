@@ -8508,6 +8508,43 @@ class TestMaterializeConfirm:
         # The proposal survives the failed confirm; the token is still redeemable.
         assert preview["proposal_id"] in api_server._MATERIALIZE_PENDING_PROPOSALS
 
+    def test_confirm_wrong_world_rejected_and_proposal_survives(self, client: TestClient, monkeypatch):
+        """A preview generated for world A cannot be confirmed against world B.
+
+        The request world must equal the world recorded on the proposal;
+        otherwise 409 fires BEFORE the image copy and the canon write, so
+        neither the ficha nor the media lands in world B, and the proposal is
+        NOT consumed — a later confirm against the correct world A succeeds.
+        """
+        # A preview WITH an image proves the guard blocks the copy too.
+        _write_idea(media_path="media/idea-foto.jpg")
+        _write_idea_media("idea-foto.jpg", b"\xff\xd8\xff\xe0fake-jpeg")
+        _wire_materialize(monkeypatch, lambda request, _c: _materialize_delta(request))
+        preview_resp = _materialize_preview(client)
+        assert preview_resp.status_code == 200, preview_resp.text
+        preview = preview_resp.json()
+        proposal_id = preview["proposal_id"]
+        world_b = api_server.MUNDOS_DIR / "test_mundo_b"
+        world_b.mkdir(parents=True, exist_ok=True)
+
+        wrong = self._confirm(client, preview, mundo="test_mundo_b")
+        assert wrong.status_code == 409, wrong.text
+        assert wrong.json()["detail"] == "Materialize proposal is stale or altered"
+        # Nothing was written or copied into world B.
+        assert not (world_b / "lore" / "subdir" / "arquero-ciego.md").exists()
+        assert not (world_b / "wiki" / "media" / "arquero-ciego.jpg").exists()
+        assert not list(world_b.rglob("*.md"))
+        # The proposal survived the mismatch.
+        assert proposal_id in api_server._MATERIALIZE_PENDING_PROPOSALS
+
+        # The correct world still confirms: ficha + carried image in world A.
+        ok = self._confirm(client, preview, mundo="test_mundo")
+        assert ok.status_code == 200, ok.text
+        world_a = api_server.MUNDOS_DIR / "test_mundo"
+        assert (world_a / "lore" / "subdir" / "arquero-ciego.md").is_file()
+        assert (world_a / "wiki" / "media" / "arquero-ciego.jpg").is_file()
+        assert proposal_id not in api_server._MATERIALIZE_PENDING_PROPOSALS
+
     def test_confirm_reports_index_status(self, client: TestClient, monkeypatch):
         """R-IM-06: the create response surfaces index_status/retryable/message."""
         preview = self._preview(client, monkeypatch)
@@ -8704,3 +8741,68 @@ class TestMaterializeConfirm:
         idea = (api_server.PROJECT_ROOT / "ideas" / "arquero-ciego.md").read_text(encoding="utf-8")
         assert "used_in:" in idea and "test_mundo" in idea and "test_mundo_b" in idea
         assert "status: used" in idea
+
+
+# ---------------------------------------------------------------------------
+# Guided create branch — world pinning (same class of gap as the materialize
+# branch: a proposal is bound to the world it was generated for)
+# ---------------------------------------------------------------------------
+
+
+class TestGuidedCreateWorldBinding:
+    """The guided create branch pins the request world to the proposal's world.
+
+    The guided pending record carries no ``world`` directly, but it carries its
+    ``session_id`` and the guided session store is the authority on the world
+    the proposal was serialized for. The create guard recovers that session and
+    rejects a confirm whose URL world differs.
+    """
+
+    def _proposal(self, client: TestClient, monkeypatch, world: str) -> dict:
+        _principal(monkeypatch, "tester")
+        store = api_server.GuidedSessionStore()
+        state = store.create("guided-world", world, "tester")
+        state.candidate.proposals["desire"] = {"value": "freedom", "certainty": "proposed"}
+        store._sessions["guided-world"] = state
+        monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
+        resp = client.post(
+            f"/api/{world}/guided-character/proposal/serialize",
+            json={"session_id": "guided-world", "base_revision": 0,
+                  "slug": "aria", "title": "Aria"},
+        )
+        assert resp.status_code == 200, resp.text
+        return resp.json()
+
+    def _confirm(self, client: TestClient, preview: dict, mundo: str):
+        section, path = preview["target"].split("/", 1)
+        conf = client.post(
+            f"/api/{mundo}/{section}/edit-confirmation?path={path}",
+            json={"edit_id": preview["proposal_id"], "kind": "new",
+                  "proposed_content": preview["proposed_content"]},
+        )
+        assert conf.status_code == 200, conf.text
+        conf = conf.json()
+        return client.post(
+            f"/api/{mundo}/{section}/create?path={path}",
+            json={"content": preview["proposed_content"], "edit_id": preview["proposal_id"],
+                  "proposed_digest": conf["proposed_digest"], "token": conf["token"]},
+        )
+
+    def test_confirm_wrong_world_rejected_and_proposal_survives(
+            self, client: TestClient, monkeypatch):
+        preview = self._proposal(client, monkeypatch, "test_mundo")
+        proposal_id = preview["proposal_id"]
+        world_b = api_server.MUNDOS_DIR / "test_mundo_b"
+        world_b.mkdir(parents=True, exist_ok=True)
+
+        wrong = self._confirm(client, preview, "test_mundo_b")
+        assert wrong.status_code == 409, wrong.text
+        assert wrong.json()["detail"] == "Guided proposal is stale or altered"
+        assert not (world_b / "personajes" / "aria.md").exists()
+        assert proposal_id in api_server._GUIDED_PENDING_PROPOSALS
+
+        ok = self._confirm(client, preview, "test_mundo")
+        assert ok.status_code == 200, ok.text
+        written = api_server.MUNDOS_DIR / "test_mundo" / "personajes" / "aria.md"
+        assert written.is_file()
+        assert written.read_text(encoding="utf-8") == preview["proposed_content"]

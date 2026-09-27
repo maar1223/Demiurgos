@@ -60,3 +60,23 @@ Object.defineProperty(globalThis, "DataTransfer", {
   writable: true,
   value: DataTransferStub,
 });
+
+/**
+ * jsdom does not implement ResizeObserver either, and any component that
+ * measures its container (Breadcrumb, the graph canvas) constructs one while
+ * mounting. Without a default the mount throws "ResizeObserver is not defined"
+ * and the failure surfaces intermittently depending on how the suite schedules
+ * files. Tests that must DRIVE the measurement replace this stub themselves
+ * with `vi.stubGlobal`; this default only keeps the mount path alive.
+ */
+class ResizeObserverStub {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+
+Object.defineProperty(globalThis, "ResizeObserver", {
+  writable: true,
+  configurable: true,
+  value: ResizeObserverStub,
+});
