@@ -2346,15 +2346,27 @@ export default function IdeasWorkshop() {
       ) : (
         <article aria-label={t("ideas.detail.articleAria", { slug: selectedIdea.slug })}>
           <header className="mb-4 border-b border-edge pb-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-heading text-h2 text-primary">{selectedIdea.title || selectedIdea.slug}</h2>
-              <span className="rounded-full bg-action/10 px-2.5 py-0.5 text-xs text-action">
+            {/* Header row: title + badges + actions. From `lg` up the row is a
+                single line and the TITLE is the only item that gives — it
+                shrinks with an ellipsis (full text kept in `title`). That
+                keeps the badges and the actions on the title's line, so the
+                buttons can never wrap onto a second row and read as offset
+                from the title/badges. Below `lg` the row still wraps, which
+                the compact layout needs. */}
+            <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+              <h2
+                className="min-w-0 font-heading text-h2 text-primary lg:truncate"
+                title={selectedIdea.title || selectedIdea.slug}
+              >
+                {selectedIdea.title || selectedIdea.slug}
+              </h2>
+              <span className="shrink-0 rounded-full bg-action/10 px-2.5 py-0.5 text-xs text-action">
                 {t(TYPE_LABELS[selectedIdea.type])}
               </span>
-              <span className="rounded-full bg-surface-raised px-2.5 py-0.5 text-xs text-muted">
+              <span className="shrink-0 rounded-full bg-surface-raised px-2.5 py-0.5 text-xs text-muted">
                 {t(STATUS_LABELS[selectedIdea.status])}
               </span>
-              <div className="ml-auto flex items-center gap-2">
+              <div className="ml-auto flex shrink-0 items-center gap-2">
                 {/* DM-2: the primary action stays visible (it turns an idea
                     into canon); exports + edits live in the `⋯` menu. */}
                 <button
