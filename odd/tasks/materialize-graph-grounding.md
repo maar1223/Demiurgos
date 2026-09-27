@@ -93,7 +93,8 @@ The genuine defect is **the selection rule**, not the AI and not the world.
   - Intermediate check at `SEED_RATIO = 0.90` produced 10 candidates including 8 Eneatipos (noise from one bad seed) — the evidence behind the tuning.
 - Backend: `pytest tests/ -q` → **3232 passed, 1 failed, 1 skipped**. The failure is the known pre-existing live-gateway test `tests/test_semantic_e2e.py::TestLiveHermesFirstE2E::test_live_guided_start_semantic_first`, reproduced identically on the base with the changes stashed. Focused (domain + api) → 574 passed.
 - Runtime: backend restarted (pid 118539); `/api/config` 200, `materialize-preview` 401 (auth gate).
-- Independent verification: NOT yet run for this change (the parent will note it).
+- Independent verification (fresh context, read-only): status **ok**; all six checks PASS; no BLOCKER/CRITICAL. The verifier built the REAL `EntityGraphIndex` over `mundos/Vibrantes` and reproduced the result end to end: `[Chaae, Pannj]`, 514 chars, with scores `15.06 / 13.97 / 11.76 / 11.69`. It confirmed the hybrid stages, the tail-only truncation, the neighbour dedupe/ordering, that the prompt/model/envelope/validator are untouched, and that the only production caller was updated.
+  - MINOR findings (accepted): the documented "ties by id" actually ties by `path` because the search hit type has no `id` (deterministic and equivalent, wording imprecise); the integration test uses a one-entity world so it cannot distinguish graph seeding from the old enumeration; a payload budget smaller than a single candidate would still drop a seed (unreachable with the 4000-char guard).
 - Could NOT verify: the live AI output with the new candidate set (needs a real generation), and the world's remaining ideas beyond the title sweep.
 
 ## Next step
