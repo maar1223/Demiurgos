@@ -98,6 +98,7 @@ from idea_materialization_protocol import (
 from idea_materialization_domain import (
     build_ficha_skeleton,
     build_grounding_candidates,
+    resolve_file_slug,
     suggest_free_slug,
     validate_relations,
 )
@@ -4694,13 +4695,26 @@ def create_file(mundo: str, section: str, path: str, body: dict, request: Reques
     """Create a new file — gated by a ``kind=new`` confirmation token."""
     pending = _GUIDED_PENDING_PROPOSALS.get(body.get("edit_id"))
     # Materialize proposals live in a SEPARATE store (AD3); the two branches
-    # are mutually exclusive and the guided branch below stays unchanged.
+    # are mutually exclusive. Both pin the request world to the world the
+    # proposal was generated for.
     materialize_pending = None if pending is not None else _MATERIALIZE_PENDING_PROPOSALS.get(body.get("edit_id"))
     if pending is not None:
         principal = _resolve_principal(request)
         target = f"{section}/{path}"
         digest = hashlib.sha256(body.get("content", "").encode("utf-8")).hexdigest()
-        if (principal is None or pending["principal_id"] != principal.id
+        # The guided record does not carry the world directly, but its session
+        # is the authority on the world the proposal was generated for. Recover
+        # it and pin the confirm to that world — mirroring the serialize route's
+        # ``state.world != mundo`` guard. Fail closed when it cannot be resolved
+        # so a removed/expired session can never widen the write to another
+        # world. This guard runs before any copy or write below.
+        guided_session = (
+            _GUIDED_SESSIONS.recover(str(pending["session_id"]), principal.id)
+            if principal is not None else None
+        )
+        if (principal is None or guided_session is None
+                or guided_session.world != mundo
+                or pending["principal_id"] != principal.id
                 or pending["target"] != target or pending["content"] != body.get("content")
                 or pending["digest"] != digest or body.get("proposed_digest") != digest):
             raise HTTPException(status_code=409, detail="Guided proposal is stale or altered")
@@ -4708,12 +4722,17 @@ def create_file(mundo: str, section: str, path: str, body: dict, request: Reques
         principal = _resolve_principal(request)
         target = f"{section}/{path}"
         digest = hashlib.sha256(body.get("content", "").encode("utf-8")).hexdigest()
-        if (principal is None or materialize_pending["principal_id"] != principal.id
+        if (principal is None or materialize_pending["world"] != mundo
+                or materialize_pending["principal_id"] != principal.id
                 or materialize_pending["target"] != target
                 or materialize_pending["content"] != body.get("content")
                 or materialize_pending["digest"] != digest
                 or body.get("proposed_digest") != digest):
             raise HTTPException(status_code=409, detail="Materialize proposal is stale or altered")
+        # CI-1: copy the idea image BEFORE the first canon write. Any failure
+        # (destination race, missing source, copy error) fails closed with 409
+        # and nothing is written; the proposal is not consumed.
+        _copy_materialize_image(materialize_pending, mundo)
     result = _write_content(mundo, section, path, body, request, kind="new")
     if materialize_pending is not None:
         full = _resolve_mundo_path(mundo, f"{section}/{path}")
@@ -5392,6 +5411,49 @@ class _GuidedGraphReader:
 
     def links(self, entity_path: str, kind: str) -> list[dict]:
         return self._index.get_links(entity_path, kind)
+
+    def neighbors(self, entity_path: str) -> list[dict]:
+        """One-hop graph neighbourhood: forward links + backlinks, deduped.
+
+        Grounding expands each seed one hop so the entities the idea is
+        *related to* reach the model too (the Chaae defect: the region linked
+        to Pannj, but neither was advertised). Uses the index's PUBLIC
+        ``get_links`` surface for both directions; each raw link record
+        carries only ``{name,type,path}``, so it is resolved to the full
+        entity mapping (the same shape ``entities()``/``read()`` return)
+        because candidates need the canonical ``id`` and ``description``.
+        Dead/unresolved links (``path`` None) are skipped.
+        """
+        result: list[dict] = []
+        seen: set[str] = set()
+        for kind in ("forward", "backlinks"):
+            for link in self._index.get_links(entity_path, kind):
+                path = link.get("path") if isinstance(link, dict) else None
+                if not isinstance(path, str) or not path or path in seen:
+                    continue
+                seen.add(path)
+                entity = self.read(path)
+                if entity is not None:
+                    result.append(entity)
+        return result
+
+    def hubs(self) -> list[dict]:
+        """The world's most connected entities, as full entity mappings.
+
+        Only consulted when a search matched nothing at all (blind map). The
+        index's PUBLIC ``get_links(None, "hubs")`` branch delegates to the
+        private ``EntityGraphIndex._get_hubs`` helper; each raw record is
+        resolved to its full mapping so the fallback can build candidates.
+        """
+        result: list[dict] = []
+        for link in self._index.get_links(None, "hubs"):
+            path = link.get("path") if isinstance(link, dict) else None
+            if not isinstance(path, str) or not path:
+                continue
+            entity = self.read(path)
+            if entity is not None:
+                result.append(entity)
+        return result
 
 
 def _resolve_entity_path(idx: "EntityGraphIndex", name: str) -> str | None:
@@ -6105,10 +6167,16 @@ ACTIVITY_ADAPTER = HermesRunsActivityAdapter(
     client_provider=_get_hermes_client,
 )
 _GUIDED_PROVIDER = HermesGuidedProvider(ACTIVITY_ADAPTER)
-# Idea-materialization provider (AD2): the SAME runs-adapter seam, one Hermes
-# run per preview. Strict envelope validation is server-side (fail closed);
-# tests replace this module attribute after import.
-_MATERIALIZE_PROVIDER = HermesMaterializationProvider(ACTIVITY_ADAPTER)
+# Idea-materialization provider (AD2): one non-streaming chat-completions
+# request per preview with ``tool_choice: "none"`` (no unused tool schemas).
+# The activity adapter is still injected for the capability probe; strict
+# envelope validation is server-side (fail closed); tests replace this module
+# attribute after import.
+_MATERIALIZE_PROVIDER = HermesMaterializationProvider(
+    ACTIVITY_ADAPTER,
+    chat_url=_GATEWAY_URL,
+    client_provider=_get_hermes_client,
+)
 # Skill Madre provider (kernel-owned, co-creation-v1 envelope). Same adapter
 # seam as the guided provider; tests replace it after import.
 _CO_CREATION_PROVIDER = HermesCoCreationProvider(ACTIVITY_ADAPTER)
@@ -7882,7 +7950,11 @@ async def ai_edit_suggest(mundo: str, body: dict, request: Request):
 # ---------------------------------------------------------------------------
 
 from idea_capture_ui import create_idea_capture_router  # noqa: E402
-from ideas_bank_router import IdeaMaterializePreviewRequest, create_ideas_bank_router  # noqa: E402
+from ideas_bank_router import (  # noqa: E402
+    IdeaMaterializePreviewRequest,
+    IdeaMaterializeTargetRequest,
+    create_ideas_bank_router,
+)
 from docx_export import _convert_markdown_to_docx, _strip_frontmatter  # noqa: E402
 from ideas_bank import IdeaNotFound, IdeasBank  # noqa: E402
 import assistant_settings  # noqa: E402
@@ -8175,6 +8247,139 @@ def _materialize_existing_ids(reader: _GuidedGraphReader) -> list[str]:
     return ids
 
 
+def _resolve_ficha_title(
+    client_title: str | None, idea_title: str | None, idea_slug: str
+) -> str:
+    """Resolve the server-owned ficha title (FT-1).
+
+    Single source for the visible title that BOTH the frontmatter ``title`` and
+    the body H1 must equal: the client-supplied title (destination step) wins,
+    then the idea's own title, then the idea slug. Internal whitespace runs
+    collapse to a single space so the H1 and the frontmatter title never differ
+    by stray spacing. The filename is derived separately by
+    ``resolve_file_slug``; changing the file name never changes this value.
+    """
+    raw = (client_title or "").strip() or (idea_title or "").strip() or idea_slug
+    return re.sub(r"\s+", " ", raw).strip()
+
+
+def _resolve_materialize_target(
+    world: str, section: str, folder: str, file_slug: str
+) -> tuple[str, dict[str, Any], dict[str, str] | None]:
+    """Resolve a materialize destination and detect an existing-file collision.
+
+    Single source of truth for the target/collision rule shared by
+    ``materialize_preview`` and ``materialize_target`` (AD5): the section-relative
+    *target* (``{section}/{folder}/{file_slug}.md``), the response *target_info*
+    block (``{world, section, folder, slug, path}`` with ``path`` relative to
+    the section) and the additive *collision* payload
+    (``{target, suggested_slug, suggested_target}``) when the target already
+    exists, else ``None``. ``file_slug`` is the RESOLVED filename slug (derived
+    from the title or supplied by the client), never the idea's internal slug;
+    ``target_info["slug"]`` reports exactly that resolved value. Pure
+    resolution — no provider, graph or write.
+    """
+    target_rel = f"{folder}/{file_slug}.md" if folder else f"{file_slug}.md"
+    target = f"{section}/{target_rel}"
+    target_info = {
+        "world": world, "section": section,
+        "folder": folder, "slug": file_slug, "path": target_rel,
+    }
+    full = _resolve_mundo_path(world, target)
+    if full is not None and full.exists():
+        suggested = suggest_free_slug(full)
+        collision = {
+            "target": target,
+            "suggested_slug": suggested.stem,
+            "suggested_target": f"{section}/{folder}/{suggested.stem}.md"
+            if folder else f"{section}/{suggested.stem}.md",
+        }
+        return target, target_info, collision
+    return target, target_info, None
+
+
+# Idea media allowlist (mirrors the ideas media route, ideas_bank_router.py:175).
+_IDEA_IMAGE_EXTENSIONS: frozenset[str] = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
+
+
+def _resolve_materialize_image(
+    idea: object, *, media_dir: Path, world_dir: Path, file_slug: str,
+) -> dict[str, str] | None:
+    """Resolve an idea's image to a free world-relative destination (READ ONLY).
+
+    Returns ``{"source": <bare name>, "dest": "media/<name><ext>"}`` when the
+    idea carries a usable image, else ``None``. Every failure degrades to
+    "no image" (logged, never raised): no ``media_path``, a path that is not a
+    bare ``media/<name>`` (traversal/separators/empty), a non-allowlisted
+    extension, or a missing/non-file source. The destination is ``file_slug``
+    plus the source extension; when ``<world_dir>/wiki/media/<name>`` already
+    exists the next free ``-2``, ``-3``, … name is picked via
+    ``suggest_free_slug``. This is a read-only check: it never creates the
+    media directory or writes a byte (R-IM-04).
+    """
+    media_path = getattr(idea, "media_path", None)
+    if not isinstance(media_path, str) or not media_path.startswith("media/"):
+        return None
+    source_name = media_path[len("media/"):]
+    if (not source_name or "/" in source_name or "\\" in source_name
+            or ".." in source_name):
+        logger.warning("materialize-preview: unsafe idea media_path %r; treating as no image", media_path)
+        return None
+    if Path(source_name).suffix.lower() not in _IDEA_IMAGE_EXTENSIONS:
+        logger.warning("materialize-preview: non-image idea media_path %r; treating as no image", media_path)
+        return None
+    source = media_dir / source_name
+    if not source.is_file():
+        logger.warning("materialize-preview: missing idea media file %s; treating as no image", source)
+        return None
+    dest_path = world_dir / "wiki" / "media" / f"{file_slug}{Path(source_name).suffix}"
+    if dest_path.exists():
+        dest_path = suggest_free_slug(dest_path)
+    return {"source": source_name, "dest": f"media/{dest_path.name}"}
+
+
+def _copy_materialize_image(pending: dict[str, Any], mundo: str) -> None:
+    """Copy a pending idea image into the world at confirm time (fail closed).
+
+    Runs after the principal/target/content/digest verification and before the
+    first canon write. Raises 409 (naming the image) when the destination
+    appeared after preview, the source is gone, or the copy fails, so NOTHING
+    is written and the proposal is not consumed; the user re-previews to pick a
+    new name. A plain ``shutil.copyfile`` byte copy — an orphan image left by a
+    later ``_write_content`` failure is acceptable and harmless.
+    """
+    media = pending.get("media")
+    if media is None:
+        return
+    source_name = str(media.get("source") or "")
+    dest_rel = str(media.get("dest") or "")
+    dest_name = Path(dest_rel).name
+    world_dir = _resolve_mundo_dir(mundo)
+    if (not source_name or "/" in source_name or "\\" in source_name or ".." in source_name
+            or dest_rel != f"media/{dest_name}" or not dest_name or world_dir is None):
+        raise HTTPException(status_code=409, detail=f"Imagen de la idea inválida: {source_name or dest_rel}")
+    dest_path = world_dir / "wiki" / "media" / dest_name
+    if dest_path.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"La imagen de destino ya existe: {dest_rel}. Vuelve a previsualizar para elegir otro nombre.",
+        )
+    source_path = IdeasBank()._ideas_root / "media" / source_name
+    if not source_path.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail=f"No se encuentra la imagen de la idea: {source_name}. Vuelve a previsualizar.",
+        )
+    try:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_path, dest_path)
+    except Exception as exc:  # noqa: BLE001 — any copy failure must abort the write
+        raise HTTPException(
+            status_code=409,
+            detail=f"No se pudo copiar la imagen de la idea '{source_name}': {exc}",
+        )
+
+
 @app.post("/api/ideas/{slug}/materialize-preview")
 async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, request: Request):
     """Preview materializing a global-bank idea into a world ficha (R-IM-01..09).
@@ -8190,8 +8395,9 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         raise HTTPException(status_code=401, detail="Autenticación requerida")
     principal = _resolve_principal(request)
     _prune_materialize_proposals()
+    bank = IdeasBank()
     try:
-        idea = IdeasBank().read(slug)
+        idea = bank.read(slug)
     except IdeaNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     mundo_dir = _resolve_mundo_dir(body.world)
@@ -8215,8 +8421,24 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
     if idx is None:
         raise problem("world.not_found")
     reader = _GuidedGraphReader(idx)
-    candidates = build_grounding_candidates(reader)
+    # Graph-aware grounding (materialize-graph-grounding): seed from the idea
+    # TITLE, broaden with a bounded body excerpt, then expand one hop. The
+    # domain bounds the body itself (BODY_EXCERPT_CHARS); the payload budget is
+    # only a guard, never a target.
+    candidates = build_grounding_candidates(reader, idea_title=idea.title, idea_body=idea.body)
+    # FT-1: the resolved ficha title (client title > idea title > idea slug,
+    # whitespace-collapsed) owns BOTH the frontmatter title and the body H1.
+    # The filename derives from it unless a client slug overrides it. The
+    # provider request keeps its original idea-derived `title`/`slug` untouched
+    # (the prompt is protected; the AI's own H1 is discarded by the skeleton).
+    ficha_title = _resolve_ficha_title(body.title, idea.title, idea.slug)
+    file_slug = resolve_file_slug(ficha_title, idea.slug, body.slug)
     title = (idea.title or "").strip() or idea.slug
+    # CI-1: carry the idea's image. Read-only resolution here; the bytes are
+    # copied only at confirm, so a missing/unusable image degrades to no image.
+    media = _resolve_materialize_image(
+        idea, media_dir=bank._ideas_root / "media", world_dir=mundo_dir, file_slug=file_slug,
+    )
     request_id = f"materialize-{uuid.uuid4().hex}"
     materialize_request = MaterializationRequest(
         protocol_version=MATERIALIZATION_PROTOCOL_VERSION,
@@ -8265,22 +8487,17 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         world_dir=mundo_dir,
         section=body.section,
         folder=folder,
-        slug=idea.slug,
-        title=title,
+        slug=file_slug,
+        idea_slug=idea.slug,
+        title=ficha_title,
         body=parsed.body,
         relations=kept_relations,
+        image_rel=media["dest"] if media is not None else None,
     )
-    target_rel = f"{folder}/{idea.slug}.md" if folder else f"{idea.slug}.md"
-    target = f"{body.section}/{target_rel}"
-    full = _resolve_mundo_path(body.world, target)
-    if full is not None and full.exists():
-        suggested = suggest_free_slug(full)
-        collision = {
-            "target": target,
-            "suggested_slug": suggested.stem,
-            "suggested_target": f"{body.section}/{folder}/{suggested.stem}.md"
-            if folder else f"{body.section}/{suggested.stem}.md",
-        }
+    target, target_info, collision = _resolve_materialize_target(
+        world=body.world, section=body.section, folder=folder, file_slug=file_slug,
+    )
+    if collision is not None:
         # AD5: 409 with the additive suggestion payload (the existing 409
         # strings are never altered). JSONResponse keeps ``collision`` at the
         # top level exactly as the design pins it.
@@ -8295,24 +8512,26 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         "section": body.section,
         "folder": folder,
         "slug": idea.slug,
+        "file_slug": file_slug,
+        "title": ficha_title,
         "target": target,
         "content": content,
         "digest": digest,
         "operation_id": f"materialize-create-{proposal_id}",
         "created_at": now,
         "expires_at": now + timedelta(seconds=_MATERIALIZE_TTL_SECONDS),
+        # CI-1: bare source filename + world-relative dest (never absolute).
+        **({"media": {"source": media["source"], "dest": media["dest"]}} if media is not None else {}),
     }
     title_by_id = {candidate["id"]: candidate["title"] for candidate in candidates}
     logger.info(
         "materialize-preview: world=%s target=%s candidates=%d relations=%d discarded=%d",
         body.world, target, len(candidates), len(kept_relations), len(discarded_relations),
     )
-    return {
+    response = {
         "proposal_id": proposal_id,
-        "target": {
-            "world": body.world, "section": body.section,
-            "folder": folder, "slug": idea.slug, "path": target_rel,
-        },
+        "title": ficha_title,
+        "target": target_info,
         "content": content,
         "proposed_relations": [
             {"target_id": rel.target_id, "title": title_by_id.get(rel.target_id, ""), "rel_type": rel.rel_type}
@@ -8320,6 +8539,54 @@ async def materialize_preview(slug: str, body: IdeaMaterializePreviewRequest, re
         ],
         "discarded_relations": discarded_relations,
     }
+    if media is not None:
+        response["media"] = {
+            "src": f"/api/ideas/media/{media['source']}",
+            "dest": media["dest"],
+        }
+    return response
+
+
+@app.post("/api/ideas/{slug}/materialize-target")
+def materialize_target(slug: str, body: IdeaMaterializeTargetRequest, request: Request):
+    """Resolve the destination ficha path + collision for a materialize (no AI).
+
+    Instant, provider-free counterpart to ``materialize-preview``: it runs the
+    same auth/world/section/traversal validation and returns the resolved
+    target (200) or the existing-file collision (409), so the UI can reveal the
+    destination before paying for a generation. It performs no provider call,
+    no graph build, no canon write and no pending-proposal store mutation
+    (resolution only; R-IM-04 preserved).
+    """
+    if _resolve_principal(request) is None:
+        raise HTTPException(status_code=401, detail="Autenticación requerida")
+    try:
+        idea = IdeasBank().read(slug)
+    except IdeaNotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    if _resolve_mundo_dir(body.world) is None:
+        raise problem("world.not_found")
+    if body.section not in _MATERIALIZE_SECTIONS:
+        raise HTTPException(status_code=400, detail="Sección no fichable")
+    folder = body.folder
+    if folder:
+        if Path(folder).is_absolute() or ".." in Path(folder).parts:
+            raise HTTPException(status_code=400, detail="Path traversal detectado")
+        # Defense-in-depth: the folder must resolve inside the world section
+        # with the canonical containment semantics of _resolve_mundo_path.
+        if _resolve_mundo_path(body.world, f"{body.section}/{folder}") is None:
+            raise HTTPException(status_code=400, detail="Path traversal detectado")
+    # FT-1: resolve the server-owned ficha title (client title > idea title >
+    # idea slug); the filename derives from it unless a client slug overrides.
+    ficha_title = _resolve_ficha_title(body.title, idea.title, idea.slug)
+    file_slug = resolve_file_slug(ficha_title, idea.slug, body.slug)
+    _target, target_info, collision = _resolve_materialize_target(
+        world=body.world, section=body.section, folder=folder, file_slug=file_slug,
+    )
+    if collision is not None:
+        return JSONResponse(status_code=409, content={"detail": "El archivo ya existe", "collision": collision})
+    return {"title": ficha_title, "target": target_info}
+
 
 app.include_router(
     create_assistant_settings_router(

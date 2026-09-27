@@ -33,6 +33,11 @@ try:  # imported as ``wiki.ideas_bank`` (package) …
 except ImportError:  # … and flat, with ``wiki/`` anchored on sys.path
     import data_root
 
+try:  # imported as ``wiki.ideas_bank`` (package) …
+    from .markdown_heading import impose_h1
+except ImportError:  # … and flat, with ``wiki/`` anchored on sys.path
+    from markdown_heading import impose_h1
+
 # --- OKF idea model contract (R-IB-01) --------------------------------------
 IDEA_TYPES: tuple[str, ...] = (
     "personaje",
@@ -462,6 +467,15 @@ class IdeasBank:
             raise InvalidIdea("used_in debe ser una lista de slugs de mundo.")
         if not isinstance(merged["title"], str):
             raise InvalidIdea("El título de la idea debe ser un string.")
+        # FT-4: a title save owns the body's leading H1 — the same rule the
+        # materialized ficha already enforces (FT-1). The H1 is TAKEN FROM the
+        # saved title unconditionally, so re-saving an already-changed title
+        # self-heals a drifting body. A body-only save (no ``title`` key)
+        # leaves the body untouched; when the H1 already matches the title the
+        # helper returns the body byte-identical.
+        body = merged.get("body", current.body)
+        if "title" in partial:
+            body = impose_h1(body, merged["title"])
         updated = Idea(
             id=current.id,
             slug=slug,
@@ -476,7 +490,7 @@ class IdeasBank:
             media_path=merged.get("media_path"),
             version=merged["version"],
             title=merged.get("title", current.title),
-            body=merged.get("body", current.body),
+            body=body,
         )
         return current, updated
 

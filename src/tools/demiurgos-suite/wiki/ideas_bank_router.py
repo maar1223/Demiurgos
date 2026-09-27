@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import mimetypes
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -82,13 +83,40 @@ class IdeaMaterializePreviewRequest(BaseModel):
     sensitive, traversal-safe); ``section`` must be one of the graph-indexed
     sections ``lore|personajes|referencias`` (``media`` is not ficha-eligible);
     ``folder`` is a traversal-safe relative path inside the section (empty =
-    the section root); ``title_hint`` optionally steers the AI-authored title.
+    the section root); ``title`` is the server-owned ficha title (drives the
+    frontmatter ``title`` and the body H1); ``slug`` optionally overrides the
+    derived filename (normalized server-side, never rejected); ``title_hint``
+    is kept for compatibility and no longer steers the filename.
     """
 
     world: str
     section: str
     folder: str = ""
+    title: str | None = None
     title_hint: str | None = None
+    slug: str | None = None
+
+
+class IdeaMaterializeTargetRequest(BaseModel):
+    """POST /api/ideas/{slug}/materialize-target payload.
+
+    Provider-free counterpart to ``IdeaMaterializePreviewRequest``: resolves
+    the destination ficha path and any existing-file collision without running
+    AI. ``world`` must resolve to an existing world directory exactly
+    (case-sensitive, traversal-safe); ``section`` must be one of the
+    graph-indexed sections ``lore|personajes|referencias``; ``folder`` is a
+    traversal-safe relative path inside the section (empty = the section root);
+    ``title`` is the server-owned ficha title and ``slug`` mirrors the preview
+    request so the instant destination step resolves exactly the filename the
+    preview will write; ``title_hint`` is kept for compatibility.
+    """
+
+    world: str
+    section: str
+    folder: str = ""
+    title: str | None = None
+    title_hint: str | None = None
+    slug: str | None = None
 
 
 def create_ideas_bank_router(
@@ -210,8 +238,12 @@ def create_ideas_bank_router(
 
         Delegates to ``IdeasBank._versions_for()`` — the router never
         re-implements version history itself. Returns
-        ``{slug, versions: [{version, path}]}``; an empty list when no
-        archive exists for the slug. Unknown slug → 404.
+        ``{slug, versions: [{version, path, created_at}]}``; an empty list
+        when no archive exists for the slug. ``created_at`` is the ISO-8601
+        UTC timestamp derived from the archive file's ``st_mtime`` (same
+        timezone convention as ``ideas_bank.utcnow_iso``). ``path`` is kept
+        for the copy-path affordance; the UI no longer renders it as text.
+        Unknown slug → 404.
         """
         _guard(request)
         try:
@@ -219,7 +251,13 @@ def create_ideas_bank_router(
         except IdeaNotFound as exc:
             raise HTTPException(status_code=404, detail=str(exc))
         versions = [
-            {"version": int(match.group(1)), "path": str(path)}
+            {
+                "version": int(match.group(1)),
+                "path": str(path),
+                "created_at": datetime.fromtimestamp(
+                    path.stat().st_mtime, tz=timezone.utc
+                ).isoformat(),
+            }
             for path in bank._versions_for(slug)
             for match in [re.search(r"-v(\d+)\.md$", path.name)]
             if match
@@ -304,6 +342,7 @@ __all__ = [
     "IdeaCreateRequest",
     "IdeaMaterializePreviewRequest",
     "IdeaMaterializeRequest",
+    "IdeaMaterializeTargetRequest",
     "IdeaUpdateRequest",
     "create_ideas_bank_router",
 ]

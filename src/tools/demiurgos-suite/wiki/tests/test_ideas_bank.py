@@ -467,6 +467,120 @@ def test_update_rejects_non_string_title(bank: IdeasBank) -> None:
         bank.update("act-titulo", {"title": 42})
 
 
+# ---------------------------------------------------------------------------
+# FT-4 — a title change owns the idea body's leading H1
+# ---------------------------------------------------------------------------
+
+def test_title_change_replaces_leading_h1(bank: IdeasBank) -> None:
+    """A changed title rewrites an existing leading H1 (the reported drift)."""
+    _create(
+        bank, slug="drift",
+        body="# Silpah — félido relámpago de Chaae\n\nTexto del cuerpo.",
+    )
+    updated = bank.update_versioned("drift", {"title": "Silpah — Lince de Chaae"})
+    assert updated.title == "Silpah — Lince de Chaae"
+    assert updated.body.split("\n", 1)[0] == "# Silpah — Lince de Chaae"
+    assert updated.body == "# Silpah — Lince de Chaae\n\nTexto del cuerpo."
+    assert "félido relámpago" not in updated.body
+
+
+def test_title_change_prepends_h1_when_body_has_none(bank: IdeasBank) -> None:
+    """A changed title on an H1-less body prepends ``# {title}`` + blank line."""
+    _create(bank, slug="sin-h1", body="Un cuerpo sin encabezado.")
+    updated = bank.update_versioned("sin-h1", {"title": "Título Nuevo"})
+    assert updated.body == "# Título Nuevo\n\nUn cuerpo sin encabezado."
+
+
+def test_title_change_leaves_later_h1_untouched(bank: IdeasBank) -> None:
+    """Only the leading H1 is rewritten; a later H1 survives."""
+    body = "# Viejo H1\n\nTexto.\n\n# Segundo H1\n\nMás texto."
+    _create(bank, slug="dos-h1", body=body)
+    updated = bank.update_versioned("dos-h1", {"title": "Nuevo H1"})
+    assert updated.body.startswith("# Nuevo H1\n\nTexto.")
+    assert "# Segundo H1\n\nMás texto." in updated.body
+    assert "# Viejo H1" not in updated.body
+
+
+def test_same_title_save_rewrites_drifting_h1(bank: IdeasBank) -> None:
+    """Re-saving the SAME title normalises a drifting H1 (the user's file:
+    title already the new value, body H1 still the old title)."""
+    body = "# Encabezado Distinto\n\nTexto del cuerpo."
+    bank.create(slug="misma", type="personaje", body=body, title="Mi Idea")
+    updated = bank.update_versioned("misma", {"title": "Mi Idea"})
+    assert updated.title == "Mi Idea"
+    assert updated.body == "# Mi Idea\n\nTexto del cuerpo."
+    assert "Encabezado Distinto" not in updated.body
+
+
+def test_same_title_save_byte_identical_when_h1_already_matches(bank: IdeasBank) -> None:
+    """When the leading H1 already equals the saved title there is no spurious
+    rewrite: the body stays byte-identical."""
+    body = "# Mi Idea\n\nTexto del cuerpo.\n\n## Sección\n\nMás."
+    bank.create(slug="coincide", type="personaje", body=body, title="Mi Idea")
+    before = bank.read("coincide").body
+    updated = bank.update_versioned("coincide", {"title": "Mi Idea"})
+    assert updated.body == before == body
+
+
+def test_body_only_save_leaves_h1_as_provided(bank: IdeasBank) -> None:
+    """A body-only save (no ``title`` key) never rewrites the H1."""
+    bank.create(slug="solo-cuerpo", type="personaje", body="# Viejo\n\nTexto.",
+                title="Título")
+    updated = bank.update_versioned(
+        "solo-cuerpo", {"body": "# Otro Encabezado\n\nNuevo texto."}
+    )
+    assert updated.body == "# Otro Encabezado\n\nNuevo texto."
+    assert updated.title == "Título"
+
+
+def test_same_title_save_normalises_h1_after_media_embed(bank: IdeasBank) -> None:
+    """Regression (user's real file): the body opens with the media embed and
+    carries an OLD H1. A same-title save must produce ONE H1 with the current
+    title, with the image line still first (exact head)."""
+    body = (
+        "![idea image](/api/ideas/media/2026-08-28-524e8b9c9770.jpg)\n\n"
+        "# Silpah — félido relámpago de Chaae\n\n"
+        "## Nombre\n\nSilpah."
+    )
+    bank.create(
+        slug="silpah", type="personaje", body=body,
+        title="Silpah — Lince de Chaae",
+    )
+    updated = bank.update_versioned(
+        "silpah", {"title": "Silpah — Lince de Chaae"}
+    )
+    assert updated.body == (
+        "![idea image](/api/ideas/media/2026-08-28-524e8b9c9770.jpg)\n\n"
+        "# Silpah — Lince de Chaae\n\n"
+        "## Nombre\n\nSilpah."
+    )
+    assert updated.body.startswith("![idea image]")
+    assert "félido relámpago" not in updated.body
+    assert sum(1 for line in updated.body.split("\n") if line.startswith("# ")) == 1
+
+
+def test_title_change_is_versioned_and_new_body_carries_h1(
+    bank: IdeasBank, tmp_path: Path
+) -> None:
+    """The rewrite rides the versioned update: the archive keeps the OLD body,
+    the new version carries the consistent H1."""
+    _create(
+        bank, slug="versionada",
+        body="# Silpah — félido relámpago de Chaae\n\nTexto.",
+    )
+    updated = bank.update_versioned("versionada", {"title": "Silpah — Lince de Chaae"})
+    assert updated.version == 2
+    archive = tmp_path / "ideas" / "versions" / "versionada-v1.md"
+    assert archive.is_file()
+    archived = bank._idea_from_file(archive)
+    assert archived is not None
+    assert archived.version == 1
+    assert archived.body == "# Silpah — félido relámpago de Chaae\n\nTexto."
+    live = bank.read("versionada")
+    assert live.version == 2
+    assert live.body == "# Silpah — Lince de Chaae\n\nTexto."
+
+
 def test_legacy_idea_without_title_loads_empty(bank: IdeasBank, tmp_path: Path) -> None:
     """Backward compat: a legacy idea without ``title`` loads as ``""``."""
     (tmp_path / "ideas").mkdir(parents=True)

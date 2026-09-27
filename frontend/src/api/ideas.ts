@@ -102,6 +102,29 @@ export interface IdeaMaterializePreviewInput {
   /** Section-relative folder path; "" = the section root. */
   folder: string;
   title_hint?: string;
+  /** Resolved ficha title; it drives the body H1 and the frontmatter `title`.
+   *  Omitted falls back server-side to the idea title, then the idea slug. */
+  title?: string;
+  /** Optional client filename slug (without extension); the server normalizes
+   *  it and reports the resolved value back in `target.slug`/`target.path`. */
+  slug?: string;
+}
+
+/** POST /api/ideas/{slug}/materialize-target payload — instant, provider-free
+ *  destination resolution. Same picker fields as the preview so the instant
+ *  step resolves exactly the filename the preview will write. */
+export interface IdeaMaterializeTargetInput {
+  world: string;
+  section: MaterializeSection;
+  /** Section-relative folder path; "" = the section root. */
+  folder: string;
+  title_hint?: string;
+  /** Resolved ficha title; it drives the body H1 and the frontmatter `title`.
+   *  Omitted falls back server-side to the idea title, then the idea slug. */
+  title?: string;
+  /** Optional client filename slug (without extension); normalized server-side,
+   *  never rejected. `target.slug`/`target.path` are the resolved truth. */
+  slug?: string;
 }
 
 /** Resolved target of a materialize preview; `path` is section-relative
@@ -112,6 +135,15 @@ export interface IdeaMaterializeTarget {
   folder: string;
   slug: string;
   path: string;
+}
+
+/** POST /api/ideas/{slug}/materialize-target response: the RESOLVED ficha
+ *  title (drives the body H1 and frontmatter `title`) plus the RESOLVED
+ *  destination. The UI displays both so what the user sees is what will be
+ *  written. */
+export interface IdeaMaterializeTargetResult {
+  title: string;
+  target: IdeaMaterializeTarget;
 }
 
 /** One AI-proposed relation that survived target/vocabulary validation. */
@@ -136,18 +168,30 @@ export interface MaterializeCollision {
 
 /** POST /api/ideas/{slug}/materialize-preview response (200). */
 export interface IdeaMaterializePreviewResult {
+  /** Resolved ficha title (server truth): the body H1 and frontmatter `title`. */
+  title: string;
   proposal_id: string;
   target: IdeaMaterializeTarget;
   content: string;
   proposed_relations: ProposedMaterializeRelation[];
   discarded_relations: DiscardedMaterializeRelation[];
   collision?: MaterializeCollision;
+  /**
+   * Idea image that confirm will carry into the world. Present only when the
+   * idea has a valid image: `src` is the idea-bank media URL (readable now),
+   * `dest` is the final world-relative path whose bytes are NOT copied until
+   * confirm. The preview dialog substitutes `dest` → `src` for display only;
+   * the content bound to the digest keeps `dest`.
+   */
+  media?: { src: string; dest: string };
 }
 
-/** One archived version of an idea (R-10) — number + archive path. */
+/** One archived version of an idea (R-10) — number + archive path + mtime. */
 export interface IdeaVersionSummary {
   version: number;
   path: string;
+  /** ISO-8601 UTC timestamp of the archive file (DM-2). */
+  created_at: string;
 }
 
 /** GET /api/ideas/{slug}/versions response (R-10, S-10.2). */
@@ -250,10 +294,16 @@ export function materializeIdea(
 export async function previewMaterialize(
   slug: string,
   input: IdeaMaterializePreviewInput,
+  signal?: AbortSignal,
 ): Promise<IdeaMaterializePreviewResult> {
   const response = await fetch(ideasUrl([slug, "materialize-preview"]), {
     method: "POST",
+    // Raw fetch is only for the top-level `collision` payload; the JSON
+    // content-type must still be explicit or FastAPI treats the body as raw
+    // bytes and answers 422 before the handler ever runs.
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
+    signal,
     ...CREDENTIALS,
   });
 
@@ -285,6 +335,56 @@ export async function previewMaterialize(
   }
 
   return (await response.json()) as IdeaMaterializePreviewResult;
+}
+
+/**
+ * POST /api/ideas/{slug}/materialize-target — resolve the destination ficha
+ * path, the resolved title and any collision WITHOUT spending an AI run
+ * (instant). Returns `{title, target}` where `target` is the section-relative
+ * destination; a 409 raises an ApiError carrying `collision` at the top level,
+ * exactly like `previewMaterialize`, so the picker can offer the
+ * `suggested_slug`. The optional `signal` lets the dialog abort the request
+ * when the author cancels.
+ */
+export async function previewMaterializeTarget(
+  slug: string,
+  input: IdeaMaterializeTargetInput,
+  signal?: AbortSignal,
+): Promise<IdeaMaterializeTargetResult> {
+  const response = await fetch(ideasUrl([slug, "materialize-target"]), {
+    method: "POST",
+    // Raw fetch is only for the top-level `collision` payload; the explicit
+    // JSON content-type keeps FastAPI from treating the body as raw bytes.
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal,
+    ...CREDENTIALS,
+  });
+
+  if (!response.ok) {
+    let detail: string | undefined;
+    let collision: MaterializeCollision | undefined;
+    try {
+      const body = await response.json();
+      detail = body.detail;
+      collision = body.collision;
+    } catch {
+      // ignore parse errors on error responses
+    }
+    const error = new ApiError(
+      response.status,
+      detail ?? `HTTP ${response.status}`,
+      detail,
+    );
+    if (collision) {
+      (error as ApiError & { collision?: MaterializeCollision }).collision =
+        collision;
+    }
+    throw error;
+  }
+
+  const body = (await response.json()) as IdeaMaterializeTargetResult;
+  return { title: body.title, target: body.target };
 }
 
 /**

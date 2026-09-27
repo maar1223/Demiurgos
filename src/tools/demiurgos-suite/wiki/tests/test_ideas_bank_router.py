@@ -10,6 +10,7 @@ mundos/, never scanned as canon).
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,7 @@ for _p in (str(_WIKI),):
 from ideas_bank_router import (
     IdeaMaterializePreviewRequest,
     IdeaMaterializeRequest,
+    IdeaMaterializeTargetRequest,
     create_ideas_bank_router,
 )  # noqa: E402
 
@@ -126,6 +128,44 @@ def test_update_title(client: TestClient) -> None:
     assert detail["title"] == "El Nuevo Título"
 
 
+def test_update_title_rewrites_body_h1(client: TestClient) -> None:
+    """FT-4: PATCH with a title returns the updated body carrying the new H1."""
+    _create(client, body="# Titulo viejo\n\nCuerpo de la idea.")
+    resp = client.patch("/api/ideas/arquero-ciego", json={"title": "Titulo nuevo"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["body"] == "# Titulo nuevo\n\nCuerpo de la idea."
+    assert client.get("/api/ideas/arquero-ciego").json()["body"] == (
+        "# Titulo nuevo\n\nCuerpo de la idea."
+    )
+
+
+def test_update_same_title_rewrites_drifting_h1_regression(client: TestClient) -> None:
+    """Regression (user report): the title is ALREADY the new value while the
+    body H1 still holds the old title. A PATCH with the SAME current title
+    must normalise the H1 — no title round-trip workaround needed."""
+    created = client.post(
+        "/api/ideas",
+        json={
+            "slug": "silpah",
+            "type": "personaje",
+            "title": "Silpah — Lince de Chaae",
+            "body": "# Silpah — félido relámpago de Chaae\n\nCuerpo de la idea.",
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["title"] == "Silpah — Lince de Chaae"
+
+    resp = client.patch(
+        "/api/ideas/silpah", json={"title": "Silpah — Lince de Chaae"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["title"] == "Silpah — Lince de Chaae"
+    assert resp.json()["body"] == "# Silpah — Lince de Chaae\n\nCuerpo de la idea."
+    assert client.get("/api/ideas/silpah").json()["body"] == (
+        "# Silpah — Lince de Chaae\n\nCuerpo de la idea."
+    )
+
+
 def test_create_without_title_defaults_empty(client: TestClient) -> None:
     idea = _create(client, slug="sin-titulo")
     assert idea["title"] == ""
@@ -213,6 +253,11 @@ def test_get_versions_returns_history_ascending(client: TestClient) -> None:
     assert all(
         v["path"].endswith(f"arquero-ciego-v{v['version']}.md") for v in versions
     )
+    # DM-2: each version carries its archive mtime as ISO-8601 UTC (parseable).
+    for v in versions:
+        assert v["created_at"]
+        parsed = datetime.fromisoformat(v["created_at"])
+        assert parsed.tzinfo is not None
 
 
 def test_get_versions_empty_when_no_archives(client: TestClient) -> None:
@@ -418,16 +463,47 @@ def test_idea_materialize_request_accepts_legacy_and_optional_fields() -> None:
 
 
 def test_idea_materialize_preview_request_requires_world_and_section() -> None:
-    """The preview payload mandates world + section; folder/title_hint default."""
+    """The preview payload mandates world + section; folder/title/title_hint/slug default."""
     preview = IdeaMaterializePreviewRequest(world="Vibrantes", section="personajes")
     assert preview.world == "Vibrantes"
     assert preview.section == "personajes"
     assert preview.folder == ""
+    assert preview.title is None
     assert preview.title_hint is None
+    assert preview.slug is None
+    explicit = IdeaMaterializePreviewRequest(
+        world="Vibrantes", section="personajes", title="El Arquero",
+        title_hint="El Arquero", slug="el-arquero",
+    )
+    assert explicit.title == "El Arquero"
+    assert explicit.title_hint == "El Arquero"
+    assert explicit.slug == "el-arquero"
     with pytest.raises(Exception):
         IdeaMaterializePreviewRequest(world="Vibrantes")
     with pytest.raises(Exception):
         IdeaMaterializePreviewRequest(section="personajes")
+
+
+def test_idea_materialize_target_request_requires_world_and_section() -> None:
+    """WU-2/WU-6 + FT-1: the target payload mandates world + section; the rest default."""
+    target = IdeaMaterializeTargetRequest(world="Vibrantes", section="personajes")
+    assert target.world == "Vibrantes"
+    assert target.section == "personajes"
+    assert target.folder == ""
+    assert target.title is None
+    assert target.title_hint is None
+    assert target.slug is None
+    explicit = IdeaMaterializeTargetRequest(
+        world="Vibrantes", section="personajes", title="El Arquero",
+        title_hint="El Arquero", slug="el-arquero",
+    )
+    assert explicit.title == "El Arquero"
+    assert explicit.title_hint == "El Arquero"
+    assert explicit.slug == "el-arquero"
+    with pytest.raises(Exception):
+        IdeaMaterializeTargetRequest(world="Vibrantes")
+    with pytest.raises(Exception):
+        IdeaMaterializeTargetRequest(section="personajes")
 
 
 def test_legacy_materialize_route_ignores_preview_fields(client: TestClient) -> None:

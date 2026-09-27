@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { EditorLayout } from "@/components/templates/EditorLayout";
 import { TabBar, type SidebarTab } from "@/components/molecules/TabBar";
@@ -32,12 +32,15 @@ import {
   type PendingCapture,
   type DiscardedMaterializeRelation,
   type IdeaMaterializePreviewResult,
+  type IdeaMaterializeTarget,
+  type IdeaMaterializeTargetResult,
   type MaterializeCollision,
   type MaterializeSection,
   type ProposedMaterializeRelation,
   IDEA_TYPES,
   MATERIALIZE_SECTIONS,
   previewMaterialize,
+  previewMaterializeTarget,
 } from "@/api/ideas";
 import { getErrorMessage } from "@/lib/utils";
 import type { ApiError, FileNode, SuccessResponse } from "@/api/types";
@@ -80,6 +83,9 @@ const SECTION_LABELS: Record<MaterializeSection, MessageKey> = {
 function suggestSectionFor(type: IdeaType): MaterializeSection {
   return type === "personaje" || type === "relacion" ? "personajes" : "lore";
 }
+
+/** Debounce for re-resolving the destination while the filename is edited. */
+const FILENAME_RESOLVE_DEBOUNCE_MS = 400;
 
 /** Read-only folder tree picker (AD7) — renders `FileNode` dirs, nested. */
 function FolderTree({
@@ -143,49 +149,581 @@ function FolderTreeBranch({
 }
 
 /**
- * Read-only preview dialog for a materialize draft (AD8). Renders the
- * server-owned ficha content via MarkdownViewer plus the proposed and
- * discarded relations. A 409 collision opens the same dialog in collision
- * mode: no draft exists, only the `suggested_slug` hint. Nothing here is
- * editable — the ficha becomes editable after creation.
+ * Editable text field shared by the destination and collision steps. The
+ * title field drives the ficha H1/frontmatter title; the filename field holds
+ * the name WITHOUT the `.md` extension. The dialog owns both drafts and the
+ * debounced re-resolve; this only renders the label + input + optional hint.
+ * Module-level on purpose: a nested component would remount the inputs on
+ * every render and steal focus from the typist.
  */
-function MaterializePreviewDialog({
-  preview,
-  collision,
-  confirming,
-  onConfirm,
-  onClose,
+function MaterializeTextField({
+  id,
+  label,
+  hint,
+  value,
+  onChange,
+  onFocus,
+  onBlur,
+  mono = false,
 }: {
-  preview: IdeaMaterializePreviewResult | null;
-  collision: MaterializeCollision | null;
-  confirming: boolean;
-  onConfirm: () => void;
+  id: string;
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (value: string) => void;
+  onFocus: () => void;
+  onBlur: () => void;
+  /** Filenames render monospaced; the human title does not. */
+  mono?: boolean;
+}) {
+  return (
+    <div>
+      <label htmlFor={id} className="mb-1 block text-xs text-muted">
+        {label}
+      </label>
+      <input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        spellCheck={false}
+        autoComplete="off"
+        className={`w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50${
+          mono ? " font-mono" : ""
+        }`}
+      />
+      {hint && <p className="mt-1 text-[11px] text-muted">{hint}</p>}
+    </div>
+  );
+}
+
+/**
+ * Focus baseline shared by the idea-detail dialogs (Fix 3): on mount move
+ * focus into the dialog container and remember the element that opened it; on
+ * unmount restore focus to that trigger when it is still in the document.
+ */
+function useDialogFocus<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  useEffect(() => {
+    const trigger = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    return () => {
+      if (trigger && trigger.isConnected) trigger.focus();
+    };
+  }, []);
+  return ref;
+}
+
+/**
+ * Shared modal frame for the small idea-detail dialogs (DM-2). Mirrors the
+ * MaterializePreviewDialog shell — backdrop click closes, Escape closes, close
+ * button in the header, focus moves in on open and returns to the trigger on
+ * close — so every dialog keeps the same accessibility contract without a new
+ * dependency. `error` is the modal-scoped failure surface (Fix 1): it renders
+ * inside the dialog so a failure is never hidden behind the overlay.
+ */
+function DialogFrame({
+  title,
+  onClose,
+  busy,
+  error,
+  children,
+  footer,
+}: {
+  title: string;
   onClose: () => void;
+  busy: boolean;
+  error?: string | null;
+  children: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   const { t } = useAppLanguage();
+  const dialogRef = useDialogFocus<HTMLDivElement>();
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) onClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [busy, onClose]);
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
       onClick={(e) => {
-        if (e.target === e.currentTarget && !confirming) onClose();
+        if (e.target === e.currentTarget && !busy) onClose();
       }}
     >
       <div
-        className="mx-4 flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-edge bg-surface-raised shadow-2xl"
+        ref={dialogRef}
+        tabIndex={-1}
+        className="mx-4 flex max-h-[85vh] w-full max-w-md flex-col rounded-xl border border-edge bg-surface-raised shadow-2xl focus:outline-none"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
-        aria-label={t("ideas.preview.title")}
+        aria-label={title}
       >
-        {/* Header */}
         <div className="flex items-center justify-between border-b border-edge px-6 py-4">
-          <h2 className="font-heading text-h4 text-primary">
-            {t("ideas.preview.title")}
-          </h2>
+          <h2 className="font-heading text-h4 text-primary">{title}</h2>
           <button
             type="button"
             onClick={onClose}
-            disabled={confirming}
+            disabled={busy}
+            className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary disabled:opacity-50"
+            aria-label={t("ideas.preview.close")}
+          >
+            <Icon name="close" size={20} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {error && (
+            <div
+              role="alert"
+              className="mb-3 rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error"
+            >
+              {error}
+            </div>
+          )}
+          {children}
+        </div>
+        {footer && (
+          <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
+            {footer}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** One accessible item inside the `⋯` options menu. */
+function IdeaMenuItem({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      onClick={onClick}
+      className="flex w-full items-center px-3 py-1.5 text-left text-xs text-primary transition-colors hover:bg-surface-hover focus:bg-surface-hover focus:outline-none"
+    >
+      {label}
+    </button>
+  );
+}
+
+/**
+ * `⋯` options menu for the idea detail (DM-2). Opens on click; closes on
+ * Escape, outside click or item activation. The trigger exposes
+ * `aria-haspopup="menu"` + `aria-expanded`; the items are plain buttons, so
+ * they are keyboard reachable (Tab) and the first one receives focus on open.
+ */
+function DetailActionsMenu({
+  disabled,
+  onTitle,
+  onImage,
+  onExportDocx,
+  onExportPdf,
+}: {
+  disabled: boolean;
+  onTitle: () => void;
+  onImage: () => void;
+  onExportDocx: () => void;
+  onExportPdf: () => void;
+}) {
+  const { t } = useAppLanguage();
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+
+  const close = useCallback(() => setOpen(false), []);
+
+  // A modal opening (or any other disable signal) must dismiss the menu.
+  useEffect(() => {
+    if (disabled) setOpen(false);
+  }, [disabled]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  }, [open]);
+
+  const activate = useCallback(
+    (action: () => void) => {
+      close();
+      // Return focus to the trigger before the dialog mounts, so the dialog's
+      // focus-restore target is the `⋯` button (Fix 3).
+      triggerRef.current?.focus();
+      action();
+    },
+    [close],
+  );
+
+  return (
+    <div className="relative" ref={rootRef}>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        disabled={disabled}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t("ideas.detail.actionsMenuAria")}
+        className="flex items-center rounded-md border border-edge bg-surface px-2 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Icon name="dots" size={16} />
+      </button>
+      {open && (
+        <div
+          role="menu"
+          ref={menuRef}
+          aria-label={t("ideas.detail.actionsMenuAria")}
+          className="absolute right-0 z-30 mt-1 w-56 rounded-md border border-edge bg-surface-raised py-1 shadow-xl"
+        >
+          <IdeaMenuItem
+            label={t("ideas.detail.titleHeading")}
+            onClick={() => activate(onTitle)}
+          />
+          <IdeaMenuItem
+            label={t("ideas.detail.imageHeading")}
+            onClick={() => activate(onImage)}
+          />
+          <div role="separator" className="my-1 border-t border-edge" />
+          <IdeaMenuItem
+            label={t("ideas.detail.exportDocxAria")}
+            onClick={() => activate(onExportDocx)}
+          />
+          <IdeaMenuItem
+            label={t("ideas.detail.exportPdfAria")}
+            onClick={() => activate(onExportPdf)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Title dialog — the idea title input now lives here, not inline (DM-2). */
+function TitleDialog({
+  open,
+  value,
+  canSave,
+  saving,
+  error,
+  onChange,
+  onSave,
+  onClose,
+}: {
+  open: boolean;
+  value: string;
+  canSave: boolean;
+  saving: boolean;
+  error: string | null;
+  onChange: (value: string) => void;
+  onSave: () => void;
+  onClose: () => void;
+}) {
+  const { t } = useAppLanguage();
+  if (!open) return null;
+  return (
+    <DialogFrame
+      title={t("ideas.detail.titleHeading")}
+      onClose={onClose}
+      busy={saving}
+      error={error}
+      footer={
+        <>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
+          >
+            {t("ideas.preview.close")}
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving || !canSave}
+            className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? t("ideas.detail.saving") : t("ideas.detail.saveTitle")}
+          </button>
+        </>
+      }
+    >
+      <label htmlFor="edit-idea-title" className="mb-1 block text-xs text-muted">
+        {t("ideas.detail.titleHeading")}
+      </label>
+      <input
+        id="edit-idea-title"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={t("ideas.detail.titlePlaceholder")}
+        className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
+      />
+    </DialogFrame>
+  );
+}
+
+/**
+ * Image dialog — attach or replace the idea image. The copy states that
+ * attaching replaces the current image and creates a new idea version (the
+ * backend archives the current version on attach).
+ */
+function ImageDialog({
+  open,
+  mediaPath,
+  attaching,
+  error,
+  onAttach,
+  onClose,
+}: {
+  open: boolean;
+  mediaPath: string | null;
+  attaching: boolean;
+  error: string | null;
+  onAttach: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onClose: () => void;
+}) {
+  const { t } = useAppLanguage();
+  if (!open) return null;
+  const fileName = mediaPath ? mediaPath.split("/").pop() ?? "" : "";
+  return (
+    <DialogFrame
+      title={t("ideas.detail.imageHeading")}
+      onClose={onClose}
+      busy={attaching}
+      error={error}
+      footer={
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={attaching}
+          className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
+        >
+          {t("ideas.preview.close")}
+        </button>
+      }
+    >
+      <p className="mb-2 text-xs text-muted">
+        {fileName
+          ? t("ideas.detail.imageDialogCurrent", { name: fileName })
+          : t("ideas.detail.noImage")}
+      </p>
+      {fileName && (
+        <img
+          src={`/api/ideas/media/${fileName}`}
+          alt={t("ideas.detail.imageDialogPreviewAlt")}
+          className="mb-3 max-h-48 rounded-md border border-edge object-contain"
+        />
+      )}
+      <p className="mb-3 text-xs text-muted">
+        {t("ideas.detail.imageDialogReplaceNote")}
+      </p>
+      <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover">
+        <Icon name="image" size={13} />
+        {attaching
+          ? t("ideas.detail.attaching")
+          : fileName
+            ? t("ideas.detail.replaceImage")
+            : t("ideas.detail.attachImage")}
+        <input
+          type="file"
+          accept="image/*"
+          className="hidden"
+          disabled={attaching}
+          onChange={onAttach}
+        />
+      </label>
+    </DialogFrame>
+  );
+}
+
+/**
+ * Materialize dialog (AD8). Five modes by priority:
+ *   1. progress (`previewing`): the AI is writing the ficha; honest copy, a
+ *      live elapsed-seconds counter and a Cancel that aborts the request.
+ *   2. collision (`collision && !preview`): the destination exists; shows the
+ *      `suggested_slug` hint, offers the one-click suggestion AND the same
+ *      editable filename field so a free name can be typed. No generation
+ *      while the collision persists.
+ *   3. destination (`targetPreview && !preview && !collision`): the instantly
+ *      resolved path, the editable filename field (server-normalized on blur)
+ *      plus the primary "Generar contenido" action; a generation error renders
+ *      here as an in-dialog alert with retry available.
+ *   4. content (`preview`): the server-owned draft via MarkdownViewer plus the
+ *      proposed/discarded relations. Nothing here is editable — the ficha
+ *      becomes editable after creation.
+ *   0. picker (none of the above): the world/section/folder picker that used
+ *      to live inline. It is the INITIAL mode of this dialog, so the flow
+ *      never stacks two modals (DM-2). Its "Previsualizar" advances to
+ *      destination (or collision); the legacy "Solo marcar como usada" and
+ *      Cancelar stay reachable here.
+ * The outer shell is shared; only the aria-label/heading follow the mode.
+ */
+function MaterializePreviewDialog({
+  preview,
+  targetPreview,
+  collision,
+  previewing,
+  materializeError,
+  elapsedSeconds,
+  confirming,
+  titleDraft,
+  onTitleChange,
+  onTitleFocus,
+  onTitleBlur,
+  filenameDraft,
+  onFilenameChange,
+  onFilenameFocus,
+  onFilenameBlur,
+  onApplySuggestedSlug,
+  onConfirm,
+  onGenerate,
+  onCancelGenerate,
+  onClose,
+  onCancelPicker,
+  worlds,
+  materializeWorld,
+  materializeSection,
+  materializeFolder,
+  folderNodes,
+  folderLoading,
+  markingUsed,
+  onWorldChange,
+  onSectionChange,
+  onFolderChange,
+  onPreview,
+  onMarkUsedOnly,
+}: {
+  preview: IdeaMaterializePreviewResult | null;
+  targetPreview: IdeaMaterializeTarget | null;
+  collision: MaterializeCollision | null;
+  previewing: boolean;
+  materializeError: string | null;
+  elapsedSeconds: number;
+  confirming: boolean;
+  titleDraft: string;
+  onTitleChange: (value: string) => void;
+  onTitleFocus: () => void;
+  onTitleBlur: () => void;
+  filenameDraft: string;
+  onFilenameChange: (value: string) => void;
+  onFilenameFocus: () => void;
+  onFilenameBlur: () => void;
+  onApplySuggestedSlug: () => void;
+  onConfirm: () => void;
+  onGenerate: () => void;
+  onCancelGenerate: () => void;
+  /** Destination/content/collision dismiss: resets back to the picker step. */
+  onClose: () => void;
+  /** Picker dismiss: closes the whole materialize flow. */
+  onCancelPicker: () => void;
+  worlds: { name: string }[];
+  materializeWorld: string;
+  materializeSection: MaterializeSection;
+  materializeFolder: string;
+  folderNodes: FileNode[];
+  folderLoading: boolean;
+  markingUsed: boolean;
+  onWorldChange: (value: string) => void;
+  onSectionChange: (value: MaterializeSection) => void;
+  onFolderChange: (value: string) => void;
+  onPreview: () => void;
+  onMarkUsedOnly: () => void;
+}) {
+  const { t } = useAppLanguage();
+  const mode: "progress" | "content" | "collision" | "destination" | "picker" =
+    previewing
+      ? "progress"
+      : preview
+        ? "content"
+        : collision
+          ? "collision"
+          : targetPreview
+            ? "destination"
+            : "picker";
+  const titleKey =
+    mode === "picker"
+      ? "ideas.materialize.heading"
+      : mode === "progress"
+        ? "ideas.materialize.progressTitle"
+        : "ideas.preview.title";
+  // The header close returns to the picker from a later step, but closes the
+  // whole flow while already on the picker.
+  const handleHeaderClose = mode === "picker" ? onCancelPicker : onClose;
+
+  // DISPLAY ONLY: the previewed body references the carried image at its final
+  // world path (`media/<dest>`), but the bytes are copied only on confirm
+  // (R-IM-04), so rendering that path would show a broken image. Point it at
+  // the idea-bank URL instead. The confirm payload keeps the original
+  // `preview.content` — its digest is bound to the world path.
+  const displayContent = preview?.media
+    ? preview.content.split(preview.media.dest).join(preview.media.src)
+    : preview?.content;
+
+  const busy = confirming || markingUsed;
+  const dialogRef = useDialogFocus<HTMLDivElement>();
+
+  // Escape follows the same close semantics as the header button: a later step
+  // returns to the picker; the picker itself closes the whole flow (Fix 3).
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !busy) handleHeaderClose();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [busy, handleHeaderClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-surface/80 backdrop-blur-sm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !busy) handleHeaderClose();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="mx-4 flex max-h-[85vh] w-full max-w-2xl flex-col rounded-xl border border-edge bg-surface-raised shadow-2xl focus:outline-none"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t(titleKey)}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-edge px-6 py-4">
+          <h2 className="font-heading text-h4 text-primary">{t(titleKey)}</h2>
+          <button
+            type="button"
+            onClick={handleHeaderClose}
+            disabled={busy}
             className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary disabled:opacity-50"
             aria-label={t("ideas.preview.close")}
           >
@@ -195,19 +733,110 @@ function MaterializePreviewDialog({
 
         {/* Body */}
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
-          {collision && !preview ? (
-            <div className="rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-xs text-status-error">
-              <p className="font-medium">{t("ideas.preview.collisionTitle")}</p>
-              <p className="mt-1">
+          {/* Modal-scoped failure surface (Fix 1): the page banner renders
+              behind the overlay, so a failed resolve / mark-used / confirm /
+              generation is shown here instead. */}
+          {materializeError && (
+            <div
+              role="alert"
+              className="mb-4 rounded-lg border border-status-error/30 bg-status-error/10 px-3 py-2 text-xs text-status-error"
+            >
+              {materializeError}
+            </div>
+          )}
+          {previewing ? (
+            <div className="space-y-4">
+              <p className="text-xs text-muted">
+                {t("ideas.materialize.progressBody")}
+              </p>
+              <div className="flex items-center gap-2 rounded-md bg-surface px-3 py-2">
+                <Spinner size="sm" />
+                <span className="text-xs text-muted">
+                  {t("ideas.materialize.elapsedLabel")}
+                </span>
+                <span className="font-mono text-xs text-primary">
+                  {t("ideas.materialize.elapsedSeconds", {
+                    seconds: elapsedSeconds,
+                  })}
+                </span>
+              </div>
+            </div>
+          ) : targetPreview && !preview && !collision ? (
+            <div className="space-y-4">
+              {/* The title drives the H1/frontmatter; the filename only names
+                  the file. Editing the title re-derives the filename until the
+                  author edits the filename by hand. */}
+              <MaterializeTextField
+                id="materialize-title"
+                label={t("ideas.materialize.titleLabel")}
+                hint={t("ideas.materialize.titleHint")}
+                value={titleDraft}
+                onChange={onTitleChange}
+                onFocus={onTitleFocus}
+                onBlur={onTitleBlur}
+              />
+              <MaterializeTextField
+                id="materialize-filename"
+                label={t("ideas.materialize.filenameLabel")}
+                hint={t("ideas.materialize.filenameHint")}
+                value={filenameDraft}
+                onChange={onFilenameChange}
+                onFocus={onFilenameFocus}
+                onBlur={onFilenameBlur}
+                mono
+              />
+              <p className="text-xs text-muted">
                 {t("ideas.preview.targetLabel")}{" "}
-                <span className="font-mono">{collision.target}</span>
+                <span className="font-mono">{targetPreview.path}</span>
               </p>
-              <p className="mt-1">
-                {t("ideas.preview.suggestedSlug")}{" "}
-                <span className="font-mono">{collision.suggested_slug}</span>{" "}
-                (→{" "}
-                <span className="font-mono">{collision.suggested_target}</span>)
-              </p>
+            </div>
+          ) : collision && !preview ? (
+            <div className="space-y-4">
+              {/* The title stays visible/editable here so the H1/frontmatter
+                  title can still be adjusted while resolving the name clash. */}
+              <MaterializeTextField
+                id="materialize-title"
+                label={t("ideas.materialize.titleLabel")}
+                hint={t("ideas.materialize.titleHint")}
+                value={titleDraft}
+                onChange={onTitleChange}
+                onFocus={onTitleFocus}
+                onBlur={onTitleBlur}
+              />
+              <div className="rounded-lg border border-status-error/30 bg-status-error/10 px-4 py-3 text-xs text-status-error">
+                <p className="font-medium">{t("ideas.preview.collisionTitle")}</p>
+                <p className="mt-1">
+                  {t("ideas.preview.targetLabel")}{" "}
+                  <span className="font-mono">{collision.target}</span>
+                </p>
+                <p className="mt-1">
+                  {t("ideas.preview.suggestedSlug")}{" "}
+                  <span className="font-mono">{collision.suggested_slug}</span>{" "}
+                  (→{" "}
+                  <span className="font-mono">{collision.suggested_target}</span>
+                  )
+                </p>
+                <button
+                  type="button"
+                  onClick={onApplySuggestedSlug}
+                  className="mt-2 rounded-md border border-edge px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action"
+                >
+                  {t("ideas.materialize.useSuggestedName")}
+                </button>
+              </div>
+              {/* The name is taken, so the same editable field is exactly what
+                  the author needs: typing a free name re-resolves and clears
+                  the collision through the shared debounce flow. */}
+              <MaterializeTextField
+                id="materialize-filename"
+                label={t("ideas.materialize.filenameLabel")}
+                hint={t("ideas.materialize.filenameHint")}
+                value={filenameDraft}
+                onChange={onFilenameChange}
+                onFocus={onFilenameFocus}
+                onBlur={onFilenameBlur}
+                mono
+              />
             </div>
           ) : preview ? (
             <div className="space-y-4">
@@ -216,7 +845,7 @@ function MaterializePreviewDialog({
                 <span className="font-mono">{preview.target.path}</span>
               </p>
               <MarkdownViewer
-                content={preview.content}
+                content={displayContent}
                 mundo={preview.target.world}
                 imageFit="contain"
               />
@@ -274,28 +903,153 @@ function MaterializePreviewDialog({
                 )}
               </section>
             </div>
-          ) : null}
+          ) : (
+            <div className="space-y-2">
+              <div>
+                <label
+                  htmlFor="materialize-world"
+                  className="mb-1 block text-xs text-muted"
+                >
+                  {t("ideas.materialize.worldLabel")}
+                </label>
+                <select
+                  id="materialize-world"
+                  value={materializeWorld}
+                  onChange={(e) => onWorldChange(e.target.value)}
+                  className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
+                >
+                  <option value="">{t("ideas.materialize.worldPlaceholder")}</option>
+                  {worlds.map((world) => (
+                    <option key={world.name} value={world.name}>
+                      {world.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label
+                  htmlFor="materialize-section"
+                  className="mb-1 block text-xs text-muted"
+                >
+                  {t("ideas.materialize.sectionLabel")}
+                </label>
+                <select
+                  id="materialize-section"
+                  value={materializeSection}
+                  onChange={(e) =>
+                    onSectionChange(e.target.value as MaterializeSection)
+                  }
+                  className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
+                >
+                  {MATERIALIZE_SECTIONS.map((section) => (
+                    <option key={section} value={section}>
+                      {t(SECTION_LABELS[section])}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-muted">
+                  {t("ideas.materialize.folderLabel")}
+                </label>
+                <div className="max-h-40 overflow-y-auto rounded-md border border-edge bg-surface px-2 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onFolderChange("")}
+                    aria-pressed={materializeFolder === ""}
+                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-primary transition-colors hover:bg-surface-hover aria-pressed:bg-action/15 aria-pressed:text-action"
+                  >
+                    <Icon name="folder" size={12} className="shrink-0 opacity-70" />
+                    <span>{t("ideas.materialize.root")}</span>
+                  </button>
+                  {folderLoading ? (
+                    <p className="px-2 py-1 text-xs text-muted">
+                      {t("ideas.materialize.loadingFolders")}
+                    </p>
+                  ) : (
+                    <FolderTree
+                      nodes={folderNodes}
+                      selected={materializeFolder}
+                      onSelect={onFolderChange}
+                    />
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-2 border-t border-edge px-6 py-4">
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={confirming}
-            className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
-          >
-            {t("ideas.preview.close")}
-          </button>
-          {preview && !collision && (
+          {previewing ? (
             <button
               type="button"
-              onClick={onConfirm}
-              disabled={confirming}
-              className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={onCancelGenerate}
+              className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary"
             >
-              {confirming ? t("ideas.preview.creating") : t("ideas.preview.create")}
+              {t("ideas.materialize.cancel")}
             </button>
+          ) : mode === "picker" ? (
+            <>
+              <button
+                type="button"
+                onClick={onPreview}
+                disabled={!materializeWorld}
+                className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {t("ideas.materialize.preview")}
+              </button>
+              <button
+                type="button"
+                onClick={onMarkUsedOnly}
+                disabled={!materializeWorld || markingUsed}
+                className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {markingUsed
+                  ? t("ideas.materialize.markingUsed")
+                  : t("ideas.materialize.markUsedOnly")}
+              </button>
+              <button
+                type="button"
+                onClick={onCancelPicker}
+                disabled={markingUsed}
+                className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
+              >
+                {t("ideas.materialize.cancel")}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={confirming}
+                className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
+              >
+                {t("ideas.preview.close")}
+              </button>
+              {preview && !collision && (
+                <button
+                  type="button"
+                  onClick={onConfirm}
+                  disabled={confirming}
+                  className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {confirming ? t("ideas.preview.creating") : t("ideas.preview.create")}
+                </button>
+              )}
+              {targetPreview && !preview && !collision && (
+                <button
+                  type="button"
+                  onClick={onGenerate}
+                  className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover"
+                >
+                  {materializeError
+                    ? t("ideas.materialize.generateAgain")
+                    : t("ideas.materialize.generate")}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -315,7 +1069,7 @@ function MaterializePreviewDialog({
  */
 export default function IdeasWorkshop() {
   const { worlds } = useWorlds();
-  const { t } = useAppLanguage();
+  const { language, t } = useAppLanguage();
 
   // ── Filters ──────────────────────────────────────────────────────────────
   const [typeFilter, setTypeFilter] = useState<"" | IdeaType>("");
@@ -340,6 +1094,17 @@ export default function IdeasWorkshop() {
   const [showCreate, setShowCreate] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("asistente");
   const [materializeFor, setMaterializeFor] = useState<string | null>(null);
+
+  // DM-2 — detail surface: the metadata collapsible (default collapsed) and
+  // the two small dialogs opened from the `⋯` options menu.
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [titleDialogOpen, setTitleDialogOpen] = useState(false);
+  const [imageDialogOpen, setImageDialogOpen] = useState(false);
+  // Modal-scoped error surfaces (Fix 1): rendered INSIDE their dialog, since
+  // the page banner sits behind the `fixed inset-0` overlay. Cleared on open,
+  // on retry and on close so they never leak to the next idea or step.
+  const [titleDialogError, setTitleDialogError] = useState<string | null>(null);
+  const [imageDialogError, setImageDialogError] = useState<string | null>(null);
 
   // ── Feedback ─────────────────────────────────────────────────────────────
   const [actionError, setActionError] = useState<string | null>(null);
@@ -465,6 +1230,12 @@ export default function IdeasWorkshop() {
   const notifyError = useCallback((err: unknown) => {
     const apiError = err as ApiError;
     setActionError(getErrorMessage(apiError.status, apiError.detail));
+  }, []);
+
+  /** Resolve an API failure to localized copy for a modal-scoped alert (Fix 1). */
+  const apiErrorMessage = useCallback((err: unknown) => {
+    const apiError = err as ApiError;
+    return getErrorMessage(apiError.status, apiError.detail);
   }, []);
 
   const showToast = useCallback((message: string) => {
@@ -593,18 +1364,20 @@ export default function IdeasWorkshop() {
     if (!selectedSlug || editTitle.trim() === (selectedIdea?.title ?? "")) return;
     setSavingTitle(true);
     setActionError(null);
+    setTitleDialogError(null);
     try {
       await updateIdea(selectedSlug, { title: editTitle.trim() });
+      setTitleDialogOpen(false);
       await mutateDetail();
       await mutateList();
       await mutateVersions();
       showToast(t("ideas.toast.titleSaved", { title: editTitle.trim() }));
     } catch (err) {
-      notifyError(err);
+      setTitleDialogError(apiErrorMessage(err));
     } finally {
       setSavingTitle(false);
     }
-  }, [selectedSlug, editTitle, selectedIdea?.title, mutateDetail, mutateList, mutateVersions, notifyError, showToast, t]);
+  }, [selectedSlug, editTitle, selectedIdea?.title, mutateDetail, mutateList, mutateVersions, apiErrorMessage, showToast, t]);
 
   // ── Export (PDF / DOCX) ──────────────────────────────────────────────────
   /** "PDF" target — opens ExportPdfDialog with the idea body. `mundo=""` by
@@ -644,20 +1417,52 @@ export default function IdeasWorkshop() {
       if (!file || !selectedSlug) return;
       setAttachingMedia(true);
       setActionError(null);
+      setImageDialogError(null);
       try {
         await attachIdeaMedia(selectedSlug, file);
         await mutateDetail();
         await mutateList();
         await mutateVersions();
         showToast(t("ideas.toast.imageAttached"));
+        // Close on success so the toast is visible.
+        setImageDialogOpen(false);
       } catch (err) {
-        notifyError(err);
+        // Keep the dialog open: the modal-scoped alert is visible there and
+        // the author can retry from where they are (Fix 1).
+        setImageDialogError(apiErrorMessage(err));
       } finally {
         setAttachingMedia(false);
         input.value = "";
       }
     },
-    [selectedSlug, mutateDetail, mutateList, mutateVersions, notifyError, showToast, t],
+    [selectedSlug, mutateDetail, mutateList, mutateVersions, apiErrorMessage, showToast, t],
+  );
+
+  /** DM-2 — copy an archived version's on-disk path (icon-only affordance). */
+  const handleCopyVersionPath = useCallback(
+    async (path: string) => {
+      try {
+        await navigator.clipboard?.writeText(path);
+        showToast(t("ideas.toast.pathCopied"));
+      } catch {
+        // Clipboard unavailable (insecure context / denied) — stay silent.
+      }
+    },
+    [showToast, t],
+  );
+
+  /** Locale-aware `dd/mm/aaaa` label for a version's ISO-8601 timestamp. */
+  const formatVersionDate = useCallback(
+    (iso: string) => {
+      const date = new Date(iso);
+      if (Number.isNaN(date.getTime())) return "";
+      return new Intl.DateTimeFormat(language, {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+      }).format(date);
+    },
+    [language],
   );
 
   // ── Materialize ("usar en el mundo") ─────────────────────────────────────
@@ -665,12 +1470,64 @@ export default function IdeasWorkshop() {
   const [materializeSection, setMaterializeSection] =
     useState<MaterializeSection>("lore");
   const [materializeFolder, setMaterializeFolder] = useState("");
-  const [materializeTitleHint, setMaterializeTitleHint] = useState("");
   const [preview, setPreview] = useState<IdeaMaterializePreviewResult | null>(null);
+  const [targetPreview, setTargetPreview] = useState<IdeaMaterializeTarget | null>(
+    null,
+  );
   const [collision, setCollision] = useState<MaterializeCollision | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  // Single materialize-scoped failure surface (Fix 1): covers target resolve,
+  // legacy mark-as-used, generation and confirm. Rendered at the top of the
+  // dialog body so it is visible in every step.
+  const [materializeError, setMaterializeError] = useState<string | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [confirming, setConfirming] = useState(false);
   const [markingUsed, setMarkingUsed] = useState(false);
+  // User-controlled ficha title draft. Drives the body H1 and the frontmatter
+  // `title`; while the filename is clean it also drives the file name.
+  const [titleDraft, setTitleDraft] = useState("");
+  // User-controlled filename draft (without extension). Kept separate from the
+  // server-resolved slug so a debounced response never fights the typist; it
+  // snaps to the normalized value on blur.
+  const [filenameDraft, setFilenameDraft] = useState("");
+
+  // In-flight generation, so Cancel (and closing the dialog) can abort it.
+  const generateAbortRef = useRef<AbortController | null>(null);
+  // True while the title/filename input has focus — the server-resolved value
+  // must not overwrite what the author is typing.
+  const titleFocusedRef = useRef(false);
+  const filenameFocusedRef = useRef(false);
+  // True once the author edits the filename by hand. While clean, a title edit
+  // re-derives the filename; once dirty, the manual name is preserved.
+  const filenameDirtyRef = useRef(false);
+  // Monotonic request counter: a resolve response is applied only when it is
+  // still the latest request (stale responses are discarded).
+  const resolveRequestRef = useRef(0);
+  // The last (title, slug) pair the dialog resolved/displayed; used to skip the
+  // no-op prefill echo and to avoid duplicate debounced requests.
+  const lastResolvedRef = useRef<{ title: string; slug: string }>({
+    title: "",
+    slug: "",
+  });
+  // The last server-resolved title; the title field snaps to it on blur.
+  const resolvedTitleRef = useRef("");
+  // The scheduled debounced re-resolve, so a pre-generate resolve can cancel it
+  // (the author asked to generate before the ~400 ms window elapsed).
+  const resolveDebounceRef = useRef<number | null>(null);
+  // Gate the debounce effect until the first explicit "Previsualizar".
+  const hasResolvedRef = useRef(false);
+
+  // Live elapsed-seconds counter while the AI writes the ficha. No fake
+  // percentage: the ticking number is the evidence that work is happening.
+  useEffect(() => {
+    if (!previewing) return;
+    setElapsedSeconds(0);
+    const timer = window.setInterval(
+      () => setElapsedSeconds((seconds) => seconds + 1),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [previewing]);
 
   // Folder tree for the selected world + section (AD7). Null key while no
   // world is chosen, so the hook stays idle until a world is picked.
@@ -679,59 +1536,345 @@ export default function IdeasWorkshop() {
     materializeSection,
   );
 
+  /** Clear both drafts (title, filename), the dirty/focus flags and the
+   *  resolve bookkeeping so a previous edit never leaks into the next idea or
+   *  dialog. Bumps the request counter so any in-flight resolve from the
+   *  previous dialog is discarded. */
+  const resetMaterializeDrafts = useCallback(() => {
+    setTitleDraft("");
+    setFilenameDraft("");
+    resolvedTitleRef.current = "";
+    titleFocusedRef.current = false;
+    filenameFocusedRef.current = false;
+    filenameDirtyRef.current = false;
+    hasResolvedRef.current = false;
+    lastResolvedRef.current = { title: "", slug: "" };
+    if (resolveDebounceRef.current !== null) {
+      window.clearTimeout(resolveDebounceRef.current);
+      resolveDebounceRef.current = null;
+    }
+    resolveRequestRef.current += 1;
+  }, []);
+
   const openMaterialize = useCallback(() => {
     if (!selectedIdea) return;
     setActionError(null);
     setPreview(null);
+    setTargetPreview(null);
     setCollision(null);
+    setMaterializeError(null);
     setMaterializeFor(selectedIdea.slug);
     setMaterializeWorld("");
     setMaterializeSection(suggestSectionFor(selectedIdea.type));
     setMaterializeFolder("");
-    setMaterializeTitleHint("");
-  }, [selectedIdea]);
+    resetMaterializeDrafts();
+    // Start the title from the idea title; the server confirms/normalizes it
+    // and its response becomes the field's truth.
+    setTitleDraft(selectedIdea.title ?? "");
+  }, [selectedIdea, resetMaterializeDrafts]);
 
   const closeMaterialize = useCallback(() => {
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
+    setPreviewing(false);
     setMaterializeFor(null);
     setMaterializeWorld("");
     setMaterializeSection("lore");
     setMaterializeFolder("");
-    setMaterializeTitleHint("");
     setPreview(null);
+    setTargetPreview(null);
     setCollision(null);
-  }, []);
+    setMaterializeError(null);
+    resetMaterializeDrafts();
+  }, [resetMaterializeDrafts]);
 
-  // "Previsualizar" — POST /materialize-preview. Read-only: the dialog only
-  // shows the server-owned draft; nothing is edited in-dialog (AD8). A 409
-  // collision arrives as an error carrying `collision` at the top level; the
-  // dialog then shows the suggested slug instead of a draft.
-  const handlePreview = useCallback(async () => {
+  /** Close only the dialog (the picker stays open) and abort any generation. */
+  const closeMaterializeDialog = useCallback(() => {
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
+    setPreviewing(false);
+    setPreview(null);
+    setTargetPreview(null);
+    setCollision(null);
+    setMaterializeError(null);
+    resetMaterializeDrafts();
+  }, [resetMaterializeDrafts]);
+
+  /** Resolve the destination (and the resolved title) and apply the response
+   *  only when this request is still the latest one (a stale response is
+   *  dropped). `applyResolvedSlug` controls whether the server-normalized file
+   *  name is mirrored into the draft: a title-driven re-resolve must never
+   *  overwrite a name the author edited by hand. Returns the resolved values so
+   *  "Generar contenido" can use them synchronously; `null` means no fresh
+   *  result (stale request, collision or failure already surfaced). */
+  const resolveTarget = useCallback(
+    async (
+      title: string,
+      clientSlug: string,
+      requestId: number,
+      applyResolvedSlug: boolean,
+    ): Promise<IdeaMaterializeTargetResult | null> => {
+      if (!materializeFor || !materializeWorld) return null;
+      const trimmedTitle = title.trim();
+      const trimmedSlug = clientSlug.trim();
+      try {
+        const result = await previewMaterializeTarget(materializeFor, {
+          world: materializeWorld,
+          section: materializeSection,
+          folder: materializeFolder,
+          ...(trimmedTitle ? { title: trimmedTitle } : {}),
+          ...(trimmedSlug ? { slug: trimmedSlug } : {}),
+        });
+        if (requestId !== resolveRequestRef.current) return null;
+        setTargetPreview(result.target);
+        setCollision(null);
+        const resolvedTitle = result.title || trimmedTitle;
+        resolvedTitleRef.current = resolvedTitle;
+        lastResolvedRef.current = {
+          title: resolvedTitle,
+          // When the server derived the name, the draft mirrors it; when a
+          // manual name rode along on a title edit, keep the manual value.
+          slug: applyResolvedSlug ? result.target.slug : trimmedSlug,
+        };
+        // Never fight the typist: mirror the server-resolved values only when
+        // the matching field is not focused. On blur the draft snaps to them.
+        if (!titleFocusedRef.current) setTitleDraft(resolvedTitle);
+        if (applyResolvedSlug && !filenameFocusedRef.current) {
+          setFilenameDraft(result.target.slug);
+        }
+        return { title: resolvedTitle, target: result.target };
+      } catch (err) {
+        if (requestId !== resolveRequestRef.current) return null;
+        const apiError = err as ApiError & { collision?: MaterializeCollision };
+        if (apiError.collision) {
+          setCollision(apiError.collision);
+          setTargetPreview(null);
+          if (trimmedTitle) resolvedTitleRef.current = trimmedTitle;
+          // On the first resolve the name is derived, so the field is still
+          // empty: surface the colliding basename (without `.md`) so the
+          // author can see and edit the taken name. A prior edit is preserved.
+          const collidingName =
+            apiError.collision.target
+              .split("/")
+              .pop()
+              ?.replace(/\.md$/i, "") ?? "";
+          if (!trimmedSlug && collidingName) {
+            setFilenameDraft(collidingName);
+            lastResolvedRef.current = {
+              title: trimmedTitle,
+              slug: collidingName,
+            };
+          } else {
+            lastResolvedRef.current = {
+              title: trimmedTitle,
+              slug: trimmedSlug,
+            };
+          }
+          return null;
+        }
+        setMaterializeError(apiErrorMessage(err));
+        return null;
+      }
+    },
+    [
+      materializeFor,
+      materializeWorld,
+      materializeSection,
+      materializeFolder,
+      apiErrorMessage,
+    ],
+  );
+
+  // Step 1 — "Previsualizar" is INSTANT: POST /materialize-target resolves
+  // the destination path, the resolved title and any collision with no AI call.
+  // The dialog opens in destination (or collision) mode; the author decides
+  // whether to pay for a generation after seeing where the ficha will land.
+  const handleResolveTarget = useCallback(async () => {
     if (!materializeFor || !materializeWorld) {
-      setActionError(t("ideas.materialize.error.selectWorldPreview"));
+      setMaterializeError(t("ideas.materialize.error.selectWorldPreview"));
       return;
     }
-    setPreviewing(true);
     setActionError(null);
+    setPreview(null);
+    setTargetPreview(null);
     setCollision(null);
+    setMaterializeError(null);
+    hasResolvedRef.current = true;
+    const requestId = ++resolveRequestRef.current;
+    // A fresh resolve never carries a manual name; the file name is derived
+    // from the title unless the author already edited it in this session.
+    const clientSlug = filenameDirtyRef.current ? filenameDraft : "";
+    await resolveTarget(titleDraft, clientSlug, requestId, true);
+  }, [
+    materializeFor,
+    materializeWorld,
+    titleDraft,
+    filenameDraft,
+    resolveTarget,
+    t,
+  ]);
+
+  // Debounced re-resolution while the author edits the title (~400 ms) or the
+  // filename. While the filename is clean, a title edit re-derives it (send the
+  // title and NO slug); once dirty, the manual name is preserved (send both).
+  // The guard skips the prefill echo and any edit before the first explicit
+  // "Previsualizar". The timer is cleared on dialog close/unmount.
+  useEffect(() => {
+    if (!hasResolvedRef.current) return;
+    if (!materializeFor || !materializeWorld) return;
+    const title = titleDraft.trim();
+    const filename = filenameDraft.trim();
+    const dirty = filenameDirtyRef.current;
+    const titleChanged = title !== lastResolvedRef.current.title;
+    const filenameChanged = dirty && filename !== lastResolvedRef.current.slug;
+    if (!titleChanged && !filenameChanged) return;
+    // Dirty filename: always send the manual slug (a filename edit, or a title
+    // edit that must not re-derive it). Clean: omit the slug so the server
+    // derives the file name from the title.
+    const slugToSend = dirty ? filename : "";
+    // A filename edit may mirror the server-normalized name; a title edit while
+    // the name is dirty must not overwrite the manual name.
+    const applyResolvedSlug = !dirty || filenameChanged;
+    const requestId = ++resolveRequestRef.current;
+    const timer = window.setTimeout(() => {
+      void resolveTarget(title, slugToSend, requestId, applyResolvedSlug);
+    }, FILENAME_RESOLVE_DEBOUNCE_MS);
+    resolveDebounceRef.current = timer;
+    return () => {
+      window.clearTimeout(timer);
+      if (resolveDebounceRef.current === timer) resolveDebounceRef.current = null;
+    };
+  }, [titleDraft, filenameDraft, materializeFor, materializeWorld, resolveTarget]);
+
+  const handleTitleChange = useCallback((value: string) => {
+    setTitleDraft(value);
+  }, []);
+
+  const handleTitleFocus = useCallback(() => {
+    titleFocusedRef.current = true;
+  }, []);
+
+  const handleTitleBlur = useCallback(() => {
+    titleFocusedRef.current = false;
+    // Snap to the exact title the server resolved (server truth).
+    if (resolvedTitleRef.current) setTitleDraft(resolvedTitleRef.current);
+  }, []);
+
+  const handleFilenameChange = useCallback((value: string) => {
+    // Editing the file name by hand makes it authoritative: later title edits
+    // no longer re-derive it.
+    filenameDirtyRef.current = true;
+    setFilenameDraft(value);
+  }, []);
+
+  const handleFilenameFocus = useCallback(() => {
+    filenameFocusedRef.current = true;
+  }, []);
+
+  const handleFilenameBlur = useCallback(() => {
+    filenameFocusedRef.current = false;
+    // Snap to the exact name the server will write (server truth).
+    if (targetPreview) setFilenameDraft(targetPreview.slug);
+  }, [targetPreview]);
+
+  /** One-click adoption of the 409 `suggested_slug`; re-resolves immediately
+   *  and clears the collision on success. */
+  const handleApplySuggestedSlug = useCallback(() => {
+    if (!collision) return;
+    const suggested = collision.suggested_slug;
+    filenameFocusedRef.current = false;
+    // The adopted name is now an explicit author choice: keep it on later
+    // title edits. Optimistic so the debounce effect does not duplicate it.
+    filenameDirtyRef.current = true;
+    lastResolvedRef.current = {
+      title: resolvedTitleRef.current || titleDraft.trim(),
+      slug: suggested,
+    };
+    setFilenameDraft(suggested);
+    const requestId = ++resolveRequestRef.current;
+    void resolveTarget(titleDraft, suggested, requestId, true);
+  }, [collision, resolveTarget, titleDraft]);
+
+  // Step 2 — "Generar contenido" runs the (slow) AI preview from destination
+  // mode only. Before spending the AI run it resolves any draft that is still
+  // ahead of the debounced re-resolve, so the generated ficha matches exactly
+  // what the author sees (never a stale title/file name). The AbortController is
+  // stored so Cancel aborts the request and returns to destination mode.
+  const handleGenerateContent = useCallback(async () => {
+    if (!materializeFor || !materializeWorld) return;
+
+    // What the author currently sees vs. the last resolved (server) values.
+    const title = titleDraft.trim();
+    const filename = filenameDraft.trim();
+    const dirty = filenameDirtyRef.current;
+    const filenameChanged = dirty && filename !== lastResolvedRef.current.slug;
+    const pending =
+      title !== lastResolvedRef.current.title || filenameChanged;
+
+    let generateTitle = resolvedTitleRef.current || title;
+    let generateSlug = targetPreview?.slug;
+
+    if (pending) {
+      // This immediate resolve supersedes any scheduled debounce.
+      if (resolveDebounceRef.current !== null) {
+        window.clearTimeout(resolveDebounceRef.current);
+        resolveDebounceRef.current = null;
+      }
+      const requestId = ++resolveRequestRef.current;
+      const resolved = await resolveTarget(
+        title,
+        dirty ? filename : "",
+        requestId,
+        !dirty || filenameChanged,
+      );
+      if (!resolved) {
+        // A collision switched the dialog to the collision step; a failure is
+        // already visible in the in-dialog alert. Never generate in either case.
+        return;
+      }
+      generateTitle = resolved.title;
+      generateSlug = resolved.target.slug;
+    }
+
+    const controller = new AbortController();
+    generateAbortRef.current = controller;
+    setPreviewing(true);
+    setPreview(null);
+    setMaterializeError(null);
+    setActionError(null);
     try {
-      const result = await previewMaterialize(materializeFor, {
-        world: materializeWorld,
-        section: materializeSection,
-        folder: materializeFolder,
-        ...(materializeTitleHint.trim()
-          ? { title_hint: materializeTitleHint.trim() }
-          : {}),
-      });
+      const result = await previewMaterialize(
+        materializeFor,
+        {
+          world: materializeWorld,
+          section: materializeSection,
+          folder: materializeFolder,
+          // The title the author sees drives the body H1/frontmatter; the slug
+          // is the freshest resolved file name (just re-resolved if pending).
+          ...(generateTitle ? { title: generateTitle } : {}),
+          ...(generateSlug ? { slug: generateSlug } : {}),
+        },
+        controller.signal,
+      );
       setPreview(result);
     } catch (err) {
+      // A user-initiated Cancel is not an error: return to destination mode.
+      if (controller.signal.aborted || (err as Error)?.name === "AbortError") {
+        return;
+      }
       const apiError = err as ApiError & { collision?: MaterializeCollision };
       if (apiError.collision) {
         setPreview(null);
         setCollision(apiError.collision);
         return;
       }
-      notifyError(err);
+      // Surface the localized failure INSIDE the dialog; the page-top banner
+      // is behind the modal and would be invisible.
+      setMaterializeError(getErrorMessage(apiError.status, apiError.detail));
     } finally {
+      if (generateAbortRef.current === controller) {
+        generateAbortRef.current = null;
+      }
       setPreviewing(false);
     }
   }, [
@@ -739,10 +1882,17 @@ export default function IdeasWorkshop() {
     materializeWorld,
     materializeSection,
     materializeFolder,
-    materializeTitleHint,
-    notifyError,
-    t,
+    titleDraft,
+    filenameDraft,
+    targetPreview?.slug,
+    resolveTarget,
   ]);
+
+  const handleCancelGenerate = useCallback(() => {
+    generateAbortRef.current?.abort();
+    generateAbortRef.current = null;
+    setPreviewing(false);
+  }, []);
 
   // Confirm — issue the single-use edit-confirmation token (kind=new,
   // edit_id=proposal_id, proposed_content=content) and create through the
@@ -751,6 +1901,7 @@ export default function IdeasWorkshop() {
     if (!preview || !materializeWorld) return;
     setConfirming(true);
     setActionError(null);
+    setMaterializeError(null);
     try {
       const { world, section, path } = preview.target;
       const confirmation = await requestConfirmation(world, section, path, {
@@ -779,7 +1930,7 @@ export default function IdeasWorkshop() {
           : t("ideas.materialize.toast.created"),
       );
     } catch (err) {
-      notifyError(err);
+      setMaterializeError(apiErrorMessage(err));
     } finally {
       setConfirming(false);
     }
@@ -789,7 +1940,7 @@ export default function IdeasWorkshop() {
     mutateDetail,
     mutateList,
     closeMaterialize,
-    notifyError,
+    apiErrorMessage,
     showToast,
     t,
   ]);
@@ -798,11 +1949,12 @@ export default function IdeasWorkshop() {
   // creating a ficha, via the original POST /api/ideas/{slug}/materialize.
   const handleMarkUsedOnly = useCallback(async () => {
     if (!materializeFor || !materializeWorld) {
-      setActionError(t("ideas.materialize.error.selectWorldMark"));
+      setMaterializeError(t("ideas.materialize.error.selectWorldMark"));
       return;
     }
     setMarkingUsed(true);
     setActionError(null);
+    setMaterializeError(null);
     try {
       const result = await materializeIdea(materializeFor, materializeWorld);
       await mutateDetail();
@@ -815,7 +1967,7 @@ export default function IdeasWorkshop() {
         }),
       );
     } catch (err) {
-      notifyError(err);
+      setMaterializeError(apiErrorMessage(err));
     } finally {
       setMarkingUsed(false);
     }
@@ -825,7 +1977,7 @@ export default function IdeasWorkshop() {
     mutateDetail,
     mutateList,
     closeMaterialize,
-    notifyError,
+    apiErrorMessage,
     showToast,
     t,
   ]);
@@ -1163,6 +2315,12 @@ export default function IdeasWorkshop() {
   );
 
   // ── Main panel: detail ───────────────────────────────────────────────────
+  // Single source of truth for "a modal owns the screen" (Fix 2): extend this
+  // expression when a new dialog is added; every modal must disable the `⋯`
+  // menu so it can never be opened behind an overlay.
+  const isModalOpen =
+    titleDialogOpen || imageDialogOpen || !!pdfTarget || !!materializeFor;
+
   const main = (
     <div className="mx-auto max-w-3xl">
       {detailLoading ? (
@@ -1197,28 +2355,29 @@ export default function IdeasWorkshop() {
                 {t(STATUS_LABELS[selectedIdea.status])}
               </span>
               <div className="ml-auto flex items-center gap-2">
+                {/* DM-2: the primary action stays visible (it turns an idea
+                    into canon); exports + edits live in the `⋯` menu. */}
                 <button
                   type="button"
-                  onClick={handleExportIdeaPdf}
-                  aria-label={t("ideas.detail.exportPdfAria")}
-                  className="rounded-md border border-edge bg-surface px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action"
+                  onClick={openMaterialize}
+                  className="flex items-center gap-1.5 rounded-md border border-edge bg-surface px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action"
                 >
-                  <span className="flex items-center gap-1">
-                    <Icon name="file" size={12} />
-                    PDF
-                  </span>
+                  <Icon name="world" size={13} />
+                  {t("ideas.materialize.button")}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void handleExportIdeaDocx()}
-                  aria-label={t("ideas.detail.exportDocxAria")}
-                  className="rounded-md border border-edge bg-surface px-2.5 py-1 text-xs font-medium text-primary transition-colors hover:border-action/40 hover:text-action"
-                >
-                  <span className="flex items-center gap-1">
-                    <Icon name="file" size={12} />
-                    DOCX
-                  </span>
-                </button>
+                <DetailActionsMenu
+                  disabled={isModalOpen}
+                  onTitle={() => {
+                    setTitleDialogError(null);
+                    setTitleDialogOpen(true);
+                  }}
+                  onImage={() => {
+                    setImageDialogError(null);
+                    setImageDialogOpen(true);
+                  }}
+                  onExportDocx={() => void handleExportIdeaDocx()}
+                  onExportPdf={handleExportIdeaPdf}
+                />
               </div>
             </div>
             <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
@@ -1245,6 +2404,122 @@ export default function IdeasWorkshop() {
             </dl>
           </header>
 
+          {/* DM-2: ONE collapsible metadata section directly below the
+              title/metadata rows and above the body image — Clasificación +
+              version history. Default COLLAPSED; the control exposes
+              `aria-expanded`. */}
+          <section className="mb-4 rounded-lg border border-edge bg-surface-raised">
+            <button
+              type="button"
+              onClick={() => setDetailsOpen((prev) => !prev)}
+              aria-expanded={detailsOpen}
+              aria-controls="idea-details-panel"
+              className="flex w-full items-center gap-2 px-4 py-3 text-left text-body font-medium text-primary transition-colors hover:bg-surface-hover"
+            >
+              <Icon
+                name={detailsOpen ? "chevron-down" : "chevron-right"}
+                size={14}
+                className="text-muted"
+              />
+              {t("ideas.detail.detailsHeading")}
+            </button>
+            {detailsOpen && (
+              <div
+                id="idea-details-panel"
+                className="space-y-4 border-t border-edge px-4 py-4"
+              >
+                {/* Clasificación (type correction) */}
+                <section aria-label={t("ideas.detail.reclassifyAria")}>
+                  <h3 className="mb-2 text-body font-medium text-primary">
+                    {t("ideas.detail.classification")}
+                  </h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      aria-label={t("ideas.detail.typeAria")}
+                      value={reclassifyType}
+                      onChange={(e) =>
+                        setReclassifyType(e.target.value as IdeaType)
+                      }
+                      className="rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
+                    >
+                      {IDEA_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {t(TYPE_LABELS[type])}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void handleReclassify()}
+                      disabled={
+                        reclassifying || reclassifyType === selectedIdea.type
+                      }
+                      className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {reclassifying
+                        ? t("ideas.detail.saving")
+                        : t("ideas.detail.saveType")}
+                    </button>
+                  </div>
+                </section>
+
+                {/* Version history (R-10) — archived versions only. The live
+                    frontmatter `version` is never shown as plain user text.
+                    Rows are readable labels; the path stays available through
+                    the icon-only copy action. */}
+                <section aria-label={t("ideas.detail.versionsAria")}>
+                  <h3 className="mb-2 text-body font-medium text-primary">
+                    {t("ideas.detail.versionsHeading")}
+                  </h3>
+                  {versionsError ? (
+                    <p className="text-xs text-status-error">
+                      {getErrorMessage(
+                        (versionsError as ApiError).status,
+                        (versionsError as ApiError).detail,
+                      )}
+                    </p>
+                  ) : archivedVersions.length === 0 ? (
+                    <p className="text-xs text-muted">
+                      {t("ideas.detail.noVersions")}
+                    </p>
+                  ) : (
+                    <ul
+                      aria-label={t("ideas.detail.archivedAria")}
+                      className="space-y-1"
+                    >
+                      {archivedVersions.map((v) => (
+                        <li
+                          key={v.version}
+                          className="flex items-center justify-between gap-2 rounded-md bg-surface px-2.5 py-1.5 text-xs"
+                        >
+                          <span className="shrink-0 font-medium text-primary">
+                            {t("ideas.detail.versionWithDate", {
+                              version: v.version,
+                              date: formatVersionDate(v.created_at),
+                            })}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void handleCopyVersionPath(v.path)}
+                            aria-label={t("ideas.detail.copyPathAria", {
+                              version: v.version,
+                            })}
+                            title={t("ideas.detail.copyPathAria", {
+                              version: v.version,
+                            })}
+                            className="rounded-md p-1 text-icon-muted transition-colors hover:bg-surface-hover hover:text-primary"
+                          >
+                            <Icon name="copy" size={13} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </div>
+            )}
+          </section>
+
           {/* Body rendered as GFM markdown (R-1). Frontmatter is stripped
               inside MarkdownViewer (splitFrontmatter); no `mundo` prop by
               design — /api/ideas/media/... embeds pass through MarkdownImage.
@@ -1254,254 +2529,9 @@ export default function IdeasWorkshop() {
             <MarkdownViewer content={selectedIdea.body} imageFit="contain" />
           </div>
 
-          {/* Attach image (POST /api/ideas/{slug}/media) — a <label> styled
-              as a button opens the hidden file input; the embed is added to
-              the body server-side, so only the three SWR keys refresh. */}
-          <section aria-label={t("ideas.detail.imageSectionAria")} className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
-            <h3 className="mb-2 text-body font-medium text-primary">{t("ideas.detail.imageHeading")}</h3>
-            {selectedIdea.media_path ? (
-              <p className="mb-2 text-xs text-muted">
-                {t("ideas.detail.hasImage", { name: selectedIdea.media_path.split("/").pop() ?? "" })}
-              </p>
-            ) : (
-              <p className="mb-2 text-xs text-muted">{t("ideas.detail.noImage")}</p>
-            )}
-            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover">
-              <Icon name="image" size={13} />
-              {attachingMedia
-                ? t("ideas.detail.attaching")
-                : selectedIdea.media_path
-                  ? t("ideas.detail.replaceImage")
-                  : t("ideas.detail.attachImage")}
-              <input
-                type="file"
-                accept="image/*"
-                className="hidden"
-                disabled={attachingMedia}
-                onChange={handleAttachMedia}
-              />
-            </label>
-          </section>
-
-          {/* Edit title */}
-          <section aria-label={t("ideas.detail.titleSectionAria")} className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
-            <h3 className="mb-2 text-body font-medium text-primary">{t("ideas.detail.titleHeading")}</h3>
-            <div className="flex flex-wrap items-center gap-2">
-              <input
-                id="edit-idea-title"
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                placeholder={t("ideas.detail.titlePlaceholder")}
-                className="min-w-0 flex-1 rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
-              />
-              <button
-                type="button"
-                onClick={() => void handleEditTitle()}
-                disabled={savingTitle || editTitle.trim() === (selectedIdea.title ?? "")}
-                className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {savingTitle ? t("ideas.detail.saving") : t("ideas.detail.saveTitle")}
-              </button>
-            </div>
-          </section>
-
-          {/* Reclassify */}
-          <section aria-label={t("ideas.detail.reclassifyAria")} className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
-            <h3 className="mb-2 text-body font-medium text-primary">{t("ideas.detail.classification")}</h3>
-            <div className="flex flex-wrap items-center gap-2">
-              <select
-                aria-label={t("ideas.detail.typeAria")}
-                value={reclassifyType}
-                onChange={(e) => setReclassifyType(e.target.value as IdeaType)}
-                className="rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
-              >
-                {IDEA_TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {t(TYPE_LABELS[type])}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => void handleReclassify()}
-                disabled={reclassifying || reclassifyType === selectedIdea.type}
-                className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {reclassifying ? t("ideas.detail.saving") : t("ideas.detail.saveType")}
-              </button>
-            </div>
-          </section>
-
-          {/* Materialize */}
-          <section aria-label={t("ideas.materialize.sectionAria")} className="mb-4 rounded-lg border border-edge bg-surface-raised p-4">
-            <h3 className="mb-2 text-body font-medium text-primary">
-              {t("ideas.materialize.heading")}
-            </h3>
-            {materializeFor !== selectedIdea.slug ? (
-              <button
-                type="button"
-                onClick={openMaterialize}
-                className="flex items-center gap-1.5 rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary"
-              >
-                <Icon name="world" size={13} />
-                {t("ideas.materialize.button")}
-              </button>
-            ) : (
-              <div className="space-y-2">
-                <div>
-                  <label htmlFor="materialize-world" className="mb-1 block text-xs text-muted">
-                    {t("ideas.materialize.worldLabel")}
-                  </label>
-                  <select
-                    id="materialize-world"
-                    value={materializeWorld}
-                    onChange={(e) => setMaterializeWorld(e.target.value)}
-                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
-                  >
-                    <option value="">{t("ideas.materialize.worldPlaceholder")}</option>
-                    {worlds.map((world) => (
-                      <option key={world.name} value={world.name}>
-                        {world.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label htmlFor="materialize-section" className="mb-1 block text-xs text-muted">
-                    {t("ideas.materialize.sectionLabel")}
-                  </label>
-                  <select
-                    id="materialize-section"
-                    value={materializeSection}
-                    onChange={(e) => {
-                      setMaterializeSection(e.target.value as MaterializeSection);
-                      setMaterializeFolder("");
-                    }}
-                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
-                  >
-                    {MATERIALIZE_SECTIONS.map((section) => (
-                      <option key={section} value={section}>
-                        {t(SECTION_LABELS[section])}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-muted">
-                    {t("ideas.materialize.folderLabel")}
-                  </label>
-                  <div className="max-h-40 overflow-y-auto rounded-md border border-edge bg-surface px-2 py-1.5">
-                    <button
-                      type="button"
-                      onClick={() => setMaterializeFolder("")}
-                      aria-pressed={materializeFolder === ""}
-                      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-primary transition-colors hover:bg-surface-hover aria-pressed:bg-action/15 aria-pressed:text-action"
-                    >
-                      <Icon name="folder" size={12} className="shrink-0 opacity-70" />
-                      <span>{t("ideas.materialize.root")}</span>
-                    </button>
-                    {folderLoading ? (
-                      <p className="px-2 py-1 text-xs text-muted">
-                        {t("ideas.materialize.loadingFolders")}
-                      </p>
-                    ) : (
-                      <FolderTree
-                        nodes={folderNodes}
-                        selected={materializeFolder}
-                        onSelect={setMaterializeFolder}
-                      />
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <label htmlFor="materialize-title-hint" className="mb-1 block text-xs text-muted">
-                    {t("ideas.materialize.titleHintLabel")}
-                  </label>
-                  <input
-                    id="materialize-title-hint"
-                    value={materializeTitleHint}
-                    onChange={(e) => setMaterializeTitleHint(e.target.value)}
-                    placeholder={t("ideas.materialize.titleHintPlaceholder")}
-                    className="w-full rounded-md border border-edge bg-surface px-2.5 py-1.5 text-xs text-primary placeholder:text-muted focus:border-action focus:outline-none focus:ring-1 focus:ring-action/50"
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void handlePreview()}
-                    disabled={previewing || !materializeWorld}
-                    className="rounded-md bg-action px-3 py-1.5 text-xs font-medium text-action-text transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {previewing
-                      ? t("ideas.materialize.previewing")
-                      : t("ideas.materialize.preview")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void handleMarkUsedOnly()}
-                    disabled={markingUsed || !materializeWorld}
-                    className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {markingUsed
-                      ? t("ideas.materialize.markingUsed")
-                      : t("ideas.materialize.markUsedOnly")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={closeMaterialize}
-                    disabled={previewing || confirming || markingUsed}
-                    className="rounded-md border border-edge px-3 py-1.5 text-xs text-muted transition-colors hover:border-action/40 hover:text-primary disabled:opacity-50"
-                  >
-                    {t("ideas.materialize.cancel")}
-                  </button>
-                </div>
-              </div>
-            )}
-          </section>
-
-          {/* Version history (R-10) — archived versions only. The live
-              frontmatter `version` is never shown here nor in the body
-              (MarkdownViewer strips frontmatter); this panel is the product
-              value: consultable archive of every prior version. */}
-          <section
-            aria-label={t("ideas.detail.versionsAria")}
-            className="mb-4 rounded-lg border border-edge bg-surface-raised p-4"
-          >
-            <h3 className="mb-2 text-body font-medium text-primary">
-              {t("ideas.detail.versionsHeading")}
-            </h3>
-            {versionsError ? (
-              <p className="text-xs text-status-error">
-                {getErrorMessage(
-                  (versionsError as ApiError).status,
-                  (versionsError as ApiError).detail,
-                )}
-              </p>
-            ) : archivedVersions.length === 0 ? (
-              <p className="text-xs text-muted">
-                {t("ideas.detail.noVersions")}
-              </p>
-            ) : (
-              <ul aria-label={t("ideas.detail.archivedAria")} className="space-y-1">
-                {archivedVersions.map((v) => (
-                  <li
-                    key={v.version}
-                    className="flex items-baseline justify-between gap-2 rounded-md bg-surface px-2.5 py-1.5 text-xs"
-                  >
-                    <span className="shrink-0 font-medium text-primary">
-                      {t("ideas.detail.version", { version: v.version })}
-                    </span>
-                    <span
-                      className="min-w-0 truncate text-muted"
-                      title={v.path}
-                    >
-                      {v.path}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          {/* Attach image, edit title and reclassify now live in the `⋯`
+              options menu / the collapsible metadata section (DM-2). The idea
+              body rendering above stays untouched. */}
 
           {/* Delete */}
           <div className="flex justify-end border-t border-edge pt-4">
@@ -1581,9 +2611,9 @@ export default function IdeasWorkshop() {
       )}
       {main}
 
-      {/* Export to PDF dialog — opened from the detail header "PDF" button.
-          mundo="" keeps the idea's absolute /api/ideas/... image URLs
-          untouched (MarkdownImage passes them through unchanged). */}
+      {/* Export to PDF dialog — opened from the `⋯` menu item. mundo=""
+          keeps the idea's absolute /api/ideas/... image URLs untouched
+          (MarkdownImage passes them through unchanged). */}
       {pdfTarget && (
         <ExportPdfDialog
           open={!!pdfTarget}
@@ -1594,18 +2624,77 @@ export default function IdeasWorkshop() {
         />
       )}
 
-      {/* Materialize preview dialog — read-only (AD8); opens on a successful
-          preview or on a 409 collision suggestion (AD5). */}
-      {(preview || collision) && (
+      {/* Title / image dialogs — opened from the `⋯` options menu (DM-2).
+          Each carries its own modal-scoped error (Fix 1). */}
+      <TitleDialog
+        open={titleDialogOpen}
+        value={editTitle}
+        canSave={
+          !!selectedIdea && editTitle.trim() !== (selectedIdea.title ?? "")
+        }
+        saving={savingTitle}
+        error={titleDialogError}
+        onChange={setEditTitle}
+        onSave={() => void handleEditTitle()}
+        onClose={() => {
+          setTitleDialogError(null);
+          setTitleDialogOpen(false);
+        }}
+      />
+      <ImageDialog
+        open={imageDialogOpen}
+        mediaPath={selectedIdea?.media_path ?? null}
+        attaching={attachingMedia}
+        error={imageDialogError}
+        onAttach={handleAttachMedia}
+        onClose={() => {
+          setImageDialogError(null);
+          setImageDialogOpen(false);
+        }}
+      />
+
+      {/* Materialize dialog — its INITIAL mode is the world/section/folder
+          picker (DM-2), so the picker never stacks another modal. Previsualizar
+          advances to destination (or collision); generation then swaps to
+          progress → content. */}
+      {materializeFor && (
         <MaterializePreviewDialog
           preview={preview}
+          targetPreview={targetPreview}
           collision={collision}
+          previewing={previewing}
+          materializeError={materializeError}
+          elapsedSeconds={elapsedSeconds}
           confirming={confirming}
+          titleDraft={titleDraft}
+          onTitleChange={handleTitleChange}
+          onTitleFocus={handleTitleFocus}
+          onTitleBlur={handleTitleBlur}
+          filenameDraft={filenameDraft}
+          onFilenameChange={handleFilenameChange}
+          onFilenameFocus={handleFilenameFocus}
+          onFilenameBlur={handleFilenameBlur}
+          onApplySuggestedSlug={handleApplySuggestedSlug}
           onConfirm={() => void handleConfirmPreview()}
-          onClose={() => {
-            setPreview(null);
-            setCollision(null);
+          onGenerate={() => void handleGenerateContent()}
+          onCancelGenerate={handleCancelGenerate}
+          onClose={closeMaterializeDialog}
+          onCancelPicker={closeMaterialize}
+          worlds={worlds}
+          materializeWorld={materializeWorld}
+          materializeSection={materializeSection}
+          materializeFolder={materializeFolder}
+          folderNodes={folderNodes}
+          folderLoading={folderLoading}
+          markingUsed={markingUsed}
+          onWorldChange={setMaterializeWorld}
+          onSectionChange={(value) => {
+            setMaterializeSection(value);
+            setMaterializeFolder("");
           }}
+          onFolderChange={setMaterializeFolder}
+          onPreview={() => void handleResolveTarget()}
+          onMarkUsedOnly={() => void handleMarkUsedOnly()}
         />
       )}
     </EditorLayout>

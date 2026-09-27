@@ -21,10 +21,13 @@ import pytest  # noqa: E402
 import yaml  # noqa: E402
 
 from idea_materialization_domain import (  # noqa: E402
+    BODY_EXCERPT_CHARS,
     FolderConvention,
+    SEED_LIMIT,
     build_ficha_skeleton,
     build_grounding_candidates,
     probe_folder_convention,
+    resolve_file_slug,
     slugify_title,
     suggest_free_slug,
     validate_relations,
@@ -65,37 +68,70 @@ def _skeleton(
     section: str = "lore",
     folder: str = "tema",
     slug: str = "idea-uno",
+    idea_slug: str | None = None,
     title: str = "Idea Uno",
     body: str = "# Cuerpo\n",
     relations: tuple[Relation, ...] = (),
     convention: FolderConvention | None = None,
+    image_rel: str | None = None,
 ) -> str:
     return build_ficha_skeleton(
         world_dir=world,
         section=section,
         folder=folder,
         slug=slug,
+        idea_slug=idea_slug if idea_slug is not None else slug,
         title=title,
         body=body,
         relations=relations,
         convention=convention,
+        image_rel=image_rel,
     )
 
 
-class _FakeReader:
-    """Ranked entity source mirroring ``_GuidedGraphReader``'s search/read seam."""
+class _GraphFakeReader:
+    """Deterministic in-memory graph-reader fake (no real index, no randomness).
 
-    def __init__(self, entities: list[dict]) -> None:
-        self._entities = list(entities)
+    ``hits`` maps an exact query to its ranked hit list, ``neighbours`` maps a
+    seed path to its full neighbour entities, ``hubs`` is the blind-map
+    fallback, and ``entities`` supplies full mappings so scoreless hits (the
+    real ``EntityHit`` shape) resolve to a canonical ``id``.
+    """
+
+    def __init__(self, *, hits=None, entities=None, neighbours=None, hubs=None) -> None:
+        self._hits = {query: [dict(h) for h in value] for query, value in (hits or {}).items()}
+        self._entities = {entity["path"]: dict(entity) for entity in (entities or [])}
+        self._neighbours = {
+            path: [dict(entity) for entity in value] for path, value in (neighbours or {}).items()
+        }
+        self._hubs = [dict(entity) for entity in (hubs or [])]
+        self.search_queries: list[str] = []
 
     def search(self, query: str) -> list[dict]:
-        return [{"path": e["path"]} for e in self._entities]
+        self.search_queries.append(query)
+        return [dict(hit) for hit in self._hits.get(query, [])]
 
     def read(self, path: str) -> dict | None:
-        for entity in self._entities:
-            if entity["path"] == path:
-                return dict(entity)
-        return None
+        entity = self._entities.get(path)
+        return dict(entity) if entity is not None else None
+
+    def entities(self) -> list[dict]:
+        return [dict(entity) for entity in self._entities.values()]
+
+    def neighbors(self, path: str) -> list[dict]:
+        return [dict(entity) for entity in self._neighbours.get(path, [])]
+
+    def hubs(self) -> list[dict]:
+        return [dict(entity) for entity in self._hubs]
+
+
+def _hit(path: str, score: float | None = None, **extra) -> dict:
+    """A ranked search hit; omitted ``score`` exercises the scoreless seam."""
+    hit: dict = {"path": path}
+    if score is not None:
+        hit["score"] = score
+    hit.update(extra)
+    return hit
 
 
 def _entity(path: str, *, id: str = "", title: str = "", type: str = "concepto",
@@ -133,6 +169,62 @@ def test_slugify_title_truncates_single_token() -> None:
     slug = slugify_title("x" * (MAX_SLUG_LEN + 50))
     assert len(slug) == MAX_SLUG_LEN
     assert _SLUG_RE.fullmatch(slug)
+
+
+# ---------------------------------------------------------------------------
+# resolve_file_slug (WU-6, iteration 2 — the typed name is the filename)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_file_slug_derives_from_ficha_title() -> None:
+    """FT-1: the caller resolves the title; the filename derives from it."""
+    assert resolve_file_slug("Mi Título", "idea-slug", None) == "mi-titulo"
+
+
+def test_resolve_file_slug_uses_idea_title_as_ficha_title() -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", None) == "idea-title"
+
+
+def test_resolve_file_slug_untitled_idea_falls_back_to_idea_slug() -> None:
+    """An untitled idea (``title == slug``) keeps its internal slug as name."""
+    telegram_id = "2026-08-28-524e8b9c9770"
+    assert resolve_file_slug(telegram_id, telegram_id, None) == telegram_id
+
+
+def test_resolve_file_slug_empty_title_falls_back_to_idea_slug() -> None:
+    assert resolve_file_slug("", "2026-08-28-524e8b9c9770", None) == "2026-08-28-524e8b9c9770"
+
+
+def test_resolve_file_slug_client_slug_overrides_default() -> None:
+    assert resolve_file_slug("Mi Título", "idea-slug", "custom-name") == "custom-name"
+
+
+def test_resolve_file_slug_client_slug_is_normalized() -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", "Mi Nombre Raro!") == "mi-nombre-raro"
+
+
+@pytest.mark.parametrize("client_slug", ["", "   ", "!!!"])
+def test_resolve_file_slug_empty_or_empty_normalizing_client_slug_falls_back(client_slug: str) -> None:
+    assert resolve_file_slug("Idea Title", "idea-slug", client_slug) == "idea-title"
+
+
+def test_resolve_file_slug_client_slug_is_traversal_safe_by_normalization() -> None:
+    """``slugify_title`` strips path separators; the result never escapes."""
+    resolved = resolve_file_slug("Idea Title", "idea-slug", "../../etc/passwd")
+    assert resolved == "etc-passwd"
+    assert "/" not in resolved and ".." not in resolved
+
+
+def test_resolve_file_slug_client_slug_is_length_bounded() -> None:
+    resolved = resolve_file_slug("Idea Title", "idea-slug", "x" * (MAX_SLUG_LEN + 50))
+    assert len(resolved) == MAX_SLUG_LEN
+    assert _SLUG_RE.fullmatch(resolved)
+
+
+def test_resolve_file_slug_derived_from_title_is_length_bounded() -> None:
+    resolved = resolve_file_slug("Palabra " * 60, "idea-slug", None)
+    assert len(resolved) <= MAX_SLUG_LEN
+    assert _SLUG_RE.fullmatch(resolved)
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +383,7 @@ def test_skeleton_personajes_emits_slug_id_type_and_schema_version(tmp_path: Pat
     assert fm["status"] == "draft"
     assert fm["based_on"] == "ideas/arquero-ciego"
     assert fm["relaciones"] == []
-    assert "# Cuerpo" in content
+    assert "# Arquero Ciego" in content
 
 
 def test_skeleton_canonical_emits_parent_qualified_id_and_wikilinks(tmp_path: Path) -> None:
@@ -347,106 +439,430 @@ def test_skeleton_always_emits_type_and_based_on(tmp_path: Path) -> None:
         assert fm["based_on"] == "ideas/idea-uno"
 
 
+def test_skeleton_based_on_uses_idea_slug_while_id_follows_slug(tmp_path: Path) -> None:
+    """WU-6 trap 1: the filename slug and the idea link are independent.
+
+    ``id`` follows the file slug (``slug``) while ``based_on`` must keep the
+    idea's internal slug — passing the title-derived filename into ``based_on``
+    would silently corrupt traceability.
+    """
+    conv = FolderConvention("canonical", "Tema", "concepto", "draft", None)
+    content = _skeleton(
+        tmp_path, section="lore", folder="tema",
+        slug="mi-nombre-raro", idea_slug="2026-08-28-524e8b9c9770",
+        title="Mi Nombre Raro", convention=conv,
+    )
+    fm = _frontmatter(content)
+    assert fm["id"] == "Tema::Mi Nombre Raro"
+    assert fm["based_on"] == "ideas/2026-08-28-524e8b9c9770"
+
+
+def test_skeleton_canonical_single_based_on_uses_idea_slug_with_slug_equal_folder(tmp_path: Path) -> None:
+    """WU-6 trap 3: the ``slug == folder`` index branch still keys ``id`` off
+    ``slug`` (title-as-id) while ``based_on`` keeps the separate idea slug."""
+    conv = FolderConvention("canonical-single", "Tema", "concepto", "draft", None)
+    content = _skeleton(
+        tmp_path, section="lore", folder="tema",
+        slug="tema", idea_slug="2026-08-28-524e8b9c9770",
+        title="Tema", convention=conv,
+    )
+    fm = _frontmatter(content)
+    assert fm["id"] == "Tema"
+    assert fm["based_on"] == "ideas/2026-08-28-524e8b9c9770"
+
+
+def test_skeleton_canonical_single_title_derived_slug_fails_index_test_not_fixed(tmp_path: Path) -> None:
+    """WU-6 trap 3: a title-derived slug correctly fails ``slug == folder``, so
+    a child ficha (not the index) keeps the ``Parent::Title`` id — do NOT
+    "fix" this into an index id."""
+    conv = FolderConvention("canonical-single", "Tema", "concepto", "draft", None)
+    content = _skeleton(
+        tmp_path, section="lore", folder="tema",
+        slug="mi-nombre-raro", idea_slug="idea-uno",
+        title="Mi Nombre Raro", convention=conv,
+    )
+    assert _frontmatter(content)["id"] == "Tema::Mi Nombre Raro"
+
+
+# ---------------------------------------------------------------------------
+# build_ficha_skeleton — image injection (CI-1, materialize-carry-idea-image)
+# ---------------------------------------------------------------------------
+
+
+def test_skeleton_image_injected_immediately_after_imposed_h1(tmp_path: Path) -> None:
+    """FT-1: the AI's own H1 is replaced by the title, and the image follows it."""
+    content = _skeleton(
+        tmp_path, slug="arquero-ciego", title="Arquero Ciego",
+        body="# Cuerpo del arquero\n\nTexto posterior.\n",
+        image_rel="media/arquero-ciego.jpg",
+    )
+    assert (
+        "# Arquero Ciego\n![Arquero Ciego](media/arquero-ciego.jpg)\n\nTexto posterior."
+        in content
+    )
+    assert "# Cuerpo del arquero" not in content
+    assert content.endswith("Texto posterior.\n")
+
+
+def test_skeleton_image_injected_after_inserted_h1_when_body_has_none(tmp_path: Path) -> None:
+    """FT-1: a body without an H1 gets one, and the image follows it."""
+    content = _skeleton(tmp_path, body="Texto sin encabezado.\n", image_rel="media/idea-uno.png")
+    assert content.endswith(
+        "---\n\n# Idea Uno\n![Idea Uno](media/idea-uno.png)\n\nTexto sin encabezado.\n"
+    )
+
+
+def test_skeleton_image_only_h1_body_has_no_dangling_blank_line(tmp_path: Path) -> None:
+    content = _skeleton(tmp_path, body="# Solo titulo\n", image_rel="media/idea-uno.png")
+    assert content.endswith("# Idea Uno\n![Idea Uno](media/idea-uno.png)\n")
+
+
+def test_skeleton_image_after_h1_collapses_extra_leading_blanks(tmp_path: Path) -> None:
+    content = _skeleton(
+        tmp_path, body="# Titulo\n\n\n\nTexto.\n", image_rel="media/idea-uno.png",
+    )
+    assert "# Idea Uno\n![Idea Uno](media/idea-uno.png)\n\nTexto." in content
+
+
+def test_skeleton_image_alt_escapes_markdown_brackets(tmp_path: Path) -> None:
+    """A bracket or newline in the title must not break the image syntax."""
+    content = _skeleton(
+        tmp_path, title="Nivel [5]\nde Chaae", body="Texto.\n",
+        image_rel="media/nivel-5.png",
+    )
+    assert "![Nivel \\[5\\] de Chaae](media/nivel-5.png)" in content
+
+
+def test_skeleton_no_image_is_byte_identical_to_current_output(tmp_path: Path) -> None:
+    """CI-1 invariant 4: with no H1 rewrite, ``image_rel=None`` emits exactly
+    today's bytes (the body already opens with ``# {title}``)."""
+    conv = FolderConvention("personajes", "", "Personaje", "draft", None)
+    kwargs = dict(
+        section="personajes", folder="", slug="arquero-ciego",
+        title="Arquero Ciego", body="# Arquero Ciego\n", convention=conv,
+    )
+    default = _skeleton(tmp_path, **kwargs)
+    explicit_none = _skeleton(tmp_path, image_rel=None, **kwargs)
+    assert explicit_none == default
+    assert "![" not in default
+    golden = (
+        "---\n"
+        "id: arquero-ciego\n"
+        "title: Arquero Ciego\n"
+        "type: Personaje\n"
+        "status: draft\n"
+        "relaciones: []\n"
+        "based_on: ideas/arquero-ciego\n"
+        "schema_version: 1\n"
+        "---\n\n"
+        "# Arquero Ciego\n"
+    )
+    assert default == golden
+
+
+# ---------------------------------------------------------------------------
+# build_ficha_skeleton — the title owns the H1 (FT-1, ficha-title-owns-h1)
+# ---------------------------------------------------------------------------
+
+
+def test_skeleton_replaces_ai_h1_with_title(tmp_path: Path) -> None:
+    """FT-1: the AI's own leading H1 is discarded and replaced by the title."""
+    content = _skeleton(
+        tmp_path, title="Arquero Ciego",
+        body="# Titulo inventado por la IA\n\nTexto posterior.\n",
+    )
+    assert content.endswith("---\n\n# Arquero Ciego\n\nTexto posterior.\n")
+    assert "Titulo inventado por la IA" not in content
+
+
+def test_skeleton_prepends_h1_when_body_has_none(tmp_path: Path) -> None:
+    """FT-1: a body without a leading H1 gets ``# {title}`` + one blank line."""
+    content = _skeleton(
+        tmp_path, title="Arquero Ciego",
+        body="Texto sin encabezado.\n",
+    )
+    assert content.endswith("---\n\n# Arquero Ciego\n\nTexto sin encabezado.\n")
+
+
+def test_skeleton_h1_equals_frontmatter_title(tmp_path: Path) -> None:
+    """FT-1: the imposed H1 and the frontmatter ``title`` are the same value."""
+    content = _skeleton(tmp_path, title="Arquero Ciego", body="# Otro encabezado\n")
+    fm = _frontmatter(content)
+    assert fm["title"] == "Arquero Ciego"
+    assert f"# {fm['title']}\n" in content
+
+
+def test_skeleton_leaves_later_h1_untouched(tmp_path: Path) -> None:
+    """FT-1: only the leading H1 is rewritten; any later H1 survives."""
+    body = "# Primer encabezado\n\nTexto.\n\n# Segundo encabezado\n\nMas texto.\n"
+    content = _skeleton(tmp_path, title="Arquero Ciego", body=body)
+    assert "# Arquero Ciego\n\nTexto." in content
+    assert "# Segundo encabezado\n\nMas texto." in content
+    assert "# Primer encabezado" not in content
+
+
+def test_skeleton_image_lands_right_after_imposed_h1(tmp_path: Path) -> None:
+    content = _skeleton(
+        tmp_path, title="Arquero Ciego",
+        body="# Otro encabezado\n\nTexto.\n",
+        image_rel="media/arquero-ciego.jpg",
+    )
+    assert content.endswith(
+        "---\n\n# Arquero Ciego\n![Arquero Ciego](media/arquero-ciego.jpg)\n\nTexto.\n"
+    )
+
+
+def test_skeleton_no_rewrite_keeps_bytes_identical(tmp_path: Path) -> None:
+    """FT-1: when the body already opens with ``# {title}`` there is no rewrite
+    and ``image_rel=None`` output stays byte-identical to the previous behavior."""
+    conv = FolderConvention("personajes", "", "Personaje", "draft", None)
+    content = _skeleton(
+        tmp_path, section="personajes", folder="", slug="arquero-ciego",
+        title="Arquero Ciego", body="# Arquero Ciego\n\nTexto.\n", convention=conv,
+    )
+    assert content.endswith("---\n\n# Arquero Ciego\n\nTexto.\n")
+
+
 # ---------------------------------------------------------------------------
 # build_grounding_candidates (task 1.6, AD6)
 # ---------------------------------------------------------------------------
 
 
 def test_candidates_empty_world_is_empty_list() -> None:
-    assert build_grounding_candidates(_FakeReader([])) == []
+    assert build_grounding_candidates(_GraphFakeReader(), idea_title="Nada") == []
 
 
 def test_candidates_skip_entities_without_canonical_id() -> None:
-    reader = _FakeReader([
-        _entity("lore/a/one.md", id="Tema::Uno", title="Uno"),
-        _entity("lore/a/two.md", id="", title="Dos"),
-        _entity("lore/a/three.md", id="Tema::Tres", title="Tres"),
-    ])
-    candidates = build_grounding_candidates(reader)
-    assert [c["id"] for c in candidates] == ["Tema::Uno", "Tema::Tres"]
+    reader = _GraphFakeReader(
+        hits={"Tema": [_hit("lore/a/two.md", 5.0)]},
+        entities=[_entity("lore/a/two.md", id="", title="Dos")],
+    )
+    assert build_grounding_candidates(reader, idea_title="Tema") == []
 
 
 def test_candidates_shape_and_summary_truncated_to_160() -> None:
-    reader = _FakeReader([
-        _entity("lore/a/one.md", id="Tema::Uno", title="Uno", type="lugar", description="d" * 200),
-    ])
-    assert build_grounding_candidates(reader) == [
+    reader = _GraphFakeReader(
+        hits={"Uno": [_hit("lore/a/one.md", 9.0)]},
+        entities=[
+            _entity("lore/a/one.md", id="Tema::Uno", title="Uno", type="lugar", description="d" * 200)
+        ],
+    )
+    assert build_grounding_candidates(reader, idea_title="Uno") == [
         {"id": "Tema::Uno", "title": "Uno", "type": "lugar", "summary": "d" * 160},
     ]
 
 
-def test_candidates_preserve_rank_order_and_cap_at_max_candidates() -> None:
-    reader = _FakeReader([
-        _entity(f"lore/a/e{i}.md", id=f"Tema::E{i}", title=f"E{i}") for i in range(30)
-    ])
-    candidates = build_grounding_candidates(reader)
-    assert len(candidates) == MAX_CANDIDATES
-    assert [c["id"] for c in candidates] == [f"Tema::E{i}" for i in range(25)]
-
-
-def test_candidates_bounded_by_payload_chars_drops_lowest_ranked() -> None:
-    reader = _FakeReader([
-        _entity(f"lore/a/e{i}.md", id=f"Tema::E{i}", title=f"E{i}", description="d" * 160)
-        for i in range(30)
-    ])
-    candidates = build_grounding_candidates(reader)
-    assert len(candidates) < MAX_CANDIDATES
-    payload = sum(len(json.dumps(c, ensure_ascii=False, separators=(",", ":"))) for c in candidates)
-    assert payload <= MAX_CANDIDATE_PAYLOAD_CHARS
-    assert candidates[0]["id"] == "Tema::E0"
-
-
-def test_candidates_section_filter_keeps_matching_paths() -> None:
-    reader = _FakeReader([
-        _entity("lore/a/one.md", id="Tema::Uno", title="Uno"),
-        _entity("personajes/Daest.md", id="daest", title="Daest", type="Personaje"),
-    ])
-    candidates = build_grounding_candidates(reader, section_filter="lore")
-    assert [c["id"] for c in candidates] == ["Tema::Uno"]
-
-
 def test_candidates_skip_hits_without_path() -> None:
-    class _PathlessReader(_FakeReader):
-        def search(self, query: str) -> list[dict]:
-            return [{"name": "no-path"}]
-
-    assert build_grounding_candidates(_PathlessReader([_entity("lore/a/one.md", id="Tema::Uno")])) == []
+    reader = _GraphFakeReader(hits={"Idea": [{"name": "sin-ruta"}]})
+    assert build_grounding_candidates(reader, idea_title="Idea") == []
 
 
-def test_candidates_use_entities_seam_when_search_is_empty() -> None:
-    """BUG-B regression at the domain level: grounding must use the reader's
-    ``entities()`` enumeration seam — ``search("*")`` returns [] against the
-    real index by design, so a reader mirroring that behavior must still
-    yield candidates."""
-    class _RealIndexLikeReader(_FakeReader):
-        def entities(self) -> list[dict]:
-            return [dict(e) for e in self._entities]
+def test_seed_relative_bar_keeps_only_near_best() -> None:
+    """Measured Chaae gap: scores 15.06 / 11.76 / 11.69 → only 15.06 seeds
+    (11.76 < SEED_RATIO * 15.06)."""
+    entities = [
+        _entity("lore/chaae.md", id="Region::Chaae", title="Chaae"),
+        _entity("lore/a.md", id="Region::A", title="A"),
+        _entity("lore/b.md", id="Region::B", title="B"),
+    ]
+    reader = _GraphFakeReader(
+        hits={"Chaae": [_hit("lore/chaae.md", 15.06), _hit("lore/a.md", 11.76), _hit("lore/b.md", 11.69)]},
+        entities=entities,
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Chaae")
+    assert [c["id"] for c in candidates] == ["Region::Chaae"]
 
-        def search(self, query: str) -> list[dict]:
-            return []
 
-    reader = _RealIndexLikeReader([
-        _entity("personajes/rhyz.md", id="Rhyz::Rhyz", title="Rhyz", type="Personaje"),
-    ])
-    assert build_grounding_candidates(reader) == [
-        {"id": "Rhyz::Rhyz", "title": "Rhyz", "type": "Personaje", "summary": ""},
+def test_measured_silpah_bar_admits_only_chaae_as_seed() -> None:
+    """Regression on the REAL measured shape ("Silpah — Lince Relámpago de
+    Chaae"): 13.97/15.06 = 0.928 is under SEED_RATIO=0.95, so Eneagrama is NOT
+    a seed and its 8-entity family never enters; Chaae's genuine neighbour
+    Pannj still arrives through the 1-hop expansion."""
+    chaae = _entity("lore/chaae.md", id="Region::Chaae", title="Chaae")
+    eneagrama = _entity("lore/eneagrama.md", id="Canon::Eneagrama", title="Eneagrama")
+    pannj = _entity("lore/pannj.md", id="Region::Pannj", title="Pannj")
+    other = _entity("lore/x.md", id="Tema::X", title="X")
+    reader = _GraphFakeReader(
+        hits={"Silpah": [
+            _hit("lore/chaae.md", 15.06),
+            _hit("lore/eneagrama.md", 13.97),
+            _hit("lore/pannj.md", 11.76),
+            _hit("lore/x.md", 11.69),
+        ]},
+        entities=[chaae, eneagrama, pannj, other],
+        neighbours={"lore/chaae.md": [pannj]},
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Silpah")
+    ids = [c["id"] for c in candidates]
+    # 0.95 * 15.06 = 14.31 → only Chaae seeds; Eneagrama would advertise a
+    # canonical id if it had seeded, so its absence proves it did not.
+    assert ids == ["Region::Chaae", "Region::Pannj"]
+    assert "Canon::Eneagrama" not in ids
+    assert reader.search_queries == ["Silpah"]
+
+
+def test_seed_bar_still_admits_a_genuinely_close_pair() -> None:
+    """The strict bar must not collapse a real cluster: 15.00/15.06 = 0.996 is
+    well above 0.95, so both hits seed and their neighbours follow."""
+    a = _entity("lore/a.md", id="Tema::A", title="A")
+    b = _entity("lore/b.md", id="Tema::B", title="B")
+    near = _entity("lore/na.md", id="Tema::NA", title="NA")
+    reader = _GraphFakeReader(
+        hits={"Cluster": [_hit("lore/a.md", 15.06), _hit("lore/b.md", 15.00)]},
+        entities=[a, b, near],
+        neighbours={"lore/a.md": [near]},
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Cluster")
+    assert [c["id"] for c in candidates] == ["Tema::A", "Tema::B", "Tema::NA"]
+
+
+def test_seed_weak_flat_distribution_still_yields_the_best() -> None:
+    """A flat/weak distribution still returns a candidate set; the best always
+    enters (the list is never empty when there is at least one hit)."""
+    entities = [
+        _entity("lore/x.md", id="Tema::X", title="X"),
+        _entity("lore/y.md", id="Tema::Y", title="Y"),
+        _entity("lore/z.md", id="Tema::Z", title="Z"),
+    ]
+    reader = _GraphFakeReader(
+        hits={"Vago": [_hit("lore/x.md", 0.4), _hit("lore/y.md", 0.3), _hit("lore/z.md", 0.2)]},
+        entities=entities,
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Vago")
+    assert [c["id"] for c in candidates] == ["Tema::X"]
+
+
+def test_seed_ceiling_caps_seeds_at_seed_limit() -> None:
+    entities = [_entity(f"lore/e{i}.md", id=f"Tema::E{i}", title=f"E{i}") for i in range(8)]
+    hits = [_hit(f"lore/e{i}.md", 1.0) for i in range(8)]
+    reader = _GraphFakeReader(hits={"Tope": hits}, entities=entities)
+    candidates = build_grounding_candidates(reader, idea_title="Tope")
+    assert len(candidates) == SEED_LIMIT
+    assert [c["id"] for c in candidates] == [f"Tema::E{i}" for i in range(SEED_LIMIT)]
+
+
+def test_neighbours_added_deduped_and_shared_ranks_first() -> None:
+    """Seeds expand one hop; a neighbour reached by several seeds outranks a
+    single-seed neighbour, duplicates collapse, and ties break by id asc."""
+    s1 = _entity("lore/s1.md", id="Tema::S1", title="S1")
+    s2 = _entity("lore/s2.md", id="Tema::S2", title="S2")
+    shared = _entity("lore/shared.md", id="Tema::NShared", title="Shared")
+    n1 = _entity("lore/n1.md", id="Tema::N1", title="N1")
+    n2 = _entity("lore/n2.md", id="Tema::N2", title="N2")
+    reader = _GraphFakeReader(
+        hits={"Idea": [_hit("lore/s1.md", 10.0), _hit("lore/s2.md", 9.5)]},
+        entities=[s1, s2, shared, n1, n2],
+        neighbours={"lore/s1.md": [shared, n1], "lore/s2.md": [shared, n2]},
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Idea")
+    assert [c["id"] for c in candidates] == [
+        "Tema::S1", "Tema::S2", "Tema::NShared", "Tema::N1", "Tema::N2",
     ]
 
 
-def test_candidates_prefer_entities_seam_order_when_both_exposed() -> None:
-    """A reader with both seams must enumerate via ``entities()`` (index
-    insertion order), never re-derive from search hits."""
-    class _BothSeamsReader(_FakeReader):
-        def entities(self) -> list[dict]:
-            return [dict(e) for e in reversed(self._entities)]
+def test_no_hits_falls_back_to_hubs() -> None:
+    entities = [
+        _entity("lore/h1.md", id="Tema::H1", title="H1"),
+        _entity("lore/h2.md", id="Tema::H2", title="H2"),
+    ]
+    reader = _GraphFakeReader(entities=entities, hubs=entities)
+    candidates = build_grounding_candidates(reader, idea_title="Sin coincidencias")
+    assert [c["id"] for c in candidates] == ["Tema::H1", "Tema::H2"]
+    # Only stage 1 ran: the body is empty, so broadening would repeat the title.
+    assert reader.search_queries == ["Sin coincidencias"]
 
-    reader = _BothSeamsReader([
-        _entity("lore/a/one.md", id="Tema::Uno", title="Uno"),
-        _entity("lore/a/two.md", id="Tema::Dos", title="Dos"),
-    ])
-    # The enumeration seam is authoritative (reversed order proves it is used
-    # instead of the search/read fallback).
-    assert [c["id"] for c in build_grounding_candidates(reader)] == ["Tema::Dos", "Tema::Uno"]
+
+def test_empty_title_uses_bounded_body_stage() -> None:
+    body = "  Una   region   fértil  " + "palabra " * 100  # long → must be bounded
+    collapsed = " ".join(body.split())[:BODY_EXCERPT_CHARS]
+    entities = [_entity("lore/c.md", id="Tema::C", title="C")]
+    reader = _GraphFakeReader(hits={collapsed: [_hit("lore/c.md", 7.0)]}, entities=entities)
+    candidates = build_grounding_candidates(reader, idea_title="", idea_body=body)
+    assert [c["id"] for c in candidates] == ["Tema::C"]
+    assert reader.search_queries == [collapsed]
+
+
+def test_scoreless_hits_fall_back_to_returned_order() -> None:
+    entities = [
+        _entity("lore/second.md", id="Tema::Second", title="Second"),
+        _entity("lore/first.md", id="Tema::First", title="First"),
+    ]
+    reader = _GraphFakeReader(
+        hits={"Idea": [_hit("lore/second.md"), _hit("lore/first.md")]},
+        entities=entities,
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Idea")
+    assert [c["id"] for c in candidates] == ["Tema::Second", "Tema::First"]
+
+
+def test_ordering_is_stable_and_ties_break_by_id() -> None:
+    entities = [
+        _entity("lore/b.md", id="Tema::B", title="B"),
+        _entity("lore/a.md", id="Tema::A", title="A"),
+    ]
+    reader = _GraphFakeReader(
+        hits={"Empate": [_hit("lore/b.md", 2.0), _hit("lore/a.md", 2.0)]},
+        entities=entities,
+    )
+    first = build_grounding_candidates(reader, idea_title="Empate")
+    second = build_grounding_candidates(reader, idea_title="Empate")
+    assert first == second
+    assert [c["id"] for c in first] == ["Tema::A", "Tema::B"]
+
+
+def test_guard_drops_the_tail_never_a_seed(monkeypatch) -> None:
+    """A tiny payload budget fits the seed but not the neighbour: the guard
+    truncates the TAIL, so the seed survives and only the neighbour is cut."""
+    seed = _entity("lore/seed.md", id="Tema::Seed", title="Seed")
+    neighbour = _entity("lore/nb.md", id="Tema::Neighbour", title="Neighbour")
+    reader = _GraphFakeReader(
+        hits={"Idea": [_hit("lore/seed.md", 9.0)]},
+        entities=[seed, neighbour],
+        neighbours={"lore/seed.md": [neighbour]},
+    )
+    seed_payload = len(json.dumps(
+        {"id": "Tema::Seed", "title": "Seed", "type": "concepto", "summary": ""},
+        ensure_ascii=False, separators=(",", ":"),
+    ))
+    monkeypatch.setattr(
+        "idea_materialization_domain.MAX_CANDIDATE_PAYLOAD_CHARS", seed_payload
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Idea")
+    assert [c["id"] for c in candidates] == ["Tema::Seed"]
+
+
+def test_measured_shape_is_a_small_neighbourhood_including_chaae() -> None:
+    """Silpah-shaped fixture: search ranks Chaae first with a clear gap, so the
+    result is the small seed+neighbour set (measured 4 entities) — NOT the
+    world enumeration — and it contains Chaae's canonical id."""
+    chaae = _entity("lore/silpah/chaae.md", id="Region::Chaae", title="Chaae")
+    dos = _entity("lore/silpah/dos.md", id="Region::Dos", title="Dos")
+    pannj = _entity("lore/silpah/pannj.md", id="Region::Pannj", title="Pannj")
+    tres = _entity("lore/silpah/tres.md", id="Region::Tres", title="Tres")
+    others = [
+        _entity("lore/ayagars/reptiles.md", id="Ayagars::Reptiles", title="Reptiles Vibrantes"),
+        *[_entity(f"lore/ayagars/e{i}.md", id=f"Ayagars::E{i}", title=f"E{i}") for i in range(8)],
+    ]
+    reader = _GraphFakeReader(
+        hits={"Silpah": [
+            _hit("lore/silpah/chaae.md", 15.06),
+            _hit("lore/silpah/dos.md", 14.5),
+            _hit("lore/silpah/pannj.md", 11.76),
+            *[_hit(f"lore/ayagars/e{i}.md", 1.0) for i in range(8)],
+        ]},
+        entities=[chaae, dos, pannj, tres, *others],
+        neighbours={"lore/silpah/chaae.md": [pannj], "lore/silpah/dos.md": [tres]},
+    )
+    candidates = build_grounding_candidates(reader, idea_title="Silpah")
+    ids = [c["id"] for c in candidates]
+    assert "Region::Chaae" in ids
+    # Seeds (>= 0.9 * 15.06 = 13.554): Chaae + Dos; Pannj is 11.76 so it enters
+    # only as Chaae's neighbour. Then one-hop neighbours by connection count.
+    assert ids == ["Region::Chaae", "Region::Dos", "Region::Pannj", "Region::Tres"]
+    assert len(candidates) < MAX_CANDIDATES
+    payload = sum(len(json.dumps(c, ensure_ascii=False, separators=(",", ":"))) for c in candidates)
+    assert payload <= MAX_CANDIDATE_PAYLOAD_CHARS
+    assert reader.search_queries == ["Silpah"]
 
 
 # ---------------------------------------------------------------------------

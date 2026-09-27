@@ -19,6 +19,7 @@ if str(_WIKI) not in sys.path:
 import pytest  # noqa: E402
 
 from idea_materialization_protocol import (  # noqa: E402
+    DEADLINE_MS,
     MAX_BODY_CHARS,
     MAX_RELATIONS,
     PROTOCOL_VERSION,
@@ -43,6 +44,29 @@ def _request() -> MaterializationRequest:
         tags=("misterio",),
         deadline_ms=8_000,
     )
+
+
+def test_deadline_allows_a_full_generation_budget() -> None:
+    """WU-1: the run deadline is 60 s and is the request default.
+
+    Unlike guided/co-creation the protocol pins no upper-bound validator, so
+    raising the budget cannot be rejected by ``MaterializationRequest``.
+    """
+    assert DEADLINE_MS == 60_000
+    assert _request().deadline_ms == 8_000  # an explicit field is still honored
+    default_request = MaterializationRequest(
+        protocol_version=PROTOCOL_VERSION,
+        request_id="request-1",
+        session_id="session-1",
+        world="Vibrantes",
+        section="lore",
+        folder="",
+        slug="arquero-ciego",
+        title="Arquero Ciego",
+        idea_type="personaje",
+        idea_body="Un arquero que no ve.",
+    )
+    assert default_request.deadline_ms == DEADLINE_MS
 
 
 def _envelope(**overrides: object) -> dict[str, object]:
