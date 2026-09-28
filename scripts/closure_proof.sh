@@ -105,8 +105,8 @@ run_cell() {
     status="FAIL"
   fi
   if [ "$expected_fail" = "1" ]; then
-    note="expected-fail (documented): musl/Alpine unsupported — explicit message in installer, exit non-zero"
-    [ "$status" = "FAIL" ] && status="PASS(expected-fail)" || note="$note (closure unexpectedly resolved; keep the unsupported declaration)"
+    note="musl/Alpine: mandatory closure is expected to RESOLVE post-split (S0-B); optional extras degrade; real-musl confirmation pending before S5"
+    [ "$status" = "FAIL" ] && status="PASS(expected-fail)" || note="$note"
   fi
   record "$cell" "$platform" "$status" "$note"
   [ "$status" = "PASS" ]
@@ -119,7 +119,7 @@ run_local() {
   local cell="local:${kernel:-unknown}-${arch:-unknown}"
   local note=""
   case "$libc" in
-    musl) note="musl detected — musl/Alpine is a declared unsupported target (expected-fail, documented)" ;;
+    musl) note="musl detected — mandatory closure expected to resolve; optional extras degrade; real confirmation pending" ;;
     glibc) note="glibc ${glibc:-unknown}" ;;
     *) note="libc: ${libc:-unknown}" ;;
   esac
@@ -163,7 +163,7 @@ if [ -n "$JSON_OUT" ]; then
   echo "proof: {"
   echo "  \"command\": \"uv pip install --only-binary=:all: --dry-run --python-version $PYTHON_VERSION -r requirements.txt\","
   echo "  \"floors\": {\"kernel\": \"$kernel\", \"arch\": \"$arch\", \"libc\": \"${libc:-unknown}\", \"glibc\": \"${glibc:-unknown}\"},"
-  echo "  \"declared_floors\": {\"windows\": \"10+ x86_64\", \"macos\": \">=13 arm64 (Intel: optional extras degraded)\", \"linux\": \"x86_64/aarch64 glibc >= 2.28\", \"musl\": \"unsupported\"},"
+  echo "  \"declared_floors\": {\"windows\": \"10+ x86_64\", \"macos\": \">=13 arm64 (Intel: optional extras degraded)\", \"linux\": \"x86_64/aarch64 glibc >= 2.28\", \"musl\": \"x86_64/aarch64 musl (mandatory closure resolves post-split; optional extras degraded; real confirmation pending)\"},"
   echo "  \"matrix\": ["
   first=1
   for spec in "${MATRIX_SPEC[@]}"; do
