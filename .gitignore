@@ -8,6 +8,8 @@
 # ============================================================
 # Mundos del Autor — contenido narrativo privado
 # ============================================================
+# Any new world is one `git add -A` away; the allow-list below is not enough.
+mundos/*
 mundos/Vibrantes-Legacy/
 mundos/Ideas/
 mundos/Vibrantes/
@@ -17,6 +19,7 @@ _archivo_produccion/
 # Estado local de Demiurgos (tracking de arcos narrativos)
 # ============================================================
 .demiurgos-estado.*
+.demiurgos-estado*
 .demiurgos-sync/
 .env.backup
 
@@ -40,6 +43,11 @@ output/
 # ============================================================
 sdd/
 exploration.md
+
+# ============================================================
+# Live secrets export (leaked-history remediation, runbook #3559)
+# ============================================================
+engram-export.json
 
 # ============================================================
 # OpenCode legacy (no aplica a Hermes)
