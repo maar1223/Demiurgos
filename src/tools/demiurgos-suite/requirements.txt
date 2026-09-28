@@ -1,3 +1,11 @@
+# Mandatory runtime closure (S0-B) — MUST resolve to wheels on every declared
+# target (Windows amd64, macOS arm64, macOS x86_64, Linux x86_64/aarch64 with
+# glibc >= 2.28). Verified by scripts/closure_proof.sh with
+# `uv pip install --only-binary=:all: --dry-run`.
+#
+# Optional extras live in requirements-optional.txt (markitdown[docx] and
+# watchdog) and degrade gracefully when absent.
+
 # Web framework (FastAPI + ASGI server)
 fastapi>=0.110
 uvicorn>=0.29
@@ -17,15 +25,11 @@ python-multipart>=0.0.9
 mcp>=1.0.0,<2.0.0
 # Deterministic BM25 search used by the entity graph index
 rank_bm25>=0.2.2,<0.3.0
-# File watching for live index updates
-watchdog>=4.0.0
 # OS-correct per-user config dir (XDG_CONFIG_HOME/APPDATA/Application Support)
 # for the data-root bootstrap pointer (data_root.py)
 platformdirs>=4.0
 # Image processing for media uploads (JPEG compression + thumbnails)
 Pillow>=10.0.0
-# Document conversion for importer (.docx, .pdf, .pptx → markdown)
-markitdown[docx]>=0.1.0
 # Streaming OOXML parsing for DOCX image extraction with precise positioning
 lxml>=4.9.0
 # Argon2id hashing for passwords and recovery words (auth-vault-credentials)
