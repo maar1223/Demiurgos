@@ -620,7 +620,14 @@ def create_assistant_settings_router(
         try:
             paths = _resolve_profile_paths()
             _, model, data = _read_config(paths.config)
-            return _status(paths, model, data, seam, runtime_state_resolver)
+            public = _status(paths, model, data, seam, runtime_state_resolver)
+            # S2b (degradable-ai-provider): an explicit presence boolean so
+            # the UI can distinguish "gateway up" from "configured state".
+            # Derived from the same read-only liveness probe that feeds the
+            # save-time acceptance; purely additive, no new endpoint.
+            if runtime_liveness is not None:
+                public["gateway_running"] = bool(runtime_liveness())
+            return public
         except AssistantSettingsError as exc:
             raise settings_error(exc) from exc
 

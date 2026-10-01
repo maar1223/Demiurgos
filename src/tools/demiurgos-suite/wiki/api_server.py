@@ -8692,10 +8692,31 @@ app.include_router(
 # process only after the response is flushed. Immediate launcher failures
 # (bad path, permission) surface via a short non-blocking peek. The local
 # session is NOT closed server-side — the client logs out first (S-2.5/S-3.4).
+#
+# The launcher path comes from the frozen layout contract (S0-C) per OS:
+# POSIX ships ``scripts/start-demiurgos.sh``, Windows ships
+# ``scripts/start-demiurgos.ps1``. The resolved path is validated at BOOT:
+# if it does not exist, /api/system reports a clear error instead of ever
+# dispatching a stale path (S2-7).
+def _system_launcher_path() -> Path:
+    if os.name == "nt":
+        return _CODE_ROOT / "scripts" / "start-demiurgos.ps1"
+    return _CODE_ROOT / "scripts" / "start-demiurgos.sh"
+
+
+_SYSTEM_LAUNCHER = _system_launcher_path()
+_SYSTEM_LAUNCHER_AVAILABLE = _SYSTEM_LAUNCHER.is_file()
+if not _SYSTEM_LAUNCHER_AVAILABLE:
+    logger.warning(
+        "System launcher missing at %s; /api/system restart/shutdown will fail closed",
+        _SYSTEM_LAUNCHER,
+    )
+
 app.include_router(
     create_system_control_router(
         require_principal=lambda request: _resolve_principal(request),
-        launcher_path=_CODE_ROOT / "scripts" / "start-demiurgos-linux.sh",
+        launcher_path=_SYSTEM_LAUNCHER,
+        launcher_available=_SYSTEM_LAUNCHER_AVAILABLE,
     ),
 )
 

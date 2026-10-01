@@ -106,6 +106,8 @@ export const messages = {
     "onboarding.remote.ai.title": "Asistente de Demiurgos (texto y visión)",
     "onboarding.remote.ai.desc":
       "Requiere un modelo local o remoto validado. Se retoma desde el Perfil.",
+    "onboarding.remote.ai.later": "Activar el asistente más tarde",
+    "onboarding.remote.ai.laterAria": "Configurar el asistente más tarde desde el Perfil",
     "onboarding.remote.telegram.title": "Telegram",
     "onboarding.remote.telegram.desc":
       "Requiere conexión y una cuenta configurada. Se retoma desde el Perfil.",
@@ -1957,6 +1959,8 @@ export const messages = {
     "onboarding.remote.ai.title": "Demiurgos Assistant (text and vision)",
     "onboarding.remote.ai.desc":
       "Requires a validated local or remote model. Resumed from the Profile.",
+    "onboarding.remote.ai.later": "Enable the assistant later",
+    "onboarding.remote.ai.laterAria": "Configure the assistant later from the Profile",
     "onboarding.remote.telegram.title": "Telegram",
     "onboarding.remote.telegram.desc":
       "Requires a connection and a configured account. Resumed from the Profile.",

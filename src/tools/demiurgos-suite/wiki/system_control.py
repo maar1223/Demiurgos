@@ -86,6 +86,7 @@ def create_system_control_router(
     require_principal: Callable[[Request], Any],
     launcher_path: Path,
     launcher_log: Path | None = None,
+    launcher_available: bool | None = None,
 ) -> APIRouter:
     """Build the /api/system router.
 
@@ -102,6 +103,11 @@ def create_system_control_router(
     ``launcher_log`` is where the detached launcher's stderr is captured. It
     MUST NOT be a pipe (see the module docstring); the default is
     ``_LAUNCHER_LOG``.
+
+    ``launcher_available`` is the boot-time existence verdict for
+    ``launcher_path`` (S2-7). When it is False, dispatch is refused with a
+    clear error instead of spawning a stale path; ``None`` keeps the legacy
+    behavior (spawn, and let a spawn failure surface).
     """
     router = APIRouter(prefix="/api/system", tags=["system-control"])
     log_path = Path(launcher_log) if launcher_log is not None else _LAUNCHER_LOG
@@ -111,6 +117,12 @@ def create_system_control_router(
             raise HTTPException(status_code=401, detail=_AUTH_REQUIRED_DETAIL)
 
     def _dispatch(api_action: str, launcher_arg: str) -> JSONResponse:
+        if launcher_available is False:
+            return JSONResponse(status_code=503, content={
+                "action": api_action,
+                "accepted": False,
+                "error": f"launcher not available at {launcher_path}",
+            })
         # Detached dispatch: the launcher outlives this request. The server
         # answers BEFORE the launcher stops/restarts the stack (shutdown kills
         # this very process), so subprocess.run is never an option here.

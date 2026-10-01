@@ -1,186 +1,244 @@
-﻿# ---------------------------------------------------------------------------
-# Demiurgos - single entry point to bring the whole stack up.
+# ---------------------------------------------------------------------------
+# Demiurgos Windows stack launcher (Windows PowerShell 5.1).
 #
-#  1. Hermes Gateway        (port 8642)  - persistent AI daemon
-#  2. Demiurgos Wiki API    (port 8000)  - api_server.py (uvicorn)
-#  3. Graph warm-up (background)         - pays the ~2min cold start
-#  4. Frontend dev server   (port 5173)  - Vite
+# Portable start/restart/stop for the web platform on Windows, derived
+# entirely from the script's own location and the frozen install layout
+# (docs/architecture/INSTALL_LAYOUT.md - S0-C). The dev checkout and the
+# installed layout (<install_root>\current) share the same relative
+# structure, so one launcher serves both.
 #
-# Idempotent: any service already listening on its port is left untouched,
-# so running this script twice never spawns duplicate processes.
+# The launcher manages ONLY the FastAPI process (uvicorn), which serves the
+# SPA and /api on one port. Hermes is OPTIONAL (S2-2): the gateway is never
+# started here and the app boots without the provider. Use start-gateway.ps1
+# to bring the assistant up later.
 #
-# Run:  powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1
-# Apply current .env auth mode to an existing API only with explicit confirmation:
-# Run:  powershell -ExecutionPolicy Bypass -File start-demiurgos.ps1 -RestartApi
+# ASCII-only on purpose: Windows PowerShell 5.1 mis-decodes BOM-less UTF-8.
+#
+# Run:  powershell.exe -NoProfile -File start-demiurgos.ps1
+#       powershell.exe -NoProfile -File start-demiurgos.ps1 restart
+#       powershell.exe -NoProfile -File start-demiurgos.ps1 stop
 # ---------------------------------------------------------------------------
 
 param(
-    [switch]$RestartApi
+    [ValidateSet("start", "restart", "stop")]
+    [string]$Action = "start"
 )
 
-$ErrorActionPreference = "Continue"
+$ErrorActionPreference = "Stop"
 
-$root    = "<local-path>\Proyectos\Demiurgos"
-$hermes  = "C:\Users\Miguel Angel\AppData\Local\hermes\hermes-agent\venv\Scripts\hermes.exe"
-$gatewayPort = 8642
-$apiPort     = 8000
-$frontendPort = 5173
-$apiUrl    = "http://localhost:$apiPort/health"
-$frontendUrl = "http://localhost:$frontendPort"
-$hermesHealthUrl = "http://localhost:$gatewayPort/health"
+# --- Paths derived from this launcher's own location (S0-C rule 1) ---------
+# Dev checkout: the script sits at <root>\start-demiurgos.ps1, so APP_ROOT is
+# its own directory. Installed layout: <current>\scripts\start-demiurgos.ps1,
+# so APP_ROOT is the parent of the scripts directory.
+$scriptDir = $PSScriptRoot
+if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
+if ((Split-Path -Leaf $scriptDir) -eq "scripts") {
+    $appRoot = Split-Path -Parent $scriptDir
+} else {
+    $appRoot = $scriptDir
+}
 
-. (Join-Path $root "scripts\import-auth-mode.ps1")
-$authMode = Set-DemiurgosAuthModeFromDotEnv -ProjectRoot $root
+# Install root: $env:DEMIURGOS_HOME override -> the parent of `current` in the
+# installed layout -> the checkout root in dev.
+if ($env:DEMIURGOS_HOME) {
+    $installRoot = $env:DEMIURGOS_HOME
+} elseif ((Split-Path -Leaf $appRoot) -eq "current") {
+    $installRoot = Split-Path -Parent $appRoot
+} else {
+    $installRoot = $appRoot
+}
 
-Write-Host ""
-Write-Host "======================================" -ForegroundColor Cyan
-Write-Host "  Demiurgos - stack launcher" -ForegroundColor Cyan
-Write-Host "======================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "Auth mode configurado para la API: $authMode" -ForegroundColor DarkCyan
+# Layout contract: venv <current>\.venv\Scripts\python.exe, API dir, logs
+# under <install_root>\logs, runtime state under %LOCALAPPDATA%\Demiurgos\run.
+$pythonBin = Join-Path $appRoot ".venv\Scripts\python.exe"
+$apiDir = Join-Path $appRoot "src\tools\demiurgos-suite\wiki"
+$logDir = Join-Path $installRoot "logs"
+$runDir = Join-Path $env:LOCALAPPDATA "Demiurgos\run"
+$apiLog = Join-Path $logDir "demiurgos-api.log"
+$apiErrLog = Join-Path $logDir "demiurgos-api.err.log"
 
-# --- Helper: is a TCP port already listening? ---------------------------------
+# Ports, overridable via env for parallel instances and the CI matrix; the
+# defaults are the product ports (mirror of the POSIX launcher).
+$apiPort = if ($env:DEMIURGOS_API_PORT) { [int]$env:DEMIURGOS_API_PORT } else { 8000 }
+$gatewayPort = if ($env:DEMIURGOS_GATEWAY_PORT) { [int]$env:DEMIURGOS_GATEWAY_PORT } else { 8642 }
+
+# --- Hermes resolution (S2-2): optional, advisory only, never a boot gate ---
+$hermesBin = $null
+$hermesCmd = Get-Command hermes -ErrorAction SilentlyContinue
+if ($hermesCmd) { $hermesBin = $hermesCmd.Source }
+if (-not $hermesBin) {
+    $fallback = Join-Path $env:USERPROFILE ".local\bin\hermes.exe"
+    if (Test-Path -LiteralPath $fallback -PathType Leaf) { $hermesBin = $fallback }
+}
+
+# --- Data-root pointer (S2-3): %APPDATA%\demiurgos\data-root.json ----------
+# Windows follows platformdirs user_config_dir("demiurgos") -> %APPDATA%.
+$configDir = Join-Path $env:APPDATA "demiurgos"
+$pointerFile = Join-Path $configDir "data-root.json"
+
+function Resolve-DataRoot {
+    # Order contract (S2-3): existing env -> existing pointer (left intact) ->
+    # bootstrap-once <install_root>\data. An existing pointer is never
+    # re-oriented.
+    if ($env:DEMIURGOS_DATA_ROOT) {
+        return $env:DEMIURGOS_DATA_ROOT
+    }
+    if (Test-Path -LiteralPath $pointerFile -PathType Leaf) {
+        try {
+            $record = Get-Content -LiteralPath $pointerFile -Raw | ConvertFrom-Json
+            if ($record.data_root) {
+                return [string]$record.data_root
+            }
+        } catch {
+            Write-Warning "Data-root pointer $pointerFile is unreadable; refusing to guess."
+        }
+    }
+    # Bootstrap-once: write the byte-compatible pointer (data_root.py format)
+    # so subsequent starts and the backend resolve the same root.
+    $root = Join-Path $installRoot "data"
+    New-Item -ItemType Directory -Force -Path $root, $configDir | Out-Null
+    $record = @{
+        schema_version = 1
+        data_root = $root
+        updated_at = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    } | ConvertTo-Json
+    Set-Content -LiteralPath $pointerFile -Value $record -Encoding ASCII
+    Write-Host "Bootstrapped data root at $root"
+    return $root
+}
+
+# Parse the data-root .env in pure PowerShell (S2-4/S0-A) and export every
+# DEMIURGOS_* key: the bridge between the installer's seed (auth mode,
+# locale) and the env-only backend (_auth_mode()). No Python involved.
+function Load-DataRootEnv {
+    $envFile = Join-Path $dataRoot ".env"
+    if (-not (Test-Path -LiteralPath $envFile -PathType Leaf)) { return }
+    Get-Content -LiteralPath $envFile | ForEach-Object {
+        $line = $_.Trim()
+        if (-not $line -or $line.StartsWith("#")) { return }
+        $eq = $line.IndexOf("=")
+        if ($eq -le 0) { return }
+        $key = $line.Substring(0, $eq).Trim()
+        $value = $line.Substring($eq + 1).Trim()
+        # Strip one layer of surrounding quotes and a trailing CR (CRLF .env).
+        if ($value.Length -ge 2 -and $value.StartsWith('"') -and $value.EndsWith('"')) {
+            $value = $value.Substring(1, $value.Length - 2)
+        }
+        $value = $value.TrimEnd("`r")
+        if ($key -like "DEMIURGOS_*") {
+            Set-Item -Path ("Env:" + $key) -Value $value
+        }
+    }
+}
+
+# --- Process/port inspection (S2-5): Get-NetTCPConnection + cmdline ownership
 function Test-PortListening([int]$port) {
     return [bool](Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue)
 }
 
-function Test-HermesHealthy {
-    try {
-        $response = Invoke-WebRequest -Uri $hermesHealthUrl -UseBasicParsing -TimeoutSec 2
-        return $response.StatusCode -eq 200
-    } catch { return $false }
-}
-
-# --- Helper: start a detached PowerShell window that stays open for logs -------
-function Start-ServiceWindow([string]$title, [string]$command) {
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", $command |
-        Out-Null
-    Write-Host "  [OK]  $title lanzado en ventana propia." -ForegroundColor Green
-}
-
-function Get-ApiListenerPids {
-    @(
-        Get-NetTCPConnection -LocalPort $apiPort -State Listen -ErrorAction SilentlyContinue |
-            ForEach-Object { $_.OwningProcess } |
-            Sort-Object -Unique
+function Get-ListenerProcIds([int]$port) {
+    return @(
+        Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.OwningProcess } | Sort-Object -Unique
     )
 }
 
-function Stop-ApiForExplicitRestart {
-    $ownerPids = @(Get-ApiListenerPids)
-    if ($ownerPids.Count -eq 0) {
-        return $true
-    }
-    if ($ownerPids.Count -ne 1) {
-        Write-Host "  [!!]  No se reinicia: hay varios procesos escuchando en $apiPort." -ForegroundColor Red
-        return $false
-    }
+function Get-ProcessCommandLine([int]$procId) {
+    $proc = Get-CimInstance Win32_Process -Filter "ProcessId = $procId" -ErrorAction SilentlyContinue
+    if ($proc) { return [string]$proc.CommandLine }
+    return ""
+}
 
-    $ownerPid = [int]$ownerPids[0]
-    $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $ownerPid" -ErrorAction SilentlyContinue
-    $commandLine = if ($processInfo) { [string]$processInfo.CommandLine } else { "" }
-    if ([string]::IsNullOrWhiteSpace($commandLine) -or
-        $commandLine -notmatch '(?i)(api_server:app|api_server\.py|start-api\.ps1)') {
-        Write-Host "  [!!]  No se reinicia: el proceso de $apiPort no se identifico como la API de Demiurgos." -ForegroundColor Red
-        return $false
-    }
+# The API ownership gate: only a process whose command line identifies it as
+# the Demiurgos API (uvicorn api_server:app) may be adopted or stopped. A
+# foreign port squatter is never touched (spec "Port already in use").
+function Test-ApiOwnership([int]$procId) {
+    $cmd = Get-ProcessCommandLine $procId
+    return ($cmd -like "*uvicorn api_server:app*")
+}
 
-    Write-Host "  [!!]  Reinicio solicitado: se detendra el proceso API identificado (PID $ownerPid)." -ForegroundColor Yellow
-    $confirmation = Read-Host "Escribe RESTART para confirmar; cualquier otra cosa cancela"
-    if ($confirmation -cne "RESTART") {
-        Write-Host "  [OK]  Reinicio cancelado; el proceso existente queda intacto." -ForegroundColor Green
-        return $false
-    }
-
-    Stop-Process -Id $ownerPid -ErrorAction Stop
-    for ($i = 0; $i -lt 20 -and (Test-PortListening $apiPort); $i++) {
-        Start-Sleep -Milliseconds 250
-    }
+function Start-Api {
     if (Test-PortListening $apiPort) {
-        Write-Host "  [!!]  La API no libero el puerto $apiPort; no se inicia otra instancia." -ForegroundColor Red
-        return $false
+        $owners = @(Get-ListenerProcIds $apiPort)
+        if ($owners.Count -ge 1 -and (Test-ApiOwnership $owners[0])) {
+            Write-Host "Already running api (pid $($owners[0]))"
+            return
+        }
+        Write-Host "Cannot start api: port $apiPort is already in use by an untracked process"
+        exit 1
     }
-    return $true
+    New-Item -ItemType Directory -Force -Path $logDir, $runDir | Out-Null
+    $uvicornArgs = @("-m", "uvicorn", "api_server:app", "--host", "127.0.0.1", "--port", "$apiPort", "--log-level", "info")
+    $proc = Start-Process -FilePath $pythonBin -ArgumentList $uvicornArgs -WorkingDirectory $apiDir -RedirectStandardOutput $apiLog -RedirectStandardError $apiErrLog -PassThru -WindowStyle Hidden
+    Set-Content -LiteralPath (Join-Path $runDir "api.pid") -Value $proc.Id -Encoding ASCII
+    Write-Host "Started api (pid $($proc.Id))"
 }
 
-# --- 1. Hermes Gateway ----------------------------------------------------------
-Write-Host "[1/4] Hermes Gateway ($gatewayPort)..." -ForegroundColor Yellow
-if (Test-PortListening $gatewayPort) {
-    if (Test-HermesHealthy) {
-        Write-Host "  [OK]  Hermes saludable en el puerto $gatewayPort - sin cambios." -ForegroundColor Green
-    } else {
-        Write-Host "  [!!]  Hermes escucha pero no esta saludable; no se inicia una segunda instancia." -ForegroundColor Red
+# Readiness covers the API only (S2-2): the gateway is optional and never
+# gates the boot.
+function Wait-ApiReady {
+    $url = "http://127.0.0.1:$apiPort/health"
+    for ($i = 0; $i -lt 30; $i++) {
+        try {
+            $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2
+            if ($r.StatusCode -eq 200) { return $true }
+        } catch { }
+        Start-Sleep -Seconds 1
     }
-} else {
-    Start-ServiceWindow "Gateway" "Set-Location '$root'; `$env:DEMIURGOS_ROOT='$root'; `$env:DEMIURGOS_DATA_ROOT='$root'; `$env:HERMES_ENABLE_PROJECT_PLUGINS='1'; & '$hermes' plugins enable demiurgos-idea-capture *> `$null; if (`$LASTEXITCODE -ne 0) { throw 'Could not enable the Demiurgos Hermes project plugin.' }; & '$hermes' gateway run -v"
+    return $false
 }
 
-# --- 2. Wiki API -----------------------------------------------------------------
-Write-Host "[2/4] Wiki API ($apiPort)..." -ForegroundColor Yellow
-if (Test-PortListening $apiPort) {
-    if ($RestartApi -and (Stop-ApiForExplicitRestart)) {
-        Write-Host "  [OK]  API anterior detenida de forma explicita; se inicia con el modo $authMode." -ForegroundColor Green
-        $env:PYTHONPATH = "src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite"
-        Start-ServiceWindow "API" "Set-Location '$root'; `$env:PYTHONPATH='src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite'; `$env:DEMIURGOS_DATA_ROOT='$root'; python -m uvicorn api_server:app --host 127.0.0.1 --port 8000 --log-level info"
-    } else {
-        Write-Host "  [OK]  Ya esta escuchando en el puerto $apiPort - sin cambios; conserva su entorno anterior." -ForegroundColor Green
-        Write-Host "        Usa -RestartApi y confirma RESTART para aplicar el .env actual." -ForegroundColor DarkYellow
+function Stop-Api {
+    $owners = @(Get-ListenerProcIds $apiPort)
+    if ($owners.Count -eq 0) {
+        Write-Host "Api not running"
+        return
     }
-} else {
-    $env:PYTHONPATH = "src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite"
-    Start-ServiceWindow "API" "Set-Location '$root'; `$env:PYTHONPATH='src\tools\demiurgos-suite\wiki;src\tools\demiurgos-suite'; `$env:DEMIURGOS_DATA_ROOT='$root'; python -m uvicorn api_server:app --host 127.0.0.1 --port 8000 --log-level info"
+    foreach ($owner in $owners) {
+        if (Test-ApiOwnership $owner) {
+            Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
+            Write-Host "Stopped api (pid $owner)"
+        } else {
+            Write-Host "Skipped api: port $apiPort owner is not a Demiurgos process (pid $owner)"
+        }
+    }
 }
 
-# --- 3. Graph warm-up (background, does not block) --------------------------------
-Write-Host "[3/4] Graph warm-up (background)..." -ForegroundColor Yellow
-Start-ServiceWindow "Warmup" "Set-Location '$root'; python src\tools\demiurgos-suite\wiki\warmup_gateway.py"
+# --- Resolve + export the contract environment BEFORE any child starts ------
+# The launcher is the SOLE exporter of DEMIURGOS_FRONTEND_DIST (S1-6) and the
+# bridge for the data-root .env auth mode (S0-A); DEMIURGOS_ROOT stays for
+# legacy Hermes reads (S2-3).
+$dataRoot = Resolve-DataRoot
+Load-DataRootEnv
+$env:DEMIURGOS_DATA_ROOT = $dataRoot
+$env:DEMIURGOS_FRONTEND_DIST = Join-Path $appRoot "frontend\dist"
+$env:DEMIURGOS_ROOT = $appRoot
 
-# --- 4. Frontend -------------------------------------------------------------------
-Write-Host "[4/4] Frontend ($frontendPort)..." -ForegroundColor Yellow
-if (Test-PortListening $frontendPort) {
-    Write-Host "  [OK]  Ya esta escuchando en el puerto $frontendPort - sin cambios." -ForegroundColor Green
-} else {
-    Start-ServiceWindow "Frontend" "Set-Location '$root\frontend'; npm run dev"
+if (-not $hermesBin) {
+    Write-Host "Hermes CLI not found; the assistant will be unavailable." -ForegroundColor Yellow
+    Write-Host "Install Hermes later and run start-gateway.ps1 to enable it." -ForegroundColor Yellow
 }
 
-# --- Wait for readiness (API + frontend) -------------------------------------------
-Write-Host ""
-Write-Host "Esperando a que los servicios respondan..." -ForegroundColor DarkYellow
-
-$apiReady = $false
-for ($i = 0; $i -lt 30; $i++) {
-    Start-Sleep -Seconds 2
-    try {
-        $r = Invoke-WebRequest -Uri $apiUrl -UseBasicParsing -TimeoutSec 3
-        if ($r.StatusCode -eq 200) { $apiReady = $true; break }
-    } catch { }
+switch ($Action) {
+    "start" {
+        Start-Api
+        if (Wait-ApiReady) {
+            Write-Host "API ready on 127.0.0.1:$apiPort" -ForegroundColor Green
+        } else {
+            Write-Host "API did not become ready; check $apiErrLog" -ForegroundColor Red
+            exit 1
+        }
+    }
+    "restart" {
+        Stop-Api
+        Start-Sleep -Seconds 1
+        Start-Api
+        if (Wait-ApiReady) {
+            Write-Host "API ready on 127.0.0.1:$apiPort" -ForegroundColor Green
+        } else {
+            Write-Host "API did not become ready; check $apiErrLog" -ForegroundColor Red
+            exit 1
+        }
+    }
+    "stop" { Stop-Api }
 }
-if ($apiReady) {
-    Write-Host "  [OK]  API listo ($apiUrl)." -ForegroundColor Green
-} else {
-    Write-Host "  [!!]  API no respondio a tiempo. Revisa la ventana del API." -ForegroundColor Red
-}
-
-$feReady = $false
-for ($i = 0; $i -lt 30; $i++) {
-    Start-Sleep -Seconds 2
-    try {
-        $r = Invoke-WebRequest -Uri $frontendUrl -UseBasicParsing -TimeoutSec 3
-        if ($r.StatusCode -eq 200) { $feReady = $true; break }
-    } catch { }
-}
-if ($feReady) {
-    Write-Host "  [OK]  Frontend listo ($frontendUrl)." -ForegroundColor Green
-} else {
-    Write-Host "  [!!]  Frontend no respondio a tiempo. Revisa la ventana del Frontend." -ForegroundColor Red
-}
-
-# --- Open the browser ----------------------------------------------------------------
-if ($feReady) {
-    Start-Process $frontendUrl
-}
-
-Write-Host ""
-Write-Host "Stack listo. Frontend: $frontendUrl" -ForegroundColor Green
-Write-Host "Cierra las ventanas de servicio para apagar el stack." -ForegroundColor DarkYellow
-Write-Host ""

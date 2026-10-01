@@ -418,6 +418,12 @@ export interface AssistantSettingsStatus {
   active_profile: string;
   revision: number;
   runtime_state: "active" | "pending-reload" | "saved-not-active";
+  /**
+   * Additive liveness boolean (S2b, degradable-ai-provider): true when the
+   * Hermes gateway process is running right now. Derived server-side from
+   * `HermesGatewayProbe.is_running()`; absent on older backends.
+   */
+  gateway_running?: boolean;
 }
 
 export interface AssistantConnectionInput {

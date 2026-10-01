@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { createWorld, getOnboardingStatus } from "@/api/onboarding";
 import { createAccount } from "@/api/wiki";
 import type { OnboardingStatus } from "@/api/types";
@@ -30,10 +30,20 @@ import type { MessageKey } from "@/i18n/messages";
  * clear hint (fail closed, never a silent bypass).
  */
 
-const REMOTE_PENDING: Record<string, { titleKey: MessageKey; descriptionKey: MessageKey }> = {
+const REMOTE_PENDING: Record<string, { titleKey: MessageKey; descriptionKey: MessageKey; enableLater?: { to: string; labelKey: MessageKey; ariaKey: MessageKey } }> = {
   ai: {
     titleKey: "onboarding.remote.ai.title",
     descriptionKey: "onboarding.remote.ai.desc",
+    // S2b (degradable-ai-provider): non-blocking "enable the assistant
+    // later" entry pointing at the existing Assistant Settings panel
+    // (Profile -> Configuration Center -> Conexiones). The AI step is
+    // never a blocker; the affordance only removes the "where do I do
+    // this later?" ambiguity.
+    enableLater: {
+      to: "/perfil?tab=conexiones",
+      labelKey: "onboarding.remote.ai.later",
+      ariaKey: "onboarding.remote.ai.laterAria",
+    },
   },
   telegram: {
     titleKey: "onboarding.remote.telegram.title",
@@ -277,6 +287,16 @@ function PendingCards(props: { remotePending: string[]; worldDone: boolean }) {
             <div>
               <p className="text-body text-primary">{t(item.titleKey)}</p>
               <p className="mt-1 text-small text-muted">{t(item.descriptionKey)}</p>
+              {item.enableLater && (
+                <Link
+                  to={item.enableLater.to}
+                  aria-label={t(item.enableLater.ariaKey)}
+                  className="mt-2 inline-flex items-center gap-1 text-small font-medium text-action hover:underline"
+                >
+                  {t(item.enableLater.labelKey)}
+                  <span aria-hidden="true">&rarr;</span>
+                </Link>
+              )}
             </div>
             <span className="inline-flex shrink-0 items-center rounded-full border border-edge bg-surface-raised px-2.5 py-0.5 text-xs font-medium text-primary">
               {t("onboarding.pending.badge")}

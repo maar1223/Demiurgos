@@ -13,6 +13,11 @@
 # (PYTHON_BIN) and the data-root .env is parsed in pure shell.
 #
 # Actions: start | restart | stop | install
+#
+# Headless guard: set DEMIURGOS_NO_BROWSER=1 (or true/yes) to skip the
+# automatic browser launch on `start`. Harnesses, system_control restarts and
+# CI run headless and MUST set it; without it, `start` opens the default
+# browser at the API URL.
 set -euo pipefail
 
 # --- OS branch (S2-1/S2-5) -------------------------------------------------
@@ -382,30 +387,45 @@ start_all() {
     export DEMIURGOS_FRONTEND_DIST="$APP_ROOT/frontend/dist"
     export DEMIURGOS_ROOT="$APP_ROOT"
 
+    # Hermes is OPTIONAL (S2-2): the app boots without the provider and the
+    # assistant degrades. The gateway is started only when the CLI is found;
+    # otherwise an advisory is printed and the boot continues.
     if [ -z "$HERMES_BIN" ] || [ ! -x "$HERMES_BIN" ]; then
-        printf 'Hermes CLI not found\n' >&2
-        return 1
+        printf 'Hermes CLI not found; the assistant will be unavailable.\n' >&2
+        printf 'Install or enable Hermes later to use the assistant.\n' >&2
+    else
+        start_component gateway
     fi
-    start_component gateway
     start_component api
 
-    local port name
-    for port in "$GATEWAY_PORT" "$API_PORT"; do
-        case "$port" in
-            "$GATEWAY_PORT") name="Hermes Gateway" ;;
-            *) name="API" ;;
-        esac
-        if wait_for_port "$port"; then
-            printf '%s ready on 127.0.0.1:%s\n' "$name" "$port"
+    # Required readiness covers the API ONLY (S2-2). The gateway is best-effort:
+    # when present it is reported, but its absence never aborts the boot.
+    if wait_for_port "$API_PORT"; then
+        printf 'API ready on 127.0.0.1:%s\n' "$API_PORT"
+    else
+        printf 'API did not become ready; check its log\n' >&2
+        return 1
+    fi
+    if [ -n "$HERMES_BIN" ] && [ -x "$HERMES_BIN" ]; then
+        if wait_for_port "$GATEWAY_PORT"; then
+            printf 'Hermes Gateway ready on 127.0.0.1:%s\n' "$GATEWAY_PORT"
         else
-            printf '%s did not become ready; check its log\n' "$name" >&2
-            return 1
+            printf 'Hermes Gateway did not become ready; check its log\n' >&2
         fi
-    done
+    fi
 }
 
 open_browser() {
     local url="$1" opener=""
+    # Headless suppression switch (S2b incident fix): a truthy
+    # DEMIURGOS_NO_BROWSER (1|true|yes) skips the browser launch entirely.
+    # Harnesses and CI set it; system_control restarts never open a tab.
+    case "${DEMIURGOS_NO_BROWSER:-}" in
+        1|true|yes|TRUE|YES|True)
+            printf 'DEMIURGOS_NO_BROWSER is set; not opening %s\n' "$url" >&2
+            return 0
+            ;;
+    esac
     case "$OS" in
         Darwin) opener="open" ;;
         *) opener="xdg-open" ;;
@@ -420,7 +440,11 @@ open_browser() {
 show_status() {
     printf '\nDemiurgos is running\n'
     printf 'API:      http://127.0.0.1:%s\n' "$API_PORT"
-    printf 'Hermes:   127.0.0.1:%s\n' "$GATEWAY_PORT"
+    if [ -n "$HERMES_BIN" ] && [ -x "$HERMES_BIN" ]; then
+        printf 'Hermes:   127.0.0.1:%s\n' "$GATEWAY_PORT"
+    else
+        printf 'Hermes:   not installed (assistant unavailable)\n'
+    fi
     printf 'Data root: %s\n' "$DATA_ROOT"
     printf 'Logs: %s, %s\n' "$API_LOG" "$GATEWAY_LOG"
     printf '\nServices continue running in the background.\n'
