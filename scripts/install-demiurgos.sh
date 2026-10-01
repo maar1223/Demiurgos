@@ -39,6 +39,16 @@
 #   UV_VERSION           pinned uv version
 #   DEMIURGOS_LANGUAGE   seeded data-root locale (default es)
 #   DEMIURGOS_WORLD      optional seeded world
+#   DEMIURGOS_SEED_ONLY  "1" -> seed-only entry point: run ONLY the
+#                        data-root bootstrap-once + .env seed (design S3-7)
+#                        and exit 0. No download, no uv, no staging, no
+#                        DEMIURGOS_URL_BASE required. Resolution order is the
+#                        installer's own (DEMIURGOS_DATA_ROOT env -> existing
+#                        pointer -> bootstrap-once). Idempotent: an existing
+#                        pointer and .env are preserved byte-for-byte. The
+#                        gated-write regression harness
+#                        (test_install_auth_gated_write.py) invokes this mode
+#                        to exercise the REAL shipping seed path.
 #
 # Decision #3565 supersedes the old "musl unsupported" wording: musl selects
 # the musl uv binary and proceeds; the actual mandatory closure is what
@@ -384,6 +394,20 @@ bootstrap_data_root() {
     printf 'install-demiurgos: bootstrapped data root at %s\n' "$DATA_ROOT" >&2
     seed_env_file
 }
+
+# --- seed-only entry point (S0-A; test/ops seam) -----------------------------
+# DEMIURGOS_SEED_ONLY=1 performs ONLY the data-root bootstrap-once + .env seed
+# (design S3-7) and exits 0 — the exact code path the full install runs at the
+# end (bootstrap_data_root), so the gated-write regression harness
+# (test_install_auth_gated_write.py) exercises the REAL shipping seed against a
+# tmp HOME/XDG_CONFIG_HOME/DEMIURGOS_HOME. Never downloads, never touches uv,
+# never requires DEMIURGOS_URL_BASE. Idempotence is preserved: an existing
+# pointer and an existing .env are left byte-for-byte untouched.
+if [ "${DEMIURGOS_SEED_ONLY:-0}" = "1" ]; then
+    bootstrap_data_root
+    printf 'install-demiurgos: seed-only done; data root is %s\n' "$DATA_ROOT" >&2
+    exit 0
+fi
 
 # --- main --------------------------------------------------------------------
 
