@@ -1,0 +1,67 @@
+# gitleaks configuration for Demiurgos (release gate, design v2 S5-3).
+#
+# Extends the default gitleaks rule set with the author-specific patterns
+# defined in the SDD tasks (8.1). The shell scanner (scripts/secret_scan.sh)
+# is the dependency-free runtime guard; this file makes the same rules
+# available to gitleaks for developers who install it.
+#
+# The allowlist covers ONLY:
+#   * the scanner's own files (they contain the rule definitions by design);
+#   * obviously-fake test fixtures (placeholder values, never real
+#     credentials and never real author data);
+#   * any value containing "testonly" (the marker used by the fake fixtures).
+# Real baseline violations are intentionally NOT allowlisted.
+
+title = "Demiurgos gitleaks configuration"
+
+[extend]
+useDefault = true
+
+# Telegram bot tokens: <8-10 digits>:<35 chars>
+[[rules]]
+id = "demiurgos-bot-token"
+description = "Telegram bot token pattern"
+regex = '''[0-9]{8,10}:[A-Za-z0-9_-]{35}'''
+secretGroup = 0
+
+# OpenAI-style keys
+[[rules]]
+id = "demiurgos-openai-key"
+description = "OpenAI-style API key"
+regex = '''sk-[A-Za-z0-9_-]{20,}'''
+secretGroup = 0
+
+# Google API keys
+[[rules]]
+id = "demiurgos-google-api-key"
+description = "Google API key"
+regex = '''AIza[0-9A-Za-z_-]{35}'''
+secretGroup = 0
+
+# Author machine paths and spreadsheet references
+[[rules]]
+id = "demiurgos-author-path"
+description = 'Author machine paths (H:\, /home/, C:\Users, spreadsheetId)'
+regex = '''H:\\|/home/|C:\\Users|spreadsheetId'''
+secretGroup = 0
+
+# Author Telegram id
+[[rules]]
+id = "demiurgos-author-id"
+description = "Author Telegram user id"
+regex = '''<telegram-id>'''
+secretGroup = 0
+
+[allowlist]
+description = "Scanner self-files and obviously-fake test fixtures only"
+paths = [
+    '''src/tools/demiurgos-suite/wiki/tests/test_payload_audit.py''',
+    '''frontend/src/__tests__/BackupSection.test.tsx''',
+    '''frontend/src/__tests__/MethodologyLibrary.test.tsx''',
+    '''scripts/secret_scan.sh''',
+    '''scripts/payload_audit.sh''',
+    '''.gitleaks.toml''',
+]
+regexes = [
+    '''(?i)testonly''',
+]

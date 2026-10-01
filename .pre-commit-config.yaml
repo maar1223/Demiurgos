@@ -1,0 +1,27 @@
+# Secret-scan guard (WU-A — the permanent S0 security guardrail).
+#
+# The local hook runs scripts/secret_scan.sh (dependency-free: grep/sed/git
+# only, no gitleaks, no pre-commit, no Python) against the STAGED changes.
+# Because it scans only the index (git show :<path>), pre-existing baseline
+# files never block new commits; the guard rejects only secrets that a commit
+# is about to introduce. The scanner never prints matched values.
+#
+# gitleaks is an optional secondary hook: it is NOT installed on the author's
+# machine, so this file is inert until a developer installs pre-commit.
+# Install with: pre-commit install
+
+repos:
+  - repo: local
+    hooks:
+      - id: secret-scan-staged
+        name: secret scan (staged)
+        description: Reject staged files containing secret/PII patterns (Telegram bot tokens, OpenAI/Google API keys, author paths and id). Never prints matched values.
+        entry: scripts/secret_scan.sh --staged
+        language: system
+        stages: [pre-commit]
+        pass_filenames: false
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
