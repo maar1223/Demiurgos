@@ -120,3 +120,6 @@ data/methodology/staging/
 # máquina, no del proyecto. Nunca se versionan.
 .impeccable/
 config/backup.json
+
+# Agent memory export — must never be tracked (leaked-secrets remediation)
+engram-export.json
