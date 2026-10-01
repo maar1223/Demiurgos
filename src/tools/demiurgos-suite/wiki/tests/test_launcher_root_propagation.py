@@ -33,7 +33,6 @@ _WIKI = _HERE.parent
 REPO_ROOT = _WIKI.parents[3]  # wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> repo
 
 PORTABLE_LAUNCHER = REPO_ROOT / "scripts" / "start-demiurgos.sh"
-COMPAT_ALIAS = REPO_ROOT / "scripts" / "start-demiurgos-linux.sh"
 PS_STACK = REPO_ROOT / "start-demiurgos.ps1"
 PS_API = REPO_ROOT / "start-api.ps1"
 PS_GATEWAY = REPO_ROOT / "start-gateway.ps1"
@@ -83,36 +82,38 @@ def test_portable_launcher_exports_legacy_root_and_layout_dist():
     assert _DIST_EXPORT in text
 
 
-def test_compat_alias_delegates_to_the_portable_launcher():
-    # The old name stays resolvable until S2b re-points the system_control
-    # dispatch (api_server.py); it must exec the portable launcher so every
-    # existing caller keeps identical behavior.
-    text = _text(COMPAT_ALIAS)
-    assert 'exec "$SCRIPT_DIR/start-demiurgos.sh"' in text
+def test_powershell_stack_roots_from_psscriptroot_and_exports_contract_env():
+    """S2b PS stack (tasks 3.2/3.3): root from $PSScriptRoot; the resolved
+    data root, the layout dist and the legacy DEMIURGOS_ROOT are exported for
+    the API child; the stack starts ONLY uvicorn (Hermes optional)."""
+    text = _text(PS_STACK)
+    assert "$PSScriptRoot" in text
+    assert "$env:DEMIURGOS_DATA_ROOT" in text
+    assert "$env:DEMIURGOS_FRONTEND_DIST" in text
+    assert "$env:DEMIURGOS_ROOT" in text
+    # The API is started exactly once, from the layout venv, with the pointer
+    # contract env already exported (uvicorn gets it via the process env).
+    # (The ownership check also names `uvicorn api_server:app`, so pin the
+    # actual invocation: Start-Process with -m uvicorn.)
+    invocation = [line for line in text.splitlines() if '"uvicorn"' in line and "api_server:app" in line]
+    assert len(invocation) == 1
+    assert ".venv\\Scripts\\python.exe" in text
 
 
-def test_powershell_stack_sets_data_root_for_gateway_and_both_api_paths():
-    lines = _text(PS_STACK).splitlines()
-    gateway_lines = [line for line in lines if "gateway run" in line]
-    assert len(gateway_lines) == 1
-    gateway = gateway_lines[0]
-    assert "$env:DEMIURGOS_DATA_ROOT='$root'" in gateway
-    assert "$env:DEMIURGOS_ROOT='$root'" in gateway  # legacy kept
-
-    api_lines = [line for line in lines if "uvicorn api_server:app" in line]
-    assert len(api_lines) == 2  # restart branch + fresh-start branch
-    for line in api_lines:
-        assert "$env:DEMIURGOS_DATA_ROOT='$root'" in line
-
-
-def test_powershell_standalone_launchers_set_data_root():
+def test_powershell_standalone_launchers_resolve_data_root_portably():
+    """S2b standalone launchers (task 3.3): no hardcoded root; the data root
+    is resolved via the pointer contract and exported (plus the legacy
+    DEMIURGOS_ROOT in the gateway, mirroring the POSIX contract)."""
     api = _text(PS_API)
-    assert "$env:DEMIURGOS_DATA_ROOT = $root" in api
-    assert "$env:PYTHONPATH" in api  # existing wiring kept
+    assert "$PSScriptRoot" in api
+    assert "$env:DEMIURGOS_DATA_ROOT" in api
+    assert "data-root.json" in api
 
     gateway = _text(PS_GATEWAY)
+    assert "$PSScriptRoot" in gateway
     assert "$env:DEMIURGOS_DATA_ROOT" in gateway
-    assert "$env:DEMIURGOS_ROOT" in gateway  # legacy kept
+    assert "$env:DEMIURGOS_ROOT" in gateway
+    assert "Get-Command hermes" in gateway
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash not available")

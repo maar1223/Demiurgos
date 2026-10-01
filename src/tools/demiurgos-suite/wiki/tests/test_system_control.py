@@ -69,7 +69,7 @@ def _make_app(require_principal, launcher_path: Path) -> FastAPI:
 
 @pytest.fixture()
 def launcher_path(tmp_path: Path) -> Path:
-    return tmp_path / "start-demiurgos-linux.sh"
+    return tmp_path / "start-demiurgos.sh"
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +207,36 @@ def test_spawn_failure_returns_500(launcher_path: Path, monkeypatch) -> None:
     assert "launcher" in body["error"]
 
 
+def test_missing_launcher_refused_without_spawning(launcher_path: Path, monkeypatch) -> None:
+    """S2b (S2-7): when the boot-time existence check says the launcher is
+    absent, /api/system MUST NOT dispatch a stale path — it returns a clear
+    error instead, and Popen is never called."""
+    calls: dict = {}
+
+    def fake_popen(argv, **kwargs):
+        calls["argv"] = argv
+        return _FakeProc(poll_result=None)
+
+    monkeypatch.setattr(system_control.subprocess, "Popen", fake_popen)
+    app = FastAPI()
+    app.include_router(
+        create_system_control_router(
+            require_principal=lambda request: _FakePrincipal(),
+            launcher_path=launcher_path,
+            launcher_available=False,
+        )
+    )
+    resp = TestClient(app).post("/api/system/restart")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body == {
+        "action": "restart",
+        "accepted": False,
+        "error": f"launcher not available at {launcher_path}",
+    }
+    assert "argv" not in calls, "a missing launcher must never be dispatched"
+
+
 def test_unavailable_log_never_reports_a_previous_runs_stderr(
     launcher_path: Path, monkeypatch
 ) -> None:
@@ -247,7 +277,7 @@ def test_unavailable_log_never_reports_a_previous_runs_stderr(
 
 def _write_launcher_stub(tmp_path: Path) -> Path:
     """Executable stub that records its action+pid, then sleeps 5s."""
-    stub = tmp_path / "start-demiurgos-linux.sh"
+    stub = tmp_path / "start-demiurgos.sh"
     marker = tmp_path / "invoked.txt"
     stub.write_text(
         "#!/usr/bin/env bash\n"
@@ -347,7 +377,7 @@ def test_launcher_survives_its_stderr_write_after_the_api_dies(
     die. A launcher whose stderr is a pipe cannot survive that.
     """
     marker = tmp_path / "survived.txt"
-    stub = tmp_path / "start-demiurgos-linux.sh"
+    stub = tmp_path / "start-demiurgos.sh"
     stub.write_text(
         "#!/usr/bin/env bash\n"
         # Outlive the 0.5s peek window AND the driver, then write to stderr.

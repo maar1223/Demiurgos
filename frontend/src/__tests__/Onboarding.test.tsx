@@ -312,6 +312,21 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     expect(screen.getByText("Asistente de Demiurgos (texto y visión)")).toBeInTheDocument();
   });
 
+  it("offers a non-blocking 'enable the assistant later' entry to the Assistant Settings panel", async () => {
+    // S2b (degradable-ai-provider): the AI pending card links to the existing
+    // Assistant Settings panel (Profile -> Configuration Center -> Conexiones)
+    // so the user can enable the provider later without a blocker.
+    (getOnboardingStatus as Mock).mockResolvedValue(ACCOUNT_DONE_STATUS);
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: tEs("onboarding.world.title") });
+    const entry = screen.getByRole("link", {
+      name: tEs("onboarding.remote.ai.laterAria"),
+    });
+    expect(entry).toHaveAttribute("href", "/perfil?tab=conexiones");
+    expect(screen.getByText("Asistente de Demiurgos (texto y visión)")).toBeInTheDocument();
+  });
+
   it("prefills step 0 from the saved locale via the shared LocaleForm (REQ-PIA-12)", async () => {
     // The extracted locale form loads GET /api/locale on mount, so the
     // onboarding step reflects the persisted values instead of hardcoded

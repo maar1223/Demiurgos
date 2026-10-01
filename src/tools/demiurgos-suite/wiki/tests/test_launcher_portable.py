@@ -30,6 +30,15 @@ _WIKI = _HERE.parent
 REPO_ROOT = _WIKI.parents[3]  # wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> repo
 
 PORTABLE_LAUNCHER = REPO_ROOT / "scripts" / "start-demiurgos.sh"
+COMPAT_ALIAS = REPO_ROOT / "scripts" / "start-demiurgos-linux.sh"
+PS_STACK = REPO_ROOT / "start-demiurgos.ps1"
+PS_API = REPO_ROOT / "start-api.ps1"
+PS_GATEWAY = REPO_ROOT / "start-gateway.ps1"
+API_SERVER = _WIKI / "api_server.py"
+SYSTEM_CONTROL = _WIKI / "system_control.py"
+
+#: Every tracked PowerShell launcher (S2-8: PS 5.1 + ASCII/BOM).
+PS_LAUNCHERS = (PS_STACK, PS_API, PS_GATEWAY)
 
 _KILL_DESCENDANTS = """_kill_descendants() {
     local parent="$1" child
@@ -146,3 +155,147 @@ def test_sourcing_probe_derives_layout_and_has_no_side_effects():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == f"{REPO_ROOT}|{REPO_ROOT}/.venv/bin/python|NO_SIDE_EFFECT"
+
+
+# ---------------------------------------------------------------------------
+# S2b — Hermes optional + OS-aware dispatch (tasks 3.4/3.5/3.7)
+# ---------------------------------------------------------------------------
+
+
+class TestHermesOptional:
+    def test_hermes_fail_hard_gate_is_removed(self):
+        """S2-2: the launcher must NOT return 1 when Hermes is absent."""
+        text = _text(PORTABLE_LAUNCHER)
+        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        # The old gate (`:345-348` in the pre-S2a script) printed a bare
+        # "Hermes CLI not found" and returned 1, aborting the whole boot.
+        # The new contract prints an advisory and continues.
+        assert "assistant will be unavailable" in start_block
+        hermes_gate = start_block[start_block.index("Hermes CLI"):]
+        assert "return 1" not in hermes_gate[:150]
+
+    def test_gateway_started_only_when_hermes_found(self):
+        text = _text(PORTABLE_LAUNCHER)
+        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        # The gateway component start is conditional on Hermes presence...
+        assert 'if [ -z "$HERMES_BIN" ] || [ ! -x "$HERMES_BIN" ]; then' in start_block
+        # ...and the API start is unconditional (outside the branch).
+        assert 'start_component api' in start_block
+
+    def test_gateway_port_not_in_required_readiness(self):
+        """S2-2: GATEWAY_PORT is dropped from the REQUIRED readiness gate."""
+        text = _text(PORTABLE_LAUNCHER)
+        start_block = text[text.index("start_all()"):text.index("open_browser()")]
+        # The API is the only REQUIRED readiness; the gateway is best-effort
+        # and never aborts the boot.
+        assert 'if wait_for_port "$API_PORT"' in start_block
+        assert 'wait_for_port "$GATEWAY_PORT"' in start_block
+        # The gateway wait must not be able to fail the boot: no `return 1`
+        # on the gateway path (it appears only in the API-required branch).
+        gateway_wait = start_block[start_block.index('wait_for_port "$GATEWAY_PORT"'):]
+        assert "return 1" not in gateway_wait[:200]
+
+
+class TestCompatAliasRemoved:
+    def test_linux_compat_alias_is_gone(self):
+        """S2b removes the S2a compat alias; no call site remains."""
+        assert not COMPAT_ALIAS.exists()
+
+    def test_dispatch_has_no_stale_alias_reference(self):
+        text = _text(API_SERVER)
+        assert "start-demiurgos-linux.sh" not in text
+
+
+class TestNoBrowserSuppression:
+    def test_open_browser_honors_demiurgos_no_browser(self):
+        """Incident fix (s2b-harness-gotcha): a truthy DEMIURGOS_NO_BROWSER
+        (1|true|yes) skips the browser launch, so harnesses, system_control
+        and CI can boot headless without ever opening a real browser."""
+        text = _text(PORTABLE_LAUNCHER)
+        open_browser = text[text.index("open_browser()"):text.index("show_status()")]
+        assert "DEMIURGOS_NO_BROWSER" in open_browser
+        assert "1|true|yes" in open_browser
+        # The suppressed path must return early (no opener is even resolved).
+        assert "return 0" in open_browser
+        # The guard is documented at the top of the script for humans.
+        assert "DEMIURGOS_NO_BROWSER" in text[:text.index("open_browser()")]
+
+    def test_start_action_still_calls_open_browser(self):
+        """The suppression switch is INSIDE open_browser: `start` keeps its
+        behavior in interactive use, and every caller (start, future flags)
+        inherits the headless guard."""
+        text = _text(PORTABLE_LAUNCHER)
+        main_block = text[text.index("main()"):]
+        assert 'start) start_all; open_browser "http://127.0.0.1:$API_PORT"' in main_block
+
+
+class TestPowerShell51Contract:
+    def test_ps1_files_are_ascii_only(self):
+        """S2-8: PS 5.1 mis-decodes BOM-less UTF-8; ASCII-only is the rule."""
+        for path in PS_LAUNCHERS:
+            raw = path.read_bytes()
+            raw.decode("ascii")  # raises UnicodeDecodeError on non-ASCII
+
+    def test_ps1_files_have_no_hardcoded_author_paths(self):
+        for path in PS_LAUNCHERS:
+            text = _text(path)
+            assert "H:\\" not in text
+            assert "C:\\Users" not in text
+
+    def test_ps1_launchers_use_psscriptroot(self):
+        for path in PS_LAUNCHERS:
+            text = _text(path)
+            assert "$PSScriptRoot" in text
+
+    def test_ps1_launchers_resolve_hermes_portably(self):
+        for path in (PS_STACK, PS_GATEWAY):
+            text = _text(path)
+            assert "Get-Command hermes" in text
+            assert ".local\\bin\\hermes.exe" in text
+
+    def test_ps_stack_starts_only_uvicorn(self):
+        text = _text(PS_STACK)
+        assert "uvicorn api_server:app" in text
+        # The old stack started gateway + warmup + frontend; S2b collapses it
+        # to the API only. No Vite/npm and no warmup entry points remain.
+        assert "npm" not in text
+        assert "warmup" not in text
+
+    def test_ps_stack_keeps_tcp_ownership_validation(self):
+        text = _text(PS_STACK)
+        assert "Get-NetTCPConnection" in text
+        # Command-line ownership: the listener pid must identify as the API
+        # before it is adopted/killed (mirrors the POSIX ps -ww gate).
+        assert "CommandLine" in text
+        assert "uvicorn api_server:app" in text
+
+    def test_ps_stack_readiness_covers_api_only(self):
+        text = _text(PS_STACK)
+        assert "/health" in text
+        assert "npm" not in text
+        # The exported contract env mirrors the POSIX launcher (S1-6/S2-3).
+        assert "DEMIURGOS_FRONTEND_DIST" in text
+        assert "DEMIURGOS_ROOT" in text
+
+    def test_ps_launchers_handle_data_root_pointer(self):
+        for path in PS_LAUNCHERS:
+            text = _text(path)
+            assert "data-root.json" in text
+            assert "DEMIURGOS_DATA_ROOT" in text
+
+
+class TestSystemControlDispatch:
+    def test_dispatch_resolves_per_os_launcher(self):
+        text = _text(API_SERVER)
+        # POSIX launcher from the S0-C contract...
+        assert 'scripts" / "start-demiurgos.sh"' in text
+        # ...and a Windows launcher (start-demiurgos.ps1) for nt.
+        assert "start-demiurgos.ps1" in text
+
+    def test_dispatch_validates_launcher_existence_at_boot(self):
+        text = _text(API_SERVER)
+        assert "is_file()" in text
+
+    def test_missing_launcher_yields_clear_error_not_stale_dispatch(self):
+        text = _text(SYSTEM_CONTROL)
+        assert "launcher not available" in text
