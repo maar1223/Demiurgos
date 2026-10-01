@@ -1,0 +1,820 @@
+# -*- coding: utf-8 -*-
+"""S3a — POSIX installer core contract (design S3-1..S3-7, tasks 4.1-4.12).
+
+The installer core (``scripts/install-demiurgos.sh`` + the shared checksum
+library ``scripts/lib/verify_checksum.sh``) must:
+
+- never clone the private source repository (no ``git`` at all), never run
+  ``npm``, never invoke ``sudo``, and never embed the private repo URL
+  (D1 — the leak lives at ``install.sh:27``, which S4 owns);
+- install the mandatory closure wheels-only and hash-locked
+  (``--only-binary=:all:`` AND ``--require-hashes``);
+- verify every download against its published checksum BEFORE staging;
+- stage atomically on the same filesystem as the install root
+  (``<install_root>/.staging/<version>-<rand>``, never ``/tmp``), rename into
+  ``app/<version>`` and flip ``current`` only on success;
+- bootstrap the data-root pointer and the ``<data_root>/.env`` seed exactly
+  once (only when neither the env override nor a pointer exists; an existing
+  pointer and an existing ``.env`` are preserved byte-for-byte);
+- install optional extras best-effort (non-fatal, warn-degrade);
+- never execute arbitrary payload files (only the launcher the user starts
+  runs);
+- provision a pinned, checksum-verified ``uv`` (musl/glibc aware per decision
+  #3565 — NO pre-emptive hard-fail on musl), with ``codesign`` verification on
+  macOS when available (M2);
+- keep the S3b Windows ``LongPathsEnabled`` floor as a parity note.
+
+The second half of this file is a fixture-only harness (task 4.11): a local
+``file://`` channel with a STUB ``uv`` and a STUB python stands in for the
+real toolchain (real uv/CPython/wheels download is CI-owned, S5a — reported
+``not-run`` here). It proves install -> boot -> ``curl /health`` + ``/``,
+re-run idempotency, checksum-mismatch abort with no runnable state, M3
+coexistence (``repo/`` clone preserved) and the byte-compatible pointer that
+Python's ``data_root.read_pointer`` can read back (task 4.9).
+
+Text scans mirror ``test_launcher_portable.py``: the installer is a CODE
+artifact of the checkout, located from this file — never from a configured
+data root.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import shutil
+import socket
+import subprocess
+import tarfile
+import time
+import urllib.request
+from pathlib import Path
+
+import pytest
+
+_HERE = Path(__file__).resolve().parent
+_WIKI = _HERE.parent
+_REPO_ROOT = _WIKI.parents[3]  # wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> repo
+
+INSTALLER = _REPO_ROOT / "scripts" / "install-demiurgos.sh"
+VERIFY_LIB = _REPO_ROOT / "scripts" / "lib" / "verify_checksum.sh"
+POINTER_NAME = "data-root.json"
+STUB_UV_VERSION = "0.5.24-test"
+
+_BASH_32_BANS = ("declare -A", "mapfile", "readarray", "^^}", "&>>")
+
+#: No-op browser stub dir (incident s2b-harness-gotcha): prepended to the
+#: child PATH so a launcher that ignores the env flag still cannot open a
+#: real browser.
+NOOP_BROWSER_BIN = Path("/tmp/opencode/noop-browser/bin")
+
+_UV_STUB_SH = r"""#!/usr/bin/env bash
+# Stub uv for the S3a fixture harness (task 4.11). Emulates the commands the
+# installer uses and RECORDS its argv so the contract test can assert the
+# exact flags. The "python" it installs is the repository's real venv
+# interpreter (DEMIURGOS_STUB_PYTHON), so the staged app genuinely boots.
+# Real uv/CPython/wheels download is CI-owned (S5a) — never run here.
+set -u
+printf 'uv %s\n' "$*" >> "${DEMIURGOS_STUB_LOG:?}"
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  python)
+    mkdir -p "${UV_PYTHON_INSTALL_DIR:?}/bin"
+    ln -sfn "${DEMIURGOS_STUB_PYTHON:?}" "$UV_PYTHON_INSTALL_DIR/bin/python"
+    ;;
+  venv)
+    # uv venv --python 3.12 <dest>  ->  create a REAL venv from the managed
+    # python with system-site-packages, so the staged app genuinely boots.
+    # The managed python is the repository venv python (which carries the
+    # full dependency set); the .pth below makes those dependencies visible
+    # to the staged venv regardless of HOME isolation (real uv pip install
+    # puts wheels into the venv itself — CI-owned, not-run here).
+    dest=""
+    for a in "$@"; do
+      case "$a" in
+        --python) continue ;;
+        -*) continue ;;
+        *) dest="$a" ;;
+      esac
+    done
+    [ -n "$dest" ] || { echo "stub uv: venv missing dest" >&2; exit 2; }
+    "${DEMIURGOS_STUB_PYTHON:?}" -m venv --system-site-packages "$dest" || exit 1
+    repo_site="$("${DEMIURGOS_STUB_PYTHON:?}" -c 'import site; print(site.getsitepackages()[0])' 2>/dev/null || true)"
+    if [ -n "$repo_site" ]; then
+      mkdir -p "$dest/lib/python3.12/site-packages"
+      printf '%s\n' "$repo_site" > "$dest/lib/python3.12/site-packages/demiurgos-repo.pth"
+    fi
+    ;;
+  pip)
+    if [ "${DEMIURGOS_STUB_FAIL_PIP:-0}" = "1" ]; then
+      echo "stub uv: pip install failed (stub)" >&2
+      exit 1
+    fi
+    ;;
+  run)
+    # uv run python -c ... -> drop the leading "python", delegate to the stub
+    shift || true
+    exec "${DEMIURGOS_STUB_PYTHON:?}" "$@"
+    ;;
+  *)
+    echo "stub uv: unknown command: $cmd" >&2
+    exit 2
+    ;;
+esac
+"""
+
+
+def _text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _require_noop_stub() -> None:
+    """Hard harness guard (incident s2b-harness-gotcha): fail loudly when the
+    no-op browser stubs are missing — a real browser must never open."""
+    if not (NOOP_BROWSER_BIN / "xdg-open").is_file():
+        raise RuntimeError(
+            "harness guard missing: /tmp/opencode/noop-browser/bin stubs are "
+            "required before launching the launcher"
+        )
+
+
+def _free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+def _port_listening(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        try:
+            sock.connect(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def _stop_and_assert_clean(launcher: Path, env: dict[str, str], api_port: int) -> None:
+    """Teardown contract (incident): stop the launcher, then assert NO leftover
+    listener on the test port."""
+    stop = subprocess.run(
+        ["bash", str(launcher), "stop"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert stop.returncode == 0, stop.stderr
+    for _ in range(20):
+        if not _port_listening(api_port):
+            break
+        time.sleep(0.25)
+    assert not _port_listening(api_port), (
+        f"port {api_port} still listening after stop: leaked launcher process"
+    )
+
+
+# ---------------------------------------------------------------------------
+# 4.1 — Contract text assertions
+# ---------------------------------------------------------------------------
+
+
+class TestNoPrivateCloneOrNpm:
+    def test_no_git_at_all_in_installer(self):
+        text = _text(INSTALLER)
+        assert "git" not in text
+
+    def test_no_npm_in_installer(self):
+        text = _text(INSTALLER)
+        assert "npm" not in text
+
+    def test_no_private_repo_url(self):
+        """D1: the leak is at install.sh:27 (S4 owns it); the core never embeds
+        the private owner or any github URL."""
+        text = _text(INSTALLER) + _text(VERIFY_LIB)
+        assert "maar1223" not in text
+        assert "github.com" not in text
+
+    def test_no_sudo(self):
+        text = _text(INSTALLER)
+        assert "sudo" not in text
+
+
+class TestWheelsOnlyHashLocked:
+    def test_only_binary_all_present(self):
+        assert "--only-binary=:all:" in _text(INSTALLER)
+
+    def test_require_hashes_present(self):
+        assert "--require-hashes" in _text(INSTALLER)
+
+    def test_mandatory_pip_line_uses_both_flags(self):
+        text = _text(INSTALLER)
+        line = next(
+            ln for ln in text.splitlines()
+            if 'uv" pip install' in ln and "--require-hashes" in ln
+        )
+        assert "--only-binary=:all:" in line
+
+
+class TestChecksumBeforeStaging:
+    def test_payload_verify_precedes_extraction(self):
+        """The payload archive is verified against SHA256SUMS BEFORE it is
+        extracted into the staging tree (task 4.1, spec 'Checksum mismatch')."""
+        text = _text(INSTALLER)
+        verify_at = text.index('verify_sha256 "$PAYLOAD_FILE"')
+        extract_at = text.index('tar -xzf "$PAYLOAD_FILE" -C "$STAGE_DIR"')
+        assert verify_at < extract_at
+
+    def test_mismatch_aborts_with_clean_rerun_path(self):
+        text = _text(INSTALLER)
+        assert "checksum" in text
+        assert "re-run" in text
+
+
+class TestAtomicSameFsStaging:
+    def test_staging_under_install_root(self):
+        text = _text(INSTALLER)
+        assert 'STAGING_ROOT="$INSTALL_ROOT/.staging"' in text
+
+    def test_no_hardcoded_tmp(self):
+        text = _text(INSTALLER)
+        assert "/tmp" not in text
+
+    def test_atomic_rename_and_current_flip(self):
+        text = _text(INSTALLER)
+        assert 'mv "$STAGE_DIR" "$INSTALL_ROOT/app/$VERSION"' in text
+        assert 'ln -sfn "app/$VERSION" "$INSTALL_ROOT/current"' in text
+
+
+class TestPointerBootstrapOnly:
+    def test_pointer_guarded_by_env_and_pointer(self):
+        """Pointer is written ONLY when neither the env override nor an
+        existing pointer is present; an existing pointer is never re-oriented
+        (spec 'Existing data root preserved', design S3-7)."""
+        text = _text(INSTALLER)
+        assert 'if [ -n "${DEMIURGOS_DATA_ROOT:-}" ]' in text
+        assert '[ -r "$POINTER_FILE" ]' in text
+        assert "data-root.json" in text
+
+    def test_env_seed_guarded_by_absence(self):
+        text = _text(INSTALLER)
+        assert 'if [ ! -f "$ENV_FILE" ]' in text
+        assert "DEMIURGOS_AUTH_MODE=local-dev" in text
+
+    def test_pointer_format_byte_compatible_with_data_root(self):
+        """The pointer record MUST be the data_root.py JSON shape
+        (schema_version 1, data_root, updated_at)."""
+        text = _text(INSTALLER)
+        assert '"schema_version": 1' in text
+        assert '"data_root"' in text
+        assert '"updated_at"' in text
+
+
+class TestOptionalExtrasBestEffort:
+    def test_optional_install_non_fatal(self):
+        text = _text(INSTALLER)
+        assert "requirements-optional" in text
+        assert "|| warn" in text
+
+
+class TestNoArbitraryPayloadExecution:
+    def test_installer_never_executes_payload_files(self):
+        """Threat-matrix 'Documentation-like paths' (execution half): the
+        installer only runs the verified uv binary and standard tools; it
+        never sources, execs or bash-runs anything extracted from the
+        payload. The user starts the launcher afterwards."""
+        text = _text(INSTALLER)
+        assert 'source "$STAGE' not in text
+        assert 'exec "$STAGE' not in text
+        assert 'bash "$STAGE' not in text
+        assert 'source "$PAYLOAD' not in text
+
+
+class TestUvProvisioning:
+    def test_uv_pinned_and_checksum_verified(self):
+        text = _text(INSTALLER)
+        assert "UV_VERSION" in text
+        assert 'verify_sha256 "$UV_ARCHIVE"' in text
+        assert "$INSTALL_ROOT/bin/uv" in text
+
+    def test_codesign_on_macos(self):
+        """M2: codesign --verify --deep --strict when available on Darwin."""
+        text = _text(INSTALLER)
+        assert "codesign --verify --deep --strict" in text
+        assert "Darwin" in text
+
+    def test_uv_python_and_venv_commands(self):
+        text = _text(INSTALLER)
+        assert "UV_PYTHON_INSTALL_DIR" in text
+        assert "venv --python 3.12" in text
+        assert "python install 3.12" in text
+
+
+class TestMuslDecision3565:
+    def test_libc_detection_present(self):
+        """S3-3 detection points: getconf GNU_LIBC_VERSION, /etc/alpine-release,
+        ldd --version."""
+        text = _text(INSTALLER)
+        assert "getconf GNU_LIBC_VERSION" in text
+        assert "/etc/alpine-release" in text
+        assert "ldd --version" in text
+
+    def test_no_preemptive_musl_hard_fail(self):
+        """Decision #3565 SUPERSEDES the old 'musl unsupported' wording: musl
+        selects the musl uv binary and proceeds; the mandatory closure failure
+        (if any) is what aborts, with an actionable message. The real
+        musl/Intel confirmation is the before-S5 gate (D3)."""
+        text = _text(INSTALLER)
+        assert "musl/Alpine unsupported" not in text
+        assert "unknown-linux-musl" in text
+
+    def test_before_s5_gate_referenced_without_rephrasing(self):
+        """D3: single authoritative gate statement — later references point to
+        (D3) without restating the timing."""
+        text = _text(INSTALLER)
+        assert "(D3)" in text
+
+
+class TestFloorsPreflight:
+    def test_macos_floor(self):
+        text = _text(INSTALLER)
+        assert "sw_vers -productVersion" in text
+        assert "13" in text
+
+    def test_glibc_floor(self):
+        text = _text(INSTALLER)
+        assert "2.28" in text
+
+    def test_free_disk_floor(self):
+        text = _text(INSTALLER)
+        assert "df -Pk" in text
+
+    def test_windows_longpaths_parity_note(self):
+        """S3b parity: the POSIX core documents the Windows LongPathsEnabled
+        floor; the S3b Windows core enforces it."""
+        text = _text(INSTALLER)
+        assert "LongPathsEnabled" in text
+
+
+class TestBash32Lint:
+    def test_installer_bash32_compatible(self):
+        text = _text(INSTALLER)
+        for banned in _BASH_32_BANS:
+            assert banned not in text, banned
+
+    def test_verify_lib_bash32_compatible(self):
+        text = _text(VERIFY_LIB)
+        for banned in _BASH_32_BANS:
+            assert banned not in text, banned
+
+
+# ---------------------------------------------------------------------------
+# 4.2 — verify_checksum.sh: order + no system python
+# ---------------------------------------------------------------------------
+
+
+class TestVerifyChecksumLibrary:
+    def test_branch_order_sha256sum_then_shasum_then_uv(self):
+        """S3-2 order: sha256sum -> shasum -a 256 (macOS) -> bundled-Python
+        hashlib via `uv run python -c` (never system Python)."""
+        text = _text(VERIFY_LIB)
+        assert text.index("sha256sum") < text.index("shasum -a 256")
+        assert text.index("shasum -a 256") < text.index("run python")
+
+    def test_no_system_python_in_lib(self):
+        text = _text(VERIFY_LIB)
+        assert "python3" not in text
+        assert "command -v python" not in text
+
+    def test_standalone_matches(self, tmp_path: Path):
+        payload = tmp_path / "blob.bin"
+        payload.write_bytes(b"hello checksum")
+        expected = hashlib.sha256(b"hello checksum").hexdigest()
+        result = subprocess.run(
+            ["bash", str(VERIFY_LIB), str(payload), expected],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_standalone_mismatch(self, tmp_path: Path):
+        payload = tmp_path / "blob.bin"
+        payload.write_bytes(b"hello checksum")
+        wrong = "0" * 64
+        result = subprocess.run(
+            ["bash", str(VERIFY_LIB), str(payload), wrong],
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 1
+        assert "MISMATCH" in result.stderr
+
+    def test_shasum_branch_used_when_sha256sum_absent(self, tmp_path: Path):
+        """Simulate macOS: no sha256sum on PATH, shasum present."""
+        payload = tmp_path / "blob.bin"
+        payload.write_bytes(b"hello checksum")
+        expected = hashlib.sha256(b"hello checksum").hexdigest()
+        bin_dir = tmp_path / "fakebin"
+        bin_dir.mkdir()
+        shim = bin_dir / "shasum"
+        shim.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = \"-a\" ]; then shift 2; fi\n"
+            "/usr/bin/sha256sum \"$@\"\n"
+        )
+        shim.chmod(0o755)
+        shim_awk = bin_dir / "awk"
+        shim_awk.write_text("#!/bin/sh\n/usr/bin/awk \"$@\"\n")
+        shim_awk.chmod(0o755)
+        env = {
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "DEMIURGOS_UV_SHA256": "unused",
+        }
+        # The library must pick the shasum branch: force sha256sum to be
+        # invisible by putting a broken sha256sum shim on PATH that exits 1.
+        broken = bin_dir / "sha256sum"
+        broken.write_text("#!/bin/sh\nexit 1\n")
+        broken.chmod(0o755)
+        result = subprocess.run(
+            ["bash", str(VERIFY_LIB), str(payload), expected],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+
+    def test_hashlib_branch_used_when_no_native_tool(self, tmp_path: Path):
+        """Bundled-Python hashlib via `uv run python -c`: neither sha256sum nor
+        shasum on PATH — the stub uv delegates to the real interpreter."""
+        payload = tmp_path / "blob.bin"
+        payload.write_bytes(b"hello checksum")
+        expected = hashlib.sha256(b"hello checksum").hexdigest()
+        bin_dir = tmp_path / "fakebin"
+        bin_dir.mkdir()
+        stub = bin_dir / "uv"
+        stub.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "run" ] && [ "$2" = "python" ]; then shift 2; '
+            'exec /usr/bin/python3 "$@"; fi\n'
+        )
+        stub.chmod(0o755)
+        env = {
+            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "HOME": str(tmp_path),
+            "UV_BIN": str(stub),
+        }
+        result = subprocess.run(
+            ["bash", str(VERIFY_LIB), str(payload), expected],
+            env=env, capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------------------
+# 4.11 — Fixture-only channel harness (file:// + stub uv/python)
+# ---------------------------------------------------------------------------
+
+
+def _build_fixture_channel(
+    tmp_path: Path, *, with_minisig: bool = True, wrong_payload_sha: str | None = None,
+) -> tuple[Path, str, str]:
+    """Build a local file:// release channel.
+
+    Contents: ``latest`` (plain text version), ``version.json``,
+    ``SHA256SUMS`` (+ ``.minisig`` when requested), the payload archive and a
+    STUB ``uv`` archive. The payload is the derived allow-list
+    (``payload_manifest.json``) plus the real launcher, a minimal
+    ``frontend/dist`` and the requirements files — the release-artifact shape
+    (S5-1). Returns ``(channel, uv_sha256, version)``.
+    """
+    channel = tmp_path / "channel"
+    channel.mkdir()
+    version = "0.9.0-test"
+    (channel / "latest").write_text(version + "\n", encoding="utf-8")
+
+    # Payload tree = manifest allow-list + launcher + minimal dist + reqs.
+    manifest = json.loads(
+        (_REPO_ROOT / "payload_manifest.json").read_text(encoding="utf-8")
+    )
+    payload_root = tmp_path / "payload-src"
+    for rel in manifest["payload"]:
+        src = _REPO_ROOT / rel
+        if src.is_file():
+            dst = payload_root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+    launcher_src = _REPO_ROOT / "scripts" / "start-demiurgos.sh"
+    dst = payload_root / "scripts" / "start-demiurgos.sh"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(launcher_src, dst)
+    dst.chmod(0o755)
+    dist = payload_root / "frontend" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text(
+        "<!doctype html><html><body>fixture dist</body></html>", encoding="utf-8"
+    )
+    for name in ("requirements.lock", "requirements-optional.txt"):
+        shutil.copy2(_REPO_ROOT / name, payload_root / name)
+
+    payload_name = f"demiurgos-app-{version}.tar.gz"
+    payload_tar = channel / payload_name
+    with tarfile.open(payload_tar, "w:gz") as tf:
+        tf.add(payload_root, arcname=".")
+    payload_sha = hashlib.sha256(payload_tar.read_bytes()).hexdigest()
+
+    # Stub uv archive: uv-<target>-<UV_VERSION>.tar.gz containing `uv`.
+    uv_dir = tmp_path / "stub-uv"
+    uv_dir.mkdir()
+    stub = uv_dir / "uv"
+    stub.write_text(_UV_STUB_SH, encoding="utf-8")
+    stub.chmod(0o755)
+    uv_archive = (
+        channel / "uv" / f"uv-x86_64-unknown-linux-gnu-{STUB_UV_VERSION}.tar.gz"
+    )
+    uv_archive.parent.mkdir()
+    with tarfile.open(uv_archive, "w:gz") as tf:
+        tf.add(stub, arcname="uv")
+    uv_sha = hashlib.sha256(uv_archive.read_bytes()).hexdigest()
+
+    version_json = {
+        "version": version,
+        "artifacts": {
+            "posix": payload_name,
+            "windows": "demiurgos-app-windows.zip",
+        },
+        "sha256": {"posix": payload_sha},
+        "floors": {"macos": 13, "glibc": "2.28", "windows": 10},
+    }
+    (channel / "version.json").write_text(
+        json.dumps(version_json, indent=2) + "\n", encoding="utf-8"
+    )
+    if with_minisig:
+        (channel / "SHA256SUMS.minisig").write_text("untrusted-test-minisig\n")
+    declared_sha = payload_sha if wrong_payload_sha is None else wrong_payload_sha
+    (channel / "SHA256SUMS").write_text(
+        f"{declared_sha}  {payload_name}\n", encoding="utf-8"
+    )
+    return channel, uv_sha, version
+
+
+def _installer_env(
+    tmp_path: Path, channel: Path, uv_sha: str, install_root: Path, *,
+    fail_pip: bool = False,
+) -> dict[str, str]:
+    """Env for one installer run: file:// channel, stub python/log, tmp
+    XDG_CONFIG_HOME/HOME/RUNTIME so the REAL ~/.demiurgos and the real
+    data-root pointer are never touched. conftest's hermetic env vars are
+    deliberately NOT inherited — the installer must bootstrap its own pointer."""
+    env = {
+        "DEMIURGOS_URL_BASE": f"file://{channel}",
+        "DEMIURGOS_HOME": str(install_root),
+        "DEMIURGOS_UV_SHA256": uv_sha,
+        "UV_VERSION": STUB_UV_VERSION,
+        "DEMIURGOS_STUB_PYTHON": str(_REPO_ROOT / ".venv" / "bin" / "python"),
+        "DEMIURGOS_STUB_LOG": str(tmp_path / "uv-stub.log"),
+        "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        "HOME": str(tmp_path / "home"),
+        "XDG_RUNTIME_DIR": str(tmp_path / "runtime"),
+        "DEMIURGOS_NO_BROWSER": "1",
+        "DEMIURGOS_LANGUAGE": "en",
+        "PATH": f"{NOOP_BROWSER_BIN}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+    }
+    if fail_pip:
+        env["DEMIURGOS_STUB_FAIL_PIP"] = "1"
+    for key in ("DEMIURGOS_DATA_ROOT", "DEMIURGOS_FRONTEND_DIST"):
+        env.pop(key, None)
+    return env
+
+
+def _run_installer(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(INSTALLER)],
+        env=env, capture_output=True, text=True, timeout=240,
+    )
+
+
+def _boot_launcher(tmp_path: Path, env: dict[str, str], install_root: Path) -> int:
+    """Start the installed launcher headless and return the API port."""
+    _require_noop_stub()
+    api_port = _free_port()
+    gateway_port = _free_port()
+    env = {**env, "DEMIURGOS_API_PORT": str(api_port),
+           "DEMIURGOS_GATEWAY_PORT": str(gateway_port)}
+    launcher = install_root / "current" / "scripts" / "start-demiurgos.sh"
+    start = subprocess.run(
+        ["bash", str(launcher), "start"],
+        env=env, capture_output=True, text=True, timeout=120,
+    )
+    assert start.returncode == 0, start.stderr
+    return api_port
+
+
+def _fetch(url: str) -> int:
+    with urllib.request.urlopen(url, timeout=5) as resp:
+        return resp.status
+
+
+def _wait_health(port: int, polls: int = 40) -> None:
+    for _ in range(polls):
+        try:
+            if _fetch(f"http://127.0.0.1:{port}/health") == 200:
+                return
+        except OSError:
+            pass
+        time.sleep(0.5)
+    raise AssertionError(f"/health never returned 200 on port {port}")
+
+
+def _read_pointer(config_dir: Path):
+    """Python-side read of the pointer bash wrote (task 4.9)."""
+    import data_root  # conftest puts _WIKI on sys.path
+
+    return data_root.read_pointer(config_dir=config_dir)
+
+
+class TestFixtureChannelInstall:
+    def test_install_then_boot_serves_health_and_root(self, tmp_path: Path):
+        channel, uv_sha, version = _build_fixture_channel(tmp_path)
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+
+        install = _run_installer(env)
+        assert install.returncode == 0, install.stdout + install.stderr
+
+        # Installed layout from the frozen contract (S0-C).
+        assert (install_root / "app" / version).is_dir()
+        assert (install_root / "current").is_symlink()
+        assert (install_root / "current").resolve() == (
+            install_root / "app" / version
+        ).resolve()
+        assert (install_root / "bin" / "uv").is_file()
+        assert (install_root / "app" / version / ".venv" / "bin" / "python").exists()
+
+        # Stub uv recorded the mandatory flags (hash-locked wheels-only).
+        log = (tmp_path / "uv-stub.log").read_text(encoding="utf-8")
+        assert "--require-hashes" in log
+        assert "--only-binary=:all:" in log
+        assert "--require-hashes" in log and "requirements.lock" in log
+
+        # Boot the installed app headless and probe /health + /.
+        api_port = _boot_launcher(tmp_path, env, install_root)
+        try:
+            _wait_health(api_port)
+            assert _fetch(f"http://127.0.0.1:{api_port}/health") == 200
+            assert _fetch(f"http://127.0.0.1:{api_port}/") == 200
+        finally:
+            _stop_and_assert_clean(
+                install_root / "current" / "scripts" / "start-demiurgos.sh",
+                env, api_port,
+            )
+
+    def test_rerun_is_idempotent_single_env(self, tmp_path: Path):
+        channel, uv_sha, version = _build_fixture_channel(tmp_path)
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+
+        first = _run_installer(env)
+        assert first.returncode == 0, first.stdout + first.stderr
+        pointer_before = _read_pointer(
+            Path(env["XDG_CONFIG_HOME"]) / "demiurgos"
+        )
+        env_before = (pointer_before / ".env").read_bytes()
+
+        second = _run_installer(env)
+        assert second.returncode == 0, second.stdout + second.stderr
+
+        # One environment: exactly one app/<version>, one current.
+        app_dirs = [p.name for p in (install_root / "app").iterdir()]
+        assert app_dirs == [version]
+        # Pointer and .env are bootstrap-only: preserved byte-for-byte.
+        pointer_after = _read_pointer(Path(env["XDG_CONFIG_HOME"]) / "demiurgos")
+        assert pointer_after == pointer_before
+        assert (pointer_after / ".env").read_bytes() == env_before
+
+        # Re-run still boots (one instance).
+        api_port = _boot_launcher(tmp_path, env, install_root)
+        try:
+            _wait_health(api_port)
+            assert _fetch(f"http://127.0.0.1:{api_port}/health") == 200
+        finally:
+            _stop_and_assert_clean(
+                install_root / "current" / "scripts" / "start-demiurgos.sh",
+                env, api_port,
+            )
+
+
+class TestChecksumMismatchAborts:
+    def test_wrong_sha256_aborts_with_no_runnable_state(self, tmp_path: Path):
+        channel, uv_sha, _version = _build_fixture_channel(
+            tmp_path, wrong_payload_sha="0" * 64
+        )
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+
+        result = _run_installer(env)
+        assert result.returncode != 0
+        assert "checksum" in (result.stdout + result.stderr).lower()
+
+        # No runnable state: no app/, no current, staging cleaned up.
+        assert not (install_root / "current").exists()
+        assert not (install_root / "app").exists()
+        staging = install_root / ".staging"
+        if staging.exists():
+            assert list(staging.iterdir()) == []
+
+
+class TestM3Coexistence:
+    def test_existing_repo_clone_and_pointer_preserved(self, tmp_path: Path):
+        """M3: an existing ~/.demiurgos/repo CLI clone is neither clobbered nor
+        adopted as the app root; a pointer pointing at the clone is preserved."""
+        channel, uv_sha, version = _build_fixture_channel(tmp_path)
+        install_root = tmp_path / "install"
+
+        # Simulate the pre-existing CLI stack (D5): repo/ clone with a marker.
+        repo_clone = install_root / "repo"
+        repo_clone.mkdir(parents=True)
+        marker = repo_clone / "README.md"
+        marker.write_text("cli clone marker\n", encoding="utf-8")
+
+        # Pre-existing pointer pointing AT the clone (author continuity).
+        config_dir = tmp_path / "config" / "demiurgos"
+        config_dir.mkdir(parents=True)
+        pointer = config_dir / POINTER_NAME
+        pointer_before = (
+            "{\n"
+            '  "schema_version": 1,\n'
+            f'  "data_root": "{repo_clone}",\n'
+            '  "updated_at": "2026-09-30T00:00:00Z"\n'
+            "}\n"
+        )
+        pointer.write_text(pointer_before, encoding="utf-8")
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+
+        result = _run_installer(env)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        # Clone is intact and untouched.
+        assert marker.read_text(encoding="utf-8") == "cli clone marker\n"
+        # Pointer is preserved byte-for-byte (never re-oriented).
+        assert pointer.read_text(encoding="utf-8") == pointer_before
+        # The app root is app/<version>, NOT the clone.
+        assert (install_root / "current").resolve() == (
+            install_root / "app" / version
+        ).resolve()
+        assert (install_root / "current" / "src").exists()
+
+
+class TestPointerAndEnvSeed:
+    def test_python_reads_what_bash_wrote(self, tmp_path: Path):
+        """Task 4.9: the pointer written by the installer is byte-compatible
+        with data_root.py — Python reads back exactly the bootstrapped root."""
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path)
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+
+        result = _run_installer(env)
+        assert result.returncode == 0, result.stdout + result.stderr
+
+        data_root = _read_pointer(Path(env["XDG_CONFIG_HOME"]) / "demiurgos")
+        assert data_root == (install_root / "data").resolve()
+
+        env_file = data_root / ".env"
+        content = env_file.read_text(encoding="utf-8")
+        assert "DEMIURGOS_AUTH_MODE=local-dev" in content
+        assert "DEMIURGOS_LANGUAGE=en" in content
+        # Never shipped inside the payload: the seeded .env lives only in the
+        # data root, not in the staged app tree.
+        assert list((install_root / "app").rglob(".env")) == []
+
+    def test_existing_env_preserved_untouched(self, tmp_path: Path):
+        """S0-A/S3-7: an existing data-root .env is preserved byte-for-byte."""
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path)
+        install_root = tmp_path / "install"
+        data_root = tmp_path / "existing-data"
+        data_root.mkdir()
+        env_file = data_root / ".env"
+        original = "DEMIURGOS_AUTH_MODE=credentials\nDEMIURGOS_LANGUAGE=es\n"
+        env_file.write_text(original, encoding="utf-8")
+
+        # The data root already exists via env override -> no pointer write,
+        # and the existing .env is never re-seeded.
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+        env["DEMIURGOS_DATA_ROOT"] = str(data_root)
+        env.pop("XDG_CONFIG_HOME", None)
+
+        result = _run_installer(env)
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert env_file.read_text(encoding="utf-8") == original
+        assert not (tmp_path / "config").exists() or not list(
+            (tmp_path / "config").rglob(POINTER_NAME)
+        )
+
+
+class TestMandatoryInstallFailure:
+    def test_pip_failure_leaves_no_runnable_state(self, tmp_path: Path):
+        channel, uv_sha, _version = _build_fixture_channel(tmp_path)
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root, fail_pip=True)
+
+        result = _run_installer(env)
+        assert result.returncode != 0
+        assert not (install_root / "current").exists()
+        assert not (install_root / "app").exists()
+        staging = install_root / ".staging"
+        if staging.exists():
+            assert list(staging.iterdir()) == []
