@@ -940,6 +940,7 @@ export const messages = {
       "No se pudo cargar la lista de mundos. Verifica que el servidor esté corriendo.",
     "wikiHome.empty":
       "No hay mundos disponibles. Crea un mundo primero.",
+    "emptyWorld.createWorld": "Crear un mundo",
     "wikiWorld.goHome": "Ir al inicio",
     "wikiWorld.relacionesBody":
       "Grafo de entidades, estados de certeza y conexiones",
@@ -1857,6 +1858,7 @@ export const messages = {
     "sectionCard.lore": "Ambientación, reglas del mundo e historia",
     "sectionCard.personajes": "Fichas de personajes y desarrollo",
     "sectionCard.referencias": "Material de apoyo e investigaciones",
+    "sectionCard.emptyHint": "Empieza aquí: crea tu primer archivo",
     "profile.cuenta.keywords": "Palabras claves",
     "wikiEditor.moveSameFolder": "El archivo ya está en esa carpeta",
     "wikiEditor.missingParams": "Faltan parámetros de ruta. Selecciona un mundo desde la página principal.",
@@ -2775,6 +2777,7 @@ export const messages = {
     "wikiHome.loadError":
       "The world list could not be loaded. Make sure the server is running.",
     "wikiHome.empty": "No worlds available. Create a world first.",
+    "emptyWorld.createWorld": "Create a world",
     "wikiWorld.goHome": "Go home",
     "wikiWorld.relacionesBody":
       "Entity graph, certainty states, and connections",
@@ -3691,6 +3694,7 @@ export const messages = {
     "sectionCard.lore": "Setting, world rules and history",
     "sectionCard.personajes": "Character sheets and development",
     "sectionCard.referencias": "Support material and research",
+    "sectionCard.emptyHint": "Start here: create your first file",
     "profile.cuenta.keywords": "Keywords",
     "wikiEditor.moveSameFolder": "The file is already in that folder",
     "wikiEditor.missingParams": "Missing route parameters. Select a world from the main page.",
