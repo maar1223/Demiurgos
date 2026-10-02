@@ -124,7 +124,14 @@ def test_portable_launcher_sourcing_exposes_app_root_and_interpreter():
     returns without spawning anything; the probe reads APP_ROOT and PYTHON_BIN
     out of the resulting shell environment and verifies no runtime dir was
     created. No server, gateway, port, pointer, or user config is touched.
+
+    The no-side-effect check compares the ``<app_root>/logs`` state before and
+    after sourcing: a pre-existing dev ``<repo>/logs/`` (left by a real launcher
+    run, S2-6) is NOT a side effect of sourcing, so its mere presence must not
+    fail the probe — what must never happen is sourcing CREATING it.
     """
+    logs_dir = REPO_ROOT / "logs"
+    existed_before = logs_dir.exists()
     probe = (
         'source "$1" __probe__ || true; '
         'printf %s "${APP_ROOT:-UNSET}|${PYTHON_BIN:-UNSET}"; '
@@ -137,4 +144,9 @@ def test_portable_launcher_sourcing_exposes_app_root_and_interpreter():
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == f"{REPO_ROOT}|{REPO_ROOT}/.venv/bin/python|NO_SIDE_EFFECT"
+    assert result.stdout.startswith(f"{REPO_ROOT}|{REPO_ROOT}/.venv/bin/python")
+    exists_after = result.stdout.endswith("|SIDE_EFFECT")
+    assert exists_after == existed_before, (
+        "sourcing the launcher changed <app_root>/logs existence "
+        f"(before={existed_before}, after={exists_after})"
+    )

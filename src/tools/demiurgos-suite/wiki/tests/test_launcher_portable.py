@@ -141,7 +141,14 @@ def test_sourcing_probe_derives_layout_and_has_no_side_effects():
     Sourcing sets the derived top-level paths, then ``main`` prints usage and
     returns without spawning anything, creating any runtime dir, or writing
     the data-root pointer.
+
+    The no-side-effect check compares the ``<app_root>/logs`` state before and
+    after sourcing. A pre-existing dev ``<repo>/logs/`` (left behind by a real
+    launcher run, S2-6) is NOT a side effect of sourcing, so its mere presence
+    must not fail the probe — what must never happen is sourcing CREATING it.
     """
+    logs_dir = REPO_ROOT / "logs"
+    existed_before = logs_dir.exists()
     probe = (
         'source "$1" __probe__ || true; '
         'printf %s "${APP_ROOT:-UNSET}|${PYTHON_BIN:-UNSET}"; '
@@ -154,7 +161,14 @@ def test_sourcing_probe_derives_layout_and_has_no_side_effects():
         timeout=30,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout == f"{REPO_ROOT}|{REPO_ROOT}/.venv/bin/python|NO_SIDE_EFFECT"
+    assert result.stdout.startswith(f"{REPO_ROOT}|{REPO_ROOT}/.venv/bin/python")
+    # Sourcing must not change the logs-dir existence (never create it, never
+    # delete it); comparing to the pre-existing state keeps the probe hermetic.
+    exists_after = result.stdout.endswith("|SIDE_EFFECT")
+    assert exists_after == existed_before, (
+        "sourcing the launcher changed <app_root>/logs existence "
+        f"(before={existed_before}, after={exists_after})"
+    )
 
 
 # ---------------------------------------------------------------------------

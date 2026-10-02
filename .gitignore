@@ -90,6 +90,13 @@ data/sessions.json
 data/.fuse_hidden*
 
 # ============================================================
+# Logs del launcher (S2-6: <install_root>/logs). En dev el install root es la
+# raíz del repo, así que correr el launcher deja logs/ ahí. Es runtime, no se
+# versiona (y no debe ensuciar `git status`).
+# ============================================================
+/logs/
+
+# ============================================================
 # Banco global de ideas (ideas/) — contenido narrativo del Autor,
 # generado por capturas de Telegram/Asistente. Es dato de usuario,
 # NO código: no se versiona.
