@@ -19,9 +19,13 @@ library ``scripts/lib/verify_checksum.sh``) must:
 - install optional extras best-effort (non-fatal, warn-degrade);
 - never execute arbitrary payload files (only the launcher the user starts
   runs);
-- provision a pinned, checksum-verified ``uv`` (musl/glibc aware per decision
-  #3565 — NO pre-emptive hard-fail on musl), with ``codesign`` verification on
-  macOS when available (M2);
+- provision a pinned, checksum-verified ``uv`` (musl/glibc aware), with
+  ``codesign`` verification on macOS when available (M2);
+- enforce the NARROWED support matrix (decision #3579, supersedes #3565):
+  Windows 10/11 x86_64; macOS >= 13 arm64 (Apple Silicon) ONLY; Linux
+  x86_64/aarch64 glibc >= 2.28. Intel macOS, macOS below the floor,
+  musl/Alpine and glibc < 2.28 fail fast with a clear message + the documented
+  manual-install alternative — BEFORE any download;
 - keep the S3b Windows ``LongPathsEnabled`` floor as a parity note.
 
 The second half of this file is a fixture-only harness (task 4.11): a local
@@ -308,7 +312,7 @@ class TestUvProvisioning:
         assert "python install 3.12" in text
 
 
-class TestMuslDecision3565:
+class TestSupportMatrixNarrowed3579:
     def test_libc_detection_present(self):
         """S3-3 detection points: getconf GNU_LIBC_VERSION, /etc/alpine-release,
         ldd --version."""
@@ -317,14 +321,15 @@ class TestMuslDecision3565:
         assert "/etc/alpine-release" in text
         assert "ldd --version" in text
 
-    def test_no_preemptive_musl_hard_fail(self):
-        """Decision #3565 SUPERSEDES the old 'musl unsupported' wording: musl
-        selects the musl uv binary and proceeds; the mandatory closure failure
-        (if any) is what aborts, with an actionable message. The real
-        musl/Intel confirmation is the before-S5 gate (D3)."""
+    def test_musl_fails_fast_with_manual_alternative(self):
+        """Decision #3579 (supersedes the #3565 'musl proceeds' wording):
+        musl/Alpine is NOT supported — the installer fails fast with the
+        explicit message + the documented manual-install alternative and never
+        attempts a wheels-only install that cannot satisfy the closure."""
         text = _text(INSTALLER)
-        assert "musl/Alpine unsupported" not in text
-        assert "unknown-linux-musl" in text
+        assert "musl/Alpine" in text
+        assert "not supported" in text
+        assert "manual" in text
 
     def test_before_s5_gate_referenced_without_rephrasing(self):
         """D3: single authoritative gate statement — later references point to
@@ -335,9 +340,17 @@ class TestMuslDecision3565:
 
 class TestFloorsPreflight:
     def test_macos_floor(self):
+        """Decision #3579: macOS >= 13 on Apple Silicon (arm64) ONLY."""
         text = _text(INSTALLER)
         assert "sw_vers -productVersion" in text
         assert "13" in text
+        assert "Apple Silicon" in text
+
+    def test_macos_intel_fails_fast(self):
+        """Decision #3579: Intel macOS is NOT supported — fail fast with a
+        clear message + the documented manual-install alternative."""
+        text = _text(INSTALLER)
+        assert "Intel Macs are not supported" in text
 
     def test_glibc_floor(self):
         text = _text(INSTALLER)
@@ -352,6 +365,117 @@ class TestFloorsPreflight:
         floor; the S3b Windows core enforces it."""
         text = _text(INSTALLER)
         assert "LongPathsEnabled" in text
+
+
+def _floors_env(tmp_path: Path, **overrides: str) -> dict[str, str]:
+    """Minimal env that reaches the floors preflight (``check_floors``) with
+    the installer's ``DEMIURGOS_FAKE_*`` detection seams (same pattern as the
+    ``DEMIURGOS_UV_SHA256`` test seam — never by editing the script at
+    runtime). ``URL_BASE`` points at an EMPTY channel: unsupported platforms
+    abort at ``check_floors`` BEFORE any download; supported platforms pass
+    the floors and then fail LATER at version resolution — proving the failure
+    is not a floors rejection. tmp HOME/XDG/RUNTIME so the real ``~/.demiurgos``
+    and the real data-root pointer are never touched."""
+    empty_channel = tmp_path / "empty-channel"
+    empty_channel.mkdir(exist_ok=True)
+    env = {
+        "DEMIURGOS_URL_BASE": f"file://{empty_channel}",
+        "DEMIURGOS_HOME": str(tmp_path / "install"),
+        "HOME": str(tmp_path / "home"),
+        "XDG_CONFIG_HOME": str(tmp_path / "config"),
+        "XDG_RUNTIME_DIR": str(tmp_path / "runtime"),
+        "DEMIURGOS_NO_BROWSER": "1",
+        "PATH": f"{NOOP_BROWSER_BIN}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+    }
+    env.update(overrides)
+    return env
+
+
+def _run_floors(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(INSTALLER)], env=env,
+        capture_output=True, text=True, timeout=120,
+    )
+
+
+class TestUnsupportedPlatformsFailFast:
+    """Decision #3579 — narrowed matrix. Intel macOS, macOS below the floor,
+    musl/Alpine and glibc < 2.28 are NOT supported: each fails fast with a
+    clear, friendly message + the documented manual-install alternative BEFORE
+    any download. Platforms are simulated via the installer's
+    ``DEMIURGOS_FAKE_*`` detection seams."""
+
+    def test_intel_macos_fails_fast(self, tmp_path: Path):
+        result = _run_floors(_floors_env(
+            tmp_path,
+            DEMIURGOS_FAKE_OS="Darwin",
+            DEMIURGOS_FAKE_ARCH="x86_64",
+            DEMIURGOS_FAKE_MACOS_VERSION="13.6",
+        ))
+        assert result.returncode != 0
+        assert "Intel Macs are not supported" in result.stderr
+        assert "manual" in result.stderr.lower()
+
+    def test_macos_below_floor_fails_fast_naming_version(self, tmp_path: Path):
+        result = _run_floors(_floors_env(
+            tmp_path,
+            DEMIURGOS_FAKE_OS="Darwin",
+            DEMIURGOS_FAKE_ARCH="arm64",
+            DEMIURGOS_FAKE_MACOS_VERSION="12.7",
+        ))
+        assert result.returncode != 0
+        assert "macOS 13 or newer is required" in result.stderr
+        assert "found 12.7" in result.stderr
+
+    def test_musl_fails_fast(self, tmp_path: Path):
+        result = _run_floors(_floors_env(tmp_path, DEMIURGOS_FAKE_LIBC="musl"))
+        assert result.returncode != 0
+        assert "musl/Alpine" in result.stderr
+        assert "not supported" in result.stderr
+
+    def test_glibc_below_floor_fails_fast_naming_version(self, tmp_path: Path):
+        result = _run_floors(
+            _floors_env(tmp_path, DEMIURGOS_FAKE_GLIBC_VERSION="2.27")
+        )
+        assert result.returncode != 0
+        assert "glibc 2.28 or newer is required" in result.stderr
+        assert "found 2.27" in result.stderr
+
+
+class TestSupportedPlatformsProceed:
+    """Supported combos (decision #3579) PASS the floors preflight: the run
+    fails later at version resolution against the empty channel, so the
+    failure is provably NOT a floors rejection."""
+
+    def test_macos_arm64_proceeds_past_floors(self, tmp_path: Path):
+        result = _run_floors(_floors_env(
+            tmp_path,
+            DEMIURGOS_FAKE_OS="Darwin",
+            DEMIURGOS_FAKE_ARCH="arm64",
+            DEMIURGOS_FAKE_MACOS_VERSION="13.0",
+        ))
+        assert result.returncode != 0  # empty channel — NOT a floors failure
+        assert "not supported" not in result.stderr
+        assert "or newer is required" not in result.stderr
+
+    def test_linux_glibc_floor_proceeds_past_floors(self, tmp_path: Path):
+        result = _run_floors(
+            _floors_env(tmp_path, DEMIURGOS_FAKE_GLIBC_VERSION="2.28")
+        )
+        assert result.returncode != 0  # empty channel — NOT a floors failure
+        assert "not supported" not in result.stderr
+        assert "or newer is required" not in result.stderr
+
+    def test_linux_aarch64_proceeds_past_floors(self, tmp_path: Path):
+        result = _run_floors(_floors_env(
+            tmp_path,
+            DEMIURGOS_FAKE_OS="Linux",
+            DEMIURGOS_FAKE_ARCH="aarch64",
+            DEMIURGOS_FAKE_GLIBC_VERSION="2.28",
+        ))
+        assert result.returncode != 0  # empty channel — NOT a floors failure
+        assert "not supported" not in result.stderr
+        assert "or newer is required" not in result.stderr
 
 
 class TestBash32Lint:
