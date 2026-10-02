@@ -79,9 +79,14 @@ export function SectionCard({
         {meta.descriptionKey ? t(meta.descriptionKey) : ""}
       </p>
 
-      {/* File count */}
-      <span className="text-xs text-muted">
-        {fileCount > 0 ? `${fileCount} archivos` : "vacío"}
+      {/* File count / empty-state action hint */}
+      <span
+        className={cn(
+          "text-xs",
+          fileCount > 0 ? "text-muted" : "text-action",
+        )}
+      >
+        {fileCount > 0 ? `${fileCount} archivos` : t("sectionCard.emptyHint")}
       </span>
     </button>
   );
