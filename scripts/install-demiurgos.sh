@@ -4,8 +4,12 @@
 # Provisions a runnable Demiurgos on Linux/macOS with NO pre-installed
 # Python/Node/compiler, NO admin rights and NO source clone:
 #
-#   1. floors preflight      macOS >= 13, glibc >= 2.28, free disk,
-#                            Windows LongPathsEnabled parity note (S3b owns it)
+#   1. floors preflight      macOS >= 13 on Apple Silicon (arm64) ONLY,
+#                            glibc >= 2.28, free disk, Windows
+#                            LongPathsEnabled parity note (S3b owns it);
+#                            Intel macOS and musl/Alpine fail fast with the
+#                            documented manual-install alternative (decision
+#                            #3579, supersedes #3565)
 #   2. version resolve       DEMIURGOS_VERSION else `latest`
 #   3. download+verify       version.json, SHA256SUMS (+ .minisig when
 #                            present), payload from DEMIURGOS_URL_BASE
@@ -49,10 +53,19 @@
 #                        gated-write regression harness
 #                        (test_install_auth_gated_write.py) invokes this mode
 #                        to exercise the REAL shipping seed path.
+#   DEMIURGOS_FAKE_OS / DEMIURGOS_FAKE_ARCH / DEMIURGOS_FAKE_LIBC /
+#   DEMIURGOS_FAKE_MACOS_VERSION / DEMIURGOS_FAKE_GLIBC_VERSION
+#                        detection TEST SEAMS (same pattern as
+#                        DEMIURGOS_UV_SHA256): default to real detection;
+#                        hermetic harnesses simulate supported/unsupported
+#                        platforms without editing this script at runtime.
 #
-# Decision #3565 supersedes the old "musl unsupported" wording: musl selects
-# the musl uv binary and proceeds; the actual mandatory closure is what
-# decides. Real musl/Intel confirmation is the before-S5 gate (D3).
+# Decision #3579 NARROWS the declared matrix (supersedes #3565's widening):
+# the .docx importer must be uniform (present) on every supported system, so
+# Intel macOS, macOS below the floor, musl/Alpine and glibc < 2.28 are NOT
+# supported and fail fast in check_floors with the documented manual-install
+# alternative. The closure proof (D3) confirms the exact minimum macOS
+# version; the mandatory/optional split stays as a safety net.
 
 set -euo pipefail
 
@@ -87,11 +100,18 @@ VENV_PYTHON_REL=".venv/bin/python"
 STAGING_ROOT="$INSTALL_ROOT/.staging"
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/demiurgos"
 POINTER_FILE="$CONFIG_DIR/data-root.json"
+# Single documented macOS floor (decision #3579). The closure proof (D3)
+# confirms the exact minimum macOS version for the wheels-only mandatory
+# closure; check_floors enforces exactly this constant and the fail message
+# names it verbatim.
 MACOS_MIN_MAJOR=13
 GLIBC_MIN="2.28"
 MIN_FREE_KB=2097152   # 2 GiB
-OS="$(uname -s)"
-ARCH="$(uname -m)"
+# Detection with test seams (see the env contract above): DEMIURGOS_FAKE_*
+# default to the real values; hermetic harnesses override them to simulate
+# platforms without editing this script at runtime.
+OS="${DEMIURGOS_FAKE_OS:-$(uname -s)}"
+ARCH="${DEMIURGOS_FAKE_ARCH:-$(uname -m)}"
 LIBC="glibc"
 
 fail() {
@@ -114,7 +134,7 @@ uv_arch() {
 }
 
 detect_libc() {
-    if [ -f /etc/alpine-release ]; then
+    if [ "${DEMIURGOS_FAKE_LIBC:-}" = "musl" ] || [ -f /etc/alpine-release ]; then
         LIBC="musl"
     elif command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
         LIBC="musl"
@@ -155,25 +175,29 @@ version_ge() {  # a b  -> a >= b as dotted numbers
 check_floors() {
     case "$OS" in
         Darwin)
+            # Decision #3579: Apple Silicon (arm64) ONLY — Intel macOS fails
+            # fast with the documented manual-install alternative.
+            if [ "$(uv_arch)" = "x86_64" ]; then
+                fail "Intel Macs are not supported: Demiurgos requires macOS on Apple Silicon (arm64). Manual install alternative: run Demiurgos from source on this machine — see the installation guide"
+            fi
             local sw major
-            sw="$(sw_vers -productVersion 2>/dev/null || true)"
+            sw="${DEMIURGOS_FAKE_MACOS_VERSION:-$(sw_vers -productVersion 2>/dev/null || true)}"
             major="${sw%%.*}"
             if [ -z "$major" ] || [ "$major" -lt "$MACOS_MIN_MAJOR" ]; then
-                fail "macOS $MACOS_MIN_MAJOR or newer is required (found ${sw:-unknown}); upgrade macOS and re-run"
-            fi
-            if [ "$(uv_arch)" = "x86_64" ]; then
-                warn "Intel macOS detected: optional extras (markitdown/watchdog) are degraded or unavailable; the app itself runs"
+                fail "macOS $MACOS_MIN_MAJOR or newer is required (found ${sw:-unknown}); upgrade macOS and re-run — or use the manual install alternative from the installation guide"
             fi
             ;;
         Linux)
+            # Decision #3579: musl/Alpine is NOT supported — fail fast with the
+            # documented manual-install alternative; never attempt a wheels-only
+            # install that cannot satisfy the closure.
             if [ "$LIBC" = "musl" ]; then
-                printf '%s\n' "install-demiurgos: musl/Alpine detected: selecting the musl uv binary and attempting the wheels-only closure; failing only if the mandatory closure actually fails (the full-matrix proof + published floors is the before-S5 gate (D3))"
-            else
-                local glibc_ver
-                glibc_ver="$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}' || true)"
-                if [ -z "$glibc_ver" ] || ! version_ge "$glibc_ver" "$GLIBC_MIN"; then
-                    fail "glibc $GLIBC_MIN or newer is required (found ${glibc_ver:-unknown}); upgrade the OS and re-run"
-                fi
+                fail "musl/Alpine is not supported: the wheels-only install cannot satisfy the dependency closure on musl. Manual install alternative: use a glibc-based Linux distribution, or run Demiurgos from source — see the installation guide"
+            fi
+            local glibc_ver
+            glibc_ver="${DEMIURGOS_FAKE_GLIBC_VERSION:-$(getconf GNU_LIBC_VERSION 2>/dev/null | awk '{print $2}' || true)}"
+            if [ -z "$glibc_ver" ] || ! version_ge "$glibc_ver" "$GLIBC_MIN"; then
+                fail "glibc $GLIBC_MIN or newer is required (found ${glibc_ver:-unknown}); upgrade the OS and re-run — or use the manual install alternative from the installation guide"
             fi
             ;;
         *)
