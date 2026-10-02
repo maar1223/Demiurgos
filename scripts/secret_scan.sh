@@ -41,10 +41,16 @@
 #     * the scanner's own files — they contain the rule definitions by
 #       design, so they necessarily match some patterns;
 #     * obviously-fake test fixtures — placeholder values only, never real
-#       credentials and never real author data.
-#   Real baseline violations (docs/MARCA.md, config/idea-capture.yaml,
-#   start-*.ps1, ...) are intentionally NOT allowlisted: they must surface in
-#   tree/CI scans until their owning slice cleans them up.
+#       credentials and never real author data;
+#     * test harnesses that deliberately reference the patterns as
+#       functional predicates (PATH scrubbing) or negative assertions;
+#     * the two personal Google-Sheets tools (dev_diary.py, sync-ideas.py) —
+#       their only residual match is the required Sheets API parameter name
+#       `spreadsheetId=`; the real sheet ids are read from environment
+#       variables, never committed.
+#   No entry hides a real credential or a real author path: baseline
+#   violations must surface in tree/CI scans until their owning slice cleans
+#   them up.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -90,6 +96,19 @@ DEFAULT_ALLOWLIST=(
     # Pre-existing frontend fixtures with placeholder paths/ids.
     frontend/src/__tests__/BackupSection.test.tsx
     frontend/src/__tests__/MethodologyLibrary.test.tsx
+    # Test harnesses that deliberately reference the patterns:
+    #   test_launcher_boot_smoke.py — scrubs /home/ paths from PATH so the
+    #     hermetic boot never touches the real home directory (functional).
+    #   test_launcher_portable.py   — negative assertions: "H:\"/"C:\Users"
+    #     must NOT appear in the shipped launchers.
+    src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py
+    src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py
+    # Personal author tooling (Google Sheets): the ONLY residual match is the
+    # required Sheets API parameter name `spreadsheetId=`; the real sheet ids
+    # are read from env vars (DEMIURGOS_DEV_DIARY_SHEET_ID / GOOGLE_SHEETS_ID),
+    # never committed. No real value is hidden by this entry.
+    src/tools/dev_diary.py
+    src/tools/sync-ideas.py
 )
 
 usage() {

@@ -9,8 +9,14 @@
 #   * the scanner's own files (they contain the rule definitions by design);
 #   * obviously-fake test fixtures (placeholder values, never real
 #     credentials and never real author data);
+#   * test harnesses that deliberately reference the patterns as functional
+#     predicates (PATH scrubbing) or negative assertions;
+#   * the two personal Google-Sheets tools (dev_diary.py, sync-ideas.py) —
+#     their only residual match is the required Sheets API parameter name
+#     `spreadsheetId=`; the real sheet ids are read from environment
+#     variables, never committed;
 #   * any value containing "testonly" (the marker used by the fake fixtures).
-# Real baseline violations are intentionally NOT allowlisted.
+# No entry hides a real credential or a real author path.
 
 title = "Demiurgos gitleaks configuration"
 
@@ -53,7 +59,7 @@ regex = '''<telegram-id>'''
 secretGroup = 0
 
 [allowlist]
-description = "Scanner self-files and obviously-fake test fixtures only"
+description = "Scanner self-files, fake fixtures, harness predicates and env-var-driven Sheets tools only"
 paths = [
     '''src/tools/demiurgos-suite/wiki/tests/test_payload_audit.py''',
     '''frontend/src/__tests__/BackupSection.test.tsx''',
@@ -61,6 +67,10 @@ paths = [
     '''scripts/secret_scan.sh''',
     '''scripts/payload_audit.sh''',
     '''.gitleaks.toml''',
+    '''src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py''',
+    '''src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py''',
+    '''src/tools/dev_diary.py''',
+    '''src/tools/sync-ideas.py''',
 ]
 regexes = [
     '''(?i)testonly''',
