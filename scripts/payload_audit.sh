@@ -14,6 +14,21 @@
 #   .env  .env.backup  .secrets/  mundos/  .git/
 #   src/tools/opencode-bridge.py  start-opencode-*.ps1  sync-ideas.py.bak-*
 #
+# --allow FILE (S5b / task 8.5): extra shippable paths beyond the manifest —
+# the explicit artifact extras (bootstraps, cores, launchers, requirements,
+# LICENSE) and the shared dist tree. One path per line; '#' comments and blank
+# lines allowed; an entry ending in '/' allows everything under that prefix
+# (the content-hashed frontend/dist tree). Deny rules still win over --allow.
+#
+# --content-scan-skip PREFIX (S5b): files under the prefix are still
+# path-checked (deny / manifest / allow) but are NOT content-scanned. Used for
+# the derived frontend/dist tree: a BUILT artifact whose sources (frontend/src)
+# are covered by the tree scan (scripts/secret_scan.sh --tree, exit 0) and
+# whose baked origins are guarded by the S1-7 same-origin check; minified
+# CSS/JS utility names (e.g. Tailwind/xyflow "sk-*" classes) false-positive the
+# openai-key heuristic. No rule is weakened — only the scanned file set is
+# scoped. Repeatable.
+#
 # Output: one "deny: <path> (<reason>)" line per denied path, plus the content
 # scan hits forwarded from secret_scan.sh ("<path>:<line>: <rule>"). Matched
 # values are NEVER printed. A summary line goes to stderr.
@@ -38,6 +53,8 @@ SECRET_SCAN="$SCRIPT_DIR/secret_scan.sh"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MANIFEST="$ROOT/payload_manifest.json"
 ALLOWLIST_ARGS=()
+ALLOW=()
+SCAN_SKIP=()
 ENUM="auto"
 ROOT_GIVEN=0
 DENY_COUNT=0
@@ -66,11 +83,18 @@ DENY_GLOBS="start-opencode-*.ps1 sync-ideas.py.bak-*"
 
 usage() {
     cat <<'USAGE'
-Usage: payload_audit.sh [--root DIR] [--manifest FILE] [--allowlist FILE]
+Usage: payload_audit.sh [--root DIR] [--manifest FILE] [--allow FILE]
+                        [--content-scan-skip PREFIX] [--allowlist FILE]
                         [--no-default-allowlist] [--help]
 
   --root DIR             tree to audit (default: repo root)
   --manifest FILE        payload allow-list JSON (default: <root>/payload_manifest.json)
+  --allow FILE           extra shippable paths (one per line; trailing '/'
+                         allows a whole prefix; '#' comments allowed) — the
+                         packaging extras and the shared dist tree
+  --content-scan-skip PREFIX
+                         path-check files under PREFIX but do NOT content-scan
+                         them (the derived frontend/dist tree; repeatable)
   --allowlist FILE       forward an extra allowlist to the content scan
   --no-default-allowlist forward --no-default-allowlist to the content scan
   --git-mode             force git-tracked-surface enumeration
@@ -97,6 +121,21 @@ while [ $# -gt 0 ]; do
             ;;
         --git-mode) ENUM="git" ;;
         --walk-fs) ENUM="fs" ;;
+        --content-scan-skip)
+            [ $# -ge 2 ] || usage
+            shift
+            SCAN_SKIP+=("$1")
+            ;;
+        --allow)
+            [ $# -ge 2 ] || usage
+            shift
+            while IFS= read -r _line; do
+                case "$_line" in
+                    "" | \#*) continue ;;
+                esac
+                ALLOW+=("$_line")
+            done < "$1"
+            ;;
         --allowlist)
             [ $# -ge 2 ] || usage
             shift
@@ -188,6 +227,27 @@ _matches_deny_glob() {
     return 1
 }
 
+_in_allow() {
+    local _rel="$1" _entry
+    for _entry in "${ALLOW[@]+"${ALLOW[@]}"}"; do
+        case "$_entry" in
+            */)
+                # prefix allow: everything under the entry (the dist tree)
+                case "$_rel" in
+                    "$_entry"*) return 0 ;;
+                esac
+                ;;
+            *)
+                # exact path, any depth (mirrors _in_manifest)
+                case "$_rel" in
+                    "$_entry" | */"$_entry") return 0 ;;
+                esac
+                ;;
+        esac
+    done
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Candidate enumeration (documented above).
 # ---------------------------------------------------------------------------
@@ -224,7 +284,7 @@ for _rel in "${CANDIDATES[@]+"${CANDIDATES[@]}"}"; do
         _reason="explicit deny directory"
     elif _matches_deny_glob "$_rel"; then
         _reason="explicit deny glob"
-    elif ! _in_manifest "$_rel"; then
+    elif ! _in_manifest "$_rel" && ! _in_allow "$_rel"; then
         _reason="not in manifest allow-list"
     fi
     if [ -n "$_reason" ]; then
@@ -235,13 +295,29 @@ for _rel in "${CANDIDATES[@]+"${CANDIDATES[@]}"}"; do
     fi
 done
 
+_scan_skipped() {
+    local _rel="$1" _prefix
+    for _prefix in "${SCAN_SKIP[@]+"${SCAN_SKIP[@]}"}"; do
+        case "$_rel" in
+            "$_prefix"*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Content scan over the allowed files — delegated to secret_scan.sh so the
-# pattern rules stay in exactly one place.
+# pattern rules stay in exactly one place. Files under a --content-scan-skip
+# prefix (the derived frontend/dist tree) are path-checked but not scanned.
 # ---------------------------------------------------------------------------
-if [ ${#ALLOWED[@]} -gt 0 ]; then
+SCAN_TARGETS=()
+for _rel in "${ALLOWED[@]+"${ALLOWED[@]}"}"; do
+    _scan_skipped "$_rel" || SCAN_TARGETS+=("$_rel")
+done
+
+if [ ${#SCAN_TARGETS[@]} -gt 0 ]; then
     SCAN_OUT=$("$SECRET_SCAN" --tree --root "$ROOT" \
-        ${ALLOWLIST_ARGS[@]+"${ALLOWLIST_ARGS[@]}"} -- "${ALLOWED[@]}" 2>&1)
+        ${ALLOWLIST_ARGS[@]+"${ALLOWLIST_ARGS[@]}"} -- "${SCAN_TARGETS[@]}" 2>&1)
     SCAN_EXIT=$?
     if [ -n "$SCAN_OUT" ]; then
         printf '%s\n' "$SCAN_OUT"

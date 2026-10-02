@@ -439,6 +439,26 @@ verify_sha256() {  # file expected_sha
         fail "checksum mismatch for $file; the download is corrupt or tampered — re-run"
 }
 
+# --- S5b: signed-manifest gate (task 8.4) ------------------------------------
+# The minisign PUBLIC key that verifies the channel SHA256SUMS.minisig.
+# >>> PLACEHOLDER <<< — the Author MUST replace this with the real key line
+# (the RWS... line of minisign.pub) generated with `minisign -G`, before the
+# first public release (S5b signing-key custody note).
+# Seam: MINISIGN_PUBKEY env override (the CI smoke and hermetic tests use it).
+DEFAULT_MINISIGN_PUBKEY="RWSREPLACE-ME-WITH-THE-REAL-MINISIGN-PUBLIC-KEY"
+
+verify_minisig() {  # sums_file sig_file
+    local sums="$1" sig="$2" pubkey="${MINISIGN_PUBKEY:-$DEFAULT_MINISIGN_PUBKEY}"
+    if ! command -v minisign >/dev/null 2>&1; then
+        fail "minisign is required to verify the signed manifest; install it (apt install minisign / brew install minisign / https://jedisct1.github.io/minisign/) and re-run"
+    fi
+    if [ ! -f "$sig" ]; then
+        fail "the channel manifest is not signed ($sig missing); refusing to continue"
+    fi
+    minisign -Vm "$sums" -P "$pubkey" >/dev/null 2>&1 || \
+        fail "the channel manifest signature is INVALID; the download is tampered or the key is wrong — refusing to continue"
+}
+
 bootstrap_web_app() {
     local core_dir core_sha lib_sha
     BOOTSTRAP_WORK="$(mktemp -d "${TMPDIR:-/tmp}/demiurgos-bootstrap.XXXXXX")"
@@ -450,6 +470,12 @@ bootstrap_web_app() {
     fetch "$DEMIURGOS_URL_BASE/scripts/install-demiurgos.sh" "$core_dir/install-demiurgos.sh"
     fetch "$DEMIURGOS_URL_BASE/scripts/lib/verify_checksum.sh" "$core_dir/lib/verify_checksum.sh"
     fetch "$DEMIURGOS_URL_BASE/SHA256SUMS" "$BOOTSTRAP_WORK/SHA256SUMS"
+    fetch "$DEMIURGOS_URL_BASE/SHA256SUMS.minisig" "$BOOTSTRAP_WORK/SHA256SUMS.minisig" 2>/dev/null || true
+
+    # S5b (task 8.4): verify the manifest SIGNATURE before trusting any
+    # checksum and before executing the core (fail-closed).
+    step "Verifying the channel manifest signature (minisign)"
+    verify_minisig "$BOOTSTRAP_WORK/SHA256SUMS" "$BOOTSTRAP_WORK/SHA256SUMS.minisig"
 
     step "Verifying the downloaded core against the published checksums"
     core_sha="$(sha_for "$BOOTSTRAP_WORK/SHA256SUMS" "scripts/install-demiurgos.sh")"

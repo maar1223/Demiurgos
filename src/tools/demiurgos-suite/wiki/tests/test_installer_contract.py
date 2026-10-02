@@ -625,6 +625,34 @@ class TestVerifyChecksumLibrary:
 # 4.11 — Fixture-only channel harness (file:// + stub uv/python)
 # ---------------------------------------------------------------------------
 
+# S5b (task 8.4): the consumer verifies the manifest SIGNATURE before the
+# checksums, so the runtime harness cells that run the REAL installer/core
+# need a REAL channel signature (ephemeral keypair, never committed). Cells
+# skip honestly when minisign is not on PATH; CI installs it.
+needs_minisign = pytest.mark.skipif(
+    shutil.which("minisign") is None,
+    reason="the signed-channel runtime harness needs minisign on PATH",
+)
+
+
+def _sign_fixture_manifest(channel: Path, tmp_path: Path) -> None:
+    """Sign the channel SHA256SUMS with an EPHEMERAL minisign keypair and
+    record the public key at ``channel/.test-pubkey`` for the harness env
+    (MINISIGN_PUBKEY seam). The keypair is a temp file — never committed."""
+    key = tmp_path / "fixture.key"
+    pub = tmp_path / "fixture.pub"
+    subprocess.run(
+        ["minisign", "-G", "-W", "-s", str(key), "-p", str(pub)],
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    subprocess.run(
+        ["minisign", "-Sm", str(channel / "SHA256SUMS"), "-s", str(key)],
+        check=True, capture_output=True, text=True, timeout=30,
+    )
+    (channel / ".test-pubkey").write_text(
+        pub.read_text(encoding="utf-8").strip().splitlines()[-1], encoding="utf-8"
+    )
+
 
 def _build_fixture_channel(
     tmp_path: Path, *, with_minisig: bool = True, wrong_payload_sha: str | None = None,
@@ -671,7 +699,7 @@ def _build_fixture_channel(
     shutil.copy2(launcher_src, dst)
     dst.chmod(0o755)
     dist = payload_root / "frontend" / "dist"
-    dist.mkdir(parents=True)
+    dist.mkdir(parents=True, exist_ok=True)  # manifest may already carry dist entries
     (dist / "index.html").write_text(
         "<!doctype html><html><body>fixture dist</body></html>", encoding="utf-8"
     )
@@ -720,6 +748,10 @@ def _build_fixture_channel(
                 f"{hashlib.sha256((channel / rel).read_bytes()).hexdigest()}  {rel}\n"
             )
     (channel / "SHA256SUMS").write_text("".join(sums_lines), encoding="utf-8")
+    if with_minisig and shutil.which("minisign") is not None:
+        # S5b: replace the placeholder minisig with a REAL signature so the
+        # runtime cells pass the consumer's signature gate (task 8.4).
+        _sign_fixture_manifest(channel, tmp_path)
     return channel, uv_sha, version
 
 
@@ -747,6 +779,11 @@ def _installer_env(
     }
     if fail_pip:
         env["DEMIURGOS_STUB_FAIL_PIP"] = "1"
+    # S5b: the consumer verifies the manifest signature via the MINISIGN_PUBKEY
+    # seam; pass the fixture's ephemeral public key when the channel is signed.
+    pubkey_file = channel / ".test-pubkey"
+    if pubkey_file.is_file():
+        env["MINISIGN_PUBKEY"] = pubkey_file.read_text(encoding="utf-8").strip()
     for key in ("DEMIURGOS_DATA_ROOT", "DEMIURGOS_FRONTEND_DIST"):
         env.pop(key, None)
     return env
@@ -799,6 +836,7 @@ def _read_pointer(config_dir: Path):
 
 
 class TestFixtureChannelInstall:
+    @needs_minisign
     def test_install_then_boot_serves_health_and_root(self, tmp_path: Path):
         channel, uv_sha, version = _build_fixture_channel(tmp_path)
         install_root = tmp_path / "install"
@@ -834,6 +872,7 @@ class TestFixtureChannelInstall:
                 env, api_port,
             )
 
+    @needs_minisign
     def test_rerun_is_idempotent_single_env(self, tmp_path: Path):
         channel, uv_sha, version = _build_fixture_channel(tmp_path)
         install_root = tmp_path / "install"
@@ -870,6 +909,7 @@ class TestFixtureChannelInstall:
 
 
 class TestChecksumMismatchAborts:
+    @needs_minisign
     def test_wrong_sha256_aborts_with_no_runnable_state(self, tmp_path: Path):
         channel, uv_sha, _version = _build_fixture_channel(
             tmp_path, wrong_payload_sha="0" * 64
@@ -890,6 +930,7 @@ class TestChecksumMismatchAborts:
 
 
 class TestM3Coexistence:
+    @needs_minisign
     def test_existing_repo_clone_and_pointer_preserved(self, tmp_path: Path):
         """M3: an existing ~/.demiurgos/repo CLI clone is neither clobbered nor
         adopted as the app root; a pointer pointing at the clone is preserved."""
@@ -931,6 +972,7 @@ class TestM3Coexistence:
 
 
 class TestPointerAndEnvSeed:
+    @needs_minisign
     def test_python_reads_what_bash_wrote(self, tmp_path: Path):
         """Task 4.9: the pointer written by the installer is byte-compatible
         with data_root.py — Python reads back exactly the bootstrapped root."""
@@ -952,6 +994,7 @@ class TestPointerAndEnvSeed:
         # data root, not in the staged app tree.
         assert list((install_root / "app").rglob(".env")) == []
 
+    @needs_minisign
     def test_existing_env_preserved_untouched(self, tmp_path: Path):
         """S0-A/S3-7: an existing data-root .env is preserved byte-for-byte."""
         channel, uv_sha, _version = _build_fixture_channel(tmp_path)
@@ -977,6 +1020,7 @@ class TestPointerAndEnvSeed:
 
 
 class TestMandatoryInstallFailure:
+    @needs_minisign
     def test_pip_failure_leaves_no_runnable_state(self, tmp_path: Path):
         channel, uv_sha, _version = _build_fixture_channel(tmp_path)
         install_root = tmp_path / "install"
@@ -1484,7 +1528,7 @@ def _build_windows_fixture_channel(
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(launcher_src, dst)
     dist = payload_root / "frontend" / "dist"
-    dist.mkdir(parents=True)
+    dist.mkdir(parents=True, exist_ok=True)  # manifest may already carry dist entries
     (dist / "index.html").write_text(
         "<!doctype html><html><body>fixture dist</body></html>", encoding="utf-8"
     )
@@ -1536,6 +1580,10 @@ def _build_windows_fixture_channel(
                 f"{hashlib.sha256((channel / rel).read_bytes()).hexdigest()}  {rel}\n"
             )
     (channel / "SHA256SUMS").write_text("".join(sums_lines), encoding="utf-8")
+    if shutil.which("minisign") is not None:
+        # S5b: real signature so the Windows bootstrap cell passes install.ps1's
+        # signature gate (task 8.4) on the Windows runner.
+        _sign_fixture_manifest(channel, tmp_path)
     return channel, uv_sha, version
 
 
@@ -1563,6 +1611,11 @@ def _ps_installer_env(
     }
     if fail_pip:
         env["DEMIURGOS_STUB_FAIL_PIP"] = "1"
+    # S5b: install.ps1 verifies the manifest signature via the MINISIGN_PUBKEY
+    # seam; pass the fixture's ephemeral public key when the channel is signed.
+    pubkey_file = channel / ".test-pubkey"
+    if pubkey_file.is_file():
+        env["MINISIGN_PUBKEY"] = pubkey_file.read_text(encoding="utf-8").strip()
     for key in ("DEMIURGOS_DATA_ROOT", "DEMIURGOS_FRONTEND_DIST"):
         env.pop(key, None)
     return env
@@ -1733,6 +1786,7 @@ def _run_posix_bootstrap(env: dict[str, str]) -> subprocess.CompletedProcess[str
 
 
 class TestPublicBootstrapPosix:
+    @needs_minisign
     def test_bootstrap_installs_then_boots(self, tmp_path: Path):
         """Task 6.5: install.sh against the fixture channel -> app serves."""
         channel, uv_sha, version = _build_fixture_channel(
@@ -1759,6 +1813,7 @@ class TestPublicBootstrapPosix:
                 env, api_port,
             )
 
+    @needs_minisign
     def test_bootstrap_rerun_is_idempotent(self, tmp_path: Path):
         """Task 6.5: run twice -> one environment, exit 0 (spec 'Re-run the
         installer')."""
@@ -1792,6 +1847,7 @@ def _run_ps_bootstrap_iex(env: dict[str, str]) -> subprocess.CompletedProcess[st
 
 
 @PS_RUNNER
+@needs_minisign
 class TestPublicBootstrapWindows:
     def test_ps1_bootstrap_iex_installs_then_boots(self, tmp_path: Path):
         """Task 6.5: iex-mode dry-run of install.ps1 against the fixture

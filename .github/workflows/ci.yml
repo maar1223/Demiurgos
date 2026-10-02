@@ -219,6 +219,12 @@ jobs:
           uv pip install --python .venv/bin/python --only-binary=:all: \
             -r src/tools/demiurgos-suite/requirements.txt pytest
 
+      - name: Install minisign (signed-channel fixture cells, S5b)
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq minisign
+
       - name: Run the installer contract suite (file:// fixture cells)
         shell: bash
         run: |
@@ -285,6 +291,16 @@ jobs:
             [scriptblock]::Create((Get-Content -Raw -LiteralPath $f)) | Out-Null
           }
           Write-Output 'PS 5.1 parse OK'
+
+      - name: Install minisign (signed-channel Windows cells, S5b; best-effort)
+        shell: powershell
+        run: |
+          # The Windows bootstrap verifies the manifest signature via minisign;
+          # when unavailable the signed-channel cell skips (documented not-run).
+          choco install -y minisign 2>$null
+          if (-not (Get-Command minisign -ErrorAction SilentlyContinue)) {
+            Write-Warning 'minisign not available; the signed-channel cell will skip'
+          }
 
       - name: Installer contract suite (Windows cells, real powershell.exe)
         shell: bash

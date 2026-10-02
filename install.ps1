@@ -108,6 +108,32 @@ function Get-ShaFor([string]$sumsFile, [string]$name) {
     return $null
 }
 
+# --- S5b: signed-manifest gate (task 8.4) ------------------------------------
+# The minisign PUBLIC key that verifies the channel SHA256SUMS.minisig.
+# >>> PLACEHOLDER <<< - the Author MUST replace this with the real key line
+# (the RWS... line of minisign.pub) generated with `minisign -G`, before the
+# first public release (S5b signing-key custody note).
+# Seam: MINISIGN_PUBKEY env override (the CI smoke and hermetic tests use it).
+$defaultMinisignPubkey = 'RWSREPLACE-ME-WITH-THE-REAL-MINISIGN-PUBLIC-KEY'
+$minisignPubkey = if ($env:MINISIGN_PUBKEY) { $env:MINISIGN_PUBKEY } else { $defaultMinisignPubkey }
+
+function Verify-Minisig([string]$sumsFile) {
+    # Fail-closed: the manifest signature MUST verify before any checksum is
+    # trusted and before the core is executed.
+    $minisign = Get-Command minisign -ErrorAction SilentlyContinue
+    if (-not $minisign) {
+        Fail "minisign is required to verify the signed manifest; install it (choco install minisign / scoop install minisign) and re-run"
+    }
+    $sigFile = "$sumsFile.minisig"
+    if (-not (Test-Path -LiteralPath $sigFile -PathType Leaf)) {
+        Fail "the channel manifest is not signed ($sigFile missing); refusing to continue"
+    }
+    & $minisign.Source -Vm $sumsFile -P $minisignPubkey | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Fail "the channel manifest signature is INVALID; the download is tampered or the key is wrong - refusing to continue"
+    }
+}
+
 # --- download + verify + execute the versioned core --------------------------
 $coreScript = Join-Path $tempDir "scripts\install-demiurgos.ps1"
 $coreLib = Join-Path $tempDir "scripts\lib\verify_checksum.ps1"
@@ -117,6 +143,13 @@ Write-Host "Downloading the installer core from $urlBase"
 Fetch "$urlBase/scripts/install-demiurgos.ps1" $coreScript
 Fetch "$urlBase/scripts/lib/verify_checksum.ps1" $coreLib
 Fetch "$urlBase/SHA256SUMS" $sumsFile
+try { Fetch "$urlBase/SHA256SUMS.minisig" "$sumsFile.minisig" }
+catch { Write-Host "note: SHA256SUMS.minisig not found on the channel" }
+
+# S5b (task 8.4): the manifest SIGNATURE is verified BEFORE trusting any
+# checksum and BEFORE executing the core (fail-closed).
+Write-Host "Verifying the channel manifest signature (minisign)"
+Verify-Minisig $sumsFile
 
 Write-Host "Verifying the downloaded core against the published checksums"
 $coreSha = Get-ShaFor $sumsFile "scripts/install-demiurgos.ps1"

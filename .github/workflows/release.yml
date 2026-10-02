@@ -4,9 +4,18 @@
 # upstream (threat-matrix rows "Git repository selection" and "Push state").
 #
 # Sequencing (task 7.7 / gate 10): the publish step is TAG-GUARDED and INERT on
-# branches; no vX.Y.Z tag is pushed until S5b (payload audit + signed manifest)
-# has landed. On branch/PR pushes this workflow is a dry run: the frontend is
-# built once, packaged per OS, and the publish + smoke jobs are skipped.
+# branches. S5b has landed: the package cells audit the assembled stage before
+# archiving (default-DENY + content scan), the publish job signs the merged
+# SHA256SUMS with minisign (Author-owned key via secrets), and the post-publish
+# smoke verifies signature + checksums before moving `latest`. The FIRST real
+# vX.Y.Z tag is the Author's decision: the Author must run `minisign -G` (or
+# `minisign -G -W` for an unprotected key), set secrets.MINISIGN_SECRET_KEY /
+# MINISIGN_PUBKEY (and MINISIGN_KEY_PASSWORD for a protected key), and replace
+# the placeholder MINISIGN_PUBKEY in install.sh / install.ps1 /
+# scripts/install-demiurgos.sh / scripts/lib/verify_checksum.sh (S5b signing-key
+# custody note). On branch/PR pushes this workflow is a dry run: the frontend
+# is built once, packaged per OS (audit included), and the publish + smoke
+# jobs are skipped.
 #
 # Support matrix mirrors decision #3579 (narrowed): Windows amd64; macOS >= 13
 # arm64 (Apple Silicon); Linux x86_64 / aarch64 glibc >= 2.28. Intel macOS,
@@ -110,7 +119,7 @@ jobs:
             cp "$f" "$stage/$f"
           done < <(jq -r '.payload[]' payload_manifest.json)
           # (2) explicit extras (S5-1 artifact list): bootstraps, cores,
-          #     launchers, requirements. LICENSE lands in S5b (task 8.3).
+          #     launchers, requirements, LICENSE (task 8.3: every artifact).
           for f in install.sh install.ps1 start-demiurgos.ps1 start-api.ps1 \
                    start-gateway.ps1 scripts/start-demiurgos.sh \
                    scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
@@ -120,20 +129,42 @@ jobs:
             mkdir -p "$stage/$(dirname "$f")"
             cp "$f" "$stage/$f"
           done
-          if [ -f LICENSE ]; then
-            cp LICENSE "$stage/LICENSE"
-          else
-            echo "note: LICENSE is S5b-owned (task 8.3); not packaged yet"
-          fi
+          [ -f LICENSE ] || { echo "FAIL: LICENSE is missing; every artifact must carry it (task 8.3)"; exit 1; }
+          cp LICENSE "$stage/LICENSE"
           # (3) the shared dist -> <stage>/frontend/dist (explicit artifact)
           dist_src="$(dirname "$(find dist -type f -name index.html | head -n1)")"
           mkdir -p "$stage/frontend/dist"
           cp -R "$dist_src/." "$stage/frontend/dist/"
-          # (4) archive the payload tree (tar.gz for POSIX)
+          # (4) S5b gate (task 8.5): audit the assembled stage BEFORE
+          #     packaging. default-DENY allow-list from payload_manifest.json
+          #     + content scan; the explicit extras and the shared dist are
+          #     declared via --allow (deny rules still win).
+          cat > "$RUNNER_TEMP/payload-allow.txt" <<'ALLOW'
+          install.sh
+          install.ps1
+          start-demiurgos.ps1
+          start-api.ps1
+          start-gateway.ps1
+          scripts/start-demiurgos.sh
+          scripts/install-demiurgos.sh
+          scripts/install-demiurgos.ps1
+          scripts/lib/verify_checksum.sh
+          scripts/lib/verify_checksum.ps1
+          requirements.lock
+          requirements-optional.txt
+          LICENSE
+          frontend/dist/
+          ALLOW
+          bash scripts/payload_audit.sh --root "$stage" --manifest payload_manifest.json \
+            --allow "$RUNNER_TEMP/payload-allow.txt" \
+            --content-scan-skip frontend/dist/
+          # (5) archive the payload tree (tar.gz for POSIX)
           tar -czf "$archive" -C "$stage" .
-          # (5) per-OS checksum (the publish job merges into the channel file)
-          sha256sum -b "$archive" > "SHA256SUMS.${cell}"
-          # (6) per-OS version record (publish merges into version.json)
+          # (6) per-OS checksum — plain sha256sum format ("hex  name"): the
+          #     installer sha_for parsers match the name field exactly, so no
+          #     binary-mode '*' marker may appear in the channel file.
+          sha256sum "$archive" > "SHA256SUMS.${cell}"
+          # (7) per-OS version record (publish merges into version.json)
           jq -n \
             --arg version "$version" \
             --arg cell "$cell" \
@@ -146,7 +177,7 @@ jobs:
                        macos: ">= 13 arm64 (Apple Silicon)",
                        linux: "glibc >= 2.28 (x86_64 / aarch64)"}}' \
             > "version-${cell}.json"
-          # (7) self-check: exactly one dist tree and one checksum file per cell
+          # (8) self-check: exactly one dist tree and one checksum file per cell
           [ "$(find "$stage/frontend/dist" -type f | wc -l)" -gt 0 ] \
             || { echo "FAIL: empty dist in the payload"; exit 1; }
           echo "packaged: $archive ($(du -h "$archive" | cut -f1))"
@@ -184,20 +215,35 @@ jobs:
             New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
             Copy-Item -LiteralPath $f -Destination $dest
           }
-          if (Test-Path LICENSE) { Copy-Item LICENSE (Join-Path $stage 'LICENSE') }
-          else { Write-Host 'note: LICENSE is S5b-owned (task 8.3); not packaged yet' }
+          if (-not (Test-Path LICENSE)) { throw 'FAIL: LICENSE is missing; every artifact must carry it (task 8.3)' }
+          Copy-Item LICENSE (Join-Path $stage 'LICENSE')
           # (3) the shared dist -> <stage>/frontend/dist
           $distFile = Get-ChildItem -Path dist -Recurse -Filter index.html | Select-Object -First 1
           $distSrc = Split-Path -Parent $distFile.FullName
           $distDest = Join-Path $stage 'frontend/dist'
           New-Item -ItemType Directory -Force -Path $distDest | Out-Null
           Copy-Item -Path (Join-Path $distSrc '*') -Destination $distDest -Recurse -Force
-          # (4) archive the payload tree (zip)
+          # (4) S5b gate (task 8.5): audit the assembled stage BEFORE
+          #     packaging (Windows parity of payload_audit.sh, task 8.2).
+          $allowFile = Join-Path $env:RUNNER_TEMP 'payload-allow.txt'
+          @(
+            'install.sh', 'install.ps1', 'start-demiurgos.ps1', 'start-api.ps1',
+            'start-gateway.ps1', 'scripts/start-demiurgos.sh',
+            'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
+            'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
+            'requirements.lock', 'requirements-optional.txt', 'LICENSE',
+            'frontend/dist/'
+          ) | Set-Content -Encoding ascii $allowFile
+          & powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/payload_audit.ps1 `
+            -Root $stage -Manifest payload_manifest.json -Allow $allowFile `
+            -ContentScanSkip 'frontend/dist/'
+          if ($LASTEXITCODE -ne 0) { throw "payload audit failed (exit $LASTEXITCODE)" }
+          # (5) archive the payload tree (zip)
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
-          # (5) per-OS checksum in sha256sum format: "<hex>  <name>"
+          # (6) per-OS checksum in plain sha256sum format: "<hex>  <name>"
           $h = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
           "$h  $archive" | Set-Content -Encoding ascii "SHA256SUMS.$cell"
-          # (6) per-OS version record
+          # (7) per-OS version record
           $record = @{
             version  = $version
             artifacts = @{ $cell = @{ artifact = $archive; format = $fmt; sha256 = $h } }
@@ -237,13 +283,15 @@ jobs:
       - name: Merge the channel SHA256SUMS and version.json
         run: |
           set -euo pipefail
-          # four per-OS archive entries + the core/bootstrap scripts
+          # four per-OS archive entries + the core/bootstrap scripts; plain
+          # sha256sum format ("hex  name") so the installer sha_for parsers
+          # match exactly (no binary-mode '*' marker)
           cat SHA256SUMS.* > SHA256SUMS
           for f in scripts/install-demiurgos.sh scripts/lib/verify_checksum.sh \
                    scripts/install-demiurgos.ps1 scripts/lib/verify_checksum.ps1 \
                    install.sh install.ps1; do
             [ -f "$f" ] || continue
-            sha256sum -b "$f" >> SHA256SUMS
+            sha256sum "$f" >> SHA256SUMS
           done
           # installer contract: version.json carries `posix` and `windows`
           jq -s '
@@ -257,6 +305,42 @@ jobs:
           ' version-*.json > version.json
           sha256sum -c SHA256SUMS
           echo "channel checksum entries: $(wc -l < SHA256SUMS)"
+      - name: Sign the channel manifest (minisign; Author-owned key, S5b)
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PUBKEY: ${{ secrets.MINISIGN_PUBKEY }}
+          MINISIGN_KEY_PASSWORD: ${{ secrets.MINISIGN_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if ! command -v minisign >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq minisign
+          fi
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ] || [ -z "${MINISIGN_PUBKEY:-}" ]; then
+            echo "FAIL: secrets.MINISIGN_SECRET_KEY / MINISIGN_PUBKEY are not set."
+            echo "The Author must run 'minisign -G' locally and set both secrets"
+            echo "(S5b signing-key custody note), then replace the placeholder"
+            echo "MINISIGN_PUBKEY in install.sh, install.ps1,"
+            echo "scripts/install-demiurgos.sh and scripts/lib/verify_checksum.sh."
+            exit 1
+          fi
+          keyfile="$RUNNER_TEMP/minisign.key"
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$keyfile"
+          # Password-protected keys are supported via MINISIGN_KEY_PASSWORD;
+          # `minisign -G -W` keys have none and sign without a prompt.
+          if [ -n "${MINISIGN_KEY_PASSWORD:-}" ]; then
+            printf '%s\n' "$MINISIGN_KEY_PASSWORD" | minisign -Sm SHA256SUMS -s "$keyfile"
+          else
+            minisign -Sm SHA256SUMS -s "$keyfile"
+          fi
+          rm -f "$keyfile"
+          # fail-closed self-check: the signed manifest must verify with the
+          # public key (the RWS... line; a full .pub file is tolerated too)
+          pubkey="$(printf '%s\n' "$MINISIGN_PUBKEY" | tail -n1)"
+          minisign -Vm SHA256SUMS -P "$pubkey" >/dev/null \
+            || { echo "FAIL: self-check signature verification failed"; exit 1; }
+          echo "manifest signed: SHA256SUMS.minisig"
       - name: Publish the release (explicit repo and explicit tag)
         run: |
           set -euo pipefail
@@ -265,12 +349,12 @@ jobs:
           # built from parts so no address appears verbatim (mirrors install.sh)
           public_repo="maar12""23/demiurgos-releases"
           gh release create --repo "$public_repo" "$tag" \
-            demiurgos-app-* SHA256SUMS version.json \
+            demiurgos-app-* SHA256SUMS SHA256SUMS.minisig version.json \
             scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
             scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
             install.sh install.ps1 \
             --title "Demiurgos ${tag}" \
-            --notes "Versioned artifact release for the one-command install flow. The anonymous post-publish smoke gates the latest pointer (S5-5)."
+            --notes "Versioned artifact release for the one-command install flow. The channel SHA256SUMS is minisign-signed (SHA256SUMS.minisig); the anonymous post-publish smoke verifies the signature + checksums and gates the latest pointer (S5-5)."
 
   smoke:
     name: Post-publish anonymous smoke (latest gate)
@@ -288,6 +372,7 @@ jobs:
             -o "demiurgos-app-${version}-linux-x86_64.tar.gz" \
             "${base}/demiurgos-app-${version}-linux-x86_64.tar.gz"
           curl -fsSL --proto '=https' --retry 3 --max-time 120 -o SHA256SUMS "${base}/SHA256SUMS"
+          curl -fsSL --proto '=https' --retry 3 --max-time 120 -o SHA256SUMS.minisig "${base}/SHA256SUMS.minisig"
           curl -fsSL --proto '=https' --retry 3 --max-time 120 -o version.json "${base}/version.json"
           curl -fsSL --proto '=https' --retry 3 --max-time 120 -o install.sh "${base}/install.sh"
           curl -fsSL --proto '=https' --retry 3 --max-time 120 \
@@ -295,6 +380,23 @@ jobs:
           curl -fsSL --proto '=https' --retry 3 --max-time 120 \
             -o verify_checksum.sh "${base}/verify_checksum.sh"
           echo "anonymous download OK (plain curl, no token)"
+      - name: Verify the manifest signature BEFORE the checksums (S5b)
+        env:
+          MINISIGN_PUBKEY: ${{ secrets.MINISIGN_PUBKEY }}
+        run: |
+          set -euo pipefail
+          if ! command -v minisign >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq minisign
+          fi
+          if [ -z "${MINISIGN_PUBKEY:-}" ]; then
+            echo "FAIL: secrets.MINISIGN_PUBKEY is not set (S5b signing-key custody note)"
+            exit 1
+          fi
+          pubkey="$(printf '%s\n' "$MINISIGN_PUBKEY" | tail -n1)"
+          minisign -Vm SHA256SUMS -P "$pubkey" \
+            || { echo "FAIL: the published manifest signature does not verify"; exit 1; }
+          echo "manifest signature OK (verified before checksums)"
       - name: Verify checksums
         run: |
           set -euo pipefail
@@ -302,6 +404,8 @@ jobs:
           grep -F "demiurgos-app-${version}-linux-x86_64.tar.gz" SHA256SUMS \
             | sha256sum -c -
       - name: Install into a clean environment and boot
+        env:
+          MINISIGN_PUBKEY: ${{ secrets.MINISIGN_PUBKEY }}
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
@@ -310,15 +414,16 @@ jobs:
           rm -rf "$channel"
           mkdir -p "$channel/scripts/lib" "$channel/uv"
           # fixture channel mirroring the S6 public channel layout (installer
-          # contract): version.json, SHA256SUMS (with the core entries), the
-          # payload archive, and the versioned uv archive.
+          # contract): version.json, SIGNED SHA256SUMS (+ .minisig), the
+          # payload archive, and the versioned uv archive. The published
+          # manifest already carries the core/bootstrap entries — nothing is
+          # appended, so the published signature stays valid.
           cp version.json "$channel/"
           cp SHA256SUMS "$channel/"
+          cp SHA256SUMS.minisig "$channel/"
           cp "demiurgos-app-${version}-linux-x86_64.tar.gz" "$channel/"
           cp install-demiurgos.sh "$channel/scripts/install-demiurgos.sh"
           cp verify_checksum.sh "$channel/scripts/lib/verify_checksum.sh"
-          # core entries must be in the channel checksum file
-          (cd "$channel" && sha256sum -b scripts/install-demiurgos.sh scripts/lib/verify_checksum.sh >> SHA256SUMS)
           # real pinned uv, fetched from the official releases (the baked
           # checksum table is filled in S5b; the seam is the documented seam)
           uv_version="${UV_VERSION:-0.5.24}"
@@ -341,6 +446,9 @@ jobs:
           export DEMIURGOS_URL_BASE="file://$channel"
           export DEMIURGOS_VERSION="$version"
           export DEMIURGOS_UV_SHA256="$uv_sha"
+          # the bootstrap's embedded pubkey seam: the real key from secrets
+          # (the RWS... line; a full .pub file is tolerated too)
+          export MINISIGN_PUBKEY="$(printf '%s\n' "$MINISIGN_PUBKEY" | tail -n1)"
           export DEMIURGOS_NO_BROWSER=1
           export DEMIURGOS_API_PORT=8123
           bash install.sh

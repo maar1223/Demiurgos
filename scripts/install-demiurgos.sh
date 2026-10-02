@@ -11,9 +11,10 @@
 #                            documented manual-install alternative (decision
 #                            #3579, supersedes #3565)
 #   2. version resolve       DEMIURGOS_VERSION else `latest`
-#   3. download+verify       version.json, SHA256SUMS (+ .minisig when
-#                            present), payload from DEMIURGOS_URL_BASE
-#                            (https:// or file:// for hermetic harnesses)
+#   3. download+verify       version.json, SHA256SUMS + SHA256SUMS.minisig,
+#                            payload from DEMIURGOS_URL_BASE (https:// or
+#                            file:// for hermetic harnesses); the manifest
+#                            SIGNATURE is verified BEFORE the checksums (S5b)
 #   4. uv provisioning       pinned UV_VERSION, verified against the baked
 #                            checksum (DEMIURGOS_UV_SHA256 override for tests),
 #                            codesign --verify --deep --strict on macOS (M2)
@@ -257,8 +258,13 @@ fetch_and_verify_payload() {
         || fail "cannot download version.json from $URL_BASE; check the channel and re-run"
     download "$URL_BASE/SHA256SUMS" "$workdir/SHA256SUMS" \
         || fail "cannot download SHA256SUMS from $URL_BASE; check the channel and re-run"
-    # Signature file is downloaded when present; verification is S5b's gate.
+    # Signature file (S5b / task 8.4): the channel manifest MUST be signed,
+    # and the signature is verified BEFORE any checksum is trusted and BEFORE
+    # anything from the channel is executed. Fail-closed when the signature
+    # file is missing or does not verify against the embedded MINISIGN_PUBKEY.
     download "$URL_BASE/SHA256SUMS.minisig" "$workdir/SHA256SUMS.minisig" 2>/dev/null || true
+    verify_minisig "$workdir/SHA256SUMS" "$workdir/SHA256SUMS.minisig" \
+        || fail "the channel manifest signature is INVALID or missing; refusing to trust the channel — fix the channel and re-run"
 
     payload_name="$(json_str "$workdir/version.json" posix)"
     [ -n "$payload_name" ] || payload_name="demiurgos-app-$VERSION.tar.gz"

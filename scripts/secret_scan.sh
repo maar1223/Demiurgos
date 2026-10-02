@@ -90,6 +90,7 @@ DEFAULT_ALLOWLIST=(
     # Scanner self-files: contain the rule definitions by design.
     scripts/secret_scan.sh
     scripts/payload_audit.sh
+    scripts/payload_audit.ps1
     .gitleaks.toml
     # Obvious test fixtures only (fake values for the secret-scan suite).
     src/tools/demiurgos-suite/wiki/tests/test_payload_audit.py

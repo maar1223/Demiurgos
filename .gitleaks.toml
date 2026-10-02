@@ -66,6 +66,7 @@ paths = [
     '''frontend/src/__tests__/MethodologyLibrary.test.tsx''',
     '''scripts/secret_scan.sh''',
     '''scripts/payload_audit.sh''',
+    '''scripts/payload_audit.ps1''',
     '''.gitleaks.toml''',
     '''src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py''',
     '''src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py''',
