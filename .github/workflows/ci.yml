@@ -7,32 +7,51 @@ on:
 
 jobs:
   backend:
-    name: Backend (${{ matrix.os }})
+    # Task 7.4 — wheels-only uv matrix (no setup-python, no bare pip),
+    # mirroring the narrowed support matrix (decision #3579):
+    # Windows amd64; macOS >= 13 arm64; Linux x86_64 / aarch64 glibc >= 2.28.
+    name: Backend wheels-only (${{ matrix.cell }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            cell: linux-x86_64-glibc
+            venv_python: .venv/bin/python
+          - os: ubuntu-24.04-arm
+            cell: linux-aarch64-glibc
+            venv_python: .venv/bin/python
+          - os: macos-14
+            cell: macos-arm64
+            venv_python: .venv/bin/python
+          - os: windows-latest
+            cell: windows-amd64
+            venv_python: .venv/Scripts/python.exe
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Install uv (wheels-only; no setup-python, no bare pip)
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
-      - name: Install backend dependencies
+      - name: Create the wheels-only venv
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install -r src/tools/demiurgos-suite/requirements.txt pytest
+          uv venv .venv --python 3.12
+          uv pip install --python "${{ matrix.venv_python }}" --only-binary=:all: \
+            -r src/tools/demiurgos-suite/requirements.txt pytest
+
+      - name: Closure proof (wheels-only dry-run for this cell)
+        shell: bash
+        run: bash scripts/closure_proof.sh --target "${{ matrix.cell }}" --json
 
       - name: Run backend tests (exclude live-Hermes e2e)
         env:
           DEMIURGOS_AUTH_MODE: local-dev
         shell: bash
         run: |
-          python -m pytest src/tools/demiurgos-suite/wiki/tests/ \
+          "${{ matrix.venv_python }}" -m pytest src/tools/demiurgos-suite/wiki/tests/ \
             --ignore=src/tools/demiurgos-suite/wiki/tests/test_semantic_e2e.py \
             --ignore=src/tools/demiurgos-suite/wiki/tests/test_import_enrichment_e2e.py \
             -k "not live" -q
@@ -46,10 +65,10 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: "20"
           cache: npm
@@ -70,3 +89,212 @@ jobs:
       - name: Build
         run: npm run build
         working-directory: frontend
+
+      - name: Upload the built dist (explicit artifact for the static-serving job)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frontend-dist-ubuntu-latest
+          path: frontend/dist
+
+  static-serving:
+    # Task 7.4 — hermetic static-serving step with the built dist as an
+    # explicit artifact input (S1-9). The conftest autouse fixture keeps the
+    # built dist out of the general backend suite (S1-4); this job runs the
+    # focused suite and the same-origin guard (S1-7) against the real build.
+    name: Static serving (built dist artifact)
+    needs: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Download the built dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: frontend-dist-ubuntu-latest
+          path: dist
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Create the wheels-only venv
+        shell: bash
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python --only-binary=:all: \
+            -r src/tools/demiurgos-suite/requirements.txt pytest
+
+      - name: Assert the built dist has no absolute API origin (S1-7)
+        shell: bash
+        run: |
+          pattern='https?://[A-Za-z0-9.-]+(:[0-9]+)?/api'
+          dist_src="$(dirname "$(find dist -type f -name index.html | head -n1)")"
+          if rg -n --no-messages "$pattern" "$dist_src"; then
+            echo "FAIL: the built dist bakes an absolute API origin"
+            exit 1
+          fi
+          echo "OK: no absolute API origin in the built dist"
+
+      - name: Run the hermetic static-serving suite
+        shell: bash
+        run: |
+          .venv/bin/python -m pytest \
+            src/tools/demiurgos-suite/wiki/tests/test_static_app_serving.py -q
+
+  launcher:
+    # Task 7.4 — launcher behaviour matrix on ubuntu / macOS arm64 / Windows.
+    name: Launcher (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            venv_python: .venv/bin/python
+            launcher_files: >-
+              src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py
+              src/tools/demiurgos-suite/wiki/tests/test_launcher_root_propagation.py
+              src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py
+          - os: macos-14
+            venv_python: .venv/bin/python
+            launcher_files: >-
+              src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py
+              src/tools/demiurgos-suite/wiki/tests/test_launcher_root_propagation.py
+              src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py
+          - os: windows-latest
+            # The PS boot smoke runs in the ps51 job; the windows stub-matrix
+            # placeholder is CI-job-driven (it pytest.fails by design), so the
+            # windows cell here runs the contract suites only.
+            venv_python: .venv/Scripts/python.exe
+            launcher_files: >-
+              src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py
+              src/tools/demiurgos-suite/wiki/tests/test_launcher_root_propagation.py
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Create the wheels-only venv
+        shell: bash
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python "${{ matrix.venv_python }}" --only-binary=:all: \
+            -r src/tools/demiurgos-suite/requirements.txt pytest
+
+      - name: Provision the no-op browser stubs (headless guard)
+        shell: bash
+        run: |
+          mkdir -p /tmp/opencode/noop-browser/bin
+          for n in xdg-open open gio sensible-browser x-www-browser; do
+            if [ ! -x "/tmp/opencode/noop-browser/bin/$n" ]; then
+              printf '#!/bin/sh\necho "noop %s" >> /tmp/opencode/noop-browser/calls.log\nexit 0\n' "$n" \
+                > "/tmp/opencode/noop-browser/bin/$n"
+              chmod +x "/tmp/opencode/noop-browser/bin/$n"
+            fi
+          done
+
+      - name: Run the launcher suites
+        shell: bash
+        run: |
+          "${{ matrix.venv_python }}" -m pytest ${{ matrix.launcher_files }} -q
+
+  installer-smoke:
+    # Task 7.4 — installer smoke against a local file:// fixture channel.
+    name: Installer smoke (file:// fixture)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Create the wheels-only venv (the fixture's stub python)
+        shell: bash
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/bin/python --only-binary=:all: \
+            -r src/tools/demiurgos-suite/requirements.txt pytest
+
+      - name: Run the installer contract suite (file:// fixture cells)
+        shell: bash
+        run: |
+          .venv/bin/python -m pytest \
+            src/tools/demiurgos-suite/wiki/tests/test_installer_contract.py -q
+
+  installer-musl-expected-fail:
+    # Decision #3579: musl/Alpine is NOT a supported target. This job keeps the
+    # documented expected-fail: the installer must fail fast with a clear
+    # message on real Alpine — proving the unsupported path, not reporting it
+    # as a supported target.
+    name: Installer musl/Alpine expected-fail (documented)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Prove the installer fails fast on musl (decision #3579)
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work \
+            -e DEMIURGOS_HOME=/tmp/dem-musl-home \
+            -e DEMIURGOS_VERSION=0.0.0 \
+            alpine:3.20 sh -c '
+              apk add --no-cache bash coreutils curl >/dev/null 2>&1
+              bash scripts/install-demiurgos.sh > /tmp/installer.out 2>&1
+              rc=$?
+              echo "installer exit code: $rc"
+              cat /tmp/installer.out
+              [ "$rc" -ne 0 ] || { echo "FAIL: installer unexpectedly succeeded on musl"; exit 1; }
+              grep -qi "musl" /tmp/installer.out \
+                || { echo "FAIL: expected musl fail-fast message missing"; exit 1; }
+              echo "PASS: musl/Alpine fails fast with a clear message (unsupported target)"
+            '
+
+  ps51:
+    # Task 7.4 — dedicated PowerShell 5.1 job: powershell.exe -NoProfile -File
+    # is exercised by the Windows installer cells and the PS launcher boot
+    # smoke, and every shipped .ps1 is parse-checked under powershell.exe.
+    name: PowerShell 5.1 contract (windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Create the wheels-only venv (the fixture's stub python)
+        shell: bash
+        run: |
+          uv venv .venv --python 3.12
+          uv pip install --python .venv/Scripts/python.exe --only-binary=:all: \
+            -r src/tools/demiurgos-suite/requirements.txt pytest
+
+      - name: PS 5.1 parse check of every shipped script
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($f in @(
+            'install.ps1', 'start-demiurgos.ps1', 'start-api.ps1',
+            'start-gateway.ps1', 'scripts/install-demiurgos.ps1',
+            'scripts/lib/verify_checksum.ps1', 'scripts/install-cli-stack.ps1'
+          )) {
+            [scriptblock]::Create((Get-Content -Raw -LiteralPath $f)) | Out-Null
+          }
+          Write-Output 'PS 5.1 parse OK'
+
+      - name: Installer contract suite (Windows cells, real powershell.exe)
+        shell: bash
+        run: |
+          ".venv/Scripts/python.exe" -m pytest \
+            src/tools/demiurgos-suite/wiki/tests/test_installer_contract.py -q
+
+      - name: PS 5.1 launcher boot smoke (powershell.exe -NoProfile -File)
+        shell: bash
+        run: |
+          ".venv/Scripts/python.exe" -m pytest \
+            src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py -q \
+            -k "powershell or m1"
