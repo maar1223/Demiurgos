@@ -102,8 +102,11 @@ DEFAULT_ALLOWLIST=(
     #     hermetic boot never touches the real home directory (functional).
     #   test_launcher_portable.py   — negative assertions: "H:\"/"C:\Users"
     #     must NOT appear in the shipped launchers.
+    #   test_launcher_boot_rollback.py — same /home/ PATH scrub as the boot
+    #     smoke; rollback harness fixtures (app/<version> stubs).
     src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py
     src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py
+    src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_rollback.py
     # Personal author tooling (Google Sheets): the ONLY residual match is the
     # required Sheets API parameter name `spreadsheetId=`; the real sheet ids
     # are read from env vars (DEMIURGOS_DEV_DIARY_SHEET_ID / GOOGLE_SHEETS_ID),

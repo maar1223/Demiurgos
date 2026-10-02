@@ -273,8 +273,11 @@ class TestLauncherBehaviourMatrix:
 
     _STUB = """#!/usr/bin/env bash
 # Stub uvicorn: keep THIS process's cmdline (stub path + uvicorn module) so
-# the launcher ownership gate matches, while a child python3 http.server
-# holds the requested port. The launcher's _kill_descendants reaps the child.
+# the launcher ownership gate matches, while a child python3 http server
+# holds the requested port and answers 200 on ANY path (the launcher
+# readiness gate is now a real HTTP 200 on /health — S6-2/D6; the plain
+# http.server module would 404 unknown paths). The launcher's
+# _kill_descendants reaps the child.
 PORT=""
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -282,7 +285,12 @@ while [ $# -gt 0 ]; do
         *) shift ;;
     esac
 done
-python3 -m http.server "${PORT:-8000}" --bind 127.0.0.1 &
+python3 -c 'import http.server, sys
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200); self.end_headers(); self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()' "${PORT:-8000}" &
 wait
 """
 

@@ -186,9 +186,9 @@ class TestHermesOptional:
         """S2-2: GATEWAY_PORT is dropped from the REQUIRED readiness gate."""
         text = _text(PORTABLE_LAUNCHER)
         start_block = text[text.index("start_all()"):text.index("open_browser()")]
-        # The API is the only REQUIRED readiness; the gateway is best-effort
-        # and never aborts the boot.
-        assert 'if wait_for_port "$API_PORT"' in start_block
+        # The API is the only REQUIRED readiness (S6-2/D6: a real HTTP 200 on
+        # /health); the gateway is best-effort and never aborts the boot.
+        assert 'if wait_for_health "$API_PORT"' in start_block
         assert 'wait_for_port "$GATEWAY_PORT"' in start_block
         # The gateway wait must not be able to fail the boot: no `return 1`
         # on the gateway path (it appears only in the API-required branch).

@@ -14,6 +14,12 @@
 #
 # Actions: start | restart | stop | install
 #
+# Bounded boot rollback (S6-2/D6): readiness requires a real HTTP 200 on
+# GET /health. When the new version fails to boot, the launcher falls back
+# ONCE to the previous bootable app/<version> (local scan only; no update or
+# download — G9 untouched) and restarts it. Set DEMIURGOS_ROLLBACK_ATTEMPTED=1
+# to suppress the fallback.
+#
 # Headless guard: set DEMIURGOS_NO_BROWSER=1 (or true/yes) to skip the
 # automatic browser launch on `start`. Harnesses, system_control restarts and
 # CI run headless and MUST set it; without it, `start` opens the default
@@ -71,6 +77,15 @@ POINTER_FILE="$CONFIG_DIR/data-root.json"
 # defaults are the product ports.
 API_PORT="${DEMIURGOS_API_PORT:-8000}"
 GATEWAY_PORT="${DEMIURGOS_GATEWAY_PORT:-8642}"
+
+# Health readiness budget (S6-2/D6): the API is "ready" only on a real HTTP
+# 200 from GET /health, not merely a listening port. The budget is bounded
+# (finite attempts); env overrides exist so harnesses can shorten the wait.
+# The defaults are the product behavior (20 polls x 1s, matching the old
+# wait_for_port budget so the happy path is equivalent).
+HEALTH_POLLS="${DEMIURGOS_HEALTH_POLLS:-20}"
+HEALTH_POLL_INTERVAL="${DEMIURGOS_HEALTH_POLL_INTERVAL:-1}"
+
 DESKTOP_SOURCE="$APP_ROOT/desktop/Demiurgos.desktop"
 APPLICATIONS_DIR="$HOME/.local/share/applications"
 DESKTOP_DIR="$HOME/Desktop"
@@ -229,6 +244,99 @@ wait_for_port() {
         seconds=$((seconds + 1))
     done
     return 1
+}
+
+# HTTP 200 on GET /health (S6-2/D6). Prefer curl when present; else fall back
+# to the layout venv python via urllib — no new hard external dependency, the
+# launcher already assumes that interpreter to run the API. Loopback only.
+http_health_ok() {
+    local port="$1"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsS -o /dev/null --max-time 2 "http://127.0.0.1:$port/health" 2>/dev/null
+    elif [ -x "$PYTHON_BIN" ]; then
+        "$PYTHON_BIN" -c 'import sys, urllib.request
+try:
+    sys.exit(0 if urllib.request.urlopen(sys.argv[1], timeout=2).status == 200 else 1)
+except Exception:
+    sys.exit(1)' "http://127.0.0.1:$port/health" >/dev/null 2>&1
+    else
+        return 1
+    fi
+}
+
+# API readiness = a real HTTP 200 on /health, bounded (S6-2/D6). This replaces
+# the plain port-listen gate for the API: a process can hold the port while
+# serving nothing, and the rollback needs the health signal. The happy-path
+# outcome is equivalent to the old wait_for_port budget.
+wait_for_health() {
+    local port="$1" polls=0
+    while [ "$polls" -lt "$HEALTH_POLLS" ]; do
+        if http_health_ok "$port"; then return 0; fi
+        sleep "$HEALTH_POLL_INTERVAL"
+        polls=$((polls + 1))
+    done
+    return 1
+}
+
+# Rollback target scan (S6-2/D6): local $INSTALL_ROOT/app/<version>
+# directories ONLY, never the network. The previous version is the newest
+# OTHER version directory (by directory mtime) that is bootable (contains the
+# launcher and the layout venv). Rollback only: no update/download logic
+# (G9 untouched).
+find_previous_version() {
+    local current_dir current_name dir mtime
+    local newest="" newest_mtime=""
+    # Resolve the ACTIVE version: in the installed layout APP_ROOT is the
+    # `current` symlink itself, so pwd -P yields app/<version>; in dev the
+    # checkout name is used and no app/ siblings exist, so none is found.
+    current_dir="$(cd "$APP_ROOT" 2>/dev/null && pwd -P || printf '%s' "$APP_ROOT")"
+    current_name="$(basename "$current_dir")"
+    for dir in "$INSTALL_ROOT"/app/*/; do
+        [ -d "$dir" ] || continue
+        [ "$(basename "$dir")" = "$current_name" ] && continue
+        # Bootable: the launcher and the layout venv must both exist.
+        [ -f "$dir/scripts/start-demiurgos.sh" ] || continue
+        [ -d "$dir/.venv" ] || continue
+        # Directory mtime: GNU stat -c %Y, BSD/macOS stat -f %m.
+        mtime="$(stat -c %Y "$dir" 2>/dev/null || stat -f %m "$dir" 2>/dev/null || true)"
+        [ -n "$mtime" ] || continue
+        if [ -z "$newest_mtime" ] || [ "$mtime" -gt "$newest_mtime" ]; then
+            newest="$dir"
+            newest_mtime="$mtime"
+        fi
+    done
+    if [ -n "$newest" ]; then
+        basename "$newest"
+    fi
+}
+
+# Bounded boot rollback (S6-2/D6): at most ONE fallback to the previous
+# bootable version when the new version fails to boot. Guarded by an exported
+# env marker so a broken previous version cannot loop. On success the process
+# is replaced (exec) by the launcher from the flipped `current`; on failure an
+# actionable message is printed and a non-zero status returned.
+rollback_if_boot_failed() {
+    if [ "${DEMIURGOS_ROLLBACK_ATTEMPTED:-}" = "1" ]; then
+        printf 'Boot failed again after the rollback; no further fallback.\n' >&2
+        printf 'Check the API log: %s\n' "$API_LOG" >&2
+        return 1
+    fi
+    local prev
+    prev="$(find_previous_version)"
+    if [ -z "$prev" ]; then
+        printf 'No bootable previous version found under %s/app; cannot roll back.\n' "$INSTALL_ROOT" >&2
+        printf 'Check the API log: %s\n' "$API_LOG" >&2
+        return 1
+    fi
+    # Best-effort: stop the broken API (pid file or port owner) so the
+    # previous version can bind the port. Failure must not abort the flip.
+    stop_component api || true
+    printf 'API failed to become ready; rolling back current -> app/%s\n' "$prev" >&2
+    ln -sfn "app/$prev" "$INSTALL_ROOT/current"
+    export DEMIURGOS_ROLLBACK_ATTEMPTED=1
+    # Re-exec the launcher from the flipped `current` so every derived path
+    # resolves against the previous version (S0-C rule 1).
+    exec "$INSTALL_ROOT/current/scripts/start-demiurgos.sh" restart
 }
 
 # Wait until a port is no longer listening (bounded). `restart` starts right
@@ -400,11 +508,14 @@ start_all() {
 
     # Required readiness covers the API ONLY (S2-2). The gateway is best-effort:
     # when present it is reported, but its absence never aborts the boot.
-    if wait_for_port "$API_PORT"; then
+    if wait_for_health "$API_PORT"; then
         printf 'API ready on 127.0.0.1:%s\n' "$API_PORT"
     else
         printf 'API did not become ready; check its log\n' >&2
-        return 1
+        # S6-2/D6: bounded boot rollback — fall back to the previous bootable
+        # version when the new one fails to boot. `exec` replaces this process
+        # on success, so a successful rollback never returns here.
+        rollback_if_boot_failed || return 1
     fi
     if [ -n "$HERMES_BIN" ] && [ -x "$HERMES_BIN" ]; then
         if wait_for_port "$GATEWAY_PORT"; then

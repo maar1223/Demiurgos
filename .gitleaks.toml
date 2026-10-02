@@ -70,6 +70,7 @@ paths = [
     '''.gitleaks.toml''',
     '''src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py''',
     '''src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py''',
+    '''src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_rollback.py''',
     '''src/tools/dev_diary.py''',
     '''src/tools/sync-ideas.py''',
 ]
