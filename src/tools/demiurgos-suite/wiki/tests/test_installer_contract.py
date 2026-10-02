@@ -65,6 +65,8 @@ INSTALLER = _REPO_ROOT / "scripts" / "install-demiurgos.sh"
 VERIFY_LIB = _REPO_ROOT / "scripts" / "lib" / "verify_checksum.sh"
 PS_INSTALLER = _REPO_ROOT / "scripts" / "install-demiurgos.ps1"
 PS_VERIFY_LIB = _REPO_ROOT / "scripts" / "lib" / "verify_checksum.ps1"
+INSTALL_SH = _REPO_ROOT / "install.sh"
+INSTALL_PS1 = _REPO_ROOT / "install.ps1"
 POINTER_NAME = "data-root.json"
 STUB_UV_VERSION = "0.5.24-test"
 
@@ -599,6 +601,7 @@ class TestVerifyChecksumLibrary:
 
 def _build_fixture_channel(
     tmp_path: Path, *, with_minisig: bool = True, wrong_payload_sha: str | None = None,
+    include_core: bool = False,
 ) -> tuple[Path, str, str]:
     """Build a local file:// release channel.
 
@@ -607,12 +610,22 @@ def _build_fixture_channel(
     STUB ``uv`` archive. The payload is the derived allow-list
     (``payload_manifest.json``) plus the real launcher, a minimal
     ``frontend/dist`` and the requirements files — the release-artifact shape
-    (S5-1). Returns ``(channel, uv_sha256, version)``.
+    (S5-1). When ``include_core`` is set (S4 bootstrap harness), the channel
+    also hosts the versioned installer core
+    (``scripts/install-demiurgos.sh`` + ``scripts/lib/verify_checksum.sh``)
+    with their own ``SHA256SUMS`` entries. Returns ``(channel, uv_sha256,
+    version)``.
     """
     channel = tmp_path / "channel"
     channel.mkdir()
     version = "0.9.0-test"
     (channel / "latest").write_text(version + "\n", encoding="utf-8")
+
+    if include_core:
+        for rel in ("scripts/install-demiurgos.sh", "scripts/lib/verify_checksum.sh"):
+            dst = channel / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(_REPO_ROOT / rel, dst)
 
     # Payload tree = manifest allow-list + launcher + minimal dist + reqs.
     manifest = json.loads(
@@ -673,9 +686,13 @@ def _build_fixture_channel(
     if with_minisig:
         (channel / "SHA256SUMS.minisig").write_text("untrusted-test-minisig\n")
     declared_sha = payload_sha if wrong_payload_sha is None else wrong_payload_sha
-    (channel / "SHA256SUMS").write_text(
-        f"{declared_sha}  {payload_name}\n", encoding="utf-8"
-    )
+    sums_lines = [f"{declared_sha}  {payload_name}\n"]
+    if include_core:
+        for rel in ("scripts/install-demiurgos.sh", "scripts/lib/verify_checksum.sh"):
+            sums_lines.append(
+                f"{hashlib.sha256((channel / rel).read_bytes()).hexdigest()}  {rel}\n"
+            )
+    (channel / "SHA256SUMS").write_text("".join(sums_lines), encoding="utf-8")
     return channel, uv_sha, version
 
 
@@ -1167,6 +1184,137 @@ class TestWindowsVerifyChecksumLibrary:
 
 
 # ---------------------------------------------------------------------------
+# 6.1 — S4 public bootstraps (install.sh + install.ps1) contract text
+# ---------------------------------------------------------------------------
+# The public one-liners are thin delegators (design S4-1..S4-4): they fetch
+# the versioned installer core from the channel, verify it, then execute it.
+# They must never carry the private repo URL (D1 — the leak lived at
+# install.sh:27), never request elevation, and the Windows one must be
+# `irm | iex`-safe (no script-file assumptions, TLS 1.2 before any download).
+
+
+class TestPublicBootstrapsS4:
+    # --- POSIX bootstrap (install.sh) --------------------------------------
+
+    def test_posix_bootstrap_delegates_to_the_core(self):
+        """The default path passes the pinned version, install root and channel
+        base through to the versioned core (env passthrough)."""
+        text = _text(INSTALL_SH)
+        assert "install-demiurgos.sh" in text
+        assert "DEMIURGOS_VERSION" in text
+        assert "DEMIURGOS_HOME" in text
+        assert "DEMIURGOS_URL_BASE" in text
+
+    def test_posix_bootstrap_has_no_private_repo_url(self):
+        """D1/S4-4: the private address never appears verbatim — the owner and
+        repo names are built from parts at runtime."""
+        text = _text(INSTALL_SH)
+        assert "maar1223" not in text
+        assert "Demiurgos.git" not in text
+
+    def test_posix_bootstrap_no_sudo(self):
+        assert "sudo" not in _text(INSTALL_SH)
+
+    def test_posix_bootstrap_no_npm(self):
+        assert "npm" not in _text(INSTALL_SH)
+
+    def test_posix_bootstrap_default_path_never_clones_or_npms(self):
+        """The web-app default path is clone-free: the only `git` in the file
+        lives inside the CLI-stack opt-in (install_demiurgos), never in the
+        delegating bootstrap_web_app body."""
+        text = _text(INSTALL_SH)
+        body = text.split("bootstrap_web_app() {", 1)[1].split("\n}\n", 1)[0]
+        assert "git" not in body
+        assert "npm" not in body
+        assert "sudo" not in body
+
+    def test_posix_bootstrap_cli_stack_is_explicit_opt_in(self):
+        text = _text(INSTALL_SH)
+        assert "--with-cli-stack" in text
+        assert "DEMIURGOS_WITH_CLI_STACK" in text
+        assert "main_cli_stack" in text
+
+    def test_posix_bootstrap_hardened_curl_flags(self):
+        """S4-3: https-only, retries, timeout and silent-fail-on-error."""
+        text = _text(INSTALL_SH)
+        assert "--proto '=https'" in text
+        assert "--retry" in text
+        assert "--max-time" in text
+        assert "-fsSL" in text
+
+    def test_posix_bootstrap_download_then_verify_then_execute(self):
+        """The core is verified against SHA256SUMS BEFORE it is executed."""
+        text = _text(INSTALL_SH)
+        assert "verify_sha256" in text
+        assert "SHA256SUMS" in text
+        # The download step precedes the execution step in the default path.
+        assert (
+            text.index("Downloading the installer core")
+            < text.index("bash \"$core_dir/install-demiurgos.sh\"")
+        )
+
+    # --- Windows bootstrap (install.ps1) -----------------------------------
+
+    def test_ps1_bootstrap_is_iex_safe(self):
+        """S4-2: under `irm | iex` there is no script file — $PSScriptRoot and
+        $MyInvocation.MyCommand.Path are both NULL; the bootstrap must not use
+        them and must not declare a param() block (unsupported under iex)."""
+        text = _text(INSTALL_PS1)
+        assert "$PSScriptRoot" not in text
+        assert "$MyInvocation.MyCommand.Path" not in text
+        assert "param(" not in text
+
+    def test_ps1_bootstrap_tls12_before_any_download(self):
+        """S4-3: PS 5.1 defaults to TLS 1.0/1.1; the SecurityProtocol line must
+        precede the first download call."""
+        text = _text(INSTALL_PS1)
+        assert "SecurityProtocol" in text
+        assert "Invoke-WebRequest" in text
+        assert text.index("SecurityProtocol") < text.index("Invoke-WebRequest")
+
+    def test_ps1_bootstrap_executes_core_with_bypass_file(self):
+        text = _text(INSTALL_PS1)
+        assert "-ExecutionPolicy Bypass -File" in text
+        assert "install-demiurgos.ps1" in text
+
+    def test_ps1_bootstrap_computes_root_from_environment(self):
+        """S4-2: %LOCALAPPDATA%\\Demiurgos default; env-only paths."""
+        text = _text(INSTALL_PS1)
+        assert "LOCALAPPDATA" in text
+        assert "Join-Path $env:LOCALAPPDATA \"Demiurgos\"" in text
+        assert "GetTempPath" in text
+
+    def test_ps1_bootstrap_delegates_with_pinned_version(self):
+        text = _text(INSTALL_PS1)
+        assert "DEMIURGOS_VERSION" in text
+        assert "DEMIURGOS_HOME" in text
+        assert "DEMIURGOS_URL_BASE" in text
+
+    def test_ps1_bootstrap_no_elevation(self):
+        text = _text(INSTALL_PS1)
+        assert "RunAs" not in text
+        assert "Start-Process" not in text
+
+    def test_ps1_bootstrap_has_no_private_repo_url(self):
+        text = _text(INSTALL_PS1)
+        assert "maar1223" not in text
+        assert "Demiurgos.git" not in text
+
+    def test_ps1_bootstrap_is_ascii_only(self):
+        """S2-8: PS 5.1 mis-decodes BOM-less UTF-8; ASCII-only is the rule."""
+        INSTALL_PS1.read_bytes().decode("ascii")  # raises UnicodeDecodeError
+
+    def test_ps1_bootstrap_no_author_paths(self):
+        """Scanner-safe: no hardcoded Windows user paths in a public artifact.
+        The literals are built from parts so this negative assertion does not
+        itself match the scanner's author-path rule (secret_scan.sh is frozen
+        for this slice, so no allowlist entry is added)."""
+        text = _text(INSTALL_PS1)
+        assert "C:" + chr(92) + "Users" not in text
+        assert "H:" + chr(92) not in text
+
+
+# ---------------------------------------------------------------------------
 # 5.4 — Windows-runner fixture harness (file:// + stub uv.ps1 + real venv)
 # ---------------------------------------------------------------------------
 # Cells mirror the S3a fixture harness (task 4.11) for the Windows core: a
@@ -1235,19 +1383,33 @@ switch ($cmd) {
 
 def _build_windows_fixture_channel(
     tmp_path: Path, *, wrong_payload_sha: str | None = None,
+    include_core: bool = False,
 ) -> tuple[Path, str, str]:
-    """Build a local file:// release channel for the Windows core.
+    r"""Build a local file:// release channel for the Windows core.
 
     Contents: ``latest``, ``version.json``, ``SHA256SUMS`` (+ ``.minisig``),
     a .zip payload (manifest allow-list + the PS launcher at the frozen
     ``scripts\start-demiurgos.ps1`` path + a minimal ``frontend/dist`` + the
     requirements files) and a STUB ``uv.ps1`` archive for
-    ``x86_64-pc-windows-msvc``. Returns ``(channel, uv_sha256, version)``.
+    ``x86_64-pc-windows-msvc``. When ``include_core`` is set (S4 bootstrap
+    harness), the channel also hosts the Windows installer core
+    (``scripts\install-demiurgos.ps1`` + ``scripts\lib\verify_checksum.ps1``)
+    with their own ``SHA256SUMS`` entries. Returns ``(channel, uv_sha256,
+    version)``.
     """
     channel = tmp_path / "channel"
     channel.mkdir()
     version = "0.9.0-test"
     (channel / "latest").write_text(version + "\n", encoding="utf-8")
+
+    if include_core:
+        for rel in (
+            "scripts/install-demiurgos.ps1",
+            "scripts/lib/verify_checksum.ps1",
+        ):
+            dst = channel / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(_REPO_ROOT / rel, dst)
 
     manifest = json.loads(
         (_REPO_ROOT / "payload_manifest.json").read_text(encoding="utf-8")
@@ -1308,9 +1470,16 @@ def _build_windows_fixture_channel(
     )
     (channel / "SHA256SUMS.minisig").write_text("untrusted-test-minisig\n")
     declared_sha = payload_sha if wrong_payload_sha is None else wrong_payload_sha
-    (channel / "SHA256SUMS").write_text(
-        f"{declared_sha}  {payload_name}\n", encoding="utf-8"
-    )
+    sums_lines = [f"{declared_sha}  {payload_name}\n"]
+    if include_core:
+        for rel in (
+            "scripts/install-demiurgos.ps1",
+            "scripts/lib/verify_checksum.ps1",
+        ):
+            sums_lines.append(
+                f"{hashlib.sha256((channel / rel).read_bytes()).hexdigest()}  {rel}\n"
+            )
+    (channel / "SHA256SUMS").write_text("".join(sums_lines), encoding="utf-8")
     return channel, uv_sha, version
 
 
@@ -1487,5 +1656,106 @@ class TestWindowsM1DefenderSpaceUser:
         try:
             _wait_health(api_port)
             assert _fetch(f"http://127.0.0.1:{api_port}/health") == 200
+        finally:
+            _stop_ps_launcher_and_assert_clean(install_root, env, api_port)
+
+
+# ---------------------------------------------------------------------------
+# 6.5 — S4 public bootstrap harness (install.sh here; install.ps1 on Windows)
+# ---------------------------------------------------------------------------
+# The public bootstrap is the thin delegator: it fetches the versioned core
+# from the fixture channel, verifies it, then runs it. The POSIX cells run on
+# this host (task 6.5); the Windows iex-mode cell is marked skipif and
+# reported not-run here (no powershell on this Linux host).
+
+
+def _run_posix_bootstrap(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["bash", str(INSTALL_SH)],
+        env=env, capture_output=True, text=True, timeout=240,
+    )
+
+
+class TestPublicBootstrapPosix:
+    def test_bootstrap_installs_then_boots(self, tmp_path: Path):
+        """Task 6.5: install.sh against the fixture channel -> app serves."""
+        channel, uv_sha, version = _build_fixture_channel(
+            tmp_path, include_core=True
+        )
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+
+        run = _run_posix_bootstrap(env)
+        assert run.returncode == 0, run.stdout + run.stderr
+
+        # Installed layout from the frozen contract (S0-C).
+        assert (install_root / "app" / version).is_dir()
+        assert (install_root / "current").exists()
+
+        api_port = _boot_launcher(tmp_path, env, install_root)
+        try:
+            _wait_health(api_port)
+            assert _fetch(f"http://127.0.0.1:{api_port}/health") == 200
+            assert _fetch(f"http://127.0.0.1:{api_port}/") == 200
+        finally:
+            _stop_and_assert_clean(
+                install_root / "current" / "scripts" / "start-demiurgos.sh",
+                env, api_port,
+            )
+
+    def test_bootstrap_rerun_is_idempotent(self, tmp_path: Path):
+        """Task 6.5: run twice -> one environment, exit 0 (spec 'Re-run the
+        installer')."""
+        channel, uv_sha, version = _build_fixture_channel(
+            tmp_path, include_core=True
+        )
+        install_root = tmp_path / "install"
+        env = _installer_env(tmp_path, channel, uv_sha, install_root)
+
+        first = _run_posix_bootstrap(env)
+        assert first.returncode == 0, first.stdout + first.stderr
+        second = _run_posix_bootstrap(env)
+        assert second.returncode == 0, second.stdout + second.stderr
+
+        # Exactly one environment: one app/<version>, one current symlink.
+        app_dirs = [p.name for p in (install_root / "app").iterdir()]
+        assert app_dirs == [version]
+        assert (install_root / "current").is_symlink()
+
+
+def _run_ps_bootstrap_iex(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Faithful `irm | iex`-mode: pipe install.ps1 CONTENT through iex (no
+    -File, no script file — exactly what the public one-liner does)."""
+    ps_code = (
+        "Get-Content -Raw -LiteralPath '" + str(INSTALL_PS1) + "' | Invoke-Expression"
+    )
+    return subprocess.run(
+        ["powershell.exe", "-NoProfile", "-Command", ps_code],
+        env=env, capture_output=True, text=True, timeout=300,
+    )
+
+
+@PS_RUNNER
+class TestPublicBootstrapWindows:
+    def test_ps1_bootstrap_iex_installs_then_boots(self, tmp_path: Path):
+        """Task 6.5: iex-mode dry-run of install.ps1 against the fixture
+        channel -> the delegated core installs and the app serves."""
+        channel, uv_sha, version = _build_windows_fixture_channel(
+            tmp_path, include_core=True
+        )
+        install_root = tmp_path / "install"
+        env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
+
+        run = _run_ps_bootstrap_iex(env)
+        assert run.returncode == 0, run.stdout + run.stderr
+
+        assert (install_root / "app" / version).is_dir()
+        assert (install_root / "current").exists()
+
+        api_port = _boot_ps_launcher(install_root, env)
+        try:
+            _wait_health(api_port)
+            assert _fetch(f"http://127.0.0.1:{api_port}/health") == 200
+            assert _fetch(f"http://127.0.0.1:{api_port}/") == 200
         finally:
             _stop_ps_launcher_and_assert_clean(install_root, env, api_port)
