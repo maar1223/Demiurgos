@@ -8,6 +8,8 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { LocaleForm, authHint } from "@/components/organisms/LocaleForm";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { markFirstValueHandoffPending } from "@/lib/firstValueHandoff";
+import { setCurrentWorld } from "@/lib/currentWorld";
 import type { MessageKey } from "@/i18n/messages";
 
 /**
@@ -105,7 +107,19 @@ export default function Onboarding() {
           return;
         }
         setBusy(false);
-        navigate("/wiki", { replace: true });
+        if (result.kind === "created") {
+          // First-value handoff (first-value-handoff spec): the created
+          // world is marked pending so its WikiWorld shows the one-time hero;
+          // it is also the active world for the session.
+          setCurrentWorld(result.name);
+          markFirstValueHandoffPending(result.name);
+          navigate(`/wiki/${encodeURIComponent(result.name)}`, {
+            replace: true,
+          });
+        } else {
+          // already_exists / io_error keep the prior landing.
+          navigate("/wiki", { replace: true });
+        }
       })
       .catch((cause: unknown) => {
         setWriteError(cause);
@@ -188,6 +202,7 @@ export default function Onboarding() {
               loreSkeleton={loreSkeleton}
               onLoreSkeleton={setLoreSkeleton}
               busy={busy}
+              error={writeError}
               onSubmit={handleCreateWorld}
             />
           )
@@ -219,6 +234,7 @@ function WorldStep(props: {
   loreSkeleton: boolean;
   onLoreSkeleton: (v: boolean) => void;
   busy: boolean;
+  error: unknown;
   onSubmit: (e: FormEvent) => void;
 }) {
   const { t } = useAppLanguage();
@@ -250,6 +266,14 @@ function WorldStep(props: {
           {t("onboarding.world.loreSkeleton")}
         </label>
       </div>
+
+      {!!props.error && (
+        <p className="mt-4 text-small text-status-error" role="alert">
+          {props.error instanceof Error
+            ? props.error.message
+            : t("onboarding.world.createError")}
+        </p>
+      )}
 
       <div className="mt-6 flex items-center justify-end">
         <Button type="submit" disabled={props.busy || !props.worldName.trim()}>

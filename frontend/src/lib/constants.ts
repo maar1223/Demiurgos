@@ -105,6 +105,13 @@ export const ACTIVE_TALLER_STORAGE_KEY = "demiurgos-active-taller";
 export const COMPANION_LATENCY_NOTIFIED_KEY =
   "demiurgos-companion-latency-notified";
 
+/** localStorage key persisting the worlds awaiting the one-time first-value
+ *  handoff hero (first-value-handoff spec): JSON string-array of world
+ *  names — the hero shows once per newly created world, cleared on dismissal
+ *  or on any action choice. */
+export const FIRST_VALUE_HANDOFF_PENDING_KEY =
+  "demiurgos-first-value-handoff-pending";
+
 /**
  * Default active Taller shown before any explicit selection (REQ-TRE-1).
  * Value is an `OPERATIONAL_TALLERES` short key (matching the `taller` field a

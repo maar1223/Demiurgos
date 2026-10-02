@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useParams,
+} from "react-router-dom";
 import { renderHook } from "@testing-library/react";
 import Onboarding from "@/pages/Onboarding";
 import { useOnboardingGate } from "@/hooks/useOnboardingGate";
 import { ApiError } from "@/api/types";
+import { FIRST_VALUE_HANDOFF_PENDING_KEY } from "@/lib/constants";
 import { tEs } from "@/__tests__/i18nTestUtils";
 
 vi.mock("@/api/onboarding", () => ({
@@ -81,10 +87,20 @@ function renderOnboarding(initialEntry = "/onboarding") {
       <Routes>
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/wiki" element={<div data-testid="wiki-home">wiki</div>} />
+        <Route
+          path="/wiki/:mundo"
+          element={<WikiWorldProbe />}
+        />
         <Route path="/perfil" element={<div data-testid="perfil">perfil</div>} />
       </Routes>
     </MemoryRouter>,
   );
+}
+
+/** Probe rendering the current :mundo param, to assert the landing world. */
+function WikiWorldProbe() {
+  const { mundo } = useParams<{ mundo: string }>();
+  return <div data-testid="wiki-world">world:{mundo}</div>;
 }
 
 describe("useOnboardingGate (ONB-1.1 first-run gate)", () => {
@@ -276,7 +292,7 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("creates a world and completes onboarding", async () => {
+  it("creates a world, sets the handoff pending flag and lands on its wiki", async () => {
     (getOnboardingStatus as Mock).mockResolvedValue(ACCOUNT_DONE_STATUS);
     (createWorld as Mock).mockResolvedValue({ kind: "created", name: "mi-mundo", path: "/x", message: "" });
     const user = userEvent.setup();
@@ -287,7 +303,92 @@ describe("Onboarding page (ONB-1.1/ONB-1.4 + account step R-AC-01)", () => {
     await user.click(screen.getByRole("button", { name: "Crear mundo" }));
 
     await waitFor(() => expect(createWorld).toHaveBeenCalledWith("mi-mundo", true));
+    expect(await screen.findByTestId("wiki-world")).toHaveTextContent("world:mi-mundo");
+    expect(localStorage.getItem(FIRST_VALUE_HANDOFF_PENDING_KEY)).toBe(
+      '["mi-mundo"]',
+    );
+  });
+
+  it("shows the collision error and sets no pending flag", async () => {
+    (getOnboardingStatus as Mock).mockResolvedValue(ACCOUNT_DONE_STATUS);
+    (createWorld as Mock).mockResolvedValue({
+      kind: "collision",
+      name: "mi-mundo",
+      path: null,
+      message: "Ya existe un mundo con ese nombre",
+    });
+    const user = userEvent.setup();
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: tEs("onboarding.world.title") });
+    await user.type(screen.getByLabelText("Nombre del mundo"), "mi-mundo");
+    await user.click(screen.getByRole("button", { name: "Crear mundo" }));
+
+    expect(
+      await screen.findByRole("alert"),
+    ).toHaveTextContent(/ya existe un mundo/i);
+    expect(localStorage.getItem(FIRST_VALUE_HANDOFF_PENDING_KEY)).toBeNull();
+    expect(screen.queryByTestId("wiki-world")).not.toBeInTheDocument();
+  });
+
+  it("shows the invalid-name error and sets no pending flag", async () => {
+    (getOnboardingStatus as Mock).mockResolvedValue(ACCOUNT_DONE_STATUS);
+    (createWorld as Mock).mockResolvedValue({
+      kind: "invalid_name",
+      name: "mi-mundo",
+      path: null,
+      message: "El nombre no es válido",
+    });
+    const user = userEvent.setup();
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: tEs("onboarding.world.title") });
+    await user.type(screen.getByLabelText("Nombre del mundo"), "mi-mundo");
+    await user.click(screen.getByRole("button", { name: "Crear mundo" }));
+
+    expect(
+      await screen.findByRole("alert"),
+    ).toHaveTextContent(/no es válido/i);
+    expect(localStorage.getItem(FIRST_VALUE_HANDOFF_PENDING_KEY)).toBeNull();
+    expect(screen.queryByTestId("wiki-world")).not.toBeInTheDocument();
+  });
+
+  it("preserves /wiki landing for already_exists with no pending flag", async () => {
+    (getOnboardingStatus as Mock).mockResolvedValue(ACCOUNT_DONE_STATUS);
+    (createWorld as Mock).mockResolvedValue({
+      kind: "already_exists",
+      name: "mi-mundo",
+      path: "/x",
+      message: "",
+    });
+    const user = userEvent.setup();
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: tEs("onboarding.world.title") });
+    await user.type(screen.getByLabelText("Nombre del mundo"), "mi-mundo");
+    await user.click(screen.getByRole("button", { name: "Crear mundo" }));
+
     expect(await screen.findByTestId("wiki-home")).toBeInTheDocument();
+    expect(localStorage.getItem(FIRST_VALUE_HANDOFF_PENDING_KEY)).toBeNull();
+  });
+
+  it("preserves /wiki landing for io_error with no pending flag", async () => {
+    (getOnboardingStatus as Mock).mockResolvedValue(ACCOUNT_DONE_STATUS);
+    (createWorld as Mock).mockResolvedValue({
+      kind: "io_error",
+      name: "mi-mundo",
+      path: null,
+      message: "No se pudo escribir el mundo",
+    });
+    const user = userEvent.setup();
+    renderOnboarding();
+
+    await screen.findByRole("heading", { name: tEs("onboarding.world.title") });
+    await user.type(screen.getByLabelText("Nombre del mundo"), "mi-mundo");
+    await user.click(screen.getByRole("button", { name: "Crear mundo" }));
+
+    expect(await screen.findByTestId("wiki-home")).toBeInTheDocument();
+    expect(localStorage.getItem(FIRST_VALUE_HANDOFF_PENDING_KEY)).toBeNull();
   });
 
   it("surfaces a clear hint when a gated write is unauthenticated (fail closed)", async () => {

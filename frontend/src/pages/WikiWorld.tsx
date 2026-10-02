@@ -7,10 +7,12 @@ import { WikiHomeLayout } from "@/components/templates/WikiHomeLayout";
 import { SectionCard } from "@/components/molecules/SectionCard";
 import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { FirstValueHandoff } from "@/components/organisms/FirstValueHandoff";
 import { Spinner } from "@/components/atoms/Spinner";
 import { Icon } from "@/components/atoms/Icon";
 import { VALID_SECTIONS, SECTION_LABELS, ROUTES, type Section } from "@/lib/constants";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { useFirstValueHandoff } from "@/hooks/useFirstValueHandoff";
 import type { WorldInfo } from "@/api/types";
 import { cn } from "@/lib/utils";
 
@@ -34,6 +36,8 @@ export default function WikiWorld() {
   const { worlds, isLoading, error, mutate } = useWorlds();
 
   const world = worlds.find((w) => w.name === mundo);
+
+  const { visible, complete } = useFirstValueHandoff(world?.name);
 
   useEffect(() => {
     if (mundo && world && getCurrentWorld() !== mundo) {
@@ -100,6 +104,28 @@ export default function WikiWorld() {
 
       {!isLoading && !error && world && (
         <>
+          {visible && (
+            <div className="col-span-full">
+              <FirstValueHandoff
+                worldName={world.name}
+                onImport={() => {
+                  complete();
+                  navigate(
+                    `/wiki/${encodeURIComponent(world.name)}/importer`,
+                  );
+                }}
+                onWriteNote={() => {
+                  complete();
+                  navigate(`/wiki/${encodeURIComponent(world.name)}/lore`);
+                }}
+                onSetupAssistant={() => {
+                  complete();
+                  navigate("/perfil?tab=conexiones");
+                }}
+                onDismiss={complete}
+              />
+            </div>
+          )}
           {VALID_SECTIONS.map((section) => (
             <SectionCard
               key={section}
