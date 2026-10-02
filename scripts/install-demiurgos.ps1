@@ -243,6 +243,14 @@ function Invoke-FetchAndVerifyPayload {
     # Signature file is downloaded when present; verification is S5b's gate.
     try { Invoke-Download "$urlBase/SHA256SUMS.minisig" (Join-Path $workdir "SHA256SUMS.minisig") } catch { }
 
+    # S5b (task 8.4): the manifest signature MUST be verified BEFORE any
+    # checksum is trusted - the exact ordering of the POSIX core. Fail-closed:
+    # a missing or invalid signature aborts the install, because a same-channel
+    # unsigned manifest is tamper-together.
+    if (-not (Test-Minisig -SumsFile (Join-Path $workdir "SHA256SUMS") -SignatureFile (Join-Path $workdir "SHA256SUMS.minisig"))) {
+        Fail "signed-manifest verification failed; the channel manifest is tampered or unsigned - fix the channel and re-run"
+    }
+
     $payloadName = Get-PayloadName (Join-Path $workdir "version.json") $version
     $script:payloadFile = Join-Path $workdir $payloadName
     Invoke-Download "$urlBase/$payloadName" $payloadFile

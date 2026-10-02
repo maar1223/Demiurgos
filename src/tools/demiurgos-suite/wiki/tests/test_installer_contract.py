@@ -629,10 +629,13 @@ class TestVerifyChecksumLibrary:
 # checksums, so the runtime harness cells that run the REAL installer/core
 # need a REAL channel signature (ephemeral keypair, never committed). Cells
 # skip honestly when minisign is not on PATH; CI installs it.
-needs_minisign = pytest.mark.skipif(
-    shutil.which("minisign") is None,
-    reason="the signed-channel runtime harness needs minisign on PATH",
-)
+# Importing _minisign_stub provisions a CLI-only stub minisign when no real
+# one is installed (import side effect), so the signed-channel cells RUN
+# instead of silently skipping. With a real minisign present (CI) they
+# exercise the real Ed25519 round-trip; with the stub they exercise the
+# installer's ordering and fail-closed behavior. The stub never proves the
+# crypto.
+import _minisign_stub  # noqa: F401
 
 
 def _sign_fixture_manifest(channel: Path, tmp_path: Path) -> None:
@@ -836,7 +839,6 @@ def _read_pointer(config_dir: Path):
 
 
 class TestFixtureChannelInstall:
-    @needs_minisign
     def test_install_then_boot_serves_health_and_root(self, tmp_path: Path):
         channel, uv_sha, version = _build_fixture_channel(tmp_path)
         install_root = tmp_path / "install"
@@ -872,7 +874,6 @@ class TestFixtureChannelInstall:
                 env, api_port,
             )
 
-    @needs_minisign
     def test_rerun_is_idempotent_single_env(self, tmp_path: Path):
         channel, uv_sha, version = _build_fixture_channel(tmp_path)
         install_root = tmp_path / "install"
@@ -909,7 +910,6 @@ class TestFixtureChannelInstall:
 
 
 class TestChecksumMismatchAborts:
-    @needs_minisign
     def test_wrong_sha256_aborts_with_no_runnable_state(self, tmp_path: Path):
         channel, uv_sha, _version = _build_fixture_channel(
             tmp_path, wrong_payload_sha="0" * 64
@@ -930,7 +930,6 @@ class TestChecksumMismatchAborts:
 
 
 class TestM3Coexistence:
-    @needs_minisign
     def test_existing_repo_clone_and_pointer_preserved(self, tmp_path: Path):
         """M3: an existing ~/.demiurgos/repo CLI clone is neither clobbered nor
         adopted as the app root; a pointer pointing at the clone is preserved."""
@@ -972,7 +971,6 @@ class TestM3Coexistence:
 
 
 class TestPointerAndEnvSeed:
-    @needs_minisign
     def test_python_reads_what_bash_wrote(self, tmp_path: Path):
         """Task 4.9: the pointer written by the installer is byte-compatible
         with data_root.py — Python reads back exactly the bootstrapped root."""
@@ -994,7 +992,6 @@ class TestPointerAndEnvSeed:
         # data root, not in the staged app tree.
         assert list((install_root / "app").rglob(".env")) == []
 
-    @needs_minisign
     def test_existing_env_preserved_untouched(self, tmp_path: Path):
         """S0-A/S3-7: an existing data-root .env is preserved byte-for-byte."""
         channel, uv_sha, _version = _build_fixture_channel(tmp_path)
@@ -1020,7 +1017,6 @@ class TestPointerAndEnvSeed:
 
 
 class TestMandatoryInstallFailure:
-    @needs_minisign
     def test_pip_failure_leaves_no_runnable_state(self, tmp_path: Path):
         channel, uv_sha, _version = _build_fixture_channel(tmp_path)
         install_root = tmp_path / "install"
@@ -1098,6 +1094,19 @@ class TestWindowsWheelsOnlyHashLocked:
             if "uvBin pip install" in ln and "--require-hashes" in ln
         )
         assert "--only-binary=:all:" in line
+
+    def test_ps1_core_verifies_the_manifest_signature_before_checksums(self):
+        """S5b (task 8.4) parity: the POSIX core verifies the channel manifest
+        signature BEFORE trusting any checksum. The Windows core must do the
+        same - otherwise a same-channel unsigned/tampered manifest is
+        tamper-together on Windows only (gatekeeper finding #2)."""
+        core = _text(PS_INSTALLER)
+        lib = _text(PS_VERIFY_LIB)
+        assert "Test-Minisig" in lib
+        assert "MINISIGN_PUBKEY" in lib
+        assert "Test-Minisig" in core
+        # Ordering: the signature gate runs before the first checksum check.
+        assert core.index("Test-Minisig") < core.index("Verify-Sha256")
 
 
 class TestWindowsChecksumBeforeStaging:
@@ -1786,7 +1795,6 @@ def _run_posix_bootstrap(env: dict[str, str]) -> subprocess.CompletedProcess[str
 
 
 class TestPublicBootstrapPosix:
-    @needs_minisign
     def test_bootstrap_installs_then_boots(self, tmp_path: Path):
         """Task 6.5: install.sh against the fixture channel -> app serves."""
         channel, uv_sha, version = _build_fixture_channel(
@@ -1813,7 +1821,6 @@ class TestPublicBootstrapPosix:
                 env, api_port,
             )
 
-    @needs_minisign
     def test_bootstrap_rerun_is_idempotent(self, tmp_path: Path):
         """Task 6.5: run twice -> one environment, exit 0 (spec 'Re-run the
         installer')."""
@@ -1847,7 +1854,6 @@ def _run_ps_bootstrap_iex(env: dict[str, str]) -> subprocess.CompletedProcess[st
 
 
 @PS_RUNNER
-@needs_minisign
 class TestPublicBootstrapWindows:
     def test_ps1_bootstrap_iex_installs_then_boots(self, tmp_path: Path):
         """Task 6.5: iex-mode dry-run of install.ps1 against the fixture

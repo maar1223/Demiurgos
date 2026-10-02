@@ -42,10 +42,13 @@ _INSTALLER_CORE = _REPO_ROOT / "scripts" / "install-demiurgos.sh"
 _PAYLOAD_AUDIT_PS1 = _REPO_ROOT / "scripts" / "payload_audit.ps1"
 _SECRET_SCAN = _REPO_ROOT / "scripts" / "secret_scan.sh"
 
-needs_minisign = pytest.mark.skipif(
-    shutil.which("minisign") is None,
-    reason="minisign is not on PATH (install it or put the static binary on PATH)",
-)
+# Importing _minisign_stub provisions a CLI-only stub minisign when no real
+# one is installed (import side effect), so the signed-channel cells RUN
+# instead of silently skipping. With a real minisign present (CI) they
+# exercise the real Ed25519 round-trip; with the stub they exercise the
+# installer's ordering and fail-closed behavior. The stub never proves the
+# crypto.
+import _minisign_stub  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Fake fixture values. The TESTONLY marker lets .gitleaks.toml allowlist them
@@ -411,7 +414,6 @@ def _sign_minisig(sums: Path, key: Path) -> None:
 
 
 class TestSignedManifest:
-    @needs_minisign
     def test_roundtrip_sign_verify_reject_tampered(self, tmp_path):
         sums = tmp_path / "SHA256SUMS"
         sums.write_text("abc123  payload.tar.gz\n", encoding="utf-8")
@@ -432,7 +434,6 @@ class TestSignedManifest:
         )
         assert bad.returncode != 0, "a tampered manifest must not verify"
 
-    @needs_minisign
     def test_verify_minisig_function_gate_fail_closed(self, tmp_path):
         """The shipped POSIX verifier library enforces the gate fail-closed."""
         sums = tmp_path / "SHA256SUMS"
@@ -452,7 +453,6 @@ class TestSignedManifest:
         assert bad.returncode != 0, "a tampered manifest must fail the shipped verifier"
         assert "SIGNATURE VERIFICATION FAILED" in bad.stderr
 
-    @needs_minisign
     def test_verify_minisig_requires_the_signature_file(self, tmp_path):
         sums = tmp_path / "SHA256SUMS"
         sums.write_text("abc123  payload.tar.gz\n", encoding="utf-8")
@@ -520,14 +520,12 @@ class TestConsumerSignedBootstrap:
             capture_output=True, text=True, timeout=120, env=env,
         )
 
-    @needs_minisign
     def test_signed_channel_executes_the_verified_core(self, tmp_path):
         channel, pubkey = self._channel(tmp_path)
         result = self._run_bootstrap(channel, pubkey, tmp_path / "home")
         assert result.returncode == 0, result.stdout + result.stderr
         assert "STUB-CORE-RAN" in result.stdout
 
-    @needs_minisign
     def test_tampered_core_aborts_before_execution(self, tmp_path):
         """Signature OK, core checksum wrong -> abort, stub never runs."""
         channel, pubkey = self._channel(tmp_path, tamper_core=True)
@@ -536,7 +534,6 @@ class TestConsumerSignedBootstrap:
         assert "checksum mismatch" in result.stdout + result.stderr
         assert "STUB-CORE-RAN" not in result.stdout
 
-    @needs_minisign
     def test_tampered_manifest_aborts_at_signature_before_checksums(self, tmp_path):
         """Manifest tampered (not re-signed) -> signature gate fails FIRST."""
         channel, pubkey = self._channel(tmp_path, tamper_manifest=True)
@@ -594,7 +591,6 @@ class TestInstallerCoreSignatureGate:
             capture_output=True, text=True, timeout=120, env=env,
         )
 
-    @needs_minisign
     def test_signed_channel_passes_the_gates_then_stops_at_uv(self, tmp_path):
         """Signature + checksum gates pass; the core proceeds to uv, which has
         no baked checksum on this host -> the honest 'refusing an unverified
@@ -605,7 +601,6 @@ class TestInstallerCoreSignatureGate:
         assert "SIGNATURE VERIFICATION FAILED" not in result.stderr
         assert "checksum mismatch" not in result.stderr
 
-    @needs_minisign
     def test_tampered_manifest_aborts_at_signature_before_checksum(self, tmp_path):
         channel, pubkey = self._channel(tmp_path, tamper_manifest=True)
         result = self._run_core(channel, pubkey, tmp_path / "home")
@@ -613,7 +608,6 @@ class TestInstallerCoreSignatureGate:
         assert "SIGNATURE VERIFICATION FAILED" in result.stderr
         assert "no uv checksum" not in result.stderr, "must stop at the signature gate"
 
-    @needs_minisign
     def test_tampered_payload_aborts_at_checksum(self, tmp_path):
         """Signature still valid (manifest untouched) -> the payload checksum
         gate catches the tampered archive."""

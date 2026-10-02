@@ -1,6 +1,7 @@
 # ---------------------------------------------------------------------------
-# Demiurgos shared checksum verifier for Windows (design S3-2 / task 5.2).
-# PS 5.1 parity of scripts/lib/verify_checksum.sh.
+# Demiurgos shared checksum verifier for Windows (design S3-2 / task 5.2,
+# signed-manifest gate S5b task 8.4). PS 5.1 parity of
+# scripts/lib/verify_checksum.sh.
 #
 # Verification order - NEVER system Python:
 #   1. Get-FileHash          (native PowerShell 4+/5.1, always present)
@@ -51,6 +52,37 @@ function Verify-Sha256 {
     Write-Host "  expected: $Expected"
     Write-Host ("  actual:   " + $actual.Trim())
     return $false
+}
+
+# --- S5b: signed-manifest gate (task 8.4) -----------------------------------
+# >>> PLACEHOLDER <<< - the Author MUST replace this with the real public key
+# line (the RWS... line of minisign.pub) generated with `minisign -G`.
+$DefaultMinisignPubkey = "RWSREPLACE-ME-WITH-THE-REAL-MINISIGN-PUBLIC-KEY"
+
+function Test-Minisig {
+    param(
+        [Parameter(Mandatory = $true)][string]$SumsFile,
+        [Parameter(Mandatory = $true)][string]$SignatureFile,
+        [string]$PubKey = ""
+    )
+    if (-not $PubKey) {
+        $PubKey = if ($env:MINISIGN_PUBKEY) { $env:MINISIGN_PUBKEY } else { $DefaultMinisignPubkey }
+    }
+    $minisignCmd = Get-Command minisign -ErrorAction SilentlyContinue
+    if (-not $minisignCmd) {
+        Write-Host "verify_checksum: minisign is required to verify the signed manifest; install it (choco install minisign / https://jedisct1.github.io/minisign/) and re-run"
+        return $false
+    }
+    if (-not (Test-Path -LiteralPath $SignatureFile -PathType Leaf)) {
+        Write-Host "verify_checksum: signature file $SignatureFile is missing; the channel manifest is not signed - refusing to continue"
+        return $false
+    }
+    & $minisignCmd.Source -Vm $SumsFile -P $PubKey | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "verify_checksum: SIGNATURE VERIFICATION FAILED for $SumsFile; the manifest is tampered or the public key is wrong - refusing to continue"
+        return $false
+    }
+    return $true
 }
 
 if ($MyInvocation.InvocationName -ne ".") {
