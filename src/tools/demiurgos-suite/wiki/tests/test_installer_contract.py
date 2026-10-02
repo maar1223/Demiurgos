@@ -52,6 +52,7 @@ import subprocess
 import tarfile
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -62,6 +63,8 @@ _REPO_ROOT = _WIKI.parents[3]  # wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> 
 
 INSTALLER = _REPO_ROOT / "scripts" / "install-demiurgos.sh"
 VERIFY_LIB = _REPO_ROOT / "scripts" / "lib" / "verify_checksum.sh"
+PS_INSTALLER = _REPO_ROOT / "scripts" / "install-demiurgos.ps1"
+PS_VERIFY_LIB = _REPO_ROOT / "scripts" / "lib" / "verify_checksum.ps1"
 POINTER_NAME = "data-root.json"
 STUB_UV_VERSION = "0.5.24-test"
 
@@ -942,3 +945,541 @@ class TestMandatoryInstallFailure:
         staging = install_root / ".staging"
         if staging.exists():
             assert list(staging.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# 5.1 — Windows parity: contract text assertions over the .ps1 core + lib
+# ---------------------------------------------------------------------------
+# Mirrors the 4.1 contract for scripts/install-demiurgos.ps1 and
+# scripts/lib/verify_checksum.ps1 (task 5.1; design S3-1..S3-7 parity + S2-8).
+# Text scans run on every host; the runtime cells at the bottom are
+# Windows-runner-only and skipif here (reported not-run on this Linux host).
+
+PS_RUNNER = pytest.mark.skipif(
+    os.name != "nt" or shutil.which("powershell") is None,
+    reason="Windows runner harness needs powershell.exe (NOT run on this Linux host)",
+)
+
+
+class TestWindowsNoPrivateCloneOrNpm:
+    def test_ps1_no_git_at_all(self):
+        text = _text(PS_INSTALLER)
+        assert "git" not in text
+
+    def test_ps1_no_npm(self):
+        text = _text(PS_INSTALLER)
+        assert "npm" not in text
+
+    def test_ps1_no_private_repo_url(self):
+        """D1 parity: the Windows core never embeds the private owner or any
+        github URL (the leak lives at install.sh:27, S4 owns it)."""
+        text = _text(PS_INSTALLER) + _text(PS_VERIFY_LIB)
+        assert "maar1223" not in text
+        assert "github.com" not in text
+
+    def test_ps1_no_elevation(self):
+        """Spec 'No elevated privileges': no RunAs, no UAC, no admin-gated
+        operation — the core installs into user-writable locations only."""
+        text = _text(PS_INSTALLER)
+        assert "RunAs" not in text
+        assert "UAC" not in text
+
+    def test_ps1_no_hardcoded_author_paths(self):
+        text = _text(PS_INSTALLER) + _text(PS_VERIFY_LIB)
+        assert "H:\\" not in text
+        assert "C:\\Users" not in text
+
+
+class TestWindowsWheelsOnlyHashLocked:
+    def test_ps1_only_binary_all_present(self):
+        assert "--only-binary=:all:" in _text(PS_INSTALLER)
+
+    def test_ps1_require_hashes_present(self):
+        assert "--require-hashes" in _text(PS_INSTALLER)
+
+    def test_ps1_mandatory_pip_line_uses_both_flags(self):
+        text = _text(PS_INSTALLER)
+        line = next(
+            ln for ln in text.splitlines()
+            if "uvBin pip install" in ln and "--require-hashes" in ln
+        )
+        assert "--only-binary=:all:" in line
+
+
+class TestWindowsChecksumBeforeStaging:
+    def test_ps1_payload_verify_precedes_extraction(self):
+        """The payload archive is verified against SHA256SUMS BEFORE it is
+        extracted into the staging tree (spec 'Checksum mismatch')."""
+        text = _text(PS_INSTALLER)
+        verify_at = text.index("Verify-Sha256 -FilePath $payloadFile")
+        extract_at = text.index("Expand-Archive -LiteralPath $payloadFile")
+        assert verify_at < extract_at
+
+    def test_ps1_mismatch_aborts_with_clean_rerun_path(self):
+        text = _text(PS_INSTALLER)
+        assert "checksum" in text
+        assert "re-run" in text
+
+
+class TestWindowsAtomicSameFsStaging:
+    def test_ps1_staging_under_install_root(self):
+        text = _text(PS_INSTALLER)
+        assert 'Join-Path $installRoot ".staging"' in text
+
+    def test_ps1_no_temp_dirs(self):
+        """Staging is on the SAME filesystem as the install root — never a
+        temp dir on another FS (design S3-5)."""
+        text = _text(PS_INSTALLER)
+        assert "/tmp" not in text
+        assert "$env:TEMP" not in text
+        assert "$env:TMP" not in text
+
+    def test_ps1_atomic_move_and_junction_flip(self):
+        """S0-C: Windows `current` is a JUNCTION (not a symlink), flipped
+        after a same-FS rename — never a cross-volume copy."""
+        text = _text(PS_INSTALLER)
+        assert 'Move-Item -LiteralPath $stageDir -Destination $target' in text
+        assert "New-Item -ItemType Junction" in text
+
+
+class TestWindowsPointerBootstrapOnly:
+    def test_ps1_pointer_guarded_by_env_and_pointer(self):
+        """Pointer is written ONLY when neither the env override nor an
+        existing pointer is present; an existing pointer is never re-oriented
+        (spec 'Existing data root preserved', design S3-7)."""
+        text = _text(PS_INSTALLER)
+        assert "DEMIURGOS_DATA_ROOT" in text
+        assert "$pointerFile" in text
+        assert "data-root.json" in text
+
+    def test_ps1_env_seed_guarded_by_absence(self):
+        text = _text(PS_INSTALLER)
+        assert 'Test-Path -LiteralPath $envFile' in text
+        assert "DEMIURGOS_AUTH_MODE=local-dev" in text
+
+    def test_ps1_pointer_format_byte_compatible_with_data_root(self):
+        """The pointer record MUST be the data_root.py JSON shape
+        (schema_version 1, data_root, updated_at)."""
+        text = _text(PS_INSTALLER)
+        assert '"schema_version": 1' in text
+        assert '"data_root"' in text
+        assert '"updated_at"' in text
+
+    def test_ps1_seed_only_seam_present(self):
+        """The DEMIURGOS_SEED_ONLY env seam (S0-A) is mirrored: seed-only runs
+        ONLY the data-root bootstrap-once + .env seed, never a download."""
+        text = _text(PS_INSTALLER)
+        assert "DEMIURGOS_SEED_ONLY" in text
+
+
+class TestWindowsOptionalExtrasBestEffort:
+    def test_ps1_optional_install_non_fatal(self):
+        text = _text(PS_INSTALLER)
+        assert "requirements-optional" in text
+        assert "Warn" in text
+
+
+class TestWindowsNoArbitraryPayloadExecution:
+    def test_ps1_never_executes_payload_files(self):
+        """Threat-matrix 'Documentation-like paths' (execution half, Windows):
+        the installer only runs the verified uv binary and standard cmdlets;
+        it never dot-sources, Invoke-Expression's or runs anything extracted
+        from the payload."""
+        text = _text(PS_INSTALLER)
+        assert "Invoke-Expression" not in text
+        assert "& $stageDir" not in text
+        assert "& $payloadFile" not in text
+
+
+class TestWindowsUvProvisioning:
+    def test_ps1_uv_pinned_and_checksum_verified(self):
+        text = _text(PS_INSTALLER)
+        assert "UV_VERSION" in text
+        assert "Verify-Sha256 -FilePath $archive" in text
+        assert 'Join-Path $installRoot "bin"' in text
+
+    def test_ps1_uv_python_and_venv_commands(self):
+        text = _text(PS_INSTALLER)
+        assert "UV_PYTHON_INSTALL_DIR" in text
+        assert "venv --python 3.12" in text
+        assert "python install 3.12" in text
+
+
+class TestWindowsSupportMatrixNarrowed3579:
+    def test_ps1_unsupported_arch_fails_fast_with_manual_alternative(self):
+        """Decision #3579: Windows 10/11 x86_64 ONLY — ARM/32-bit Windows fail
+        fast with the documented manual-install alternative."""
+        text = _text(PS_INSTALLER)
+        assert "not supported" in text
+        assert "x86_64" in text
+        assert "manual" in text
+
+    def test_ps1_windows_below_floor_fails_fast_naming_version(self):
+        text = _text(PS_INSTALLER)
+        assert "Windows 10 or newer is required" in text
+
+    def test_ps1_longpaths_floor(self):
+        text = _text(PS_INSTALLER)
+        assert "LongPathsEnabled" in text
+
+    def test_ps1_before_s5_gate_referenced_without_rephrasing(self):
+        """D3: single authoritative gate statement — later references point to
+        (D3) without restating the timing."""
+        text = _text(PS_INSTALLER)
+        assert "(D3)" in text
+
+
+class TestWindowsPowerShell51Contract:
+    def test_ps1_files_are_ascii_only(self):
+        """S2-8: PS 5.1 mis-decodes BOM-less UTF-8; ASCII-only is the rule."""
+        for path in (PS_INSTALLER, PS_VERIFY_LIB):
+            path.read_bytes().decode("ascii")  # raises UnicodeDecodeError
+
+    def test_ps1_files_avoid_pwsh_only_isms(self):
+        """$IsWindows / $IsLinux are pwsh 6+ automatic variables; PS 5.1 has
+        no such variables, so their use would break the 5.1 target."""
+        for path in (PS_INSTALLER, PS_VERIFY_LIB):
+            text = _text(path)
+            assert "$IsWindows" not in text
+            assert "$IsLinux" not in text
+
+
+class TestWindowsVerifyChecksumLibrary:
+    def test_ps1_branch_order_native_then_certutil_then_uv(self):
+        """S3-2 parity: Get-FileHash (native PS 5.1) -> certutil (legacy
+        Windows) -> bundled-Python hashlib via `uv run python -c` (never
+        system Python)."""
+        text = _text(PS_VERIFY_LIB)
+        assert text.index("Get-FileHash") < text.index("certutil")
+        assert text.index("certutil") < text.index("run python")
+
+    def test_ps1_no_system_python_in_lib(self):
+        text = _text(PS_VERIFY_LIB)
+        assert "python3" not in text
+        assert "python.exe" not in text
+        assert "Get-Command python" not in text
+
+
+# ---------------------------------------------------------------------------
+# 5.4 — Windows-runner fixture harness (file:// + stub uv.ps1 + real venv)
+# ---------------------------------------------------------------------------
+# Cells mirror the S3a fixture harness (task 4.11) for the Windows core: a
+# local file:// channel with a STUB uv.ps1 and the repository venv python
+# stands in for the real toolchain (real uv/CPython/wheels download is
+# CI-owned, S5a — reported not-run here). They need powershell.exe 5.1, a
+# Windows-hosted repo venv (.venv\Scripts\python.exe) and Defender semantics,
+# so every cell is marked skipif on this Linux host and reported not-run; the
+# S3b/CI windows-latest matrix is the runtime proof.
+
+_UV_STUB_PS1 = r"""# Stub uv for the S3b Windows fixture harness (task 5.4). Emulates the
+# commands the installer uses and RECORDS its argv so the harness can assert
+# the exact flags. The "python" it installs is the repository venv
+# interpreter (DEMIURGOS_STUB_PYTHON), so the staged app genuinely boots.
+# Real uv/CPython/wheels download is CI-owned (S5a) - never run here.
+$cmd = $args[0]
+("uv " + ($args -join " ")) | Out-File -LiteralPath $env:DEMIURGOS_STUB_LOG -Append -Encoding ascii
+switch ($cmd) {
+  "python" {
+    New-Item -ItemType Directory -Force -Path (Join-Path $env:UV_PYTHON_INSTALL_DIR "bin") | Out-Null
+    Copy-Item -LiteralPath $env:DEMIURGOS_STUB_PYTHON -Destination (Join-Path $env:UV_PYTHON_INSTALL_DIR "bin\python.exe") -Force
+    exit 0
+  }
+  "venv" {
+    # uv venv --python 3.12 <dest> -> create a REAL venv from the managed
+    # python with system-site-packages so the staged app genuinely boots; the
+    # .pth makes the repo venv's site-packages visible to the staged venv
+    # regardless of APPDATA isolation (real uv pip install puts wheels into
+    # the venv itself - CI-owned, not-run here).
+    $dest = $null
+    foreach ($a in $args[1..($args.Length - 1)]) {
+      if ($a -notlike "-*" -and $a -ne "3.12") { $dest = $a }
+    }
+    if (-not $dest) { Write-Error "stub uv: venv missing dest"; exit 2 }
+    & $env:DEMIURGOS_STUB_PYTHON -m venv --system-site-packages $dest
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $repoSite = & $env:DEMIURGOS_STUB_PYTHON -c "import site; print(site.getsitepackages()[0])" 2>$null
+    if ($repoSite) {
+      $pthDir = Join-Path $dest "Lib\site-packages"
+      New-Item -ItemType Directory -Force -Path $pthDir | Out-Null
+      Set-Content -LiteralPath (Join-Path $pthDir "demiurgos-repo.pth") -Value $repoSite -Encoding ASCII
+    }
+    exit 0
+  }
+  "pip" {
+    if ($env:DEMIURGOS_STUB_FAIL_PIP -eq "1") { Write-Error "stub uv: pip install failed (stub)"; exit 1 }
+    exit 0
+  }
+  "run" {
+    # uv run python <args...> -> drop the leading "python", delegate to the
+    # stub interpreter (never system python).
+    if ($args.Length -ge 2 -and $args[1] -eq "python") {
+      & $env:DEMIURGOS_STUB_PYTHON $args[2..($args.Length - 1)]
+    } else {
+      & $env:DEMIURGOS_STUB_PYTHON $args[1..($args.Length - 1)]
+    }
+    exit $LASTEXITCODE
+  }
+  default {
+    Write-Error "stub uv: unknown command: $cmd"
+    exit 2
+  }
+}
+"""
+
+
+def _build_windows_fixture_channel(
+    tmp_path: Path, *, wrong_payload_sha: str | None = None,
+) -> tuple[Path, str, str]:
+    """Build a local file:// release channel for the Windows core.
+
+    Contents: ``latest``, ``version.json``, ``SHA256SUMS`` (+ ``.minisig``),
+    a .zip payload (manifest allow-list + the PS launcher at the frozen
+    ``scripts\start-demiurgos.ps1`` path + a minimal ``frontend/dist`` + the
+    requirements files) and a STUB ``uv.ps1`` archive for
+    ``x86_64-pc-windows-msvc``. Returns ``(channel, uv_sha256, version)``.
+    """
+    channel = tmp_path / "channel"
+    channel.mkdir()
+    version = "0.9.0-test"
+    (channel / "latest").write_text(version + "\n", encoding="utf-8")
+
+    manifest = json.loads(
+        (_REPO_ROOT / "payload_manifest.json").read_text(encoding="utf-8")
+    )
+    payload_root = tmp_path / "payload-src"
+    for rel in manifest["payload"]:
+        src = _REPO_ROOT / rel
+        if src.is_file():
+            dst = payload_root / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+    # Windows launcher at the frozen layout path (S0-C):
+    # <current>\scripts\start-demiurgos.ps1.
+    launcher_src = _REPO_ROOT / "start-demiurgos.ps1"
+    dst = payload_root / "scripts" / "start-demiurgos.ps1"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(launcher_src, dst)
+    dist = payload_root / "frontend" / "dist"
+    dist.mkdir(parents=True)
+    (dist / "index.html").write_text(
+        "<!doctype html><html><body>fixture dist</body></html>", encoding="utf-8"
+    )
+    for name in ("requirements.lock", "requirements-optional.txt"):
+        shutil.copy2(_REPO_ROOT / name, payload_root / name)
+
+    payload_name = f"demiurgos-app-{version}.zip"
+    payload_zip = channel / payload_name
+    with zipfile.ZipFile(payload_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        for f in payload_root.rglob("*"):
+            if f.is_file():
+                zf.write(f, f.relative_to(payload_root).as_posix())
+    payload_sha = hashlib.sha256(payload_zip.read_bytes()).hexdigest()
+
+    # Stub uv archive: uv-<target>-<UV_VERSION>.zip containing uv.ps1.
+    uv_dir = tmp_path / "stub-uv"
+    uv_dir.mkdir()
+    stub = uv_dir / "uv.ps1"
+    stub.write_text(_UV_STUB_PS1, encoding="utf-8")
+    uv_archive = (
+        channel / "uv" / f"uv-x86_64-pc-windows-msvc-{STUB_UV_VERSION}.zip"
+    )
+    uv_archive.parent.mkdir()
+    with zipfile.ZipFile(uv_archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.write(stub, "uv.ps1")
+    uv_sha = hashlib.sha256(uv_archive.read_bytes()).hexdigest()
+
+    version_json = {
+        "version": version,
+        "artifacts": {
+            "posix": "demiurgos-app-posix.tar.gz",
+            "windows": payload_name,
+        },
+        "sha256": {"posix": "0" * 64, "windows": payload_sha},
+        "floors": {"macos": 13, "glibc": "2.28", "windows": 10},
+    }
+    (channel / "version.json").write_text(
+        json.dumps(version_json, indent=2) + "\n", encoding="utf-8"
+    )
+    (channel / "SHA256SUMS.minisig").write_text("untrusted-test-minisig\n")
+    declared_sha = payload_sha if wrong_payload_sha is None else wrong_payload_sha
+    (channel / "SHA256SUMS").write_text(
+        f"{declared_sha}  {payload_name}\n", encoding="utf-8"
+    )
+    return channel, uv_sha, version
+
+
+def _ps_installer_env(
+    tmp_path: Path, channel: Path, uv_sha: str, install_root: Path, *,
+    fail_pip: bool = False,
+) -> dict[str, str]:
+    """Env for one Windows installer run: file:// channel, stub uv log, tmp
+    APPDATA/LOCALAPPDATA/USERPROFILE so the REAL %APPDATA% pointer and data
+    root are never touched. The installer must bootstrap its own pointer
+    (conftest's hermetic env vars are deliberately NOT inherited)."""
+    env = {
+        "DEMIURGOS_URL_BASE": f"file://{channel}",
+        "DEMIURGOS_HOME": str(install_root),
+        "DEMIURGOS_UV_SHA256": uv_sha,
+        "UV_VERSION": STUB_UV_VERSION,
+        "DEMIURGOS_STUB_PYTHON": str(_REPO_ROOT / ".venv" / "Scripts" / "python.exe"),
+        "DEMIURGOS_STUB_LOG": str(tmp_path / "uv-stub.log"),
+        "APPDATA": str(tmp_path / "appdata"),
+        "LOCALAPPDATA": str(tmp_path / "localappdata"),
+        "USERPROFILE": str(tmp_path / "userprofile"),
+        "DEMIURGOS_NO_BROWSER": "1",
+        "DEMIURGOS_LANGUAGE": "en",
+        "PATH": os.environ.get("PATH", ""),
+    }
+    if fail_pip:
+        env["DEMIURGOS_STUB_FAIL_PIP"] = "1"
+    for key in ("DEMIURGOS_DATA_ROOT", "DEMIURGOS_FRONTEND_DIST"):
+        env.pop(key, None)
+    return env
+
+
+def _run_ps_installer(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["powershell.exe", "-NoProfile", "-File", str(PS_INSTALLER)],
+        env=env, capture_output=True, text=True, timeout=300,
+    )
+
+
+def _boot_ps_launcher(install_root: Path, env: dict[str, str]) -> int:
+    """Start the installed Windows launcher headless and return the API port."""
+    api_port = _free_port()
+    env = {**env, "DEMIURGOS_API_PORT": str(api_port),
+           "DEMIURGOS_GATEWAY_PORT": str(_free_port())}
+    launcher = install_root / "current" / "scripts" / "start-demiurgos.ps1"
+    start = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-File", str(launcher), "start"],
+        env=env, capture_output=True, text=True, timeout=180,
+    )
+    assert start.returncode == 0, start.stderr
+    return api_port
+
+
+def _stop_ps_launcher_and_assert_clean(
+    install_root: Path, env: dict[str, str], api_port: int,
+) -> None:
+    """Teardown contract (incident parity): stop the PS launcher, then assert
+    NO leftover listener on the test port."""
+    launcher = install_root / "current" / "scripts" / "start-demiurgos.ps1"
+    stop = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-File", str(launcher), "stop"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert stop.returncode == 0, stop.stderr
+    for _ in range(20):
+        if not _port_listening(api_port):
+            break
+        time.sleep(0.25)
+    assert not _port_listening(api_port), (
+        f"port {api_port} still listening after stop: leaked launcher process"
+    )
+
+
+@PS_RUNNER
+class TestWindowsFixtureChannelInstall:
+    def test_ps1_install_then_boot_serves_health_and_root(self, tmp_path: Path):
+        """Task 5.4: .ps1 core against a file:// fixture -> app serves."""
+        channel, uv_sha, version = _build_windows_fixture_channel(tmp_path)
+        install_root = tmp_path / "install"
+        env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
+
+        install = _run_ps_installer(env)
+        assert install.returncode == 0, install.stdout + install.stderr
+
+        # Installed layout from the frozen contract (S0-C).
+        assert (install_root / "app" / version).is_dir()
+        assert (install_root / "current").exists()
+        assert (install_root / "bin" / "uv.ps1").is_file()
+        assert (
+            install_root / "app" / version / ".venv" / "Scripts" / "python.exe"
+        ).exists()
+
+        # Stub uv recorded the mandatory flags (hash-locked wheels-only).
+        log = (tmp_path / "uv-stub.log").read_text(encoding="utf-8")
+        assert "--require-hashes" in log
+        assert "--only-binary=:all:" in log
+        assert "requirements.lock" in log
+
+        # Boot the installed app headless and probe /health + /.
+        api_port = _boot_ps_launcher(install_root, env)
+        try:
+            _wait_health(api_port)
+            assert _fetch(f"http://127.0.0.1:{api_port}/health") == 200
+            assert _fetch(f"http://127.0.0.1:{api_port}/") == 200
+        finally:
+            _stop_ps_launcher_and_assert_clean(install_root, env, api_port)
+
+    def test_ps1_rerun_is_idempotent_single_env(self, tmp_path: Path):
+        """Task 5.4: re-run converges — one environment, pointer and .env
+        preserved byte-for-byte (spec 'Re-run the installer')."""
+        channel, uv_sha, version = _build_windows_fixture_channel(tmp_path)
+        install_root = tmp_path / "install"
+        env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
+
+        first = _run_ps_installer(env)
+        assert first.returncode == 0, first.stdout + first.stderr
+        pointer = _read_pointer(Path(env["APPDATA"]) / "demiurgos")
+        env_before = (pointer / ".env").read_bytes()
+
+        second = _run_ps_installer(env)
+        assert second.returncode == 0, second.stdout + second.stderr
+
+        # One environment: exactly one app/<version>, one current junction.
+        app_dirs = [p.name for p in (install_root / "app").iterdir()]
+        assert app_dirs == [version]
+        # Pointer and .env are bootstrap-only: preserved byte-for-byte.
+        assert (pointer / ".env").read_bytes() == env_before
+
+
+@PS_RUNNER
+class TestWindowsChecksumMismatchAborts:
+    def test_ps1_wrong_sha256_aborts_with_no_runnable_state(self, tmp_path: Path):
+        """Task 5.4: corrupted checksum -> abort with no runnable state."""
+        channel, uv_sha, _version = _build_windows_fixture_channel(
+            tmp_path, wrong_payload_sha="0" * 64
+        )
+        install_root = tmp_path / "install"
+        env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
+
+        result = _run_ps_installer(env)
+        assert result.returncode != 0
+        assert "checksum" in (result.stdout + result.stderr).lower()
+
+        # No runnable state: no current, no app, staging cleaned up.
+        assert not (install_root / "current").exists()
+        assert not (install_root / "app").exists()
+        staging = install_root / ".staging"
+        if staging.exists():
+            assert list(staging.iterdir()) == []
+
+
+@PS_RUNNER
+class TestWindowsM1DefenderSpaceUser:
+    def test_ps1_install_under_username_with_space(self, tmp_path: Path):
+        """M1 (errata): Defender enabled (default on windows-latest) + a
+        username containing a space -> the install root path contains a space
+        (like C:\\Users\\Miguel Angel\\AppData\\Local\\Demiurgos). The core
+        must install, junction and boot without choking on the space;
+        Defender's real-time scan runs on the CI runner."""
+        channel, uv_sha, version = _build_windows_fixture_channel(tmp_path)
+        space_home = tmp_path / "Users" / "Miguel Angel" / "AppData" / "Local"
+        install_root = space_home / "Demiurgos"
+        env = _ps_installer_env(tmp_path, channel, uv_sha, install_root)
+
+        install = _run_ps_installer(env)
+        assert install.returncode == 0, install.stdout + install.stderr
+        current = install_root / "current"
+        assert current.exists()
+        assert (install_root / "app" / version / "src").exists()
+
+        # Boot from the spaced path proves the junction + venv + launcher
+        # handle spaces.
+        api_port = _boot_ps_launcher(install_root, env)
+        try:
+            _wait_health(api_port)
+            assert _fetch(f"http://127.0.0.1:{api_port}/health") == 200
+        finally:
+            _stop_ps_launcher_and_assert_clean(install_root, env, api_port)
