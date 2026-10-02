@@ -19,6 +19,12 @@
 #      verify-then-execute);
 #   5. run the core with powershell -NoProfile -ExecutionPolicy Bypass -File.
 #
+# OPT-IN - -WithCliStack (or DEMIURGOS_WITH_CLI_STACK=1) runs the preserved
+# historical Windows installer INSTEAD of the web-app install: scripts\
+# install-cli-stack.ps1 overlays the narrative agents/commands/skills into the
+# OpenCode config home and prepares the dev-checkout environment. Mirrors
+# `install.sh --with-cli-stack` on POSIX.
+#
 # No elevation (UAC), no admin rights, no private source clone, no npm.
 # ASCII-only on purpose: Windows PowerShell 5.1 mis-decodes BOM-less UTF-8.
 # ===========================================================================
@@ -27,6 +33,30 @@ $ErrorActionPreference = "Stop"
 
 # TLS 1.2 FIRST: must precede every download in this bootstrap.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# --- OPT-IN: CLI-stack overlay INSTEAD of the web-app install (S4 follow-up) --
+# Mirrors `install.sh --with-cli-stack`: the historical Windows installer is
+# preserved as scripts\install-cli-stack.ps1 and is selected explicitly.
+# Env equivalent: DEMIURGOS_WITH_CLI_STACK=1
+$withCliStack = $false
+if ($env:DEMIURGOS_WITH_CLI_STACK -eq "1" -or $env:DEMIURGOS_WITH_CLI_STACK -eq "true") { $withCliStack = $true }
+foreach ($cliArg in $args) {
+    if ($cliArg -eq "-WithCliStack" -or $cliArg -eq "--with-cli-stack") { $withCliStack = $true }
+}
+if ($withCliStack) {
+    # Located from the environment / current directory ONLY: this bootstrap must
+    # never use script-file location variables (both are NULL under iex).
+    $repoRoot = if ($env:DEMIURGOS_REPO_ROOT) { $env:DEMIURGOS_REPO_ROOT } else { (Get-Location).Path }
+    $overlay = Join-Path $repoRoot "scripts\install-cli-stack.ps1"
+    if (-not (Test-Path -LiteralPath $overlay -PathType Leaf)) {
+        Write-Host "install: CLI-stack overlay not found at $overlay" -ForegroundColor Red
+        Write-Host "Clone the repository and run this from the checkout root, or set DEMIURGOS_REPO_ROOT." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "Running the opt-in CLI-stack overlay (web-app install skipped): $overlay"
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $overlay
+    exit $LASTEXITCODE
+}
 
 # --- paths from the environment ONLY (never the script file) -----------------
 $installRoot = if ($env:DEMIURGOS_HOME) { $env:DEMIURGOS_HOME } else { Join-Path $env:LOCALAPPDATA "Demiurgos" }

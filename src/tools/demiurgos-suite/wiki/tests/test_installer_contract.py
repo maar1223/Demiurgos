@@ -67,6 +67,9 @@ PS_INSTALLER = _REPO_ROOT / "scripts" / "install-demiurgos.ps1"
 PS_VERIFY_LIB = _REPO_ROOT / "scripts" / "lib" / "verify_checksum.ps1"
 INSTALL_SH = _REPO_ROOT / "install.sh"
 INSTALL_PS1 = _REPO_ROOT / "install.ps1"
+# The historical Windows installer, preserved as the explicit opt-in overlay
+# (mirrors `install.sh --with-cli-stack`). Always run with -File.
+PS_CLI_OVERLAY = _REPO_ROOT / "scripts" / "install-cli-stack.ps1"
 POINTER_NAME = "data-root.json"
 STUB_UV_VERSION = "0.5.24-test"
 
@@ -76,6 +79,21 @@ _BASH_32_BANS = ("declare -A", "mapfile", "readarray", "^^}", "&>>")
 #: child PATH so a launcher that ignores the env flag still cannot open a
 #: real browser.
 NOOP_BROWSER_BIN = Path("/tmp/opencode/noop-browser/bin")
+# The no-op browser stubs are PROVISIONED by the harness (see
+# _require_noop_stub) so the suite never depends on an out-of-band /tmp dir
+# that the OS may clean between runs.
+_NOOP_BROWSER_TOOLS = (
+    "xdg-open", "open", "sensible-browser", "x-www-browser", "gio",
+    "brave-browser-stable", "brave-browser", "google-chrome",
+    "chromium", "chromium-browser", "firefox",
+)
+_NOOP_BROWSER_SCRIPT = (
+    "#!/bin/sh\n"
+    "# no-op browser stub (s2b-harness-gotcha guard): record, never open.\n"
+    'log="$(dirname "$0")/../calls.log"\n'
+    'printf "%s %s\\n" "$0" "$*" >> "$log" 2>/dev/null || true\n'
+    "exit 0\n"
+)
 
 _UV_STUB_SH = r"""#!/usr/bin/env bash
 # Stub uv for the S3a fixture harness (task 4.11). Emulates the commands the
@@ -139,12 +157,21 @@ def _text(path: Path) -> str:
 
 
 def _require_noop_stub() -> None:
-    """Hard harness guard (incident s2b-harness-gotcha): fail loudly when the
-    no-op browser stubs are missing — a real browser must never open."""
+    """Hard harness guard (incident s2b-harness-gotcha): the launcher under
+    test must never open a real browser. The stubs are (re)created here,
+    idempotently, so the suite is self-contained and never depends on an
+    out-of-band /tmp directory the OS may clean. Fails loudly if the stubs
+    cannot be provisioned (never silently proceeds toward a real browser)."""
+    NOOP_BROWSER_BIN.mkdir(parents=True, exist_ok=True)
+    for tool in _NOOP_BROWSER_TOOLS:
+        stub = NOOP_BROWSER_BIN / tool
+        if not stub.is_file():
+            stub.write_text(_NOOP_BROWSER_SCRIPT, encoding="utf-8")
+            stub.chmod(0o755)
     if not (NOOP_BROWSER_BIN / "xdg-open").is_file():
         raise RuntimeError(
-            "harness guard missing: /tmp/opencode/noop-browser/bin stubs are "
-            "required before launching the launcher"
+            "harness guard could not provision the no-op browser stubs at "
+            f"{NOOP_BROWSER_BIN}"
         )
 
 
@@ -1312,6 +1339,35 @@ class TestPublicBootstrapsS4:
         text = _text(INSTALL_PS1)
         assert "C:" + chr(92) + "Users" not in text
         assert "H:" + chr(92) not in text
+
+    # --- Windows CLI-stack overlay (S4 follow-up) --------------------------
+
+    def test_ps1_bootstrap_cli_stack_is_explicit_opt_in(self):
+        """The historical Windows installer is preserved behind an explicit
+        opt-in, mirroring `install.sh --with-cli-stack`; the iex-safe default
+        path never runs it (it delegates to the versioned core instead)."""
+        text = _text(INSTALL_PS1)
+        assert "-WithCliStack" in text
+        assert "DEMIURGOS_WITH_CLI_STACK" in text
+        assert "install-cli-stack.ps1" in text
+
+    def test_ps1_cli_stack_overlay_is_tracked_and_ascii_only(self):
+        assert PS_CLI_OVERLAY.is_file()
+        PS_CLI_OVERLAY.read_bytes().decode("ascii")  # raises UnicodeDecodeError
+
+    def test_ps1_cli_stack_overlay_is_file_context_only(self):
+        """The overlay is always run with -File, so it MAY use the script-file
+        location; the iex-safe public bootstrap must not (S4-2)."""
+        assert "$PSScriptRoot" in _text(PS_CLI_OVERLAY)
+        assert "$PSScriptRoot" not in _text(INSTALL_PS1)
+
+    def test_ps1_cli_stack_overlay_has_no_private_url_or_elevation(self):
+        text = _text(PS_CLI_OVERLAY)
+        assert "maar1223" not in text
+        assert "Demiurgos.git" not in text
+        assert "RunAs" not in text
+        assert "Start-Process" not in text
+        assert "sudo" not in text
 
 
 # ---------------------------------------------------------------------------
