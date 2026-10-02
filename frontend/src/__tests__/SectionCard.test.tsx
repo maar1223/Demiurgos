@@ -12,11 +12,22 @@ describe("SectionCard", () => {
     expect(screen.getByText("77 archivos")).toBeInTheDocument();
   });
 
-  it("shows 'vacío' when the count is 0", () => {
+  it("shows an actionable empty hint instead of 'vacío' when the count is 0", () => {
     render(
       <SectionCard section="sagas" label="Sagas" fileCount={0} onClick={vi.fn()} />,
     );
-    expect(screen.getByText("vacío")).toBeInTheDocument();
+    expect(
+      screen.getByText("Empieza aquí: crea tu primer archivo"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("vacío")).not.toBeInTheDocument();
+  });
+
+  it("keeps the empty variant a single button with no nested interactive element", () => {
+    render(
+      <SectionCard section="lore" label="Lore" fileCount={0} onClick={vi.fn()} />,
+    );
+    const card = screen.getByRole("button");
+    expect(card.querySelector("button, a, input")).toBeNull();
   });
 
   it("renders the description for known sections", () => {

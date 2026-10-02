@@ -73,7 +73,7 @@ describe("WikiWorld", () => {
     expect(screen.getByText("10 archivos")).toBeInTheDocument();
   });
 
-  it("shows 'vacío' for sections with zero files", () => {
+  it("shows an actionable hint for sections with zero files", () => {
     (useWorlds as Mock).mockReturnValue({
       worlds: [
         { name: "Vibrantes", path: "/vibrantes", lore_count: 77, character_count: 0, reference_count: 0 },
@@ -85,7 +85,10 @@ describe("WikiWorld", () => {
     renderWikiWorld();
 
     // Two sections (personajes, referencias) are empty with this world.
-    expect(screen.getAllByText("vacío")).toHaveLength(2);
+    expect(
+      screen.getAllByText("Empieza aquí: crea tu primer archivo"),
+    ).toHaveLength(2);
+    expect(screen.queryByText("vacío")).not.toBeInTheDocument();
   });
 
   it("navigates to the section when a card is clicked", async () => {

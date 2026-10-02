@@ -24,6 +24,10 @@ function renderWorldWorkshop() {
       <Routes>
         <Route path="/taller-mundo" element={<WorldWorkshop />} />
         <Route path="/wiki/:mundo" element={<div data-testid="wiki">wiki</div>} />
+        <Route
+          path="/onboarding"
+          element={<div data-testid="onboarding-route">onboarding</div>}
+        />
       </Routes>
     </MemoryRouter>,
   );
@@ -101,6 +105,25 @@ describe("WorldWorkshop", () => {
     expect(
       screen.getByText(tEs("wikiHome.empty")),
     ).toBeInTheDocument();
+  });
+
+  it("offers a create-world action on the empty state that navigates to /onboarding", async () => {
+    (useWorlds as Mock).mockReturnValue({
+      worlds: [],
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWorldWorkshop();
+
+    const action = screen.getByRole("button", {
+      name: tEs("emptyWorld.createWorld"),
+    });
+    await user.click(action);
+
+    expect(screen.getByTestId("onboarding-route")).toBeInTheDocument();
   });
 
   it("shows the error banner with retry on fetch failure", async () => {

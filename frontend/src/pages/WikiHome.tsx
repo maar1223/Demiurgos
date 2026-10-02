@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/organisms/EmptyState";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
 import { Spinner } from "@/components/atoms/Spinner";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { ROUTES } from "@/lib/constants";
 import type { WorldInfo } from "@/api/types";
 
 /**
@@ -66,6 +67,8 @@ export default function WikiHome() {
           <EmptyState
             icon="empty"
             message={t("wikiHome.empty")}
+            actionLabel={t("emptyWorld.createWorld")}
+            onAction={() => navigate(ROUTES.ONBOARDING)}
           />
         </div>
       )}
