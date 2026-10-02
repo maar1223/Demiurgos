@@ -345,3 +345,48 @@ class TestPosixRollbackRuntime:
         assert result.returncode != 0, result.stderr
         assert "No bootable previous version found under" in result.stderr
         assert (install_root / "current").resolve().name == "v2"
+
+
+# ---------------------------------------------------------------------------
+# Windows launcher — parity text-scan contract (PS 5.1 runtime cell NOT run
+# on this Linux host; CI windows-latest / the ps51 job is the proof)
+# ---------------------------------------------------------------------------
+
+
+class TestPowerShellRollbackParity:
+    def test_ps1_stays_ascii_only(self):
+        """S2-8: PS 5.1 mis-decodes BOM-less UTF-8; ASCII-only is the rule."""
+        PS_STACK.read_bytes().decode("ascii")
+
+    def test_ps_rollback_scans_local_app_dirs_only(self):
+        text = _text(PS_STACK)
+        scan = text[text.index("function Find-PreviousVersion"):text.index("function Invoke-BootRollback")]
+        assert 'Join-Path $installRoot "app"' in scan
+        assert "Get-ChildItem" in scan
+        assert "scripts\\start-demiurgos.ps1" in scan
+        assert '".venv"' in scan
+        # Bootable selection by LastWriteTime (directory mtime equivalent).
+        assert "LastWriteTime" in scan
+        # No update/download logic (G9 untouched): nothing in the scan fetches.
+        for banned in ("Invoke-WebRequest", "Invoke-RestMethod", "irm", "git", "DEMIURGOS_VERSION"):
+            assert banned not in scan, banned
+
+    def test_ps_rollback_is_bounded_by_env_marker_and_reexecs(self):
+        text = _text(PS_STACK)
+        rollback = text[text.index("function Invoke-BootRollback"):]
+        assert '$env:DEMIURGOS_ROLLBACK_ATTEMPTED -eq "1"' in rollback
+        assert "no further fallback" in rollback
+        # Junction flip (link only, never the target) + launcher re-exec.
+        assert "New-Item -ItemType Junction" in rollback
+        assert 'Join-Path $current "scripts\\start-demiurgos.ps1"' in rollback
+        assert "restart" in rollback
+        assert "exit $child.ExitCode" in rollback
+        # No fetch inside the rollback action itself.
+        assert "Invoke-WebRequest" not in rollback
+        assert "irm" not in rollback
+
+    def test_ps_switch_hooks_rollback_on_readiness_failure(self):
+        text = _text(PS_STACK)
+        switch = text[text.index("switch ($Action)"):]
+        assert "Invoke-BootRollback" in switch
+        assert "exit 1" in switch

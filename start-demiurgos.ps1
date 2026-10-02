@@ -12,6 +12,11 @@
 # started here and the app boots without the provider. Use start-gateway.ps1
 # to bring the assistant up later.
 #
+# Bounded boot rollback (S6-2/D6): readiness requires a real HTTP 200 on
+# GET /health (Wait-ApiReady). When the new version fails to boot, the
+# launcher falls back ONCE to the previous bootable app\<version> (local scan
+# only; no update or download - G9 untouched) and restarts it.
+#
 # ASCII-only on purpose: Windows PowerShell 5.1 mis-decodes BOM-less UTF-8.
 #
 # Run:  powershell.exe -NoProfile -File start-demiurgos.ps1
@@ -204,6 +209,78 @@ function Stop-Api {
     }
 }
 
+# --- Bounded boot rollback (S6-2/D6): local app\<version> scan only ---------
+# Rollback ONLY: no update/download logic (G9 untouched); no network beyond
+# the loopback /health probe in Wait-ApiReady.
+
+function Get-CurrentVersionName {
+    # Resolve the ACTIVE version: in the installed layout $appRoot is the
+    # `current` junction itself, so its Target yields app\<version>; in dev
+    # the checkout name is used and no app\ siblings exist, so none is found.
+    $item = Get-Item -LiteralPath $appRoot -Force -ErrorAction SilentlyContinue
+    if ($item -and $item.LinkType) {
+        return [string](Split-Path -Leaf $item.Target)
+    }
+    return [string](Split-Path -Leaf $appRoot)
+}
+
+function Find-PreviousVersion {
+    # Newest OTHER bootable app\<version> directory by LastWriteTime. A
+    # version is bootable when it contains the launcher and the layout venv.
+    $currentName = Get-CurrentVersionName
+    $appDir = Join-Path $installRoot "app"
+    if (-not (Test-Path -LiteralPath $appDir -PathType Container)) { return $null }
+    $candidates = @(
+        Get-ChildItem -LiteralPath $appDir -Directory -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -ne $currentName -and
+                (Test-Path -LiteralPath (Join-Path $_.FullName "scripts\start-demiurgos.ps1") -PathType Leaf) -and
+                (Test-Path -LiteralPath (Join-Path $_.FullName ".venv") -PathType Container)
+            }
+    )
+    if ($candidates.Count -eq 0) { return $null }
+    return [string]($candidates | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+}
+
+function Invoke-BootRollback {
+    # At most ONE rollback attempt, guarded by an exported env marker so a
+    # broken previous version cannot loop.
+    if ($env:DEMIURGOS_ROLLBACK_ATTEMPTED -eq "1") {
+        Write-Host "Boot failed again after the rollback; no further fallback." -ForegroundColor Red
+        Write-Host "Check the API log: $apiErrLog" -ForegroundColor Red
+        return $false
+    }
+    $prev = Find-PreviousVersion
+    if (-not $prev) {
+        Write-Host "No bootable previous version found under $installRoot\app; cannot roll back." -ForegroundColor Red
+        Write-Host "Check the API log: $apiErrLog" -ForegroundColor Red
+        return $false
+    }
+    # Best-effort: stop the broken API (pid file or port owner) so the
+    # previous version can bind the port.
+    Stop-Api
+    Write-Host "API failed to become ready; rolling back current -> $prev" -ForegroundColor Yellow
+    $current = Join-Path $installRoot "current"
+    $currentItem = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+    if ($currentItem) {
+        if ($currentItem.LinkType) {
+            # Deleting a junction removes the link only, never the target.
+            $currentItem.Delete()
+        } else {
+            Write-Host "current exists and is not a junction; refusing to clobber it" -ForegroundColor Red
+            return $false
+        }
+    }
+    New-Item -ItemType Junction -Path $current -Target $prev | Out-Null
+    $env:DEMIURGOS_ROLLBACK_ATTEMPTED = "1"
+    # Re-exec the launcher from the flipped `current` so every derived path
+    # resolves against the previous version (S0-C rule 1). A child process
+    # inherits the parent env (the marker) and propagates the exit code.
+    $launcher = Join-Path $current "scripts\start-demiurgos.ps1"
+    $child = Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-File", $launcher, "restart") -Wait -PassThru -WindowStyle Hidden
+    exit $child.ExitCode
+}
+
 # --- Resolve + export the contract environment BEFORE any child starts ------
 # The launcher is the SOLE exporter of DEMIURGOS_FRONTEND_DIST (S1-6) and the
 # bridge for the data-root .env auth mode (S0-A); DEMIURGOS_ROOT stays for
@@ -226,7 +303,9 @@ switch ($Action) {
             Write-Host "API ready on 127.0.0.1:$apiPort" -ForegroundColor Green
         } else {
             Write-Host "API did not become ready; check $apiErrLog" -ForegroundColor Red
-            exit 1
+            # S6-2/D6: bounded boot rollback - one fallback to the previous
+            # bootable version, then exit non-zero when it also fails.
+            if (-not (Invoke-BootRollback)) { exit 1 }
         }
     }
     "restart" {
@@ -237,7 +316,9 @@ switch ($Action) {
             Write-Host "API ready on 127.0.0.1:$apiPort" -ForegroundColor Green
         } else {
             Write-Host "API did not become ready; check $apiErrLog" -ForegroundColor Red
-            exit 1
+            # S6-2/D6: bounded boot rollback - one fallback to the previous
+            # bootable version, then exit non-zero when it also fails.
+            if (-not (Invoke-BootRollback)) { exit 1 }
         }
     }
     "stop" { Stop-Api }
