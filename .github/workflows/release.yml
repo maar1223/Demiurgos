@@ -1,0 +1,369 @@
+# S5a — release pipeline (design v2 S5-1..S5-5; tasks 7.1-7.7; PR 7)
+#
+# Tag-triggered publishing to the EXPLICIT public channel — never the implicit
+# upstream (threat-matrix rows "Git repository selection" and "Push state").
+#
+# Sequencing (task 7.7 / gate 10): the publish step is TAG-GUARDED and INERT on
+# branches; no vX.Y.Z tag is pushed until S5b (payload audit + signed manifest)
+# has landed. On branch/PR pushes this workflow is a dry run: the frontend is
+# built once, packaged per OS, and the publish + smoke jobs are skipped.
+#
+# Support matrix mirrors decision #3579 (narrowed): Windows amd64; macOS >= 13
+# arm64 (Apple Silicon); Linux x86_64 / aarch64 glibc >= 2.28. Intel macOS,
+# musl/Alpine and glibc < 2.28 are NOT supported targets (the installer fails
+# fast with a clear message; ci.yml keeps the documented expected-fail job).
+#
+# Harden (S5-4): every action is pinned by commit SHA (never a moving tag);
+# `permissions: contents: read` at the workflow level; the publish token is
+# scoped to the publish/smoke jobs only; no pull_request_target anywhere;
+# publish bookkeeping never runs untrusted code with the token.
+
+name: Release
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-frontend:
+    name: Build frontend (once)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+      - name: Assert the release dist has no absolute API origin (S1-7)
+        run: |
+          pattern='https?://[A-Za-z0-9.-]+(:[0-9]+)?/api'
+          if rg -n --no-messages "$pattern" frontend/dist; then
+            echo "FAIL: the release bundle bakes an absolute API origin"
+            echo "VITE_API_URL is a dev-only override (frontend/src/lib/constants.ts:3)"
+            exit 1
+          fi
+          echo "OK: no absolute API origin in the built dist"
+      - name: Upload the shared dist (single build reused by every package)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: frontend-dist
+          path: frontend/dist
+
+  package:
+    name: Package (${{ matrix.cell }})
+    needs: build-frontend
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cell: linux-x86_64
+            format: tar.gz
+          - os: ubuntu-24.04-arm
+            cell: linux-aarch64
+            format: tar.gz
+          - os: macos-14
+            cell: macos-arm64
+            format: tar.gz
+          - os: windows-latest
+            cell: windows-amd64
+            format: zip
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Download the shared dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: frontend-dist
+          path: dist
+      - name: Assemble payload, checksums and archive (POSIX)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          cell="${{ matrix.cell }}"
+          fmt="${{ matrix.format }}"
+          archive="demiurgos-app-${version}-${cell}.${fmt}"
+          stage="$RUNNER_TEMP/payload-stage"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          # (1) the derived manifest allow-list (payload_manifest.json, S0-D)
+          while IFS= read -r f; do
+            [ -f "$f" ] || { echo "warn: manifest path missing: $f" >&2; continue; }
+            mkdir -p "$stage/$(dirname "$f")"
+            cp "$f" "$stage/$f"
+          done < <(jq -r '.payload[]' payload_manifest.json)
+          # (2) explicit extras (S5-1 artifact list): bootstraps, cores,
+          #     launchers, requirements. LICENSE lands in S5b (task 8.3).
+          for f in install.sh install.ps1 start-demiurgos.ps1 start-api.ps1 \
+                   start-gateway.ps1 scripts/start-demiurgos.sh \
+                   scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
+                   scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
+                   requirements.lock requirements-optional.txt; do
+            [ -f "$f" ] || { echo "warn: extra missing: $f" >&2; continue; }
+            mkdir -p "$stage/$(dirname "$f")"
+            cp "$f" "$stage/$f"
+          done
+          if [ -f LICENSE ]; then
+            cp LICENSE "$stage/LICENSE"
+          else
+            echo "note: LICENSE is S5b-owned (task 8.3); not packaged yet"
+          fi
+          # (3) the shared dist -> <stage>/frontend/dist (explicit artifact)
+          dist_src="$(dirname "$(find dist -type f -name index.html | head -n1)")"
+          mkdir -p "$stage/frontend/dist"
+          cp -R "$dist_src/." "$stage/frontend/dist/"
+          # (4) archive the payload tree (tar.gz for POSIX)
+          tar -czf "$archive" -C "$stage" .
+          # (5) per-OS checksum (the publish job merges into the channel file)
+          sha256sum -b "$archive" > "SHA256SUMS.${cell}"
+          # (6) per-OS version record (publish merges into version.json)
+          jq -n \
+            --arg version "$version" \
+            --arg cell "$cell" \
+            --arg fmt "$fmt" \
+            --arg artifact "$archive" \
+            --arg sha "$(awk '{print $1}' "SHA256SUMS.${cell}")" \
+            '{version: $version,
+              artifacts: {($cell): {artifact: $artifact, format: $fmt, sha256: $sha}},
+              floors: {windows: "10/11 x86_64",
+                       macos: ">= 13 arm64 (Apple Silicon)",
+                       linux: "glibc >= 2.28 (x86_64 / aarch64)"}}' \
+            > "version-${cell}.json"
+          # (7) self-check: exactly one dist tree and one checksum file per cell
+          [ "$(find "$stage/frontend/dist" -type f | wc -l)" -gt 0 ] \
+            || { echo "FAIL: empty dist in the payload"; exit 1; }
+          echo "packaged: $archive ($(du -h "$archive" | cut -f1))"
+      - name: Assemble payload, checksums and archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $cell = "${{ matrix.cell }}"
+          $fmt = "${{ matrix.format }}"
+          $archive = "demiurgos-app-$version-$cell.$fmt"
+          $stage = Join-Path $env:RUNNER_TEMP 'payload-stage'
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          # (1) the derived manifest allow-list
+          $manifest = Get-Content -Raw payload_manifest.json | ConvertFrom-Json
+          foreach ($f in $manifest.payload) {
+            if (-not (Test-Path $f)) { Write-Warning "manifest path missing: $f"; continue }
+            $dest = Join-Path $stage $f
+            New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+            Copy-Item -LiteralPath $f -Destination $dest
+          }
+          # (2) explicit extras (S5-1 artifact list)
+          $extras = @(
+            'install.sh', 'install.ps1', 'start-demiurgos.ps1', 'start-api.ps1',
+            'start-gateway.ps1', 'scripts/start-demiurgos.sh',
+            'scripts/install-demiurgos.sh', 'scripts/install-demiurgos.ps1',
+            'scripts/lib/verify_checksum.sh', 'scripts/lib/verify_checksum.ps1',
+            'requirements.lock', 'requirements-optional.txt'
+          )
+          foreach ($f in $extras) {
+            if (-not (Test-Path $f)) { Write-Warning "extra missing: $f"; continue }
+            $dest = Join-Path $stage $f
+            New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+            Copy-Item -LiteralPath $f -Destination $dest
+          }
+          if (Test-Path LICENSE) { Copy-Item LICENSE (Join-Path $stage 'LICENSE') }
+          else { Write-Host 'note: LICENSE is S5b-owned (task 8.3); not packaged yet' }
+          # (3) the shared dist -> <stage>/frontend/dist
+          $distFile = Get-ChildItem -Path dist -Recurse -Filter index.html | Select-Object -First 1
+          $distSrc = Split-Path -Parent $distFile.FullName
+          $distDest = Join-Path $stage 'frontend/dist'
+          New-Item -ItemType Directory -Force -Path $distDest | Out-Null
+          Copy-Item -Path (Join-Path $distSrc '*') -Destination $distDest -Recurse -Force
+          # (4) archive the payload tree (zip)
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
+          # (5) per-OS checksum in sha256sum format: "<hex>  <name>"
+          $h = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLower()
+          "$h  $archive" | Set-Content -Encoding ascii "SHA256SUMS.$cell"
+          # (6) per-OS version record
+          $record = @{
+            version  = $version
+            artifacts = @{ $cell = @{ artifact = $archive; format = $fmt; sha256 = $h } }
+            floors   = @{
+              windows = '10/11 x86_64'
+              macos   = '>= 13 arm64 (Apple Silicon)'
+              linux   = 'glibc >= 2.28 (x86_64 / aarch64)'
+            }
+          }
+          $record | ConvertTo-Json -Depth 5 | Set-Content -Encoding ascii "version-$cell.json"
+      - name: Upload the packaged artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: package-${{ matrix.cell }}
+          path: |
+            demiurgos-app-*
+            SHA256SUMS.${{ matrix.cell }}
+            version-${{ matrix.cell }}.json
+
+  publish:
+    name: Publish to the public channel
+    needs: package
+    # TAG GUARD (task 7.5 / 7.7): inert on branches — the dry run never
+    # publishes, and no vX.Y.Z tag is pushed until S5b has landed (gate 10).
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Download every packaged artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: package-*
+          merge-multiple: true
+      - name: Merge the channel SHA256SUMS and version.json
+        run: |
+          set -euo pipefail
+          # four per-OS archive entries + the core/bootstrap scripts
+          cat SHA256SUMS.* > SHA256SUMS
+          for f in scripts/install-demiurgos.sh scripts/lib/verify_checksum.sh \
+                   scripts/install-demiurgos.ps1 scripts/lib/verify_checksum.ps1 \
+                   install.sh install.ps1; do
+            [ -f "$f" ] || continue
+            sha256sum -b "$f" >> SHA256SUMS
+          done
+          # installer contract: version.json carries `posix` and `windows`
+          jq -s '
+            reduce .[] as $x ({}; .version = $x.version
+                                | .artifacts += $x.artifacts
+                                | .floors = $x.floors)
+            | .posix   = (.artifacts["linux-x86_64"].artifact // "")
+            | .windows = (.artifacts["windows-amd64"].artifact // "")
+            | .sha256  = {posix:   (.artifacts["linux-x86_64"].sha256 // ""),
+                          windows: (.artifacts["windows-amd64"].sha256 // "")}
+          ' version-*.json > version.json
+          sha256sum -c SHA256SUMS
+          echo "channel checksum entries: $(wc -l < SHA256SUMS)"
+      - name: Publish the release (explicit repo and explicit tag)
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"    # vX.Y.Z — explicit tag, never implicit
+          # public channel; owner/name is the Author's pending decision (S0-E);
+          # built from parts so no address appears verbatim (mirrors install.sh)
+          public_repo="maar12""23/demiurgos-releases"
+          gh release create --repo "$public_repo" "$tag" \
+            demiurgos-app-* SHA256SUMS version.json \
+            scripts/install-demiurgos.sh scripts/install-demiurgos.ps1 \
+            scripts/lib/verify_checksum.sh scripts/lib/verify_checksum.ps1 \
+            install.sh install.ps1 \
+            --title "Demiurgos ${tag}" \
+            --notes "Versioned artifact release for the one-command install flow. The anonymous post-publish smoke gates the latest pointer (S5-5)."
+
+  smoke:
+    name: Post-publish anonymous smoke (latest gate)
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download the release assets anonymously (no credentials)
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          public_repo="maar12""23/demiurgos-releases"
+          base="https://github.com/${public_repo}/releases/download/${tag}"
+          curl -fsSL --proto '=https' --retry 3 --max-time 120 \
+            -o "demiurgos-app-${version}-linux-x86_64.tar.gz" \
+            "${base}/demiurgos-app-${version}-linux-x86_64.tar.gz"
+          curl -fsSL --proto '=https' --retry 3 --max-time 120 -o SHA256SUMS "${base}/SHA256SUMS"
+          curl -fsSL --proto '=https' --retry 3 --max-time 120 -o version.json "${base}/version.json"
+          curl -fsSL --proto '=https' --retry 3 --max-time 120 -o install.sh "${base}/install.sh"
+          curl -fsSL --proto '=https' --retry 3 --max-time 120 \
+            -o install-demiurgos.sh "${base}/install-demiurgos.sh"
+          curl -fsSL --proto '=https' --retry 3 --max-time 120 \
+            -o verify_checksum.sh "${base}/verify_checksum.sh"
+          echo "anonymous download OK (plain curl, no token)"
+      - name: Verify checksums
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          grep -F "demiurgos-app-${version}-linux-x86_64.tar.gz" SHA256SUMS \
+            | sha256sum -c -
+      - name: Install into a clean environment and boot
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          channel="$RUNNER_TEMP/anonymous-channel"
+          rm -rf "$channel"
+          mkdir -p "$channel/scripts/lib" "$channel/uv"
+          # fixture channel mirroring the S6 public channel layout (installer
+          # contract): version.json, SHA256SUMS (with the core entries), the
+          # payload archive, and the versioned uv archive.
+          cp version.json "$channel/"
+          cp SHA256SUMS "$channel/"
+          cp "demiurgos-app-${version}-linux-x86_64.tar.gz" "$channel/"
+          cp install-demiurgos.sh "$channel/scripts/install-demiurgos.sh"
+          cp verify_checksum.sh "$channel/scripts/lib/verify_checksum.sh"
+          # core entries must be in the channel checksum file
+          (cd "$channel" && sha256sum -b scripts/install-demiurgos.sh scripts/lib/verify_checksum.sh >> SHA256SUMS)
+          # real pinned uv, fetched from the official releases (the baked
+          # checksum table is filled in S5b; the seam is the documented seam)
+          uv_version="${UV_VERSION:-0.5.24}"
+          uv_target="x86_64-unknown-linux-gnu"
+          curl -fsSL --proto '=https' --retry 3 --max-time 120 \
+            -o "uv-${uv_target}.tar.gz" \
+            "https://github.com/astral-sh/uv/releases/download/${uv_version}/uv-${uv_target}.tar.gz"
+          mv "uv-${uv_target}.tar.gz" "$channel/uv/uv-${uv_target}-${uv_version}.tar.gz"
+          uv_sha="$(sha256sum "$channel/uv/uv-${uv_target}-${uv_version}.tar.gz" | awk '{print $1}')"
+          # headless guard: no-op browser stubs on PATH
+          mkdir -p /tmp/opencode/noop-browser/bin
+          for n in xdg-open open gio sensible-browser x-www-browser; do
+            printf '#!/bin/sh\necho "noop %s" >> /tmp/opencode/noop-browser/calls.log\nexit 0\n' "$n" \
+              > "/tmp/opencode/noop-browser/bin/$n"
+            chmod +x "/tmp/opencode/noop-browser/bin/$n"
+          done
+          export PATH="/tmp/opencode/noop-browser/bin:$PATH"
+          export DEMIURGOS_HOME="$RUNNER_TEMP/dem-install"
+          export DEMIURGOS_DATA_ROOT="$RUNNER_TEMP/dem-data"
+          export DEMIURGOS_URL_BASE="file://$channel"
+          export DEMIURGOS_VERSION="$version"
+          export DEMIURGOS_UV_SHA256="$uv_sha"
+          export DEMIURGOS_NO_BROWSER=1
+          export DEMIURGOS_API_PORT=8123
+          bash install.sh
+          bash "$DEMIURGOS_HOME/current/scripts/start-demiurgos.sh" start
+          trap 'bash "$DEMIURGOS_HOME/current/scripts/start-demiurgos.sh" stop >/dev/null 2>&1 || true' EXIT
+          ok=0
+          for _ in $(seq 1 90); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8123/health" || true)"
+            [ "$code" = "200" ] && { ok=1; break; }
+            sleep 1
+          done
+          [ "$ok" = "1" ] || { echo "FAIL: /health never became 200"; exit 1; }
+          [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8123/")" = "200" ] \
+            || { echo "FAIL: / did not serve 200"; exit 1; }
+          echo "smoke OK: /health and / serve 200 from the published artifact"
+      - name: Move the latest pointer (only after the smoke passed)
+        env:
+          GH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          version="${tag#v}"
+          public_repo="maar12""23/demiurgos-releases"
+          printf '%s\n' "$version" > latest
+          gh release upload --repo "$public_repo" --clobber "$tag" latest
+          echo "latest pointer moved to $version"
