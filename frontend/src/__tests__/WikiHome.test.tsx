@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import WikiHome from "@/pages/WikiHome";
 import { ACTIVE_WORLD_STORAGE_KEY } from "@/lib/currentWorld";
@@ -33,6 +34,10 @@ function renderWikiHome() {
         <Route
           path="/wiki/:mundo"
           element={<div data-testid="world-route">world</div>}
+        />
+        <Route
+          path="/onboarding"
+          element={<div data-testid="onboarding-route">onboarding</div>}
         />
       </Routes>
     </MemoryRouter>,
@@ -97,6 +102,23 @@ describe("WikiHome", () => {
     expect(
       screen.getByText(/No hay mundos disponibles/i),
     ).toBeInTheDocument();
+  });
+
+  it("offers a create-world action on the empty state that navigates to /onboarding", async () => {
+    (useWorlds as Mock).mockReturnValue({
+      worlds: [],
+      isLoading: false,
+      error: null,
+      mutate: vi.fn(),
+    });
+
+    const user = userEvent.setup();
+    renderWikiHome();
+
+    const action = screen.getByRole("button", { name: "Crear un mundo" });
+    await user.click(action);
+
+    expect(screen.getByTestId("onboarding-route")).toBeInTheDocument();
   });
 
   it("does not render the Navbar (hoisted to the shared AppLayout)", () => {

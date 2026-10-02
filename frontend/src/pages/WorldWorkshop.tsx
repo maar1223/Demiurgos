@@ -11,6 +11,7 @@ import { Spinner } from "@/components/atoms/Spinner";
 import { Button } from "@/components/atoms/Button";
 import { Icon } from "@/components/atoms/Icon";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { ROUTES } from "@/lib/constants";
 import type { WorldInfo } from "@/api/types";
 
 /**
@@ -86,6 +87,8 @@ export default function WorldWorkshop() {
           <EmptyState
             icon="empty"
             message={t("wikiHome.empty")}
+            actionLabel={t("emptyWorld.createWorld")}
+            onAction={() => navigate(ROUTES.ONBOARDING)}
           />
         </div>
       )}
