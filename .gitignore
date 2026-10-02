@@ -58,7 +58,6 @@ engram-export.json
 src/opencode.json
 src/tui.json
 src/tui-plugins/
-install.ps1
 .migration-baseline.txt
 src/tools/sync-ideas.py.bak-*
 src/tools/gas-webhook.js
