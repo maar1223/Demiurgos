@@ -34,7 +34,7 @@ agent:
 # cwd must point to the Demiurgos project root so AGENTS.md is found
 terminal:
   backend: local
-  cwd: <local-path>\Proyectos\Demiurgos
+  cwd: <your-project-root>  # absolute path to your Demiurgos checkout
   timeout: 180
 
 # ── MCP (Engram connection) ────────────────────────────────────────

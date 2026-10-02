@@ -4,6 +4,9 @@
 .env
 .secrets/
 *.json.credential
+# Live idea-capture ingress policy (author's real Telegram ids). The tracked
+# tree ships the sanitized config/idea-capture.yaml.example instead.
+config/idea-capture.yaml
 
 # ============================================================
 # Mundos del Autor — contenido narrativo privado

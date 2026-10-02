@@ -33,8 +33,8 @@ Hay **dos ubicaciones**:
    regenerar o consultar el estado original:
 
 ```
-<home>/Imágenes/Logos de Demiurogs Definitivos/   ← fuente primaria
-docs/Logos-Demiurgos/                                          ← copia dentro del repo
+~/Imágenes/Logos de Demiurgos Definitivos/   ← fuente primaria (fuera del repo)
+docs/Logos-Demiurgos/                          ← copia dentro del repo
 ```
 
 Estructura (idéntica en ambas ubicaciones):
