@@ -114,7 +114,7 @@ function Get-ShaFor([string]$sumsFile, [string]$name) {
 # (the RWS... line of minisign.pub) generated with `minisign -G`, before the
 # first public release (S5b signing-key custody note).
 # Seam: MINISIGN_PUBKEY env override (the CI smoke and hermetic tests use it).
-$defaultMinisignPubkey = 'RWSREPLACE-ME-WITH-THE-REAL-MINISIGN-PUBLIC-KEY'
+$defaultMinisignPubkey = 'RWRZGmxh1+0HULxpc0FTGSGQCy4fyfNiukXM3bBxt2MmI+PEMPEBcSiy'
 $minisignPubkey = if ($env:MINISIGN_PUBKEY) { $env:MINISIGN_PUBKEY } else { $defaultMinisignPubkey }
 
 function Verify-Minisig([string]$sumsFile) {

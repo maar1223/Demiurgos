@@ -445,7 +445,7 @@ verify_sha256() {  # file expected_sha
 # (the RWS... line of minisign.pub) generated with `minisign -G`, before the
 # first public release (S5b signing-key custody note).
 # Seam: MINISIGN_PUBKEY env override (the CI smoke and hermetic tests use it).
-DEFAULT_MINISIGN_PUBKEY="RWSREPLACE-ME-WITH-THE-REAL-MINISIGN-PUBLIC-KEY"
+DEFAULT_MINISIGN_PUBKEY="RWRZGmxh1+0HULxpc0FTGSGQCy4fyfNiukXM3bBxt2MmI+PEMPEBcSiy"
 
 verify_minisig() {  # sums_file sig_file
     local sums="$1" sig="$2" pubkey="${MINISIGN_PUBKEY:-$DEFAULT_MINISIGN_PUBKEY}"

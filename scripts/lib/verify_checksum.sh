@@ -49,9 +49,9 @@ verify_sha256() {
 }
 
 # --- S5b: signed-manifest gate (task 8.4) -----------------------------------
-# >>> PLACEHOLDER <<< — the Author MUST replace this with the real public key
-# line (the RWS... line of minisign.pub) generated with `minisign -G`.
-DEFAULT_MINISIGN_PUBKEY="RWSREPLACE-ME-WITH-THE-REAL-MINISIGN-PUBLIC-KEY"
+# Real public key line (the RW... line of minisign.pub) generated with
+# `minisign -G` (S5b signing-key custody, set 2026-10-02).
+DEFAULT_MINISIGN_PUBKEY="RWRZGmxh1+0HULxpc0FTGSGQCy4fyfNiukXM3bBxt2MmI+PEMPEBcSiy"
 
 verify_minisig() {  # sums_file sig_file [pubkey]
     local sums="$1" sig="$2" pubkey="${3:-${MINISIGN_PUBKEY:-$DEFAULT_MINISIGN_PUBKEY}}"
