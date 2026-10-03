@@ -41,9 +41,19 @@ _DENIED_SUBTREE = "plantillas"
 
 @pytest.fixture()
 def staged_payload(tmp_path: Path):
-    """Stage the manifest allow-list; scrub the repo from sys.path/modules."""
+    """Stage the manifest allow-list; scrub the repo from sys.path/modules.
+
+    Hermetic: ``sys.path`` and ``sys.modules`` are snapshotted and restored
+    EXACTLY on teardown, so the staged anchors never leak into later tests. An
+    earlier version left them at the front of ``sys.path``, which made unrelated
+    tests (e.g. the sync_lore import flow) resolve modules from the temp payload
+    copy and fail.
+    """
     assert _MANIFEST.is_file(), f"missing derived manifest: {_MANIFEST}"
     manifest = json.loads(_MANIFEST.read_text(encoding="utf-8"))
+
+    original_sys_path = list(sys.path)
+    original_modules = dict(sys.modules)
 
     staged_root = tmp_path / "payload"
     for rel in manifest["payload"]:
@@ -88,16 +98,13 @@ def staged_payload(tmp_path: Path):
 
     yield staged_root, api_server
 
-    # Restore the session: drop staged modules and re-add the real anchors.
+    # Restore sys.path and sys.modules EXACTLY (no leak into later tests).
+    sys.path[:] = original_sys_path
     for name in list(sys.modules):
-        module = sys.modules[name]
-        if getattr(module, "__file__", "") and str(Path(module.__file__).resolve()).startswith(
-            str(staged_root.resolve())
-        ):
+        if name not in original_modules:
             del sys.modules[name]
-    for p in removed_paths:
-        if p not in sys.path:
-            sys.path.append(p)
+    for name, module in original_modules.items():
+        sys.modules[name] = module
 
 
 class TestPayloadBoot:
