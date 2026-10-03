@@ -39,6 +39,16 @@ for _sub in _SUBDIRS:
 _PREVIOUS_ENV = os.environ.get(_ENV_VAR)
 os.environ[_ENV_VAR] = str(_HERMETIC_ROOT)
 
+# S1 static serving isolation (S1-4): the working tree contains a gitignored
+# ``frontend/dist`` that would make the catch-all serve a stale bundle during
+# unrelated tests. Point ``DEMIURGOS_FRONTEND_DIST`` at a NONEXISTENT path so
+# the catch-all stays inert (503) for the general suite; static-serving tests
+# override the env per test with their own ``tmp_path`` fixture.
+_DIST_ENV_VAR = "DEMIURGOS_FRONTEND_DIST"
+_HERMETIC_DIST = Path(tempfile.mkdtemp(prefix="demiurgos-test-dist-")) / "dist"
+_PREVIOUS_DIST_ENV = os.environ.get(_DIST_ENV_VAR)
+os.environ[_DIST_ENV_VAR] = str(_HERMETIC_DIST)
+
 
 @pytest.fixture(scope="session", autouse=True)
 def hermetic_data_root() -> Path:
@@ -54,3 +64,20 @@ def hermetic_data_root() -> Path:
         os.environ.pop(_ENV_VAR, None)
     else:
         os.environ[_ENV_VAR] = _PREVIOUS_ENV
+
+
+@pytest.fixture(scope="session", autouse=True)
+def hermetic_frontend_dist() -> Path:
+    """The suite's frontend dist pointer: nonexistent, never the working tree's.
+
+    ``api_server._frontend_dist()`` reads the env at request time, so this
+    single session-scoped pointer keeps the S1 catch-all inert for every test
+    that does not opt into a real dist fixture.
+    """
+    assert os.environ.get(_DIST_ENV_VAR) == str(_HERMETIC_DIST)
+    yield _HERMETIC_DIST
+    shutil.rmtree(_HERMETIC_DIST.parent, ignore_errors=True)
+    if _PREVIOUS_DIST_ENV is None:
+        os.environ.pop(_DIST_ENV_VAR, None)
+    else:
+        os.environ[_DIST_ENV_VAR] = _PREVIOUS_DIST_ENV

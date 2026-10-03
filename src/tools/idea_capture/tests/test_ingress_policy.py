@@ -48,11 +48,17 @@ class IngressTests(unittest.TestCase):
         self.assertEqual(self.ingress.confirm_world(WorldAction.CANCEL, "vibrantes"), None)
         self.assertEqual(self.ingress.confirm_world(WorldAction.CHANGE_WORLD, "vibrantes", "nec"), "nec")
 
-    def test_stale_hermes_health_does_not_start_a_second_owner(self):
+    def test_launcher_has_no_provider_gate_and_never_starts_a_second_owner(self):
+        # S2b (S2-2): Hermes is optional, so the launcher has no provider
+        # health gate at all. Idempotency now rests on the API ownership gate:
+        # an existing Demiurgos API listener is adopted, and a foreign port
+        # squatter is refused (spec "Port already in use").
         launcher = Path(__file__).resolve().parents[4] / "start-demiurgos.ps1"
         source = launcher.read_text(encoding="utf-8")
-        self.assertIn("no se inicia una segunda instancia", source)
-        self.assertIn("Test-HermesHealthy", source)
+        self.assertNotIn("Test-HermesHealthy", source)
+        self.assertIn("Test-ApiOwnership", source)
+        self.assertIn("uvicorn api_server:app", source)
+        self.assertIn("Already running api", source)
 
 
 if __name__ == "__main__":

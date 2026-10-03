@@ -158,6 +158,18 @@ class TestAssistantSettings:
         assert response.status_code == 200
         assert response.json()["model_metadata"]["capability"] == "multimodal"
 
+    def test_status_exposes_gateway_running_boolean(self, client: TestClient):
+        """S2b (degradable-ai-provider): the status surface carries an explicit
+        presence boolean derived from HermesGatewayProbe.is_running() so the UI
+        can distinguish gateway-up from configured-but-down. The real app
+        wiring injects runtime_liveness, so the key must be a plain bool."""
+        response = client.get("/api/profile/assistant/status")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert "gateway_running" in body
+        assert isinstance(body["gateway_running"], bool)
+
     def test_get_uses_provider_default_when_endpoint_is_omitted(self, client: TestClient):
         paths = assistant_settings._resolve_profile_paths()
         paths.config.write_text(

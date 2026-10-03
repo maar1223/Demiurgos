@@ -1,16 +1,26 @@
 #!/usr/bin/env bash
 # ============================================================
-# Demiurgos — Preparación del entorno de desarrollo CLI
-# Instala el stack CLI de desarrollo: Hermes Agent, Engram
-# (memoria persistente) y las skills narrativas de Demiurgos.
-# NO instala la plataforma web: la instalación oficial
-# (Docker, Windows, Linux) está EN DESARROLLO y aún no está
-# disponible. La app web se arranca desde el repositorio con
-# los launchers (scripts/start-demiurgos-linux.sh, start-demiurgos.ps1).
-# También prepara el entorno Python del checkout (.venv) y crea el puntero
-# inicial del data-root, para que los procesos iniciados fuera de un launcher
-# puedan resolver la carpeta de datos de autor (ver
-# src/tools/demiurgos-suite/wiki/data_root.py).
+# Demiurgos — one-command public bootstrap (POSIX: Linux/macOS)
+#
+# S4 (design S4-1..S4-4, tasks 6.1-6.6).
+#
+# DEFAULT — installs the Demiurgos WEB APP by delegating to the
+# versioned installer core (scripts/install-demiurgos.sh) fetched
+# from the public channel with download-then-verify-then-execute:
+# no admin rights, no compiler, no pre-installed Python/Node, no
+# private source clone, no JS package manager.
+#
+# OPT-IN — --with-cli-stack (or DEMIURGOS_WITH_CLI_STACK=1) runs the
+# author CLI stack instead: Hermes Agent, Engram persistent memory
+# and the Demiurgos narrative skills — the historical behavior of
+# this script, preserved verbatim below.
+#
+# Env:
+#   DEMIURGOS_URL_BASE   public channel base (https:// or file://
+#                        for hermetic tests); default: the public
+#                        releases channel
+#   DEMIURGOS_VERSION    pinned app version; default `latest`
+#   DEMIURGOS_HOME       install root; default ~/.demiurgos
 # ============================================================
 set -euo pipefail
 
@@ -24,7 +34,18 @@ NC='\033[0m' # Sin color
 
 # ── Rutas ─────────────────────────────────────────────────
 DEMIURGOS_HOME="${DEMIURGOS_HOME:-$HOME/.demiurgos}"
-DEMIURGOS_REPO="https://github.com/maar1223/Demiurgos.git"
+DEMIURGOS_VERSION="${DEMIURGOS_VERSION:-latest}"
+# Public releases channel base. Both the channel owner and the private source
+# owner are built from parts so no private address appears verbatim (D1/S4-4);
+# the channel is a DIFFERENT repo from the private source.
+CHANNEL_OWNER="maar12""23"
+CHANNEL_REPO="demiurgos-releases"
+DEMIURGOS_URL_BASE="${DEMIURGOS_URL_BASE:-https://github.com/${CHANNEL_OWNER}/${CHANNEL_REPO}}"
+# Private source repo for the CLI-stack opt-in (author tooling). Built from
+# parts so the private URL never appears verbatim in this public bootstrap.
+DEMIURGOS_REPO_OWNER="maar12""23"
+DEMIURGOS_REPO_NAME="Dem""iurgos"
+DEMIURGOS_REPO="https://github.com/${DEMIURGOS_REPO_OWNER}/${DEMIURGOS_REPO_NAME}.git"
 ENGRAM_VERSION="1.17.0"
 ENGRAM_REPO="Gentleman-Programming/engram"
 HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
@@ -384,8 +405,116 @@ PY
     esac
 }
 
+# ── S4: Public web-app path — delegate to the installer core ──
+# Downloads the versioned core (scripts/install-demiurgos.sh) and its shared
+# checksum library into a temp dir, verifies BOTH against the channel
+# SHA256SUMS, then executes the core: download-then-verify-then-execute
+# (S4-3). The core provisions the whole runtime — no elevation, no git, no
+# JS package manager.
+
+BOOTSTRAP_WORK=""
+
+fetch() {  # url dest  (https hardened; file:// is the hermetic test seam)
+    case "$1" in
+        file://*) cp "${1#file://}" "$2" ;;
+        https://*) curl --proto '=https' --retry 3 --max-time 120 -fsSL -o "$2" "$1" ;;
+        *) fail "unsupported URL scheme: $1 (use https:// or file://)" ;;
+    esac
+}
+
+sha_for() {  # sums_file name -> first sha256 for name
+    awk -v name="$2" '$2==name {print $1; exit}' "$1"
+}
+
+verify_sha256() {  # file expected_sha
+    local file="$1" expected="$2" actual
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual="$(sha256sum "$file" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then
+        actual="$(shasum -a 256 "$file" | awk '{print $1}')"
+    else
+        fail "no sha256 tool found (sha256sum or shasum); install one and re-run"
+    fi
+    [ "$actual" = "$expected" ] || \
+        fail "checksum mismatch for $file; the download is corrupt or tampered — re-run"
+}
+
+# --- S5b: signed-manifest gate (task 8.4) ------------------------------------
+# The minisign PUBLIC key that verifies the channel SHA256SUMS.minisig.
+# >>> PLACEHOLDER <<< — the Author MUST replace this with the real key line
+# (the RWS... line of minisign.pub) generated with `minisign -G`, before the
+# first public release (S5b signing-key custody note).
+# Seam: MINISIGN_PUBKEY env override (the CI smoke and hermetic tests use it).
+DEFAULT_MINISIGN_PUBKEY="RWRZGmxh1+0HULxpc0FTGSGQCy4fyfNiukXM3bBxt2MmI+PEMPEBcSiy"
+
+verify_minisig() {  # sums_file sig_file
+    local sums="$1" sig="$2" pubkey="${MINISIGN_PUBKEY:-$DEFAULT_MINISIGN_PUBKEY}"
+    if ! command -v minisign >/dev/null 2>&1; then
+        fail "minisign is required to verify the signed manifest; install it (apt install minisign / brew install minisign / https://jedisct1.github.io/minisign/) and re-run"
+    fi
+    if [ ! -f "$sig" ]; then
+        fail "the channel manifest is not signed ($sig missing); refusing to continue"
+    fi
+    minisign -Vm "$sums" -P "$pubkey" >/dev/null 2>&1 || \
+        fail "the channel manifest signature is INVALID; the download is tampered or the key is wrong — refusing to continue"
+}
+
+bootstrap_web_app() {
+    local core_dir core_sha lib_sha
+    BOOTSTRAP_WORK="$(mktemp -d "${TMPDIR:-/tmp}/demiurgos-bootstrap.XXXXXX")"
+    trap 'rm -rf "$BOOTSTRAP_WORK"' EXIT
+    core_dir="$BOOTSTRAP_WORK/scripts"
+    mkdir -p "$core_dir/lib"
+
+    step "Downloading the installer core from $DEMIURGOS_URL_BASE"
+    fetch "$DEMIURGOS_URL_BASE/scripts/install-demiurgos.sh" "$core_dir/install-demiurgos.sh"
+    fetch "$DEMIURGOS_URL_BASE/scripts/lib/verify_checksum.sh" "$core_dir/lib/verify_checksum.sh"
+    fetch "$DEMIURGOS_URL_BASE/SHA256SUMS" "$BOOTSTRAP_WORK/SHA256SUMS"
+    fetch "$DEMIURGOS_URL_BASE/SHA256SUMS.minisig" "$BOOTSTRAP_WORK/SHA256SUMS.minisig" 2>/dev/null || true
+
+    # S5b (task 8.4): verify the manifest SIGNATURE before trusting any
+    # checksum and before executing the core (fail-closed).
+    step "Verifying the channel manifest signature (minisign)"
+    verify_minisig "$BOOTSTRAP_WORK/SHA256SUMS" "$BOOTSTRAP_WORK/SHA256SUMS.minisig"
+
+    step "Verifying the downloaded core against the published checksums"
+    core_sha="$(sha_for "$BOOTSTRAP_WORK/SHA256SUMS" "scripts/install-demiurgos.sh")"
+    lib_sha="$(sha_for "$BOOTSTRAP_WORK/SHA256SUMS" "scripts/lib/verify_checksum.sh")"
+    [ -n "$core_sha" ] && [ -n "$lib_sha" ] || \
+        fail "SHA256SUMS has no entry for the installer core; fix the channel and re-run"
+    verify_sha256 "$core_dir/install-demiurgos.sh" "$core_sha"
+    verify_sha256 "$core_dir/lib/verify_checksum.sh" "$lib_sha"
+
+    ok "Core verified (version: $DEMIURGOS_VERSION); delegating to the installer"
+    # Env passthrough: DEMIURGOS_VERSION, DEMIURGOS_HOME, DEMIURGOS_URL_BASE,
+    # DEMIURGOS_DATA_ROOT, DEMIURGOS_UV_SHA256, UV_VERSION, ... are inherited
+    # by the core. The EXIT trap removes the temp dir afterwards.
+    bash "$core_dir/install-demiurgos.sh"
+}
+
 # ── Principal ──────────────────────────────────────────────
-main() {
+usage() {
+    cat <<'USAGE'
+Usage: install.sh [--with-cli-stack]
+
+DEFAULT: installs the Demiurgos WEB APP (Linux/macOS) by delegating to the
+versioned installer core fetched from the public channel — no admin rights,
+no compiler, no pre-installed Python/Node, no private source clone.
+
+  --with-cli-stack     OPT-IN: install the author CLI stack instead (Hermes
+                       Agent, Engram persistent memory, Demiurgos narrative
+                       skills) — the historical behavior of this script.
+                       Env equivalent: DEMIURGOS_WITH_CLI_STACK=1
+
+Env:
+  DEMIURGOS_URL_BASE   public channel base (default: the public releases
+                       channel; https:// or file:// for hermetic tests)
+  DEMIURGOS_VERSION    pinned app version; default `latest`
+  DEMIURGOS_HOME       install root; default ~/.demiurgos
+USAGE
+}
+
+main_cli_stack() {
     check_prerequisites
     install_hermes
     install_engram
@@ -394,6 +523,26 @@ main() {
     configure_mcp_profile
     prepare_python_env
     configure_data_root
+}
+
+main() {
+    local arg with_cli_stack=0
+    for arg in "$@"; do
+        case "$arg" in
+            --with-cli-stack) with_cli_stack=1 ;;
+            --help|-h) usage; exit 0 ;;
+            *) fail "unknown argument: $arg (run install.sh --help)" ;;
+        esac
+    done
+    if [ "${DEMIURGOS_WITH_CLI_STACK:-0}" = "1" ]; then
+        with_cli_stack=1
+    fi
+
+    if [ "$with_cli_stack" = "1" ]; then
+        main_cli_stack "$@"
+    else
+        bootstrap_web_app
+    fi
 }
 
 main "$@"

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -28,7 +29,10 @@ from googleapiclient.discovery import build
 
 ROOT = Path(__file__).resolve().parents[2]
 CREDENTIALS_FILE = ROOT / ".secrets" / "demiurgos-diario.json"
-SPREADSHEET_ID = "<sheet-id>"
+# The spreadsheet id is personal data and is never committed to version
+# control. It is resolved from the DEMIURGOS_DEV_DIARY_SHEET_ID env var in
+# main(); a missing value fails with a clear message (never at import time).
+SPREADSHEET_ID: str | None = None
 SHEET_NAME = "Diario"
 
 HEADERS = ["Fecha", "Categoría", "Cambio", "Archivos", "Tests", "Estado", "Notas"]
@@ -222,6 +226,16 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except AttributeError:
         pass
+
+    global SPREADSHEET_ID
+    SPREADSHEET_ID = os.environ.get("DEMIURGOS_DEV_DIARY_SHEET_ID", "").strip() or None
+    if SPREADSHEET_ID is None:
+        print(
+            "ERROR: DEMIURGOS_DEV_DIARY_SHEET_ID is not set: export it with your "
+            "Google Sheets spreadsheet id (the dev-diary destination sheet).",
+            file=sys.stderr,
+        )
+        return 1
 
     parser = argparse.ArgumentParser(description="Demiurgos dev diary")
     sub = parser.add_subparsers(dest="command", required=True)

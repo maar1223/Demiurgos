@@ -126,6 +126,16 @@ La co-creación es **adaptativa**: la plataforma aprende el **vocabulario y la e
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+**Componentes de distribución** *(2026-10-02, decisión G8)* — capa separada de
+la aplicación, sobre el canal público:
+
+| Componente | Rol |
+|---|---|
+| `install.sh` / `install.ps1` | bootstraps públicos: descargan, verifican y delegan al core de instalación |
+| `scripts/install-demiurgos.sh` / `.ps1` | core de instalación: pisos de sistema, `uv` verificado, entorno con ruedas y *hash lock*, staging atómico, semilla del data root |
+| `scripts/start-demiurgos.sh` / `.ps1` | launcher portable: deriva rutas de su propia ubicación, gestión idempotente, provider opcional |
+| `.github/workflows/release.yml` | pipeline: un solo build del frontend, empaquetado por sistema, auditoría del payload, manifiesto firmado y smoke anónimo antes de mover `latest` |
+
 ### 2.2 Flujo de datos end-to-end
 
 ```
@@ -349,7 +359,7 @@ Estas decisiones pertenecen a la **plataforma completa** (no al Taller de Herram
 | **G5** | Alcance de flujos de imagen | Subida/media + `image_indexer` + visión actuales vs generación/regeneración profunda de imágenes de personaje |
 | **G6** | Rol de Engram como memoria de plataforma | Registro de co-creación vs fuente de contexto de búsqueda; sincronización con el worker `engram_sync` |
 | **G7** | Idioma de UI en runtime | `DEMIURGOS_LANGUAGE` estático actual vs cambio dinámico con persistencia (el frontend ya tiene `useAppLanguage`) |
-| **G8** | Instalación/despliegue | `install.sh` + onboarding/Centro de Configuración actuales (el Centro vive en el Perfil de la wiki, `/perfil`, sin página independiente) vs empaquetado/despliegue gestionado (p. ej. Docker); wizard legacy `web-config-ui` retirado (histórico) |
+| **G8** | Instalación/despliegue | **[DECISIÓN CERRADA]** *(2026-10-02)* Instalación **local de un solo comando**: canal público de artefactos precompilados, `uv` + ruedas binarias (sin compilador), sin permisos de administrador, launcher portable y rollback acotado a la versión anterior. **Docker queda como canal paralelo futuro, no como canal principal** (rompería la promesa de un solo comando y exigiría privilegios). Esta decisión **supersede #2330** (ejecutables nativos, diferidos): la distribución *source-visible* con `uv` + wheels es el enfoque vigente. Detalle en `docs/install/` y `docs/architecture/INSTALL_LAYOUT.md` |
 | **G9** | Modelo de licencias y activación | **[DECISIÓN CERRADA]** Módulos de **pago único**; la compra incluye **actualizaciones durante 1 año**; la **renovación colaborativa** es opcional y posterior; la **versión instalada nunca se bloquea**. La activación es **por plataforma**: 1 Windows + 1 macOS + 1 Linux + 1 servidor/VPS, con transferencia. Los cobros son agnósticos de proveedor (Stripe/Binance futuros) y los **descuentos se calculan en Demiurgos**, no en el proveedor |
 | **G10** | Alcance del MVP | **[DECISIÓN CERRADA]** El MVP entrega solo el **Core**: Taller de Herramientas + Taller de Mundo. Los 6 módulos de pago (Visuales, Planificación, Rol, Escritor, GameDesigner, Publicación) van después |
 | **G11** | Onboarding y respaldo | **[DECISIÓN CERRADA]** El onboarding configura idioma, modelos LLM e importar/crear mundo; la **carpeta sincronizada** de Google Drive es **no bloqueante**; el **árbol espejo por taller** se escribe en esa carpeta; hay **sync 30 s tras editar** y **restauración Google→Demiurgos**. El cliente de sincronización queda fuera de esta arquitectura y lo elige el operador |

@@ -1,5 +1,10 @@
 # Native Hermes Telegram ingress policy. Groups are deny-by-default.
 #
+# THIS IS A SANITIZED REFERENCE COPY. The author's real values live in the
+# UNTRACKED local file at config/idea-capture.yaml (see .gitignore) — that is
+# the file the runtime loads. To use this example, copy it to
+# config/idea-capture.yaml and replace every placeholder with your own ids.
+#
 # FAIL-CLOSED: empty allowlists reject EVERY update. Authorize explicitly:
 #
 #   private_chat_ids: [123456789]            # owner chat ids
@@ -12,20 +17,20 @@
 # ALLOWLIST CONFIRMATION (bot-capture-and-conversation, R-3.1 / T-3.1):
 # The gateway-level allowlist is the FIRST authorization gate and is already
 # enforced (default-deny). It lives in the Hermes runtime env:
-#   ~/.hermes/.env -> TELEGRAM_ALLOWED_USERS=<telegram-id>   (authorized sender)
+#   ~/.hermes/.env -> TELEGRAM_ALLOWED_USERS=<your-telegram-user-id>
 # The gateway (gateway/authz_mixin.py _is_user_authorized) drops any message
 # from a user not in that list WITHOUT responding, so an unauthorized sender
 # can never use the bot as a free LLM or inject content. This file's
 # authorized_bindings must stay in sync with TELEGRAM_ALLOWED_USERS (both
-# carry user_id <telegram-id>). The legacy `serve` entrypoint remains
+# carry your user id). The legacy `serve` entrypoint remains
 # compatibility-only and is not the production supervisor.
-private_chat_ids: [<telegram-id>]
+private_chat_ids: [123456789]  # <your-telegram-user-id>
 approved_groups:
   {}
 authorized_bindings:
   - platform: telegram
-    chat_id: <telegram-id>
-    user_id: <telegram-id>
+    chat_id: 123456789        # <your-telegram-user-id>
+    user_id: 123456789        # <your-telegram-user-id>
     profile: default
 limits:
   image_mb: 20
@@ -40,4 +45,4 @@ limits:
 capture_mode: ai
 # Canonical world for world-scoped captures (SAVE/CHANGE_WORLD). Read by
 # src/tools/idea_capture/config.py (load_active_world) and the Hermes handler.
-active_world: Vibrantes
+active_world: your-world  # <your-canonical-world-name>

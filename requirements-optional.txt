@@ -1,0 +1,24 @@
+# Optional extras (S0-B) — installed best-effort AFTER the mandatory closure,
+# NEVER fatal: `uv pip install --only-binary=:all: -r requirements-optional.txt
+# || warn-degrade`.
+#
+# Both subtrees break the wheels-only closure on some declared targets
+# (PM-2): markitdown[docx] -> magika -> onnxruntime has no musllinux wheels,
+# no x86_64 macOS wheel and needs glibc >= 2.28; watchdog has no musllinux
+# wheels. They are therefore OPTIONAL with a degradation contract:
+#
+#   - markitdown[docx] (document conversion for the importer): when
+#     markitdown/magika is importable the importer uses it; otherwise it
+#     reports "document conversion unavailable on this platform" — feature
+#     degraded, never a crash.
+#   - watchdog (live index watching): when watchdog is importable the observer
+#     is used; otherwise the index falls back to poll-based refresh / explicit
+#     reindex.
+#
+# On Intel macOS and musl/Alpine the optional install is expected to fail and
+# the app must keep working degraded.
+
+# Document conversion for importer (.docx, .pdf, .pptx -> markdown)
+markitdown[docx]>=0.1.0
+# File watching for live index updates
+watchdog>=4.0.0

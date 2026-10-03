@@ -360,6 +360,11 @@ register_error_handlers(app)
 PROJECT_ROOT: Path | None = None
 MUNDOS_DIR: Path | None = None
 TRASH_ROOT: Path | None = None
+# Prebuilt SPA dist dir (S1 static serving). Same lazy seam contract as the
+# data-root names above: ``_frontend_dist()`` reads the env override first,
+# then this patched attribute, then the dev-checkout default. The launcher is
+# the sole exporter of ``DEMIURGOS_FRONTEND_DIST`` (S0-C layout contract).
+FRONTEND_DIST: Path | None = None
 
 
 class _LazyBinding:
@@ -424,6 +429,65 @@ def _world_trash_root() -> Path:
 # artifacts (the launcher script) must keep following the checkout, wherever
 # the author data root happens to live. Derived from the sys.path anchors above.
 _CODE_ROOT = _TOOLS.parent.parent
+
+
+def _frontend_dist() -> Path | None:
+    """Prebuilt SPA dist dir, resolved lazily on each request (S1-2).
+
+    Order: ``DEMIURGOS_FRONTEND_DIST`` env (exported by the launcher per the
+    S0-C layout contract) > patched ``FRONTEND_DIST`` module attribute (test
+    seam) > ``_CODE_ROOT / "frontend" / "dist"`` (dev checkout). Derived on
+    every call rather than cached so a patched value always wins, mirroring
+    ``_mundos_dir()``.
+    """
+    env_dist = os.environ.get("DEMIURGOS_FRONTEND_DIST")
+    if env_dist:
+        return Path(env_dist)
+    if FRONTEND_DIST is not None:
+        return FRONTEND_DIST
+    return _CODE_ROOT / "frontend" / "dist"
+
+
+# Fixed extension -> content type map (S1-3), consulted BEFORE
+# ``mimetypes.guess_type``: the Windows registry can map ``.js`` to
+# ``text/plain``, which blocks ES modules and renders a blank page only on
+# Windows. A deterministic map keeps the served type identical on every OS.
+CONTENT_TYPES = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".svg": "image/svg+xml",
+    ".json": "application/json",
+    ".woff2": "font/woff2",
+    ".wasm": "application/wasm",
+    ".html": "text/html",
+    ".ico": "image/x-icon",
+}
+
+
+def _content_type(path: Path) -> str:
+    """Content type for a served file: fixed map first, mimetypes fallback."""
+    return (
+        CONTENT_TYPES.get(path.suffix.lower())
+        or mimetypes.guess_type(path.name)[0]
+        or "application/octet-stream"
+    )
+
+
+def _cache_control(request_path: str) -> str:
+    """Cache policy (S1-5): index revalidates; content-hashed assets immutable."""
+    if request_path.startswith("assets/"):
+        return "public, max-age=31536000, immutable"
+    return "no-cache"
+
+
+def _spa_index_response(dist: Path) -> FileResponse:
+    """SPA shell: ``index.html`` with a revalidate cache policy."""
+    return FileResponse(
+        dist / "index.html",
+        media_type="text/html",
+        headers={"Cache-Control": "no-cache"},
+    )
 
 # Names that can never be treated as worlds. ``trash`` is reserved so a world
 # literally named "trash" can never collide with the world recycle-bin routes
@@ -8628,10 +8692,31 @@ app.include_router(
 # process only after the response is flushed. Immediate launcher failures
 # (bad path, permission) surface via a short non-blocking peek. The local
 # session is NOT closed server-side — the client logs out first (S-2.5/S-3.4).
+#
+# The launcher path comes from the frozen layout contract (S0-C) per OS:
+# POSIX ships ``scripts/start-demiurgos.sh``, Windows ships
+# ``scripts/start-demiurgos.ps1``. The resolved path is validated at BOOT:
+# if it does not exist, /api/system reports a clear error instead of ever
+# dispatching a stale path (S2-7).
+def _system_launcher_path() -> Path:
+    if os.name == "nt":
+        return _CODE_ROOT / "scripts" / "start-demiurgos.ps1"
+    return _CODE_ROOT / "scripts" / "start-demiurgos.sh"
+
+
+_SYSTEM_LAUNCHER = _system_launcher_path()
+_SYSTEM_LAUNCHER_AVAILABLE = _SYSTEM_LAUNCHER.is_file()
+if not _SYSTEM_LAUNCHER_AVAILABLE:
+    logger.warning(
+        "System launcher missing at %s; /api/system restart/shutdown will fail closed",
+        _SYSTEM_LAUNCHER,
+    )
+
 app.include_router(
     create_system_control_router(
         require_principal=lambda request: _resolve_principal(request),
-        launcher_path=_CODE_ROOT / "scripts" / "start-demiurgos-linux.sh",
+        launcher_path=_SYSTEM_LAUNCHER,
+        launcher_available=_SYSTEM_LAUNCHER_AVAILABLE,
     ),
 )
 
@@ -9577,6 +9662,95 @@ def methodologies_quarantine_trust(package_id: str, request: Request):
         "clasificacion": trusted.clasificacion,
         "trust_attributes": list(trusted.trust_attributes),
     }
+
+
+# ---------------------------------------------------------------------------
+# Static SPA serving (S1)
+# ---------------------------------------------------------------------------
+# Single catch-all registered LAST on purpose: Starlette matches in
+# registration order, so only paths no earlier route claimed ever reach this
+# handler. It serves the prebuilt same-origin SPA (index + hashed assets +
+# client-route fallback), keeps unknown ``/api/*`` paths on the API's own JSON
+# 404 (never ``index.html``), and is inert when no dist is present so the Vite
+# dev proxy path keeps working unchanged.
+
+
+@app.get("/{full_path:path}")
+def spa_fallback(full_path: str) -> Response:
+    """Serve the prebuilt SPA, falling back to ``index.html`` for client routes.
+
+    Precedence (S1-1): the ``/api`` carve-out stays on the API's JSON 404;
+    an absent dist answers 503 ``app.not_served`` while ``/api/*`` and
+    ``/health`` keep working; a traversal-safe file inside the dist dir is
+    served with a deterministic content type; anything else is the SPA shell.
+    """
+    if full_path == "api" or full_path.startswith("api/"):
+        if _api_route_method_mismatch(full_path):
+            # The path exists under a non-GET method: keep the API's native
+            # 405 instead of hiding it behind the SPA carve-out 404.
+            return JSONResponse(
+                status_code=405, content={"detail": "Method Not Allowed"}
+            )
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
+    dist = _frontend_dist()
+    if dist is None or not dist.is_dir() or not (dist / "index.html").is_file():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "code": "app.not_served",
+                "detail": "Frontend build not present. Build the SPA or point "
+                "DEMIURGOS_FRONTEND_DIST at a built dist directory.",
+            },
+        )
+
+    if not full_path:
+        return _spa_index_response(dist)
+
+    candidate = (dist / full_path).resolve()
+    dist_root = dist.resolve()
+    if dist_root not in candidate.parents:
+        # Traversal attempt (or the dist dir itself): never serve outside it.
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
+    if candidate.is_file():
+        return FileResponse(
+            candidate,
+            media_type=_content_type(candidate),
+            headers={"Cache-Control": _cache_control(full_path)},
+        )
+    return _spa_index_response(dist)
+
+
+def _api_route_method_mismatch(full_path: str) -> bool:
+    """True when an API path exists only under non-GET methods (→ 405).
+
+    The catch-all is registered last, so a GET reaching it for a path that a
+    POST/DELETE/PUT route owns would otherwise turn Starlette's native 405
+    into the carve-out 404. Re-runs the router's own matching with a synthetic
+    GET scope: any ``PARTIAL`` match means the path exists but not for GET.
+    Uses ``route.matches()`` (not ``path_regex``) so router objects wrapped by
+    ``include_router`` are seen through on every FastAPI version.
+    """
+    from starlette.routing import Match  # noqa: PLC0415 — local, tiny
+
+    scope: dict = {
+        "type": "http",
+        "method": "GET",
+        "path": "/" + full_path,
+        "raw_path": ("/" + full_path).encode("latin-1"),
+        "root_path": "",
+        "scheme": "http",
+        "query_string": b"",
+        "headers": [],
+        "client": ("127.0.0.1", 8000),
+        "server": ("127.0.0.1", 8000),
+    }
+    for route in app.routes:
+        match, _ = route.matches(scope)
+        if match == Match.PARTIAL:
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------

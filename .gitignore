@@ -4,10 +4,15 @@
 .env
 .secrets/
 *.json.credential
+# Live idea-capture ingress policy (author's real Telegram ids). The tracked
+# tree ships the sanitized config/idea-capture.yaml.example instead.
+config/idea-capture.yaml
 
 # ============================================================
 # Mundos del Autor — contenido narrativo privado
 # ============================================================
+# Any new world is one `git add -A` away; the allow-list below is not enough.
+mundos/*
 mundos/Vibrantes-Legacy/
 mundos/Ideas/
 mundos/Vibrantes/
@@ -17,6 +22,7 @@ _archivo_produccion/
 # Estado local de Demiurgos (tracking de arcos narrativos)
 # ============================================================
 .demiurgos-estado.*
+.demiurgos-estado*
 .demiurgos-sync/
 .env.backup
 
@@ -42,12 +48,16 @@ sdd/
 exploration.md
 
 # ============================================================
+# Live secrets export (leaked-history remediation, runbook #3559)
+# ============================================================
+engram-export.json
+
+# ============================================================
 # OpenCode legacy (no aplica a Hermes)
 # ============================================================
 src/opencode.json
 src/tui.json
 src/tui-plugins/
-install.ps1
 .migration-baseline.txt
 src/tools/sync-ideas.py.bak-*
 src/tools/gas-webhook.js
@@ -78,6 +88,13 @@ data/local-state.json
 data/sessions.json
 # Artefacto temporal que deja el sincronizador (filesystem de fusión)
 data/.fuse_hidden*
+
+# ============================================================
+# Logs del launcher (S2-6: <install_root>/logs). En dev el install root es la
+# raíz del repo, así que correr el launcher deja logs/ ahí. Es runtime, no se
+# versiona (y no debe ensuciar `git status`).
+# ============================================================
+/logs/
 
 # ============================================================
 # Banco global de ideas (ideas/) — contenido narrativo del Autor,
