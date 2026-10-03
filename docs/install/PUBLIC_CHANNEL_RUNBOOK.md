@@ -41,22 +41,23 @@ En el repo del código (el privado, que corre el workflow):
 
 ## 4. Reemplazar el placeholder de la clave pública
 
-Buscar todas las apariciones:
+Buscar todas las apariciones (excluyendo este runbook, que menciona el literal):
 
 ```bash
-rg -n 'RWSREPLACE-ME-WITH-THE-REAL-MINISIGN-PUBLIC-KEY' --hidden
+rg -n 'RWSREPLACE-ME-WITH-THE-REAL-MINISIGN-PUBLIC-KEY' --hidden -g '!docs/install/PUBLIC_CHANNEL_RUNBOOK.md'
 ```
 
-Y reemplazar por la línea real en **los cinco** lugares:
+La clave real va en **cuatro** archivos:
 
-- `install.sh`
-- `install.ps1`
-- `scripts/install-demiurgos.sh`
+- `install.sh` (variable `DEFAULT_MINISIGN_PUBKEY`)
+- `install.ps1` (variable `$defaultMinisignPubkey`)
 - `scripts/lib/verify_checksum.sh` (variable `DEFAULT_MINISIGN_PUBKEY`)
 - `scripts/lib/verify_checksum.ps1` (variable `$DefaultMinisignPubkey`)
 
-> El seam `MINISIGN_PUBKEY` (variable de entorno) sigue existiendo para pruebas;
-> la clave embebida es la que usa el usuario final.
+> `scripts/install-demiurgos.sh` **no** lleva la clave: usa `verify_minisig` de
+> `scripts/lib/verify_checksum.sh`. El seam `MINISIGN_PUBKEY` (variable de
+> entorno) sigue existiendo para pruebas; la clave embebida es la que usa el
+> usuario final.
 
 ## 5. Emitir el primer release
 
