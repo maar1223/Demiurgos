@@ -220,10 +220,15 @@ class TestFrontmatterMaterialization:
             "\n  Cuerpo\n", canonical_id="El Origen | Breve Historia")
         assert 'title: "El Origen | Breve Historia"' in doc
         assert 'id: "El Origen | Breve Historia"' in doc
-        # The rendered document is a valid OKF v1 document (Bug A's correct view).
+        # The rendered document is a recognized OKF v1 document (Bug A's correct
+        # view): the quoted ``|`` must not break frontmatter parsing. The
+        # ``evento`` type now maps to the cronologia shape, so the missing event
+        # content minimum surfaces; that is a content diagnostic, never an
+        # identity/version failure.
         v = okf_contract.validate(doc)
-        assert v.ok, [i.message for i in v.issues]
         assert v.entity_type == "evento"
+        assert not any(i.code in ("identity", "version") for i in v.issues), \
+            [i.message for i in v.issues]
 
     def test_approved_materialization_in_fresh_world_emits_status_stable(
             self, store, service):
