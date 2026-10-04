@@ -1410,7 +1410,8 @@ export interface ImportCreateJobInput {
 // Graph
 // ---------------------------------------------------------------------------
 
-/** Result item from graph entity search. */
+/** Result item from graph entity search. `type` is normalized to lowercase
+ *  server-side; `shape`/`canon_state` are the optional derived OKF envelope. */
 export interface SearchResult {
   name: string;
   type: string;
@@ -1420,9 +1421,18 @@ export interface SearchResult {
   tags: string[];
   link_count: number;
   score: number;
+  /** Derived OKF structural class (entidad|sistema|cronologia); absent on
+   *  legacy payloads. Additive envelope field — not yet rendered. */
+  shape?: string | null;
+  /** Derived OKF world-truth state (canon|creencia|leyenda|hipotesis|perdido|
+   *  prohibido|propuesta); absent on legacy payloads. Additive — not yet
+   *  rendered. */
+  canon_state?: string | null;
 }
 
-/** Full entity detail from the knowledge graph. */
+/** Full entity detail from the knowledge graph. `type` is normalized to
+ *  lowercase server-side; `shape`/`canon_state` are the optional derived OKF
+ *  envelope. */
 export interface GraphEntity {
   /** Canonical importer identity (frontmatter ``id``); empty for legacy files. */
   id: string;
@@ -1437,6 +1447,13 @@ export interface GraphEntity {
   /** Frontmatter `relaciones:` entries — canonical-id strings or objects.
    *  The backend ships the raw list, so both forms are valid on the wire. */
   relaciones: (string | Record<string, unknown>)[];
+  /** Derived OKF structural class (entidad|sistema|cronologia); absent on
+   *  legacy payloads. Additive envelope field — not yet rendered. */
+  shape?: string | null;
+  /** Derived OKF world-truth state (canon|creencia|leyenda|hipotesis|perdido|
+   *  prohibido|propuesta); absent on legacy payloads. Additive — not yet
+   *  rendered. */
+  canon_state?: string | null;
 }
 
 /** A directed connection between two entities in the graph. */
