@@ -235,7 +235,7 @@ class TestGraphIndexerIntegration(unittest.TestCase):
         })
         entity = index.get_entity("personajes/Anisa.md")
         self.assertIsNotNone(entity)
-        self.assertEqual(entity.type, "Personaje")
+        self.assertEqual(entity.type, "personaje")
         # Tolerant: the entity is still indexed despite the missing minimum.
         self.assertEqual(index.entity_count, 1)
 

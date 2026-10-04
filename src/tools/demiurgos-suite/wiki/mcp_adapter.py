@@ -356,6 +356,8 @@ class GraphMCPAdapter:
             "tags": hit.tags,
             "link_count": hit.link_count,
             "score": hit.score,
+            "shape": hit.shape,
+            "canon_state": hit.canon_state,
         }
 
     @staticmethod
@@ -373,4 +375,6 @@ class GraphMCPAdapter:
             "backlinks": detail.backlinks,
             "relaciones": detail.relaciones,
             "word_count": detail.word_count,
+            "shape": detail.shape,
+            "canon_state": detail.canon_state,
         }

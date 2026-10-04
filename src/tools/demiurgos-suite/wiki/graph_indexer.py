@@ -27,7 +27,14 @@ from rank_bm25 import BM25Okapi  # noqa: E402
 
 from . import data_root
 from .graph_models import EntityDetail, EntityHit
-from .okf_contract import is_canonical_id, validate as okf_validate
+from .okf_contract import (
+    default_canon_state,
+    is_canonical_id,
+    normalize_canon_state,
+    normalize_type,
+    shape_for_type,
+)
+from .okf_contract import validate as okf_validate
 
 # ---------------------------------------------------------------------------
 # Constants (mirror migrate_okf.py exclusions)
@@ -247,7 +254,18 @@ class EntityGraphIndex:
             # OKF ficha status (draft|stable); legacy entities without a
             # frontmatter ``status:`` default to draft (BLOQUE 4, D4).
             "status": fm.get("status", "draft"),
-            "type": fm.get("type", "Ficha"),
+            # Derived OKF envelope (okf_contract): ``type`` is normalized
+            # (strip + lowercase + alias) and never empty — an absent or
+            # unclassifiable type falls back to the tolerant legacy label
+            # ``ficha``. ``shape`` is the kernel structural class and
+            # ``canon_state`` the world-truth state (an explicit
+            # ``canon_state`` wins over the legacy ``status`` default).
+            "type": normalize_type(fm.get("type", "")) or "ficha",
+            "shape": shape_for_type(fm.get("type", "")),
+            "canon_state": (
+                normalize_canon_state(fm.get("canon_state"))
+                or default_canon_state(fm.get("status"))
+            ),
             "path": rel_path,
             "title": fm.get("title", ""),
             "description": fm.get("description", ""),
@@ -729,6 +747,8 @@ class EntityGraphIndex:
                         link_count=len(ent.get("forward_links", []))
                         + len(ent.get("backlinks", [])),
                         score=total_score,
+                        shape=ent.get("shape"),
+                        canon_state=ent.get("canon_state"),
                     )
                 )
 
@@ -798,6 +818,8 @@ class EntityGraphIndex:
                 backlinks=ent.get("backlinks", []),
                 relaciones=ent.get("relaciones", []),
                 word_count=ent.get("word_count", 0),
+                shape=ent.get("shape"),
+                canon_state=ent.get("canon_state"),
             )
 
     def get_links(
