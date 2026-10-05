@@ -221,7 +221,12 @@ fi
     ok "Engram conectado a Hermes"
 }
 
-# ── Etapa 5: Instalar las skills de Demiurgos ─────────────
+# ── Etapa 5: Registrar el directorio de skills de Demiurgos ─
+# The Demiurgos-owned skills folder lives in the checkout
+# (data/methodology/skills/) and is registered in the dedicated product profile
+# through an idempotent YAML merge (hermes_profile_config.merge_skills_external_dirs)
+# — never through a raw heredoc append of a skills block, which could duplicate
+# the block on re-runs (design Decision 5).
 install_demiurgos() {
     step "Instalando Demiurgos skills..."
     
@@ -232,30 +237,54 @@ install_demiurgos() {
             fail "No se pudo clonar Demiurgos. Verifica tu conexión a GitHub."
         ok "Demiurgos clonado"
     fi
-    
-    # Agregar las skills a los directorios externos de Hermes
-    local skills_path="$DEMIURGOS_HOME/repo/skills"
-    
-    if [ -f "$HERMES_CONFIG" ] && grep -q "$skills_path" "$HERMES_CONFIG" 2>/dev/null; then
-        ok "Skills ya registradas en Hermes"
+
+    merge_skills_dirs
+}
+
+# Registrar el directorio de skills del checkout en el perfil de producto
+# (skills.external_dirs de $HERMES_CONFIG). Best-effort, igual que
+# prepare_python_env: sin venv/helper utilizable se avisa y se omite, nunca
+# aborta el instalador.
+merge_skills_dirs() {
+    step "Registrando el directorio de skills de Demiurgos..."
+
+    local root wiki_dir venv_python
+    root="$(checkout_root)"
+    wiki_dir="$root/$WIKI_REL"
+    venv_python="$root/.venv/bin/python"
+
+    if [ ! -x "$venv_python" ]; then
+        warn "No hay un intérprete utilizable en $venv_python. Se omite el registro de skills."
+        warn "Vuelve a ejecutar el instalador tras prepare_python_env para crearlo."
         return 0
     fi
-    
-    # Inyectar external_dirs en el config.yaml de Hermes
-    if grep -q "external_dirs:" "$HERMES_CONFIG" 2>/dev/null; then
-        if ! grep -q "$skills_path" "$HERMES_CONFIG" 2>/dev/null; then
-            # Agregar la ruta bajo la lista external_dirs existente
-            sed -i "/external_dirs:/a\\    - $skills_path" "$HERMES_CONFIG"
-        fi
-    else
-        cat >> "$HERMES_CONFIG" <<EOF
 
-skills:
-  external_dirs:
-    - $skills_path
-EOF
+    if [ ! -f "$wiki_dir/hermes_profile_config.py" ]; then
+        warn "No se encontró el módulo del merge en $wiki_dir/hermes_profile_config.py. Se omite el registro de skills."
+        return 0
     fi
-    ok "Skills registradas (13 fases narrativas)"
+
+    if "$venv_python" - "$wiki_dir" "$HERMES_CONFIG" "$root" <<'PY'
+import sys
+from pathlib import Path
+
+# Import the product-profile merge: idempotent, preserves sibling keys
+# (creation_nudge_interval) and registers the checkout skills folder
+# (data/methodology/skills) under skills.external_dirs of the product profile.
+sys.path.insert(0, sys.argv[1])
+from hermes_profile_config import merge_skills_external_dirs, resolve_skills_dir
+
+config_path = Path(sys.argv[2])
+skills_dir = resolve_skills_dir(sys.argv[3])
+if merge_skills_external_dirs(config_path, skills_dir):
+    print(config_path)
+PY
+    then
+        ok "Skills registradas en el perfil de producto"
+    else
+        warn "No se pudo registrar el directorio de skills. El resto de los pasos de instalación no se ven afectados."
+        warn "Reintenta manualmente: $venv_python - $wiki_dir $HERMES_CONFIG $root"
+    fi
 }
 
 # ── Etapa 5.5: Configurar el perfil demiurgos-mcp ─────────
@@ -526,9 +555,11 @@ main_cli_stack() {
     install_hermes
     install_engram
     configure_engram "$DEMIURGOS_HOME/bin/engram"
+    # The venv must exist before the skills merge: it runs through the
+    # checkout venv Python.
+    prepare_python_env
     install_demiurgos
     configure_mcp_profile
-    prepare_python_env
     configure_data_root
 }
 
