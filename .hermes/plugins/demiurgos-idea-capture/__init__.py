@@ -96,6 +96,17 @@ The real media bytes are stashed in ``_MEDIA_STASH`` (keyed by
 attach the actual voice/image file via ``build_media_enrich_provider``
 (R-2.3); a missing/unreadable stash degrades the capture to text-only and
 never breaks it. ``strict`` mode and the text flow are unchanged (R-2.4).
+
+SDD ``hermes-etapa-0-cimientos`` WU 0.3 (gateway hooks): the plugin also
+registers two UNCONDITIONAL hooks outside the capture-mode branch —
+``pre_tool_call`` vetoing the native ``skill_manage`` tool (read-only
+skills, fail-closed) and ``pre_llm_call`` invalidating Hermes' in-process
+skills system-prompt cache every turn. Both are thin wrappers over the pure
+functions in ``hermes_gateway_hooks.py`` (``src/tools/demiurgos-suite/wiki/``,
+imported lazily so the module never needs the wiki package at plugin load).
+The ai-mode ``capture_guidance_hook`` and the ``pre_gateway_dispatch`` intake
+are untouched; the cache hook returns ``None`` so it never collides with
+guidance-returning hooks.
 """
 
 from __future__ import annotations
@@ -385,6 +396,39 @@ _UPDATE_IDEA_SCHEMA = {
 }
 
 
+# -- SDD hermes-etapa-0-cimientos WU 0.3: gateway hooks (unconditional) --------
+# Thin wrappers over the pure, non-throwing functions in
+# ``hermes_gateway_hooks.py``. Lazy imports: ``register()`` runs
+# ``_ensure_code_on_path()`` first, so ``wiki`` is importable by the time any
+# hook fires. ``pre_tool_call`` has no matcher in ``ctx.register_hook``, so the
+# veto filters on ``tool_name`` in code; ``pre_llm_call`` returns ``None`` to
+# stay invisible to the guidance collection.
+
+
+def _veto_skill_manage_hook(**kwargs) -> dict | None:
+    """``pre_tool_call``: block native ``skill_manage`` (read-only skills).
+
+    Any tool name or argument shape is tolerated — the veto never raises and
+    returns a block directive or ``None`` (allow).
+    """
+    from hermes_gateway_hooks import skill_manage_veto
+
+    return skill_manage_veto(str(kwargs.get("tool_name") or ""))
+
+
+def _invalidate_skills_cache_hook(**kwargs) -> None:
+    """``pre_llm_call``: invalidate the skills cache every turn; return None.
+
+    Registered unconditionally (independent of capture mode). The safe clearer
+    degrades to a no-op when the hook point is absent or raises; this wrapper
+    always returns ``None`` so it never collides with guidance-returning hooks.
+    """
+    from hermes_gateway_hooks import clear_skills_system_prompt_cache_safe
+
+    clear_skills_system_prompt_cache_safe()
+    return None
+
+
 def register(ctx) -> None:
     global _handler
     # Ordering matters: the checkout paths go on ``sys.path`` FIRST so the
@@ -430,6 +474,15 @@ def register(ctx) -> None:
     # captured messages are consumed and never reach the assistant (strict
     # mode); in ai mode the authorized binding falls through (R-2).
     ctx.register_hook("pre_gateway_dispatch", capture_intake_hook)
+
+    # SDD hermes-etapa-0-cimientos WU 0.3: UNCONDITIONAL gateway hooks
+    # (registered outside the capture-mode branch on purpose). The veto makes
+    # native skills read-only; the cache hook keeps Hermes' in-process skills
+    # system-prompt cache coherent after external writes. A registration miss
+    # (plugin not loaded) is fail-open with the documented shell-hook fallback
+    # (see hermes_gateway_hooks.py docstring).
+    ctx.register_hook("pre_tool_call", _veto_skill_manage_hook)
+    ctx.register_hook("pre_llm_call", _invalidate_skills_cache_hook)
 
     if _CAPTURE_MODE == "ai":
         # PR idea-capture-ai-gate Phase 2 (R-3/R-4): the assistant decides per
