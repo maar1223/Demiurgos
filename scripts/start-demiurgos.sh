@@ -49,6 +49,12 @@ else
     INSTALL_ROOT="$APP_ROOT"
 fi
 
+# Dedicated Hermes profile root (hermes-isolated-profile): same resolution
+# chain as install.sh — explicit DEMIURGOS_HERMES_HOME -> ${DEMIURGOS_HOME:-$HOME/.demiurgos}/hermes.
+# The launcher exports it to the children ONLY when provisioned (see
+# export_product_hermes_home); unprovisioned machines keep today's resolution.
+PRODUCT_HERMES_HOME="${DEMIURGOS_HERMES_HOME:-${DEMIURGOS_HOME:-$HOME/.demiurgos}/hermes}"
+
 # Interpreter from the frozen layout (S2-4): the layout venv, never a
 # system Python and never a hardcoded path.
 PYTHON_BIN="$APP_ROOT/.venv/bin/python"
@@ -482,6 +488,21 @@ start_component() {
     printf '%s\n' "$pid" > "$(pid_file "$name")"
 }
 
+# Dedicated Hermes profile export (hermes-isolated-profile): HERMES_HOME is
+# exported to the gateway and API children ONLY when the dedicated root is
+# provisioned (<root>/config.yaml exists; the installer is the sole
+# provisioner). Otherwise an advisory is printed and HERMES_HOME stays unset:
+# the product falls back to today's personal-profile resolution — absence of
+# the dedicated profile is NOT an error condition.
+export_product_hermes_home() {
+    if [ -f "$PRODUCT_HERMES_HOME/config.yaml" ]; then
+        export HERMES_HOME="$PRODUCT_HERMES_HOME"
+    else
+        printf 'Hermes dedicated profile not provisioned: %s/config.yaml missing.\n' "$PRODUCT_HERMES_HOME" >&2
+        printf 'Falling back to the personal Hermes profile (the assistant may need configuration).\n' >&2
+    fi
+}
+
 start_all() {
     ensure_runtime_dirs
     resolve_data_root
@@ -494,6 +515,9 @@ start_all() {
     export DEMIURGOS_DATA_ROOT="$DATA_ROOT"
     export DEMIURGOS_FRONTEND_DIST="$APP_ROOT/frontend/dist"
     export DEMIURGOS_ROOT="$APP_ROOT"
+    # Hermes dedicated profile (additive isolation): export HERMES_HOME to both
+    # children before they start, only when the profile is provisioned.
+    export_product_hermes_home
 
     # Hermes is OPTIONAL (S2-2): the app boots without the provider and the
     # assistant degrades. The gateway is started only when the CLI is found;

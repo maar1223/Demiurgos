@@ -282,6 +282,7 @@ Migración **por etapas**; el producto **sigue funcionando** hasta la Etapa 3. R
 
 ### Etapa 0 — Cimientos (aditivo)
 1. **Perfil Hermes propio y aislado** (`HERMES_HOME` dedicado; el instalador deja de escribir en el `~/.hermes` personal).
+   - **Consecuencia aceptada (aislamiento):** el perfil dedicado **no hereda** el modelo/proveedor/clave del perfil personal. Quien actualice con `--with-cli-stack` reconfigura **una sola vez** por Assistant Settings contra el perfil dedicado ahora activo (los valores se persisten en `<dedicated root>/config.yaml` y su `.env`; el `~/.hermes` personal no se modifica). Es una consecuencia aceptada del aislamiento, **no una regresión**; un perfil dedicado sin credenciales es un estado conocido y no bloquea el arranque.
 2. **Carpeta de skills de Demiurgos** (`data/methodology/skills/`) + `external_dirs` + gitignore + **fix** del instalador (merge, no append).
 3. **Hooks del gateway**: `pre_tool_call` (veta `skill_manage`) + `pre_llm_call` (invalida la caché de skills).
 
