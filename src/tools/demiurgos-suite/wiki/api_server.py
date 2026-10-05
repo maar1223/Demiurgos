@@ -286,6 +286,13 @@ async def _lifespan(app: FastAPI):
                 logger.info("Spool GC startup sweep: %s", counts)
         except Exception as exc:  # noqa: BLE001 — never crash startup
             logger.warning("Spool GC startup sweep failed: %s", exc)
+    # Etapa 1 (D6): reconcile the native skills into the unregistered staging
+    # tree once at boot and record the (world, revision) epoch. Inert and
+    # additive; a failure is logged and never crashes startup.
+    try:
+        _materialize_skills()
+    except Exception as exc:  # noqa: BLE001 — never crash startup
+        logger.warning("Skill materialization startup sweep failed: %s", exc)
     # The backup engine starts once the startup sweep is done, then stops on the
     # way out. A debounce deadline still pending is DROPPED, not flushed: the
     # next start's reconciliation pass catches whatever changed (SC-BE-6.3).
@@ -922,6 +929,12 @@ def _set_active_world(world: str) -> None:
         write_config(config)
     except Exception:  # noqa: BLE001 — rename must never fail on config rewrite
         logger.warning("could not set active_world to %s", world)
+    # Etapa 1 (D6): refresh the staged skills for the new active world. Inert
+    # (staging is unregistered) and never raises into the caller.
+    try:
+        _materialize_skills()
+    except Exception as exc:  # noqa: BLE001 — rename must never fail on refresh
+        logger.warning("skill materialization after world switch failed: %s", exc)
 
 
 def read_world_aliases() -> dict[str, str]:
@@ -2195,6 +2208,37 @@ def _methodology_library() -> MethodologyLibrary:
                 )
                 _METHODOLOGY_LIBRARY = library
     return _METHODOLOGY_LIBRARY
+
+
+def _materialize_skills() -> None:
+    """Reconcile native skills into staging and record the ``(world, revision)`` epoch.
+
+    Etapa 1 seam (design D6): invoked at startup and on a world switch. It is
+    additive and inert — it writes only to the unregistered staging tree and
+    records the session epoch; nothing reaches the model-visible prompt or tool
+    set. Never raises into boot or a request: any failure (including an
+    unreadable library) is logged and the caller proceeds.
+    """
+    try:
+        from skill_materializer import SkillMaterializer
+        from skill_session_epochs import (
+            SessionEpochRegistry,
+            resolve_session_store_path,
+        )
+
+        project_root = _project_root()
+        world = _active_world()
+        report = SkillMaterializer(
+            _methodology_library(), project_root=project_root
+        ).materialize(world)
+        if report.ok and report.revision:
+            SessionEpochRegistry(
+                resolve_session_store_path(project_root)
+            ).observe(world, report.revision)
+        elif report.aborted:
+            logger.warning("skill materialization aborted: %s", report.issues)
+    except Exception as exc:  # noqa: BLE001 — never crash boot or a request
+        logger.warning("skill materialization failed: %s", exc)
 
 
 def _methodology_quarantine() -> QuarantineStore:

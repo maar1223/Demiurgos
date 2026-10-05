@@ -140,6 +140,12 @@ data/methodology/staging/
 data/methodology/skills/*
 !data/methodology/skills/.gitkeep
 
+# Skill materialization staging (Etapa 1): an unregistered, derived tree.
+# Only the tracked .gitkeep sentinel is preserved; generated content is never
+# versioned (promotion staging -> live is Etapa 3).
+data/methodology/skills-staging/*
+!data/methodology/skills-staging/.gitkeep
+
 # Artefactos locales de herramientas y respaldos de configuración: son de esta
 # máquina, no del proyecto. Nunca se versionan.
 .impeccable/
