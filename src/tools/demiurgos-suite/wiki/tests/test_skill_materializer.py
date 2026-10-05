@@ -1,25 +1,35 @@
 # -*- coding: utf-8 -*-
-"""skill-materializer-reconciliation (WU 1.2a) — desired set + atomic writes.
+"""skill-materializer-reconciliation — desired set, writes, GC, revision, abort.
 
-Part 1 of the materializer: compute the desired set from the library and write
-it atomically into the unregistered staging tree. Orphan GC, the revision
-marker, and the fail-safe abort are WU 1.2b and are deliberately NOT covered
-here. Covered scenarios (spec ``skill-materializer-reconciliation``):
+Part 1 covers computing the desired set from the library and writing it
+atomically into the unregistered staging tree. Part 2 (WU 1.2b) covers orphan
+GC, the deterministic revision + marker, and the fail-safe abort. Covered
+scenarios (spec ``skill-materializer-reconciliation``):
 
 - Desired set is transversal plus active world (all three scenarios).
 - Desired tree layout maps each skill to a deterministic, distinct path.
 - Staging root is distinct and unregistered (not in ``external_dirs``).
 - Live skills folder stays empty (only its tracked ``.gitkeep``).
 - Writes are atomic per file (complete replace; failed replace preserves bytes).
+- Orphan GC removes every undesired path (file + folder, deactivated skill).
+- Sentinel paths are never deleted (``.gitkeep`` + revision marker survive GC).
+- Deterministic materialization revision (unchanged tree identical; add/remove/
+  version bump/attachment byte change all differ).
+- Fail-safe abort when the library is unreadable/malformed (no deletion, no
+  marker advance, observable failure).
+- GC containment (a ``..``/symlink candidate never escapes the staging root).
 """
 
 from __future__ import annotations
 
+import hashlib
+import os
 from pathlib import Path
 
 import pytest
 import yaml
 
+from methodology_compiler import AttachmentEntry
 from methodology_library import DEFAULT_FLOW_TYPE, Activation, PublishedVersion
 from methodology_trust import FOUNDATIONAL
 import skill_materializer as materializer_module
@@ -69,6 +79,7 @@ def _published(
     foundational=True,
     description="A skill trigger",
     source="# Body\n",
+    adjuntos=(),
 ):
     return PublishedVersion(
         skill_id=skill_id,
@@ -81,6 +92,20 @@ def _published(
         digest="0" * 64,
         published_at="2026-01-01T00:00:00+00:00",
         trust_attributes=(FOUNDATIONAL,) if foundational else (),
+        adjuntos=adjuntos,
+    )
+
+
+def _attachment(tmp_path, skill_id, content, *, path="exemplar.md", nivel="1º"):
+    """Write a carrier file under ``seeds/<skill_id>`` and return its pin."""
+    seed_dir = tmp_path / "data" / "methodology" / "seeds" / skill_id
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    (seed_dir / path).write_bytes(content)
+    return AttachmentEntry(
+        path=path,
+        sha256=hashlib.sha256(content).hexdigest(),
+        bytes=len(content),
+        nivel=nivel,
     )
 
 
@@ -248,7 +273,8 @@ def test_atomic_materialize_skips_unchanged_files(tmp_path):
     second = materializer.materialize(None)
     assert first.written == 1
     assert second.written == 0
-    assert second.revision is None
+    assert second.revision == first.revision
+    assert second.revision is not None
     assert second.aborted is False
     assert second.deleted == 0
     assert second.ok is True
@@ -265,3 +291,220 @@ def test_live_folder_unchanged_after_materialize(tmp_path):
     assert all(path.is_relative_to(staging) for path in written)
     assert not (tmp_path / "data" / "methodology" / "skills").exists()
     assert sorted(p.name for p in LIVE_SKILLS_DIR.iterdir()) == [".gitkeep"]
+
+
+# -- Deterministic revision ---------------------------------------------------
+
+
+def test_revision_identical_for_unchanged_tree(tmp_path):
+    """Spec 'Unchanged desired tree yields an identical revision'."""
+    library = _StubLibrary(published=[_published("alpha")])
+    materializer = SkillMaterializer(library, project_root=tmp_path)
+    first = materializer.materialize(None)
+    second = materializer.materialize(None)
+    assert first.revision is not None
+    assert first.revision == second.revision
+    # The digest depends only on content, not on the staging path.
+    other = SkillMaterializer(library, project_root=tmp_path / "elsewhere")
+    assert other.materialize(None).revision == first.revision
+
+
+def test_revision_changes_on_add(tmp_path):
+    """Spec 'Any desired change changes the revision': a skill is added."""
+    only_alpha = SkillMaterializer(
+        _StubLibrary(published=[_published("alpha")]), project_root=tmp_path
+    ).materialize(None)
+    with_beta = SkillMaterializer(
+        _StubLibrary(published=[_published("alpha"), _published("beta")]),
+        project_root=tmp_path,
+    ).materialize(None)
+    assert only_alpha.revision != with_beta.revision
+
+
+def test_revision_changes_on_remove(tmp_path):
+    """Spec 'Any desired change changes the revision': a skill is removed."""
+    with_beta = SkillMaterializer(
+        _StubLibrary(published=[_published("alpha"), _published("beta")]),
+        project_root=tmp_path,
+    ).materialize(None)
+    without_beta = SkillMaterializer(
+        _StubLibrary(published=[_published("alpha")]), project_root=tmp_path
+    ).materialize(None)
+    assert with_beta.revision != without_beta.revision
+
+
+def test_revision_changes_on_version_bump(tmp_path):
+    """Spec 'Any desired change changes the revision': version bumped."""
+    v1 = SkillMaterializer(
+        _StubLibrary(published=[_published("alpha", "1.0.0")]), project_root=tmp_path
+    ).materialize(None)
+    v2 = SkillMaterializer(
+        _StubLibrary(published=[_published("alpha", "1.1.0")]), project_root=tmp_path
+    ).materialize(None)
+    assert v1.revision != v2.revision
+
+
+def test_revision_changes_on_attachment_bytes(tmp_path):
+    """Spec 'Any desired change changes the revision': attachment bytes change."""
+    root_a = tmp_path / "a"
+    pin_a = _attachment(root_a, "alpha", b"first exemplar\n")
+    first = SkillMaterializer(
+        _StubLibrary(published=[_published("alpha", adjuntos=(pin_a,))]),
+        project_root=root_a,
+    ).materialize(None)
+    root_b = tmp_path / "b"
+    pin_b = _attachment(root_b, "alpha", b"second exemplar\n")
+    second = SkillMaterializer(
+        _StubLibrary(published=[_published("alpha", adjuntos=(pin_b,))]),
+        project_root=root_b,
+    ).materialize(None)
+    assert first.revision != second.revision
+
+
+def test_revision_marker_content_equals_revision(tmp_path):
+    """The marker holds exactly the revision + a trailing newline."""
+    library = _StubLibrary(published=[_published("alpha")])
+    report = SkillMaterializer(library, project_root=tmp_path).materialize(None)
+    marker = revision_marker_path(tmp_path)
+    assert marker.read_bytes() == (report.revision + "\n").encode("utf-8")
+
+
+# -- Orphan GC ----------------------------------------------------------------
+
+
+def test_gc_removes_undesired_file_and_folder(tmp_path):
+    """Spec 'Undesired paths are removed'."""
+    library = _StubLibrary(published=[_published("alpha")])
+    materializer = SkillMaterializer(library, project_root=tmp_path)
+    materializer.materialize(None)
+    staging = resolve_staging_root(tmp_path)
+
+    stray_file = staging / "world" / "demiurgos-W-ghost@1.0.0" / "SKILL.md"
+    stray_file.parent.mkdir(parents=True)
+    stray_file.write_bytes(b"orphan")
+    stray_nested = staging / "orphan" / "nested"
+    stray_nested.mkdir(parents=True)
+    (stray_nested / "leaf.txt").write_bytes(b"leaf")
+
+    report = materializer.materialize(None)
+    assert report.ok is True
+    assert not (staging / "world").exists()
+    assert not (staging / "orphan").exists()
+    assert report.deleted == 2
+    assert (
+        staging / TRANSVERSAL_SUBDIR / "demiurgos-alpha@1.0.0" / "SKILL.md"
+    ).is_file()
+
+
+def test_gc_collects_deactivated_world_skill(tmp_path):
+    """Spec 'A deactivated world-specific skill is collected'."""
+    published = [
+        _published("alpha"),
+        _published("worldskill", foundational=False),
+    ]
+    active = _StubLibrary(
+        published=published,
+        activations={"W": _activation("W", "worldskill", "1.0.0")},
+    )
+    materializer = SkillMaterializer(active, project_root=tmp_path)
+    first = materializer.materialize("W")
+    staging = resolve_staging_root(tmp_path)
+    world_dir = staging / WORLD_SUBDIR / "demiurgos-W-worldskill@1.0.0"
+    assert (world_dir / "SKILL.md").is_file()
+
+    deactivated = _StubLibrary(published=published, activations={})
+    report = SkillMaterializer(deactivated, project_root=tmp_path).materialize("W")
+    assert report.ok is True
+    assert not world_dir.exists()
+    assert (
+        staging / TRANSVERSAL_SUBDIR / "demiurgos-alpha@1.0.0" / "SKILL.md"
+    ).is_file()
+    assert report.revision != first.revision
+
+
+def test_gc_preserves_sentinels(tmp_path):
+    """Spec 'Sentinels survive GC': `.gitkeep` and the marker both survive."""
+    staging = resolve_staging_root(tmp_path)
+    staging.mkdir(parents=True, exist_ok=True)
+    (staging / ".gitkeep").write_bytes(b"")
+    library = _StubLibrary(published=[_published("alpha")])
+    materializer = SkillMaterializer(library, project_root=tmp_path)
+    materializer.materialize(None)
+    materializer.materialize(None)
+    assert (staging / ".gitkeep").exists()
+    assert (staging / REVISION_MARKER_NAME).exists()
+
+
+def test_gc_containment_skips_escaping_symlink(tmp_path):
+    """A `..`/symlink candidate never escapes the staging root."""
+    library = _StubLibrary(published=[_published("alpha")])
+    materializer = SkillMaterializer(library, project_root=tmp_path)
+    materializer.materialize(None)
+    staging = resolve_staging_root(tmp_path)
+
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    secret = outside_dir / "secret.txt"
+    secret.write_bytes(b"secret bytes")
+
+    absolute_link = staging / "evil_absolute"
+    relative_link = staging / "evil_relative"
+    try:
+        absolute_link.symlink_to(outside_dir, target_is_directory=True)
+        relative_link.symlink_to(
+            os.path.relpath(outside_dir, staging), target_is_directory=True
+        )
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available on this platform")
+
+    report = materializer.materialize(None)
+    assert secret.read_bytes() == b"secret bytes"
+    assert sorted(p.name for p in outside_dir.iterdir()) == ["secret.txt"]
+    assert any(issue.code == "containment-violation" for issue in report.issues)
+    assert (
+        staging / TRANSVERSAL_SUBDIR / "demiurgos-alpha@1.0.0" / "SKILL.md"
+    ).is_file()
+
+
+# -- Fail-safe abort ----------------------------------------------------------
+
+
+class _RaisingLibrary(_StubLibrary):
+    """A library whose read seam raises, simulating an unreadable source."""
+
+    def __init__(self, exc):
+        super().__init__()
+        self._exc = exc
+
+    def list_published(self):
+        raise self._exc
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [OSError("library is unreadable"), ValueError("library is malformed")],
+)
+def test_abort_on_unreadable_library(tmp_path, exc):
+    """Spec 'Unreadable library aborts without deleting' + 'does not report
+    success': no writes, no GC, no marker advance, observable failure."""
+    staging = resolve_staging_root(tmp_path)
+    pre_existing = staging / TRANSVERSAL_SUBDIR / "demiurgos-old@1.0.0" / "SKILL.md"
+    pre_existing.parent.mkdir(parents=True)
+    pre_existing.write_bytes(b"pre-existing derived bytes")
+    (staging / ".gitkeep").write_bytes(b"")
+    marker = revision_marker_path(tmp_path)
+    marker.write_bytes(b"deadbeef\n")
+
+    report = SkillMaterializer(
+        _RaisingLibrary(exc), project_root=tmp_path
+    ).materialize(None)
+
+    assert report.ok is False
+    assert report.aborted is True
+    assert report.revision is None
+    assert report.written == 0
+    assert report.deleted == 0
+    assert report.issues and report.issues[0].code == "library-unreadable"
+    assert pre_existing.read_bytes() == b"pre-existing derived bytes"
+    assert (staging / ".gitkeep").read_bytes() == b""
+    assert marker.read_bytes() == b"deadbeef\n"
