@@ -11,13 +11,18 @@ Decision 2):
   ``pre_tool_call`` and treats a timed-out/still-running callback as a block,
   and our callback must never rely on that). Every read or unrelated tool
   returns ``None`` (allow).
-- ``clear_skills_system_prompt_cache_safe`` — a ``pre_llm_call`` hook that
-  invalidates Hermes' in-process skills system-prompt cache on every turn so
-  external writes to ``skills.external_dirs`` are picked up. It returns
-  ``None`` from the wrapper, so it never collides with guidance-returning
-  hooks. In Etapa 0 the external folder is empty, so the per-turn call is
-  effectively free; the materializer (Etapa 1) owns choosing a finer trigger
-  (e.g. an mtime guard) when it starts writing.
+- ``clear_skills_system_prompt_cache_safe`` — the ``pre_llm_call``
+  cache-invalidation hook. Etapa 1 (T-FU-02) turns it into a **revision-marker
+  guard**: the plugin passes the materialization revision marker path and the
+  hook clears Hermes' in-process skills system-prompt cache ONLY when that
+  marker changed since the last turn (an unchanged turn is a no-op). Called
+  without a marker path it keeps the Etapa 0 unconditional-clear behavior, so
+  the etape is purely additive. The wrapper returns ``None``, so it never
+  collides with guidance-returning hooks.
+
+``revision_marker_signature`` is the non-throwing marker comparison used by the
+guard: ``(st_mtime_ns, st_size, sha256(content))``, or ``None`` when the marker
+is missing/unreadable.
 
 Both functions are pure and NEVER raise: they live outside the Hermes process
 so they are directly unit-testable, and their wrapper registrations are thin.
@@ -40,10 +45,25 @@ Cache invalidation degrades safely: when the installed Hermes build lacks
 ``clear_skills_system_prompt_cache`` (or it raises), the hook reports ``False``
 and the turn proceeds normally. The version fallback tries ``agent.prompt_builder``
 first, then ``prompt_builder``, matching the import shape of the installed
-build (``agent/prompt_builder.py`` in Hermes v0.21).
+build (``agent/prompt_builder.py`` in Hermes v0.21). When the revision marker is
+absent or unreadable the guard treats the revision as changed and attempts a
+clear (never raising) — degrade toward coherence rather than a stale prompt.
+
+``skill_manage_veto`` is UNCHANGED by Etapa 1.
 """
 
 from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+#: Last-seen sentinel for the in-process marker guard. A brand-new process holds
+#: ``_UNSEEN``, so the first real signature — or an absent/unreadable marker —
+#: never compares equal and always triggers the first clear.
+_UNSEEN = object()
+
+#: In-process last-seen marker signature (``_UNSEEN`` until the first guard run).
+_LAST_SEEN_MARKER: object = _UNSEEN
 
 SKILL_MANAGE_BLOCK_MESSAGE = (
     "skill_manage is disabled in the Demiurgos product profile: native skills are read-only."
@@ -63,7 +83,24 @@ def skill_manage_veto(tool_name: str) -> dict | None:
     return {"action": "block", "message": SKILL_MANAGE_BLOCK_MESSAGE}
 
 
-def clear_skills_system_prompt_cache_safe() -> bool:
+def revision_marker_signature(marker_path) -> tuple[int, int, str] | None:
+    """Non-throwing signature of the materialization revision marker.
+
+    Returns ``(st_mtime_ns, st_size, sha256(content))`` for a readable marker,
+    or ``None`` when the path is missing, unreadable, or not a regular file.
+    Never raises: any failure degrades to ``None`` (treated as "changed" by the
+    guard, so the next turn retries rather than serving a stale prompt).
+    """
+    try:
+        path = Path(marker_path)
+        stat = path.stat()
+        content = path.read_bytes()
+    except Exception:  # noqa: BLE001 — comparison must never raise
+        return None
+    return (stat.st_mtime_ns, stat.st_size, hashlib.sha256(content).hexdigest())
+
+
+def _clear_skills_system_prompt_cache() -> bool:
     """Clear Hermes' in-process skills cache; never raise.
 
     Version fallback: try ``agent.prompt_builder``, then ``prompt_builder``.
@@ -86,3 +123,33 @@ def clear_skills_system_prompt_cache_safe() -> bool:
             except Exception:
                 return False
     return False
+
+
+def clear_skills_system_prompt_cache_safe(*, marker_path=None) -> bool:
+    """Clear Hermes' skills cache, guarded by the revision marker; never raise.
+
+    - ``marker_path is None`` → Etapa 0 unconditional clear (no marker guard),
+      preserving the pre-Etapa-1 contract.
+    - Otherwise the marker signature is compared against the in-process
+      last-seen value:
+
+      * unchanged (and readable) → no-op, return ``True`` (no clear call);
+      * changed → attempt a clear, record the new signature, return the clearer
+        result;
+      * absent/unreadable (``None``) → treat as changed, attempt a clear, record
+        ``None`` so the next turn retries (degrade toward coherence).
+
+    The comparison itself never raises and the returned value is always a bool.
+    """
+    global _LAST_SEEN_MARKER
+
+    if marker_path is None:
+        return _clear_skills_system_prompt_cache()
+
+    signature = revision_marker_signature(marker_path)
+    if signature is not None and signature == _LAST_SEEN_MARKER:
+        return True  # unchanged marker: no-op, no clear call
+
+    result = _clear_skills_system_prompt_cache()
+    _LAST_SEEN_MARKER = signature
+    return result

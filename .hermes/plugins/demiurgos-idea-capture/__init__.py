@@ -101,12 +101,20 @@ SDD ``hermes-etapa-0-cimientos`` WU 0.3 (gateway hooks): the plugin also
 registers two UNCONDITIONAL hooks outside the capture-mode branch —
 ``pre_tool_call`` vetoing the native ``skill_manage`` tool (read-only
 skills, fail-closed) and ``pre_llm_call`` invalidating Hermes' in-process
-skills system-prompt cache every turn. Both are thin wrappers over the pure
+skills system-prompt cache. Both are thin wrappers over the pure
 functions in ``hermes_gateway_hooks.py`` (``src/tools/demiurgos-suite/wiki/``,
 imported lazily so the module never needs the wiki package at plugin load).
 The ai-mode ``capture_guidance_hook`` and the ``pre_gateway_dispatch`` intake
 are untouched; the cache hook returns ``None`` so it never collides with
 guidance-returning hooks.
+
+SDD ``hermes-etapa-1-materializador`` WU 1.3 (T-FU-02): the cache hook is now
+revision-marker-guarded. ``register()`` resolves the materialization revision
+marker path once (``revision_marker_path(root)``, guarded by try/except with a
+``None`` fallback) into the module-level ``_SKILLS_REVISION_MARKER``, and the
+wrapper passes it so the safe clearer fires only when that marker changed
+(an unchanged turn is a no-op). The veto registration line and the cache-hook
+registration line/indent are unchanged.
 """
 
 from __future__ import annotations
@@ -403,6 +411,15 @@ _UPDATE_IDEA_SCHEMA = {
 # hook fires. ``pre_tool_call`` has no matcher in ``ctx.register_hook``, so the
 # veto filters on ``tool_name`` in code; ``pre_llm_call`` returns ``None`` to
 # stay invisible to the guidance collection.
+#
+# SDD hermes-etapa-1-materializador WU 1.3 (T-FU-02): the cache hook is now
+# marker-guarded. ``register()`` resolves the materialization revision marker
+# path once and stores it here; the wrapper passes it so the safe clearer only
+# fires when that marker changed (an unchanged turn is a no-op).
+
+#: Materialization revision marker path, resolved once in ``register()``.
+#: ``None`` (rename/None marker) preserves the Etapa 0 unconditional clear.
+_SKILLS_REVISION_MARKER: str | None = None
 
 
 def _veto_skill_manage_hook(**kwargs) -> dict | None:
@@ -417,20 +434,22 @@ def _veto_skill_manage_hook(**kwargs) -> dict | None:
 
 
 def _invalidate_skills_cache_hook(**kwargs) -> None:
-    """``pre_llm_call``: invalidate the skills cache every turn; return None.
+    """``pre_llm_call``: invalidate the skills cache on a marker change only.
 
-    Registered unconditionally (independent of capture mode). The safe clearer
-    degrades to a no-op when the hook point is absent or raises; this wrapper
-    always returns ``None`` so it never collides with guidance-returning hooks.
+    Registered unconditionally (independent of capture mode). The marker path
+    resolved at registration is passed to the safe clearer, which clears only
+    when the materialization revision marker changed and otherwise no-ops. The
+    wrapper always returns ``None`` so it never collides with guidance-returning
+    hooks.
     """
     from hermes_gateway_hooks import clear_skills_system_prompt_cache_safe
 
-    clear_skills_system_prompt_cache_safe()
+    clear_skills_system_prompt_cache_safe(marker_path=_SKILLS_REVISION_MARKER)
     return None
 
 
 def register(ctx) -> None:
-    global _handler
+    global _handler, _SKILLS_REVISION_MARKER
     # Ordering matters: the checkout paths go on ``sys.path`` FIRST so the
     # data-root resolver is importable, and only THEN is the author-data root
     # resolved. An unconfigured root raises here and aborts registration
@@ -440,6 +459,18 @@ def register(ctx) -> None:
     # PR idea-capture-ai-gate Phase 4: mode resolution delegates to the config
     # module (env > yaml > ai), so ``src/tools`` must be on the path first.
     _resolve_capture_mode()
+
+    # SDD hermes-etapa-1-materializador WU 1.3 (T-FU-02): resolve the
+    # materialization revision marker under the data root once. Any failure
+    # (e.g. an older checkout without ``skill_materializer``) leaves the marker
+    # at ``None``, which preserves the Etapa 0 unconditional-clear behavior —
+    # the hook never half-breaks.
+    try:
+        from skill_materializer import revision_marker_path
+
+        _SKILLS_REVISION_MARKER = str(revision_marker_path(root))
+    except Exception:  # noqa: BLE001 — degrade to the unconditional Etapa 0 path
+        _SKILLS_REVISION_MARKER = None
 
     from idea_capture.hermes_handler import IdeaCaptureHandler
     from .capture_adapter import (
