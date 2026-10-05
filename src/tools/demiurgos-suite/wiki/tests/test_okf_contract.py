@@ -22,13 +22,18 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from wiki.okf_contract import (  # noqa: E402
+    CANON_STATES,
     OKF_VERSION,
     OkfValidation,
     OkfIssue,
     OkfDocument,
+    default_canon_state,
+    minimums_for,
+    normalize_canon_state,
+    normalize_type,
     parse_document,
     register_minimums,
-    minimums_for,
+    shape_for_type,
     validate,
 )
 from wiki.world_authority import (  # noqa: E402
@@ -230,7 +235,7 @@ class TestGraphIndexerIntegration(unittest.TestCase):
         })
         entity = index.get_entity("personajes/Anisa.md")
         self.assertIsNotNone(entity)
-        self.assertEqual(entity.type, "Personaje")
+        self.assertEqual(entity.type, "personaje")
         # Tolerant: the entity is still indexed despite the missing minimum.
         self.assertEqual(index.entity_count, 1)
 
@@ -495,6 +500,131 @@ class TestCanonicalIdentity(unittest.TestCase):
         )
         validation = validate(content)
         self.assertTrue(validation.ok, validation.issues)
+
+
+class TestTypeNormalization(unittest.TestCase):
+    """World-owned ``type`` labels normalize tolerantly (casing/variants)."""
+
+    def test_lowercase_and_strip_collapse_casing(self) -> None:
+        self.assertEqual(normalize_type("  Criatura "), "criatura")
+        self.assertEqual(normalize_type("PERSONAJE"), "personaje")
+
+    def test_alias_map_is_identity_for_known_labels(self) -> None:
+        for label in ("criatura", "personaje", "lugar", "faccion",
+                      "artefacto", "cultura", "objeto", "especie",
+                      "concepto", "sistema", "evento", "historia"):
+            self.assertEqual(normalize_type(label), label)
+
+    def test_empty_and_none_normalize_to_empty(self) -> None:
+        self.assertEqual(normalize_type(""), "")
+        self.assertEqual(normalize_type("   "), "")
+        self.assertEqual(normalize_type(None), "")
+
+
+class TestShapeMapping(unittest.TestCase):
+    """Kernel shape derivation from a world-owned type label."""
+
+    def test_entity_types_map_to_entidad(self) -> None:
+        for label in ("personaje", "lugar", "criatura", "faccion",
+                      "artefacto", "cultura", "objeto", "especie",
+                      "concepto", "ficha", "referencia_visual"):
+            self.assertEqual(shape_for_type(label), "entidad", label)
+
+    def test_system_types_map_to_sistema(self) -> None:
+        for label in ("sistema", "magia", "tecnologia", "economia",
+                      "ley", "religion"):
+            self.assertEqual(shape_for_type(label), "sistema", label)
+
+    def test_history_types_map_to_cronologia(self) -> None:
+        for label in ("cronologia", "historia", "evento", "era"):
+            self.assertEqual(shape_for_type(label), "cronologia", label)
+
+    def test_unknown_and_empty_default_to_entidad(self) -> None:
+        self.assertEqual(shape_for_type("desconocido"), "entidad")
+        self.assertEqual(shape_for_type(""), "entidad")
+        self.assertEqual(shape_for_type(None), "entidad")
+
+
+class TestCanonState(unittest.TestCase):
+    """Canon state derivation and normalization (7 world-truth states)."""
+
+    def test_default_from_status(self) -> None:
+        self.assertEqual(default_canon_state("stable"), "canon")
+        self.assertEqual(default_canon_state("draft"), "propuesta")
+        self.assertEqual(default_canon_state(None), "canon")
+
+    def test_all_seven_states_are_accepted(self) -> None:
+        self.assertEqual(len(CANON_STATES), 7)
+        for state in CANON_STATES:
+            self.assertEqual(normalize_canon_state(state), state)
+            self.assertEqual(
+                normalize_canon_state(f"  {state.upper()}  "), state
+            )
+
+    def test_invalid_states_are_rejected(self) -> None:
+        for raw in ("stable", "draft", "", "  ", "canonico", None, 42):
+            self.assertIsNone(normalize_canon_state(raw), raw)
+
+
+class TestEnvelopeDerivation(unittest.TestCase):
+    """parse_document derives shape/canon_state; explicit values win."""
+
+    def test_legacy_ficha_derives_shape_and_canon_state(self) -> None:
+        content = (
+            "---\ntype: Criatura\nstatus: stable\ntitle: Grifo\n---\nCuerpo\n"
+        )
+        doc = parse_document(content)
+        self.assertIsNotNone(doc)
+        if doc is not None:
+            self.assertEqual(doc.entity_type, "Criatura")  # raw label kept
+            self.assertEqual(doc.shape, "entidad")
+            self.assertEqual(doc.canon_state, "canon")
+        self.assertTrue(validate(content).ok)
+
+    def test_explicit_canon_state_wins_over_status(self) -> None:
+        content = (
+            "---\ntype: Lugar\nstatus: draft\ncanon_state: leyenda\n---\nCuerpo\n"
+        )
+        doc = parse_document(content)
+        self.assertIsNotNone(doc)
+        if doc is not None:
+            self.assertEqual(doc.canon_state, "leyenda")
+
+    def test_invalid_canon_state_falls_back_to_status_default(self) -> None:
+        content = (
+            "---\ntype: Lugar\nstatus: draft\ncanon_state: bogus\n---\nCuerpo\n"
+        )
+        doc = parse_document(content)
+        self.assertIsNotNone(doc)
+        if doc is not None:
+            self.assertEqual(doc.canon_state, "propuesta")
+
+
+class TestShapeMinimums(unittest.TestCase):
+    """Shape base minimums compose with type-specific extras."""
+
+    def test_sistema_requires_origen(self) -> None:
+        missing = validate("---\ntype: sistema\ntitle: Magia\n---\nCuerpo\n")
+        codes = {issue.code for issue in missing.issues}
+        self.assertIn("missing-minimum", codes)
+        self.assertFalse(missing.ok)
+
+        complete = validate(
+            "---\ntype: sistema\norigen: los dioses\n---\nCuerpo\n"
+        )
+        self.assertTrue(complete.ok, complete.issues)
+
+    def test_cronologia_requires_event_field(self) -> None:
+        missing = validate("---\ntype: cronologia\ntitle: Era\n---\nCuerpo\n")
+        codes = {issue.code for issue in missing.issues}
+        self.assertIn("missing-minimum", codes)
+
+        complete = validate("---\ntype: cronologia\nevento: fundacion\n---\n")
+        self.assertTrue(complete.ok, complete.issues)
+
+    def test_shape_base_does_not_duplicate_type_identity_group(self) -> None:
+        groups = minimums_for("personaje")
+        self.assertEqual(len(groups), 2, "identity must appear once, plus desire")
 
 
 if __name__ == "__main__":

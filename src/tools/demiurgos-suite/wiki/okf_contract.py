@@ -54,6 +54,141 @@ OKF_MINIMUM_GROUPS_BY_TYPE: dict[str, tuple[frozenset[str], ...]] = {
     "personaje": (MINIMUM_IDENTITY_FIELDS, MINIMUM_DESIRE_FIELDS),
 }
 
+# ---------------------------------------------------------------------------
+# Shape vocabulary (kernel-owned, world-agnostic)
+# ---------------------------------------------------------------------------
+# A "shape" is the kernel's coarse structural class for an entity: it decides
+# which base minimums apply, independently of the world-owned ``type`` label.
+# ``RESERVED_SHAPES`` names a shape the MVP deliberately does NOT activate yet;
+# it is documented here so the vocabulary stays closed and auditable.
+SHAPES = ("entidad", "sistema", "cronologia")
+RESERVED_SHAPES = ("relacion",)  # documented, not active in the MVP
+DEFAULT_SHAPE = "entidad"
+
+# Legacy and casing variants collapse onto a canonical type label. Keys are
+# already whitespace-stripped/lowercased by ``normalize_type``; entries map to
+# themselves today, and this dict is the seam where future synonyms are added.
+_TYPE_ALIASES: dict[str, str] = {
+    "criatura": "criatura",
+    "personaje": "personaje",
+    "lugar": "lugar",
+    "faccion": "faccion",
+    "artefacto": "artefacto",
+    "cultura": "cultura",
+    "objeto": "objeto",
+    "especie": "especie",
+    "concepto": "concepto",
+    "sistema": "sistema",
+    "evento": "evento",
+    "historia": "historia",
+}
+
+# Kernel-owned type -> shape map. Auditable and extensible: a world may extend
+# it later through a declarative seam (not built in the MVP).
+SHAPE_BY_TYPE: dict[str, str] = {
+    # entidad
+    "personaje": "entidad",
+    "lugar": "entidad",
+    "criatura": "entidad",
+    "faccion": "entidad",
+    "artefacto": "entidad",
+    "cultura": "entidad",
+    "objeto": "entidad",
+    "especie": "entidad",
+    "concepto": "entidad",
+    "ficha": "entidad",
+    "referencia_visual": "entidad",
+    # sistema
+    "sistema": "sistema",
+    "magia": "sistema",
+    "tecnologia": "sistema",
+    "economia": "sistema",
+    "ley": "sistema",
+    "religion": "sistema",
+    # cronologia
+    "cronologia": "cronologia",
+    "historia": "cronologia",
+    "evento": "cronologia",
+    "era": "cronologia",
+}
+
+# Shape base minimums: every entity of a shape must satisfy these groups,
+# independently of its world-owned type.  A group is satisfied when any of its
+# alternative fields is present in frontmatter.  ``entidad`` reuses the
+# identity anchors; ``sistema``/``cronologia`` define their own base fields.
+MINIMUM_SISTEMA_FIELDS = frozenset({
+    "origen", "fuente", "source", "principio", "premisa",
+})
+MINIMUM_CRONOLOGIA_FIELDS = frozenset({
+    "evento", "event", "fecha", "date", "era", "periodo",
+})
+MINIMUM_GROUPS_BY_SHAPE: dict[str, tuple[frozenset[str], ...]] = {
+    "entidad": (MINIMUM_IDENTITY_FIELDS,),
+    "sistema": (MINIMUM_SISTEMA_FIELDS,),
+    "cronologia": (MINIMUM_CRONOLOGIA_FIELDS,),
+}
+
+
+def normalize_type(raw: str) -> str:
+    """Normalize a world-owned ``type`` label (strip + lowercase + alias).
+
+    Pure and deterministic.  The result is the canonical label used as the
+    registry key; unknown labels are returned lowercased unchanged so the
+    mapping layer can default them.
+    """
+    if raw is None:
+        return ""
+    normalized = str(raw).strip().lower()
+    return _TYPE_ALIASES.get(normalized, normalized)
+
+
+def shape_for_type(entity_type: str) -> str:
+    """Map a world-owned ``type`` label to its kernel shape.
+
+    Unknown and empty labels default to ``DEFAULT_SHAPE``.
+    """
+    return SHAPE_BY_TYPE.get(normalize_type(entity_type), DEFAULT_SHAPE)
+
+
+def minimums_for_shape(shape: str) -> tuple[frozenset[str], ...]:
+    """Return the base minimum groups for a kernel shape (empty when unknown)."""
+    if not isinstance(shape, str):
+        return ()
+    return MINIMUM_GROUPS_BY_SHAPE.get(shape.strip().lower(), ())
+
+
+# ---------------------------------------------------------------------------
+# Canon state (world truth)
+# ---------------------------------------------------------------------------
+CANON_STATES = (
+    "canon",
+    "creencia",
+    "leyenda",
+    "hipotesis",
+    "perdido",
+    "prohibido",
+    "propuesta",
+)
+
+
+def default_canon_state(status: str | None) -> str:
+    """Derive the canon state from the legacy ficha ``status`` field.
+
+    ``draft`` means the entity is still a proposal; everything else (including
+    ``stable``, missing, or unrecognized values) is treated as canon.
+    """
+    if isinstance(status, str) and status.strip().lower() == "draft":
+        return "propuesta"
+    return "canon"
+
+
+def normalize_canon_state(raw: str | None) -> str | None:
+    """Return ``raw`` as a canonical lowercased state, or None when invalid."""
+    if not isinstance(raw, str):
+        return None
+    normalized = raw.strip().lower()
+    return normalized if normalized in CANON_STATES else None
+
 
 def register_minimums(entity_type: str, *groups: Iterable[str]) -> None:
     """Extend the per-entity minimum registry.
@@ -75,8 +210,19 @@ def register_minimums(entity_type: str, *groups: Iterable[str]) -> None:
 
 
 def minimums_for(entity_type: str) -> tuple[frozenset[str], ...]:
-    """Return the minimum groups for an entity type (empty when unregistered)."""
-    return OKF_MINIMUM_GROUPS_BY_TYPE.get(entity_type.strip().lower(), ())
+    """Return the minimum groups for an entity type.
+
+    Shape base groups come first, then the registered type-specific extras
+    (deduplicated, so a group shared by both is reported once).  Empty when the
+    type has no shape base and no registered extras.
+    """
+    groups: list[frozenset[str]] = list(
+        minimums_for_shape(shape_for_type(entity_type))
+    )
+    for group in OKF_MINIMUM_GROUPS_BY_TYPE.get(normalize_type(entity_type), ()):
+        if group not in groups:
+            groups.append(group)
+    return tuple(groups)
 
 
 def is_canonical_id(value: str) -> bool:
@@ -122,13 +268,20 @@ def safe_slug_from_id(canonical_id: str) -> str:
 
 @dataclass(frozen=True)
 class OkfDocument:
-    """An OKF v1 document: identity, frontmatter, body, and relationship links."""
+    """An OKF v1 document: identity, frontmatter, body, and relationship links.
+
+    ``entity_type`` is the raw frontmatter ``type`` value.  ``shape`` and
+    ``canon_state`` are derived kernel classifications: the coarse structural
+    class and the world-truth state respectively.
+    """
 
     entity_type: str
     frontmatter: dict[str, Any]
     body: str
     forward_links: tuple[str, ...]
     version: str | None
+    shape: str
+    canon_state: str
 
 
 @dataclass(frozen=True)
@@ -192,6 +345,11 @@ def parse_document(content: str) -> OkfDocument | None:
         body=body,
         forward_links=tuple(forward_links),
         version=version,
+        shape=shape_for_type(frontmatter.get("type")),
+        canon_state=(
+            normalize_canon_state(frontmatter.get("canon_state"))
+            or default_canon_state(frontmatter.get("status"))
+        ),
     )
 
 

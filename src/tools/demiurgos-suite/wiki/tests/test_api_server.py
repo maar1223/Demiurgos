@@ -8591,7 +8591,7 @@ class TestMaterializeConfirm:
         entity = by_path.get("personajes/arquero-ciego.md")
         assert entity is not None, by_path.keys()
         assert entity["id"] == "arquero-ciego"
-        assert entity["type"] == "Personaje"
+        assert entity["type"] == "personaje"
         assert entity["status"] == "stable"
         assert entity["relaciones"] == []
 

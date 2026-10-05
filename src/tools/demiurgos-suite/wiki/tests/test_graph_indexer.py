@@ -185,7 +185,7 @@ class TestUpdateReadOnly(unittest.TestCase):
             entity = index.get_entity("personajes/X.md")
             self.assertIsNotNone(entity, "entity should still resolve after update")
             if entity is not None:
-                self.assertEqual(entity.type, "Personaje")
+                self.assertEqual(entity.type, "personaje")
                 self.assertIn("# Cuerpo", entity.content)
 
     def test_update_after_build_keeps_cache_consistent(self) -> None:
@@ -455,6 +455,101 @@ class TestEntitiesEnumeration(unittest.TestCase):
             _write_okf(mundo_dir, "lore/C.md", "Gamma")
             index.build("enumworld")
             self.assertEqual([e["path"] for e in index.entities()], ["lore/A.md", "lore/C.md"])
+
+
+class TestEntityEnvelope(unittest.TestCase):
+    """okf-envelope-formalization (T2) — the index exposes the derived envelope.
+
+    ``type`` is normalized (strip + lowercase + alias), ``shape`` is the kernel
+    structural class, and ``canon_state`` is the world-truth state (an explicit
+    frontmatter ``canon_state`` wins over the legacy ``status`` default).
+    """
+
+    def _world(self, tmpdir: str) -> tuple[Path, Path]:
+        mundos_path = Path(tmpdir) / "mundos"
+        mundo_dir = mundos_path / "envelopeworld"
+        (mundo_dir / "lore").mkdir(parents=True, exist_ok=True)
+        return mundos_path, mundo_dir
+
+    def _write(self, mundo_dir: Path, rel: str, content: str) -> None:
+        target = mundo_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+    def test_personaje_exposes_entidad_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "lore/A.md",
+                "---\ntype: personaje\ntitle: A\n---\n# A\n",
+            )
+            index = EntityGraphIndex(mundos_path)
+            index.build("envelopeworld")
+            record = index._cache["entities"]["lore/A.md"]
+            self.assertEqual(record["type"], "personaje")
+            self.assertEqual(record["shape"], "entidad")
+            detail = index.get_entity("lore/A.md")
+            self.assertIsNotNone(detail)
+            self.assertEqual(detail.shape, "entidad")
+            self.assertIsNotNone(detail.canon_state)
+
+    def test_sistema_exposes_sistema_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "lore/Magia.md",
+                "---\ntype: sistema\ntitle: Magia\norigen: estelar\n---\n# Magia\n",
+            )
+            index = EntityGraphIndex(mundos_path)
+            index.build("envelopeworld")
+            record = index._cache["entities"]["lore/Magia.md"]
+            self.assertEqual(record["type"], "sistema")
+            self.assertEqual(record["shape"], "sistema")
+            self.assertEqual(index.get_entity("lore/Magia.md").shape, "sistema")
+
+    def test_legacy_criatura_normalizes_type_and_derives_canon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "lore/B.md",
+                "---\ntype: Criatura\ntitle: B\nstatus: stable\n---\n# B\n",
+            )
+            index = EntityGraphIndex(mundos_path)
+            index.build("envelopeworld")
+            record = index._cache["entities"]["lore/B.md"]
+            self.assertEqual(record["type"], "criatura")
+            self.assertEqual(record["shape"], "entidad")
+            self.assertEqual(record["canon_state"], "canon")
+            detail = index.get_entity("lore/B.md")
+            self.assertEqual(detail.type, "criatura")
+            self.assertEqual(detail.canon_state, "canon")
+
+    def test_explicit_canon_state_wins_over_status_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "lore/C.md",
+                "---\ntype: personaje\ntitle: C\nstatus: stable\n"
+                "canon_state: leyenda\n---\n# C\n",
+            )
+            index = EntityGraphIndex(mundos_path)
+            index.build("envelopeworld")
+            record = index._cache["entities"]["lore/C.md"]
+            self.assertEqual(record["canon_state"], "leyenda")
+
+    def test_search_hit_carries_envelope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mundos_path, mundo_dir = self._world(tmpdir)
+            self._write(
+                mundo_dir, "lore/D.md",
+                "---\ntype: sistema\ntitle: Rueda\norigen: x\n---\n# Rueda\n",
+            )
+            index = EntityGraphIndex(mundos_path)
+            index.build("envelopeworld")
+            hits = index.search("Rueda")
+            self.assertEqual(len(hits), 1)
+            self.assertEqual(hits[0].shape, "sistema")
+            self.assertIsNotNone(hits[0].canon_state)
 
 
 if __name__ == "__main__":

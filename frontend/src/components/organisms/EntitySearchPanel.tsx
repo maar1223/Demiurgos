@@ -166,7 +166,7 @@ function SearchResultItem({ result, onClick }: SearchResultItemProps) {
         </span>
         {result.type && (
           <span className="shrink-0 rounded bg-surface-raised px-1.5 py-0.5 text-xs text-muted">
-            {result.type}
+            {capitalize(result.type)}
           </span>
         )}
       </div>
@@ -187,4 +187,10 @@ function SearchResultItem({ result, onClick }: SearchResultItemProps) {
       )}
     </button>
   );
+}
+
+/** Capitalise the first letter of the server-normalized (lowercase) type. */
+function capitalize(value: string): string {
+  if (!value) return value;
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }

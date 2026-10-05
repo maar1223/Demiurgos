@@ -22,6 +22,10 @@ class EntityHit:
     tags: list[str]
     link_count: int
     score: float = 0.0
+    # Derived OKF envelope (okf_contract): coarse structural class and
+    # world-truth state. Optional so legacy constructors keep working.
+    shape: str | None = None
+    canon_state: str | None = None
 
 
 @dataclass
@@ -43,6 +47,10 @@ class EntityDetail:
     id: str = ""
     # OKF ficha status (draft|stable); legacy entities default to draft.
     status: str = "draft"
+    # Derived OKF envelope (okf_contract): coarse structural class and
+    # world-truth state. Optional so legacy constructors keep working.
+    shape: str | None = None
+    canon_state: str | None = None
 
 
 @dataclass

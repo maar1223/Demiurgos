@@ -34,6 +34,13 @@ NC='\033[0m' # Sin color
 
 # ── Rutas ─────────────────────────────────────────────────
 DEMIURGOS_HOME="${DEMIURGOS_HOME:-$HOME/.demiurgos}"
+# Dedicated Hermes profile root (hermes-isolated-profile): explicit
+# DEMIURGOS_HERMES_HOME -> ${DEMIURGOS_HOME:-$HOME/.demiurgos}/hermes, the same
+# chain scripts/start-demiurgos.sh uses. The installer is the SOLE provisioner
+# of this root: it lives outside the personal ~/.hermes and outside the data
+# root, and never writes an active-profile marker (a bare root resolves
+# profile == root in Hermes).
+DEMIURGOS_HERMES_HOME="${DEMIURGOS_HERMES_HOME:-${DEMIURGOS_HOME:-$HOME/.demiurgos}/hermes}"
 DEMIURGOS_VERSION="${DEMIURGOS_VERSION:-latest}"
 # Public releases channel base. Both the channel owner and the private source
 # owner are built from parts so no private address appears verbatim (D1/S4-4);
@@ -49,7 +56,7 @@ DEMIURGOS_REPO="https://github.com/${DEMIURGOS_REPO_OWNER}/${DEMIURGOS_REPO_NAME
 ENGRAM_VERSION="1.17.0"
 ENGRAM_REPO="Gentleman-Programming/engram"
 HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
-HERMES_CONFIG="$HOME/.hermes/config.yaml"
+HERMES_CONFIG="$DEMIURGOS_HERMES_HOME/config.yaml"
 
 # Rutas relativas al checkout que usan las etapas de entorno Python y data-root.
 REQUIREMENTS_REL="src/tools/demiurgos-suite/requirements.txt"
