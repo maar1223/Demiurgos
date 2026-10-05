@@ -133,6 +133,13 @@ data/methodology/attachments/
 # principal de la sesión; se limpia con sweep y nunca se versiona.
 data/methodology/staging/
 
+# Directorio de skills propiedad de Demiurgos (demiurgos-skills-directory):
+# el contenido runtime generado bajo data/methodology/skills/ nunca se
+# versiona; la carpeta vacía se conserva vía .gitkeep (trackeado). Los seeds
+# (data/methodology/seeds/) siguen versionándose.
+data/methodology/skills/*
+!data/methodology/skills/.gitkeep
+
 # Artefactos locales de herramientas y respaldos de configuración: son de esta
 # máquina, no del proyecto. Nunca se versionan.
 .impeccable/

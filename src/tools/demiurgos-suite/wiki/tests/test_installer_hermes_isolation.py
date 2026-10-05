@@ -12,8 +12,11 @@ write target the dedicated profile — never the personal ``~/.hermes``. No
 Text scans mirror ``test_installer_contract.py``: the installer is a CODE
 artifact of the checkout, located from this file. ``configure_mcp_profile``
 stays personal/dev-only per the ratified design; the isolation contract here is
-that no product write touches ``$HOME/.hermes/config.yaml``. The skills-merge
-half of this file belongs to work unit 0.2 and is NOT implemented here.
+that no product write touches ``$HOME/.hermes/config.yaml``. The merge half
+(WU 0.2, spec ``demiurgos-skills-directory``) asserts the legacy ``skills:``
+append bug is gone, that the installer invokes
+``merge_skills_external_dirs`` through the checkout venv Python, and that the
+registration targets the dedicated product profile.
 """
 
 from __future__ import annotations
@@ -129,3 +132,59 @@ def test_installer_resolution_chain_evaluates_per_spec(tmp_path: Path):
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout == f"{home}/.demiurgos/hermes"
+
+
+# ── Merge half (WU 0.2, demiurgos-skills-directory) ─────────────────────────
+
+HERMES_PROFILE_CONFIG = _WIKI / "hermes_profile_config.py"
+
+
+def test_installer_has_no_skills_append_block():
+    """Spec 'Installer merge is idempotent' (text half): the legacy
+    'cat >> ... skills:' append bug is removed entirely — no YAML `skills:`
+    block exists in the installer to duplicate on re-runs."""
+    assert "skills:" not in _text(INSTALL_SH)
+
+
+def test_installer_calls_merge_skills_external_dirs():
+    """Design Decision 5: the installer invokes the idempotent merge helper
+    through the checkout venv Python (never a raw append or sed insert)."""
+    text = _text(INSTALL_SH)
+    assert "merge_skills_external_dirs" in text
+    assert "hermes_profile_config" in text
+
+
+def test_installer_registers_the_owned_skills_folder():
+    """Spec 'Folder path is registered in the product profile': the registered
+    path is the Demiurgos-owned data/methodology/skills folder, derived through
+    the resolver helper (resolve_skills_dir)."""
+    assert "resolve_skills_dir" in _text(INSTALL_SH)
+    assert "data/methodology/skills" in _text(HERMES_PROFILE_CONFIG)
+
+
+def test_installer_merge_targets_dedicated_product_profile():
+    """Spec 'Folder path is registered in the product profile' + 'Installer
+    never writes the personal profile': the merge writes $HERMES_CONFIG — the
+    dedicated product root's config.yaml from the isolation half — never a
+    personal-path literal."""
+    text = _text(INSTALL_SH)
+    assert ' - "$wiki_dir" "$HERMES_CONFIG" "$root" <<' in text
+    assert '"$HOME/.hermes/config.yaml"' not in text
+
+
+def test_installer_runs_python_env_before_the_merge():
+    """Design Decision 5: main_cli_stack prepares the checkout venv BEFORE the
+    skills merge runs (the merge needs $root/.venv/bin/python)."""
+    text = _text(INSTALL_SH)
+    start = text.index("main_cli_stack()")
+    body = text[start:text.index("main() {", start)]
+    assert body.index("prepare_python_env") < body.index("install_demiurgos")
+
+
+def test_installer_merge_is_best_effort():
+    """Design Decision 5: a missing venv/helper warns and skips — the merge can
+    never abort the install (same best-effort contract as prepare_python_env)."""
+    text = _text(INSTALL_SH)
+    assert '[ ! -x "$venv_python" ]' in text
+    assert "Se omite el registro de skills" in text
+    assert "hermes_profile_config.py" in text
