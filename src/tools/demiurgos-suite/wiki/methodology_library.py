@@ -18,6 +18,7 @@ kernel, canon files, or any path outside its own store file.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -70,6 +71,14 @@ SUPPORTED_FLOW_TYPES: frozenset[str] = frozenset({
 DEFAULT_FLOW_TYPE = GUIDED_CHARACTER_FLOW
 
 
+# Authored intake bound for a skill trigger (the ``description`` the Author
+# edits/approves). Mirrors ``skill_renderer.DESCRIPTION_INTAKE_LIMIT`` so the
+# client mirror, the approval surface, and the renderer agree on one value;
+# the server re-validates against this bound, which is authoritative over the
+# client (see ``approve_trigger``).
+TRIGGER_INTAKE_LIMIT = 60
+
+
 class MethodologyLibraryError(Exception):
     """Base error for the methodology library."""
 
@@ -109,6 +118,42 @@ class AttachmentLimitError(ValidationError):
     """
 
 
+class TriggerInvalidError(ValidationError):
+    """``approve_trigger()`` refused an empty/whitespace-only or over-bound trigger.
+
+    Subclasses ``ValidationError`` so the API maps it to a dedicated
+    ``trigger_invalid`` code without changing the existing ``validation_error``
+    behavior of the compiler gate.
+    """
+
+
+class TriggerNotApprovedError(MethodologyLibraryError):
+    """``publish()`` refused: no valid, matching trigger approval (fail-closed).
+
+    Subclasses ``MethodologyLibraryError`` so it inherits the base publish
+    boundary; the API MUST catch it BEFORE the generic
+    ``MethodologyLibraryError`` handler so a gate refusal is never mislabeled
+    as ``reserved_skill_id``.
+    """
+
+
+@dataclass(frozen=True)
+class TriggerApproval:
+    """An Author's explicit approval of a skill trigger (auditable record).
+
+    ``text`` is the normalized (whitespace-collapsed) trigger, ``digest`` is
+    ``normalized_trigger_digest(text)``, and ``approved_by``/``approved_at``
+    record the attributable act. Persisted as a plain dict on the draft (and
+    echoed onto the immutable published record); excluded from the manifest and
+    compile digest (metadata, not identity).
+    """
+
+    text: str
+    digest: str
+    approved_by: str
+    approved_at: str
+
+
 @dataclass
 class Draft:
     """An editable methodology draft. Never reaches runtime until published."""
@@ -141,6 +186,11 @@ class Draft:
     # digest canonical (per-attachment sha256 IS the pin, D1). Optional with
     # defaults so old records deserialize safely.
     adjuntos: tuple[AttachmentEntry, ...] = ()
+    # Trigger approval (Etapa 2): the Author's explicit, auditable approval of
+    # this draft's trigger. Optional with a default so old records deserialize
+    # safely; EXCLUDED from the manifest and compile digest (metadata, not
+    # identity — like ``parent_skill_id``/``adjuntos``).
+    trigger_approval: TriggerApproval | None = None
 
 
 @dataclass(frozen=True)
@@ -172,6 +222,11 @@ class PublishedVersion:
     # Attachment entries (contract §4, SR4): metadata only; excluded from the
     # digest canonical (per-attachment sha256 IS the pin, D1).
     adjuntos: tuple[AttachmentEntry, ...] = ()
+    # Trigger approval provenance (Etapa 2): echoed from the draft's approval
+    # at publish, immutable thereafter. Optional so old published records
+    # deserialize safely; EXCLUDED from the manifest/digest (metadata, not
+    # identity — like ``parent_skill_id``/``adjuntos``).
+    trigger_approval: TriggerApproval | None = None
 
 
 @dataclass(frozen=True)
@@ -190,6 +245,21 @@ class Activation:
 
 def _utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def normalize_trigger(text: str) -> str:
+    """Collapse all whitespace runs to single spaces and strip the ends.
+
+    The single normalization used by approval, the publish gate, and the
+    renderer, so insignificant whitespace differences never change the
+    recorded approval or invalidate a matching one.
+    """
+    return " ".join(text.split())
+
+
+def normalized_trigger_digest(text: str) -> str:
+    """SHA-256 (hex) of the normalized trigger text, utf-8 encoded."""
+    return hashlib.sha256(normalize_trigger(text).encode("utf-8")).hexdigest()
 
 
 def _bump_version(version: str) -> str:
@@ -490,6 +560,43 @@ class MethodologyLibrary:
             record["updated_at"] = now
             self._save_locked()
             return self._draft_from(record)
+
+    def approve_trigger(
+        self, draft_id: str, text: str, approved_by: str
+    ) -> TriggerApproval:
+        """Record an explicit Author approval of a draft's trigger.
+
+        Normalizes ``text`` (whitespace-collapsed) and refuses an empty result
+        or one longer than ``TRIGGER_INTAKE_LIMIT`` with ``TriggerInvalidError``
+        (the server bound is authoritative over the client). Then, under ONE
+        lock, writes the normalized value as the draft's ``description`` AND the
+        auditable ``trigger_approval`` sub-record in a single atomic save
+        (TD-B), so the approved value equals the draft description by
+        construction. The approval stays bound to the value it was granted for:
+        a later ``update_draft(description=...)`` does not mutate it
+        (distinctness — REQ ``skill-trigger-approval``). Raises ``KeyError`` for
+        an unknown draft.
+        """
+        normalized = normalize_trigger(text)
+        if not normalized or len(normalized) > TRIGGER_INTAKE_LIMIT:
+            raise TriggerInvalidError(
+                "trigger must be non-empty and at most "
+                f"{TRIGGER_INTAKE_LIMIT} characters after normalization"
+            )
+        approval = TriggerApproval(
+            text=normalized,
+            digest=normalized_trigger_digest(normalized),
+            approved_by=approved_by,
+            approved_at=_utcnow(),
+        )
+        with self._lock:
+            record = self._drafts.get(draft_id)
+            if record is None:
+                raise KeyError(f"draft {draft_id!r} not found")
+            record["description"] = normalized
+            record["trigger_approval"] = asdict(approval)
+            self._save_locked()
+        return approval
 
     def list_draft_history(self, draft_id: str) -> list[dict[str, Any]]:
         """Immutable per-draft snapshot-on-update history (TW13).
@@ -1078,6 +1185,13 @@ class MethodologyLibrary:
             adjuntos=tuple(
                 AttachmentEntry(**entry) for entry in (record.get("adjuntos") or ())
             ),
+            # Tolerant read (Etapa 2): records predating the field (or drafts
+            # never approved) deserialize to None without error.
+            trigger_approval=(
+                TriggerApproval(**record["trigger_approval"])
+                if record.get("trigger_approval")
+                else None
+            ),
         )
 
     @staticmethod
@@ -1102,6 +1216,13 @@ class MethodologyLibrary:
             parent_version=record.get("parent_version"),
             adjuntos=tuple(
                 AttachmentEntry(**entry) for entry in (record.get("adjuntos") or ())
+            ),
+            # Tolerant read (Etapa 2): published records predating the field
+            # deserialize to None without error (no read path crashes).
+            trigger_approval=(
+                TriggerApproval(**record["trigger_approval"])
+                if record.get("trigger_approval")
+                else None
             ),
         )
 
