@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activateCompanion,
   activateMethodology,
+  approveDraftTrigger,
   createMethodologyDraft,
   deactivateCompanion,
   deactivateMethodology,
@@ -77,6 +78,55 @@ describe("methodologies API contract", () => {
     expect(mockApiFetch).toHaveBeenCalledWith(
       "/api/methodologies/drafts/draft-1/publish",
       { method: "POST", timeout: 15_000 },
+    );
+  });
+
+  it("POST trigger/approve sends the raw description and returns the approval (server normalizes)", async () => {
+    const approval = {
+      text: "Construir personajes coherentes",
+      digest: "b".repeat(64),
+      approved_by: "principal-1",
+      approved_at: "2026-10-05T00:00:00Z",
+    };
+    mockApiFetch.mockResolvedValue({ trigger_approval: approval });
+
+    // The client never pre-normalizes: the server is authoritative and owns
+    // the whitespace-collapse + bound; the raw authored value is sent as-is.
+    const result = await approveDraftTrigger(
+      "draft-1",
+      "  Construir   personajes coherentes ",
+    );
+
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/methodologies/drafts/draft-1/trigger/approve",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          description: "  Construir   personajes coherentes ",
+        }),
+        timeout: 15_000,
+      },
+    );
+    expect(result).toEqual({ trigger_approval: approval });
+  });
+
+  it("encodes the draft id and preserves the trigger_invalid fail-closed code", async () => {
+    mockApiFetch.mockRejectedValue(
+      new ApiError(
+        422,
+        "The trigger is empty or over the authored bound.",
+        "The trigger is empty or over the authored bound.",
+        "trigger_invalid",
+      ),
+    );
+
+    await expect(
+      approveDraftTrigger("draft with space", "x".repeat(61)),
+    ).rejects.toMatchObject({ status: 422, code: "trigger_invalid" });
+
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/api/methodologies/drafts/draft%20with%20space/trigger/approve",
+      expect.objectContaining({ method: "POST" }),
     );
   });
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   activateCoCreationSession,
+  approveSessionTrigger,
   createCoCreationSession,
   deriveDraft as deriveDraftApi,
   getPublishedDetail as getPublishedDetailApi,
@@ -32,6 +33,7 @@ import type {
   DraftPayload,
   MethodologyAdjunto,
   PublishedMethodologyDetail,
+  TriggerApproval,
   WarningState,
 } from "@/api/types";
 
@@ -102,6 +104,18 @@ export interface UseCoCreationReturn {
   activate: (world: string) => Promise<CoCreationActivateResult | null>;
   /** Discard the hint and the local session (backend session stays intact). */
   reset: () => void;
+
+  // -- Etapa 2: trigger approval surface (REQ: server value mirrored) -------
+
+  /** The server-recorded trigger approval for the current session's draft
+   *  (null until the Author approves). Mirrors the server value; additive. */
+  triggerApproval: TriggerApproval | null;
+  /** Author approves the trigger (Etapa 2). Flushes pending canvas edits first
+   *  so the approved value matches the payload the server binds it to, then
+   *  sends the revision-guarded approve call and folds the returned approval
+   *  and revision into the session. Returns the approval, or null on failure
+   *  (`error` is set). */
+  approveTrigger: (description: string) => Promise<TriggerApproval | null>;
 
   // -- TW12 canvas (REQ-CC-11/15) ------------------------------------------
 
@@ -807,6 +821,54 @@ export function useCoCreation(
       .finally(() => setIsLoading(false));
   }, [flushCanvas]);
 
+  const approveTrigger = useCallback(
+    async (description: string) => {
+      // Flush pending canvas edits first so the value the server binds the
+      // approval to matches the session payload publish will use (Etapa 2: the
+      // surface approves the value publish will use); the same reason
+      // `send`/`materialize`/`publish` flush before they act.
+      await flushCanvas();
+      const current = sessionRef.current;
+      if (!current) return null;
+      setError(null);
+      try {
+        // `pendingRevisionRef` holds the latest revision we know the server is
+        // at after our own autosave; falling back to the session revision keeps
+        // the base revision fresh without waiting for a re-render (same rule as
+        // `persistCanvas`).
+        const baseRevision = pendingRevisionRef.current ?? current.revision;
+        const result = await approveSessionTrigger(
+          current.session_id,
+          baseRevision,
+          description,
+        );
+        // The approve call bumps the session revision and records the approval
+        // on the draft; fold both in so the surface mirrors the server value.
+        pendingRevisionRef.current = result.revision;
+        setSession((prev) =>
+          prev
+            ? {
+                ...prev,
+                revision: result.revision,
+                trigger_approval: result.trigger_approval,
+              }
+            : prev,
+        );
+        return result.trigger_approval;
+      } catch (cause) {
+        // ApiError is always an Error, so this fallback is effectively
+        // unreachable; the dedicated trigger copy lands with the UI in WU 2.3b.
+        setError(
+          cause instanceof Error
+            ? cause.message
+            : tStatic("cocreation.unavailable"),
+        );
+        return null;
+      }
+    },
+    [flushCanvas],
+  );
+
   const activate = useCallback(
     async (world: string) => {
       await flushCanvas();
@@ -877,6 +939,10 @@ export function useCoCreation(
     publish,
     activate,
     reset,
+
+    // Etapa 2: trigger approval surface
+    triggerApproval: session?.trigger_approval ?? null,
+    approveTrigger,
 
     // TW12 canvas
     draftPayload,

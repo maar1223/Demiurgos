@@ -10,6 +10,7 @@ import type {
   MethodologyStatus,
   PublishedMethodology,
   QuarantineRecord,
+  TriggerApproval,
   TrustQuarantineResult,
 } from "@/api/types";
 
@@ -74,6 +75,24 @@ export function publishMethodologyDraft(
     url(`/drafts/${encodeURIComponent(draftId)}/publish`),
     {
       method: "POST",
+      timeout: METHODOLOGIES_TIMEOUT_MS,
+    },
+  );
+}
+
+/** POST /api/methodologies/drafts/{draftId}/trigger/approve — record the
+ *  Author's explicit approval of the draft trigger (Etapa 2). The server
+ *  normalizes and re-validates the authored bound (server-authoritative:
+ *  over-bound/empty is refused with 422 `trigger_invalid`). */
+export function approveDraftTrigger(
+  draftId: string,
+  description: string,
+): Promise<{ trigger_approval: TriggerApproval }> {
+  return apiFetch<{ trigger_approval: TriggerApproval }>(
+    url(`/drafts/${encodeURIComponent(draftId)}/trigger/approve`),
+    {
+      method: "POST",
+      body: JSON.stringify({ description }),
       timeout: METHODOLOGIES_TIMEOUT_MS,
     },
   );

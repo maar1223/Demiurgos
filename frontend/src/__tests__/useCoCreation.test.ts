@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activateCoCreationSession,
+  approveSessionTrigger,
   createCoCreationSession,
   deriveDraft,
   materializeCoCreationSession,
@@ -25,6 +26,7 @@ import type {
 
 vi.mock("@/api/coCreation", () => ({
   activateCoCreationSession: vi.fn(),
+  approveSessionTrigger: vi.fn(),
   createCoCreationSession: vi.fn(),
   deriveDraft: vi.fn(),
   listHistory: vi.fn(),
@@ -277,6 +279,135 @@ describe("useCoCreation", () => {
 
     expect(result.current.published).toEqual(publishResult);
     expect(result.current.session?.phase).toBe("complete");
+  });
+
+  // -- Etapa 2: trigger approval surface ------------------------------------
+
+  const approvalFixture = () => ({
+    text: "Construir personajes coherentes",
+    digest: "c".repeat(64),
+    approved_by: "principal-1",
+    approved_at: "2026-10-05T00:00:00Z",
+  });
+
+  it("approves the session trigger with the current revision and mirrors the server value (Etapa 2)", async () => {
+    const reviewed = sessionFixture({
+      phase: "review",
+      milestone: "revision_publicacion",
+      draft_id: "draft-1",
+      compile_issues: [],
+      pending_question: null,
+      pending_options: [],
+    });
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(reviewed);
+    const approval = approvalFixture();
+    vi.mocked(approveSessionTrigger).mockResolvedValue({
+      trigger_approval: approval,
+      revision: 4,
+    });
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+    // Pending until the Author approves (additive field absent on the fixture).
+    expect(result.current.triggerApproval).toBeNull();
+
+    let returned = null as typeof approval | null;
+    await act(async () => {
+      returned = await result.current.approveTrigger("Construir personajes coherentes");
+    });
+
+    expect(approveSessionTrigger).toHaveBeenCalledWith(
+      "server-session",
+      3,
+      "Construir personajes coherentes",
+    );
+    expect(returned).toEqual(approval);
+    expect(result.current.triggerApproval).toEqual(approval);
+    expect(result.current.session?.revision).toBe(4);
+  });
+
+  it("flushes pending canvas edits before approving so the approve uses the fresh revision (Etapa 2)", async () => {
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({ revision: 5, draft_payload: canvasPayload }),
+    );
+    vi.mocked(updateCanvas).mockResolvedValue({
+      revision: 6,
+      issues: [],
+      warnings: [],
+      ok: true,
+    });
+    const approval = approvalFixture();
+    vi.mocked(approveSessionTrigger).mockResolvedValue({
+      trigger_approval: approval,
+      revision: 7,
+    });
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+
+    act(() => result.current.editCanvas({ purpose: "Propósito aprobado" }));
+    await act(async () => {
+      await result.current.approveTrigger("Construir personajes coherentes");
+    });
+
+    // The debounced edit was persisted first and the approve used the revision
+    // the autosave returned (6), not the stale one (5).
+    expect(updateCanvas).toHaveBeenCalledTimes(1);
+    expect(approveSessionTrigger).toHaveBeenCalledWith(
+      "server-session",
+      6,
+      "Construir personajes coherentes",
+    );
+    expect(
+      vi.mocked(updateCanvas).mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      vi.mocked(approveSessionTrigger).mock.invocationCallOrder[0],
+    );
+    expect(result.current.session?.revision).toBe(7);
+  });
+
+  it("leaves the approval pending and surfaces the error when approve fails (Etapa 2)", async () => {
+    localStorage.setItem(
+      "demiurgos-co-creation-session",
+      JSON.stringify({ sessionId: "server-session" }),
+    );
+    vi.mocked(recoverCoCreationSession).mockResolvedValue(
+      sessionFixture({
+        phase: "review",
+        milestone: "revision_publicacion",
+        draft_id: "draft-1",
+        compile_issues: [],
+        pending_question: null,
+        pending_options: [],
+      }),
+    );
+    vi.mocked(approveSessionTrigger).mockRejectedValue(
+      new Error("The trigger is over the authored bound."),
+    );
+
+    const { result } = renderHook(() => useCoCreation());
+    await waitFor(() => expect(result.current.session).not.toBeNull());
+
+    let returned = approvalFixture();
+    await act(async () => {
+      returned = (await result.current.approveTrigger(
+        "x".repeat(61),
+      )) as typeof returned;
+    });
+
+    expect(returned).toBeNull();
+    expect(result.current.error).toBe(
+      "The trigger is over the authored bound.",
+    );
+    expect(result.current.triggerApproval).toBeNull();
   });
 
   it("pins the published version to a world via activate", async () => {
