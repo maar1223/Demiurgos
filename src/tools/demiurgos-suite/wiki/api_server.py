@@ -172,8 +172,13 @@ from methodology_library import (
     MethodologyLibraryError,
     NotPublishedError,
     SUPPORTED_FLOW_TYPES,
+    TRIGGER_INTAKE_LIMIT,
     FOUNDATIONAL_CHARACTER_SKILL_ID,
+    TriggerApproval,
+    TriggerInvalidError,
+    TriggerNotApprovedError,
     ValidationError,
+    normalize_trigger,
 )
 from methodology_compiler import AttachmentEntry
 from methodology_seed import install_seeds
@@ -2954,6 +2959,28 @@ class CoCreationPublishRequest(BaseModel):
     base_revision: int
 
 
+class TriggerApproveRequest(BaseModel):
+    """Etapa 2: explicit Author approval of a draft's trigger.
+
+    The server normalizes and re-validates the bound; the request is transport
+    only (the client value is never trusted as authoritative).
+    """
+
+    description: str
+
+
+class CoCreationTriggerApproveRequest(BaseModel):
+    """Etapa 2: revision-guarded Author approval on a co-creation session.
+
+    The approved value is written into the session canvas
+    (``draft_payload["description"]``) and, when the session has a materialized
+    draft, recorded on that library draft.
+    """
+
+    base_revision: int
+    description: str
+
+
 class CoCreationAdjunto(BaseModel):
     """One Author exemplar pin on the materialize request (REQ-CC-25).
 
@@ -3123,12 +3150,60 @@ def _co_creation_session_or_error(
     return None, _co_creation_missing_session_response()
 
 
-def _co_creation_public_state(state: CoCreationSessionState) -> dict:
+def _trigger_approval_dict(approval: TriggerApproval | None) -> dict | None:
+    """Serialize a trigger approval for the wire (``None`` stays ``null``)."""
+    if approval is None:
+        return None
+    return {
+        "text": approval.text,
+        "digest": approval.digest,
+        "approved_by": approval.approved_by,
+        "approved_at": approval.approved_at,
+    }
+
+
+def _draft_trigger_approval(draft_id: str | None) -> TriggerApproval | None:
+    """Read a draft's recorded approval once at the API layer.
+
+    The public-state serializer stays pure; call sites that know the
+    materialized draft inject this value instead of reaching into the library
+    from the serializer.
+    """
+    if draft_id is None:
+        return None
+    draft = _methodology_library().get_draft(draft_id)
+    return draft.trigger_approval if draft is not None else None
+
+
+def _normalized_trigger_or_error(
+    description: str,
+) -> tuple[str | None, JSONResponse | None]:
+    """Normalize a trigger and validate the server-authoritative bound.
+
+    Mirrors ``MethodologyLibrary.approve_trigger`` so the session approve route
+    can refuse an empty/over-bound value with 422 BEFORE mutating any state,
+    independent of whether a library draft exists yet.
+    """
+    normalized = normalize_trigger(description)
+    if not normalized or len(normalized) > TRIGGER_INTAKE_LIMIT:
+        return None, JSONResponse(status_code=422, content={
+            "detail": "trigger must be non-empty and at most "
+                      f"{TRIGGER_INTAKE_LIMIT} characters after normalization",
+            "code": "trigger_invalid",
+        })
+    return normalized, None
+
+
+def _co_creation_public_state(
+    state: CoCreationSessionState, *, trigger_approval: TriggerApproval | None = None,
+) -> dict:
     """Serialize the frontend-compatible session view (TW12 canvas included).
 
     Exposes the editable draft payload, the 3-state warnings list, the
     autosave history count, and the server-injected provenance (``None`` until
-    a derived draft exists — Phase 2).
+    a derived draft exists — Phase 2). ``trigger_approval`` (Etapa 2) is
+    injected by the API layer from the materialized draft; the serializer
+    itself stays pure.
     """
     return {
         "protocol_version": CO_CREATION_PROTOCOL_VERSION,
@@ -3156,6 +3231,7 @@ def _co_creation_public_state(state: CoCreationSessionState) -> dict:
             {"skill_id": state.derived_from.skill_id, "version": state.derived_from.version}
             if state.derived_from is not None else None
         ),
+        "trigger_approval": _trigger_approval_dict(trigger_approval),
     }
 
 
@@ -3168,7 +3244,9 @@ def _co_creation_result(
         return _co_creation_error_response(CoCreationStructuredError(
             CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
         ))
-    return _co_creation_public_state(state)
+    return _co_creation_public_state(
+        state, trigger_approval=_draft_trigger_approval(state.draft_id),
+    )
 
 
 async def _probe_co_creation_capabilities() -> CoCreationCapabilities | None:
@@ -3298,7 +3376,9 @@ def recover_co_creation(session_id: str, request: Request):
     state, error = _co_creation_session_or_error(session_id, principal)
     if error:
         return error
-    return _co_creation_public_state(state)
+    return _co_creation_public_state(
+        state, trigger_approval=_draft_trigger_approval(state.draft_id),
+    )
 
 
 @app.get("/api/co-creation/sessions/{session_id}/progress")
@@ -3435,7 +3515,9 @@ def materialize_co_creation(session_id: str, body: CoCreationMaterializeRequest,
         return _co_creation_error_response(CoCreationStructuredError(
             CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
         ))
-    payload = _co_creation_public_state(reviewed)
+    payload = _co_creation_public_state(
+        reviewed, trigger_approval=_draft_trigger_approval(reviewed.draft_id),
+    )
     payload.update({"ok": True, "issues": [], "compile_issues": []})
     return payload
 
@@ -3534,6 +3616,13 @@ def publish_co_creation(session_id: str, body: CoCreationPublishRequest, request
         return JSONResponse(status_code=409, content={
             "detail": str(exc), "code": "already_published",
         })
+    except TriggerNotApprovedError as exc:
+        # Etapa 2 (TD-D): this route has no generic MethodologyLibraryError
+        # handler, so without this catch the gate refusal would leak as a 500.
+        # The session stays incomplete and the draft remains approvable.
+        return JSONResponse(status_code=409, content={
+            "detail": str(exc), "code": "trigger_not_approved",
+        })
     completed = _CO_CREATION_SESSIONS.set_phase(
         session_id, principal.id, body.base_revision, "complete",
     )
@@ -3549,6 +3638,60 @@ def publish_co_creation(session_id: str, body: CoCreationPublishRequest, request
             "digest": published.digest,
             "published_at": published.published_at,
         },
+    }
+
+
+@app.post("/api/co-creation/sessions/{session_id}/trigger/approve")
+def approve_co_creation_trigger(
+    session_id: str, body: CoCreationTriggerApproveRequest, request: Request,
+):
+    """Record the Author's explicit approval of the session draft's trigger (Etapa 2).
+
+    Writes the normalized approved value into the session canvas
+    (``draft_payload["description"]``) through the revision-guarded autosave and,
+    when the session has a materialized draft, records the approval on that
+    library draft in one atomic save (TD-B) — so the approved value equals the
+    value publish will use. The bound is validated server-side BEFORE any state
+    mutation.
+    """
+    principal, error = _co_creation_principal(request)
+    if error:
+        return error
+    state, error = _co_creation_session_or_error(session_id, principal)
+    if error:
+        return error
+    if state.revision != body.base_revision:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    normalized, invalid = _normalized_trigger_or_error(body.description)
+    if invalid is not None:
+        return invalid
+    merged = _CO_CREATION_SESSIONS.autosave_payload(
+        session_id, principal.id, body.base_revision,
+        {"description": normalized}, source="author",
+    )
+    if merged is None:
+        return _co_creation_error_response(CoCreationStructuredError(
+            CoCreationErrorCode.REVISION_CONFLICT, "The session revision is stale.", True,
+        ))
+    approval: TriggerApproval | None = None
+    if merged.draft_id is not None:
+        library = _methodology_library()
+        try:
+            approval = library.approve_trigger(merged.draft_id, normalized, principal.id)
+        except KeyError:
+            return JSONResponse(status_code=404, content={
+                "detail": "The session draft is unavailable.",
+                "code": "draft_unavailable",
+            })
+        except TriggerInvalidError as exc:
+            return JSONResponse(status_code=422, content={
+                "detail": str(exc), "code": "trigger_invalid",
+            })
+    return {
+        "trigger_approval": _trigger_approval_dict(approval),
+        "revision": merged.revision,
     }
 
 
@@ -9179,6 +9322,7 @@ def methodologies_status(request: Request):
             "source": draft.source,
             "description": draft.description,
             "updated_at": draft.updated_at,
+            "trigger_approval": _trigger_approval_dict(draft.trigger_approval),
         }
         for draft in library.list_drafts()
     ]
@@ -9351,6 +9495,14 @@ def methodologies_publish(draft_id: str, request: Request):
         return JSONResponse(status_code=409, content={
             "detail": str(exc), "code": "already_published",
         })
+    except TriggerNotApprovedError as exc:
+        # Etapa 2 (TD-D): MUST precede the generic MethodologyLibraryError
+        # handler below — TriggerNotApprovedError subclasses it, and the generic
+        # handler maps everything else to ``reserved_skill_id``. Placing this
+        # after would mislabel a gate refusal.
+        return JSONResponse(status_code=409, content={
+            "detail": str(exc), "code": "trigger_not_approved",
+        })
     except MethodologyLibraryError as exc:
         # REQ-IMP-6: the reserved id belongs to the foundational character
         # skill — an import-derived draft can never publish it. All other
@@ -9371,6 +9523,32 @@ def methodologies_publish(draft_id: str, request: Request):
     if published.adjuntos:
         payload["adjuntos"] = [entry.as_dict() for entry in published.adjuntos]
     return payload
+
+
+@app.post("/api/methodologies/drafts/{draft_id}/trigger/approve")
+def methodologies_approve_trigger(
+    draft_id: str, body: TriggerApproveRequest, request: Request,
+):
+    """Record the Author's explicit approval of a draft's trigger (Etapa 2).
+
+    The library normalizes and re-validates the bound (server-authoritative),
+    then writes the approved value as the draft description AND the auditable
+    approval sub-record in one atomic save (TD-B) — so the approved value is
+    the value publish will use.
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    library = _methodology_library()
+    try:
+        approval = library.approve_trigger(draft_id, body.description, principal.id)
+    except KeyError:
+        return JSONResponse(status_code=404, content={"detail": "The draft is unavailable."})
+    except TriggerInvalidError as exc:
+        return JSONResponse(status_code=422, content={
+            "detail": str(exc), "code": "trigger_invalid",
+        })
+    return {"trigger_approval": _trigger_approval_dict(approval)}
 
 
 @app.post("/api/methodologies/activate")
