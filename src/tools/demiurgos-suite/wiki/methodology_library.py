@@ -325,6 +325,9 @@ class MethodologyLibrary:
         # Per-world companion skills (skill-runtime-bridge): many published
         # versions per world, one slot per skill_id; slot ops never touch it.
         self._companions: dict[str, list[dict[str, Any]]] = {}
+        # Per-world native-channel flag (hermes-native-channel): {world: True}
+        # for opted-in worlds; absent => OFF (design Q1).
+        self._native_channel: dict[str, bool] = {}
         self._load()
 
     # ------------------------------------------------------------------ #
@@ -1095,6 +1098,34 @@ class MethodologyLibrary:
             ]
 
     # ------------------------------------------------------------------ #
+    # Native channel flag by world
+    # ------------------------------------------------------------------ #
+
+    def native_channel_enabled(self, world: str) -> bool:
+        """Whether ``world`` has opted into the native Hermes channel.
+
+        Tolerant read (design Q1 / REQ-NC-2): an absent, unset, or invalid
+        flag is OFF, so a legacy world is never auto-enabled. Thread-safe.
+        """
+        with self._lock:
+            return self._native_channel.get(str(world), False)
+
+    def set_native_channel(self, world: str, enabled: bool) -> None:
+        """Set (or clear) ``world``'s native-channel opt-in, persisted atomically.
+
+        Enabling stores ``True``; disabling removes the key so the store stays
+        minimal and an absent flag reads OFF. Mirrors ``deactivate``'s
+        pop-if-empty pattern.
+        """
+        with self._lock:
+            key = str(world)
+            if enabled:
+                self._native_channel[key] = True
+            else:
+                self._native_channel.pop(key, None)
+            self._save_locked()
+
+    # ------------------------------------------------------------------ #
     # Persistence
     # ------------------------------------------------------------------ #
 
@@ -1119,6 +1150,9 @@ class MethodologyLibrary:
             for draft_id, stack in (payload.get("draft_history") or {}).items()
         }
         self._companions = dict(payload.get("companions") or {})
+        self._native_channel = self._coerce_native_channel(
+            payload.get("native_channel") or {}
+        )
 
     @staticmethod
     def _coerce_activations(
@@ -1169,6 +1203,22 @@ class MethodologyLibrary:
                 coerced[world] = {}
         return coerced
 
+    @staticmethod
+    def _coerce_native_channel(raw: Mapping[str, Any]) -> dict[str, bool]:
+        """Normalize the on-disk ``native_channel`` map to ``{world: True}``.
+
+        Tolerant read (design Q1 / spec REQ-NC-2): absent, non-mapping, or
+        non-bool values are dropped — only an explicit boolean ``True`` opts a
+        world in, so every other value degrades to OFF. Read-only.
+        """
+        if not isinstance(raw, Mapping):
+            return {}
+        return {
+            str(world): True
+            for world, value in raw.items()
+            if isinstance(value, bool) and value is True
+        }
+
     def _save_locked(self) -> None:
         # ``activations``/``history`` are written in the per-flow nested shape
         # (memory is always nested post-coercion) under the stable keys.
@@ -1179,6 +1229,7 @@ class MethodologyLibrary:
             "companions": self._companions,
             "history": self._history,
             "draft_history": self._draft_history,
+            "native_channel": self._native_channel,
         }
         self._path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, tmp_path = tempfile.mkstemp(
