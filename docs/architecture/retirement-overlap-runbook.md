@@ -5,6 +5,54 @@ legacy wiring is removed from `install.sh`; `web-config-ui` is preserved as
 historical reference only. This runbook validates the FINAL post-retirement
 state — the barrier must pass WITH the retirement applied.
 
+> **Scope note:** the ONB-5 retirement above is a *different* subsystem. The
+> Hermes methodology channel documented next is in a **dormant/overlap** phase
+> — native opt-in, legacy overlap intact — and is NOT retired.
+
+---
+
+## Hermes methodology channel — dormant/overlap phase (Etapa 3, WU-3.4)
+
+**Status: DORMANT / OVERLAP — NOT retired.** The legacy methodology channel
+(`skill_router` + `contract_projection`) stays present in-tree but dormant: it is
+exercised only by the flag-OFF path. The native Hermes channel is **opt-in per
+world** and **default OFF**; the legacy modules are not deleted and no import is
+rewired in Etapa 3 (D3). The removal is a separate later change after a
+≥1-release grace window.
+
+### Dormant surface
+
+- `src/tools/demiurgos-suite/wiki/skill_router.py` and
+  `contract_projection.py`: present, importable, dormant.
+- `convergence_injection.py:16` (`from contract_projection import
+  _estimate_tokens`) stays intact — a naive deletion breaks this import.
+- Presence is enforced by `wiki/tests/test_dormant_legacy_guard.py`, which FAILS
+  if either module is removed or the cross-module import is rewired, blocking an
+  early deletion.
+
+### Rollback boundary
+
+Flip the per-world channel flag OFF ⇒ `_active_channel_state()` returns
+`"legacy"` and the legacy projection is restored **while the modules remain
+present**. Promotion is reversible by repromotion; the `skills` toolset is a
+revertible config value in the dedicated profile; there is **no module deletion,
+no import rewire, and no test mass-inversion** in Etapa 3. Worst case for the
+change is flag-OFF degradation, never lost capability.
+
+### Migration evidence (Etapa 3)
+
+| Evidence | Result |
+|---|---|
+| Pre-flight probe (WU-3.0) | Both gateway hooks live (`pre_tool_call` `skill_manage` veto + `pre_llm_call` cache clear); in-process cache clear works; `skill_manage` veto is fail-closed; behavior-neutral (flag-OFF prompt/toolset byte-identical). |
+| **Q1 — toolset flip restart** | **NO gateway restart required.** `platform_toolsets.api_server` is resolved per agent turn and the gateway config is re-read when its `(mtime_ns, size)` changes, so adding `skills` lands on the next turn. Pinned by `test_native_channel_probe.py::test_q1_toolset_flip_takes_effect_without_gateway_restart` (`Q1_GATEWAY_RESTART_REQUIRED = False`). The live-gateway model-level step stays pending a dedicated test profile (`DEMIURGOS_PROBE_LIVE=1`). |
+| Toolset reconcile (WU-3.1/3.2) | `ensure_skills_toolset` writes only the dedicated profile; zero-ON ⇒ config byte-identical; personal `~/.hermes` never touched. |
+| Epoch activation — D4 (WU-3.1/3.2) | `SessionEpochRegistry.observe(world, revision)` allocates a fresh epoch when a promotion advances the revision; the run session id is epoch-suffixed only in the healthy `native` state — process restart is not the mechanism. |
+| Promotion (WU-3.1) | `SkillPromoter` swaps a fresh generation tree in with a guarded two-rename; the revision is deterministic; orphan GC preserves sentinels; no-op on an unchanged revision. |
+| Default-OFF byte-identical | `test_cross_cutting_invariant.py` + `test_native_channel_suppression.py` guards stay green with zero worlds opted in. |
+| Dormant-legacy guard (WU-3.4) | `test_dormant_legacy_guard.py` green; fails on a simulated removed module / rewired import. |
+
+---
+
 ## What the gate is
 
 `src/tools/demiurgos-suite/wiki/retirement_gate.py` is a verifiable barrier.

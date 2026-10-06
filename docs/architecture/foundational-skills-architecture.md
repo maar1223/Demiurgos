@@ -228,7 +228,7 @@ Se **reutiliza el mecanismo nativo de skills de Hermes**; **no** se construye í
 
 ### 10.3 Decisiones **[LOCK]**
 - **A — Perfil propio y aislado.** Demiurgos corre su **propio perfil** de Hermes (no el personal del usuario); solo Demiurgos lo invoca; sin las skills globales.
-- **B1 — Un solo canal.** Las metodologías pasan a ser **skills nativas**; se **retira** el router + la proyección server-side. Nada de doble guía.
+- **B1 — Un solo canal (canal nativo opt-in; legacy latente).** Las metodologías pasan a ser **skills nativas** de forma **opt-in por mundo** (default OFF). Con el flag ON y el canal sano, el `SKILL.md` nativo es la **única** guía y se **suprime** la proyección server-side (`_route_skill`, `_companion_contract_for`, `_compiled_contract_markdown`, `_convergence_specimen_markdown`); con el flag OFF el router + la proyección legacy sirven byte-idéntico; con el flag ON pero **insano** (falta el toolset / la carpeta viva / el promote) el sistema es **fail-closed**: cero guía, nunca un fallback silencioso al legacy (D2). El router + la proyección **NO se retiran en la Etapa 3** (D3): quedan **presentes y latentes (dormant)**, ejercitados solo por el camino flag-OFF y protegidos por un guard de presencia. La eliminación es un **cambio posterior separado** (ventana de gracia ≥1 release).
 - **C1 — Carpeta propia de Demiurgos.** Los `SKILL.md` viven en una carpeta de Demiurgos; el perfil apunta ahí (`skills.external_dirs`).
 - **D — Render y gatillo.** Metodología → `SKILL.md`: `name`; `description` = **gatillo "cuándo usarme"** (lo **escribe** quien crea la skill; se **muestra al usuario para aprobar/aportar**); `metadata` (version/scope); cuerpo (`source` + **reglas de co-creación siempre**); adjuntos como archivos extra.
 - **E1 — Dos carpetas.** **Transversal** (siempre) + **mundo activo** (específicas); el perfil apunta a ambas; al cambiar de mundo solo se reescribe la del mundo.
@@ -266,13 +266,18 @@ Ejercicio adversarial con 4 especialistas: **runtime Hermes** · **migración/co
 - La `description` de la skill se **trunca a 57 chars** en el índice → el gatillo debe ser **≤57**.
 - `external_dirs` **cachea la existencia**; swaps en la misma ruta no invalidan.
 - **Colisiones de nombre**: una skill externa con nombre ya ocupado **se salta en silencio**.
-- Retirar `contract_projection` **rompe imports** (`convergence_injection.py:16` importa `_estimate_tokens`).
+- Retirar `contract_projection` **rompe imports** (`convergence_injection.py:16` importa `_estimate_tokens`). En la Etapa 3 esos módulos **no se retiran** (D3): quedan latentes y el import se mantiene intacto; el guard `test_dormant_legacy_guard.py` bloquea el borrado anticipado.
 - Fuga de identidad (`SOUL.md`) y de **lore cross-world** (graph search sin scope).
 - **Degradación silenciosa**; falta la **superficie de aprobación del gatillo**; "una pregunta por turno" no queda forzada.
 - Retiro masivo: tests/docs que asertan el canal viejo.
 
 ### Veredicto operativo
 Migración **por etapas**, manteniendo el canal viejo hasta **probar** el nativo; y **el consentimiento se queda del lado del servidor**.
+
+### Estado tras la Etapa 3 (implementado)
+- **Probe (WU-3.0):** los dos hooks del gateway (`pre_tool_call` → veto de `skill_manage`, `pre_llm_call` → limpieza de la caché de skills) están vivos; habilitar `skills` en `platform_toolsets.api_server` del perfil dedicado tiene el efecto buscado; la limpieza in-process funciona; `skill_manage` queda vetado fail-closed. **Q1: el flip del toolset NO requiere reiniciar el gateway** (el toolset se resuelve por turno y la config del gateway se re-lee al cambiar `(mtime_ns, size)`; pinneado por `wiki/tests/test_native_channel_probe.py`). El paso a nivel modelo con gateway real sigue pendiente de un perfil de test dedicado.
+- **Canales:** flag por mundo `native_channel` (default OFF, tolerante); promoción staging→live **atómica** (`SkillPromoter`, revisión determinista, GC de huérfanos con centinelas); **sesión nueva por `(mundo, revisión)`** (D4); **consentimiento 100% server-side** (D6); legacy **latente** (presente, no retirado).
+- **Anclas verificadas en la rama apilada (Etapa 3):** `_semantic_gate` vive en `api_server.py:7194` (el baseline de diseño `2c88a4a` lo tenía en `:6829`; el número se desplazó por los cambios de WU-3.1..3.3). `_convergence_specimen_markdown` en `api_server.py:2625` (cableado `:2936`).
 
 ---
 
@@ -296,10 +301,13 @@ Migración **por etapas**; el producto **sigue funcionando** hasta la Etapa 3. R
 ### Etapa 2 — Superficie de aprobación
 7. **Gatillo visible y aprobable** en la revisión del Taller; no publicar sin gatillo.
 
-### Etapa 3 — El corte (riesgoso; último)
-8. **Encender el canal nativo + apagar la proyección** (flag por mundo; sin doble guía).
-9. **Rehacer el flujo guiado como skill**; el **consentimiento queda server-side**.
-10. **Retirar** `skill_router` + `contract_projection` (rewiring de imports como `convergence_injection.py:16`) + **portar tests**.
+### Etapa 3 — El corte (riesgoso; último) — IMPLEMENTADA (fase legacy latente)
+8. **Encender el canal nativo + apagar la proyección** (flag por mundo `native_channel`, default OFF; sin doble guía; **fail-closed** si el canal está insano). ✅ WU-3.1/WU-3.2.
+9. **Rehacer el flujo guiado como skill**; el **consentimiento queda server-side** (D6) y **una pregunta por turno** se fuerza en el servidor. ✅ WU-3.3.
+10. ~~**Retirar** `skill_router` + `contract_projection` (rewiring de imports como `convergence_injection.py:16`) + **portar tests**.~~ **Diferido (D3):** en la Etapa 3 los módulos legacy quedan **presentes y latentes** (ejercitados solo con el flag OFF) bajo un guard de presencia; el borrado, el rewiring de imports y el portado de tests son un **cambio posterior separado** tras una ventana de gracia ≥1 release. ✅ WU-3.4 (guard + docs; sin borrado).
+
+**Estado:** las cinco unidades (WU-3.0 probe gate → WU-3.1 promote → WU-3.2 flag/salud/supresión → WU-3.3 guiado nativo → WU-3.4 guard y docs) están implementadas; el default OFF es byte-idéntico al baseline. El corte **no borra nada**: el peor caso sigue siendo degradación flag-OFF, no pérdida de capacidad.
 
 ### Etapa 4 — Cierre
 11. Backup/restore del perfil y la carpeta; docs; evidencia de migración.
+12. **Cambio posterior (fuera de la Etapa 3):** eliminar `skill_router` + `contract_projection`, rewiring de imports (`convergence_injection.py:16`) y portado de tests, una vez probado el canal nativo en uso real durante ≥1 release (D3).
