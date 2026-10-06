@@ -19,7 +19,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import httpx
 
@@ -937,13 +937,17 @@ def _channel_session_id(base_session_id: str) -> str:
 
     The run submission keys its Hermes ``session_id`` by this value so a live
     session pinned to an older ``(world, revision)`` is never reused after a
-    promotion (REQ-LP-6 / REQ-MM-2). WU-3.1 wires the seam with the channel
-    default OFF — the suffix never applies and the flag-OFF run path stays
-    byte-identical (REQ-NC-2); WU-3.2 refines the gate with channel health.
-    Never raises: any read failure keeps the base id unchanged.
+    promotion (REQ-LP-6 / REQ-MM-2). The suffix applies only when the active
+    channel is healthy ``native``: the flag-OFF path (and the fail-closed
+    ``unhealthy`` state) keep the base id unchanged, so the legacy run path
+    stays byte-identical (REQ-NC-2/REQ-NC-5). Never raises: any read failure
+    keeps the base id unchanged.
     """
     world = _active_world()
     if not world or not _native_channel_enabled(world):
+        return base_session_id
+    if _active_channel_state() != "native":
+        # Flag ON but unhealthy: fail-closed — no epoch-suffixed native session.
         return base_session_id
     try:
         from skill_session_epochs import (
@@ -959,6 +963,217 @@ def _channel_session_id(base_session_id: str) -> str:
     if not epoch_id:
         return base_session_id
     return f"{base_session_id}.{epoch_id}"
+
+
+# ---------------------------------------------------------------------------
+# Native channel state + health (WU-3.2, REQ-NC-5/REQ-NC-6)
+#
+# The runtime is modelled as a single tri-state per active world (design §1):
+# "legacy" (flag OFF — byte-identical baseline), "native" (flag ON and
+# healthy — the native SKILL.md is the only guide), "unhealthy" (flag ON but
+# health fails — fail-closed: zero methodology guidance, never a silent legacy
+# fallback, loudly logged). Every legacy-projection seam is suppressed when the
+# state is not "legacy" (design §2 Q7 suppression matrix).
+# ---------------------------------------------------------------------------
+
+#: Tri-state of the active world's methodology channel (design §4).
+ChannelState = Literal["legacy", "native", "unhealthy"]
+
+#: Short process-local health memo (design Q4): ``key -> bool`` keyed by
+#: ``(config mtime/size, live-marker signature, staging-marker signature,
+#: flag)`` so a per-turn evaluation costs a stat + small read and invalidates
+#: on any marker/config/flag change. Bounded: cleared past a small size.
+_NATIVE_HEALTH_MEMO: dict[tuple[object, ...], bool] = {}
+_NATIVE_HEALTH_MEMO_MAX = 64
+
+
+def _dedicated_profile_config_path() -> Path:
+    """Resolve the dedicated product profile ``config.yaml`` (HERMES_HOME-aware).
+
+    Mirrors the runtime resolution used by the installer
+    (``assistant_settings._resolve_profile_paths``), never the personal
+    ``~/.hermes`` while the installer owns ``HERMES_HOME`` (REQ-NC-3/P0-8).
+    Any resolution failure degrades to a nonexistent sentinel path so health
+    reads the toolset as absent (fail-closed).
+    """
+    try:
+        from assistant_settings import _resolve_profile_paths
+
+        return _resolve_profile_paths().config
+    except Exception:
+        return Path("/") / "demiurgos-nonexistent-profile" / "config.yaml"
+
+
+def _marker_signature(path: Path) -> tuple[int, int, str]:
+    """``(st_mtime_ns, st_size, sha256)`` of a revision marker; zeros on absence."""
+    try:
+        if not path.is_file():
+            return (0, 0, "")
+        st = path.stat()
+        return (st.st_mtime_ns, st.st_size, hashlib.sha256(path.read_bytes()).hexdigest())
+    except OSError:
+        return (0, 0, "")
+
+
+def _health_memo_key(world: str) -> tuple[object, ...]:
+    """Stat signature keying ``_NATIVE_HEALTH_MEMO`` (design Q4).
+
+    ``(config mtime/size, live-marker signature, staging-marker signature,
+    flag)`` — every health input change lands a new key, so the memo
+    invalidates exactly when the inputs change (REQ-NC-6 per-turn evaluation).
+    """
+    config = _dedicated_profile_config_path()
+    config_sig = (0, 0)
+    try:
+        if config.is_file():
+            st = config.stat()
+            config_sig = (st.st_mtime_ns, st.st_size)
+    except OSError:
+        pass
+    project_root = _project_root()
+    try:
+        from hermes_profile_config import resolve_skills_dir
+        from skill_materializer import REVISION_MARKER_NAME, revision_marker_path
+
+        staging = revision_marker_path(project_root)
+        live = resolve_skills_dir(project_root) / REVISION_MARKER_NAME
+    except Exception:
+        staging = project_root / ".nonexistent-staging-marker"
+        live = project_root / ".nonexistent-live-marker"
+    return (
+        config_sig,
+        _marker_signature(staging),
+        _marker_signature(live),
+        _native_channel_enabled(world),
+    )
+
+
+def _promotion_current(world: str) -> bool:
+    """Conditions 2+3 of channel health (REQ-NC-6): the registered live folder
+    exists and its revision equals the staging marker.
+
+    The toolset condition (1) is the reconcile's own output
+    (``_sync_native_channel`` owns ``ensure_skills_toolset``), so the DECISION
+    half of the reconcile evaluates this pair instead of the full conjunction —
+    otherwise a missing toolset could never be enabled (self-reference). The
+    REQUEST path uses the full ``channel_health`` conjunction, so a drifted
+    toolset still fails closed (REQ-NC-5). Never raises: a read failure
+    degrades to False (fail-closed).
+    """
+    try:
+        from hermes_profile_config import resolve_skills_dir
+        from skill_materializer import REVISION_MARKER_NAME, revision_marker_path
+
+        project_root = _project_root()
+        live_dir = resolve_skills_dir(project_root)
+        if not live_dir.is_dir():
+            return False
+        live_marker = live_dir / REVISION_MARKER_NAME
+        staging_marker = revision_marker_path(project_root)
+        return (
+            live_marker.is_file()
+            and staging_marker.is_file()
+            and live_marker.read_bytes() == staging_marker.read_bytes()
+        )
+    except Exception:
+        return False
+
+
+def channel_health(world: str) -> bool:
+    """Native-channel health (REQ-NC-6): pure conjunction of three conditions.
+
+    1. ``skills`` is present in ``platform_toolsets.api_server`` of the
+       dedicated product profile;
+    2. the registered live folder ``resolve_skills_dir(project_root)`` is a
+       directory;
+    3. promotion is current: the live ``.demiurgos-revision`` exists and equals
+       the staging marker (``skill_materializer.revision_marker_path``).
+
+    Evaluated on the request path before any injection (design Q4) with a
+    short process-local memo (see ``_NATIVE_HEALTH_MEMO``). Never raises: every
+    read failure degrades to unhealthy so the caller fails closed (REQ-NC-5).
+    """
+    try:
+        key = _health_memo_key(world)
+        cached = _NATIVE_HEALTH_MEMO.get(key)
+        if cached is not None:
+            return cached
+        # 1. toolset presence in the dedicated profile config.
+        toolset_ok = False
+        config = _dedicated_profile_config_path()
+        if config.is_file():
+            data = yaml.safe_load(config.read_text(encoding="utf-8")) or {}
+            if isinstance(data, dict):
+                toolsets = data.get("platform_toolsets")
+                tools = (
+                    toolsets.get("api_server")
+                    if isinstance(toolsets, dict) else None
+                )
+                toolset_ok = isinstance(tools, list) and "skills" in tools
+        # 2+3. live folder present and promotion current.
+        healthy = bool(toolset_ok and _promotion_current(world))
+        if len(_NATIVE_HEALTH_MEMO) >= _NATIVE_HEALTH_MEMO_MAX:
+            _NATIVE_HEALTH_MEMO.clear()
+        _NATIVE_HEALTH_MEMO[key] = healthy
+        return healthy
+    except Exception:
+        return False
+
+
+def _active_channel_state() -> ChannelState:
+    """Tri-state of the active world's native channel (design §1/§4).
+
+    - ``legacy``    — no active world or the flag is OFF: the legacy projection
+      behaves byte-identically and the native channel is absent.
+    - ``native``    — flag ON and ``channel_health`` true: the native
+      ``SKILL.md`` is the only methodology guide; every legacy seam is
+      suppressed (REQ-NC-4).
+    - ``unhealthy`` — flag ON but health fails (REQ-NC-5): fail-closed —
+      legacy suppressed AND no native guidance; the state is LOUD
+      (``logger.warning``) at every evaluation, never a silent legacy fallback
+      (D2).
+    """
+    world = _active_world()
+    if not world or not _native_channel_enabled(world):
+        return "legacy"
+    if channel_health(world):
+        return "native"
+    logger.warning(
+        "native channel unhealthy for world %r; fail-closed (no methodology guidance)",
+        world,
+    )
+    return "unhealthy"
+
+
+def _sync_native_channel(world: str) -> bool:
+    """Reconcile the dedicated profile's ``skills`` toolset (REQ-NC-3).
+
+    Ensures ``skills`` presence matches the channel the reconcile does NOT own:
+    the flag and promotion currency (``_promotion_current``), behind the WU-3.0
+    probe gate — so with the probe closed NOTHING enables (REQ-NC-1) and a
+    zero-ON config with ``skills`` never present stays byte-identical
+    (REQ-NC-3 scenario 3). The toolset itself is the reconcile's own output,
+    so the full ``channel_health`` conjunction (which it feeds back into)
+    gates the REQUEST path, not the reconcile — a fresh flag-ON world without
+    the toolset is enabled here, then health turns ``native`` on the next
+    evaluation; operator drift removing ``skills`` is re-enabled, and the
+    request path stays fail-closed meanwhile. Idempotent via
+    ``ensure_skills_toolset``; never raises; the caller (boot / world switch /
+    flag route) proceeds on any failure.
+    """
+    if not _probe_passed():
+        return False
+    try:
+        from hermes_profile_config import ensure_skills_toolset
+
+        config_path = _dedicated_profile_config_path()
+        enabled = bool(_native_channel_enabled(world) and _promotion_current(world))
+        return bool(ensure_skills_toolset(config_path, enabled=enabled))
+    except Exception:
+        logger.warning(
+            "native channel toolset reconcile failed for world %r", world, exc_info=True
+        )
+        return False
 
 
 def _world_aliases_path() -> Path:
@@ -2174,8 +2389,12 @@ class MethodologyRollbackRequest(BaseModel):
 
 class MethodologyDeactivateRequest(BaseModel):
     world: str
-    # The guided-flow slot to clear (SR1); absent/omitted = guided-character.
+    # The guided-flow slot to roll back (SR1); absent/omitted = guided-character.
     flow_type: str = DEFAULT_FLOW_TYPE
+
+
+class NativeChannelRequest(BaseModel):
+    enabled: bool
 
 
 class MethodologyCompanionActivateRequest(BaseModel):
@@ -2319,6 +2538,11 @@ def _materialize_skills() -> None:
                     )
         elif report.aborted:
             logger.warning("skill materialization aborted: %s", report.issues)
+        # Toolset reconcile (REQ-NC-3): ensure ``skills`` presence matches the
+        # active channel state. Idempotent; probe-gated inside — with the probe
+        # closed (default) nothing enables and the dedicated profile stays
+        # byte-identical.
+        _sync_native_channel(world)
     except Exception as exc:  # noqa: BLE001 — never crash boot or a request
         logger.warning("skill materialization failed: %s", exc)
 
@@ -2378,7 +2602,13 @@ def _compiled_contract_markdown(
     Walks activation → published version → ``project_contract_markdown`` and
     returns ``None`` for the builtin case (no activation) or on any resolution
     failure, so callers fall back to the legacy version-string injection.
+    When the active channel is NOT ``legacy`` (native or fail-closed
+    unhealthy), the legacy projection is suppressed — early ``None`` (REQ-NC-4
+    path d / REQ-GF-1): the native ``SKILL.md`` is the only guide, or, when
+    unhealthy, no guidance at all (never a silent legacy fallback, D2).
     """
+    if _active_channel_state() != "legacy":
+        return None
     try:
         activation = _methodology_library().active_for(world, flow_type)
         if activation is None:
@@ -2403,8 +2633,13 @@ def _convergence_specimen_markdown(
     one finished exchange exists (D3). The published skill's ``adjuntos`` pins
     then drive the block. Builtin worlds (no activation), zero-attachment
     records, and every resolution failure resolve to ``None`` so the turn
-    proceeds byte-identically — fail-open, mirroring :1914.
+    proceeds byte-identically — fail-open, mirroring :1914. When the active
+    channel is NOT ``legacy`` the specimen is suppressed — early ``None``
+    (REQ-NC-4 path d / REQ-GF-1): with the native channel healthy the native
+    body drives the turn; unhealthy is fail-closed zero guidance (D2).
     """
+    if _active_channel_state() != "legacy":
+        return None
     try:
         if state is None:
             return None
@@ -6584,7 +6819,13 @@ async def _route_skill(prompt: str, mundo: str, distilled_state: str | None) -> 
     Never raises and never blocks the response: on any failure or when no
     router is wired it returns ``None`` (no skill). The routing decision is a
     side effect (stored on the user turn for analytics / future summaries).
+    When the active channel is NOT ``legacy`` (native or fail-closed
+    unhealthy), the legacy routing seam is suppressed — early ``None``
+    (REQ-NC-4 path a); the caller's persist stays as-is and records
+    ``skill_id=None`` (never two channels, D2/D3).
     """
+    if _active_channel_state() != "legacy":
+        return None
     router = _SKILL_ROUTER
     if router is None:
         return None
@@ -6607,8 +6848,13 @@ def _companion_contract_for(
     returned. Timeouts, no winner, non-companion winners (including
     transversals — never inject), and lookup misses all return ``None`` so the
     prompt falls back to today's byte-for-byte shape. Per-turn only: parameter,
-    zero state.
+    zero state. When the active channel is NOT ``legacy`` the companion marker
+    is suppressed — early ``None`` (REQ-NC-4 path b): no ``[Companion
+    methodology: …]`` marker is appended with the native channel or in the
+    fail-closed unhealthy state.
     """
+    if _active_channel_state() != "legacy":
+        return None
     if winner is None or not companions:
         return None
     library = _methodology_library()
@@ -9696,6 +9942,31 @@ def methodologies_active(world: str, request: Request, flow_type: str = DEFAULT_
             "activated_at": activation.activated_at,
             "flow_type": activation.flow_type,
         },
+    }
+
+
+@app.post("/api/{mundo}/methodologies/native-channel")
+def methodologies_native_channel(mundo: str, body: NativeChannelRequest, request: Request):
+    """Set a world's native-channel opt-in flag and reconcile the toolset (REQ-NC-2/3).
+
+    Minimal auth-gated surface (design §4): mirrors ``methodologies_active``'s
+    prelude (401 unauth / 404 unknown world). Persists the flag through
+    ``library.set_native_channel`` and reconciles the dedicated profile toolset
+    through ``_sync_native_channel`` (idempotent, probe-gated, REQ-NC-3).
+    Adds no behavior beyond enabling/disabling the channel; the flag flip OFF
+    restores the legacy projection immediately (rollback boundary).
+    """
+    principal = _resolve_principal(request)
+    if principal is None:
+        return JSONResponse(status_code=401, content={"detail": "Authentication required."})
+    if _resolve_mundo_dir(mundo) is None:
+        return JSONResponse(status_code=404, content={"detail": "Mundo no encontrado"})
+    library = _methodology_library()
+    library.set_native_channel(mundo, bool(body.enabled))
+    _sync_native_channel(mundo)
+    return {
+        "world": mundo,
+        "native_channel": library.native_channel_enabled(mundo),
     }
 
 
