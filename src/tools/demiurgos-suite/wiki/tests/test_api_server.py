@@ -2337,6 +2337,28 @@ def _wire_semantic_provider(monkeypatch, runs, **provider_kwargs):
     return provider
 
 
+def _approve_draft_trigger(
+    client: TestClient, draft_id: str, description: str = "Approved test trigger",
+) -> dict:
+    """Etapa 2: record the explicit trigger approval a real Author grants on the
+    review surface before publishing (REQ ``skill-trigger-approval``)."""
+    response = client.post(
+        f"/api/methodologies/drafts/{draft_id}/trigger/approve",
+        json={"description": description},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["trigger_approval"]
+
+
+def _approve_library_trigger(
+    library: MethodologyLibrary, draft_id: str,
+    description: str = "Approved test trigger",
+) -> None:
+    """Library-boundary twin of ``_approve_draft_trigger`` for helpers that
+    seed the store directly (no HTTP route)."""
+    library.approve_trigger(draft_id, description, "author-1")
+
+
 class TestMethodologyApi:
     """Phase 3 (3.5): publish/activate wiring — only NEW sessions use the
     change; existing sessions pinned to a different version fail closed."""
@@ -2353,6 +2375,7 @@ class TestMethodologyApi:
         draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
         assert draft.status_code == 200, draft.text
         draft_id = draft.json()["draft_id"]
+        _approve_draft_trigger(client, draft_id)
         published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
         assert published.status_code == 200, published.text
         assert published.json()["digest"]
@@ -2501,6 +2524,7 @@ class TestMethodologyApi:
         _principal(monkeypatch, "author-1")
         draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
         assert draft.status_code == 200, draft.text
+        _approve_draft_trigger(client, draft.json()["draft_id"])
         published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
         assert published.status_code == 200, published.text
         record = api_server._methodology_library().get_published("guided-character-v1", "1.2.0")
@@ -2544,6 +2568,7 @@ class TestMethodologyApi:
         _principal(monkeypatch, "author-1")
         draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
         assert draft.status_code == 200, draft.text
+        _approve_draft_trigger(client, draft.json()["draft_id"])
         published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
         assert published.status_code == 200, published.text
         assert "adjuntos" not in published.json()
@@ -2584,6 +2609,7 @@ class TestMethodologyApi:
             clasificacion="Oficiales",
             trust_attributes=("verified",),
         )
+        _approve_library_trigger(library, oficial)
         library.publish(oficial)
         community = library.create_draft(
             skill_id="community-skill", version="0.1.0",
@@ -2594,6 +2620,7 @@ class TestMethodologyApi:
             clasificacion="Comunitarias",
             trust_attributes=(),
         )
+        _approve_library_trigger(library, community)
         library.publish(community)
         monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
         return library
@@ -2699,6 +2726,7 @@ class TestMethodologyApi:
             clasificacion="Oficiales",
             trust_attributes=("fundacional",),
         )
+        _approve_library_trigger(library, fundacional)
         library.publish(fundacional)
 
         # `fundacional=true` restricts to server-seeded foundational skills
@@ -2793,6 +2821,7 @@ class TestMethodologyApi:
         draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
         assert draft.status_code == 200, draft.text
         draft_id = draft.json()["draft_id"]
+        _approve_draft_trigger(client, draft_id)
         published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
         assert published.status_code == 200, published.text
         exported = client.post("/api/methodologies/published/guided-character-v1/1.2.0/export")
@@ -2844,6 +2873,7 @@ class TestMethodologyApi:
             "adjuntos": [entry],
         })
         assert draft.status_code == 200, draft.text
+        _approve_draft_trigger(client, draft.json()["draft_id"])
         published = client.post(
             f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish",
         )
@@ -2853,6 +2883,7 @@ class TestMethodologyApi:
     def _publish_plain(self, client: TestClient) -> None:
         draft = client.post("/api/methodologies/drafts", json=self._draft_payload())
         assert draft.status_code == 200, draft.text
+        _approve_draft_trigger(client, draft.json()["draft_id"])
         published = client.post(
             f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish",
         )
@@ -3039,6 +3070,7 @@ class TestMethodologyApi:
             "adjuntos": [entry],
         })
         assert draft.status_code == 200, draft.text
+        _approve_draft_trigger(client, draft.json()["draft_id"])
         published = client.post(
             f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish",
         )
@@ -3165,6 +3197,7 @@ class TestMethodologyApi:
 
         # Publish the trusted draft, then export: the carriers ship.
         draft_id = trusted.json()["draft_id"]
+        _approve_draft_trigger(client, draft_id)
         published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
         assert published.status_code == 200, published.text
         exported = client.post(
@@ -3219,6 +3252,7 @@ class TestMethodologyApi:
             language=record.verdict.compiled.language,
             adjuntos=tuple(record.verdict.compiled.adjuntos),
         )
+        _approve_draft_trigger(client, draft_id)
         published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
         assert published.status_code == 200, published.text
         exported = client.post(
@@ -3278,6 +3312,7 @@ class TestMethodologyApi:
             "source": "## Skill Madre\n\nTexto.\n",
         })
         assert draft.status_code == 200, draft.text
+        _approve_draft_trigger(client, draft.json()["draft_id"])
         published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
         assert published.status_code == 200, published.text
         assert published.json()["skill_id"] == "narrative-character-creation"
@@ -3296,6 +3331,7 @@ class TestMethodologyApi:
             source="## Compañera\n\nTexto.\n",
             description="Metodología compañera de prueba.",
         )
+        _approve_library_trigger(library, draft_id, "Metodología compañera de prueba.")
         library.publish(draft_id)
         monkeypatch.setattr(api_server, "_METHODOLOGY_LIBRARY", library)
         return library
@@ -3586,6 +3622,7 @@ class TestCompanionActivityBridge:
             source="## Compañera\n\nMetodología compañera.\n",
             description="Metodología compañera de prueba.",
         )
+        _approve_library_trigger(library, draft_id, "Metodología compañera de prueba.")
         library.publish(draft_id)
         if companions:
             library.add_companion("test_mundo", "companion-skill", "1.0.0")
@@ -7448,6 +7485,7 @@ class TestPublishedAdjuntoRoute:
             "adjuntos": [entry],
         })
         assert draft.status_code == 200, draft.text
+        _approve_draft_trigger(client, draft.json()["draft_id"])
         published = client.post(
             f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish",
         )
@@ -8806,3 +8844,125 @@ class TestGuidedCreateWorldBinding:
         written = api_server.MUNDOS_DIR / "test_mundo" / "personajes" / "aria.md"
         assert written.is_file()
         assert written.read_text(encoding="utf-8") == preview["proposed_content"]
+
+
+class TestTriggerApprovalApi:
+    """Etapa 2 (WU 2.2): the draft publish gate refuses without an explicit
+    trigger approval, and the approve endpoint records the auditable approval.
+
+    The co-creation route's twin (same ``trigger_not_approved`` code, session
+    not advanced) is covered in ``test_co_creation_api.py``.
+    """
+
+    _PAYLOAD = {
+        "skill_id": "guided-character-v1",
+        "version": "1.2.0",
+        "name": "Guided character methodology",
+        "source": "## Construcción segura\n\nHaz preguntas de a una.\n",
+    }
+
+    def _draft(self, client: TestClient) -> str:
+        draft = client.post("/api/methodologies/drafts", json=self._PAYLOAD)
+        assert draft.status_code == 200, draft.text
+        return draft.json()["draft_id"]
+
+    def test_publish_without_approval_refused_with_dedicated_code(
+        self, client: TestClient, monkeypatch,
+    ):
+        """A gate refusal maps to 409 ``trigger_not_approved`` — never the
+        generic ``reserved_skill_id`` (TD-D catch-ordering) and never a 500."""
+        _principal(monkeypatch, "author-1")
+        draft_id = self._draft(client)
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 409
+        assert published.json()["code"] == "trigger_not_approved"
+        # No immutable version was created and the draft remains editable.
+        library = api_server._methodology_library()
+        assert library.list_published() == []
+        assert library.get_draft(draft_id) is not None
+
+    def test_approve_endpoint_records_audit_fields_and_enables_publish(
+        self, client: TestClient, monkeypatch,
+    ):
+        _principal(monkeypatch, "author-1")
+        draft_id = self._draft(client)
+        approved = client.post(
+            f"/api/methodologies/drafts/{draft_id}/trigger/approve",
+            json={"description": "  Ayuda   a crear personajes  "},
+        )
+        assert approved.status_code == 200, approved.text
+        approval = approved.json()["trigger_approval"]
+        assert approval["text"] == "Ayuda a crear personajes"  # normalized
+        assert approval["digest"]
+        assert approval["approved_by"] == "author-1"
+        assert approval["approved_at"]
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 200, published.text
+        assert published.json()["description"] == "Ayuda a crear personajes"
+
+    def test_approve_requires_authentication(self, client: TestClient):
+        denied = client.post(
+            "/api/methodologies/drafts/whatever/trigger/approve",
+            json={"description": "x"},
+        )
+        assert denied.status_code == 401
+
+    def test_approve_unknown_draft_is_404(self, client: TestClient, monkeypatch):
+        _principal(monkeypatch, "author-1")
+        missing = client.post(
+            "/api/methodologies/drafts/ghost/trigger/approve",
+            json={"description": "x"},
+        )
+        assert missing.status_code == 404
+
+    def test_approve_rejects_empty_and_over_bound_without_recording(
+        self, client: TestClient, monkeypatch,
+    ):
+        _principal(monkeypatch, "author-1")
+        draft_id = self._draft(client)
+        empty = client.post(
+            f"/api/methodologies/drafts/{draft_id}/trigger/approve",
+            json={"description": "   "},
+        )
+        assert empty.status_code == 422
+        assert empty.json()["code"] == "trigger_invalid"
+        over = client.post(
+            f"/api/methodologies/drafts/{draft_id}/trigger/approve",
+            json={"description": "x" * 61},
+        )
+        assert over.status_code == 422
+        assert over.json()["code"] == "trigger_invalid"
+        # The server bound is authoritative: no approval was recorded.
+        library = api_server._methodology_library()
+        assert library.get_draft(draft_id).trigger_approval is None
+
+    def test_status_drafts_exposes_trigger_approval(
+        self, client: TestClient, monkeypatch,
+    ):
+        _principal(monkeypatch, "author-1")
+        draft_id = self._draft(client)
+        client.post(
+            f"/api/methodologies/drafts/{draft_id}/trigger/approve",
+            json={"description": "Trigger visible en estado"},
+        )
+        status = client.get("/api/methodologies/status")
+        assert status.status_code == 200, status.text
+        entry = next(
+            item for item in status.json()["drafts"] if item["draft_id"] == draft_id
+        )
+        assert entry["trigger_approval"]["text"] == "Trigger visible en estado"
+
+    def test_description_drift_after_approval_fails_closed(
+        self, client: TestClient, monkeypatch,
+    ):
+        _principal(monkeypatch, "author-1")
+        draft_id = self._draft(client)
+        client.post(
+            f"/api/methodologies/drafts/{draft_id}/trigger/approve",
+            json={"description": "Trigger A"},
+        )
+        # A later description edit invalidates the prior approval (fail closed).
+        api_server._methodology_library().update_draft(draft_id, description="Trigger B")
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
+        assert published.status_code == 409
+        assert published.json()["code"] == "trigger_not_approved"

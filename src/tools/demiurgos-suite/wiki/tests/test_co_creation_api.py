@@ -48,6 +48,7 @@ ROUTES = {
     ("GET", "/api/co-creation/sessions/{session_id}/progress"),
     ("POST", "/api/co-creation/sessions/{session_id}/materialize"),
     ("POST", "/api/co-creation/sessions/{session_id}/publish"),
+    ("POST", "/api/co-creation/sessions/{session_id}/trigger/approve"),
     ("POST", "/api/co-creation/sessions/{session_id}/activate"),
     ("PUT", "/api/co-creation/sessions/{session_id}/canvas"),
     ("POST", "/api/co-creation/sessions/{session_id}/validate"),
@@ -189,6 +190,7 @@ def test_routes_fail_closed_with_stable_auth_error(client: TestClient) -> None:
         ("get", "/api/co-creation/sessions/s-1/progress", None),
         ("post", "/api/co-creation/sessions/s-1/materialize", {"base_revision": 0}),
         ("post", "/api/co-creation/sessions/s-1/publish", {"base_revision": 0}),
+        ("post", "/api/co-creation/sessions/s-1/trigger/approve", {"base_revision": 0, "description": "x"}),
         ("post", "/api/co-creation/sessions/s-1/activate", {"base_revision": 0, "world": "vibrantes"}),
         ("put", "/api/co-creation/sessions/s-1/canvas", {"base_revision": 0, "payload": {}}),
         ("post", "/api/co-creation/sessions/s-1/validate", {"payload": {}}),
@@ -635,12 +637,27 @@ def test_pending_question_status_route_is_author_only(client: TestClient, monkey
 # Publish / activate (REQ-CC-6) — explicit Author approval only
 # ---------------------------------------------------------------------------
 
+def _approve_session_trigger(client: TestClient, session_id: str) -> None:
+    """Etapa 2: record the session draft's trigger approval at the library
+    boundary, using the value the session's publish will use so the gate's
+    digest match holds. The HTTP approve route itself is covered in
+    ``test_api_server.py``.
+    """
+    state = client.get(f"/api/co-creation/sessions/{session_id}").json()
+    draft_id = state["draft_id"]
+    assert draft_id is not None, session_id
+    payload = state.get("draft_payload") or {}
+    description = payload.get("description") or "Approved test trigger"
+    api_server._methodology_library().approve_trigger(draft_id, description, "author-1")
+
+
 def _materialize_ok(client: TestClient, session_id: str) -> int:
     materialized = client.post(f"/api/co-creation/sessions/{session_id}/materialize", json={
         "base_revision": 1, "name": "Batallas Épicas",
     })
     assert materialized.status_code == 200, materialized.text
     assert materialized.json()["ok"] is True
+    _approve_session_trigger(client, session_id)
     return materialized.json()["revision"]
 
 
@@ -731,6 +748,7 @@ def _publish_skill(
         trust_attributes=trust_attributes,
         adjuntos=adjuntos,
     )
+    library.approve_trigger(draft_id, "Descripción oficial.", "author-1")
     library.publish(draft_id)
 
 
@@ -921,6 +939,7 @@ def test_derived_publish_auto_versions_and_preserves_original(
     assert canvas.status_code == 200, canvas.text
     assert canvas.json()["revision"] == 1
     # Publish: the POST is the Author's explicit approval.
+    _approve_session_trigger(client, session_id)
     published = client.post(f"/api/co-creation/sessions/{session_id}/publish", json={
         "base_revision": 1,
     })
@@ -952,6 +971,7 @@ def test_derived_session_publish_without_edits_preserves_original_content(
     })
     assert derived.status_code == 200
     session_id = derived.json()["session_id"]
+    _approve_session_trigger(client, session_id)
     published = client.post(f"/api/co-creation/sessions/{session_id}/publish", json={
         "base_revision": 0,
     })
@@ -982,6 +1002,8 @@ def test_published_detail_route_returns_source_and_provenance(
         "skill-oficial", "1.0.0", seed_source=_template_source("Skill Oficial"),
         name="Skill Oficial",
     )
+    derived_draft = library.get_draft(derived_id)
+    library.approve_trigger(derived_id, derived_draft.description, "author-1")
     library.publish(derived_id)
     derived_detail = client.get("/api/methodologies/published/skill-oficial/1.0.1")
     assert derived_detail.status_code == 200
@@ -1005,6 +1027,7 @@ def test_list_routes_expose_derived_provenance(
     })
     assert derived.status_code == 200, derived.text
     session_id = derived.json()["session_id"]
+    _approve_session_trigger(client, session_id)
     published = client.post(f"/api/co-creation/sessions/{session_id}/publish", json={
         "base_revision": 0,
     })
@@ -1369,6 +1392,7 @@ def test_materialize_adjuntos_survive_publish(
             "skill_id": "batallas-epicas", "version": "0.1.0", "adjuntos": [pin],
         },
     ).json()
+    _approve_session_trigger(client, session_id)
     published = client.post(
         f"/api/co-creation/sessions/{session_id}/publish",
         json={"base_revision": materialized["revision"]},
@@ -1499,6 +1523,7 @@ def _materialized_session(
     )
     assert materialized.status_code == 200, materialized.text
     assert materialized.json()["ok"] is True
+    _approve_session_trigger(client, session_id)
     return session_id, materialized.json()["revision"], materialized.json()["draft_id"]
 
 
@@ -1509,6 +1534,7 @@ def _publish_pins(client: TestClient, session_id: str, revision: int, adjuntos: 
         json={"base_revision": revision, "payload": {"adjuntos": adjuntos}},
     )
     assert canvas.status_code == 200, canvas.text
+    _approve_session_trigger(client, session_id)
     return client.post(
         f"/api/co-creation/sessions/{session_id}/publish",
         json={"base_revision": canvas.json()["revision"]},
@@ -1649,3 +1675,107 @@ def test_publish_rejects_pending_pin_without_staged_bytes(
     assert published.status_code == 422, published.text
     assert published.json()["code"] == "attachment_unavailable"
     assert not _attachments_dir(tmp_path, "missing-skill").exists()
+
+# ---------------------------------------------------------------------------
+# Etapa 2 (WU 2.2) — session trigger approval + publish gate
+# ---------------------------------------------------------------------------
+
+def _materialize_only(client: TestClient, session_id: str) -> dict:
+    """Materialize without approving, so the publish gate can be exercised."""
+    materialized = client.post(
+        f"/api/co-creation/sessions/{session_id}/materialize",
+        json={"base_revision": 1, "name": "Batallas Épicas"},
+    )
+    assert materialized.status_code == 200, materialized.text
+    assert materialized.json()["ok"] is True
+    return materialized.json()
+
+
+def test_session_publish_without_approval_refused_and_stays_incomplete(
+    client: TestClient, monkeypatch,
+) -> None:
+    """The co-creation route maps the gate refusal to 409
+    ``trigger_not_approved`` (never a generic 500) and the session does NOT
+    advance to complete; the draft remains approvable."""
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch, milestone="borrador_listo")
+    session_id = _create_session(client)
+    materialized = _materialize_only(client, session_id)
+    draft_id = materialized["draft_id"]
+
+    refused = client.post(
+        f"/api/co-creation/sessions/{session_id}/publish",
+        json={"base_revision": materialized["revision"]},
+    )
+    assert refused.status_code == 409
+    assert refused.json()["code"] == "trigger_not_approved"
+
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}").json()
+    assert recovered["phase"] != "complete"
+    assert recovered["draft_id"] == draft_id
+    library = api_server._methodology_library()
+    assert library.get_draft(draft_id) is not None
+    assert library.list_published() == []
+
+
+def test_session_approve_endpoint_records_and_enables_publish(
+    client: TestClient, monkeypatch,
+) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch, milestone="borrador_listo")
+    session_id = _create_session(client)
+    materialized = _materialize_only(client, session_id)
+    revision = materialized["revision"]
+
+    approved = client.post(
+        f"/api/co-creation/sessions/{session_id}/trigger/approve",
+        json={"base_revision": revision, "description": "Cuenta batallas épicas"},
+    )
+    assert approved.status_code == 200, approved.text
+    body = approved.json()
+    assert body["trigger_approval"]["text"] == "Cuenta batallas épicas"
+    assert body["trigger_approval"]["digest"]
+    assert body["revision"] == revision + 1
+
+    # The approved value lands in the canvas AND is exposed by the state view,
+    # so the value approved is the value publish will use.
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}").json()
+    assert recovered["draft_payload"]["description"] == "Cuenta batallas épicas"
+    assert recovered["trigger_approval"]["text"] == "Cuenta batallas épicas"
+
+    published = client.post(
+        f"/api/co-creation/sessions/{session_id}/publish",
+        json={"base_revision": body["revision"]},
+    )
+    assert published.status_code == 200, published.text
+    assert published.json()["phase"] == "complete"
+    assert published.json()["published"]["description"] == "Cuenta batallas épicas"
+
+
+def test_session_approve_rejects_stale_revision_and_over_bound(
+    client: TestClient, monkeypatch,
+) -> None:
+    _bind_principal(monkeypatch)
+    _wire_provider(monkeypatch, milestone="borrador_listo")
+    session_id = _create_session(client)
+    materialized = _materialize_only(client, session_id)
+    revision = materialized["revision"]
+
+    stale = client.post(
+        f"/api/co-creation/sessions/{session_id}/trigger/approve",
+        json={"base_revision": revision + 5, "description": "ok"},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["code"] == "revision_conflict"
+
+    over = client.post(
+        f"/api/co-creation/sessions/{session_id}/trigger/approve",
+        json={"base_revision": revision, "description": "x" * 61},
+    )
+    assert over.status_code == 422
+    assert over.json()["code"] == "trigger_invalid"
+
+    # Zero mutation on either refusal.
+    recovered = client.get(f"/api/co-creation/sessions/{session_id}").json()
+    assert recovered["revision"] == revision
+    assert recovered["trigger_approval"] is None

@@ -169,7 +169,14 @@ class TestPerFlowActivationApi:
             "skill_id": skill_id, "version": version, "name": name, "source": _SOURCE,
         })
         assert draft.status_code == 200, draft.text
-        published = client.post(f"/api/methodologies/drafts/{draft.json()['draft_id']}/publish")
+        draft_id = draft.json()["draft_id"]
+        # Etapa 2: the publish gate requires a recorded trigger approval. This
+        # helper seeds it at the library boundary (the route layer is exercised
+        # by the dedicated approve-endpoint tests in test_api_server.py).
+        api_server._methodology_library().approve_trigger(
+            draft_id, "Approved test trigger", "author-1",
+        )
+        published = client.post(f"/api/methodologies/drafts/{draft_id}/publish")
         assert published.status_code == 200, published.text
 
     def _activate(self, client: TestClient, skill_id: str, version: str,
