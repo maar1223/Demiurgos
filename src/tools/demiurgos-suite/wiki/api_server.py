@@ -2662,6 +2662,39 @@ def _convergence_specimen_markdown(
     except Exception:
         logger.warning("convergence specimen resolution failed for world %r", world, exc_info=True)
         return None
+
+
+def _native_skill_body(world: str) -> str | None:
+    """Resolve the native ``SKILL.md`` body that drives the guided continuation.
+
+    REQ-GN-1/REQ-GF-1: when the active channel is ``native``, the guided
+    continuation is driven by the method body exactly as the renderer composes
+    it — ``published.source`` plus the co-creation rules block (the
+    ``skill_renderer`` body seam at ``skill_renderer.py:318``, design §6
+    verify-only). The builtin pin has no published record and resolves to
+    ``None``, mirroring the legacy builtin case where the provider keeps the
+    version-string methodology. Self-gated on the channel state so the
+    flag-OFF path (legacy projection keeps its seam) and the fail-closed
+    ``unhealthy`` state (zero guidance, D2) both stay byte-identical. Never
+    raises; any read failure degrades to ``None``.
+    """
+    if _active_channel_state() != "native":
+        return None
+    try:
+        from skill_renderer import CO_CREATION_RULES_BLOCK
+
+        library = _methodology_library()
+        activation = library.active_for(world, GUIDED_CHARACTER_FLOW)
+        if activation is None:
+            return None
+        published = library.get_published(activation.skill_id, activation.version)
+        if published is None:
+            return None
+        source = published.source or ""
+        return source.rstrip() + "\n\n" + CO_CREATION_RULES_BLOCK
+    except Exception:
+        logger.warning("native skill body resolution failed for world %r", world, exc_info=True)
+        return None
 # Semantic routing seam: the mandatory Hermes-first semantic gate. Wired to a
 # SemanticIntentProvider(ACTIVITY_ADAPTER) below, after the runs adapter exists.
 # No lexical/plain-chat fallback exists; unavailable/invalid/exhausted Hermes
@@ -2901,6 +2934,15 @@ async def _guided_continue(
     # RECOVERED state (delta=None), so turn one and fast-mode turn one can
     # never inject; gate-passed turns inject ≤1 pinned carrier block.
     specimen = _convergence_specimen_markdown(mundo, session_flow, state)
+    # Single-channel cut (REQ-GN-4 / REQ-GF-1): with the flag ON the guided
+    # continuation is driven by the native ``SKILL.md`` body instead of the
+    # legacy projection — the legacy compiled contract and the convergence
+    # specimen are suppressed (path d, REQ-NC-4). ``_native_skill_body``
+    # self-gates on the channel state, so the flag-OFF builtin case (contract
+    # also ``None``) and the fail-closed ``unhealthy`` state (zero guidance,
+    # D2) both stay byte-identical.
+    if compiled is None:
+        compiled = _native_skill_body(mundo)
     # Shared choke point for every guided continuation. Sessions opened by the
     # semantic chat path never called the REST start route, so the module-level
     # cache was never probed: passing it straight through sent None into

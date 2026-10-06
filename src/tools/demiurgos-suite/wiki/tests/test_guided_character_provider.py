@@ -22,7 +22,11 @@ from guided_character_protocol import (  # noqa: E402
     PROTOCOL_VERSION,
     invoke_bounded,
 )
-from guided_character_provider import HermesGuidedProvider, guided_capabilities  # noqa: E402
+from guided_character_provider import (
+    HermesGuidedProvider,
+    first_pending_question,
+    guided_capabilities,
+)  # noqa: E402
 
 
 def gateway_capabilities() -> dict:
@@ -331,6 +335,83 @@ def test_fenced_json_output_is_accepted() -> None:
         assert result.error is None
         assert result.outcome.value == "question"
         assert result.question == "What drives them?"
+
+    asyncio.run(scenario())
+
+
+def test_first_pending_question_collapses_multi_question_text_to_one() -> None:
+    """REQ-GN-3 (3.3.4): two or more ``?``-terminated sentences collapse to
+    the first pending question; everything after it is dropped."""
+    assert first_pending_question("What is their name? What is their age?") == "What is their name?"
+    assert first_pending_question("A? B? C?") == "A?"
+    assert first_pending_question("Why? Also where?") == "Why?"
+    assert first_pending_question("Name? Age? Era?") == "Name?"
+    assert first_pending_question("What? Then why?!") == "What?"
+    # A question ending in ``?`` right before the end keeps its question mark.
+    assert first_pending_question("What is their name?") == "What is their name?"
+
+
+def test_first_pending_question_single_or_no_question_is_unchanged() -> None:
+    """REQ-GN-3 (3.3.4 control): a single question or a question-free text is
+    never truncated."""
+    assert first_pending_question("What drives them?") == "What drives them?"
+    assert first_pending_question("Consider a character one step at a time.") == (
+        "Consider a character one step at a time."
+    )
+    assert first_pending_question("") == ""
+    # Markers like ``?!"`` stay inside the first question; no second question
+    # is created by the punctuation.
+    assert first_pending_question('"Why?!" she asked.') == '"Why?!" she asked.'
+
+
+def test_multi_question_provider_response_surfaces_at_most_one_pending_question() -> None:
+    """REQ-GN-3 scenario 2 (3.3.5): a provider response containing more than
+    one question is surfaced as at most one pending question — the server-side
+    enforcement never exposes a second question in the same turn."""
+    async def scenario() -> None:
+        class Runs:
+            def __init__(self, question: object) -> None:
+                self._question = question
+
+            async def start(self, _request: object) -> str:
+                return "run-1"
+
+            async def events(self, _run_id: str):
+                yield {
+                    "event": "run.completed", "run_id": "run-1", "output": {
+                        "version": PROTOCOL_VERSION,
+                        "request_id": "request-1", "session_id": "session-1",
+                        "outcome": "question", "question": self._question,
+                    },
+                }
+
+        capabilities = Capabilities(PROTOCOL_VERSION, True, True, True, 8_000)
+        # Plain-string multi-question response.
+        result = await invoke_bounded(
+            HermesGuidedProvider(Runs("What is their name? What is their age?")).invoke,
+            guided_request(), capabilities,
+        )
+        assert result.error is None
+        assert result.outcome.value == "question"
+        assert result.question == "What is their name?"
+        assert result.question.count("?") == 1
+        assert "age" not in result.question
+        # Structured mapping with options: the collapse happens on the question
+        # text BEFORE the options block, so the first question keeps its options.
+        structured = {
+            "text": "What is their name? What is their age?",
+            "options": ["Aria", "Pert"],
+        }
+        structured_result = await invoke_bounded(
+            HermesGuidedProvider(Runs(structured)).invoke,
+            guided_request(), capabilities,
+        )
+        assert structured_result.error is None
+        assert structured_result.question == (
+            "What is their name?\n\nOptions:\n- Aria\n- Pert"
+        )
+        assert structured_result.question.count("?") == 1
+        assert "age" not in structured_result.question
 
     asyncio.run(scenario())
 
