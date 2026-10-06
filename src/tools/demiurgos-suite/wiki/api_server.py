@@ -2215,6 +2215,25 @@ def _methodology_library() -> MethodologyLibrary:
     return _METHODOLOGY_LIBRARY
 
 
+#: WU-3.0 pre-flight probe gate (REQ-NC-1): ``False`` until the real-Hermes
+#: probe has passed against a dedicated TEST profile proving all four — hooks
+#: live, ``skills``-on toolset effect, in-process cache-clear, ``skill_manage``
+#: veto. A failing or absent probe blocks every enablement path (flag ON,
+#: toolset enable, promotion). Inert by default: nothing consumes it yet —
+#: WU-3.1/3.2 wire the consumption into ``_materialize_skills``.
+_PROBE_PASSED: bool = False
+
+
+def _probe_passed() -> bool:
+    """Native-channel enablement gate (REQ-NC-1 / WU-3.0 pre-flight probe).
+
+    Read-only predicate; the probe evidence that flips ``_PROBE_PASSED`` is
+    recorded by the WU-3.2 enablement path. Default ``False`` keeps the system
+    on baseline behavior until the probe proves the gateway is ready.
+    """
+    return _PROBE_PASSED
+
+
 def _materialize_skills() -> None:
     """Reconcile native skills into staging and record the ``(world, revision)`` epoch.
 
