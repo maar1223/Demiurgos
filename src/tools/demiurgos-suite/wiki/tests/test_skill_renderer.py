@@ -298,6 +298,50 @@ def test_co_creation_block_present_with_empty_source(tmp_path):
     assert CO_CREATION_RULES_BLOCK in text
 
 
+def test_rendered_skill_md_carries_no_consent_or_session_seam(tmp_path):
+    """D6 / REQ-GN-2 (3.3.1): the rendered ``SKILL.md`` is a pure method
+    carrier.
+
+    The bytes carry ONLY the method body plus the co-creation rules block; they
+    contain no ``consent_token``, no ``_GUIDED_SESSIONS`` reference, and no
+    mechanism to open/create a guided session. The consent gate, the one-shot
+    token, and session creation stay 100% in ``api_server``; a native skill
+    invocation can never open a session (``skill_manage`` is vetoed and the
+    read-only ``skill`` tool only loads). The 57-char trigger bound
+    (``DESCRIPTION_RENDER_LIMIT``) is asserted here as the other half of the
+    design §6 verify-only contract (REQ-GN-1).
+    """
+    source = (
+        "# Creación guiada de personajes\n\n"
+        "Método de co-creación: se construye un personaje paso a paso "
+        "haciendo una sola pregunta por turno, sin volcar información.\n"
+    )
+    rendered = _transversal(_published(source=source), tmp_path)
+    text = rendered.skill_md.decode("utf-8")
+
+    # The method body and the co-creation rules are the ONLY content blocks.
+    assert source.rstrip() in text
+    assert CO_CREATION_RULES_BLOCK in text
+
+    # No consent/token/session seam in the rendered bytes (D6).
+    for seam in (
+        "consent_token",
+        "consent token",
+        "_GUIDED_SESSIONS",
+        "guided_session_id",
+        "create_session",
+        "opens a session",
+        "/guided-character/session",
+    ):
+        assert seam not in text
+    assert "ct-" not in text
+
+    # Trigger bound: the description consumed by the skills index never
+    # exceeds the 57-char render limit (REQ-GN-1 scenario 2).
+    description = _frontmatter(rendered)["description"]
+    assert len(description) <= DESCRIPTION_RENDER_LIMIT
+
+
 # -- Attachments --------------------------------------------------------------
 
 

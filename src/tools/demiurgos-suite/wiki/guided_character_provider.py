@@ -23,9 +23,36 @@ from demiurgos_language import resolve_domain_language
 _MAX_QUESTION_OPTIONS = 5
 
 
+def first_pending_question(text: str) -> str:
+    """Surface at most one pending question (REQ-GN-3 server enforcement).
+
+    A pending question is a ``?``-terminated sentence. When the text contains
+    more than one such sentence, only the first is kept and the remainder is
+    dropped; a single question (or none) leaves the text unchanged. The
+    question end is a ``?`` followed by end-of-string, whitespace, a closing
+    quote/bracket, or sentence punctuation, so markers like ``?!"`` stay
+    inside the first question.
+    """
+    if not text:
+        return text
+    ends = [
+        index + 1
+        for index, char in enumerate(text)
+        if char == "?"
+        and (
+            index + 1 == len(text)
+            or text[index + 1].isspace()
+            or text[index + 1] in "!.\"'”’)]}"
+        )
+    ]
+    if len(ends) <= 1:
+        return text
+    return text[: ends[0]].rstrip()
+
+
 def _normalize_question(value: object) -> str | None:
     if isinstance(value, str):
-        return value
+        return first_pending_question(value)
     if not isinstance(value, Mapping):
         return None
 
@@ -43,7 +70,12 @@ def _normalize_question(value: object) -> str | None:
     if allow_custom is not None and not isinstance(allow_custom, bool):
         return None
 
-    parts = [text.strip()]
+    # One-question-per-turn server enforcement (REQ-GN-3): even when the
+    # provider returns a structured question with several ``?``-terminated
+    # sentences, only the first pending question is surfaced; options are
+    # appended after the collapsed question text.
+    text = first_pending_question(text.strip())
+    parts = [text]
     if options:
         parts.append("Options:\n" + "\n".join(f"- {option.strip()}" for option in options))
     if allow_custom is True:
@@ -169,7 +201,10 @@ class HermesGuidedProvider:
                     pass
             if isinstance(output, Mapping):
                 result = dict(output)
-                if "question" in result and isinstance(result["question"], Mapping):
+                if "question" in result and result["question"] is not None:
+                    # Server-side one-question-per-turn enforcement (REQ-GN-3):
+                    # plain-string AND structured questions are normalized here
+                    # so at most one pending question ever surfaces in a turn.
                     normalized_question = _normalize_question(result["question"])
                     if normalized_question is not None:
                         result["question"] = normalized_question

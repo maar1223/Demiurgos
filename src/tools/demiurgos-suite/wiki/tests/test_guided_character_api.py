@@ -31,8 +31,12 @@ from guided_character_protocol import (  # noqa: E402
     TypedMessage,
 )
 from guided_character_provider import HermesGuidedProvider  # noqa: E402
+from contract_projection import project_contract_markdown  # noqa: E402
+from hermes_profile_config import resolve_skills_dir  # noqa: E402
 from methodology_library import MethodologyLibrary  # noqa: E402
 from methodology_seed import install_seeds  # noqa: E402
+from skill_materializer import revision_marker_path  # noqa: E402
+from skill_renderer import CO_CREATION_RULES_BLOCK  # noqa: E402
 
 REPO_ROOT = _WIKI.parents[3]
 SEED_ROOT = REPO_ROOT / "data" / "methodology" / "seeds"
@@ -1567,3 +1571,302 @@ class TestConvergenceSpecimenB5:
             api_server.EditPrincipal("author-1"),
         ))
         assert provider.received == [None]
+
+
+# ---------------------------------------------------------------------------
+# WU-3.3 — guided-native: native body drives the continuation; consent stays
+# 100% server-side; one-question-per-turn server enforcement (REQ-GN-1..4,
+# REQ-GF-2, design §2 Q6/Q8 + §4 ``first_pending_question``).
+# ---------------------------------------------------------------------------
+
+
+class _HintCapturingProvider:
+    """Guided provider recording the methodology/contract hint each turn."""
+
+    def __init__(self) -> None:
+        self.compiled: list[str | None] = []
+        self.specimen: list[str | None] = []
+
+    async def invoke(self, request, token, *, compiled_contract_markdown=None,
+                     convergence_specimen_markdown=None) -> dict:
+        self.compiled.append(compiled_contract_markdown)
+        self.specimen.append(convergence_specimen_markdown)
+        return {
+            "protocol_version": "guided-character-v1",
+            "request_id": request.request_id,
+            "session_id": request.session_id,
+            "outcome": "question",
+            "question": "What drives them?",
+        }
+
+
+def _wired_guided_library(tmp_path: Path) -> MethodologyLibrary:
+    """REAL library with the guided seed published and activated for
+    ``vibrantes``; the seed is mirrored under the patched DATA root (WU-2) so
+    the serving seam stays hermetic instead of reading the real repo."""
+    seed_root = tmp_path / "seeds"
+    shutil.copytree(SEED_ROOT, seed_root)
+    served = tmp_path / "data" / "methodology" / "seeds"
+    served.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(SEED_ROOT, served, dirs_exist_ok=True)
+    library = MethodologyLibrary(tmp_path / "library.json")
+    report = install_seeds(library, seed_root)
+    assert report.installed == 1
+    library.activate("vibrantes", "narrative-character-creation", "1.2")
+    return library
+
+
+def _make_guided_native_healthy(monkeypatch, tmp_path, library, world="vibrantes") -> None:
+    """Flag ON + healthy native channel: dedicated profile carries ``skills``,
+    the live folder exists with a current revision, the probe is open — so the
+    guided turn is served by the ``native`` channel (health matrix row 1)."""
+    (tmp_path / world).mkdir(exist_ok=True)
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_methodology_library", lambda: library)
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir(exist_ok=True)
+    (hermes_home / "config.yaml").write_text(
+        "platform_toolsets:\n  api_server:\n    - file\n    - skills\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    monkeypatch.setattr(api_server, "_PROBE_PASSED", True)
+    monkeypatch.setattr(api_server, "_active_world", lambda: world)
+    library.set_native_channel(world, True)
+    live = resolve_skills_dir(tmp_path)
+    live.mkdir(parents=True, exist_ok=True)
+    (live / ".gitkeep").write_bytes(b"")
+    marker = b"rev-wu-3-3\n"
+    (live / ".demiurgos-revision").write_bytes(marker)
+    staging = revision_marker_path(tmp_path)
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    staging.write_bytes(marker)
+    api_server._NATIVE_HEALTH_MEMO.clear()
+
+
+def _semantic_payload(state="allow", **overrides):
+    payload = {
+        "state": state,
+        "response": "Hermes semantic answer.",
+        "request_id": "request-1",
+        "session_id": "chat-1",
+        "guided": True,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _continuation_semantic_payload(state="proposal_ready", **overrides):
+    """Single-run envelope: semantic decision + typed guided continuation."""
+    payload = {
+        "state": state,
+        "response": "Hermes semantic answer.",
+        "request_id": "request-1",
+        "session_id": "chat-1",
+        "guided": True,
+        "guided_explicitness": "imperative",
+        "continuation": {
+            "outcome": "question" if state == "require_confirmation" else "delta",
+            "question": "¿Creo este personaje?" if state == "require_confirmation" else None,
+            "delta": None if state == "require_confirmation" else {"name": "Rhyz's Wife", "desire": "freedom"},
+        },
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_guided_continuation_driven_by_native_skill_body_when_channel_native(
+    monkeypatch, tmp_path,
+) -> None:
+    """REQ-GN-1 scenario 1 (3.3.2): with the flag ON the native ``SKILL.md``
+    body (method + co-creation rules) drives the guided continuation; the
+    legacy compiled contract and the convergence specimen never reach the
+    provider (single channel, REQ-GN-4)."""
+    library = _wired_guided_library(tmp_path)
+    _make_guided_native_healthy(monkeypatch, tmp_path, library)
+    assert api_server._active_channel_state() == "native"
+    activation = library.active_for("vibrantes", api_server.GUIDED_CHARACTER_FLOW)
+    published = library.get_published(activation.skill_id, activation.version)
+    native_body = (published.source or "").rstrip() + "\n\n" + CO_CREATION_RULES_BLOCK
+    legacy_contract = project_contract_markdown(published)
+
+    provider = _HintCapturingProvider()
+    store = GuidedSessionStore()
+    store.create("guided-native-1", "vibrantes", "author-1")
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", store)
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities(
+        "guided-character-v1", True, True, True, 30000,
+    ))
+
+    asyncio.run(api_server._guided_continue(
+        "vibrantes", "guided-native-1", 0, "Create a character",
+        api_server.EditPrincipal("author-1"),
+    ))
+
+    # The native body — not the legacy contract — drives the continuation.
+    assert provider.compiled == [native_body]
+    assert provider.specimen == [None]
+    assert CO_CREATION_RULES_BLOCK in provider.compiled[0]
+    assert provider.compiled[0] != legacy_contract
+    # The legacy projection is suppressed on the guided path (path d).
+    assert api_server._compiled_contract_markdown(
+        "vibrantes", api_server.DEFAULT_FLOW_TYPE,
+    ) is None
+    assert api_server._convergence_specimen_markdown(
+        "vibrantes", api_server.DEFAULT_FLOW_TYPE,
+        store.recover("guided-native-1", "author-1"),
+    ) is None
+
+
+def test_guided_path_single_channel_flag_on_and_byte_identical_flag_off(
+    monkeypatch, tmp_path,
+) -> None:
+    """REQ-GN-4 / REQ-GF-1 (3.3.9): with the flag ON the guided path has
+    exactly one channel — the native body, never the legacy compiled contract
+    or the convergence specimen (cross-ref 3.2.14/3.2.15). With the flag OFF
+    the baseline injection is byte-identical: the continuation receives
+    exactly the legacy resolver's output, not the native body."""
+    library = _wired_guided_library(tmp_path)
+    activation = library.active_for("vibrantes", api_server.GUIDED_CHARACTER_FLOW)
+    published = library.get_published(activation.skill_id, activation.version)
+    native_body = (published.source or "").rstrip() + "\n\n" + CO_CREATION_RULES_BLOCK
+
+    # Control: flag OFF — baseline injection byte-identical.
+    (tmp_path / "vibrantes").mkdir()
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", tmp_path)
+    monkeypatch.setattr(api_server, "_methodology_library", lambda: library)
+    off_provider = _HintCapturingProvider()
+    off_store = GuidedSessionStore()
+    off_store.create("guided-off-1", "vibrantes", "author-1")
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", off_store)
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", off_provider)
+    monkeypatch.setattr(api_server, "_GUIDED_CAPABILITIES", Capabilities(
+        "guided-character-v1", True, True, True, 30000,
+    ))
+    assert api_server._active_channel_state() == "legacy"
+    baseline = api_server._compiled_contract_markdown(
+        "vibrantes", api_server.DEFAULT_FLOW_TYPE,
+    )
+    asyncio.run(api_server._guided_continue(
+        "vibrantes", "guided-off-1", 0, "Create a character",
+        api_server.EditPrincipal("author-1"),
+    ))
+    assert baseline == project_contract_markdown(published)
+    assert off_provider.compiled == [baseline]
+    assert off_provider.specimen == [None]
+    assert CO_CREATION_RULES_BLOCK not in (baseline or "")
+
+    # Flag ON — exactly one channel: the native body replaces the contract.
+    _make_guided_native_healthy(monkeypatch, tmp_path, library)
+    on_provider = _HintCapturingProvider()
+    on_store = GuidedSessionStore()
+    on_store.create("guided-on-1", "vibrantes", "author-1")
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", on_store)
+    monkeypatch.setattr(api_server, "_GUIDED_PROVIDER", on_provider)
+    assert api_server._active_channel_state() == "native"
+    asyncio.run(api_server._guided_continue(
+        "vibrantes", "guided-on-1", 0, "Create a character",
+        api_server.EditPrincipal("author-1"),
+    ))
+    assert on_provider.compiled == [native_body]
+    assert on_provider.specimen == [None]
+    assert on_provider.compiled[0] != baseline
+
+
+def test_consent_stays_server_side_with_flag_on(monkeypatch, tmp_path) -> None:
+    """REQ-GN-2 / REQ-GF-2 (3.3.8): with the native channel live the consent
+    machinery is 100% server-side — musing yields ``consent: "required"`` plus
+    a one-shot token and NO session; imperative auto-opens server-side; the
+    server store owns the tokens and the sessions (``_GUIDED_SESSIONS``)."""
+    library = _wired_guided_library(tmp_path)
+    _make_guided_native_healthy(monkeypatch, tmp_path, library)
+    assert api_server._active_channel_state() == "native"
+    api_server._GUIDED_CONSENT_TOKENS.clear()
+    memory = api_server.ConversationMemoryStore(":memory:")
+    monkeypatch.setattr(api_server, "_CONVERSATION_MEMORY", memory)
+    sessions = GuidedSessionStore()
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
+    monkeypatch.setattr(api_server, "_GUIDED_PENDING_PROPOSALS", {})
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
+
+    # Musing ⇒ consent suggestion + one-shot token, zero session created.
+    musing_runs = _SemanticRuns(
+        _continuation_semantic_payload("require_confirmation", guided_explicitness="musing"),
+    )
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(musing_runs))
+    musing = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "quiero crear un personaje", "session_id": "consent-1",
+    }).json()
+    assert musing["state"] == "require_confirmation"
+    assert musing["consent"] == "required"
+    assert musing["consent_token"].startswith("ct-")
+    assert musing["guided_explicitness"] == "musing"
+    assert "guided_session_id" not in musing
+    assert sessions._sessions == {}
+    assert api_server._GUIDED_CONSENT_TOKENS  # one-shot token lives server-side
+
+    # Imperative ⇒ the server auto-opens the session (no second Hermes run).
+    imperative_runs = _SemanticRuns(
+        _continuation_semantic_payload("require_confirmation", guided_explicitness="imperative"),
+    )
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(imperative_runs))
+    imperative = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "quiero crear un personaje", "session_id": "chat-2",
+    }).json()
+    assert imperative["guided_explicitness"] == "imperative"
+    assert imperative["guided_session_id"].startswith("guided-")
+    assert imperative["guided_state"]["phase"] == "confirmation"
+    assert "consent" not in imperative
+    assert any(
+        state.world == "vibrantes"
+        for state in sessions._sessions.values()
+    )
+    assert musing_runs.starts == 1
+    assert imperative_runs.starts == 1
+
+
+def test_decline_records_durable_server_flag_with_flag_on(monkeypatch, tmp_path) -> None:
+    """REQ-GF-2 (3.3.8): with the flag ON a suggestion left unaccepted is a
+    durable server-side decline (TTL 24 h) — the session is never re-nagged and
+    no session is ever opened."""
+    library = _wired_guided_library(tmp_path)
+    _make_guided_native_healthy(monkeypatch, tmp_path, library)
+    api_server._GUIDED_CONSENT_TOKENS.clear()
+    memory = api_server.ConversationMemoryStore(":memory:")
+    monkeypatch.setattr(api_server, "_CONVERSATION_MEMORY", memory)
+    sessions = GuidedSessionStore()
+    monkeypatch.setattr(api_server, "_GUIDED_SESSIONS", sessions)
+    monkeypatch.setattr(api_server, "_GUIDED_PENDING_PROPOSALS", {})
+    monkeypatch.setattr(api_server, "_resolve_principal", lambda _request: api_server.EditPrincipal("author-1"))
+    monkeypatch.setattr(api_server, "_named_reference_context", lambda _m, _p: ("", False, None))
+    runs = _SemanticRuns(
+        _continuation_semantic_payload("require_confirmation", guided_explicitness="musing"),
+        _semantic_payload("allow"),
+        _continuation_semantic_payload("require_confirmation", guided_explicitness="musing"),
+    )
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", api_server.SemanticIntentProvider(runs))
+
+    first = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "quiero crear un personaje", "session_id": "consent-2",
+    }).json()
+    assert first["consent"] == "required"
+    assert memory.guided_consent_declined("consent-2", "vibrantes") is False
+
+    # Keeps chatting: the unaccepted suggestion is a durable server decline.
+    second = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "gracias", "session_id": "consent-2",
+    }).json()
+    assert memory.guided_consent_declined("consent-2", "vibrantes") is True
+
+    third = client.post("/api/vibrantes/ai/ask", json={
+        "prompt": "quiero crear un personaje", "session_id": "consent-2",
+    }).json()
+    assert third["state"] == "allow"
+    assert "consent" not in third and "consent_token" not in third
+    assert "guided_session_id" not in third and "guided_state" not in third
+    assert sessions._sessions == {}
+    assert runs.starts == 3
