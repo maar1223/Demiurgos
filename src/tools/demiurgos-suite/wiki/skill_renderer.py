@@ -34,7 +34,8 @@ from pathlib import Path
 import yaml
 
 from convergence_injection import read_adjunto_bytes
-from methodology_library import PublishedVersion
+from methodology_library import PublishedVersion, normalized_trigger_digest
+from methodology_trust import FOUNDATIONAL
 from world_authority import normalize_world_name
 
 # The Hermes skills-index truncation bound (design doc §11 P1).
@@ -74,8 +75,8 @@ class RenderIssue:
     """A surfaced renderer problem.
 
     Codes: ``description-missing`` | ``description-overflow`` |
-    ``description-too-long`` | ``attachment-unavailable`` |
-    ``world-token-fallback``.
+    ``description-too-long`` | ``trigger-unapproved`` | ``trigger-mismatch`` |
+    ``attachment-unavailable`` | ``world-token-fallback``.
     """
 
     code: str
@@ -222,6 +223,48 @@ def _render_attachments(
     return tuple(outputs), tuple(issues)
 
 
+def _trigger_issues(published: PublishedVersion) -> tuple[RenderIssue, ...]:
+    """Surface a missing or mismatched trigger approval; never raise (TD-E).
+
+    The renderer consumes an approved description by construction: the approval
+    echoed onto the immutable published record is compared against the
+    normalized description digest. A matching approval yields no issue. A
+    present approval whose digest does not match yields ``trigger-mismatch``. An
+    absent approval yields ``trigger-unapproved`` **unless** the record is a
+    grandfathered foundational seed (``fundacional`` in ``trust_attributes``),
+    which is exempted to avoid flagging every transversal seed (D5/TD-E). In
+    every case the bounded description is still rendered and the renderer never
+    raises and never exceeds the 57-character render bound.
+    """
+    approval = published.trigger_approval
+    if approval is not None:
+        if approval.digest == normalized_trigger_digest(published.description):
+            return ()
+        return (
+            RenderIssue(
+                code="trigger-mismatch",
+                message=(
+                    "The recorded trigger approval does not match the published "
+                    "description digest; the bounded description is still "
+                    "rendered, but the trigger provenance is stale."
+                ),
+                field="description",
+            ),
+        )
+    if FOUNDATIONAL in published.trust_attributes:
+        return ()
+    return (
+        RenderIssue(
+            code="trigger-unapproved",
+            message=(
+                "The published record carries no trigger approval; the bounded "
+                "description is still rendered, but the trigger is unapproved."
+            ),
+            field="description",
+        ),
+    )
+
+
 def render_skill(
     published: PublishedVersion,
     *,
@@ -237,6 +280,12 @@ def render_skill(
     ``world_token`` is the (optional) pre-resolved world token, resolved again
     here so an unsafe or absent value falls back to a deterministic slug and
     surfaces an issue.
+
+    Defense-in-depth (Etapa 2, TD-E): the published record's ``trigger_approval``
+    is consumed so an approved description renders normally and a
+    missing/mismatched approval surfaces a ``trigger-unapproved`` /
+    ``trigger-mismatch`` issue instead of a silent fallback. Foundational seeds
+    without an approval are exempt. The renderer never raises either way.
     """
     skill_id = published.skill_id
     version = published.version
@@ -251,6 +300,7 @@ def render_skill(
         skill_name = f"demiurgos-{token}-{skill_id}"
 
     description, description_issues = _bound_description(published.description)
+    trigger_issues = _trigger_issues(published)
 
     frontmatter = {
         "name": skill_name,
@@ -272,7 +322,7 @@ def render_skill(
 
     attachments, attachment_issues = _render_attachments(carrier_root, published.adjuntos)
 
-    issues: tuple[RenderIssue, ...] = description_issues
+    issues: tuple[RenderIssue, ...] = description_issues + trigger_issues
     if world_issue is not None:
         issues = issues + (world_issue,)
     issues = issues + attachment_issues

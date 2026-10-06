@@ -9,6 +9,8 @@ Hermes skill folder. Covered scenarios (spec ``methodology-skill-renderer``):
 - Frontmatter carries name, description, and metadata (transversal/world).
 - Description is hard-bounded to 57 characters (verbatim/overflow/too-long/
   missing).
+- Trigger approval provenance is consumed (approved renders; a missing or
+  mismatched approval is surfaced; foundational seeds are exempt).
 - Co-creation rules are always present in the body (non-empty and empty source).
 - Attachments are emitted as sibling files (verified emitted, drifted omitted).
 - Skill identity is namespaced.
@@ -25,7 +27,12 @@ import pytest
 import yaml
 
 from methodology_compiler import AttachmentEntry
-from methodology_library import PublishedVersion
+from methodology_library import (
+    PublishedVersion,
+    TriggerApproval,
+    normalize_trigger,
+    normalized_trigger_digest,
+)
 from skill_renderer import (
     CO_CREATION_RULES_BLOCK,
     DESCRIPTION_INTAKE_LIMIT,
@@ -53,6 +60,18 @@ def _published(**overrides) -> PublishedVersion:
         "published_at": "2026-01-01T00:00:00+00:00",
     }
     base.update(overrides)
+    # Etapa 2 defense-in-depth (WU 2.4): default to a matching trigger approval
+    # so the trigger provenance surface does not add issues to scenarios that
+    # are not about the trigger. Tests pass ``trigger_approval`` explicitly
+    # (including ``None``) to exercise the approved/missing/mismatched paths.
+    if "trigger_approval" not in overrides:
+        description = base["description"]
+        base["trigger_approval"] = TriggerApproval(
+            text=normalize_trigger(description),
+            digest=normalized_trigger_digest(description),
+            approved_by="author",
+            approved_at="2026-01-01T00:00:00+00:00",
+        )
     return PublishedVersion(**base)
 
 
@@ -180,6 +199,84 @@ def test_empty_description_is_flagged_without_raising(tmp_path):
     rendered = _transversal(_published(description="   "), tmp_path)
     assert _frontmatter(rendered)["description"] == ""
     assert [issue.code for issue in rendered.issues] == ["description-missing"]
+
+
+# -- Trigger approval provenance (Etapa 2, TD-E) ------------------------------
+
+
+def test_approved_description_renders_without_trigger_issue(tmp_path):
+    """Spec 'Description within the render bound renders verbatim': a matching
+    approval renders normally, with no trigger issue."""
+    rendered = _transversal(_published(), tmp_path)
+    assert rendered.issues == ()
+    assert _frontmatter(rendered)["description"] == (
+        "Craft a coherent story with the author"
+    )
+
+
+def test_missing_approval_on_non_seed_is_flagged_without_raising(tmp_path):
+    """Spec 'Missing or unapproved trigger is surfaced, never silently
+    rendered': a non-seed record without an approval is flagged
+    ``trigger-unapproved`` and the render still succeeds."""
+    rendered = _transversal(_published(trigger_approval=None), tmp_path)
+    assert [issue.code for issue in rendered.issues] == ["trigger-unapproved"]
+    assert rendered.issues[0].field == "description"
+    # the bounded description is still rendered; the renderer never raises
+    assert _frontmatter(rendered)["description"] == (
+        "Craft a coherent story with the author"
+    )
+    assert rendered.skill_md
+
+
+def test_foundational_seed_without_approval_is_exempt(tmp_path):
+    """TD-E seed exemption: a grandfathered foundational record without an
+    approval is not flagged (avoids noise on every transversal seed)."""
+    rendered = _transversal(
+        _published(trust_attributes=("fundacional",), trigger_approval=None),
+        tmp_path,
+    )
+    assert rendered.issues == ()
+    assert _frontmatter(rendered)["description"] == (
+        "Craft a coherent story with the author"
+    )
+
+
+def test_mismatched_approval_is_flagged_but_still_renders(tmp_path):
+    """Spec 'Missing or unapproved trigger is surfaced, never silently
+    rendered': a present approval whose digest does not match the published
+    description yields ``trigger-mismatch`` while the bounded description still
+    renders (never raises, never >57)."""
+    stale = TriggerApproval(
+        text="stale trigger",
+        digest=normalized_trigger_digest("stale trigger"),
+        approved_by="author",
+        approved_at="2026-01-01T00:00:00+00:00",
+    )
+    rendered = _transversal(_published(trigger_approval=stale), tmp_path)
+    assert [issue.code for issue in rendered.issues] == ["trigger-mismatch"]
+    assert rendered.issues[0].field == "description"
+    description = _frontmatter(rendered)["description"]
+    assert description == "Craft a coherent story with the author"
+    assert len(description) <= DESCRIPTION_RENDER_LIMIT
+
+
+def test_mismatched_approval_never_exceeds_render_bound(tmp_path):
+    """The trigger delta never changes the ≤57 hard bound: an over-bound
+    description with a stale approval is still bounded to ≤57."""
+    stale = TriggerApproval(
+        text="stale",
+        digest=normalized_trigger_digest("stale"),
+        approved_by="author",
+        approved_at="2026-01-01T00:00:00+00:00",
+    )
+    rendered = _transversal(
+        _published(description="g" * 200, trigger_approval=stale), tmp_path
+    )
+    assert [issue.code for issue in rendered.issues] == [
+        "description-too-long",
+        "trigger-mismatch",
+    ]
+    assert len(_frontmatter(rendered)["description"]) <= DESCRIPTION_RENDER_LIMIT
 
 
 # -- Co-creation rules block --------------------------------------------------

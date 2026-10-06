@@ -1,20 +1,26 @@
 # -*- coding: utf-8 -*-
-"""Cross-cutting invariant — Etapa 1 changes nothing assistant-visible.
+"""Cross-cutting invariant — Etapa 1/2 changes nothing assistant-visible.
 
-Etapa 1 (renderer + materializer + sessions + T-FU-02 hook) is additive and
-inert with respect to what the model sees. Covered scenarios (spec cross-cutting
-'No visible product behavior change in Etapa 1'):
+Etapa 1 (renderer + materializer + sessions + T-FU-02 hook) and Etapa 2 (trigger
+approval surface + publish gate + narrow renderer delta) are additive and inert
+with respect to what the model sees. Covered scenarios (spec cross-cutting
+'No visible product behavior change in Etapa 2'):
 
-- The legacy server-side projection of an active world's methodology is
-  byte-identical before and after Etapa 1 materialization + session plumbing
-  (the library record is never mutated; the projection is a pure function).
-- The ``skills`` toolset stays absent from ``platform_toolsets.api_server`` and
-  the staging root is never registered in ``skills.external_dirs``.
+- The legacy server-side projection of an active world's methodology (the
+  assistant-visible system prompt) is byte-identical before and after Etapa 1
+  materialization + session plumbing, and is independent of the Etapa 2
+  trigger-approval provenance (the library record is never mutated; the
+  projection is a pure function).
+- The model-visible enabled tool set is byte-identical: ``skills`` stays absent
+  from ``platform_toolsets.api_server`` and the staging root is never registered
+  in ``skills.external_dirs``.
 - Materialization writes nothing under the live ``data/methodology/skills/``
   folder, which keeps holding only its tracked sentinel.
 - The legacy channel modules (``skill_router.py`` / ``contract_projection.py``)
   are unchanged versus the merge base with ``master`` (skipped when git is
   unavailable).
+- A partial Etapa 2 delivery (a subset of the two new capabilities) changes
+  nothing visible: the projection is independent of whether an approval exists.
 """
 
 from __future__ import annotations
@@ -29,7 +35,13 @@ import yaml
 
 from contract_projection import project_contract_markdown
 from hermes_profile_config import merge_skills_external_dirs, resolve_skills_dir
-from methodology_library import DEFAULT_FLOW_TYPE, Activation, PublishedVersion
+from methodology_library import (
+    DEFAULT_FLOW_TYPE,
+    Activation,
+    PublishedVersion,
+    TriggerApproval,
+    normalized_trigger_digest,
+)
 from methodology_trust import FOUNDATIONAL
 from skill_materializer import SkillMaterializer, resolve_staging_root
 from skill_session_epochs import SessionEpochRegistry, resolve_session_store_path
@@ -68,7 +80,14 @@ class _StubLibrary:
         return list(self._companions.get(world, ()))
 
 
-def _published(skill_id, version="1.0.0", *, foundational, source="# Body\n"):
+def _published(
+    skill_id,
+    version="1.0.0",
+    *,
+    foundational,
+    source="# Body\n",
+    trigger_approval=None,
+):
     return PublishedVersion(
         skill_id=skill_id,
         version=version,
@@ -81,6 +100,16 @@ def _published(skill_id, version="1.0.0", *, foundational, source="# Body\n"):
         published_at="2026-01-01T00:00:00+00:00",
         trust_attributes=(FOUNDATIONAL,) if foundational else (),
         adjuntos=(),
+        trigger_approval=trigger_approval,
+    )
+
+
+def _approval(text):
+    return TriggerApproval(
+        text=text,
+        digest=normalized_trigger_digest(text),
+        approved_by="author",
+        approved_at="2026-01-01T00:00:00+00:00",
     )
 
 
@@ -137,6 +166,51 @@ def test_legacy_projection_byte_identical_after_materialization(tmp_path):
 
     after = project_contract_markdown(guided).encode("utf-8")
     assert after == baseline
+
+
+def test_legacy_projection_is_independent_of_trigger_approval():
+    """Scenario 'System prompt ... byte-identical' and 'Partial Etapa 2 delivery
+    still changes nothing visible': the assistant-visible projection of the
+    active world's method is independent of the trigger-approval provenance, so
+    a partial delivery (approval record present, absent, or stale) is invisible
+    to the model."""
+    unapproved = _published("guia", foundational=False)
+    baseline = project_contract_markdown(unapproved).encode("utf-8")
+
+    approved = _published(
+        "guia",
+        foundational=False,
+        trigger_approval=_approval("guia trigger"),
+    )
+    stale = _published(
+        "guia",
+        foundational=False,
+        trigger_approval=_approval("a different trigger"),
+    )
+
+    assert project_contract_markdown(approved).encode("utf-8") == baseline
+    assert project_contract_markdown(stale).encode("utf-8") == baseline
+
+
+def test_model_visible_tool_set_is_byte_identical(tmp_path):
+    """Scenario 'System prompt and toolset are byte-identical to the Etapa 1
+    baseline': the enabled model-visible tool set is unchanged by Etapa 0
+    registration and an Etapa 2 materialization pass, and stays skills-free."""
+    config = tmp_path / "config.yaml"
+    baseline_text = "platform_toolsets:\n  api_server:\n    - file\n    - terminal\n"
+    config.write_text(baseline_text, encoding="utf-8")
+    baseline_tools = yaml.safe_load(baseline_text)["platform_toolsets"]["api_server"]
+
+    live = resolve_skills_dir(tmp_path)
+    merge_skills_external_dirs(config, live)
+    assert SkillMaterializer(_library(), project_root=tmp_path).materialize("W").ok
+
+    data = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert data["platform_toolsets"]["api_server"] == baseline_tools
+    assert data["platform_toolsets"]["api_server"] == ["file", "terminal"]
+    assert "skills" not in data["platform_toolsets"]["api_server"]
+    # Registration landed only in skills.external_dirs, never in the tool set.
+    assert str(live) in data["skills"]["external_dirs"]
 
 
 def test_skills_absent_and_staging_not_registered(tmp_path):
