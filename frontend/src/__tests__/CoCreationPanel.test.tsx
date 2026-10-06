@@ -274,6 +274,14 @@ describe("CoCreationPanel", () => {
     const user = userEvent.setup();
     const state = {
       ...baseState(),
+      // Etapa 2: the reviewed trigger is approved, so only compiler issues
+      // can keep publish disabled.
+      triggerApproval: {
+        text: "Gatillo de prueba",
+        digest: "digest-zero-issues",
+        approved_by: "author-1",
+        approved_at: "2026-10-05T00:00:00Z",
+      },
       session: sessionFixture({
         phase: "review",
         milestone: "revision_publicacion",
@@ -281,6 +289,17 @@ describe("CoCreationPanel", () => {
         compile_issues: [],
         pending_question: null,
         pending_options: [],
+        draft_payload: {
+          name: "Skill de prueba",
+          description: "Gatillo de prueba",
+          purpose: "",
+          scope: "",
+          main_flow: "",
+          branches: [],
+          rules: [],
+          pending_questions: [],
+          world: null,
+        },
       }),
     };
     render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
@@ -319,6 +338,14 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     overrides: Partial<UseCoCreationReturn> = {},
   ): UseCoCreationReturn => ({
     ...baseState(),
+    // Etapa 2: the reviewed description is approved by default so the publish
+    // gate (D2/D4) is satisfied; gate-specific tests override it.
+    triggerApproval: {
+      text: reviewPayload.description,
+      digest: "digest-review",
+      approved_by: "author-1",
+      approved_at: "2026-10-05T00:00:00Z",
+    },
     session: sessionFixture({
       phase: "review",
       milestone: "revision_publicacion",
@@ -336,8 +363,12 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     render(<CoCreationPanel state={reviewState()} worlds={["Vibrantes"]} />);
 
     expect(screen.getByText("Skill de eneagrama")).toBeInTheDocument();
+    // The description appears in the review row; scope by selector because the
+    // trigger-approval preview also echoes it (Etapa 2).
     expect(
-      screen.getByText("Perfil de los nueve eneatipos."),
+      screen.getByText("Perfil de los nueve eneatipos.", {
+        selector: "span.truncate",
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByText("Modelar personalidades en el mundo."),
@@ -458,6 +489,26 @@ describe("CoCreationPanel — TW16 review projection (REQ-TW16-1..6)", () => {
     await user.click(screen.getByRole("button", { name: tEs("cocreation.review.publish") }));
 
     expect(state.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("gates publish on the trigger approval and calls the approve client (Etapa 2)", async () => {
+    const user = userEvent.setup();
+    const approveTrigger = vi.fn().mockResolvedValue(null);
+    const state = reviewState({ triggerApproval: null, approveTrigger });
+    render(<CoCreationPanel state={state} worlds={["Vibrantes"]} />);
+
+    // Unapproved: the trigger reads pending and publish is refused client-side.
+    expect(
+      screen.getByTestId("trigger-approval-badge"),
+    ).toHaveTextContent(tEs("triggerApproval.badgePending"));
+    expect(
+      screen.getByRole("button", { name: tEs("cocreation.review.publish") }),
+    ).toBeDisabled();
+
+    await user.click(screen.getByTestId("trigger-approve"));
+
+    expect(approveTrigger).toHaveBeenCalledTimes(1);
+    expect(approveTrigger).toHaveBeenCalledWith(reviewPayload.description);
   });
 });
 

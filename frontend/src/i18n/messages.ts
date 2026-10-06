@@ -1554,6 +1554,30 @@ export const messages = {
     "skillCreate.name": "Nombre",
     "skillCreate.source": "Fuente (Markdown)",
     "skillCreate.submit": "Publicar borrador",
+
+    "triggerApproval.aria": "Aprobación del gatillo",
+    "triggerApproval.title": "Gatillo de la skill",
+    "triggerApproval.help":
+      "Revisa el texto que describe cuándo debe usarse esta skill y apruébalo antes de publicar.",
+    "triggerApproval.label": "Texto del gatillo",
+    "triggerApproval.inputAria": "Texto del gatillo",
+    "triggerApproval.counter": "{count}/{limit} caracteres",
+    "triggerApproval.overBound":
+      "Supera el límite de {limit} caracteres; no se puede aprobar.",
+    "triggerApproval.previewLabel": "Previsualización del índice:",
+    "triggerApproval.truncated":
+      "Truncado a {limit} caracteres con un marcador visible.",
+    "triggerApproval.approve": "Aprobar gatillo",
+    "triggerApproval.reapprove": "Aprobar de nuevo",
+    "triggerApproval.badgeApproved": "Aprobado",
+    "triggerApproval.badgePending": "Pendiente de aprobación",
+    "triggerApproval.error":
+      "No se pudo aprobar el gatillo. Inténtalo de nuevo.",
+
+    "error.trigger_not_approved":
+      "La skill no se puede publicar sin un gatillo aprobado. Aprueba el gatillo e inténtalo de nuevo.",
+    "error.trigger_invalid":
+      "El gatillo no es válido: debe tener entre 1 y 60 caracteres.",
     "skillImport.title": "Importar una skill",
     "skillImport.intro": "La Skill creada fuera del Taller no se ejecuta como válida: entra en cuarentena y solo se habilita cuando pasa la revisión de integridad y la marcas como confiable.",
     "skillImport.packageLabel": "Paquete (.zip)",
@@ -3403,6 +3427,30 @@ export const messages = {
     "skillCreate.name": "Name",
     "skillCreate.source": "Source (Markdown)",
     "skillCreate.submit": "Publish draft",
+
+    "triggerApproval.aria": "Trigger approval",
+    "triggerApproval.title": "Skill trigger",
+    "triggerApproval.help":
+      "Review the text that describes when this skill should be used, then approve it before publishing.",
+    "triggerApproval.label": "Trigger text",
+    "triggerApproval.inputAria": "Trigger text",
+    "triggerApproval.counter": "{count}/{limit} characters",
+    "triggerApproval.overBound":
+      "Exceeds the {limit}-character limit; it cannot be approved.",
+    "triggerApproval.previewLabel": "Index preview:",
+    "triggerApproval.truncated":
+      "Truncated to {limit} characters with a visible marker.",
+    "triggerApproval.approve": "Approve trigger",
+    "triggerApproval.reapprove": "Approve again",
+    "triggerApproval.badgeApproved": "Approved",
+    "triggerApproval.badgePending": "Pending approval",
+    "triggerApproval.error":
+      "The trigger could not be approved. Please try again.",
+
+    "error.trigger_not_approved":
+      "The skill cannot be published without an approved trigger. Approve the trigger and try again.",
+    "error.trigger_invalid":
+      "The trigger is invalid: it must be between 1 and 60 characters.",
     "skillImport.title": "Import a skill",
     "skillImport.intro": "A Skill created outside the Workshop does not run as valid: it enters quarantine and is only enabled once it passes the integrity review and you mark it as trusted.",
     "skillImport.packageLabel": "Package (.zip)",

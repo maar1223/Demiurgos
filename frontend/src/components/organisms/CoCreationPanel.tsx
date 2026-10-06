@@ -18,6 +18,7 @@ import { Icon } from "@/components/atoms/Icon";
 import { MarkdownViewer } from "@/components/organisms/MarkdownViewer";
 import { ManualSkillCreator } from "@/components/organisms/ManualSkillCreator";
 import { SkillImportPanel } from "@/components/organisms/SkillImportPanel";
+import { TriggerApprovalBlock } from "@/components/organisms/TriggerApprovalBlock";
 import { CoCreationCanvas } from "@/components/organisms/CoCreation/CoCreationCanvas";
 import {
   normalizePendingQuestion,
@@ -29,6 +30,7 @@ import { AdaptationComparePanel } from "@/components/organisms/CoCreation/Adapta
 import { ProvenanceBadge } from "@/components/organisms/CoCreation/ProvenanceBadge";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { cn } from "@/lib/utils";
+import { isTriggerApproved } from "@/lib/triggerBound";
 import type { MessageKey, TFunction } from "@/i18n/messages";
 
 /**
@@ -278,6 +280,8 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
   >("guided");
   const [historyOpen, setHistoryOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
+  /** Etapa 2: locally edited trigger (null = follow the server payload). */
+  const [triggerDraft, setTriggerDraft] = useState<string | null>(null);
   const [originalDetail, setOriginalDetail] =
     useState<PublishedMethodologyDetail | null>(null);
   const { session, isLoading, error } = state;
@@ -294,6 +298,15 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
    *  `draft_payload` — never the local materialize-form state (refresh-lossy). */
   const reviewPayload = (session?.draft_payload ?? {}) as ReviewPayload;
   const touched = state.touchedSections;
+  /** Etapa 2 trigger (D3): the server-authored description is the starting
+   *  value; the Author may edit it locally, and the recorded approval drives
+   *  the pending/approved state. `null` means untouched. */
+  const serverTrigger =
+    typeof reviewPayload.description === "string" ? reviewPayload.description : "";
+  const triggerValue = triggerDraft ?? serverTrigger;
+  /** The publish gate (D2/D4): publish stays disabled until the recorded
+   *  approval matches the value that will be published. */
+  const triggerApproved = isTriggerApproved(state.triggerApproval, triggerValue);
   const compatibles = reviewPayload.talleres_compatibles ?? [];
   const dependencies = [
     ...(compatibles.length > 0 ? [compatibles.join(", ")] : []),
@@ -791,16 +804,30 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                 </div>
 
                 {!complete && (
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="space-y-4">
+                    {/* Etapa 2 trigger approval (D3/D6/D7): one focused block in
+                        the review surface; publish is gated on its approval. */}
+                    <TriggerApprovalBlock
+                      value={triggerValue}
+                      onChange={setTriggerDraft}
+                      approval={state.triggerApproval}
+                      onApprove={(description) =>
+                        void state.approveTrigger(description)
+                      }
+                      disabled={isLoading}
+                    />
+                    <div className="flex flex-wrap items-center gap-3">
                     <Button
                       type="button"
                       size="sm"
                       onClick={() => void state.publish()}
-                      disabled={isLoading || hasIssues}
+                      disabled={isLoading || hasIssues || !triggerApproved}
                       title={
-                        hasIssues
-                          ? t("cocreation.review.publishTitleIssues")
-                          : t("cocreation.review.publishTitleOk")
+                        !triggerApproved
+                          ? t("triggerApproval.badgePending")
+                          : hasIssues
+                            ? t("cocreation.review.publishTitleIssues")
+                            : t("cocreation.review.publishTitleOk")
                       }
                     >
                       {isLoading ? (
@@ -840,6 +867,7 @@ export function CoCreationPanel({ state, worlds }: CoCreationPanelProps) {
                         {t("cocreation.review.activate")}
                       </Button>
                     </label>
+                  </div>
                   </div>
                 )}
               </div>

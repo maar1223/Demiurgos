@@ -7,6 +7,8 @@
  * remains authoritative — these constants must never be trusted as enforcement.
  */
 
+import type { TriggerApproval } from "@/api/types";
+
 /** Authored intake bound: the maximum number of characters the Author may
  *  approve (mirrors `skill_renderer.DESCRIPTION_INTAKE_LIMIT`). */
 export const TRIGGER_INTAKE_LIMIT = 60;
@@ -37,4 +39,17 @@ export function boundTrigger(raw: string): {
     value: normalized.slice(0, TRIGGER_RENDER_LIMIT - 1).trimEnd() + "…",
     truncated: true,
   };
+}
+
+/** Whether a recorded approval still matches the current trigger value.
+ *  Compares against the *normalized* current text (mirrors the server digest
+ *  over the normalized value), so whitespace-only edits do NOT invalidate an
+ *  approval — but any real edit does, reverting the surface to pending (D7). */
+export function isTriggerApproved(
+  approval: TriggerApproval | null | undefined,
+  value: string,
+): boolean {
+  const normalized = normalizeTrigger(value);
+  if (normalized.length === 0) return false;
+  return approval != null && normalizeTrigger(approval.text) === normalized;
 }
