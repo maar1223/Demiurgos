@@ -21,11 +21,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
+import threading
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from convergence_injection import carrier_root_for
+from hermes_profile_config import resolve_skills_dir
 from methodology_library import (
     DEFAULT_FLOW_TYPE,
     PublishedVersion,
@@ -50,6 +54,10 @@ SENTINEL_NAMES = (".gitkeep", REVISION_MARKER_NAME)
 TRANSVERSAL_SUBDIR = "transversal"
 WORLD_SUBDIR = "world"
 
+#: Serializes the generation-tree swap so concurrent promotions cannot interleave
+#: their two-rename swaps (design Q3 step 6).
+_PROMOTE_LOCK = threading.Lock()
+
 
 def resolve_staging_root(project_root: Path) -> Path:
     """Resolve the unregistered staging root under a checkout root."""
@@ -59,6 +67,15 @@ def resolve_staging_root(project_root: Path) -> Path:
 def revision_marker_path(project_root: Path) -> Path:
     """Resolve the materialization revision marker under the staging root."""
     return resolve_staging_root(project_root) / REVISION_MARKER_NAME
+
+
+def resolve_live_root(project_root: Path) -> Path:
+    """Resolve the registered live skills folder under a checkout root.
+
+    Same canonical resolver the installer uses (``hermes_profile_config``), so
+    promotion targets exactly the folder registered in ``external_dirs``.
+    """
+    return resolve_skills_dir(project_root)
 
 
 @dataclass(frozen=True)
@@ -90,6 +107,109 @@ class MaterializationReport:
     written: int
     deleted: int
     issues: tuple[RenderIssue, ...]
+
+
+@dataclass(frozen=True)
+class PromoteReport:
+    """Outcome of one staging→live promotion (design Q3, REQ-LP-1..7).
+
+    ``promoted`` is ``False`` when promotion was a no-op: the world did not opt
+    into the native channel (REQ-LP-2) or the live revision already matches the
+    desired digest (REQ-LP-3/7). ``ok`` is ``False`` only on a fail-safe abort
+    (unreadable library / render failure), in which case nothing was written,
+    nothing was deleted, and the live folder was left byte-untouched. On a
+    successful swap ``revision`` is the promoted deterministic digest and
+    ``written``/``deleted`` count the generation-tree writes and orphan GC.
+    """
+
+    ok: bool
+    promoted: bool
+    revision: str | None
+    written: int
+    deleted: int
+
+
+def _gc_tree(root: Path, desired_paths: set[str]) -> tuple[int, tuple[RenderIssue, ...]]:
+    """Delete every path under ``root`` outside ``desired_paths`` (spec D3).
+
+    Walks ``root`` bottom-up, removing every file/symlink that is not a desired
+    relative path and not an exact root-level sentinel (``.gitkeep`` / the
+    revision marker), then prunes emptied directories. Every candidate is
+    resolved and asserted inside the resolved ``root`` before it is touched: a
+    symlink or ``..`` that escapes the tree is left untouched and surfaced as a
+    ``containment-violation`` issue, so GC can never delete outside its own
+    tree. The root itself is never removed. Returns ``(deleted_file_count,
+    issues)``.
+    """
+    if not root.is_dir():
+        return 0, ()
+    anchor = root.resolve()
+    deleted = 0
+    issues: list[RenderIssue] = []
+    for dirpath, dirnames, filenames in os.walk(
+        root, topdown=False, followlinks=False
+    ):
+        current = Path(dirpath)
+        # Symlinked directories are listed in ``dirnames`` but never
+        # descended; treat them as removable candidates too.
+        candidates = list(filenames) + [
+            name for name in dirnames if (current / name).is_symlink()
+        ]
+        for name in candidates:
+            candidate = current / name
+            if not _contained(candidate, anchor):
+                issues.append(
+                    RenderIssue(
+                        code="containment-violation",
+                        message=(
+                            f"Staging candidate {candidate} escapes the "
+                            "staging root; it was left untouched."
+                        ),
+                        field="staging",
+                    )
+                )
+                continue
+            relative = candidate.relative_to(root).as_posix()
+            if relative in SENTINEL_NAMES:
+                continue
+            if relative in desired_paths:
+                continue
+            try:
+                candidate.unlink()
+            except OSError:
+                continue
+            deleted += 1
+        if current != root:
+            try:
+                current.rmdir()
+            except OSError:
+                pass
+    return deleted, tuple(issues)
+
+
+def _contained(candidate: Path, root: Path) -> bool:
+    """True when ``candidate`` resolves inside the resolved ``root``."""
+    try:
+        resolved = candidate.resolve()
+    except (OSError, ValueError):
+        return False
+    return resolved == root or root in resolved.parents
+
+
+def _remove_tree(root: Path) -> None:
+    """Best-effort recursive removal with a short Windows retry loop.
+
+    The swap's left-aside predecessor tree is removed after the new tree is
+    live; a failure is never fatal (``ignore_errors`` + existence check), and
+    Windows' brief handle retention is retried a few times (design Q3).
+    """
+    for _ in range(3):
+        try:
+            shutil.rmtree(root, ignore_errors=True)
+        except OSError:
+            continue
+        if not root.exists():
+            return
 
 
 def _atomic_write(path: Path, data: bytes) -> None:
@@ -272,69 +392,15 @@ class SkillMaterializer:
     @staticmethod
     def _contained(candidate: Path, root: Path) -> bool:
         """True when ``candidate`` resolves inside the resolved staging root."""
-        try:
-            resolved = candidate.resolve()
-        except (OSError, ValueError):
-            return False
-        return resolved == root or root in resolved.parents
+        return _contained(candidate, root)
 
     def _gc(self, desired_paths: set[str]) -> tuple[int, tuple[RenderIssue, ...]]:
         """Delete every staging path outside ``desired_paths`` (spec D3).
 
-        Walks the staging tree bottom-up, removing every file/symlink that is
-        not a desired relative path and not an exact root-level sentinel
-        (``.gitkeep`` / the revision marker), then prunes emptied directories.
-        Every candidate is resolved and asserted inside the resolved staging
-        root before it is touched: a symlink or ``..`` that escapes staging is
-        left untouched and surfaced as a ``containment-violation`` issue, so GC
-        can never delete outside its own tree. The staging root itself is never
-        removed. Returns ``(deleted_file_count, issues)``.
+        Staging-root GC; the promoted side runs the same containment-checked
+        walk over its generation tree via ``_gc_tree`` (REQ-MM-3).
         """
-        staging = self._staging_root
-        if not staging.is_dir():
-            return 0, ()
-        root = staging.resolve()
-        deleted = 0
-        issues: list[RenderIssue] = []
-        for dirpath, dirnames, filenames in os.walk(
-            staging, topdown=False, followlinks=False
-        ):
-            current = Path(dirpath)
-            # Symlinked directories are listed in ``dirnames`` but never
-            # descended; treat them as removable candidates too.
-            candidates = list(filenames) + [
-                name for name in dirnames if (current / name).is_symlink()
-            ]
-            for name in candidates:
-                candidate = current / name
-                if not self._contained(candidate, root):
-                    issues.append(
-                        RenderIssue(
-                            code="containment-violation",
-                            message=(
-                                f"Staging candidate {candidate} escapes the "
-                                "staging root; it was left untouched."
-                            ),
-                            field="staging",
-                        )
-                    )
-                    continue
-                relative = candidate.relative_to(staging).as_posix()
-                if relative in SENTINEL_NAMES:
-                    continue
-                if relative in desired_paths:
-                    continue
-                try:
-                    candidate.unlink()
-                except OSError:
-                    continue
-                deleted += 1
-            if current != staging:
-                try:
-                    current.rmdir()
-                except OSError:
-                    pass
-        return deleted, tuple(issues)
+        return _gc_tree(self._staging_root, desired_paths)
 
     def materialize(self, world: str | None) -> MaterializationReport:
         """Reconcile the desired set into staging, emit + mark the revision.
@@ -392,10 +458,14 @@ class SkillMaterializer:
         issues.extend(gc_issues)
 
         revision = _revision_digest(desired)
-        _atomic_write(
-            revision_marker_path(self._project_root),
-            (revision + "\n").encode("utf-8"),
-        )
+        marker_bytes = (revision + "\n").encode("utf-8")
+        marker = revision_marker_path(self._project_root)
+        try:
+            unchanged = marker.is_file() and marker.read_bytes() == marker_bytes
+        except OSError:
+            unchanged = False
+        if not unchanged:
+            _atomic_write(marker, marker_bytes)
         return MaterializationReport(
             ok=True,
             aborted=False,
@@ -403,4 +473,119 @@ class SkillMaterializer:
             written=written,
             deleted=deleted,
             issues=tuple(issues),
+        )
+
+
+class SkillPromoter:
+    """Promote the staging desired set into the registered live folder.
+
+    Generation-tree promotion (design Q3, REQ-LP-1..7): builds the desired set
+    (transversals + the active world's skills) into a fresh sibling generation
+    tree atomically per file, garbage-collects orphans inside that tree
+    (reusing the materializer's containment-checked GC, REQ-MM-3), then swaps
+    the generation tree into the live folder with a guarded two-rename under a
+    module lock — a reader observes the old complete tree, then the new
+    complete tree, never a partial or mixed revision.
+
+    Inert by default: with the native channel OFF for the world (REQ-LP-2), or
+    with a live revision already equal to the desired digest (REQ-LP-3/7),
+    ``promote`` returns a no-op report and never touches the live folder.
+    """
+
+    def __init__(self, library, *, project_root: Path) -> None:
+        self._library = library
+        self._project_root = Path(project_root)
+        self._materializer = SkillMaterializer(library, project_root=project_root)
+        self._live_root = resolve_live_root(self._project_root)
+
+    def promote(self, world: str | None) -> PromoteReport:
+        """Reconcile the desired set into the live folder for ``world``.
+
+        Flag OFF → no-op (live untouched). Flag ON → build a generation tree,
+        GC orphans, and swap it in; a render/library failure aborts before any
+        write, leaving the live tree byte-untouched (never a silent success).
+        """
+        try:
+            if not self._library.native_channel_enabled(world):
+                # REQ-LP-2: promotion never touches the live folder for a world
+                # that has not opted into the native channel.
+                return PromoteReport(
+                    ok=True, promoted=False, revision=None, written=0, deleted=0
+                )
+        except Exception:  # noqa: BLE001 — a flag read problem is OFF, never fatal
+            return PromoteReport(
+                ok=True, promoted=False, revision=None, written=0, deleted=0
+            )
+
+        try:
+            desired = self._materializer.desired_set(world)
+        except Exception:  # noqa: BLE001 — fail-safe abort boundary
+            return PromoteReport(
+                ok=False, promoted=False, revision=None, written=0, deleted=0
+            )
+
+        revision = _revision_digest(desired)
+        live = self._live_root
+        live_marker = live / REVISION_MARKER_NAME
+        if live.is_dir() and live_marker.is_file():
+            try:
+                if live_marker.read_bytes().decode("utf-8").strip() == revision:
+                    # REQ-LP-3/7: identical desired tree — no marker write, no
+                    # cache invalidation, no epoch churn.
+                    return PromoteReport(
+                        ok=True,
+                        promoted=False,
+                        revision=revision,
+                        written=0,
+                        deleted=0,
+                    )
+            except (OSError, UnicodeDecodeError):
+                pass
+
+        next_root = live.parent / f".skills-live-next-{uuid.uuid4().hex}"
+        desired_paths: set[str] = set()
+        written = 0
+        for skill in desired:
+            base = next_root / skill.relative_dir
+            files: dict[str, bytes] = {"SKILL.md": skill.rendered.skill_md}
+            for attachment in skill.rendered.attachments:
+                files[attachment.path] = attachment.bytes
+            for relative_path, data in files.items():
+                desired_paths.add(
+                    (Path(skill.relative_dir) / relative_path).as_posix()
+                )
+                # A fresh generation tree has no files yet, so every desired
+                # file is written (atomic per file, complete content).
+                _atomic_write(base / relative_path, data)
+                written += 1
+        deleted, _gc_issues = _gc_tree(next_root, desired_paths)
+        # Sentinels land after GC so they are never orphan candidates (REQ-LP-4).
+        _atomic_write(next_root / ".gitkeep", b"")
+        _atomic_write(next_root / REVISION_MARKER_NAME, (revision + "\n").encode("utf-8"))
+
+        prev_root = live.parent / f".skills-live-prev-{uuid.uuid4().hex}"
+        with _PROMOTE_LOCK:
+            try:
+                if live.exists():
+                    os.replace(live, prev_root)
+                os.replace(next_root, live)
+            except BaseException:
+                # Roll the prior tree back: an interrupted swap must never leave
+                # the live folder absent or partial (REQ-LP-1 scenario 2). The
+                # generation tree is removed best-effort; staging stays intact
+                # for a retry.
+                try:
+                    if not live.exists() and prev_root.exists():
+                        os.replace(prev_root, live)
+                except OSError:
+                    pass
+                _remove_tree(next_root)
+                raise
+            _remove_tree(prev_root)
+        return PromoteReport(
+            ok=True,
+            promoted=True,
+            revision=revision,
+            written=written,
+            deleted=deleted,
         )

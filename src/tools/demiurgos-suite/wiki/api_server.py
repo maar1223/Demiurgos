@@ -920,6 +920,47 @@ def _active_world() -> str:
         return ""
 
 
+def _native_channel_enabled(world: str) -> bool:
+    """Whether ``world`` opted into the native Hermes channel (design Q1).
+
+    Delegates to the methodology library's per-world flag; a missing library
+    or unreadable store degrades to OFF (REQ-NC-2 tolerant read), never ON.
+    """
+    try:
+        return bool(_methodology_library().native_channel_enabled(world))
+    except Exception:
+        return False
+
+
+def _channel_session_id(base_session_id: str) -> str:
+    """D4 run-path session id: epoch-suffixed when the native channel applies.
+
+    The run submission keys its Hermes ``session_id`` by this value so a live
+    session pinned to an older ``(world, revision)`` is never reused after a
+    promotion (REQ-LP-6 / REQ-MM-2). WU-3.1 wires the seam with the channel
+    default OFF — the suffix never applies and the flag-OFF run path stays
+    byte-identical (REQ-NC-2); WU-3.2 refines the gate with channel health.
+    Never raises: any read failure keeps the base id unchanged.
+    """
+    world = _active_world()
+    if not world or not _native_channel_enabled(world):
+        return base_session_id
+    try:
+        from skill_session_epochs import (
+            SessionEpochRegistry,
+            resolve_session_store_path,
+        )
+
+        epoch_id = SessionEpochRegistry(
+            resolve_session_store_path(_project_root())
+        ).epoch_for(world)
+    except Exception:
+        epoch_id = None
+    if not epoch_id:
+        return base_session_id
+    return f"{base_session_id}.{epoch_id}"
+
+
 def _world_aliases_path() -> Path:
     """``<data root>/data/world-aliases.json``, resolved on every call (WU-2)."""
     return _project_root() / "data" / "world-aliases.json"
@@ -2242,9 +2283,16 @@ def _materialize_skills() -> None:
     records the session epoch; nothing reaches the model-visible prompt or tool
     set. Never raises into boot or a request: any failure (including an
     unreadable library) is logged and the caller proceeds.
+
+    Etapa 3 (WU-3.1, REQ-MM-1/REQ-MM-2): when the world opted into the native
+    channel AND the WU-3.0 probe passed, the same seam additionally drives the
+    staging→live promotion; a promotion that advances the revision records the
+    promoted ``(world, revision)`` epoch (D4), which the run path consumes
+    through ``_channel_session_id``. With the flag default OFF nothing
+    additional runs and the live folder stays untouched.
     """
     try:
-        from skill_materializer import SkillMaterializer
+        from skill_materializer import SkillMaterializer, SkillPromoter
         from skill_session_epochs import (
             SessionEpochRegistry,
             resolve_session_store_path,
@@ -2256,9 +2304,19 @@ def _materialize_skills() -> None:
             _methodology_library(), project_root=project_root
         ).materialize(world)
         if report.ok and report.revision:
-            SessionEpochRegistry(
-                resolve_session_store_path(project_root)
-            ).observe(world, report.revision)
+            registry = SessionEpochRegistry(resolve_session_store_path(project_root))
+            registry.observe(world, report.revision)
+            if _native_channel_enabled(world) and _probe_passed():
+                promote = SkillPromoter(
+                    _methodology_library(), project_root=project_root
+                ).promote(world)
+                if promote.ok and promote.promoted:
+                    registry.observe(world, promote.revision)
+                elif not promote.ok:
+                    logger.warning(
+                        "skill promotion aborted for world %r; live folder untouched",
+                        world,
+                    )
         elif report.aborted:
             logger.warning("skill materialization aborted: %s", report.issues)
     except Exception as exc:  # noqa: BLE001 — never crash boot or a request
@@ -7766,7 +7824,7 @@ async def ai_ask_activity_endpoint(mundo: str, body: AskRequest, request: Reques
             distilled_state=distilled_state,
             skill_contract=skill_contract,
         ),
-        session_id=body.session_id,
+        session_id=_channel_session_id(body.session_id),
     )
     try:
         run_id = adapter.start(activity_request)

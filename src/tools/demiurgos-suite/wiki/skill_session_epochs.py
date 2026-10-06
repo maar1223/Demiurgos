@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""skill-materialization-sessions — (world, revision) epoch registry (inert).
+"""skill-materialization-sessions — (world, revision) epoch registry (D4 active).
 
 The product binds its Hermes session identity to the pair ``(active world,
 materialization revision)`` so a change in the materialized revision forces a
@@ -7,10 +7,13 @@ new session instead of reusing a live session whose system prompt is already
 frozen (design D4). This module owns the deterministic key and a durable epoch
 registry with lazy TTL pruning.
 
-Etapa 1 wiring is **inert**: the registry is exercised at the materialization
+Etapa 1 wiring was **inert**: the registry was exercised at the materialization
 seams (startup / world switch) purely to record the current ``(world,
-revision)`` epoch and never feeds the live run submission, so nothing
-assistant-visible changes.
+revision)`` epoch and never fed the live run submission. Etapa 3 (WU-3.1)
+**activates** it: the run path now keys the Hermes ``session_id`` through
+``_channel_session_id`` (epoch-suffixed when the native channel is active), so
+the recorded epoch is consumed for session invalidation (REQ-LP-6 / REQ-MM-2).
+The durable-store schema and corrupt-store degradation are unchanged.
 """
 
 from __future__ import annotations
@@ -173,6 +176,24 @@ class SessionEpochRegistry:
             }
         self._save(data)
         return worlds[world]["epoch_id"]
+
+    def epoch_for(self, world: str) -> str | None:
+        """Read the stored epoch id for ``world`` without mutating the store.
+
+        The run-path lookup (D4, ``_channel_session_id``): returns the epoch id
+        currently bound to the world, or ``None`` when there is no record or the
+        store is missing/malformed (which degrades to an empty registry, so the
+        caller falls back to the base session id). Never raises.
+        """
+        try:
+            data = self._load()
+            entry = data.get("worlds", {}).get(str(world))
+        except Exception:  # noqa: BLE001 — a corrupt store is never fatal
+            return None
+        if not isinstance(entry, dict):
+            return None
+        epoch_id = entry.get("epoch_id")
+        return epoch_id if isinstance(epoch_id, str) and epoch_id else None
 
     def prune(self, *, now: datetime | None = None) -> int:
         """Drop every world older than the TTL; return how many were removed.

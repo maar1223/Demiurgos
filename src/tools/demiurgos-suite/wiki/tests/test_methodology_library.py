@@ -1424,3 +1424,70 @@ class TestFoundationalSeedV12Channels:
         library.add_companion("Vibrantes", FOUNDATIONAL_CHARACTER_SKILL_ID, "1.2")
         assert library.active_for("Vibrantes").version == "1.2"
         assert [c.version for c in library.list_companions("Vibrantes")] == ["1.2"]
+
+
+class TestNativeChannelFlag:
+    """hermes-native-channel storage (WU-3.1, REQ-NC-2): per-world opt-in flag,
+    default OFF, tolerant read, atomic persistence in ``_save_locked``."""
+
+    def test_flag_absent_defaults_off(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        assert library.native_channel_enabled("W") is False
+        assert library.native_channel_enabled("") is False
+
+    def test_invalid_value_is_treated_as_off(self, tmp_path: Path) -> None:
+        """Tolerant read (design Q1): only an explicit boolean True opts in."""
+        path = tmp_path / "library.json"
+        path.write_text(
+            json.dumps({"native_channel": {"W": "yes", "V": 1, "F": False}}),
+            encoding="utf-8",
+        )
+        library = MethodologyLibrary(path)
+        assert library.native_channel_enabled("W") is False
+        assert library.native_channel_enabled("V") is False
+        assert library.native_channel_enabled("F") is False
+
+    def test_set_round_trips_through_save_locked(self, tmp_path: Path) -> None:
+        """Spec 'Flag ON for one world': set + reload from disk round-trips."""
+        path = tmp_path / "library.json"
+        library = MethodologyLibrary(path)
+        library.set_native_channel("Aldoria", True)
+
+        reloaded = MethodologyLibrary(path)
+        assert reloaded.native_channel_enabled("Aldoria") is True
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["native_channel"] == {"Aldoria": True}
+
+    def test_disable_removes_flag(self, tmp_path: Path) -> None:
+        """Disabling pops the key so an absent flag reads OFF from disk too."""
+        path = tmp_path / "library.json"
+        library = MethodologyLibrary(path)
+        library.set_native_channel("W", True)
+        library.set_native_channel("W", False)
+
+        assert library.native_channel_enabled("W") is False
+        assert MethodologyLibrary(path).native_channel_enabled("W") is False
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert "W" not in payload["native_channel"]
+
+    def test_opt_in_is_isolated_per_world(self, tmp_path: Path) -> None:
+        """Spec 'Opt-in is isolated per world': one world's flag never leaks."""
+        library = _library(tmp_path)
+        library.set_native_channel("A", True)
+        assert library.native_channel_enabled("A") is True
+        assert library.native_channel_enabled("B") is False
+
+    def test_other_mutations_preserve_the_flag(self, tmp_path: Path) -> None:
+        """_save_locked persists native_channel alongside the existing keys."""
+        path = tmp_path / "library.json"
+        library = MethodologyLibrary(path)
+        library.set_native_channel("W", True)
+        draft_id = library.create_draft(
+            skill_id="guided-character-v1",
+            version="1.0.0",
+            name="Guided character methodology",
+            source="## Cuerpo\n",
+        )
+        assert library.get_draft(draft_id) is not None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["native_channel"] == {"W": True}

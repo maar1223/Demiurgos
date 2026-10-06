@@ -39,11 +39,16 @@ from skill_materializer import (
     STAGING_DIR_REL,
     TRANSVERSAL_SUBDIR,
     WORLD_SUBDIR,
+    PromoteReport,
     SkillMaterializer,
+    SkillPromoter,
     _atomic_write,
+    _gc_tree,
+    _revision_digest,
     resolve_staging_root,
     revision_marker_path,
 )
+from hermes_profile_config import resolve_skills_dir
 
 _HERE = Path(__file__).resolve().parent
 _WIKI = _HERE.parent
@@ -54,10 +59,12 @@ LIVE_SKILLS_DIR = REPO_ROOT / "data" / "methodology" / "skills"
 class _StubLibrary:
     """Minimal in-memory library seam for the materializer."""
 
-    def __init__(self, *, published=(), activations=None, companions=None):
+    def __init__(self, *, published=(), activations=None, companions=None,
+                 native_channels=None):
         self._published = {(p.skill_id, p.version): p for p in published}
         self._activations = dict(activations or {})
         self._companions = dict(companions or {})
+        self._native_channels = dict(native_channels or {})
 
     def list_published(self):
         return list(self._published.values())
@@ -70,6 +77,9 @@ class _StubLibrary:
 
     def list_companions(self, world):
         return list(self._companions.get(world, ()))
+
+    def native_channel_enabled(self, world):
+        return self._native_channels.get(str(world), False)
 
 
 def _published(
@@ -472,8 +482,8 @@ def test_gc_containment_skips_escaping_symlink(tmp_path):
 class _RaisingLibrary(_StubLibrary):
     """A library whose read seam raises, simulating an unreadable source."""
 
-    def __init__(self, exc):
-        super().__init__()
+    def __init__(self, exc, *, native_channels=None):
+        super().__init__(native_channels=native_channels)
         self._exc = exc
 
     def list_published(self):
@@ -508,3 +518,363 @@ def test_abort_on_unreadable_library(tmp_path, exc):
     assert pre_existing.read_bytes() == b"pre-existing derived bytes"
     assert (staging / ".gitkeep").read_bytes() == b""
     assert marker.read_bytes() == b"deadbeef\n"
+
+
+# -- Promotion staging -> live (WU-3.1, REQ-LP-1..7 / REQ-MM-3) ---------------
+
+
+def _live_files(live: Path) -> frozenset[str]:
+    """Relative posix path of every file under the live folder (empty when the
+    folder does not exist)."""
+    if not live.is_dir():
+        return frozenset()
+    return frozenset(
+        path.relative_to(live).as_posix() for path in live.rglob("*") if path.is_file()
+    )
+
+
+def _promoted_marker(live: Path) -> bytes:
+    return (live / REVISION_MARKER_NAME).read_bytes()
+
+
+def test_promote_flag_off_leaves_live_untouched(tmp_path):
+    """Spec 'Flag OFF — live folder untouched' (REQ-LP-2): with the native
+    channel OFF for the world, promotion is a no-op and never creates the
+    registered live folder."""
+    library = _StubLibrary(published=[_published("alpha")])  # default OFF
+    report = SkillPromoter(library, project_root=tmp_path).promote("W")
+    assert isinstance(report, PromoteReport)
+    assert report.ok is True
+    assert report.promoted is False
+    assert report.revision is None
+    assert not resolve_skills_dir(tmp_path).exists()
+
+
+def test_promote_writes_complete_desired_set_into_live(tmp_path):
+    """Spec 'Successful atomic promotion' (REQ-LP-1 scenario 1): the live
+    folder reflects the complete desired set plus the preserved sentinels, and
+    no generation/left-aside tree is left behind."""
+    library = _StubLibrary(
+        published=[
+            _published("alpha"),
+            _published("worldskill", foundational=False),
+        ],
+        activations={"W": _activation("W", "worldskill", "1.0.0")},
+        native_channels={"W": True},
+    )
+    report = SkillPromoter(library, project_root=tmp_path).promote("W")
+    assert report.ok is True
+    assert report.promoted is True
+    assert report.revision is not None
+    assert report.written >= 2  # both desired SKILL.md files
+    live = resolve_skills_dir(tmp_path)
+    assert _live_files(live) == frozenset(
+        {
+            f"{TRANSVERSAL_SUBDIR}/demiurgos-alpha@1.0.0/SKILL.md",
+            f"{WORLD_SUBDIR}/demiurgos-W-worldskill@1.0.0/SKILL.md",
+            ".gitkeep",
+            REVISION_MARKER_NAME,
+        }
+    )
+    assert _promoted_marker(live).decode("utf-8").strip() == report.revision
+    assert not list(live.parent.glob(".skills-live-next-*"))
+    assert not list(live.parent.glob(".skills-live-prev-*"))
+
+
+def test_promote_swap_never_exposes_partial_tree(tmp_path, monkeypatch):
+    """Spec 'A concurrent reader never observes a partial tree' (REQ-LP-1): at
+    every observable point during the guarded two-rename swap the live folder
+    holds the old complete tree, is briefly absent, or holds the new complete
+    tree — never a partial or mixed-revision tree."""
+    published = [
+        _published("alpha"),
+        _published("worldskill", foundational=False),
+    ]
+    active = _StubLibrary(
+        published=published,
+        activations={"W": _activation("W", "worldskill", "1.0.0")},
+        native_channels={"W": True},
+    )
+    live = resolve_skills_dir(tmp_path)
+    SkillPromoter(active, project_root=tmp_path).promote("W")
+    old_set = _live_files(live)
+
+    reverted = _StubLibrary(
+        published=published, activations={}, native_channels={"W": True}
+    )
+    observed: list[frozenset[str]] = []
+    real_replace = materializer_module.os.replace
+
+    def spy(source, destination):
+        observed.append(_live_files(live))
+        real_replace(source, destination)
+        observed.append(_live_files(live))
+
+    monkeypatch.setattr(materializer_module.os, "replace", spy)
+    SkillPromoter(reverted, project_root=tmp_path).promote("W")
+
+    new_set = _live_files(live)
+    empty: frozenset[str] = frozenset()
+    for snapshot in observed:
+        assert snapshot in (old_set, new_set, empty), f"partial tree observed: {snapshot}"
+    assert new_set == frozenset(
+        {
+            f"{TRANSVERSAL_SUBDIR}/demiurgos-alpha@1.0.0/SKILL.md",
+            ".gitkeep",
+            REVISION_MARKER_NAME,
+        }
+    )
+
+
+def test_promote_interruption_rolls_back_prior_state(tmp_path, monkeypatch):
+    """Spec 'Interruption leaves a consistent prior state' (REQ-LP-1 scenario 2):
+    a swap failure restores the prior consistent revision in the live folder and
+    a retry is available."""
+    published = [
+        _published("alpha"),
+        _published("worldskill", foundational=False),
+    ]
+    promoter = SkillPromoter(
+        _StubLibrary(published=[_published("alpha")], native_channels={"W": True}),
+        project_root=tmp_path,
+    )
+    first = promoter.promote("W")
+    assert first.promoted is True
+    live = resolve_skills_dir(tmp_path)
+    prior_marker = _promoted_marker(live)
+    prior_set = _live_files(live)
+
+    real_replace = materializer_module.os.replace
+    failed = False
+
+    def flaky(source, destination):
+        nonlocal failed
+        # Fail the generation-tree move-in exactly once (the rollback rename
+        # back to ``live`` must still succeed to restore the prior state).
+        if Path(destination) == live and not failed:
+            failed = True
+            raise OSError("simulated interrupted swap")
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(materializer_module.os, "replace", flaky)
+    extended = SkillPromoter(
+        _StubLibrary(
+            published=published,
+            activations={"W": _activation("W", "worldskill", "1.0.0")},
+            native_channels={"W": True},
+        ),
+        project_root=tmp_path,
+    )
+    with pytest.raises(OSError):
+        extended.promote("W")
+
+    # The prior consistent tree is restored: same revision, complete content.
+    assert _promoted_marker(live) == prior_marker
+    assert _live_files(live) == prior_set
+    assert not list(live.parent.glob(".skills-live-next-*"))
+    assert not list(live.parent.glob(".skills-live-prev-*"))
+
+    # Retry is available and lands the new revision.
+    monkeypatch.undo()
+    retry = extended.promote("W")
+    assert retry.ok is True and retry.promoted is True
+    assert _promoted_marker(live).decode("utf-8").strip() == retry.revision
+    assert (live / WORLD_SUBDIR / "demiurgos-W-worldskill@1.0.0" / "SKILL.md").is_file()
+
+
+def test_promote_abort_on_render_library_error(tmp_path):
+    """Spec 'Aborted materialization does not promote' (REQ-LP-1 / REQ-MM-1
+    scenario 3): a render/library failure aborts with the live tree
+    byte-unchanged and the prior revision preserved."""
+    library = _StubLibrary(
+        published=[_published("alpha")], native_channels={"W": True}
+    )
+    promoter = SkillPromoter(library, project_root=tmp_path)
+    first = promoter.promote("W")
+    live = resolve_skills_dir(tmp_path)
+    prior_marker = _promoted_marker(live)
+    prior_set = _live_files(live)
+
+    report = SkillPromoter(
+        _RaisingLibrary(ValueError("render failure"), native_channels={"W": True}),
+        project_root=tmp_path,
+    ).promote("W")
+
+    assert report.ok is False
+    assert report.promoted is False
+    assert report.revision is None
+    assert report.written == 0 and report.deleted == 0
+    assert _promoted_marker(live) == prior_marker
+    assert _live_files(live) == prior_set
+    assert first.revision is not None
+    assert not list(live.parent.glob(".skills-live-next-*"))
+
+
+def test_revision_digest_changes_on_layout_change(tmp_path):
+    """Spec 'Any desired change changes the revision' (REQ-LP-3): a scope/
+    layout change — the same skills under a different world — changes the
+    digest, because layout is part of the canonical form."""
+    published = [
+        _published("alpha"),
+        _published("w1", foundational=False),
+        _published("w2", foundational=False),
+    ]
+    m1 = SkillMaterializer(
+        _StubLibrary(
+            published=published,
+            activations={"W1": _activation("W1", "w1", "1.0.0")},
+        ),
+        project_root=tmp_path,
+    )
+    m2 = SkillMaterializer(
+        _StubLibrary(
+            published=published,
+            activations={"W2": _activation("W2", "w2", "1.0.0")},
+        ),
+        project_root=tmp_path,
+    )
+    assert m1.desired_set("W1") != m2.desired_set("W2")
+    assert _revision_digest(m1.desired_set("W1")) != _revision_digest(
+        m2.desired_set("W2")
+    )
+
+
+def test_promote_idempotent_rerun_no_churn(tmp_path):
+    """Spec 'Idempotent re-promotion' (REQ-LP-7 scenario 1): re-running with an
+    unchanged desired set produces no duplicate files, an unchanged revision,
+    and no new marker write."""
+    library = _StubLibrary(
+        published=[_published("alpha")], native_channels={"W": True}
+    )
+    promoter = SkillPromoter(library, project_root=tmp_path)
+    first = promoter.promote("W")
+    live = resolve_skills_dir(tmp_path)
+    marker_before = _promoted_marker(live)
+    files_before = _live_files(live)
+
+    second = promoter.promote("W")
+
+    assert first.promoted is True and first.ok is True
+    assert second.ok is True
+    assert second.promoted is False
+    assert second.revision == first.revision
+    assert _promoted_marker(live) == marker_before
+    assert _live_files(live) == files_before
+    assert not list(live.parent.glob(".skills-live-next-*"))
+    assert not list(live.parent.glob(".skills-live-prev-*"))
+
+
+def test_promote_rollback_by_repromotion(tmp_path):
+    """Spec 'Rollback by repromotion' (REQ-LP-7 scenario 2): reverting to the
+    prior desired set and repromoting returns the live folder to the prior
+    consistent state and the revision reflects the reverted set."""
+    published = [
+        _published("alpha"),
+        _published("worldskill", foundational=False),
+    ]
+    active = _StubLibrary(
+        published=published,
+        activations={"W": _activation("W", "worldskill", "1.0.0")},
+        native_channels={"W": True},
+    )
+    live = resolve_skills_dir(tmp_path)
+    with_skill = SkillPromoter(active, project_root=tmp_path).promote("W")
+    assert (live / WORLD_SUBDIR / "demiurgos-W-worldskill@1.0.0" / "SKILL.md").is_file()
+
+    reverted = _StubLibrary(
+        published=published, activations={}, native_channels={"W": True}
+    )
+    without = SkillPromoter(reverted, project_root=tmp_path).promote("W")
+    assert without.promoted is True
+    assert without.revision != with_skill.revision
+    assert not (live / WORLD_SUBDIR).exists()
+    assert (live / TRANSVERSAL_SUBDIR / "demiurgos-alpha@1.0.0" / "SKILL.md").is_file()
+
+    # Repromoting the original desired set restores it, revision included.
+    restored = SkillPromoter(active, project_root=tmp_path).promote("W")
+    assert restored.promoted is True
+    assert restored.revision == with_skill.revision
+    assert (live / WORLD_SUBDIR / "demiurgos-W-worldskill@1.0.0" / "SKILL.md").is_file()
+
+
+def test_promote_collects_deactivated_skill_preserves_sentinels(tmp_path):
+    """Spec 'Deactivated skill is collected' + 'Sentinels preserved' (REQ-LP-4):
+    a skill dropped from the desired set disappears from the reconciled live
+    set, while `.gitkeep` and `.demiurgos-revision` survive."""
+    published = [
+        _published("alpha"),
+        _published("worldskill", foundational=False),
+    ]
+    active = _StubLibrary(
+        published=published,
+        activations={"W": _activation("W", "worldskill", "1.0.0")},
+        native_channels={"W": True},
+    )
+    live = resolve_skills_dir(tmp_path)
+    SkillPromoter(active, project_root=tmp_path).promote("W")
+    world_dir = live / WORLD_SUBDIR / "demiurgos-W-worldskill@1.0.0"
+    assert world_dir.is_dir()
+    assert (live / ".gitkeep").exists()
+    assert (live / REVISION_MARKER_NAME).exists()
+    assert not list(live.parent.glob(".skills-live-next-*"))
+
+    deactivated = _StubLibrary(
+        published=published, activations={}, native_channels={"W": True}
+    )
+    report = SkillPromoter(deactivated, project_root=tmp_path).promote("W")
+    assert report.ok is True and report.promoted is True
+    assert not world_dir.exists()
+    assert (live / ".gitkeep").exists()
+    assert (live / REVISION_MARKER_NAME).exists()
+    assert (live / TRANSVERSAL_SUBDIR / "demiurgos-alpha@1.0.0" / "SKILL.md").is_file()
+
+
+def test_promote_gc_containment_surfaces_violation(tmp_path):
+    """Spec 'Containment violation is surfaced' (REQ-LP-4 / REQ-MM-3): the
+    promoted-side GC is the same containment-checked walk — an escaping
+    candidate is reported, never deleted."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_bytes(b"secret bytes")
+    next_root = resolve_skills_dir(tmp_path).parent / ".skills-live-next-test"
+    legal = next_root / TRANSVERSAL_SUBDIR / "demiurgos-alpha@1.0.0"
+    legal.mkdir(parents=True)
+    (legal / "SKILL.md").write_bytes(b"# Body\n")
+    try:
+        (next_root / "evil").symlink_to(outside, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available on this platform")
+
+    deleted, issues = _gc_tree(
+        next_root, {f"{TRANSVERSAL_SUBDIR}/demiurgos-alpha@1.0.0/SKILL.md"}
+    )
+
+    assert secret.read_bytes() == b"secret bytes"
+    assert deleted == 0
+    assert any(issue.code == "containment-violation" for issue in issues)
+
+
+def test_materialize_skips_unchanged_marker_write(tmp_path):
+    """Spec 'Unchanged marker is a no-op' (REQ-LP-5): ``materialize()`` does not
+    rewrite the staging ``.demiurgos-revision`` when its bytes are unchanged, so
+    the gateway guard watching the marker stays a no-op on idempotent reruns."""
+    library = _StubLibrary(published=[_published("alpha")])
+    materializer = SkillMaterializer(library, project_root=tmp_path)
+    materializer.materialize(None)
+    marker = revision_marker_path(tmp_path)
+    mtime_before = marker.stat().st_mtime_ns
+
+    second = materializer.materialize(None)
+
+    assert second.ok is True and second.written == 0
+    assert marker.stat().st_mtime_ns == mtime_before  # not rewritten
+    assert list(resolve_staging_root(tmp_path).glob(".tmp-*")) == []
+
+    # A content change still rewrites the marker with the new revision.
+    changed = SkillMaterializer(
+        _StubLibrary(published=[_published("alpha"), _published("beta")]),
+        project_root=tmp_path,
+    ).materialize(None)
+    assert marker.read_bytes().decode("utf-8").strip() == changed.revision
+    assert changed.revision != second.revision

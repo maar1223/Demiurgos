@@ -224,3 +224,119 @@ def test_resolve_skills_dir_points_at_owned_folder(tmp_path):
     repo_root = tmp_path / "checkout"
     expected = (repo_root / "data" / "methodology" / "skills").resolve()
     assert resolve_skills_dir(repo_root) == expected
+
+
+# -- ensure_skills_toolset (WU-3.1, REQ-NC-3) ---------------------------------
+
+
+def test_ensure_skills_toolset_enabled_adds_skills_preserves_siblings(tmp_path):
+    """Spec 'Flag ON enables the toolset in the dedicated profile': `skills` is
+    appended to platform_toolsets.api_server and every other key/tool survives."""
+    from hermes_profile_config import ensure_skills_toolset
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        textwrap.dedent(
+            """\
+            model: test-model
+            platform_toolsets:
+              api_server:
+                - file
+                - terminal
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    assert ensure_skills_toolset(config, enabled=True) is True
+
+    data = _read_yaml(config)
+    assert data["platform_toolsets"]["api_server"] == ["file", "terminal", "skills"]
+    assert data["model"] == "test-model"
+    assert not list(config.parent.glob(f".{config.name}.*.tmp"))
+
+
+def test_ensure_skills_toolset_enabled_creates_missing_keys(tmp_path):
+    """A config without platform_toolsets gets the key created, not crashed on."""
+    from hermes_profile_config import ensure_skills_toolset
+
+    config = tmp_path / "nested" / "config.yaml"
+    assert ensure_skills_toolset(config, enabled=True) is True
+    assert _read_yaml(config)["platform_toolsets"]["api_server"] == ["skills"]
+
+
+def test_ensure_skills_toolset_disabled_removes_only_skills(tmp_path):
+    """Spec 'Flag OFF removes only skills': sibling tools and unrelated blocks
+    (skills.external_dirs) are preserved byte-for-byte."""
+    from hermes_profile_config import ensure_skills_toolset
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        textwrap.dedent(
+            """\
+            model: test-model
+            skills:
+              external_dirs:
+                - /some/dir
+            platform_toolsets:
+              api_server:
+                - file
+                - skills
+                - terminal
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    assert ensure_skills_toolset(config, enabled=False) is True
+
+    data = _read_yaml(config)
+    assert data["platform_toolsets"]["api_server"] == ["file", "terminal"]
+    assert data["model"] == "test-model"
+    assert data["skills"]["external_dirs"] == ["/some/dir"]
+
+
+def test_ensure_skills_toolset_desired_state_is_noop_byte_identical(tmp_path):
+    """Spec 'Flag OFF leaves the toolset unchanged' (REQ-NC-3 scenario 3): when
+    the config is already in the desired state the writer returns False and
+    writes nothing — a zero-ON config stays byte-identical."""
+    from hermes_profile_config import ensure_skills_toolset
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "platform_toolsets:\n  api_server:\n    - file\n", encoding="utf-8"
+    )
+    before = config.read_bytes()
+    assert ensure_skills_toolset(config, enabled=False) is False
+    assert config.read_bytes() == before
+
+    config_on = tmp_path / "config-on.yaml"
+    config_on.write_text(
+        "platform_toolsets:\n  api_server:\n    - file\n    - skills\n",
+        encoding="utf-8",
+    )
+    before_on = config_on.read_bytes()
+    assert ensure_skills_toolset(config_on, enabled=True) is False
+    assert config_on.read_bytes() == before_on
+
+
+def test_ensure_skills_toolset_scalar_api_server_coerced(tmp_path):
+    """A scalar api_server is coerced to a list without data loss."""
+    from hermes_profile_config import ensure_skills_toolset
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "platform_toolsets:\n  api_server: file\n", encoding="utf-8"
+    )
+    assert ensure_skills_toolset(config, enabled=True) is True
+    assert _read_yaml(config)["platform_toolsets"]["api_server"] == ["file", "skills"]
+
+
+def test_ensure_skills_toolset_missing_config_starts_empty(tmp_path):
+    """A missing config produces a valid mapping with the skills tool."""
+    from hermes_profile_config import ensure_skills_toolset
+
+    config = tmp_path / "nested" / "config.yaml"
+    assert ensure_skills_toolset(config, enabled=True) is True
+    data = _read_yaml(config)
+    assert data["platform_toolsets"]["api_server"] == ["skills"]

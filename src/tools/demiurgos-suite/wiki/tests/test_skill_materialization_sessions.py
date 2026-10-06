@@ -10,8 +10,10 @@ atomically-written store with lazy TTL pruning. Covered scenarios (spec
   revision change allocates a new epoch, a world change allocates a new epoch).
 - The durable store is atomic and versioned and degrades safely when corrupt.
 - TTL pruning drops a stale world and keeps the active one.
-- The registry is exercised inertly: its only production references live inside
-  the ``api_server`` materialization helper, never on the live ``/v1/runs`` path.
+- D4 activation (WU-3.1, REQ-LP-6 / REQ-MM-2): the registry feeds the live run
+  path — the ``/ai/ask`` submission keys its Hermes ``session_id`` through
+  ``api_server._channel_session_id`` (epoch-suffixed when the native channel is
+  active), and ``epoch_for`` reads the stored epoch read-only.
 """
 
 from __future__ import annotations
@@ -198,8 +200,7 @@ def test_corrupt_store_degrades_to_empty_registry(tmp_path):
     assert _read_store(tmp_path)["worlds"]["W"]["revision"] == "R"
 
 
-# -- Inert wiring (spec: Session-revision keying is assistant-invisible) ------
-
+# -- D4 activation (WU-3.1, REQ-LP-6 / REQ-MM-2) ------------------------------
 
 def _function_body(text: str, header: str) -> list[str]:
     """Return the header line plus every indented line of a module-level def."""
@@ -213,25 +214,56 @@ def _function_body(text: str, header: str) -> list[str]:
     return body
 
 
-def test_registry_is_exercised_inertly_not_on_the_run_path():
-    """The registry is only referenced from the api_server materialization
-    helper, never from the ``/v1/runs`` submission path (inert plumbing)."""
+def test_epoch_registry_feeds_the_run_path_through_channel_session_id():
+    """D4/REQ-MM-2 activation: the epoch is no longer inert — the ``/ai/ask``
+    run submission wires ``session_id`` through ``_channel_session_id``
+    (epoch-suffixed when the native channel is active), and the promotion seam
+    records the promoted ``(world, revision)`` epoch. This rewrites the Etapa-1
+    'registry is inert' assertion: the run-path reference now exists by design.
+    """
     text = _API_SERVER.read_text(encoding="utf-8")
     helper = _function_body(text, "def _materialize_skills(")
 
     assert any("SkillMaterializer" in line for line in helper)
     assert any("SessionEpochRegistry" in line for line in helper)
     assert any(".observe(" in line for line in helper)
-    assert not any("/v1/runs" in line for line in helper)
+    assert any("SkillPromoter" in line for line in helper)
+    assert any("_native_channel_enabled" in line for line in helper)
+    assert not any("/v1/runs" in line for line in helper)  # still no raw seam
 
-    total = sum(
-        1
-        for line in text.splitlines()
-        if "SessionEpochRegistry" in line or "session_key_for" in line
-    )
-    in_helper = sum(
-        1
-        for line in helper
-        if "SessionEpochRegistry" in line or "session_key_for" in line
-    )
-    assert total == in_helper, "registry references leaked outside the inert helper"
+    # The run-path helper consumes the registry (epoch-suffixed session id).
+    channel = _function_body(text, "def _channel_session_id(")
+    assert any("SessionEpochRegistry" in line for line in channel)
+    assert any("epoch_for(" in line for line in channel)
+    assert any("_native_channel_enabled" in line for line in channel)
+
+    # The /ai/ask streaming submission passes the channel session id through.
+    ask = _function_body(text, "async def ai_ask_activity_endpoint(")
+    assert any("HermesActivityRequest(" in line for line in ask)
+    assert any("session_id=_channel_session_id(" in line for line in ask)
+
+
+def test_epoch_for_reads_stored_epoch_without_mutation(tmp_path):
+    """``epoch_for`` is the read-only run-path lookup: it returns the stored
+    epoch id and never rewrites the store."""
+    registry = _registry(tmp_path)
+    epoch = registry.observe("W", "R")
+    store_before = _store(tmp_path).read_bytes()
+
+    assert registry.epoch_for("W") == epoch
+    assert _store(tmp_path).read_bytes() == store_before  # read-only
+
+
+def test_epoch_for_unknown_and_corrupt_store_degrades_to_none(tmp_path):
+    """``epoch_for`` never raises: an unknown world, a missing store, or a
+    malformed store degrades to ``None`` (corrupt-store degradation preserved)."""
+    assert _registry(tmp_path).epoch_for("unknown") is None
+    assert _registry(tmp_path).epoch_for("") is None
+
+    store = _store(tmp_path)
+    store.parent.mkdir(parents=True, exist_ok=True)
+    store.write_text("{not valid json", encoding="utf-8")
+    registry = SessionEpochRegistry(store)
+    assert registry.epoch_for("W") is None
+    # The registry still recovers on the next mutation.
+    assert registry.observe("W", "R") == session_key_for("W", "R")

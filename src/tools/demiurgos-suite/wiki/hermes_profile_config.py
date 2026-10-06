@@ -22,6 +22,8 @@ installer so the registered path is a single source of truth.
 
 from __future__ import annotations
 
+import os
+import uuid
 from pathlib import Path
 
 #: Canonical location of the Demiurgos-owned skills folder under a checkout root.
@@ -66,4 +68,58 @@ def merge_skills_external_dirs(config_path: Path, skills_dir: Path) -> bool:
     config_path.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
     )
+    return True
+
+
+def ensure_skills_toolset(config_path: Path, *, enabled: bool) -> bool:
+    """Add or remove ONLY ``skills`` in ``platform_toolsets.api_server``.
+
+    Runtime reconcile writer (design Q2, spec REQ-NC-3): loading the YAML,
+    ensuring ``platform_toolsets.api_server`` is a list, appending ``"skills"``
+    when ``enabled`` or removing only ``"skills"`` when not — every other key,
+    tool, and block is preserved. The write is atomic (temp sibling +
+    ``os.replace``) and the whole operation never crashes on missing/empty/
+    non-mapping configs.
+
+    Returns True when the file was written, False when it already was in the
+    desired state (so a zero-world-OFF config without ``skills`` is a no-op
+    that leaves the dedicated profile byte-identical).
+    """
+    import yaml
+
+    data = {}
+    if config_path.is_file():
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict):
+            data = loaded
+    toolsets = data.get("platform_toolsets")
+    if not isinstance(toolsets, dict):
+        toolsets = {}
+        data["platform_toolsets"] = toolsets
+    tools = toolsets.get("api_server")
+    if not isinstance(tools, list):
+        tools = [tools] if isinstance(tools, str) else []
+        toolsets["api_server"] = tools
+    if enabled:
+        if "skills" in tools:
+            return False
+        tools.append("skills")
+    else:
+        if "skills" not in tools:
+            return False
+        tools = [tool for tool in tools if tool != "skills"]
+        toolsets["api_server"] = tools
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = config_path.with_name(f".{config_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(
+            yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+        )
+        os.replace(str(tmp), str(config_path))
+    except BaseException:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     return True
