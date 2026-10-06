@@ -702,6 +702,21 @@ class MethodologyLibrary:
                     f"{compiled.skill_id}@{compiled.version} is already published "
                     "with different content; published versions are immutable."
                 )
+            # Trigger approval gate (Etapa 2, TD-A). It sits AFTER the
+            # idempotent early-return above so an identical re-publish is never
+            # newly refused (forward-only grandfathering, D5), and it validates
+            # the digest of ``compiled.description`` — the exact value
+            # ``_published_record`` writes — so any change between approval and
+            # publish (including a last-moment ``draft_payload["description"]``
+            # sync) fails closed by construction. No immutable version is
+            # created on refusal and no publish-side state advances.
+            approval_record = draft_record.get("trigger_approval")
+            if (
+                not approval_record
+                or approval_record.get("digest")
+                != normalized_trigger_digest(compiled.description)
+            ):
+                raise TriggerNotApprovedError("trigger_not_approved")
             record = self._published_record(
                 compiled,
                 now=now,
@@ -716,6 +731,10 @@ class MethodologyLibrary:
                 # it stays visible across the lifecycle (REQ-CC-21).
                 parent_skill_id=draft_record.get("parent_skill_id"),
                 parent_version=parent_version,
+                # Etapa 2: echo the validated approval onto the immutable
+                # published record so downstream consumes an approved trigger
+                # by construction; the record is never rewritten afterwards.
+                trigger_approval=TriggerApproval(**approval_record),
             )
             self._published[key] = record
             self._save_locked()
@@ -750,6 +769,7 @@ class MethodologyLibrary:
         trust_attributes: tuple[str, ...],
         parent_skill_id: str | None = None,
         parent_version: str | None = None,
+        trigger_approval: TriggerApproval | None = None,
     ) -> dict[str, Any]:
         """Build the immutable published record dict shared by publish paths.
 
@@ -757,6 +777,8 @@ class MethodologyLibrary:
         ``install_published_version()`` both land here, so a seeded record and
         a draft-published record carry the same fields. Classification and
         trust attributes arrive server-derived (never client-claimed).
+        ``trigger_approval`` is the approved-trigger echo; the seed path passes
+        ``None`` (it bypasses the publish gate — forward-only grandfathering).
         """
         return {
             "skill_id": compiled.skill_id,
@@ -778,6 +800,11 @@ class MethodologyLibrary:
             "parent_skill_id": parent_skill_id,
             "parent_version": parent_version,
             "adjuntos": [entry.as_dict() for entry in compiled.adjuntos],
+            # Etapa 2: approved-trigger provenance. ``None`` for a seeded record
+            # (no draft, no approval) and for pre-Etapa-2 records; tolerant read.
+            "trigger_approval": (
+                asdict(trigger_approval) if trigger_approval is not None else None
+            ),
         }
 
     def install_published_version(
@@ -845,6 +872,10 @@ class MethodologyLibrary:
                 now=_utcnow(),
                 clasificacion=clasificacion,
                 trust_attributes=trust_attributes,
+                # Seed path: no draft and no approval — it deliberately bypasses
+                # the publish gate, so the installed record carries no trigger
+                # approval (forward-only grandfathering, D5).
+                trigger_approval=None,
             )
             self._published[key] = record
             self._save_locked()

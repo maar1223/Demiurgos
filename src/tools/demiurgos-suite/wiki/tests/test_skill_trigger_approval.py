@@ -219,9 +219,38 @@ class TestTolerantRead:
     def test_published_record_without_provenance_reads_none(
         self, tmp_path: Path
     ) -> None:
-        library = _library(tmp_path)
-        library.publish(_draft(library))
-        published = library.get_published("guided-character-v1", "1.2.0")
+        # A published record predating Etapa 2 (or installed as a seed, which
+        # bypasses the publish gate) carries no ``trigger_approval``; the read
+        # path must tolerate its absence. A draft publish can no longer produce
+        # such a record (the gate refuses it), so load one from disk.
+        store = tmp_path / "library.json"
+        store.write_text(
+            json.dumps(
+                {
+                    "drafts": {},
+                    "published": {
+                        "guided-character-v1@1.2.0": {
+                            "skill_id": "guided-character-v1",
+                            "version": "1.2.0",
+                            "name": "Guided character methodology",
+                            "description": "Legacy trigger",
+                            "phases": [],
+                            "language": "es",
+                            "source": "## Legacy\n",
+                            "digest": "a" * 64,
+                            "published_at": "2026-01-01T00:00:00+00:00",
+                            "deleted_at": None,
+                        },
+                    },
+                    "activations": {},
+                    "history": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        published = MethodologyLibrary(store).get_published(
+            "guided-character-v1", "1.2.0"
+        )
         assert published is not None
         assert published.trigger_approval is None
 

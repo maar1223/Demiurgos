@@ -73,6 +73,9 @@ def _publish(
         skill_id=skill_id, version=version, name=name, source=_valid_source(),
         description="A test methodology.",
     )
+    # Etapa 2 trigger gate: record the approval the review surface would capture
+    # so the publish is not refused.
+    library.approve_trigger(draft_id, "A test methodology.", "author")
     library.publish(draft_id)
 
 
