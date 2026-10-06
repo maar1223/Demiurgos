@@ -25,14 +25,17 @@ with respect to what the model sees. Covered scenarios (spec cross-cutting
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
 
+import api_server
 from contract_projection import project_contract_markdown
 from hermes_profile_config import merge_skills_external_dirs, resolve_skills_dir
 from methodology_library import (
@@ -62,10 +65,20 @@ GIT_AVAILABLE = shutil.which("git") is not None
 class _StubLibrary:
     """Minimal in-memory library seam (published + activations + companions)."""
 
-    def __init__(self, *, published=(), activations=None, companions=None):
+    def __init__(self, *, published=(), activations=None, companions=None, native=None):
         self._published = {(p.skill_id, p.version): p for p in published}
         self._activations = dict(activations or {})
         self._companions = dict(companions or {})
+        self._native = dict(native or {})
+
+    def native_channel_enabled(self, world):
+        return bool(self._native.get(world, False))
+
+    def set_native_channel(self, world, enabled):
+        if enabled:
+            self._native[world] = True
+        else:
+            self._native.pop(world, None)
 
     def list_published(self):
         return list(self._published.values())
@@ -291,3 +304,119 @@ def test_legacy_channel_modules_unchanged_vs_merge_base():
         f"legacy channel modules changed vs merge-base {merge_base}: "
         f"{result.stdout}{result.stderr}"
     )
+
+
+# -- Native channel flag gates: zero-ON byte-identical across the request matrix
+
+
+class _FakeRouter:
+    """Deterministic router seam whose legacy result proves the OFF control."""
+
+    def __init__(self, skill_id="narrative-draft"):
+        self._skill_id = skill_id
+
+    async def route(self, prompt, mundo, distilled_state=None):
+        return api_server.SkillRouteResult(self._skill_id, 0.9, "llm", True)
+
+
+def _native_published():
+    return _published("guia", foundational=False)
+
+
+@pytest.fixture()
+def native_matrix(tmp_path, monkeypatch):
+    """Hermetic zero-ON env: dedicated profile + mundo, probe OPEN, personal
+    ``~/.hermes`` never resolved (P0-8). Mirrors the WU-3.2 suppression env so
+    the cross-cutting default byte-identical gate can assert the flag-OFF
+    control on the same seams the flag-ON suppression is tested against."""
+    project_root = tmp_path / "proyecto"
+    (project_root / "mundos" / "W").mkdir(parents=True)
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir()
+    monkeypatch.setattr(api_server, "PROJECT_ROOT", project_root)
+    monkeypatch.setattr(api_server, "MUNDOS_DIR", project_root / "mundos")
+    monkeypatch.setattr(api_server, "_active_world", lambda: "W")
+    library = _StubLibrary(
+        published=[_native_published()],
+        activations={"W": _activation("W", "guia", "1.0.0")},
+    )
+    monkeypatch.setattr(api_server, "_methodology_library", lambda: library)
+    monkeypatch.setattr(api_server, "_SEMANTIC_PROVIDER", None)
+    monkeypatch.setattr(api_server, "_PROBE_PASSED", True)
+    monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+    api_server._NATIVE_HEALTH_MEMO.clear()
+    ns = SimpleNamespace(
+        project_root=project_root,
+        library=library,
+        hermes_home=hermes_home,
+        profile_config=hermes_home / "config.yaml",
+    )
+    yield ns
+    api_server._NATIVE_HEALTH_MEMO.clear()
+
+
+def _write_profile(native_matrix, tools=("file",)):
+    native_matrix.profile_config.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["platform_toolsets:", "  api_server:"] + [f"    - {t}" for t in tools]
+    native_matrix.profile_config.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _companions():
+    return [SimpleNamespace(skill_id="guia", version="1.0.0", world="W")]
+
+
+def test_zero_on_state_is_legacy(native_matrix):
+    """With zero worlds opted in the tri-state is ``legacy`` (REQ-NC-2 / D1)."""
+    assert api_server._native_channel_enabled("W") is False
+    assert api_server._active_channel_state() == "legacy"
+
+
+def test_zero_on_full_request_matrix_is_byte_identical(native_matrix, monkeypatch):
+    """REQ-LMP-3 / cross-cutting default byte-identical: with zero worlds opted
+    in every legacy seam over the full request matrix behaves exactly as at
+    baseline — (a) non-guided ``/ai/ask`` routing, (b) streaming companion
+    contract, (c) ``/api/chat`` semantic gate, (d) guided contract resolver.
+
+    Suppression applies ONLY when the flag is ON (WU-3.2); the existing suite
+    is never inverted to a "deleted" expectation (D3)."""
+    fake = _FakeRouter("narrative-draft")
+    monkeypatch.setattr(api_server, "_SKILL_ROUTER", fake)
+
+    # (a) non-guided /ai/ask self-contained routing: legacy router result.
+    assert asyncio.run(api_server._route_skill("Hola", "W", None)) == "narrative-draft"
+
+    # (b) streaming companion contract: the legacy marker is still emitted.
+    companion = api_server._companion_contract_for("guia", _companions(), "W")
+    assert companion is not None
+    assert "[Companion methodology:" in companion
+
+    # (c) /api/chat semantic gate: unwired provider fails closed, and no legacy
+    # compiled-contract content leaks into the gate envelope.
+    gate = asyncio.run(api_server._semantic_gate("W", "Hola"))
+    assert gate.unavailable is True
+    assert "compiled_contract" not in str(gate.as_dict())
+
+    # (d) guided path resolvers: the compiled contract is not suppressed.
+    assert api_server._compiled_contract_markdown("W") is not None
+    # no seeded specimen carrier at baseline ⇒ None (unchanged by the flag).
+    assert (
+        api_server._convergence_specimen_markdown(
+            "W", api_server.DEFAULT_FLOW_TYPE, None
+        )
+        is None
+    )
+
+    # D4 session id is unchanged when the channel is legacy.
+    assert api_server._channel_session_id("sess-1") == "sess-1"
+
+
+def test_zero_on_toolset_reconcile_is_config_byte_identical(native_matrix):
+    """REQ-NC-3 scenario 3: with zero ON and the probe gate open the reconcile
+    is a no-op and the dedicated profile config stays byte-identical."""
+    _write_profile(native_matrix, ("file",))
+    before = native_matrix.profile_config.read_bytes()
+    assert api_server._sync_native_channel("W") is False
+    assert native_matrix.profile_config.read_bytes() == before
+    data = yaml.safe_load(native_matrix.profile_config.read_text(encoding="utf-8"))
+    assert data["platform_toolsets"]["api_server"] == ["file"]
+    assert "skills" not in data["platform_toolsets"]["api_server"]
