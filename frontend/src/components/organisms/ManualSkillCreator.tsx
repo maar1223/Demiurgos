@@ -1,11 +1,16 @@
 import { useState } from "react";
 import {
+  approveDraftTrigger,
   createMethodologyDraft,
   publishMethodologyDraft,
 } from "@/api/methodologies";
+import { ApiError, type TriggerApproval } from "@/api/types";
 import { Button } from "@/components/atoms/Button";
 import { ErrorBanner } from "@/components/organisms/ErrorBanner";
+import { TriggerApprovalBlock } from "@/components/organisms/TriggerApprovalBlock";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
+import { localizeApiError } from "@/i18n/errors";
+import { isTriggerApproved } from "@/lib/triggerBound";
 
 /**
  * Manual authoring mode — markdown draft form (REQ-CC-2).
@@ -13,6 +18,12 @@ import { useAppLanguage } from "@/hooks/useAppLanguage";
  * Lets the Author publish a methodology by typing the skill id, version, name
  * and Markdown source directly. World-agnostic: it has no world or taller
  * selector — publishing a draft never activates anything for a world.
+ *
+ * Etapa 2 gate (D2/D4/D6/D7): the description is the skill's trigger. The
+ * Author edits/approves it through one `TriggerApprovalBlock`; the approve
+ * action creates the editable draft on first use (the approval binds to a
+ * draft) and records the approval. Publish stays disabled until a matching
+ * approval exists, and the server re-validates regardless of the client state.
  */
 export function ManualSkillCreator() {
   const { t } = useAppLanguage();
@@ -20,29 +31,76 @@ export function ManualSkillCreator() {
   const [version, setVersion] = useState("");
   const [name, setName] = useState("");
   const [source, setSource] = useState("");
+  const [description, setDescription] = useState("");
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [approval, setApproval] = useState<TriggerApproval | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handlePublish = async () => {
-    if (!skillId.trim() || !version.trim() || !name.trim() || !source.trim()) {
-      return;
-    }
+  const fieldsReady =
+    skillId.trim() !== "" &&
+    version.trim() !== "" &&
+    name.trim() !== "" &&
+    source.trim() !== "";
+  const approved = isTriggerApproved(approval, description);
+
+  const resetForm = () => {
+    setSkillId("");
+    setVersion("");
+    setName("");
+    setSource("");
+    setDescription("");
+    setDraftId(null);
+    setApproval(null);
+  };
+
+  const fail = (cause: unknown) => {
+    setError(
+      cause instanceof ApiError
+        ? localizeApiError(cause, t)
+        : t("skillCreate.error"),
+    );
+  };
+
+  /** The single explicit approve action (D6). On first use it creates the
+   *  draft the approval binds to; afterwards it re-approves the same draft. */
+  const handleApprove = async (text: string) => {
+    if (busy || !fieldsReady) return;
     setBusy(true);
     setError(null);
     try {
-      const draft = await createMethodologyDraft({
-        skill_id: skillId.trim(),
-        version: version.trim(),
-        name: name.trim(),
-        source,
-      });
-      await publishMethodologyDraft(draft.draft_id);
-      setSkillId("");
-      setVersion("");
-      setName("");
-      setSource("");
-    } catch {
-      setError(t("skillCreate.error"));
+      let id = draftId;
+      if (!id) {
+        const draft = await createMethodologyDraft({
+          skill_id: skillId.trim(),
+          version: version.trim(),
+          name: name.trim(),
+          source,
+          description: text.trim() || undefined,
+        });
+        id = draft.draft_id;
+        setDraftId(id);
+      }
+      const result = await approveDraftTrigger(id, text);
+      setApproval(result.trigger_approval);
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Publish — gated on a matching approval (the client gate is UX only; the
+   *  server refuses without a valid approval). */
+  const handlePublish = async () => {
+    if (!draftId || !approved || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await publishMethodologyDraft(draftId);
+      resetForm();
+    } catch (cause) {
+      fail(cause);
     } finally {
       setBusy(false);
     }
@@ -95,7 +153,15 @@ export function ManualSkillCreator() {
             onChange={(event) => setSource(event.target.value)}
           />
         </label>
-        <Button type="submit" size="sm" disabled={busy}>
+        <TriggerApprovalBlock
+          value={description}
+          onChange={setDescription}
+          approval={approval}
+          onApprove={handleApprove}
+          disabled={busy}
+          approveDisabled={!fieldsReady}
+        />
+        <Button type="submit" size="sm" disabled={busy || !approved}>
           {t("skillCreate.submit")}
         </Button>
       </form>

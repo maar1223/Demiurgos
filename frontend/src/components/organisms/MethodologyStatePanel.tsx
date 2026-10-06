@@ -12,6 +12,7 @@ import type { Lens } from "@/components/organisms/LensToggle";
 import { useAppLanguage } from "@/hooks/useAppLanguage";
 import { GLOBAL_ASSISTANT_CONTEXT } from "@/hooks/useAIAssistantSessions";
 import { computeSkillState } from "@/lib/tallerStates";
+import { isTriggerApproved } from "@/lib/triggerBound";
 import {
   AXIS_SCOPE,
   AXIS_TERMS,
@@ -149,6 +150,12 @@ export function MethodologyStatePanel({
 
   const talleresCompatibles = entry?.talleres_compatibles ?? [];
   const etiquetas = entry?.etiquetas ?? [];
+  /** Etapa 2 trigger approval state (D4): the selected version's approved
+   *  trigger is shown distinguishably from an unapproved/legacy one. */
+  const triggerApproved = isTriggerApproved(
+    entry?.trigger_approval,
+    entry?.description ?? "",
+  );
   const isMiMundo = lens === "mi-mundo";
   /** Companions of the current world (status-derived; absent key → none).
    *  The selected version is ON when it appears in this list. */
@@ -262,6 +269,28 @@ export function MethodologyStatePanel({
               );
             })}
           </ul>
+        )}
+      </div>
+
+      {/* Etapa 2 trigger approval state (D4): no tree filtering — the
+          unapproved state is visible here and never reads as ready-to-publish. */}
+      <div className="rounded-lg border border-edge bg-surface-raised p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-heading text-small font-semibold text-primary">
+            {t("triggerApproval.title")}
+          </h3>
+          <span data-testid="methodology-trigger-badge">
+            <Badge variant={triggerApproved ? "success" : "warning"}>
+              {triggerApproved
+                ? t("triggerApproval.badgeApproved")
+                : t("triggerApproval.badgePending")}
+            </Badge>
+          </span>
+        </div>
+        {entry?.description && (
+          <p className="mt-2 break-words text-small text-muted">
+            {entry.description}
+          </p>
         )}
       </div>
 
