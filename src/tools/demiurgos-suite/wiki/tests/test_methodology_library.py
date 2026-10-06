@@ -33,9 +33,12 @@ from methodology_library import (  # noqa: E402
     NotPublishedError,
     FOUNDATIONAL_CHARACTER_SKILL_ID,
     FoundationalImmutableError,
+    PublishedVersion,
+    TriggerNotApprovedError,
     ValidationError,
     _bump_version,
     _version_key,
+    normalized_trigger_digest,
 )
 from methodology_compiler import AttachmentEntry, compile_methodology  # noqa: E402
 from methodology_seed import install_seeds  # noqa: E402
@@ -71,6 +74,22 @@ def _draft(library: MethodologyLibrary) -> str:
     )
 
 
+def _publish(library: MethodologyLibrary, draft_id: str) -> PublishedVersion:
+    """Approve the draft's authored description, then publish it.
+
+    Etapa 2's trigger gate (WU 2.1b) refuses a publish without a matching
+    approval. These lifecycle tests exercise the surrounding publish paths, so
+    record the approval the review surface would normally capture — but only
+    when the draft carries a non-empty description, since a description-less
+    draft's publish is expected to fail before the gate (e.g. the
+    already-published checks). Returns the published version.
+    """
+    draft = library.get_draft(draft_id)
+    if draft is not None and draft.description:
+        library.approve_trigger(draft_id, draft.description, "author")
+    return library.publish(draft_id)
+
+
 class TestDrafts:
     def test_draft_is_editable(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
@@ -104,31 +123,31 @@ class TestCompilerGate:
         draft_id = _draft(library)
         library.update_draft(draft_id, source=_valid_source() + "\npermissions: all\n")
         with pytest.raises(ValidationError):
-            library.publish(draft_id)
+            _publish(library, draft_id)
 
 
 class TestImmutablePublish:
     def test_publish_creates_immutable_version(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
         draft_id = _draft(library)
-        published = library.publish(draft_id)
+        published = _publish(library, draft_id)
         assert published.version == "1.2.0"
         assert library.get_published("guided-character-v1", "1.2.0") == published
         assert library.list_published()[0].skill_id == "guided-character-v1"
 
     def test_republish_with_different_digest_is_rejected(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        library.publish(_draft(library))
+        _publish(library, _draft(library))
         other = library.create_draft(
             skill_id="guided-character-v1", version="1.2.0",
             name="Different", source="Diferente.\n",
         )
         with pytest.raises(AlreadyPublishedError):
-            library.publish(other)
+            _publish(library, other)
 
     def test_published_version_is_immutable(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        published = library.publish(_draft(library))
+        published = _publish(library, _draft(library))
         with pytest.raises(Exception):
             published.name = "changed"  # type: ignore[misc]
 
@@ -136,7 +155,7 @@ class TestImmutablePublish:
 class TestActivation:
     def test_activate_by_world(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        library.publish(_draft(library))
+        _publish(library, _draft(library))
         activation = library.activate("nec", "guided-character-v1", "1.2.0")
         assert activation.world == "nec"
         assert library.active_for("nec") == activation
@@ -149,19 +168,20 @@ class TestActivation:
 
     def test_deactivate_clears_world(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        library.publish(_draft(library))
+        _publish(library, _draft(library))
         library.activate("nec", "guided-character-v1", "1.2.0")
         library.deactivate("nec")
         assert library.active_for("nec") is None
 
     def test_rollback_restores_previous_version(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        library.publish(_draft(library))
+        _publish(library, _draft(library))
         v2 = library.create_draft(
             skill_id="guided-character-v1", version="1.3.0",
             name="v2", source="Nueva.\n",
+            description="Una versión nueva.",
         )
-        library.publish(v2)
+        _publish(library, v2)
         library.activate("nec", "guided-character-v1", "1.3.0")
         library.activate("nec", "guided-character-v1", "1.2.0")
         library.rollback("nec")
@@ -172,7 +192,7 @@ class TestActivation:
 class TestSoftDelete:
     def test_soft_delete_is_recoverable(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        library.publish(_draft(library))
+        _publish(library, _draft(library))
         library.soft_delete("guided-character-v1", "1.2.0")
         assert library.list_published() == []
         library.restore("guided-character-v1", "1.2.0")
@@ -180,7 +200,7 @@ class TestSoftDelete:
 
     def test_deleted_cannot_be_activated(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        library.publish(_draft(library))
+        _publish(library, _draft(library))
         library.soft_delete("guided-character-v1", "1.2.0")
         with pytest.raises(NotPublishedError):
             library.activate("nec", "guided-character-v1", "1.2.0")
@@ -202,7 +222,7 @@ class TestFoundationalImmutability:
             clasificacion="Oficiales",
             trust_attributes=("fundacional", "verified"),
         )
-        library.publish(draft_id)
+        _publish(library, draft_id)
 
     def test_soft_delete_foundational_raises_and_preserves_state(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
@@ -233,7 +253,7 @@ class TestFoundationalImmutability:
             clasificacion="Oficiales",
             trust_attributes=("verified",),
         )
-        library.publish(draft_id)
+        _publish(library, draft_id)
         library.soft_delete("signed-official", "1.0.0")
         assert library.get_published("signed-official", "1.0.0") is None
         assert library.list_published() == []
@@ -429,7 +449,7 @@ class TestCompanions:
             name="Skill", source=_valid_source(),
             description="A companion skill.",
         )
-        library.publish(draft_id)
+        _publish(library, draft_id)
 
     def test_companions_persist_and_reload(self, tmp_path: Path) -> None:
         store = tmp_path / "library.json"
@@ -515,7 +535,7 @@ class TestNoKernelAccess:
     def test_library_never_writes_outside_its_root(self, tmp_path: Path) -> None:
         root = tmp_path / "library.json"
         library = MethodologyLibrary(root)
-        library.publish(_draft(library))
+        _publish(library, _draft(library))
         # Nothing else may have been created next to the store file.
         assert sorted(p.name for p in tmp_path.iterdir()) == ["library.json"]
 
@@ -565,6 +585,7 @@ class TestInventoryRecords:
         draft_id = library.create_draft(
             skill_id="guided-character-v1", version="1.2.0",
             name="Guided character methodology", source=_valid_source(),
+            description=_valid_manifest()["description"],
             taller="Creación",
             talleres_compatibles=("Investigación",),
             categoria_funcional="Análisis",
@@ -572,7 +593,7 @@ class TestInventoryRecords:
             clasificacion="Oficiales",
             trust_attributes=("verified",),
         )
-        published = library.publish(draft_id)
+        published = _publish(library, draft_id)
         assert published.taller == "Creación"
         assert published.talleres_compatibles == ("Investigación",)
         assert published.categoria_funcional == "Análisis"
@@ -585,7 +606,7 @@ class TestInventoryRecords:
         an idempotent republish is recognized (stored version returned, no
         ``AlreadyPublishedError``)."""
         library = _library(tmp_path)
-        plain = library.publish(_draft(library))
+        plain = _publish(library, _draft(library))
         with_inventory = library.create_draft(
             skill_id="guided-character-v1", version="1.2.0",
             name="Guided character methodology", source=_valid_source(),
@@ -595,7 +616,7 @@ class TestInventoryRecords:
             categoria_funcional="Análisis",
             etiquetas=("lore",),
         )
-        republished = library.publish(with_inventory)
+        republished = _publish(library, with_inventory)
         assert republished.digest == plain.digest
         assert republished == plain  # idempotent: stored version returned
 
@@ -644,11 +665,12 @@ class TestInventoryRecords:
         draft_id = library.create_draft(
             skill_id="guided-character-v1", version="1.2.0",
             name="Guided character methodology", source=_valid_source(),
+            description=_valid_manifest()["description"],
             taller="Creación",
             etiquetas=("lore",),
             clasificacion="Comunitarias",
         )
-        library.publish(draft_id)
+        _publish(library, draft_id)
         reloaded = MethodologyLibrary(store)
         published = reloaded.get_published("guided-character-v1", "1.2.0")
         assert published is not None
@@ -691,7 +713,7 @@ class TestAdjuntosRegistry:
             description=_valid_manifest()["description"],
             adjuntos=self._entries(),
         )
-        published = library.publish(draft_id)
+        published = _publish(library, draft_id)
         assert [e.as_dict() for e in published.adjuntos] == [
             e.as_dict() for e in self._entries()
         ]
@@ -711,7 +733,7 @@ class TestAdjuntosRegistry:
 
     def test_publish_without_adjuntos_defaults_empty(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        published = library.publish(_draft(library))
+        published = _publish(library, _draft(library))
         assert published.adjuntos == ()
 
     def test_update_draft_persists_adjuntos_round_trip(self, tmp_path: Path) -> None:
@@ -807,7 +829,7 @@ class TestDerivedDrafts:
             trust_attributes=trust_attributes,
             adjuntos=adjuntos,
         )
-        library.publish(draft_id)
+        _publish(library, draft_id)
 
     def test_create_derived_draft_injects_provenance_from_published_record(
         self, tmp_path: Path,
@@ -847,7 +869,7 @@ class TestDerivedDrafts:
             clasificacion="Oficiales",
             trust_attributes=("fundacional", "verified"),
         )
-        library.publish(original_id)
+        _publish(library, original_id)
         derived_id = library.create_derived_draft(
             "guided-character-v1", "1.2.0",
             seed_source=_valid_source() + "\n# adaptado\n",
@@ -920,7 +942,7 @@ class TestDerivedDrafts:
             "guided-character-v1", "1.2.0",
             seed_source=_valid_source(), name="Adaptada",
         )
-        published = library.publish(derived_id)
+        published = _publish(library, derived_id)
         assert [entry.as_dict() for entry in published.adjuntos] == [
             entry.as_dict() for entry in self._pins()
         ]
@@ -980,7 +1002,7 @@ class TestDerivedDrafts:
             "guided-character-v1", "1.2.0",
             seed_source=_valid_source(), name="Adaptada",
         )
-        published = library.publish(derived_id)
+        published = _publish(library, derived_id)
         # REQ-CC-19: S@1.2.1 with provenance pointing to S@1.2.0.
         assert published.version == "1.2.1"
         assert published.parent_skill_id == "guided-character-v1"
@@ -1008,7 +1030,7 @@ class TestDerivedDrafts:
         with library._lock:
             library._drafts[derived_id]["version"] = "1.2.0"
         with pytest.raises(ValidationError):
-            library.publish(derived_id)
+            _publish(library, derived_id)
         assert library.get_published("guided-character-v1", "1.2.0") is not None
         assert library.get_published("guided-character-v1", "1.2.1") is None
 
@@ -1050,7 +1072,7 @@ class TestReservedSkillId:
             name="Skill Madre", source=_valid_source(),
             description="La skill madre del taller.",
         )
-        published = library.publish(draft_id)
+        published = _publish(library, draft_id)
         assert published.skill_id == FOUNDATIONAL_CHARACTER_SKILL_ID
         assert published.version == "1.0.0"
 
@@ -1061,7 +1083,7 @@ class TestReservedSkillId:
             name="Skill Madre", source=_valid_source(),
             description="La skill madre del taller.",
         )
-        library.publish(foundational)
+        _publish(library, foundational)
         # An import-derived draft carries server-injected parent_skill_id;
         # publishing it must fail closed before any record is written.
         derived = library.create_derived_draft(
@@ -1069,7 +1091,7 @@ class TestReservedSkillId:
             seed_source=_valid_source(), name="Skill Madre importada",
         )
         with pytest.raises(MethodologyLibraryError) as excinfo:
-            library.publish(derived)
+            _publish(library, derived)
         assert str(excinfo.value) == "reserved_skill_id"
         assert library.get_published(FOUNDATIONAL_CHARACTER_SKILL_ID, "1.0.1") is None
 
@@ -1124,8 +1146,9 @@ class TestDraftHistory:
         original = library.create_draft(
             skill_id="guided-character-v1", version="1.2.0",
             name="Original", source=_valid_source(),
+            description=_valid_manifest()["description"],
         )
-        library.publish(original)
+        _publish(library, original)
         derived_id = library.create_derived_draft(
             "guided-character-v1", "1.2.0",
             seed_source=_valid_source(), name="Adaptada",
@@ -1151,7 +1174,7 @@ class TestProvenanceManifestExclusion:
 
     def test_manifest_for_never_includes_provenance(self, tmp_path: Path) -> None:
         library = _library(tmp_path)
-        library.publish(_draft(library))
+        _publish(library, _draft(library))
         derived_id = library.create_derived_draft(
             "guided-character-v1", "1.2.0",
             seed_source=_valid_source(), name="Adaptada",
@@ -1167,7 +1190,7 @@ class TestProvenanceManifestExclusion:
         """Two drafts identical in content/version but different provenance
         compile to the SAME digest (metadata, not identity)."""
         library = _library(tmp_path)
-        library.publish(_draft(library))  # guided-character-v1@1.2.0 (Oficiales-free)
+        _publish(library, _draft(library))  # guided-character-v1@1.2.0 (Oficiales-free)
         derived_id = library.create_derived_draft(
             "guided-character-v1", "1.2.0",
             seed_source=_valid_source(), name="Adaptada",
@@ -1188,12 +1211,12 @@ class TestProvenanceManifestExclusion:
     def test_provenance_survives_reload_from_disk(self, tmp_path: Path) -> None:
         store = tmp_path / "library.json"
         library = MethodologyLibrary(store)
-        library.publish(_draft(library))
+        _publish(library, _draft(library))
         derived_id = library.create_derived_draft(
             "guided-character-v1", "1.2.0",
             seed_source=_valid_source(), name="Adaptada",
         )
-        library.publish(derived_id)
+        _publish(library, derived_id)
         reloaded = MethodologyLibrary(store)
         draft = reloaded.get_draft(derived_id)
         assert draft is not None
@@ -1203,6 +1226,186 @@ class TestProvenanceManifestExclusion:
         assert published is not None
         assert published.parent_skill_id == "guided-character-v1"
         assert published.parent_version == "1.2.0"
+
+
+class TestPublishTriggerGate:
+    """Etapa 2 (WU 2.1b): publish refuses without a matching trigger approval.
+
+    The gate lives at ``MethodologyLibrary.publish()`` — the single choke point
+    every publish path reaches (the draft route, the co-creation route, and any
+    internal caller) — so no caller can bypass it. It re-validates the recorded
+    approval against the description about to be published and fails closed on
+    drift; the idempotent already-published return sits before the gate.
+    """
+
+    def _draft_with(
+        self,
+        library: MethodologyLibrary,
+        *,
+        description: str,
+        version: str = "1.2.0",
+        skill_id: str = "guided-character-v1",
+    ) -> str:
+        return library.create_draft(
+            skill_id=skill_id,
+            version=version,
+            name="Guided character methodology",
+            source=_valid_source(),
+            description=description,
+        )
+
+    def _approved_draft(
+        self, library: MethodologyLibrary, *, description: str = "Gatillo aprobado"
+    ) -> str:
+        draft_id = self._draft_with(library, description=description)
+        library.approve_trigger(draft_id, description, "author")
+        return draft_id
+
+    def test_publish_without_approval_is_refused_and_creates_no_version(
+        self, tmp_path: Path
+    ) -> None:
+        library = _library(tmp_path)
+        draft_id = self._draft_with(library, description="Sin aprobar")
+        with pytest.raises(TriggerNotApprovedError) as excinfo:
+            library.publish(draft_id)
+        assert str(excinfo.value) == "trigger_not_approved"
+        # No immutable version is created and no publish-side state advances.
+        assert library.get_published("guided-character-v1", "1.2.0") is None
+        assert library.list_published() == []
+
+    def test_absent_approval_is_refused_never_defaulted(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        draft_id = self._draft_with(library, description="Ausente")
+        # The draft carries no approval at all; publish must not default to
+        # "approved".
+        draft = library.get_draft(draft_id)
+        assert draft is not None and draft.trigger_approval is None
+        with pytest.raises(TriggerNotApprovedError):
+            library.publish(draft_id)
+        assert library.get_published("guided-character-v1", "1.2.0") is None
+
+    def test_direct_internal_publish_call_is_refused(self, tmp_path: Path) -> None:
+        # No HTTP route involved: a direct library.publish() of an unapproved
+        # derived draft is still refused — no internal caller bypasses the gate.
+        library = _library(tmp_path)
+        _publish(library, self._approved_draft(library))  # approved original
+        derived_id = library.create_derived_draft(
+            "guided-character-v1", "1.2.0",
+            seed_source=_valid_source(), name="Adaptada",
+        )
+        with pytest.raises(TriggerNotApprovedError):
+            library.publish(derived_id)
+        assert library.get_published("guided-character-v1", "1.2.1") is None
+
+    def test_matching_approval_publishes_and_echoes_provenance(
+        self, tmp_path: Path
+    ) -> None:
+        library = _library(tmp_path)
+        draft_id = self._approved_draft(library, description="Gatillo coincidente")
+        published = library.publish(draft_id)
+        assert published.description == "Gatillo coincidente"
+        assert published.trigger_approval is not None
+        assert published.trigger_approval.text == "Gatillo coincidente"
+        assert published.trigger_approval.digest == normalized_trigger_digest(
+            "Gatillo coincidente"
+        )
+        assert published.trigger_approval.approved_by == "author"
+        assert published.trigger_approval.approved_at
+        # The echo survives a reload from disk (immutable published record).
+        reloaded = MethodologyLibrary(tmp_path / "library.json")
+        stored = reloaded.get_published("guided-character-v1", "1.2.0")
+        assert stored is not None
+        assert stored.trigger_approval == published.trigger_approval
+
+    def test_published_provenance_is_immutable_under_draft_edit(
+        self, tmp_path: Path
+    ) -> None:
+        library = _library(tmp_path)
+        draft_id = self._approved_draft(library, description="Gatillo original")
+        published = library.publish(draft_id)
+        # Editing the draft description later must never rewrite the echo.
+        library.update_draft(draft_id, description="Gatillo editado")
+        stored = library.get_published("guided-character-v1", "1.2.0")
+        assert stored is not None
+        assert stored.trigger_approval == published.trigger_approval
+        assert stored.description == "Gatillo original"
+
+    def test_description_drift_fails_closed(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        draft_id = self._approved_draft(library, description="Gatillo A")
+        # The description changes after approval (the co-creation route's
+        # last-moment sync is the same seam): publish must fail closed.
+        library.update_draft(draft_id, description="Gatillo B")
+        with pytest.raises(TriggerNotApprovedError):
+            library.publish(draft_id)
+        assert library.get_published("guided-character-v1", "1.2.0") is None
+
+    def test_whitespace_only_difference_does_not_invalidate_approval(
+        self, tmp_path: Path
+    ) -> None:
+        library = _library(tmp_path)
+        draft_id = self._draft_with(library, description="Gatillo  con   espacios")
+        library.approve_trigger(draft_id, "Gatillo con espacios", "author")
+        # A later save re-introduces insignificant whitespace; the normalized
+        # digests still match, so publish is not refused for drift.
+        library.update_draft(draft_id, description="Gatillo   con  espacios")
+        published = library.publish(draft_id)
+        assert published.trigger_approval is not None
+        assert published.trigger_approval.digest == normalized_trigger_digest(
+            "Gatillo con espacios"
+        )
+
+    def test_identical_republish_is_not_newly_refused(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        draft_id = self._approved_draft(library)
+        first = library.publish(draft_id)
+        # Drop the approval (white-box): an identical re-publish short-circuits
+        # at the idempotent already-published early-return BEFORE the gate, so
+        # it is not newly refused (forward-only grandfathering).
+        with library._lock:
+            del library._drafts[draft_id]["trigger_approval"]
+        again = library.publish(draft_id)
+        assert again == first
+
+    def test_seed_install_bypasses_gate_and_carries_no_approval(
+        self, tmp_path: Path
+    ) -> None:
+        library = _library(tmp_path)
+        outcome = library.install_published_version(
+            _compiled(skill_id="seeded-skill", version="1.0"),
+            clasificacion="Oficiales", trust_attributes=("fundacional",),
+        )
+        assert outcome == "installed"
+        seed = library.get_published("seeded-skill", "1.0")
+        assert seed is not None
+        assert seed.trigger_approval is None
+        # A later, genuinely new draft publish still requires approval.
+        draft_id = self._draft_with(library, description="Nuevo gatillo")
+        with pytest.raises(TriggerNotApprovedError):
+            library.publish(draft_id)
+
+    def test_approval_does_not_change_compiled_digest(self, tmp_path: Path) -> None:
+        library = _library(tmp_path)
+        plain = library.create_draft(
+            skill_id="guided-character-v1", version="1.2.0",
+            name="Guided character methodology", source=_valid_source(),
+            description="Gatillo estable",
+        )
+        approved = library.create_draft(
+            skill_id="guided-character-v1", version="1.2.0",
+            name="Guided character methodology", source=_valid_source(),
+            description="Gatillo estable",
+        )
+        library.approve_trigger(approved, "Gatillo estable", "author")
+        approved_draft = library.get_draft(approved)
+        assert approved_draft is not None
+        assert approved_draft.trigger_approval is not None
+        # The additive approval is metadata, not identity: same digest.
+        plain_result = library.compile_draft(plain)
+        approved_result = library.compile_draft(approved)
+        assert plain_result.ok and approved_result.ok
+        assert plain_result.compiled is not None and approved_result.compiled is not None
+        assert plain_result.compiled.digest == approved_result.compiled.digest
 
 
 class TestFoundationalSeedV12Channels:
