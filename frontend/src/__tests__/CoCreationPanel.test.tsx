@@ -74,6 +74,9 @@ const baseState = (): UseCoCreationReturn => ({
   publish: vi.fn(),
   activate: vi.fn(),
   reset: vi.fn(),
+  // Etapa 2: trigger approval surface
+  triggerApproval: null,
+  approveTrigger: vi.fn(),
   // TW12 canvas
   draftPayload: null,
   touchedSections: new Set<string>(),

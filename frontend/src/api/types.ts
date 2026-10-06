@@ -614,6 +614,10 @@ export interface CoCreationSession {
   /** TW14 server-injected provenance; null for non-derived sessions. The
    *  client NEVER sends this — the server reads it from the PUBLISHED record. */
   derived_from: DerivedFrom | null;
+  /** Etapa 2: recorded trigger approval for the session's materialized draft
+   *  (null until the Author approves). Additive — absent on pre-Etapa-2
+   *  payloads; the server is authoritative. */
+  trigger_approval?: TriggerApproval | null;
 }
 
 /** Milestone progress projection (GET .../sessions/{id}/progress). */
@@ -1562,6 +1566,17 @@ export interface MethodologyAdjunto {
   nivel: string;
 }
 
+/** Etapa 2: the Author's explicit approval of a methodology trigger. The
+ *  `text` is the server-normalized value (single-spaced, <= TRIGGER_INTAKE_LIMIT);
+ *  `digest` is the sha256 of that normalized text and binds the approval to the
+ *  exact published description (drift fails closed at publish time). */
+export interface TriggerApproval {
+  text: string;
+  digest: string;
+  approved_by: string;
+  approved_at: string;
+}
+
 /** A published, immutable methodology version. */
 export interface PublishedMethodology {
   skill_id: string;
@@ -1586,6 +1601,9 @@ export interface PublishedMethodology {
    *  versions without adjuntos; every entry is metadata only — the client
    *  never fetches carrier bytes. `PublishedMethodologyDetail` inherits it. */
   adjuntos?: MethodologyAdjunto[];
+  /** Etapa 2: immutable echo of the trigger approval recorded at publish time.
+   *  Additive/tolerant-read: absent on pre-Etapa-2 records. */
+  trigger_approval?: TriggerApproval | null;
 }
 
 /** Full published version + source from
@@ -1637,6 +1655,9 @@ export interface MethodologyDraft {
    *  for derived drafts. The client never supplies these. */
   parent_skill_id?: string | null;
   parent_version?: string | null;
+  /** Etapa 2: recorded trigger approval for this draft (null until approved).
+   *  Additive/tolerant-read: absent on pre-Etapa-2 records. */
+  trigger_approval?: TriggerApproval | null;
 }
 
 /** Library status from GET /api/methodologies/status. */

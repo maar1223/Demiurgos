@@ -17,6 +17,7 @@ import type {
   DraftPayload,
   MethodologyAdjunto,
   PublishedMethodologyDetail,
+  TriggerApproval,
   WarningState,
 } from "@/api/types";
 
@@ -113,6 +114,26 @@ export function publishCoCreationSession(
       timeout: CO_CREATION_TIMEOUT_MS,
     },
   );
+}
+
+/** POST /api/co-creation/sessions/{id}/trigger/approve — record the Author's
+ *  explicit approval of the session trigger (Etapa 2). The server validates the
+ *  bound BEFORE mutating (server-authoritative), writes the approved value into
+ *  the session canvas, and — when a draft is materialized — records the approval
+ *  on the library draft so the approved value equals the value publish will use. */
+export function approveSessionTrigger(
+  sessionId: string,
+  baseRevision: number,
+  description: string,
+): Promise<{ trigger_approval: TriggerApproval | null; revision: number }> {
+  return apiFetch<{
+    trigger_approval: TriggerApproval | null;
+    revision: number;
+  }>(url(`/sessions/${encodeURIComponent(sessionId)}/trigger/approve`), {
+    method: "POST",
+    body: JSON.stringify({ base_revision: baseRevision, description }),
+    timeout: CO_CREATION_TIMEOUT_MS,
+  });
 }
 
 /** POST /api/co-creation/sessions/{id}/activate — pin the published version
