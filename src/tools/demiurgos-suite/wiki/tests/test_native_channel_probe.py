@@ -38,6 +38,7 @@ import importlib.util
 import inspect
 import os
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,7 +55,11 @@ from hermes_gateway_hooks import (
     clear_skills_system_prompt_cache_safe,
     revision_marker_signature,
 )
-from hermes_profile_config import merge_skills_external_dirs, resolve_skills_dir
+from hermes_profile_config import (
+    SEED_SKILL_NAME,
+    merge_skills_external_dirs,
+    resolve_skills_dir,
+)
 
 import hermes_probe_support as probe_support
 
@@ -538,3 +543,269 @@ def test_gateway_runtime_anchor_names_registered_hook_phrasing():
         "installed runtime no longer logs 'registered %s: %s' in hermes_cli/plugins.py; "
         "the helper's 'registered hook: <name>' markers have drifted (R10)"
     )
+
+
+# -- WU-3: model-level condition (b) (REQ-NC-1 / REQ-LPH-9 / REQ-TPP-7) --------
+
+#: The model credential the dedicated profile resolves HOME-SCOPED
+#: (hermes_cli/auth.py opencode-go registry tuple; REQ-TPP-7). The operator
+#: supplies it via export or ``<profile>/.env`` — the dedicated profile does NOT
+#: inherit the personal ``~/.hermes/.env`` (P0-8).
+_MODEL_CREDENTIAL_ENV = "OPENCODE_GO_API_KEY"
+
+#: Bounded discovery prompt maximizing the reply-names-skill evidence arm
+#: (design open decision; REQ-LPH-9).
+_MODEL_PROMPT = "List every skill you currently have available, by name."
+
+
+def _model_credential_present(home: Path) -> bool:
+    """Home-scoped model-credential check (REQ-TPP-7), P0-8 safe.
+
+    True iff ``OPENCODE_GO_API_KEY`` is non-empty in the process env OR in
+    ``<home>/.env``. NEVER reads the personal ``~/.hermes`` profile — a key
+    exported there (or in its ``.env``) does NOT count for the dedicated home.
+    """
+    exported = (os.environ.get(_MODEL_CREDENTIAL_ENV) or "").strip()
+    if exported.strip("\"'") and exported:
+        return True
+    env_file = Path(home) / ".env"
+    if not env_file.is_file():
+        return False
+    try:
+        lines = env_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, raw = stripped.partition("=")
+        value = raw.strip().strip("\"'")
+        if key.strip() == _MODEL_CREDENTIAL_ENV and value:
+            return True
+    return False
+
+
+def _assert_skill_in_prompt_assembly(home: Path, skill_name: str) -> str:
+    """DETERMINISTIC prompt-assembly sub-check (REQ-LPH-9), LABELED non-turn.
+
+    Runs the installed runtime's ``build_skills_system_prompt()`` in a subprocess
+    (Hermes venv python, ``HERMES_HOME=<home>``, ``PYTHONPATH=<agent dir>``) and
+    asserts the composed ``## Skills`` / ``<available_skills>`` block names
+    ``skill_name``. Skips honestly when the runtime/venv is absent. This is NOT a
+    real turn and is never a substitute for the model-level evidence — it only
+    proves the seeded skill is composable into the system prompt. Returns the
+    evidence label so callers surface it as prompt-assembly level.
+    """
+    agent = _hermes_agent_dir()
+    if agent is None:
+        pytest.skip(
+            "installed hermes-agent runtime not found; prompt-assembly sub-check "
+            "unavailable (non-turn evidence skipped honestly)"
+        )
+    venv_py = agent / "venv" / "bin" / "python"
+    if not venv_py.is_file():
+        pytest.skip(
+            f"Hermes venv python absent at {venv_py}; prompt-assembly sub-check "
+            "unavailable (non-turn evidence skipped honestly)"
+        )
+    probe = (
+        "import sys; "
+        "from agent.prompt_builder import build_skills_system_prompt; "
+        "sys.stdout.write(build_skills_system_prompt())"
+    )
+    env = dict(os.environ)
+    env["HERMES_HOME"] = str(home)
+    env["DEMIURGOS_HERMES_HOME"] = str(home)
+    env["PYTHONPATH"] = str(agent)
+    completed = subprocess.run(
+        [str(venv_py), "-c", probe],
+        env=env,
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=60.0,
+    )
+    assert completed.returncode == 0, (
+        "prompt-assembly sub-check subprocess failed: "
+        f"{completed.stderr.strip()[:300] or 'no stderr'}"
+    )
+    composed = completed.stdout
+    assert skill_name in composed, (
+        "prompt-assembly sub-check: the composed ## Skills / <available_skills> "
+        f"block does not name seeded skill {skill_name!r} "
+        f"(got {len(composed)} bytes)"
+    )
+    return (
+        "prompt-assembly-level evidence (deterministic, NON-turn): "
+        f"{skill_name!r} present in the composed ## Skills / "
+        "<available_skills> block"
+    )
+
+
+def test_live_model_level_skills_visibility():
+    """Model-level condition (b) (REQ-NC-1 / REQ-LPH-9 / REQ-TPP-7): a real
+    assistant turn proves the model sees/loads native skills — opt-in and honest.
+
+    Gate off / no hermes / no profile / no credential -> NAMED skip (no boot).
+    ``API_SERVER_KEY`` absent -> NAMED skip; too short -> LOUD fail.
+    Prerequisites present -> boot, drive one turn, THEN:
+    evidence = ``SEED_SKILL_NAME`` in ``reply_text.lower()``
+    OR ``skills_list``/``skill_view`` in the tool-call trace; evidence -> PASS
+    (model-level (b) recorded); else ``pytest.fail`` with the observed error,
+    never a pass. Then the LABELED prompt-assembly sub-check (non-turn).
+    """
+    if not probe_support.model_live_enabled():
+        pytest.skip(
+            "model gate disabled (DEMIURGOS_MODEL_LIVE=1 required); model-level "
+            "(b) stays deferred, never claimed"
+        )
+    hermes_bin = shutil.which("hermes")
+    if hermes_bin is None:
+        pytest.skip("hermes binary not found on PATH")
+    try:
+        home = probe_support.resolve_dedicated_profile_root()
+    except probe_support.ProbeUnavailable as exc:
+        pytest.skip(str(exc))
+    except probe_support.ProbeIsolationError as exc:
+        pytest.fail(str(exc))  # isolation is a hard fail, never a skip
+    if not _model_credential_present(home):
+        pytest.skip(
+            f"no provider credential for the dedicated profile "
+            f"({_MODEL_CREDENTIAL_ENV} in env or <home>/.env required); "
+            "model-level (b) stays deferred, never claimed"
+        )
+    api_key = (os.environ.get("API_SERVER_KEY") or "").strip()
+    if not api_key:
+        pytest.skip(
+            "API_SERVER_KEY unset: the assistant-turn driver cannot authenticate; "
+            "model-level (b) stays deferred, never claimed"
+        )
+    if len(api_key) < probe_support.MIN_API_SERVER_KEY_LEN:
+        pytest.fail(
+            f"API_SERVER_KEY is too short ({len(api_key)} chars < "
+            f"{probe_support.MIN_API_SERVER_KEY_LEN}): credentials are present "
+            "but malformed — loud fail, never a pass"
+        )
+
+    turn = probe_support.drive_assistant_turn(
+        hermes_bin, home, prompt=_MODEL_PROMPT, api_key=api_key
+    )
+    reply_lower = turn.reply_text.lower()
+    evidence = (SEED_SKILL_NAME in reply_lower) or bool(
+        {"skills_list", "skill_view"} & set(turn.tool_calls)
+    )
+    assert evidence, (
+        "model-level (b): the assistant turn produced no skill-visibility "
+        f"evidence (reply does not name {SEED_SKILL_NAME!r}; tool calls = "
+        f"{turn.tool_calls!r}; {turn.error or 'no observed error'}) — "
+        "never a false pass"
+    )
+
+    # LABELED deterministic prompt-assembly sub-check (NON-turn evidence).
+    _assert_skill_in_prompt_assembly(home, SEED_SKILL_NAME)
+
+
+def test_model_credential_present_from_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """WU3-01: the operator's process-env export counts as the home-scoped
+    credential (no ``<home>/.env`` needed)."""
+    home = tmp_path / "home"
+    monkeypatch.delenv(_MODEL_CREDENTIAL_ENV, raising=False)
+    monkeypatch.setenv(_MODEL_CREDENTIAL_ENV, "sk-opencode-go-from-env")
+    assert _model_credential_present(home) is True
+
+
+def test_model_credential_present_from_profile_env_file(tmp_path: Path):
+    """WU3-01: ``<home>/.env`` (the dedicated profile scope) counts; the file is
+    read without touching the process env and sibling keys are ignored."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".env").write_text(
+        f"OTHER=keep\n{_MODEL_CREDENTIAL_ENV}=sk-opencode-go-from-profile\n",
+        encoding="utf-8",
+    )
+    assert _model_credential_present(home) is True
+
+
+def test_model_credential_absent_when_only_personal_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """WU3-01 (P0-8): a key in the PERSONAL ``~/.hermes/.env`` does NOT count.
+    The dedicated profile does not inherit personal secrets; the check only
+    reads the process env and ``<home>/.env`` of the dedicated root."""
+    personal = tmp_path / "personal-home" / ".hermes"
+    personal.mkdir(parents=True)
+    (personal / ".env").write_text(
+        f"{_MODEL_CREDENTIAL_ENV}=sk-personal-only\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "personal-home"))
+    monkeypatch.delenv(_MODEL_CREDENTIAL_ENV, raising=False)
+    home = tmp_path / "dedicated-home"
+    home.mkdir()
+    assert _model_credential_present(home) is False
+
+
+def test_prompt_assembly_subcheck_names_seeded_skill(tmp_path: Path):
+    """WU3-02: against a model-turn-provisioned profile the deterministic
+    sub-check composes a ``## Skills`` / ``<available_skills>`` block naming the
+    seeded skill, and the returned label is explicitly NON-turn. Skips honestly
+    when the installed runtime/venv is absent."""
+    agent = _hermes_agent_dir()
+    if agent is None or not (agent / "venv" / "bin" / "python").is_file():
+        pytest.skip(
+            "installed hermes-agent runtime/venv absent; prompt-assembly "
+            "sub-check proof skipped honestly"
+        )
+    from hermes_profile_config import provision_model_turn_profile
+
+    root = tmp_path / "profile"
+    provision_model_turn_profile(
+        root,
+        REPO_ROOT,
+        provider="opencode-go",
+        model="deepseek-v4.1-flash",
+        base_url="https://opencode.ai/zen/go/v1",
+    )
+    label = _assert_skill_in_prompt_assembly(root, SEED_SKILL_NAME)
+    assert "NON-turn" in label, "the sub-check must be labeled non-turn evidence"
+    assert SEED_SKILL_NAME in label
+
+
+def test_model_level_skips_when_gate_disabled(monkeypatch: pytest.MonkeyPatch):
+    """WU3-03: with the ``DEMIURGOS_MODEL_LIVE`` gate off the model-level test
+    skips with the named reason — no boot, no credential needed."""
+    monkeypatch.delenv(probe_support.MODEL_LIVE_ENV_VAR, raising=False)
+    with pytest.raises(pytest.skip.Exception, match="model gate disabled"):
+        test_live_model_level_skills_visibility()
+
+
+def test_model_level_skips_without_credential(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """WU3-03: with the gate on but no resolvable provider credential the test
+    skips naming ``OPENCODE_GO_API_KEY`` — before any gateway boot."""
+    monkeypatch.setenv(probe_support.MODEL_LIVE_ENV_VAR, "1")
+    monkeypatch.setattr(shutil, "which", lambda name: "/fake/hermes" if name == "hermes" else None)
+    home = tmp_path / "home"
+    monkeypatch.setenv("DEMIURGOS_HERMES_HOME", str(home))
+    monkeypatch.delenv(_MODEL_CREDENTIAL_ENV, raising=False)
+    monkeypatch.delenv("API_SERVER_KEY", raising=False)
+    with pytest.raises(pytest.skip.Exception, match="no provider credential"):
+        test_live_model_level_skills_visibility()
+    assert not (home / "driver.pid").exists(), "no gateway may boot on the skip path"
+
+
+def test_model_level_fails_on_short_api_server_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """WU3-03: credentials present but ``API_SERVER_KEY`` < 16 chars is a LOUD
+    fail (never a skip, never a pass) and no gateway boot happens."""
+    monkeypatch.setenv(probe_support.MODEL_LIVE_ENV_VAR, "1")
+    monkeypatch.setattr(shutil, "which", lambda name: "/fake/hermes" if name == "hermes" else None)
+    home = tmp_path / "home"
+    monkeypatch.setenv("DEMIURGOS_HERMES_HOME", str(home))
+    monkeypatch.setenv(_MODEL_CREDENTIAL_ENV, "sk-opencode-go-present")
+    monkeypatch.setenv("API_SERVER_KEY", "short-key")
+    with pytest.raises(pytest.fail.Exception, match="too short"):
+        test_live_model_level_skills_visibility()
+    assert not (home / "driver.pid").exists(), "no gateway may boot with a malformed key"
