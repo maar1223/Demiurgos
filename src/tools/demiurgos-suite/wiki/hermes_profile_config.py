@@ -22,8 +22,10 @@ installer so the registered path is a single source of truth.
 ``provision_test_profile`` (WU-3, REQ-TPP-1..5) reuses the same idempotent
 writers to build a dedicated ``HERMES_HOME``-layout test profile for the live
 probe: it enables the ``demiurgos-idea-capture`` plugin, adds the ``skills``
-toolset, and registers the owned skills folder. It refuses the personal
-``~/.hermes`` profile (P0-8) and never writes outside the requested root.
+toolset, registers the owned skills folder, disables the telegram platform
+(REQ-TPP-6, WU-4), and raises ``logging.level`` to ``DEBUG`` (REQ-LPH-8, WU-4).
+It refuses the personal ``~/.hermes`` profile (P0-8) and never writes outside
+the requested root.
 """
 
 from __future__ import annotations
@@ -179,16 +181,85 @@ def ensure_skills_toolset(config_path: Path, *, enabled: bool) -> bool:
     return True
 
 
+def merge_platform_disabled(config_path: Path, platform_name: str) -> bool:
+    """Ensure ``platforms.<platform_name>.enabled`` is ``False`` (idempotent).
+
+    Sets the explicit-disable marker the gateway's env pass honors
+    (``gateway/config_loader.py:142-143`` -> ``gateway/config_env.py:184-190`` /
+    ``:385-386``), so no environment credential can start that adapter — for
+    telegram this avoids the non-retryable startup conflict that exits the
+    gateway ``78`` (REQ-TPP-6). Same idempotent-YAML shape as
+    :func:`merge_plugins_enabled`: preserves every sibling key, coerces a
+    non-mapping platform block, and returns True when written, False when the
+    platform was already disabled.
+    """
+    import yaml
+
+    data = {}
+    if config_path.is_file():
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict):
+            data = loaded
+    platforms = data.get("platforms")
+    if not isinstance(platforms, dict):
+        platforms = {}
+        data["platforms"] = platforms
+    block = platforms.get(platform_name)
+    if not isinstance(block, dict):
+        block = {}
+        platforms[platform_name] = block
+    if block.get("enabled") is False:
+        return False
+    block["enabled"] = False
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return True
+
+
+def merge_logging_level(config_path: Path, level: str) -> bool:
+    """Ensure ``logging.level`` equals ``level`` (idempotent; REQ-LPH-8).
+
+    Raises the dedicated profile's ``agent.log`` to ``DEBUG`` so the gateway's
+    hook-registration lines (``hermes_cli/plugins.py:914``, DEBUG-only) become
+    observable. Same idempotent-YAML shape as :func:`merge_plugins_enabled`:
+    preserves every sibling key, coerces a non-mapping ``logging`` block, and
+    returns True when written, False when the level already matched.
+    """
+    import yaml
+
+    data = {}
+    if config_path.is_file():
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict):
+            data = loaded
+    logging_block = data.get("logging")
+    if not isinstance(logging_block, dict):
+        logging_block = {}
+        data["logging"] = logging_block
+    if logging_block.get("level") == level:
+        return False
+    logging_block["level"] = level
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return True
+
+
 def provision_test_profile(root: Path, repo_root: Path) -> Path:
     """Provision a dedicated ``HERMES_HOME``-layout test profile under ``root``.
 
-    Writes ``<root>/config.yaml`` with the three effects required by the live
+    Writes ``<root>/config.yaml`` with the five effects required by the live
     probe's config-level evidence: the ``demiurgos-idea-capture`` plugin opt-in
     (REQ-TPP-1), the ``skills`` toolset in ``platform_toolsets.api_server``
-    (REQ-TPP-2), and the owned ``skills.external_dirs`` (REQ-TPP-3).
+    (REQ-TPP-2), the owned ``skills.external_dirs`` (REQ-TPP-3), a telegram-free
+    platform block (REQ-TPP-6), and ``logging.level: DEBUG`` (REQ-LPH-8) so the
+    gateway's hook-registration lines become observable in ``agent.log``.
 
     Refuses the personal ``~/.hermes`` profile and writes nothing under it
-    (REQ-TPP-4, P0-8). Re-running is a no-op for all three writers. Returns the
+    (REQ-TPP-4, P0-8). Re-running is a no-op for all five writers. Returns the
     path of the written ``config.yaml``.
     """
     root = Path(root).expanduser().resolve()
@@ -202,4 +273,6 @@ def provision_test_profile(root: Path, repo_root: Path) -> Path:
     merge_plugins_enabled(config, PLUGIN_NAME)
     ensure_skills_toolset(config, enabled=True)
     merge_skills_external_dirs(config, resolve_skills_dir(repo_root))
+    merge_platform_disabled(config, "telegram")
+    merge_logging_level(config, "DEBUG")
     return config

@@ -399,6 +399,8 @@ def test_provision_is_idempotent(tmp_path):
     assert data["plugins"]["enabled"] == ["demiurgos-idea-capture"]
     assert data["platform_toolsets"]["api_server"].count("skills") == 1
     assert len(data["skills"]["external_dirs"]) == 1
+    assert data["platforms"]["telegram"]["enabled"] is False
+    assert data["logging"]["level"] == "DEBUG"
 
 
 def test_provision_preserves_sibling_keys(tmp_path):
@@ -477,3 +479,103 @@ def test_provision_layout_matches_resolve_profile_paths(tmp_path, monkeypatch):
     assert paths.name == "default"
     assert paths.config == config
     assert paths.config == root / "config.yaml"
+
+
+# -- provision telegram-free + DEBUG (WU-4, REQ-TPP-6 / REQ-LPH-8) -----------
+
+
+def test_provision_disables_telegram(tmp_path):
+    """Spec REQ-TPP-6: provisioning writes ``platforms.telegram.enabled: false``
+    so the gateway boots without a bot token (avoids the exit-78 fatal conflict)."""
+    from hermes_profile_config import provision_test_profile
+
+    root = tmp_path / "profile"
+    provision_test_profile(root, tmp_path / "repo")
+
+    data = _read_yaml(root / "config.yaml")
+    assert data["platforms"]["telegram"]["enabled"] is False
+
+
+def test_merge_platform_disabled_is_idempotent(tmp_path):
+    """A second platform-disable write is a no-op and leaves the file byte-identical."""
+    from hermes_profile_config import merge_platform_disabled
+
+    config = tmp_path / "config.yaml"
+    assert merge_platform_disabled(config, "telegram") is True
+    before = config.read_bytes()
+    assert merge_platform_disabled(config, "telegram") is False
+    assert config.read_bytes() == before
+    assert _read_yaml(config)["platforms"]["telegram"]["enabled"] is False
+
+
+def test_merge_platform_disabled_preserves_siblings(tmp_path):
+    """An operator-authored sibling key under the platform block (and other
+    top-level keys) survive the disable write."""
+    from hermes_profile_config import merge_platform_disabled
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        textwrap.dedent(
+            """\
+            model: test-model
+            platforms:
+              telegram:
+                allowed_chats:
+                  - "42"
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    assert merge_platform_disabled(config, "telegram") is True
+
+    data = _read_yaml(config)
+    assert data["platforms"]["telegram"]["enabled"] is False
+    assert data["platforms"]["telegram"]["allowed_chats"] == ["42"]
+    assert data["model"] == "test-model"
+
+
+def test_provision_sets_logging_level_debug(tmp_path):
+    """Spec REQ-LPH-8: provisioning writes ``logging.level: DEBUG`` so the
+    gateway's ``registered hook:`` lines land in the dedicated profile's log."""
+    from hermes_profile_config import provision_test_profile
+
+    root = tmp_path / "profile"
+    provision_test_profile(root, tmp_path / "repo")
+
+    data = _read_yaml(root / "config.yaml")
+    assert data["logging"]["level"] == "DEBUG"
+
+
+def test_merge_logging_level_is_idempotent(tmp_path):
+    """A second logging-level write is a no-op and leaves the file byte-identical."""
+    from hermes_profile_config import merge_logging_level
+
+    config = tmp_path / "config.yaml"
+    assert merge_logging_level(config, "DEBUG") is True
+    before = config.read_bytes()
+    assert merge_logging_level(config, "DEBUG") is False
+    assert config.read_bytes() == before
+    assert _read_yaml(config)["logging"]["level"] == "DEBUG"
+
+
+def test_merge_logging_level_preserves_siblings(tmp_path):
+    """An existing ``logging`` sibling key survives the level write."""
+    from hermes_profile_config import merge_logging_level
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        textwrap.dedent(
+            """\
+            logging:
+              max_size_mb: 7
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    assert merge_logging_level(config, "DEBUG") is True
+
+    data = _read_yaml(config)
+    assert data["logging"]["level"] == "DEBUG"
+    assert data["logging"]["max_size_mb"] == 7

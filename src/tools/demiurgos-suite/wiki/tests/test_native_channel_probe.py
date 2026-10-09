@@ -487,9 +487,12 @@ def test_live_gateway_probe(plugin):
         f"returncode={result.returncode}"
     )
     joined = "\n".join(result.hook_evidence).lower()
-    assert "pre_tool_call" in joined and "pre_llm_call" in joined, (
-        "both pre_tool_call and pre_llm_call registration must appear in the "
-        f"gateway log; saw {result.hook_evidence!r}"
+    assert (
+        "registered hook: pre_tool_call" in joined
+        and "registered hook: pre_llm_call" in joined
+    ), (
+        "both 'registered hook: pre_tool_call' and 'registered hook: pre_llm_call' "
+        f"must appear in the gateway log; saw {result.hook_evidence!r}"
     )
 
     # (c)/(d) live, in-process: the registered hook callables fire fail-closed.
@@ -517,4 +520,21 @@ def test_gateway_runtime_anchor_names_agent_log():
     assert "agent.log" in source, (
         "installed runtime no longer names agent.log in hermes_logging.py; the "
         "helper's <HERMES_HOME>/logs/agent.log assumption has drifted"
+    )
+
+
+def test_gateway_runtime_anchor_names_registered_hook_phrasing():
+    """R6/R10 guard: the installed runtime's hook-registration line keeps the
+    ``registered <kind>: <key>`` phrasing the helper matches (DEBUG, plugins.py).
+    A phrasing change must fail loudly, never turn the probe into a false pass."""
+    agent = _hermes_agent_dir()
+    if agent is None:
+        pytest.skip("installed hermes-agent runtime not found; hook-marker anchor unchecked")
+    plugins_py = agent / "hermes_cli" / "plugins.py"
+    if not plugins_py.is_file():
+        pytest.skip(f"runtime anchor {plugins_py} absent; hook-marker anchor unchecked")
+    source = plugins_py.read_text(encoding="utf-8")
+    assert "registered %s: %s" in source, (
+        "installed runtime no longer logs 'registered %s: %s' in hermes_cli/plugins.py; "
+        "the helper's 'registered hook: <name>' markers have drifted (R10)"
     )

@@ -12,7 +12,7 @@ profile is `src/tools/demiurgos-suite/wiki/tests/hermes_probe_support.py`.
 
 ## What provisioning writes
 
-`provision_test_profile(root, repo_root)` writes `<root>/config.yaml` with three
+`provision_test_profile(root, repo_root)` writes `<root>/config.yaml` with five
 effects, each through an idempotent writer that preserves every other key:
 
 | Effect | Key | Requirement |
@@ -20,8 +20,17 @@ effects, each through an idempotent writer that preserves every other key:
 | Plugin opt-in | `plugins.enabled` contains `demiurgos-idea-capture` | REQ-TPP-1 |
 | Skills toolset | `platform_toolsets.api_server` includes `skills` | REQ-TPP-2 |
 | External skills dir | `skills.external_dirs` includes `resolve_skills_dir(repo_root)` | REQ-TPP-3 |
+| Telegram-free boot | `platforms.telegram.enabled: false` | REQ-TPP-6 |
+| Observable hooks | `logging.level: DEBUG` | REQ-LPH-8 |
 
-Re-running the recipe is a no-op: the file stays byte-identical when all three
+The `platforms.telegram.enabled: false` write makes the profile boot without a
+bot token: a missing telegram token is a non-retryable startup conflict that
+exits the gateway `78`, and the explicit-disable marker wins over environment
+credentials. The `logging.level: DEBUG` write raises the dedicated profile's
+`agent.log` so the gateway's hook-registration lines (DEBUG-only) become
+observable — no other log level exposes them.
+
+Re-running the recipe is a no-op: the file stays byte-identical when all five
 keys are already present.
 
 ## P0-8 safety
@@ -44,7 +53,7 @@ PYTHONPATH=src/tools/demiurgos-suite/wiki .venv/bin/python -c \
    provision_test_profile('<PROFILE_ROOT>', '<REPO_ROOT>')"
 ```
 
-Result: `<PROFILE_ROOT>/config.yaml` carrying the three effects above.
+Result: `<PROFILE_ROOT>/config.yaml` carrying the five effects above.
 
 ## Gateway env / CWD source of truth
 
@@ -63,22 +72,30 @@ The shared live-probe helper mirrors those exactly and additionally sets both
 
 The probe is opt-in and honest: it skips (with the named reason) when the opt-in
 is unset, `hermes` is not on `PATH`, the profile is not provisioned, or the
-expected log path drifted. It never reports a pass it did not observe.
+gateway never created the log directory **after** boot (log-path drift). A
+missing log directory **before** boot is not drift — the gateway creates it on
+boot — so a fresh profile is probed normally. It never reports a pass it did not
+observe.
 
 ```bash
 DEMIURGOS_PROBE_LIVE=1 \
 DEMIURGOS_HERMES_HOME=/tmp/opencode/hermes-test-profile-closure \
 .venv/bin/python -m pytest \
-  src/tools/demiurgos-suite/wiki/tests/test_native_channel_probe.py -q
+  src/tools/demiurgos-suite/wiki/tests/test_native_channel_probe.py -q -rs
 ```
 
 When it runs, the probe boots the real gateway, reads hook-registration evidence
 from `<HERMES_HOME>/logs/agent.log` from a boot offset, and asserts:
 
-- **(a)** both `pre_tool_call` and `pre_llm_call` registered — live evidence;
+- **(a)** both `registered hook: pre_tool_call` and `registered hook: pre_llm_call`
+  logged by the gateway (requires the DEBUG-provisioned profile) — live evidence;
 - **(c)/(d)** in-process cache-clear and `skill_manage` veto — live evidence;
 - **(b)** `skills` present in `platform_toolsets.api_server` and the owned skills
   folder in `skills.external_dirs` — config-level evidence.
+
+If the DEBUG `registered hook:` markers are absent (for example a managed scope
+pins the log level to INFO), the probe fails loudly with the observed gateway
+return code — never a false pass.
 
 Condition **(b) at the model level** (a real assistant turn loading native
 skills) requires credentials and remains explicitly deferred; the probe records

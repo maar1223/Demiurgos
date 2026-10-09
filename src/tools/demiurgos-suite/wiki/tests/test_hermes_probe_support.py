@@ -34,6 +34,14 @@ import hermes_probe_support
 #   emit (default) — both hook markers + the boot env/CWD contract dump
 #   silent         — no hook markers (proves "no evidence ⇒ not booted")
 #   ignore-term    — ignores SIGTERM and sleeps (proves bounded kill)
+#   no-logs        — never creates ``<home>/logs`` (proves post-boot drift)
+#   incidental     — mentions a hook name WITHOUT the ``registered hook:``
+#                    prefix (proves an incidental mention is not evidence)
+#   exit-78        — exits with the gateway's fatal-config code, no markers
+#
+# The marker strings mirror the exact gateway phrasing
+# ``hermes_cli/plugins.py:914`` emits at DEBUG:
+# ``Plugin <name> registered <kind>: <key>``.
 _FAKE_HERMES_SOURCE = '''\
 import os
 import signal
@@ -44,6 +52,9 @@ from pathlib import Path
 mode = "__MODE__"
 home = Path(os.environ["HERMES_HOME"])
 logs = home / "logs"
+if mode == "no-logs":
+    # Never creates <home>/logs: proves post-boot drift detection (T4.1).
+    sys.exit(0)
 logs.mkdir(parents=True, exist_ok=True)
 log = logs / "agent.log"
 
@@ -53,9 +64,12 @@ def emit(lines):
         fh.write("\\n".join(lines) + "\\n")
 
 
+MARKER_TOOL = "registered hook: pre_tool_call"
+MARKER_LLM = "registered hook: pre_llm_call"
+
 if mode == "ignore-term":
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    emit(["pre_tool_call registered", "pre_llm_call registered"])
+    emit([MARKER_TOOL, MARKER_LLM])
     time.sleep(600)
     sys.exit(0)
 
@@ -63,10 +77,23 @@ if mode == "silent":
     emit(["gateway starting", "no hook registration here"])
     sys.exit(0)
 
+if mode == "incidental":
+    # Mentions the hook names WITHOUT the "registered hook:" prefix.
+    emit([
+        "gateway boot",
+        "pre_tool_call mentioned incidentally",
+        "pre_llm_call mentioned incidentally",
+    ])
+    sys.exit(0)
+
+if mode == "exit-78":
+    emit(["gateway starting", "fatal config conflict"])
+    sys.exit(78)
+
 emit([
     "gateway boot",
-    "pre_tool_call registered",
-    "pre_llm_call registered",
+    MARKER_TOOL,
+    MARKER_LLM,
     "ENV HERMES_ENABLE_PROJECT_PLUGINS=" + os.environ.get("HERMES_ENABLE_PROJECT_PLUGINS", ""),
     "ENV DEMIURGOS_ROOT=" + os.environ.get("DEMIURGOS_ROOT", ""),
     "ENV HERMES_HOME=" + os.environ.get("HERMES_HOME", ""),
@@ -183,6 +210,48 @@ def test_boot_env_and_cwd_carry_the_plugin_load_contract(tmp_path: Path) -> None
 # -- REQ-LPH-3: evidence from the log, from a boot offset --------------------
 
 
+def test_gateway_log_path_is_pure(tmp_path: Path) -> None:
+    """``gateway_log_path`` is a pure resolver: it returns the path and does NOT
+    raise when ``<home>/logs`` is absent (the gateway creates it lazily on boot)."""
+    home = tmp_path / "home"
+    home.mkdir()  # no logs/ subdir
+    assert hermes_probe_support.gateway_log_path(home) == home / "logs" / "agent.log"
+
+
+def test_boot_creates_log_dir_and_reads_debug_markers(tmp_path: Path) -> None:
+    """A fresh home (no pre-boot ``logs/``) boots and reads both
+    ``registered hook:`` markers from the log the gateway creates (T4.1/T4.4)."""
+    home = tmp_path / "home"
+    home.mkdir()  # genuinely no logs/ dir before boot
+    assert not (home / "logs").exists()
+    fake = _write_fake_hermes(tmp_path)
+
+    result = hermes_probe_support.boot_and_probe_gateway(
+        str(fake), home, repo=hermes_probe_support.REPO_ROOT, timeout=10.0, environ={}
+    )
+
+    assert result.booted is True
+    joined = "\n".join(result.hook_evidence).lower()
+    assert "registered hook: pre_tool_call" in joined
+    assert "registered hook: pre_llm_call" in joined
+    assert result.hook_evidence, "expected the marker lines to be captured"
+
+
+def test_no_incidental_hook_mention_marks_booted(tmp_path: Path) -> None:
+    """A line that merely mentions ``pre_tool_call`` without the
+    ``registered hook:`` prefix is NOT evidence (REQ-LPH-8, T4.4/T4.5)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    fake = _write_fake_hermes(tmp_path, mode="incidental")
+
+    result = hermes_probe_support.boot_and_probe_gateway(
+        str(fake), home, repo=hermes_probe_support.REPO_ROOT, timeout=10.0, environ={}
+    )
+
+    assert result.booted is False
+    assert result.hook_evidence == []
+
+
 def test_boot_offset_excludes_pre_existing_log_text(tmp_path: Path) -> None:
     """Only content written at/after boot counts as evidence (boot byte-offset)."""
     home = tmp_path / "home"
@@ -220,6 +289,21 @@ def test_missing_evidence_fails_not_passes(tmp_path: Path) -> None:
     assert result.returncode == 0
 
 
+def test_fatal_exit_surfaces_returncode_not_a_pass(tmp_path: Path) -> None:
+    """A gateway that exits with the fatal-config code (78) and no markers must
+    surface the observed return code and never report a pass (REQ-LPH-3/T4.5)."""
+    home = tmp_path / "home"
+    home.mkdir()
+    fake = _write_fake_hermes(tmp_path, mode="exit-78")
+
+    result = hermes_probe_support.boot_and_probe_gateway(
+        str(fake), home, repo=hermes_probe_support.REPO_ROOT, timeout=10.0, environ={}
+    )
+
+    assert result.booted is False
+    assert result.returncode == 78
+
+
 # -- REQ-LPH-4: bounded teardown ---------------------------------------------
 
 
@@ -255,15 +339,27 @@ def test_teardown_kills_a_child_that_ignores_sigterm(tmp_path: Path) -> None:
             proc.wait(timeout=5)
 
 
-# -- REQ-LPH-6: log-path drift -----------------------------------------------
+# -- REQ-LPH-6: log-path drift (post-boot) -----------------------------------
 
 
 def test_gateway_log_path_drift_raises(tmp_path: Path) -> None:
-    """A missing ``<home>/logs`` directory is honest drift, not a false pass."""
+    """A missing ``<home>/logs`` pre-boot is NOT drift (the resolver is pure); a
+    gateway that never creates it AFTER boot is honest drift, not a false pass."""
     home = tmp_path / "home"
     home.mkdir()  # no logs/ subdir
+    # Pure resolver: no raise on a fresh profile.
+    assert hermes_probe_support.gateway_log_path(home) == home / "logs" / "agent.log"
+
+    fake = _write_fake_hermes(tmp_path, mode="no-logs")
     with pytest.raises(hermes_probe_support.ProbeLogDriftError):
-        hermes_probe_support.gateway_log_path(home)
+        hermes_probe_support.boot_and_probe_gateway(
+            str(fake),
+            home,
+            repo=hermes_probe_support.REPO_ROOT,
+            timeout=10.0,
+            environ={},
+        )
+    assert not (home / "logs").is_dir()
 
 
 # -- REQ-LPH-7: P0-8 isolation -----------------------------------------------
