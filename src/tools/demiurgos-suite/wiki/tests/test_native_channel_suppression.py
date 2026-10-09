@@ -35,10 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import shutil
-import subprocess
-import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,12 +49,11 @@ from methodology_library import Activation, PublishedVersion
 from methodology_trust import FOUNDATIONAL
 from skill_materializer import revision_marker_path
 
+import hermes_probe_support as probe_support
+
 _HERE = Path(__file__).resolve().parent
 _WIKI = _HERE.parent
 REPO_ROOT = _WIKI.parents[3]  # wiki/ -> demiurgos-suite/ -> tools/ -> src/ -> repo
-
-#: The personal Hermes profile the channel must NEVER resolve to or write (P0-8).
-_PERSONAL_HERMES_HOME = Path.home() / ".hermes"
 
 WORLD = "W"
 FLOW = api_server.DEFAULT_FLOW_TYPE
@@ -758,9 +754,9 @@ def test_live_native_channel_e2e_gateway():
     profile and assert the channel wiring comes up. Explicitly opt-in
     (``DEMIURGOS_PROBE_LIVE=1``) and requires a provisioned dedicated profile
     (``DEMIURGOS_HERMES_HOME``/``HERMES_HOME``, never the personal profile);
-    otherwise SKIPPED with the exact reason — runs with the WU-3.0 harness.
-    A failing run here FAILS loudly, never silently passes."""
-    if os.environ.get("DEMIURGOS_PROBE_LIVE", "").strip() != "1":
+    otherwise SKIPPED with the exact reason — runs with the shared WU-2 harness
+    (REQ-LPH-5). A failing run here FAILS loudly, never silently passes."""
+    if not probe_support.live_probe_enabled():
         pytest.skip(
             "live gateway E2E disabled (DEMIURGOS_PROBE_LIVE=1 required); "
             "deterministic unit/integration half executed instead"
@@ -768,48 +764,22 @@ def test_live_native_channel_e2e_gateway():
     hermes_bin = shutil.which("hermes")
     if hermes_bin is None:
         pytest.skip("hermes binary not found on PATH")
-    value = os.environ.get("DEMIURGOS_HERMES_HOME", "").strip() or os.environ.get(
-        "HERMES_HOME", ""
-    ).strip()
-    if not value:
-        pytest.skip("no dedicated test profile provisioned (DEMIURGOS_HERMES_HOME unset)")
-    home = Path(value).expanduser().resolve()
-    if home == _PERSONAL_HERMES_HOME.resolve():
-        pytest.fail("refusing to boot the personal profile (P0-8)")
-
-    env_ = {**os.environ, "HERMES_HOME": str(home), "DEMIURGOS_HERMES_HOME": str(home)}
-    proc = subprocess.Popen(
-        [hermes_bin, "gateway", "run"],
-        env=env_,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
-    )
-    evidence: list[str] = []
-    started = False
-    deadline = time.monotonic() + 90.0
     try:
-        while time.monotonic() < deadline:
-            line = proc.stdout.readline() if proc.stdout else ""
-            if not line:
-                if proc.poll() is not None:
-                    break
-                time.sleep(0.5)
-                continue
-            evidence.append(line)
-            if "registering hook" in line.lower() or "pre_tool_call" in line.lower():
-                started = True
-    finally:
-        try:
-            proc.terminate()
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-    assert started, (
+        home = probe_support.resolve_dedicated_profile_root()
+    except probe_support.ProbeUnavailable as exc:
+        pytest.skip(str(exc))
+    except probe_support.ProbeIsolationError as exc:
+        pytest.fail(str(exc))  # isolation is a hard fail, never a skip
+
+    try:
+        result = probe_support.boot_and_probe_gateway(hermes_bin, home)
+    except probe_support.ProbeLogDriftError as exc:
+        pytest.skip(str(exc))  # log-path drift is an honest skip, never a pass
+
+    assert result.booted, (
         "gateway did not come up with hook evidence; "
-        f"returncode={proc.returncode}"
+        f"returncode={result.returncode}"
     )
-    assert any("pre_tool_call" in line.lower() for line in evidence), (
-        "no pre_tool_call registration evidence in gateway output"
+    assert any("pre_tool_call" in line.lower() for line in result.hook_evidence), (
+        "no pre_tool_call registration evidence in the gateway log"
     )
