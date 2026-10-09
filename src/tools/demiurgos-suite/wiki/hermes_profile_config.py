@@ -43,6 +43,16 @@ PLUGIN_NAME = "demiurgos-idea-capture"
 #: The personal Hermes profile provisioning must never touch (P0-8, REQ-TPP-4).
 PERSONAL_HERMES_HOME = Path.home() / ".hermes"
 
+#: Tracked native-skill carrier copied into the model-turn profile seed. Valid
+#: ``name:``/``description:`` frontmatter (verified src/skills/narrative-design/SKILL.md).
+SEED_SKILL_NAME = "narrative-design"
+
+#: Checkout-relative location of the tracked carrier skills (REQ-TPP-7).
+CARRIER_SKILLS_REL = Path("src") / "skills"
+
+#: Scratch dir (scoped to the dedicated profile root) holding the seeded skill.
+SEED_DIR_NAME = "skills-seed"
+
 
 class ProfileProvisioningError(RuntimeError):
     """Refused to provision a profile (P0-8 personal home, or a bad root)."""
@@ -275,4 +285,102 @@ def provision_test_profile(root: Path, repo_root: Path) -> Path:
     merge_skills_external_dirs(config, resolve_skills_dir(repo_root))
     merge_platform_disabled(config, "telegram")
     merge_logging_level(config, "DEBUG")
+    return config
+
+
+def merge_model_provider(
+    config_path: Path, provider: str, model: str, base_url: str
+) -> bool:
+    """Ensure ``config_path`` has ``model:{provider,default,base_url}``. Idempotent.
+
+    Writes the canonical reader keys the installed runtime resolves: ``model.provider``,
+    ``model.default`` (the model id) and ``model.base_url``. Preserves sibling keys
+    under an existing ``model:`` block (e.g. ``context_length``, ``options``).
+    Same idempotent-YAML shape as :func:`merge_plugins_enabled`: returns True when
+    written, False when already matching (byte-preserving no-op).
+    """
+    import yaml
+
+    data = {}
+    if config_path.is_file():
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict):
+            data = loaded
+    model_block = data.get("model")
+    if not isinstance(model_block, dict):
+        model_block = {}
+        data["model"] = model_block
+    if (
+        model_block.get("provider") == provider
+        and model_block.get("default") == model
+        and model_block.get("base_url") == base_url
+    ):
+        return False
+    model_block["provider"] = provider
+    model_block["default"] = model
+    model_block["base_url"] = base_url
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return True
+
+
+def _seed_skill(seed_dir: Path, carrier_dir: Path) -> bool:
+    """Copy ``carrier_dir`` (recursively) into ``seed_dir`` when bytes differ.
+
+    Byte-preserving on re-run: a target file whose content already matches is not
+    rewritten. Raises ``ProfileProvisioningError`` when ``carrier_dir/SKILL.md`` is
+    absent — a missing tracked carrier is a loud provisioning error, never a
+    silent empty seed. Returns True when at least one file was written.
+    """
+    carrier_dir = Path(carrier_dir).expanduser().resolve()
+    carrier_skill = carrier_dir / "SKILL.md"
+    if not carrier_skill.is_file():
+        raise ProfileProvisioningError(
+            f"cannot seed skill: no SKILL.md in tracked carrier {carrier_dir} "
+            "(a missing tracked carrier is a loud provisioning error, "
+            "never a silent empty seed)"
+        )
+    seed_dir = Path(seed_dir).expanduser().resolve()
+    written = False
+    for source in sorted(carrier_dir.rglob("*")):
+        if not source.is_file():
+            continue
+        target = seed_dir / source.relative_to(carrier_dir)
+        if target.is_file() and target.read_bytes() == source.read_bytes():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+        written = True
+    return written
+
+
+def provision_model_turn_profile(
+    root: Path, repo_root: Path, *, provider: str, model: str, base_url: str
+) -> Path:
+    """Provision a dedicated model-turn profile (REQ-TPP-7). Reuses provision_test_profile.
+
+    Order: (1) ``root`` resolve -> ``is_personal_hermes_home`` -> ``ProfileProvisioningError``
+    (P0-8, no write); (2) ``provision_test_profile(root, repo_root)`` (five existing
+    writers); (3) ``merge_model_provider`` writes the ``model:`` block; (4) seed the
+    REAL tracked carrier ``<repo_root>/src/skills/<SEED_SKILL_NAME>/`` into
+    ``<root>/skills-seed/<SEED_SKILL_NAME>/``; (5) register ``<root>/skills-seed`` via
+    ``merge_skills_external_dirs``. Idempotent; does NOT write any credential
+    (operator supplies it via export or ``<root>/.env``). Returns ``<root>/config.yaml``.
+    """
+    root = Path(root).expanduser().resolve()
+    if is_personal_hermes_home(root):
+        raise ProfileProvisioningError(
+            f"refused to provision the personal profile {PERSONAL_HERMES_HOME} "
+            "(P0-8); target a dedicated test profile root instead"
+        )
+    config = provision_test_profile(root, repo_root)
+    merge_model_provider(config, provider, model, base_url)
+    repo_root = Path(repo_root).expanduser().resolve()
+    _seed_skill(
+        root / SEED_DIR_NAME / SEED_SKILL_NAME,
+        repo_root / CARRIER_SKILLS_REL / SEED_SKILL_NAME,
+    )
+    merge_skills_external_dirs(config, root / SEED_DIR_NAME)
     return config

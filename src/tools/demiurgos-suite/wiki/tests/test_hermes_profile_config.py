@@ -579,3 +579,281 @@ def test_merge_logging_level_preserves_siblings(tmp_path):
     data = _read_yaml(config)
     assert data["logging"]["level"] == "DEBUG"
     assert data["logging"]["max_size_mb"] == 7
+
+
+# -- model-turn provisioning (WU-1, REQ-TPP-7) --------------------------------
+
+
+def _write_carrier_skill(repo_root: Path, source_text: str = "---\nname: narrative-design\n") -> Path:
+    """Create a temp tracked carrier ``<repo>/src/skills/narrative-design/SKILL.md``."""
+    carrier = repo_root / "src" / "skills" / "narrative-design"
+    carrier.mkdir(parents=True)
+    (carrier / "SKILL.md").write_text(source_text, encoding="utf-8")
+    return carrier
+
+
+def test_merge_model_provider_writes_block(tmp_path):
+    """Spec REQ-TPP-7 'Model block provisioned': a fresh config gets the
+    canonical ``model:`` block with provider, default (model id) and base_url."""
+    from hermes_profile_config import merge_model_provider
+
+    config = tmp_path / "config.yaml"
+    assert (
+        merge_model_provider(
+            config, "opencode-go", "deepseek-v4.1-flash", "https://opencode.ai/zen/go/v1"
+        )
+        is True
+    )
+
+    data = _read_yaml(config)
+    assert data["model"]["provider"] == "opencode-go"
+    assert data["model"]["default"] == "deepseek-v4.1-flash"
+    assert data["model"]["base_url"] == "https://opencode.ai/zen/go/v1"
+
+
+def test_merge_model_provider_preserves_sibling_model_keys(tmp_path):
+    """Spec REQ-TPP-7 'Model block provisioned': sibling keys under an existing
+    ``model:`` block (e.g. ``context_length``, ``options``) survive the write."""
+    from hermes_profile_config import merge_model_provider
+
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        textwrap.dedent(
+            """\
+            model:
+              context_length: 8192
+              options:
+                temperature: 0.7
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    assert (
+        merge_model_provider(config, "opencode-go", "deepseek-v4.1-flash", "https://opencode.ai/zen/go/v1")
+        is True
+    )
+
+    data = _read_yaml(config)
+    assert data["model"]["provider"] == "opencode-go"
+    assert data["model"]["default"] == "deepseek-v4.1-flash"
+    assert data["model"]["base_url"] == "https://opencode.ai/zen/go/v1"
+    assert data["model"]["context_length"] == 8192
+    assert data["model"]["options"] == {"temperature": 0.7}
+
+
+def test_merge_model_provider_idempotent_byte_stable(tmp_path):
+    """Spec REQ-TPP-7 'Idempotent and sibling-preserving': a second write of the
+    same block is a no-op and leaves the file byte-identical."""
+    from hermes_profile_config import merge_model_provider
+
+    config = tmp_path / "config.yaml"
+    assert (
+        merge_model_provider(config, "opencode-go", "deepseek-v4.1-flash", "https://opencode.ai/zen/go/v1")
+        is True
+    )
+    before = config.read_bytes()
+    assert (
+        merge_model_provider(config, "opencode-go", "deepseek-v4.1-flash", "https://opencode.ai/zen/go/v1")
+        is False
+    )
+    assert config.read_bytes() == before
+
+
+def test_seed_skill_copies_real_carrier_content(tmp_path):
+    """Spec REQ-TPP-7 'REAL tracked skill seeded': the seed copies the tracked
+    carrier's real content (not a stub) into the seed dir."""
+    from hermes_profile_config import _seed_skill
+
+    repo = tmp_path / "repo"
+    carrier = _write_carrier_skill(repo, "---\nname: narrative-design\ndescription: real content\n")
+    seed = tmp_path / "seed" / "narrative-design"
+
+    assert _seed_skill(seed, carrier) is True
+    assert (seed / "SKILL.md").read_text(encoding="utf-8") == (
+        "---\nname: narrative-design\ndescription: real content\n"
+    )
+
+
+def test_seed_skill_is_byte_preserving_on_rerun(tmp_path):
+    """Spec REQ-TPP-7: a second seed of identical content rewrites nothing."""
+    from hermes_profile_config import _seed_skill
+
+    repo = tmp_path / "repo"
+    carrier = _write_carrier_skill(repo)
+    seed = tmp_path / "seed" / "narrative-design"
+
+    assert _seed_skill(seed, carrier) is True
+    seeded = seed / "SKILL.md"
+    before = seeded.read_bytes()
+    assert _seed_skill(seed, carrier) is False
+    assert seeded.read_bytes() == before
+
+
+def test_seed_skill_missing_carrier_raises(tmp_path):
+    """Spec REQ-TPP-7 'Empty-external-dir gotcha is closed': a missing tracked
+    carrier is a loud provisioning error, never a silent empty seed."""
+    from hermes_profile_config import ProfileProvisioningError, _seed_skill
+
+    seed = tmp_path / "seed" / "narrative-design"
+    missing = tmp_path / "src" / "skills" / "narrative-design"
+
+    with pytest.raises(ProfileProvisioningError):
+        _seed_skill(seed, missing)
+
+
+def test_provision_model_turn_writes_model_block(tmp_path):
+    """Spec REQ-TPP-7 'Model block provisioned': provision_model_turn_profile
+    writes the ``model:`` block with the given provider/default/base_url."""
+    from hermes_profile_config import provision_model_turn_profile
+
+    root = tmp_path / "profile"
+    repo = tmp_path / "repo"
+    _write_carrier_skill(repo)
+
+    config = provision_model_turn_profile(
+        root, repo, provider="opencode-go", model="deepseek-v4.1-flash", base_url="https://opencode.ai/zen/go/v1"
+    )
+
+    data = _read_yaml(config)
+    assert data["model"]["provider"] == "opencode-go"
+    assert data["model"]["default"] == "deepseek-v4.1-flash"
+    assert data["model"]["base_url"] == "https://opencode.ai/zen/go/v1"
+
+
+def test_provision_model_turn_seeds_real_carrier_content(tmp_path):
+    """Spec REQ-TPP-7 'REAL tracked skill seeded': the seeded SKILL.md matches
+    the tracked carrier — real content, not a stub."""
+    from hermes_profile_config import SEED_DIR_NAME, SEED_SKILL_NAME, provision_model_turn_profile
+
+    root = tmp_path / "profile"
+    repo = tmp_path / "repo"
+    carrier_text = (
+        "---\nname: narrative-design\ndescription: Design narrative structure\n---\n# Narrative Design\n"
+    )
+    _write_carrier_skill(repo, carrier_text)
+
+    provision_model_turn_profile(
+        root, repo, provider="opencode-go", model="deepseek-v4.1-flash", base_url="https://opencode.ai/zen/go/v1"
+    )
+
+    seeded = root / SEED_DIR_NAME / SEED_SKILL_NAME / "SKILL.md"
+    assert seeded.read_text(encoding="utf-8") == carrier_text
+
+
+def test_provision_model_turn_registers_scratch_dir(tmp_path):
+    """Spec REQ-TPP-7 'REAL tracked skill seeded': the scratch dir scoped to the
+    dedicated profile root is registered in ``skills.external_dirs``."""
+    from hermes_profile_config import SEED_DIR_NAME, provision_model_turn_profile
+
+    root = tmp_path / "profile"
+    repo = tmp_path / "repo"
+    _write_carrier_skill(repo)
+
+    provision_model_turn_profile(
+        root, repo, provider="opencode-go", model="deepseek-v4.1-flash", base_url="https://opencode.ai/zen/go/v1"
+    )
+
+    data = _read_yaml(root / "config.yaml")
+    assert str((root / SEED_DIR_NAME).resolve()) in data["skills"]["external_dirs"]
+
+
+def test_provision_model_turn_idempotent_byte_stable(tmp_path):
+    """Spec REQ-TPP-7 'Idempotent and sibling-preserving': a second provision is
+    a byte-stable no-op across the model block, the seed, and external_dirs."""
+    from hermes_profile_config import provision_model_turn_profile
+
+    root = tmp_path / "profile"
+    repo = tmp_path / "repo"
+    _write_carrier_skill(repo)
+
+    provision_model_turn_profile(
+        root, repo, provider="opencode-go", model="deepseek-v4.1-flash", base_url="https://opencode.ai/zen/go/v1"
+    )
+    before = (root / "config.yaml").read_bytes()
+    seeded_before = (root / "skills-seed" / "narrative-design" / "SKILL.md").read_bytes()
+
+    provision_model_turn_profile(
+        root, repo, provider="opencode-go", model="deepseek-v4.1-flash", base_url="https://opencode.ai/zen/go/v1"
+    )
+
+    assert (root / "config.yaml").read_bytes() == before
+    assert (root / "skills-seed" / "narrative-design" / "SKILL.md").read_bytes() == seeded_before
+    data = _read_yaml(root / "config.yaml")
+    assert len(data["skills"]["external_dirs"]) == 2
+
+
+def test_provision_model_turn_preserves_siblings(tmp_path):
+    """Spec REQ-TPP-7: operator-authored sibling keys survive every write."""
+    from hermes_profile_config import provision_model_turn_profile
+
+    root = tmp_path / "profile"
+    root.mkdir(parents=True)
+    (root / "config.yaml").write_text(
+        textwrap.dedent(
+            """\
+            model:
+              context_length: 8192
+            plugins:
+              enabled:
+                - some-other-plugin
+            """
+        ),
+        encoding="utf-8",
+    )
+    repo = tmp_path / "repo"
+    _write_carrier_skill(repo)
+
+    provision_model_turn_profile(
+        root, repo, provider="opencode-go", model="deepseek-v4.1-flash", base_url="https://opencode.ai/zen/go/v1"
+    )
+
+    data = _read_yaml(root / "config.yaml")
+    assert data["model"]["context_length"] == 8192
+    assert data["model"]["provider"] == "opencode-go"
+    assert data["plugins"]["enabled"] == ["some-other-plugin", "demiurgos-idea-capture"]
+
+
+def test_provision_model_turn_refuses_personal_home(tmp_path, monkeypatch):
+    """Spec REQ-TPP-7 'P0-8 refusal preserved': a root resolving to the personal
+    ``~/.hermes`` raises and creates nothing under it."""
+    import hermes_profile_config
+    from hermes_profile_config import ProfileProvisioningError, provision_model_turn_profile
+
+    fake_personal = tmp_path / ".hermes"
+    fake_personal.mkdir()
+    monkeypatch.setattr(hermes_profile_config, "PERSONAL_HERMES_HOME", fake_personal)
+
+    with pytest.raises(ProfileProvisioningError):
+        provision_model_turn_profile(
+            fake_personal,
+            tmp_path / "repo",
+            provider="opencode-go",
+            model="deepseek-v4.1-flash",
+            base_url="https://opencode.ai/zen/go/v1",
+        )
+
+    assert not (fake_personal / "config.yaml").exists()
+    assert not (fake_personal / "skills-seed").exists()
+
+
+def test_provision_model_turn_does_not_require_owned_dir(tmp_path):
+    """Spec REQ-TPP-7 'Empty-external-dir gotcha is closed': with the owned dir
+    empty (only ``.gitkeep``), provisioning still seeds real carrier content —
+    no promotion, no world-flag dependency."""
+    from hermes_profile_config import SEED_DIR_NAME, SEED_SKILL_NAME, provision_model_turn_profile
+
+    root = tmp_path / "profile"
+    repo = tmp_path / "repo"
+    owned = repo / "data" / "methodology" / "skills"
+    owned.mkdir(parents=True)
+    (owned / ".gitkeep").write_text("", encoding="utf-8")
+    _write_carrier_skill(repo)
+
+    provision_model_turn_profile(
+        root, repo, provider="opencode-go", model="deepseek-v4.1-flash", base_url="https://opencode.ai/zen/go/v1"
+    )
+
+    seeded = root / SEED_DIR_NAME / SEED_SKILL_NAME / "SKILL.md"
+    assert seeded.is_file()
+    assert "narrative-design" in seeded.read_text(encoding="utf-8")
