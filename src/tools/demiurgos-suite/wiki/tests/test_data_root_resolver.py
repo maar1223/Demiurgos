@@ -6,6 +6,11 @@ Covers WU-1 of portable-data-root-drive-backup: ``data_root.resolve_data_root``,
 (REQ-DR-1/2/4, SC-DR-1.1/1.2/1.3/2.1/4.1). Every test injects ``environ`` and
 ``config_dir`` so nothing touches the real process env or the real user config
 dir.
+
+Also covers WU-1 of hermes-probe-closure: the optional-``platformdirs``
+stdlib fallback (REQ-PLR-3/4/5). Those tests inject the resolver's own seams
+(``_HAS_PLATFORMDIRS``/``_platformdirs``/``_is_windows`` plus ``HOME``/
+``XDG_CONFIG_HOME``/``APPDATA``) so they never touch the real user config dir.
 """
 
 import json
@@ -120,6 +125,136 @@ def test_pointer_path_defaults_to_platformdirs_config_dir():
         Path(platformdirs.user_config_dir(data_root.APP_NAME)) / data_root.POINTER_NAME
     )
     assert data_root.pointer_path() == expected
+
+
+# -- hermes-probe-closure WU-1: optional platformdirs, stdlib fallback --------
+# REQ-PLR-3: the pointer location above is preserved byte-for-byte when
+# platformdirs is importable. The cases below pin the fallback (REQ-PLR-4) and
+# the preserved failure/atomic contract (REQ-PLR-5) when it is absent.
+
+
+def test_pointer_path_falls_back_to_xdg_config_home_without_platformdirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """REQ-PLR-4: absent platformdirs + non-blank ``$XDG_CONFIG_HOME``."""
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
+    xdg = tmp_path / "xdg"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+
+    assert (
+        data_root.pointer_path()
+        == xdg / data_root.APP_NAME / data_root.POINTER_NAME
+    )
+
+
+@pytest.mark.parametrize("xdg_value", [None, "", "   "])
+def test_pointer_path_falls_back_to_home_config_without_xdg(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, xdg_value: str | None
+):
+    """REQ-PLR-4: absent platformdirs + unset/blank XDG -> ``~/.config``."""
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    if xdg_value is None:
+        monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    else:
+        monkeypatch.setenv("XDG_CONFIG_HOME", xdg_value)
+
+    assert (
+        data_root.pointer_path()
+        == home / ".config" / data_root.APP_NAME / data_root.POINTER_NAME
+    )
+
+
+def test_pointer_path_falls_back_to_appdata_on_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """REQ-PLR-4: absent platformdirs + Windows -> ``%APPDATA%``."""
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
+    monkeypatch.setattr(data_root, "_is_windows", lambda: True)
+    appdata = tmp_path / "appdata"
+    monkeypatch.setenv("APPDATA", str(appdata))
+
+    assert (
+        data_root.pointer_path()
+        == appdata / data_root.APP_NAME / data_root.POINTER_NAME
+    )
+
+
+def test_fallback_does_not_shadow_platformdirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """REQ-PLR-3: present platformdirs + a set XDG never uses the fallback."""
+    pd_root = tmp_path / "pd"
+
+    class _StubPlatformdirs:
+        @staticmethod
+        def user_config_dir(name: str) -> str:
+            return str(pd_root / name)
+
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", True)
+    monkeypatch.setattr(data_root, "_platformdirs", _StubPlatformdirs)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+
+    assert (
+        data_root.pointer_path()
+        == pd_root / data_root.APP_NAME / data_root.POINTER_NAME
+    )
+
+
+def test_no_config_without_platformdirs_fails_loudly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """REQ-PLR-5: absent platformdirs, no env, no pointer -> raise."""
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
+    cfg = _config(tmp_path)
+
+    with pytest.raises(DataRootNotConfigured):
+        data_root.resolve_data_root(environ={}, config_dir=cfg)
+
+
+def test_malformed_pointer_without_platformdirs_fails_loudly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """REQ-PLR-5: absent platformdirs + malformed pointer -> raise."""
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
+    cfg = _config(tmp_path)
+    cfg.mkdir()
+    data_root.pointer_path(cfg).write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(DataRootNotConfigured):
+        data_root.resolve_data_root(environ={}, config_dir=cfg)
+
+
+def test_pointer_write_is_atomic_without_platformdirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """REQ-PLR-5: the atomic staged-temp + ``os.replace`` pointer is preserved."""
+    monkeypatch.setattr(data_root, "_HAS_PLATFORMDIRS", False)
+    cfg = _config(tmp_path)
+    root_a = tmp_path / "root-a"
+    root_a.mkdir()
+    root_b = tmp_path / "root-b"
+    root_b.mkdir()
+
+    data_root.write_pointer(root_a, config_dir=cfg)
+    assert data_root.read_pointer(cfg) == root_a.resolve()
+
+    def interrupted(src, dst):
+        raise OSError("simulated interruption mid-write")
+
+    with monkeypatch.context() as m:
+        m.setattr(data_root.os, "replace", interrupted)
+        with pytest.raises(OSError):
+            data_root.write_pointer(root_b, config_dir=cfg)
+
+    # the previous COMPLETE record survived and no temp residue remains
+    assert data_root.read_pointer(cfg) == root_a.resolve()
+    assert [p.name for p in cfg.iterdir() if data_root._TMP_MARKER in p.name] == []
+
+    data_root.write_pointer(root_b, config_dir=cfg)
+    assert data_root.read_pointer(cfg) == root_b.resolve()
+    assert [p.name for p in cfg.iterdir() if data_root._TMP_MARKER in p.name] == []
 
 
 @pytest.mark.parametrize(

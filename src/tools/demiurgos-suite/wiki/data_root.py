@@ -9,9 +9,16 @@ exactly three steps, applied in this order:
 1. ``DEMIURGOS_DATA_ROOT`` when it is set to a non-blank value. The value is
    returned as a normalized absolute path and the pointer is never rewritten.
 2. The bootstrap pointer written by :func:`write_pointer` — a small JSON record
-   in the OS config dir (``platformdirs.user_config_dir("demiurgos")``) that
-   holds the data-root path ONLY, never author data.
+   in the OS config dir (``platformdirs.user_config_dir("demiurgos")`` when
+   ``platformdirs`` is importable, otherwise the stdlib fallback
+   ``$XDG_CONFIG_HOME``/``~/.config`` on POSIX or ``%APPDATA%`` on Windows)
+   that holds the data-root path ONLY, never author data.
 3. :class:`DataRootNotConfigured`.
+
+``platformdirs`` is an optional dependency: the module soft-imports it and
+records availability in :data:`_HAS_PLATFORMDIRS`. The pointer location is
+preserved byte-for-byte when it is importable; the stdlib fallback activates
+ONLY on absence, so a host that already resolves the pointer keeps it.
 
 There is deliberately NO code-relative fallback and NO default root: a missing
 configuration fails loudly instead of silently reading a path inside the code
@@ -49,12 +56,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 try:
-    import platformdirs
-except ImportError as exc:  # pragma: no cover - dependency is declared in the manifest
-    raise ImportError(
-        "platformdirs is required by the data-root resolver; install it from "
-        "src/tools/demiurgos-suite/requirements.txt"
-    ) from exc
+    import platformdirs as _platformdirs
+except ImportError:  # platformdirs is optional; the stdlib fallback below replaces it
+    _platformdirs = None
+
+#: Whether ``platformdirs`` is importable in this interpreter. When ``True``
+#: the pointer location is preserved byte-for-byte; the stdlib fallback is
+#: consulted ONLY when this is ``False``.
+_HAS_PLATFORMDIRS = _platformdirs is not None
 
 
 ENV_VAR = "DEMIURGOS_DATA_ROOT"
@@ -73,10 +82,37 @@ class DataRootNotConfigured(RuntimeError):
     """
 
 
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _fallback_config_dir() -> Path:
+    """Config dir used ONLY when ``platformdirs`` is unavailable.
+
+    POSIX: ``$XDG_CONFIG_HOME`` when set and non-blank, else ``~/.config``.
+    Windows: ``%APPDATA%`` when set and non-blank, else ``~/AppData/Roaming``.
+    ``APP_NAME`` is always appended. This mirrors the platformdirs base only
+    for the hosts that would otherwise raise ``ImportError``.
+    """
+    if _is_windows():
+        appdata = (os.environ.get("APPDATA") or "").strip()
+        base = (
+            Path(appdata).expanduser()
+            if appdata
+            else Path.home() / "AppData" / "Roaming"
+        )
+    else:
+        xdg = (os.environ.get("XDG_CONFIG_HOME") or "").strip()
+        base = Path(xdg).expanduser() if xdg else Path.home() / ".config"
+    return base / APP_NAME
+
+
 def _config_dir(config_dir: Path | None) -> Path:
     if config_dir is not None:
         return Path(config_dir)
-    return Path(platformdirs.user_config_dir(APP_NAME))
+    if _HAS_PLATFORMDIRS:
+        return Path(_platformdirs.user_config_dir(APP_NAME))
+    return _fallback_config_dir()
 
 
 def pointer_path(config_dir: Path | None = None) -> Path:
