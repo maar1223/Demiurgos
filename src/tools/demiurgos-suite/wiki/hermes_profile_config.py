@@ -18,6 +18,12 @@ The merge never crashes on missing/empty/non-mapping configs: it starts from
 ``{}`` and always produces a valid mapping. ``resolve_skills_dir`` is the
 canonical resolver of the owned folder under a checkout root, used by the
 installer so the registered path is a single source of truth.
+
+``provision_test_profile`` (WU-3, REQ-TPP-1..5) reuses the same idempotent
+writers to build a dedicated ``HERMES_HOME``-layout test profile for the live
+probe: it enables the ``demiurgos-idea-capture`` plugin, adds the ``skills``
+toolset, and registers the owned skills folder. It refuses the personal
+``~/.hermes`` profile (P0-8) and never writes outside the requested root.
 """
 
 from __future__ import annotations
@@ -28,6 +34,21 @@ from pathlib import Path
 
 #: Canonical location of the Demiurgos-owned skills folder under a checkout root.
 SKILLS_DIR_REL = Path("data") / "methodology" / "skills"
+
+#: The gateway plugin a provisioned test profile must opt into (REQ-TPP-1).
+PLUGIN_NAME = "demiurgos-idea-capture"
+
+#: The personal Hermes profile provisioning must never touch (P0-8, REQ-TPP-4).
+PERSONAL_HERMES_HOME = Path.home() / ".hermes"
+
+
+class ProfileProvisioningError(RuntimeError):
+    """Refused to provision a profile (P0-8 personal home, or a bad root)."""
+
+
+def is_personal_hermes_home(root: Path) -> bool:
+    """True when ``root`` resolves to the personal ``~/.hermes`` profile (P0-8)."""
+    return Path(root).expanduser().resolve() == PERSONAL_HERMES_HOME.resolve()
 
 
 def resolve_skills_dir(repo_root: Path) -> Path:
@@ -64,6 +85,39 @@ def merge_skills_external_dirs(config_path: Path, skills_dir: Path) -> bool:
     if entry in dirs:
         return False
     dirs.append(entry)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return True
+
+
+def merge_plugins_enabled(config_path: Path, plugin_name: str) -> bool:
+    """Ensure ``config_path`` has ONE ``plugins.enabled`` list containing ``plugin_name``.
+
+    Same idempotent-YAML shape as :func:`merge_skills_external_dirs`: idempotent,
+    preserves every sibling key, coerces a scalar/missing list, and never crashes
+    on a missing/empty/non-mapping config. Returns True when written, False when
+    the entry was already present.
+    """
+    import yaml
+
+    data = {}
+    if config_path.is_file():
+        loaded = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+        if isinstance(loaded, dict):
+            data = loaded
+    plugins = data.get("plugins")
+    if not isinstance(plugins, dict):
+        plugins = {}
+        data["plugins"] = plugins
+    enabled = plugins.get("enabled")
+    if not isinstance(enabled, list):
+        enabled = [enabled] if isinstance(enabled, str) else []
+        plugins["enabled"] = enabled
+    if plugin_name in enabled:
+        return False
+    enabled.append(plugin_name)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     config_path.write_text(
         yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
@@ -123,3 +177,29 @@ def ensure_skills_toolset(config_path: Path, *, enabled: bool) -> bool:
             pass
         raise
     return True
+
+
+def provision_test_profile(root: Path, repo_root: Path) -> Path:
+    """Provision a dedicated ``HERMES_HOME``-layout test profile under ``root``.
+
+    Writes ``<root>/config.yaml`` with the three effects required by the live
+    probe's config-level evidence: the ``demiurgos-idea-capture`` plugin opt-in
+    (REQ-TPP-1), the ``skills`` toolset in ``platform_toolsets.api_server``
+    (REQ-TPP-2), and the owned ``skills.external_dirs`` (REQ-TPP-3).
+
+    Refuses the personal ``~/.hermes`` profile and writes nothing under it
+    (REQ-TPP-4, P0-8). Re-running is a no-op for all three writers. Returns the
+    path of the written ``config.yaml``.
+    """
+    root = Path(root).expanduser().resolve()
+    if is_personal_hermes_home(root):
+        raise ProfileProvisioningError(
+            f"refused to provision the personal profile {PERSONAL_HERMES_HOME} "
+            "(P0-8); target a dedicated test profile root instead"
+        )
+    root.mkdir(parents=True, exist_ok=True)
+    config = root / "config.yaml"
+    merge_plugins_enabled(config, PLUGIN_NAME)
+    ensure_skills_toolset(config, enabled=True)
+    merge_skills_external_dirs(config, resolve_skills_dir(repo_root))
+    return config
