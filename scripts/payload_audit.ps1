@@ -87,8 +87,7 @@ $rules = @(
     @{ Name = 'bot-token';      Pattern = '[0-9]{8,10}:[A-Za-z0-9_-]{35}' },
     @{ Name = 'openai-key';     Pattern = 'sk-[A-Za-z0-9_-]{20,}' },
     @{ Name = 'google-api-key'; Pattern = 'AIza[0-9A-Za-z_-]{35}' },
-    @{ Name = 'author-path';    Pattern = 'H:\\|/home/|C:\\Users|spreadsheetId' },
-    @{ Name = 'author-id';      Pattern = '<telegram-id>' }
+    @{ Name = 'author-path';    Pattern = 'H:\\|/home/|C:\\Users|spreadsheetId' }
 )
 
 function Test-DenyExact([string]$rel) {

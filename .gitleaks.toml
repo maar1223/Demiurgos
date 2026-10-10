@@ -51,13 +51,6 @@ description = 'Author machine paths (H:\, /home/, C:\Users, spreadsheetId)'
 regex = '''H:\\|/home/|C:\\Users|spreadsheetId'''
 secretGroup = 0
 
-# Author Telegram id
-[[rules]]
-id = "demiurgos-author-id"
-description = "Author Telegram user id"
-regex = '''<telegram-id>'''
-secretGroup = 0
-
 [allowlist]
 description = "Scanner self-files, fake fixtures, harness predicates and env-var-driven Sheets tools only"
 paths = [

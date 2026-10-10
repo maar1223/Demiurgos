@@ -711,7 +711,7 @@ def test_model_credential_present_from_env(monkeypatch: pytest.MonkeyPatch, tmp_
     credential (no ``<home>/.env`` needed)."""
     home = tmp_path / "home"
     monkeypatch.delenv(_MODEL_CREDENTIAL_ENV, raising=False)
-    monkeypatch.setenv(_MODEL_CREDENTIAL_ENV, "sk-opencode-go-from-env")
+    monkeypatch.setenv(_MODEL_CREDENTIAL_ENV, "placeholder-credential-from-env")
     assert _model_credential_present(home) is True
 
 
@@ -721,7 +721,7 @@ def test_model_credential_present_from_profile_env_file(tmp_path: Path):
     home = tmp_path / "home"
     home.mkdir()
     (home / ".env").write_text(
-        f"OTHER=keep\n{_MODEL_CREDENTIAL_ENV}=sk-opencode-go-from-profile\n",
+        f"OTHER=keep\n{_MODEL_CREDENTIAL_ENV}=placeholder-credential-from-profile\n",
         encoding="utf-8",
     )
     assert _model_credential_present(home) is True

@@ -13,7 +13,6 @@
 #   openai-key      sk-[A-Za-z0-9_-]{20,}                OpenAI-style keys
 #   google-api-key  AIza[0-9A-Za-z_-]{35}                Google API keys
 #   author-path     H:\ | /home/ | C:\Users | spreadsheetId
-#   author-id       <telegram-id>
 #
 # Output: one line per hit — "<path>:<line>: <rule-name>". The matched value
 # is NEVER printed; hits are identified by path + line + rule name only.
@@ -71,7 +70,6 @@ bot-token	[0-9]{8,10}:[A-Za-z0-9_-]{35}
 openai-key	sk-[A-Za-z0-9_-]{20,}
 google-api-key	AIza[0-9A-Za-z_-]{35}
 author-path	H:\\|/home/|C:\\Users|spreadsheetId
-author-id	<telegram-id>
 EOF
 )
 

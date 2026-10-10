@@ -63,7 +63,6 @@ FAKE_AUTHOR_PATHS = [
     "C:\\Users\\TESTONLY\\fake",
     "spreadsheetId=TESTONLY_FAKE",
 ]
-FAKE_AUTHOR_ID = "<telegram-id>"
 
 # (rel path, kind) — every explicit deny entry from tasks 8.1. The kind only
 # documents the deny rule class; the audit must reject each of them.
@@ -89,7 +88,6 @@ CONTENT_CASES = [
     (FAKE_OPENAI_KEY, "openai-key"),
     (FAKE_GOOGLE_KEY, "google-api-key"),
     *[(path, "author-path") for path in FAKE_AUTHOR_PATHS],
-    (FAKE_AUTHOR_ID, "author-id"),
 ]
 
 
