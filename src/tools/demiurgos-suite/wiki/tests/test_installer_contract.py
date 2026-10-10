@@ -46,6 +46,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import shutil
 import socket
 import subprocess
@@ -672,6 +673,21 @@ def _sign_fixture_manifest(channel: Path, tmp_path: Path) -> None:
     )
 
 
+def _host_uv_target() -> str:
+    """The uv release target the installer resolves on THIS host.
+
+    Mirrors ``scripts/install-demiurgos.sh::uv_target`` (glibc Linux/macOS —
+    the fixture cells never run on musl; Alpine is the separate docker job).
+    The stub uv archive the fixture publishes must carry this exact target or
+    the installer cannot find it and fails fast.
+    """
+    machine = platform.machine().lower()
+    arch = "x86_64" if machine in ("x86_64", "amd64") else "aarch64"
+    if platform.system() == "Darwin":
+        return f"{arch}-apple-darwin"
+    return f"{arch}-unknown-linux-gnu"
+
+
 def _build_fixture_channel(
     tmp_path: Path, *, with_minisig: bool = True, wrong_payload_sha: str | None = None,
     include_core: bool = False,
@@ -730,14 +746,17 @@ def _build_fixture_channel(
         tf.add(payload_root, arcname=".")
     payload_sha = hashlib.sha256(payload_tar.read_bytes()).hexdigest()
 
-    # Stub uv archive: uv-<target>-<UV_VERSION>.tar.gz containing `uv`.
+    # Stub uv archive: uv-<target>-<UV_VERSION>.tar.gz containing `uv`. The
+    # target MUST match what scripts/install-demiurgos.sh::uv_target resolves
+    # on THIS host (a hardcoded x86_64-linux target made every aarch64/macOS
+    # fixture cell fail with "uv provider unreachable").
     uv_dir = tmp_path / "stub-uv"
     uv_dir.mkdir()
     stub = uv_dir / "uv"
     stub.write_text(_UV_STUB_SH, encoding="utf-8")
     stub.chmod(0o755)
     uv_archive = (
-        channel / "uv" / f"uv-x86_64-unknown-linux-gnu-{STUB_UV_VERSION}.tar.gz"
+        channel / "uv" / f"uv-{_host_uv_target()}-{STUB_UV_VERSION}.tar.gz"
     )
     uv_archive.parent.mkdir()
     with tarfile.open(uv_archive, "w:gz") as tf:
