@@ -15,6 +15,7 @@ before anything is written, so the target tree stays byte-identical.
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,19 @@ from backup.transport.folder import FolderTransport  # noqa: E402
 # normalization maps the second onto the first, so staging both is a collision.
 _NFC_NAME = "caf\u00e9.md"
 _NFD_NAME = "cafe\u0301.md"
+
+
+def _fs_normalizes_unicode() -> bool:
+    """True when the host filesystem normalizes Unicode (macOS APFS).
+
+    The staging contract checks the STORED spelling; a normalizing filesystem
+    rewrites it at the OS layer, so the NFD path resolves to the NFC file and
+    the filesystem — not the transport — is what changed the name.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        probe = Path(d) / "cafe\u0301"
+        probe.write_text("x", encoding="utf-8")
+        return (Path(d) / "caf\u00e9").exists()
 
 
 def _folder(tmp_path: Path) -> FolderTransport:
@@ -62,6 +76,10 @@ def test_nfc_collision_fails_loudly_naming_both_sources(tmp_path: Path) -> None:
     assert _tree_state(tmp_path / "Demiurgos") == before  # collision wrote nothing
 
 
+@pytest.mark.skipif(
+    _fs_normalizes_unicode(),
+    reason="normalizing filesystem rewrites the stored name; NFD resolves to NFC",
+)
 def test_staged_paths_are_nfc_normalized_before_publish(tmp_path: Path) -> None:
     """A lone decomposed path is published under its NFC name."""
     transport = _folder(tmp_path)
