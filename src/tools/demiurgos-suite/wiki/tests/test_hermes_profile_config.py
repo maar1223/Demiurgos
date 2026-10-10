@@ -22,6 +22,7 @@ from __future__ import annotations
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 
 from hermes_profile_config import merge_skills_external_dirs, resolve_skills_dir
@@ -340,3 +341,139 @@ def test_ensure_skills_toolset_missing_config_starts_empty(tmp_path):
     assert ensure_skills_toolset(config, enabled=True) is True
     data = _read_yaml(config)
     assert data["platform_toolsets"]["api_server"] == ["skills"]
+
+
+# -- provision_test_profile (WU-3, REQ-TPP-1..5) ------------------------------
+
+
+def test_provision_writes_plugins_enabled(tmp_path):
+    """Spec REQ-TPP-1: the provisioned profile enables `demiurgos-idea-capture`
+    in `plugins.enabled`."""
+    from hermes_profile_config import PLUGIN_NAME, provision_test_profile
+
+    root = tmp_path / "profile"
+    provision_test_profile(root, tmp_path / "repo")
+
+    data = _read_yaml(root / "config.yaml")
+    assert PLUGIN_NAME in data["plugins"]["enabled"]
+    assert data["plugins"]["enabled"] == [PLUGIN_NAME]
+
+
+def test_provision_adds_skills_toolset(tmp_path):
+    """Spec REQ-TPP-2: `skills` is present in `platform_toolsets.api_server`."""
+    from hermes_profile_config import provision_test_profile
+
+    root = tmp_path / "profile"
+    provision_test_profile(root, tmp_path / "repo")
+
+    data = _read_yaml(root / "config.yaml")
+    assert "skills" in data["platform_toolsets"]["api_server"]
+
+
+def test_provision_registers_external_skills_dir(tmp_path):
+    """Spec REQ-TPP-3: `skills.external_dirs` includes `resolve_skills_dir(repo_root)`."""
+    from hermes_profile_config import provision_test_profile, resolve_skills_dir
+
+    root = tmp_path / "profile"
+    repo = tmp_path / "repo"
+    provision_test_profile(root, repo)
+
+    data = _read_yaml(root / "config.yaml")
+    assert str(resolve_skills_dir(repo)) in data["skills"]["external_dirs"]
+
+
+def test_provision_is_idempotent(tmp_path):
+    """Spec REQ-TPP idempotency: a second run writes nothing and the config file
+    stays byte-stable across all three merge steps."""
+    from hermes_profile_config import provision_test_profile
+
+    root = tmp_path / "profile"
+    repo = tmp_path / "repo"
+    provision_test_profile(root, repo)
+
+    before = (root / "config.yaml").read_bytes()
+    provision_test_profile(root, repo)
+    assert (root / "config.yaml").read_bytes() == before
+
+    data = _read_yaml(root / "config.yaml")
+    assert data["plugins"]["enabled"] == ["demiurgos-idea-capture"]
+    assert data["platform_toolsets"]["api_server"].count("skills") == 1
+    assert len(data["skills"]["external_dirs"]) == 1
+
+
+def test_provision_preserves_sibling_keys(tmp_path):
+    """An operator-authored sibling key survives every merge step."""
+    from hermes_profile_config import provision_test_profile
+
+    root = tmp_path / "profile"
+    root.mkdir(parents=True)
+    (root / "config.yaml").write_text(
+        textwrap.dedent(
+            """\
+            model: test-model
+            plugins:
+              enabled:
+                - some-other-plugin
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    provision_test_profile(root, tmp_path / "repo")
+
+    data = _read_yaml(root / "config.yaml")
+    assert data["model"] == "test-model"
+    assert data["plugins"]["enabled"] == ["some-other-plugin", "demiurgos-idea-capture"]
+
+
+def test_provision_refuses_personal_home(tmp_path, monkeypatch):
+    """Spec REQ-TPP-4 (P0-8): a root resolving to the personal `~/.hermes`
+    raises `ProfileProvisioningError` and creates nothing under it."""
+    import hermes_profile_config
+    from hermes_profile_config import (
+        ProfileProvisioningError,
+        provision_test_profile,
+    )
+
+    fake_personal = tmp_path / ".hermes"
+    fake_personal.mkdir()
+    monkeypatch.setattr(hermes_profile_config, "PERSONAL_HERMES_HOME", fake_personal)
+
+    with pytest.raises(ProfileProvisioningError):
+        provision_test_profile(fake_personal, tmp_path / "repo")
+
+    assert not (fake_personal / "config.yaml").exists()
+
+
+def test_is_personal_hermes_home_predicate(tmp_path, monkeypatch):
+    """The shared predicate recognises the personal root and rejects a dedicated one."""
+    import hermes_profile_config
+    from hermes_profile_config import (
+        PERSONAL_HERMES_HOME,
+        is_personal_hermes_home,
+    )
+
+    assert is_personal_hermes_home(PERSONAL_HERMES_HOME) is True
+
+    fake_personal = tmp_path / ".hermes"
+    monkeypatch.setattr(hermes_profile_config, "PERSONAL_HERMES_HOME", fake_personal)
+    assert is_personal_hermes_home(fake_personal) is True
+    assert is_personal_hermes_home(tmp_path / "dedicated") is False
+
+
+def test_provision_layout_matches_resolve_profile_paths(tmp_path, monkeypatch):
+    """Layout fidelity: `<root>/config.yaml` matches `assistant_settings`
+    resolution when `HERMES_HOME=<root>` and no `active_profile` file exists
+    (profile name "default")."""
+    import assistant_settings
+    from hermes_profile_config import provision_test_profile
+
+    root = tmp_path / "profile"
+    repo = tmp_path / "repo"
+    config = provision_test_profile(root, repo)
+
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    paths = assistant_settings._resolve_profile_paths()
+    assert paths.name == "default"
+    assert paths.config == config
+    assert paths.config == root / "config.yaml"
