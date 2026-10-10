@@ -25,6 +25,8 @@ import textwrap
 import types
 from pathlib import Path
 
+import pytest
+
 _WIKI = Path(__file__).resolve().parent.parent
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
@@ -35,6 +37,19 @@ if str(_TOOLS) not in sys.path:
     sys.path.insert(0, str(_TOOLS))
 
 _PLUGIN_PATH = _REPO_ROOT / ".hermes" / "plugins" / "demiurgos-idea-capture" / "__init__.py"
+
+# The plugin loads the bundled Hermes gateway runtime (``plugins.*`` under
+# ``<HERMES_HOME>/hermes-agent``; ``capture_adapter.py`` puts that root on
+# ``sys.path``). CI runners have no Hermes runtime, so these cells skip honestly
+# there instead of failing on ``ModuleNotFoundError: No module named 'plugins'``.
+_HERMES_AGENT_ROOT = Path(
+    os.environ.get("HERMES_AGENT_ROOT")
+    or (Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes")) / "hermes-agent")
+).expanduser()
+_REQUIRES_HERMES_RUNTIME = pytest.mark.skipif(
+    not (_HERMES_AGENT_ROOT / "plugins").is_dir(),
+    reason="requires the bundled Hermes gateway runtime (plugins.* under HERMES_HOME/hermes-agent)",
+)
 
 
 class RecordingCtx:
@@ -82,6 +97,7 @@ def _data_root_layout(root: Path, *, capture_mode: str) -> None:
         f"capture_mode: {capture_mode}\nauthorized_bindings: []\n", encoding="utf-8")
 
 
+@_REQUIRES_HERMES_RUNTIME
 def test_register_derives_root_and_mode_from_the_configured_data_root(
         tmp_path: Path, monkeypatch) -> None:
     """register() + _resolve_capture_mode() read ``DEMIURGOS_DATA_ROOT``.
@@ -103,6 +119,7 @@ def test_register_derives_root_and_mode_from_the_configured_data_root(
     assert ("pre_gateway_dispatch", plugin.capture_intake_hook) in ctx.hooks
 
 
+@_REQUIRES_HERMES_RUNTIME
 def test_plugin_handler_and_api_resolve_the_same_folder(tmp_path: Path,
                                                         monkeypatch) -> None:
     """SC-DR-3.3: one ``DEMIURGOS_DATA_ROOT`` -> one folder for every writer."""
@@ -132,6 +149,7 @@ def test_plugin_handler_and_api_resolve_the_same_folder(tmp_path: Path,
     assert api_server._project_root() == resolved
 
 
+@_REQUIRES_HERMES_RUNTIME
 def test_plugin_register_succeeds_without_platformdirs(tmp_path: Path) -> None:
     """REQ-PLR-1/6: genuine ``platformdirs`` absence in a child interpreter.
 

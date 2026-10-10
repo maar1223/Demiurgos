@@ -17,6 +17,10 @@ jobs:
     # mirroring the narrowed support matrix (decision #3579):
     # Windows amd64; macOS >= 13 arm64; Linux x86_64 / aarch64 glibc >= 2.28.
     name: Backend wheels-only (${{ matrix.cell }})
+    # The suite includes the POSIX Hermes-absent boot cell, which serves the
+    # built SPA at "/" (the launcher hardcodes <app-root>/frontend/dist), so the
+    # built dist is downloaded into frontend/dist before the tests run.
+    needs: frontend
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -51,6 +55,12 @@ jobs:
       - name: Closure proof (wheels-only dry-run for this cell)
         shell: bash
         run: bash scripts/closure_proof.sh --target "${{ matrix.cell }}" --json
+
+      - name: Download the built frontend dist (the boot cell serves "/" from it)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: frontend-dist-ubuntu-latest
+          path: frontend/dist
 
       - name: Run backend tests (exclude live-Hermes e2e)
         env:
@@ -325,8 +335,9 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile $zip
           $dest = Join-Path $env:RUNNER_TEMP 'minisign'
           Expand-Archive -Path $zip -DestinationPath $dest -Force
-          $exe = Get-ChildItem -Path $dest -Recurse -Filter 'minisign.exe' | Select-Object -First 1
-          if (-not $exe) { throw 'minisign.exe not found in the archive' }
+          $exe = Get-ChildItem -Path $dest -Recurse -Filter 'minisign.exe' |
+            Where-Object { $_.FullName -match '[\\/]x86_64[\\/]' } | Select-Object -First 1
+          if (-not $exe) { throw 'x86_64 minisign.exe not found in the archive' }
           Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
           & $exe.FullName -v
 
