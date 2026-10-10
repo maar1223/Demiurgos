@@ -40,8 +40,14 @@ change; test/CI-contract repairs only (plus the launcher sourcing guard).
 - [x] **WU-8** `install-demiurgos.ps1`: nested `Join-Path` (PS 5.1 has no 3-arg `Join-Path`). Fixes the `uv.ps1` binding error.
 - [x] **WU-9** `ci.yml` backend job: scope it to the backend suite (ignore the launcher/installer contract files, which run in their dedicated jobs). Fixes the macOS/Windows backend cross-platform red + the Windows hang.
 - [x] **WU-10** `start-demiurgos.sh`: robust `command_of_pid` on macOS + cmdline in the skip diagnostic. macOS boot-smoke leak.
-- [ ] **WU-11** Windows PS launcher boot: the 3 remaining ps51 cells fail booting the installed app (API err log, exit 1).
-- [ ] **WU-12** Windows backend: 74 pre-existing platform failures — `test_payload_audit.py` (44, runs the POSIX `payload_audit.sh` + needs minisign), `test_hermes_probe_support.py` (13, needs a live Hermes runtime), `test_sync_folder_discovery.py` (3, FUSE/Linux), and launcher/Hermes/data-root cells. Gate to the OS/capability that can run them.
+- [~] **WU-11** Windows PS launcher boot: `_boot_ps_launcher` now dumps the `demiurgos-api.err.log` on failure (diagnostic). The 3 ps51 cells still fail booting the installed app — needs the err-log evidence from a Windows run to fix.
+- [x] **WU-12** Windows backend: gate the 9 platform-specific files to the OS/capability that can run them (payload_audit 44, hermes_probe_support 13, sync_folder FUSE 3, data_root XDG 4, launcher_boot_rollback 4, launcher_hermes_home 3, installer_hermes_isolation 1, install_auth_gated_write 1, hermes_profile_config 1). Local: 3793 passed, no regressions.
+
+## BLOCKER — GitHub Actions billing
+Since `33c7395` GitHub Actions refuses to start jobs:
+`The job was not started because recent account payments have failed or your spending limit needs to be increased.`
+So WU-11/WU-12 cannot be validated on CI until the account's billing is resolved. The last VALID run was `38021719503` (12/14 jobs green; PS51 + backend Windows red).
+
 
 ## Progress (CI evidence)
 - Baseline `master`: 7 red jobs. After WU-1..WU-10:
