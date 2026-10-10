@@ -50,6 +50,16 @@ _SECRET_SCAN = _REPO_ROOT / "scripts" / "secret_scan.sh"
 # crypto.
 import _minisign_stub  # noqa: F401
 
+#: POSIX-runner-only: the runtime cells execute the POSIX audit/installer core
+#: directly (``scripts/payload_audit.sh`` / ``install.sh`` / ``scripts/lib/
+#: verify_checksum.sh``) or via ``bash`` — impossible on Windows, where a bare
+#: ``bash`` is the WSL launcher stub and a ``.sh`` file is not a Win32
+#: executable (WinError 193). The ``.ps1`` parity cells stay ungated.
+POSIX_RUNNER = pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX audit/installer runtime cells shell out to bash or the .sh core",
+)
+
 # ---------------------------------------------------------------------------
 # Fake fixture values. The TESTONLY marker lets .gitleaks.toml allowlist them
 # by regex; the fixtures themselves live only in tmp_path.
@@ -127,6 +137,7 @@ def _fixture_tree(tmp_path: Path, deny_path: str | None = None) -> tuple[Path, P
     return root, manifest
 
 
+@POSIX_RUNNER
 class TestDenyByPath:
     @pytest.mark.parametrize("deny_path,_kind", DENY_CASES, ids=[c[0] for c in DENY_CASES])
     def test_each_named_deny_path_is_rejected(self, tmp_path, deny_path, _kind):
@@ -150,6 +161,7 @@ class TestDenyByPath:
         assert FAKE_BOT_TOKEN not in result.stdout
 
 
+@POSIX_RUNNER
 class TestContentScan:
     @pytest.mark.parametrize("value,rule", CONTENT_CASES, ids=[c[1] for c in CONTENT_CASES])
     def test_planted_pattern_in_allowed_file_is_rejected(self, tmp_path, value, rule):
@@ -163,6 +175,7 @@ class TestContentScan:
         assert value not in result.stdout, "the audit must never echo a matched value"
 
 
+@POSIX_RUNNER
 class TestDefaultDeny:
     def test_clean_tree_passes(self, tmp_path):
         root = tmp_path / "tree"
@@ -209,6 +222,7 @@ class TestDefaultDeny:
 # (the packaging extras and the shared dist tree).
 # ---------------------------------------------------------------------------
 
+@POSIX_RUNNER
 class TestAllowFlag:
     def test_extra_path_listed_in_allow_file_passes(self, tmp_path):
         root = tmp_path / "tree"
@@ -289,6 +303,7 @@ INSTALLER_SCRIPTS = [
 ]
 
 
+@POSIX_RUNNER
 class TestDocumentationLikePaths:
     @pytest.mark.parametrize("name", REQUIREMENTS_REFERENCE_CASES)
     def test_requirements_reference_ships_as_allowed(self, tmp_path, name):
@@ -318,6 +333,7 @@ class TestDocumentationLikePaths:
                 )
 
 
+@POSIX_RUNNER
 class TestContentScanSkip:
     """The derived dist tree is path-checked but not content-scanned.
 
@@ -411,6 +427,7 @@ def _sign_minisig(sums: Path, key: Path) -> None:
     )
 
 
+@POSIX_RUNNER
 class TestSignedManifest:
     def test_roundtrip_sign_verify_reject_tampered(self, tmp_path):
         sums = tmp_path / "SHA256SUMS"
@@ -470,6 +487,7 @@ class TestSignedManifest:
 # Tampered artifact -> verification fails -> installation aborted.
 # ---------------------------------------------------------------------------
 
+@POSIX_RUNNER
 class TestConsumerSignedBootstrap:
     STUB_CORE = "#!/usr/bin/env bash\necho STUB-CORE-RAN\nexit 0\n"
 
@@ -546,6 +564,7 @@ class TestConsumerSignedBootstrap:
 # S5b / task 8.4 — the real installer core's signature gate.
 # ---------------------------------------------------------------------------
 
+@POSIX_RUNNER
 class TestInstallerCoreSignatureGate:
     def _channel(self, tmp_path, *, tamper_manifest=False, tamper_payload=False):
         """A signed file:// fixture channel for the real installer core.

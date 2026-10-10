@@ -26,6 +26,14 @@ import pytest
 
 import hermes_probe_support
 
+#: The harness spawns a fake ``hermes`` gateway built as a shebang'd script and
+#: drives it with POSIX process semantics (SIGTERM/``os.setsid``); neither works
+#: on Windows, so the whole module is POSIX-runner-only.
+pytestmark = pytest.mark.skipif(
+    os.name == "nt",
+    reason="spawns a shebang'd fake gateway and drives it with POSIX signals",
+)
+
 
 # -- fake ``hermes`` binary ---------------------------------------------------
 

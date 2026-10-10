@@ -252,8 +252,8 @@ def _rollback_env(tmp_path: Path, install_root: Path, api_port: int) -> dict[str
 
 
 @pytest.mark.skipif(
-    shutil.which("bash") is None or shutil.which("python3") is None,
-    reason="rollback harness needs bash + python3",
+    os.name == "nt" or shutil.which("bash") is None or shutil.which("python3") is None,
+    reason="POSIX rollback harness needs real bash + python3 (on Windows `bash` is the WSL stub)",
 )
 class TestPosixRollbackRuntime:
     def test_broken_new_version_rolls_back_to_previous(self, tmp_path: Path) -> None:
