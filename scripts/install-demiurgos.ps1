@@ -300,7 +300,10 @@ function Invoke-ProvisionUv {
         Fail "the uv archive contains no uv binary; fix the channel and re-run"
     }
     New-Item -ItemType Directory -Force -Path (Join-Path $installRoot "bin") | Out-Null
-    $script:uvBin = Join-Path $installRoot "bin" $uvFile.Name
+    # Nested Join-Path: PS 5.1 accepts only -Path/-ChildPath (a third positional
+    # child path is PS 6+ / -AdditionalChildPath) and would fail binding with
+    # "A positional parameter cannot be found that accepts argument 'uv.ps1'".
+    $script:uvBin = Join-Path (Join-Path $installRoot "bin") $uvFile.Name
     Copy-Item -LiteralPath $uvFile.FullName -Destination $script:uvBin -Force
     Write-Host "install-demiurgos: uv $uvVersion installed at $script:uvBin"
 }
