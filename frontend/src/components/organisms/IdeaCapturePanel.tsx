@@ -12,9 +12,11 @@ import {
   getIdeaCaptureStatus,
   saveIdeaCaptureConfig,
   setIdeaCaptureToken,
+  testTelegramConnection,
 } from "@/api/ideaCapture";
 import type {
   AuthSessionStatus,
+  CardState,
   ChatCandidate,
   ChatDiscoveryResult,
   IdeaCaptureConfig,
@@ -185,20 +187,41 @@ export function IdeaCapturePanel({
   const [tokenError, setTokenError] = useState<string | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
 
-  // Report the connection status to the shell as a row badge. Keyed on the
-  // primitive `has_token` + authorized-chat count (never on `status` or the
-  // form objects) so the effect only fires on a real change.
-  const authorizedCount = countAuthorized(privateText, groupRows);
+  // ------------------------------------------------------- connection probe
+  // The row badge is probe-driven: it only turns green after a successful live
+  // probe. `verifying` is a transient in-flight state; `verifyState` holds the
+  // last probe result (or null before the first probe).
+  const [verifying, setVerifying] = useState(false);
+  const [verifyState, setVerifyState] = useState<CardState | null>(null);
+
+  /** Fire-and-forget probe of the stored token (fail-open): a transport error
+   *  never blocks the flow and leaves the honest non-green state. */
+  const runProbe = useCallback(() => {
+    setVerifying(true);
+    testTelegramConnection()
+      .then((result) => setVerifyState(result.state))
+      .catch(() => setVerifyState("requires_connection"))
+      .finally(() => setVerifying(false));
+  }, []);
+
+  // Report the connection status to the shell as a row badge. Probe-driven
+  // precedence: no token → warning; verifying → info; probe `configured` →
+  // success; probe `error` → error; otherwise (`requires_connection`/none) →
+  // warning. A freshly saved token never renders green on its own.
   useEffect(() => {
     if (!onStatus) return;
     if (!hasToken) {
       onStatus({ label: t("ideaCapture.status.noToken"), variant: "warning" });
-    } else if (authorizedCount === 0) {
-      onStatus({ label: t("ideaCapture.status.noChats"), variant: "warning" });
+    } else if (verifying) {
+      onStatus({ label: t("ideaCapture.verify.probing"), variant: "info" });
+    } else if (verifyState === "configured") {
+      onStatus({ label: t("ideaCapture.badge.configured"), variant: "success" });
+    } else if (verifyState === "error") {
+      onStatus({ label: t("ideaCapture.badge.error"), variant: "error" });
     } else {
-      onStatus({ label: t("ideaCapture.status.ready"), variant: "success" });
+      onStatus({ label: t("ideaCapture.badge.requires"), variant: "warning" });
     }
-  }, [onStatus, hasToken, authorizedCount]);
+  }, [onStatus, hasToken, verifying, verifyState]);
 
   const handleTokenSave = async () => {
     const value = tokenDraft.trim();
@@ -211,6 +234,8 @@ export function IdeaCapturePanel({
       setTokenDraft("");
       setStatus((prev) => (prev ? { ...prev, has_token: true } : prev));
       setTokenMessage(t("ideaCapture.tokenSaved"));
+      // Probe the freshly stored token (fire-and-forget, fail-open).
+      void runProbe();
     } catch (cause) {
       setTokenError(errorText(cause, t("ideaCapture.tokenSaveError")));
     } finally {
@@ -232,6 +257,7 @@ export function IdeaCapturePanel({
       setConfirmingClear(false);
       setTokenDraft("");
       setStatus((prev) => (prev ? { ...prev, has_token: false } : prev));
+      setVerifyState(null);
       setTokenMessage(t("ideaCapture.tokenRemoved"));
     } catch (cause) {
       setTokenError(errorText(cause, t("ideaCapture.tokenRemoveError")));
@@ -267,6 +293,8 @@ export function IdeaCapturePanel({
     try {
       const result = await discoverChatCandidates();
       setDiscoverResult(result);
+      // The bot just proved reachable: refresh the probe-driven badge.
+      void runProbe();
     } catch (cause) {
       if (cause instanceof ApiError && cause.code) {
         // Backend mapped the Telegram failure to a machine-readable
@@ -301,6 +329,8 @@ export function IdeaCapturePanel({
         next.message || t("ideaCapture.privateAuthorized"),
       );
       setDiscoverResult(null);
+      // Authorization refreshes the badge: the bot is now genuinely usable.
+      void runProbe();
     } catch (cause) {
       setDiscoverError(errorText(cause, t("ideaCapture.authorizeError")));
     } finally {
@@ -335,6 +365,8 @@ export function IdeaCapturePanel({
         next.message || t("ideaCapture.groupAuthorized"),
       );
       setDiscoverResult(null);
+      // Group authorization refreshes the badge too.
+      void runProbe();
     } catch (cause) {
       setDiscoverError(errorText(cause, t("ideaCapture.groupAuthorizeError")));
     } finally {
