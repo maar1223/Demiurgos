@@ -11,9 +11,9 @@ dedicated profile, and ``cwd=<repo>``. Registration evidence is read in **binary
 from ``<HERMES_HOME>/logs/agent.log`` starting at the boot byte offset — never
 from the process stdout (REQ-LPH-3). Teardown is the bounded
 ``terminate()`` → ``wait(timeout)`` → ``kill()`` sequence in a ``finally``
-(REQ-LPH-4). Missing evidence is a hard fail; missing log path is an honest
-``ProbeLogDriftError`` (REQ-LPH-6); the personal ``~/.hermes`` is a hard fail
-(REQ-LPH-7).
+(REQ-LPH-4). Missing evidence is a hard fail; a gateway that never creates
+``<home>/logs`` AFTER boot is an honest ``ProbeLogDriftError`` (REQ-LPH-6); the
+personal ``~/.hermes`` is a hard fail (REQ-LPH-7).
 """
 
 from __future__ import annotations
@@ -41,7 +41,10 @@ assert _PLUGIN_INIT.is_file(), f"REPO_ROOT derivation is wrong; expected plugin 
 
 LIVE_ENV_VAR = "DEMIURGOS_PROBE_LIVE"
 HOME_ENV_VARS = ("DEMIURGOS_HERMES_HOME", "HERMES_HOME")
-HOOK_MARKERS = ("pre_tool_call", "pre_llm_call")
+# Match the exact ``_track_callback`` phrasing (hermes_cli/plugins.py:914,
+# DEBUG-only: ``Plugin %s registered %s: %s``) so an incidental DEBUG line that
+# merely mentions a hook name is not mistaken for registration evidence.
+HOOK_MARKERS = ("registered hook: pre_tool_call", "registered hook: pre_llm_call")
 DEFAULT_TIMEOUT = 90.0
 TERM_TIMEOUT = 10.0
 
@@ -113,15 +116,14 @@ def resolve_dedicated_profile_root(environ: Mapping[str, str] | None = None) -> 
 
 
 def gateway_log_path(home: Path) -> Path:
-    """``<home>/logs/agent.log``; :class:`ProbeLogDriftError` when ``<home>/logs`` is absent."""
-    home = Path(home)
-    logs = home / "logs"
-    if not logs.is_dir():
-        raise ProbeLogDriftError(
-            f"gateway log path drifted: expected directory {logs} is absent "
-            "(the installed runtime no longer writes logs/agent.log there)"
-        )
-    return logs / "agent.log"
+    """Return ``<home>/logs/agent.log`` (pure path; existence NOT required).
+
+    The gateway creates ``<home>/logs`` lazily in ``setup_logging()`` on boot
+    (``hermes_logging.py:181``), so requiring the directory BEFORE boot falsely
+    reports drift on a fresh profile. Drift is detected post-boot in
+    :func:`boot_and_probe_gateway` (REQ-LPH-6).
+    """
+    return Path(home) / "logs" / "agent.log"
 
 
 def _terminate(proc: subprocess.Popen, *, term_timeout: float = TERM_TIMEOUT) -> None:
@@ -224,6 +226,17 @@ def boot_and_probe_gateway(
             time.sleep(0.5)
     finally:
         _terminate(proc)
+
+    # Post-boot drift: the gateway creates <home>/logs lazily in setup_logging()
+    # (hermes_logging.py:181). If it never appeared after boot, the installed
+    # runtime no longer writes logs/agent.log there — an honest skip, never a
+    # pass (REQ-LPH-6). A pre-boot absence is NOT drift (the resolver is pure).
+    logs_dir = home / "logs"
+    if not logs_dir.is_dir():
+        raise ProbeLogDriftError(
+            f"gateway log path drifted: {logs_dir} was not created by the gateway "
+            "after boot (the installed runtime no longer writes logs/agent.log there)"
+        )
 
     joined = "\n".join(evidence).lower()
     hook_evidence = [
