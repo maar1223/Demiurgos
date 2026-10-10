@@ -83,9 +83,21 @@ jobs:
           DEMIURGOS_AUTH_MODE: local-dev
         shell: bash
         run: |
+          # The launcher and installer CONTRACT suites shell out to bash /
+          # powershell / the POSIX installer and are covered by their dedicated
+          # jobs (launcher: ubuntu+macos+windows; installer-smoke: POSIX;
+          # ps51: Windows cells). Running them again here was the source of the
+          # cross-platform red: on macOS the unsigned fixture uv fails the
+          # installer's codesign gate and the shasum shim assumes sha256sum; on
+          # Windows the cells invoke the WSL bash stub and can hang. Keep the
+          # backend matrix on the backend suite.
           "${{ matrix.venv_python }}" -m pytest src/tools/demiurgos-suite/wiki/tests/ \
             --ignore=src/tools/demiurgos-suite/wiki/tests/test_semantic_e2e.py \
             --ignore=src/tools/demiurgos-suite/wiki/tests/test_import_enrichment_e2e.py \
+            --ignore=src/tools/demiurgos-suite/wiki/tests/test_installer_contract.py \
+            --ignore=src/tools/demiurgos-suite/wiki/tests/test_launcher_portable.py \
+            --ignore=src/tools/demiurgos-suite/wiki/tests/test_launcher_root_propagation.py \
+            --ignore=src/tools/demiurgos-suite/wiki/tests/test_launcher_boot_smoke.py \
             -k "not live" -q
 
   frontend:
