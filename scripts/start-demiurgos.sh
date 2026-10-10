@@ -160,11 +160,18 @@ pid_file() {
 # ownership match below would silently fail. /proc/<pid>/cmdline is a Linux
 # fast path only, never assumed present on macOS.
 command_of_pid() {
-    local pid="$1"
+    local pid="$1" out
     if [ "$OS" = "Linux" ] && [ -r "/proc/$pid/cmdline" ]; then
         tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null || true
     else
-        ps -ww -o command= -p "$pid" 2>/dev/null || true
+        # macOS/BSD: `-ww` is mandatory (macOS truncates the command line
+        # otherwise and the ownership match below would silently fail). Try the
+        # common forms in order; an empty result would make BOTH the pid-file
+        # ownership gate and the port-owner gate fail and leak the process.
+        out="$(ps -ww -o command= -p "$pid" 2>/dev/null || true)"
+        [ -n "$out" ] || out="$(ps -p "$pid" -ww -o command= 2>/dev/null || true)"
+        [ -n "$out" ] || out="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+        printf '%s' "$out"
     fi
 }
 
@@ -423,8 +430,8 @@ stop_component() {
         return 0
     fi
     if ! _validate_cmdline_for_name "$name" "$pid"; then
-        printf 'Skipped %s: port %s owner is not a Demiurgos process (pid %s)\n' \
-            "$name" "$port" "$pid" >&2
+        printf 'Skipped %s: port %s owner is not a Demiurgos process (pid %s, cmd: %s)\n' \
+            "$name" "$port" "$pid" "$(command_of_pid "$pid")" >&2
         remove_pid_file "$name"
         return 1
     fi
