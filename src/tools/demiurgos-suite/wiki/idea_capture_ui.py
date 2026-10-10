@@ -32,7 +32,7 @@ import shutil
 import threading
 import uuid
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 import yaml
 from fastapi import APIRouter, HTTPException, Request
@@ -857,20 +857,50 @@ def _discover_candidates() -> dict:
     return {"ok": True, "candidates": candidates, "message": ""}
 
 
+class _UnwiredRegistry:
+    """Read-only fallback registry so the router imports without a wired store.
+
+    api_server always wires the real local registry; this only guarantees the
+    module is importable standalone. Any evidence commit through it raises
+    loudly rather than silently dropping evidence.
+    """
+
+    def snapshot(self) -> dict[str, Any]:
+        return {}
+
+    def atomic_commit(self, next_state: Mapping[str, Any]) -> int:
+        raise RuntimeError("idea-capture router used without a wired registry")
+
+
 def create_idea_capture_router(
     require_principal: Callable[[Request], Any],
+    registry: Callable[[], Any] | None = None,
 ) -> APIRouter:
     """Build the /api/idea-capture router.
 
     ``require_principal`` must return a trusted principal for the request or
     None; None maps to 401. api_server passes ``_resolve_principal`` through
     a call-time lambda so tests can monkeypatch it.
+
+    ``registry`` returns the authoritative local registry (``LocalState``-like
+    with ``snapshot()`` and ``atomic_commit()``); it defaults to a read-only
+    fallback so the router stays importable in isolation, and api_server wires
+    the real registry.
     """
     router = APIRouter(prefix="/api/idea-capture", tags=["idea-capture"])
+
+    def _registry() -> Any:
+        if registry is None:
+            return _UnwiredRegistry()
+        return registry()
 
     def _guard(request: Request) -> None:
         if require_principal(request) is None:
             raise HTTPException(status_code=401, detail="Autenticación requerida")
+
+    def _commit_evidence(next_state: Mapping[str, Any]) -> None:
+        """Single evidence write path shared by the probe and token handlers."""
+        _registry().atomic_commit(dict(next_state))
 
     @router.get("/status")
     def get_status(request: Request) -> dict:
@@ -907,6 +937,8 @@ def create_idea_capture_router(
 
     @router.post("/token")
     def set_token(request: Request, body: dict | None = None) -> dict:
+        from telegram_settings import EVIDENCE_KEY
+
         _guard(request)
         raw = (body if isinstance(body, dict) else {}).get("token")
         try:
@@ -917,14 +949,76 @@ def create_idea_capture_router(
             raise HTTPException(status_code=500,
                                 detail="No se pudo escribir .env (token no guardado)")
         log.info("idea-capture: TELEGRAM_BOT_TOKEN configurado (valor no expuesto)")
-        return {"has_token": True}
+        # A freshly stored token is untested: commit fresh requires_connection
+        # evidence so the card can never render green on save alone. The 400
+        # and 500 paths above return before this commit, so a rejected or
+        # failed write never mutates evidence.
+        next_state = dict(_registry().snapshot())
+        next_state[EVIDENCE_KEY] = {
+            "state": "requires_connection",
+            "tested_at": None,
+            "error_code": "",
+        }
+        _commit_evidence(next_state)
+        return {"state": "requires_connection", "has_token": True}
 
     @router.delete("/token")
     def clear_token(request: Request) -> dict:
+        from telegram_settings import EVIDENCE_KEY
+
         _guard(request)
         write_env_var(_ENV_TOKEN_NAME, "")
         log.info("idea-capture: TELEGRAM_BOT_TOKEN eliminado (valor no expuesto)")
-        return {"has_token": False}
+        # Clear evidence too: a stale configured entry must never survive a
+        # delete (and a later re-save) once the token is gone.
+        next_state = dict(_registry().snapshot())
+        next_state.pop(EVIDENCE_KEY, None)
+        _commit_evidence(next_state)
+        return {"state": "pending", "has_token": False}
+
+    @router.post("/test-connection")
+    def test_connection_probe(request: Request) -> dict:
+        """Probe the STORED token against Telegram; never accept one in body.
+
+        Reads the token server-side; a missing token returns 409 with NO
+        Telegram call and NO evidence write. Network/offline failures map to
+        ``requires_connection`` (retryable); invalid-token or API failures map
+        to ``error``; success maps to ``configured``. The committed evidence
+        reuses the exact ``{state, tested_at, error_code}`` shape. Only the
+        resulting state is logged — never the token.
+        """
+        from datetime import datetime, timezone
+
+        from telegram_settings import EVIDENCE_KEY, test_connection
+
+        _guard(request)
+        token = read_env_var(_ENV_TOKEN_NAME)
+        if not token:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "Todavía no hay token guardado. Guardá el token "
+                              "del bot antes de probar la conexión.",
+                    "code": "no_token",
+                })
+        result = test_connection(token)
+        next_state = dict(_registry().snapshot())
+        next_state[EVIDENCE_KEY] = {
+            "state": result["state"],
+            "tested_at": datetime.now(timezone.utc).isoformat(),
+            "error_code": result["error_code"],
+        }
+        _commit_evidence(next_state)
+        log.info("idea-capture: prueba de conexión finalizada (estado=%s, "
+                 "valor no expuesto)", result["state"])
+        evidence = next_state[EVIDENCE_KEY]
+        return {
+            "state": result["state"],
+            "has_token": True,
+            "tested_at": evidence["tested_at"],
+            "error_code": evidence["error_code"],
+            "message": result["message"],
+        }
 
     @router.post("/chats/discover")
     def discover_chats(request: Request) -> dict:

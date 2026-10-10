@@ -281,7 +281,8 @@ class TestToken:
         _authed(monkeypatch)
         resp = client.post("/api/idea-capture/token", json={"token": self.SECRET})
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"has_token": True}
+        # The response carries the fresh card state alongside has_token.
+        assert resp.json() == {"state": "requires_connection", "has_token": True}
         assert self.SECRET not in resp.text
 
         env = idea_capture_ui._env_path().read_text(encoding="utf-8")
@@ -311,7 +312,8 @@ class TestToken:
 
         resp = client.delete("/api/idea-capture/token")
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"has_token": False}
+        # Deleting clears the token and the evidence; the card returns to pending.
+        assert resp.json() == {"state": "pending", "has_token": False}
 
         text = env_path.read_text(encoding="utf-8")
         assert "TELEGRAM_BOT_TOKEN" not in text
