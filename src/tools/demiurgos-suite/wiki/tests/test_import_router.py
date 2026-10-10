@@ -1484,10 +1484,17 @@ class TestCancelDuringAnalyze:
     """
 
     def test_cancel_during_analyze_returns_cleanly_without_persisting(
-            self, tmp_path):
+            self, tmp_path, monkeypatch):
         """Analyze is blocked inside the (slow) enricher; cancel lands; the
         analyze thread then returns a cancellation result: 200 (no 500), no
         REVIEW, no candidates persisted, and the job row is reaped."""
+        # The source is a ``.docx``; mock the conversion seam so this cell does
+        # not depend on the OPTIONAL ``markitdown`` extra. The CI backend job
+        # installs only the mandatory wheels-only closure, where conversion is
+        # unavailable and ``analyze`` would fail at the conversion gate BEFORE
+        # ever reaching the enricher (the assert below would then read as if the
+        # enricher were never called).
+        _docx_seams(monkeypatch, [])
         import threading as _threading
 
         release = _threading.Event()
