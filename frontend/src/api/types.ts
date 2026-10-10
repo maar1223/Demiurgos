@@ -351,9 +351,12 @@ export interface IdeaCaptureStatus {
   limitations: string[];
 }
 
-/** Result of setting/clearing the bot token — never contains the token. */
+/** Result of setting/clearing the bot token — never contains the token. The
+ *  optional `state` reports the resulting Telegram card state: a fresh save is
+ *  `requires_connection` and a delete returns to `pending`. */
 export interface TokenStatus {
   has_token: boolean;
+  state?: CardState;
 }
 
 /** Telegram card status (ONB-3.3) derived by the readiness projector from the
