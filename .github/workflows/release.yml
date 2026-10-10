@@ -13,9 +13,10 @@
 # MINISIGN_PUBKEY (and MINISIGN_KEY_PASSWORD for a protected key), and replace
 # the placeholder MINISIGN_PUBKEY in install.sh / install.ps1 /
 # scripts/install-demiurgos.sh / scripts/lib/verify_checksum.sh (S5b signing-key
-# custody note). On branch/PR pushes this workflow is a dry run: the frontend
-# is built once, packaged per OS (audit included), and the publish + smoke
-# jobs are skipped.
+# custody note). On a push to master (or a vX.Y.Z tag) this workflow is a dry
+# run: the frontend is built once, packaged per OS (audit included), and the
+# publish + smoke jobs are skipped. The packaging matrix is NOT run on pull
+# requests (Actions-minute cost guard) — ci.yml is the PR gate.
 #
 # Support matrix mirrors decision #3579 (narrowed): Windows amd64; macOS >= 13
 # arm64 (Apple Silicon); Linux x86_64 / aarch64 glibc >= 2.28. Intel macOS,
@@ -33,7 +34,6 @@ on:
   push:
     branches: [master]
     tags: ["v*"]
-  pull_request:
 
 permissions:
   contents: read

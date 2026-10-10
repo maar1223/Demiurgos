@@ -5,12 +5,22 @@ on:
     branches: [master]
   pull_request:
 
+# Cost guard: keep a single in-flight run per ref. A newer push cancels the
+# older run for the same ref so back-to-back pushes never stack Actions minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     # Task 7.4 — wheels-only uv matrix (no setup-python, no bare pip),
     # mirroring the narrowed support matrix (decision #3579):
     # Windows amd64; macOS >= 13 arm64; Linux x86_64 / aarch64 glibc >= 2.28.
     name: Backend wheels-only (${{ matrix.cell }})
+    # The suite includes the POSIX Hermes-absent boot cell, which serves the
+    # built SPA at "/" (the launcher hardcodes <app-root>/frontend/dist), so the
+    # built dist is downloaded into frontend/dist before the tests run.
+    needs: frontend
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -45,6 +55,12 @@ jobs:
       - name: Closure proof (wheels-only dry-run for this cell)
         shell: bash
         run: bash scripts/closure_proof.sh --target "${{ matrix.cell }}" --json
+
+      - name: Download the built frontend dist (the boot cell serves "/" from it)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: frontend-dist-ubuntu-latest
+          path: frontend/dist
 
       - name: Run backend tests (exclude live-Hermes e2e)
         env:
@@ -145,6 +161,10 @@ jobs:
   launcher:
     # Task 7.4 — launcher behaviour matrix on ubuntu / macOS arm64 / Windows.
     name: Launcher (${{ matrix.os }})
+    # The POSIX Hermes-absent boot cell serves the built SPA at "/": the launcher
+    # hardcodes DEMIURGOS_FRONTEND_DIST="$APP_ROOT/frontend/dist", so the built
+    # dist (from the frontend job) is downloaded into frontend/dist first.
+    needs: frontend
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -195,6 +215,12 @@ jobs:
               chmod +x "/tmp/opencode/noop-browser/bin/$n"
             fi
           done
+
+      - name: Download the built frontend dist (the boot cell serves "/" from it)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: frontend-dist-ubuntu-latest
+          path: frontend/dist
 
       - name: Run the launcher suites
         shell: bash
@@ -247,6 +273,7 @@ jobs:
           docker run --rm -v "$PWD:/work" -w /work \
             -e DEMIURGOS_HOME=/tmp/dem-musl-home \
             -e DEMIURGOS_VERSION=0.0.0 \
+            -e DEMIURGOS_URL_BASE=https://example.invalid/demiurgos \
             alpine:3.20 sh -c '
               apk add --no-cache bash coreutils curl >/dev/null 2>&1
               bash scripts/install-demiurgos.sh > /tmp/installer.out 2>&1
@@ -264,6 +291,10 @@ jobs:
     # is exercised by the Windows installer cells and the PS launcher boot
     # smoke, and every shipped .ps1 is parse-checked under powershell.exe.
     name: PowerShell 5.1 contract (windows)
+    # The Windows PS 5.1 boot-smoke cell serves the built SPA at "/" (the
+    # launcher hardcodes <app-root>/frontend/dist), so the built dist is
+    # downloaded here too.
+    needs: frontend
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -292,21 +323,35 @@ jobs:
           }
           Write-Output 'PS 5.1 parse OK'
 
-      - name: Install minisign (signed-channel Windows cells, S5b; best-effort)
-        shell: powershell
+      - name: Install a working minisign (official 0.12 win64 build)
+        shell: pwsh
         run: |
-          # The Windows bootstrap verifies the manifest signature via minisign;
-          # when unavailable the signed-channel cell skips (documented not-run).
-          choco install -y minisign 2>$null
-          if (-not (Get-Command minisign -ErrorAction SilentlyContinue)) {
-            Write-Warning 'minisign not available; the signed-channel cell will skip'
-          }
+          # chocolatey only ships minisign 0.8.0, which predates the "-G -W"
+          # unencrypted-keygen flag the harness uses, so the signed-channel
+          # cells cannot run with it. Install the official 0.12 win64 build.
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/jedisct1/minisign/releases/download/0.12/minisign-0.12-win64.zip'
+          $zip = Join-Path $env:RUNNER_TEMP 'minisign-0.12-win64.zip'
+          Invoke-WebRequest -Uri $url -OutFile $zip
+          $dest = Join-Path $env:RUNNER_TEMP 'minisign'
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          $exe = Get-ChildItem -Path $dest -Recurse -Filter 'minisign.exe' |
+            Where-Object { $_.FullName -match '[\\/]x86_64[\\/]' } | Select-Object -First 1
+          if (-not $exe) { throw 'x86_64 minisign.exe not found in the archive' }
+          Add-Content -Path $env:GITHUB_PATH -Value $exe.DirectoryName
+          & $exe.FullName -v
 
       - name: Installer contract suite (Windows cells, real powershell.exe)
         shell: bash
         run: |
           ".venv/Scripts/python.exe" -m pytest \
             src/tools/demiurgos-suite/wiki/tests/test_installer_contract.py -q
+
+      - name: Download the built frontend dist (the PS boot smoke serves "/" from it)
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: frontend-dist-ubuntu-latest
+          path: frontend/dist
 
       - name: PS 5.1 launcher boot smoke (powershell.exe -NoProfile -File)
         shell: bash
