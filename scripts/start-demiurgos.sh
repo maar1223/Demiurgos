@@ -186,7 +186,7 @@ owned_pid() {
     cmdline="$(command_of_pid "$pid")"
     [ -n "$cmdline" ] || return 1
     case "$name" in
-        api) [[ "$cmdline" == *"$PYTHON_BIN"* && "$cmdline" == *"uvicorn api_server:app"* ]] ;;
+        api) [[ "$cmdline" == *"uvicorn api_server:app"* ]] ;;
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] ;;
         *) return 1 ;;
     esac
@@ -224,14 +224,18 @@ port_owner_pid() {
 
 # Verify that pid's cmdline identifies it as the named Demiurgos component.
 # Shared by adopt_existing_component and the stop_component port fallback so
-# both gate on the exact same matching. The API gate pins the layout venv
-# python plus the uvicorn module — never adopt/kill an arbitrary `uvicorn`
-# from another project or an unrelated port squatter.
+# both gate on the exact same matching. The API gate is the Demiurgos app
+# module `uvicorn api_server:app` — the SAME discriminator the Windows launcher
+# uses. It must NOT also pin the layout venv interpreter path: on macOS the
+# venv `python` re-execs as the framework interpreter, so argv[0] is
+# `/Library/Frameworks/.../Python` and a venv-path requirement would fail to
+# recognise our OWN process and leak it. `api_server:app` is specific enough to
+# never match an arbitrary `uvicorn` from another project.
 _validate_cmdline_for_name() {
     local name="$1" pid="$2" cmdline
     cmdline="$(command_of_pid "$pid")"
     case "$name" in
-        api) [[ ( "$cmdline" == *"$PYTHON_BIN"* && "$cmdline" == *"uvicorn api_server:app"* ) || "$cmdline" == *"$API_DIR"* ]] || return 1 ;;
+        api) [[ "$cmdline" == *"uvicorn api_server:app"* ]] || return 1 ;;
         gateway) [[ "$cmdline" == *"hermes gateway run"* ]] || return 1 ;;
         *) return 1 ;;
     esac
