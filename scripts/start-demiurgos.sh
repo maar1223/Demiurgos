@@ -627,4 +627,13 @@ main() {
     esac
 }
 
-main "$@"
+# Execute the entry point only when this file is RUN, not when it is SOURCED.
+# The hermetic layout probe sources this script to read the derived APP_ROOT /
+# PYTHON_BIN; running `main` there would treat the probe's argument as an action
+# (usage + non-zero), and under `set -e` that aborts the probing shell on bash
+# 3.2 (macOS) and git-bash (Windows) before it can read the paths. `BASH_SOURCE`
+# is an array whose [0] is the sourced-or-run file; it equals `$0` only for the
+# executed script (bash 3.2+), which is exactly the run-vs-source discriminator.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    main "$@"
+fi
