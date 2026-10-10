@@ -5,6 +5,12 @@ on:
     branches: [master]
   pull_request:
 
+# Cost guard: keep a single in-flight run per ref. A newer push cancels the
+# older run for the same ref so back-to-back pushes never stack Actions minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     # Task 7.4 — wheels-only uv matrix (no setup-python, no bare pip),
