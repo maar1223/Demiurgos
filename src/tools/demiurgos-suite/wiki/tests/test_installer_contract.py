@@ -1700,7 +1700,16 @@ def _boot_ps_launcher(install_root: Path, env: dict[str, str]) -> int:
         ["powershell.exe", "-NoProfile", "-File", str(launcher), "start"],
         env=env, capture_output=True, text=True, timeout=180,
     )
-    assert start.returncode == 0, start.stderr
+    err_log = install_root / "logs" / "demiurgos-api.err.log"
+    api_err = (
+        err_log.read_text(encoding="utf-8", errors="replace")
+        if err_log.is_file() else "<no api err log>"
+    )
+    assert start.returncode == 0, (
+        f"PS launcher start failed (rc={start.returncode})\n"
+        f"stdout: {start.stdout}\nstderr: {start.stderr}\n"
+        f"api err log ({err_log}):\n{api_err}"
+    )
     return api_port
 
 
