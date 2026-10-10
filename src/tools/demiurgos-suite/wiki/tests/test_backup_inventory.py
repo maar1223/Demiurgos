@@ -10,6 +10,7 @@ if a hardcoded top-level list ever drove the walk, that name would vanish.
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -32,6 +33,31 @@ from backup.staging import stage_inventory  # noqa: E402
 
 #: A folder no rule knows and no test helper creates by name elsewhere.
 EXOTIC = "zzq-lumen-grotto-9f3"
+
+def _fs_is_case_insensitive() -> bool:
+    """True when the host filesystem folds case (macOS APFS, Windows).
+
+    The top-level case-collision contract is about TWO byte-distinct names; a
+    case-insensitive filesystem silently collapses them before the walk can see
+    both, so the cell is meaningless there.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        probe = Path(d) / "CaseProbe"
+        probe.write_text("x", encoding="utf-8")
+        return (Path(d) / "caseprobe").exists()
+
+
+def _fs_normalizes_unicode() -> bool:
+    """True when the host filesystem normalizes Unicode (macOS APFS).
+
+    The NFC collision needs the composed and decomposed spellings to STAY
+    distinct on disk; a normalizing filesystem collapses them at the OS layer.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        probe = Path(d) / "cafe\u0301"
+        probe.write_text("x", encoding="utf-8")
+        return (Path(d) / "caf\u00e9").exists()
+
 
 #: Tooling / dependency / cache names that must be refused by basename ANYWHERE.
 TOOLING_NAMES = (
@@ -148,6 +174,10 @@ def test_ruled_subtree_is_included_and_sqlite_scope_is_narrow(tmp_path: Path) ->
     assert "data/methodology/library.json" in inventory.included
 
 
+@pytest.mark.skipif(
+    _fs_is_case_insensitive(),
+    reason="case-folding filesystem collapses the two spellings before discovery",
+)
 def test_case_collision_is_detected_names_both_and_aborts(tmp_path: Path) -> None:
     """A same-level case collision aborts, naming BOTH members (SC-CDL-2.1)."""
     _make(tmp_path / "Ideas" / "a.md")
@@ -169,6 +199,10 @@ def test_case_collision_is_detected_names_both_and_aborts(tmp_path: Path) -> Non
         assert name in str(raised.value)
 
 
+@pytest.mark.skipif(
+    _fs_normalizes_unicode() or _fs_is_case_insensitive(),
+    reason="normalizing/case-folding filesystem collapses NFC and NFD spellings",
+)
 def test_nfc_equivalent_names_collide(tmp_path: Path) -> None:
     """Composed vs decomposed spellings collapse after NFC and abort (REQ-CDL-2)."""
     _make(tmp_path / "caf\u00e9" / "a.md")  # composed: é
