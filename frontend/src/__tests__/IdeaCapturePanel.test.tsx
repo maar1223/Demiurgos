@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Mock } from "vitest";
 import {
@@ -9,6 +9,7 @@ import {
   getIdeaCaptureStatus,
   saveIdeaCaptureConfig,
   setIdeaCaptureToken,
+  testTelegramConnection,
 } from "@/api/ideaCapture";
 import {
   IdeaCapturePanel,
@@ -24,6 +25,7 @@ vi.mock("@/api/ideaCapture", () => ({
   clearIdeaCaptureToken: vi.fn(),
   discoverChatCandidates: vi.fn(),
   authorizeChat: vi.fn(),
+  testTelegramConnection: vi.fn(),
 }));
 
 const mocked = {
@@ -33,7 +35,20 @@ const mocked = {
   clearIdeaCaptureToken: clearIdeaCaptureToken as Mock,
   discoverChatCandidates: discoverChatCandidates as Mock,
   authorizeChat: authorizeChat as Mock,
+  testTelegramConnection: testTelegramConnection as Mock,
 };
+
+/** Every flow that triggers a probe must resolve: default it here so existing
+ *  tests never hit an undefined mock. Individual tests override the value to
+ *  drive specific badge transitions. */
+beforeEach(() => {
+  mocked.testTelegramConnection.mockResolvedValue({
+    state: "requires_connection",
+    has_token: true,
+    tested_at: null,
+    error_code: "",
+  });
+});
 
 function makeStatus(overrides: Partial<IdeaCaptureStatus> = {}): IdeaCaptureStatus {
   return {
@@ -880,5 +895,228 @@ describe("IdeaCapturePanel — Finalizar", () => {
       }),
     ).toBeInTheDocument();
     expect(mocked.saveIdeaCaptureConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("IdeaCapturePanel — verificación de conexión (probe)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Render with an `onStatus` spy so the shell row badge is observable. */
+  function renderWithStatus(auth: AuthSessionController = makeAuth()) {
+    const onStatus = vi.fn();
+    render(<IdeaCapturePanel auth={auth} onStatus={onStatus} />);
+    return { onStatus };
+  }
+
+  async function saveToken(user: ReturnType<typeof userEvent.setup>) {
+    const tokenInput = await screen.findByLabelText(tEs("ideaCapture.tokenAria"));
+    await user.type(tokenInput, "123:AA-secret");
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.saveToken") }));
+  }
+
+  it("probes after a successful save and turns the badge green on success", async () => {
+    mocked.setIdeaCaptureToken.mockResolvedValue({
+      has_token: true,
+      state: "requires_connection",
+    });
+    mocked.testTelegramConnection.mockResolvedValue({
+      state: "configured",
+      has_token: true,
+      tested_at: "2026-10-10T12:00:00+00:00",
+      error_code: "",
+    });
+    const user = userEvent.setup();
+    const { onStatus } = renderWithStatus();
+
+    await saveToken(user);
+
+    expect(mocked.testTelegramConnection).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(onStatus).toHaveBeenCalledWith({
+        label: tEs("ideaCapture.badge.configured"),
+        variant: "success",
+      }),
+    );
+  });
+
+  it("shows the transient verifying badge while the probe is in flight", async () => {
+    let resolveProbe: (value: unknown) => void = () => {};
+    mocked.setIdeaCaptureToken.mockResolvedValue({ has_token: true });
+    mocked.testTelegramConnection.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveProbe = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    const { onStatus } = renderWithStatus();
+
+    await saveToken(user);
+
+    await waitFor(() =>
+      expect(onStatus).toHaveBeenCalledWith({
+        label: tEs("ideaCapture.verify.probing"),
+        variant: "info",
+      }),
+    );
+
+    resolveProbe({
+      state: "configured",
+      has_token: true,
+      tested_at: null,
+      error_code: "",
+    });
+    await waitFor(() =>
+      expect(onStatus).toHaveBeenCalledWith({
+        label: tEs("ideaCapture.badge.configured"),
+        variant: "success",
+      }),
+    );
+  });
+
+  it("surfaces a probe error as an error badge", async () => {
+    mocked.setIdeaCaptureToken.mockResolvedValue({ has_token: true });
+    mocked.testTelegramConnection.mockResolvedValue({
+      state: "error",
+      has_token: true,
+      tested_at: "2026-10-10T12:00:00+00:00",
+      error_code: "invalid_token",
+    });
+    const user = userEvent.setup();
+    const { onStatus } = renderWithStatus();
+
+    await saveToken(user);
+
+    await waitFor(() =>
+      expect(onStatus).toHaveBeenCalledWith({
+        label: tEs("ideaCapture.badge.error"),
+        variant: "error",
+      }),
+    );
+  });
+
+  it("keeps a requires_connection probe as a warning badge", async () => {
+    mocked.setIdeaCaptureToken.mockResolvedValue({ has_token: true });
+    mocked.testTelegramConnection.mockResolvedValue({
+      state: "requires_connection",
+      has_token: true,
+      tested_at: null,
+      error_code: "network",
+    });
+    const user = userEvent.setup();
+    const { onStatus } = renderWithStatus();
+
+    await saveToken(user);
+
+    await waitFor(() =>
+      expect(onStatus).toHaveBeenCalledWith({
+        label: tEs("ideaCapture.badge.requires"),
+        variant: "warning",
+      }),
+    );
+  });
+
+  it("fails open on a rejected probe: no crash, honest warning badge", async () => {
+    mocked.setIdeaCaptureToken.mockResolvedValue({ has_token: true });
+    mocked.testTelegramConnection.mockRejectedValue(new Error("network down"));
+    const user = userEvent.setup();
+    const { onStatus } = renderWithStatus();
+
+    await saveToken(user);
+
+    await waitFor(() =>
+      expect(onStatus).toHaveBeenCalledWith({
+        label: tEs("ideaCapture.badge.requires"),
+        variant: "warning",
+      }),
+    );
+    // The panel is intact and the save confirmation still rendered.
+    expect(
+      screen.getByRole("heading", { name: tEs("ideaCapture.connectTitle") }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(tEs("ideaCapture.tokenSaved"))).toBeInTheDocument();
+  });
+
+  it("fires the probe after discovery completes", async () => {
+    mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
+    mocked.discoverChatCandidates.mockResolvedValue({
+      ok: true,
+      message: "",
+      candidates: [],
+    });
+    const user = userEvent.setup();
+    renderPanel(makeAuth());
+    await goToStep(user, 1);
+
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }));
+
+    await waitFor(() => expect(mocked.testTelegramConnection).toHaveBeenCalled());
+  });
+
+  it("fires the probe after a private chat is authorized", async () => {
+    mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
+    mocked.discoverChatCandidates.mockResolvedValue({
+      ok: true,
+      message: "",
+      candidates: [{ id: 111, type: "private", kind: "private", title: "Ana Perez" }],
+    });
+    mocked.authorizeChat.mockResolvedValue({
+      ...makeStatus({
+        has_token: true,
+        config: { ...makeStatus().config, private_chat_ids: [111] },
+      }),
+      message: "Chat privado autorizado.",
+    });
+    const user = userEvent.setup();
+    renderPanel(makeAuth());
+    await goToStep(user, 1);
+
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }));
+    await screen.findByRole("button", { name: tEs("ideaCapture.authorize") });
+
+    mocked.testTelegramConnection.mockClear();
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.authorize") }));
+
+    await waitFor(() => expect(mocked.testTelegramConnection).toHaveBeenCalledTimes(1));
+  });
+
+  it("fires the probe after a group is authorized", async () => {
+    mocked.getIdeaCaptureStatus.mockResolvedValue(makeStatus({ has_token: true }));
+    mocked.discoverChatCandidates.mockResolvedValue({
+      ok: true,
+      message: "",
+      candidates: [{ id: -100, type: "group", kind: "group", title: "Equipo" }],
+    });
+    mocked.authorizeChat.mockResolvedValue({
+      ...makeStatus({
+        has_token: true,
+        config: { ...makeStatus().config, approved_groups: { "-100": [5, 6] } },
+      }),
+      message: "Grupo autorizado con remitentes explícitos.",
+    });
+    const user = userEvent.setup();
+    renderPanel(makeAuth());
+    await goToStep(user, 1);
+
+    await user.click(screen.getByRole("button", { name: tEs("ideaCapture.discoverCta") }));
+    await user.type(
+      await screen.findByLabelText(tEs("ideaCapture.sendersAria", { id: -100 })),
+      "5, 6",
+    );
+    await user.click(screen.getByLabelText(tEs("ideaCapture.groupConfirmAria", { id: -100 })));
+
+    mocked.testTelegramConnection.mockClear();
+    await user.click(
+      screen.getByRole("button", { name: tEs("ideaCapture.authorizeGroup") }),
+    );
+
+    await waitFor(() => expect(mocked.testTelegramConnection).toHaveBeenCalledTimes(1));
   });
 });
