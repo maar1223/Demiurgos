@@ -75,6 +75,18 @@ STUB_UV_VERSION = "0.5.24-test"
 
 _BASH_32_BANS = ("declare -A", "mapfile", "readarray", "^^}", "&>>")
 
+#: POSIX-runner-only: cells that SHELL OUT to the POSIX installer core
+#: (``scripts/install-demiurgos.sh`` / ``scripts/lib/verify_checksum.sh``) and
+#: therefore cannot run on Windows, where a bare ``bash`` resolves to the WSL
+#: launcher (``C:\\Windows\\System32\\bash.exe``, no distribution installed) and
+#: dies printing a UTF-16 "no installed distributions" error. The Windows
+#: parity cells live in the ``*Windows*`` classes and are gated to ``nt`` via
+#: ``PS_RUNNER``; this is the mirror gate for the POSIX half.
+POSIX_RUNNER = pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX installer cells shell out to the POSIX core; Windows runs the *Windows* cells",
+)
+
 #: No-op browser stub dir (incident s2b-harness-gotcha): prepended to the
 #: child PATH so a launcher that ignores the env flag still cannot open a
 #: real browser.
@@ -430,6 +442,7 @@ def _run_floors(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+@POSIX_RUNNER
 class TestUnsupportedPlatformsFailFast:
     """Decision #3579 — narrowed matrix. Intel macOS, macOS below the floor,
     musl/Alpine and glibc < 2.28 are NOT supported: each fails fast with a
@@ -474,6 +487,7 @@ class TestUnsupportedPlatformsFailFast:
         assert "found 2.27" in result.stderr
 
 
+@POSIX_RUNNER
 class TestSupportedPlatformsProceed:
     """Supported combos (decision #3579) PASS the floors preflight: the run
     fails later at version resolution against the empty channel, so the
@@ -527,6 +541,7 @@ class TestBash32Lint:
 # ---------------------------------------------------------------------------
 
 
+@POSIX_RUNNER
 class TestVerifyChecksumLibrary:
     def test_branch_order_sha256sum_then_shasum_then_uv(self):
         """S3-2 order: sha256sum -> shasum -a 256 (macOS) -> bundled-Python
@@ -838,6 +853,7 @@ def _read_pointer(config_dir: Path):
     return data_root.read_pointer(config_dir=config_dir)
 
 
+@POSIX_RUNNER
 class TestFixtureChannelInstall:
     def test_install_then_boot_serves_health_and_root(self, tmp_path: Path):
         channel, uv_sha, version = _build_fixture_channel(tmp_path)
@@ -909,6 +925,7 @@ class TestFixtureChannelInstall:
             )
 
 
+@POSIX_RUNNER
 class TestChecksumMismatchAborts:
     def test_wrong_sha256_aborts_with_no_runnable_state(self, tmp_path: Path):
         channel, uv_sha, _version = _build_fixture_channel(
@@ -929,6 +946,7 @@ class TestChecksumMismatchAborts:
             assert list(staging.iterdir()) == []
 
 
+@POSIX_RUNNER
 class TestM3Coexistence:
     def test_existing_repo_clone_and_pointer_preserved(self, tmp_path: Path):
         """M3: an existing ~/.demiurgos/repo CLI clone is neither clobbered nor
@@ -970,6 +988,7 @@ class TestM3Coexistence:
         assert (install_root / "current" / "src").exists()
 
 
+@POSIX_RUNNER
 class TestPointerAndEnvSeed:
     def test_python_reads_what_bash_wrote(self, tmp_path: Path):
         """Task 4.9: the pointer written by the installer is byte-compatible
@@ -1016,6 +1035,7 @@ class TestPointerAndEnvSeed:
         )
 
 
+@POSIX_RUNNER
 class TestMandatoryInstallFailure:
     def test_pip_failure_leaves_no_runnable_state(self, tmp_path: Path):
         channel, uv_sha, _version = _build_fixture_channel(tmp_path)
@@ -1627,6 +1647,20 @@ def _ps_installer_env(
         env["MINISIGN_PUBKEY"] = pubkey_file.read_text(encoding="utf-8").strip()
     for key in ("DEMIURGOS_DATA_ROOT", "DEMIURGOS_FRONTEND_DIST"):
         env.pop(key, None)
+    # Windows PowerShell 5.1 cannot load its managed runtime from a MINIMAL
+    # environment block: without ``SystemRoot`` (and the other OS-critical
+    # variables) ``powershell.exe`` prints "Loading managed Windows PowerShell
+    # failed with error 8009001d" and exits before running the installer. Carry
+    # them through from the parent process while keeping every hermetic override
+    # above intact (the real %APPDATA%/%USERPROFILE% are still replaced and the
+    # DEMIURGOS_* env is still popped).
+    for _win_key in (
+        "SystemRoot", "windir", "SystemDrive", "PATHEXT", "ComSpec",
+        "TEMP", "TMP", "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE",
+        "ProgramData", "ProgramFiles", "PUBLIC",
+    ):
+        if _win_key in os.environ:
+            env[_win_key] = os.environ[_win_key]
     return env
 
 
@@ -1794,6 +1828,7 @@ def _run_posix_bootstrap(env: dict[str, str]) -> subprocess.CompletedProcess[str
     )
 
 
+@POSIX_RUNNER
 class TestPublicBootstrapPosix:
     def test_bootstrap_installs_then_boots(self, tmp_path: Path):
         """Task 6.5: install.sh against the fixture channel -> app serves."""
