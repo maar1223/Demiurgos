@@ -30,6 +30,13 @@ _WIKI = Path(__file__).resolve().parent.parent
 if str(_WIKI) not in sys.path:
     sys.path.insert(0, str(_WIKI))
 
+# The shared live-probe helper lives in this tests/ dir (not a package, no
+# __init__.py). Insert the dir explicitly so ``import hermes_probe_support`` is
+# stable regardless of pytest rootdir/import-mode (WU-2, REQ-LPH-5).
+_TESTS = Path(__file__).resolve().parent
+if str(_TESTS) not in sys.path:
+    sys.path.insert(0, str(_TESTS))
+
 _ENV_VAR = "DEMIURGOS_DATA_ROOT"
 _SUBDIRS = ("mundos", "ideas", "data", "config")
 

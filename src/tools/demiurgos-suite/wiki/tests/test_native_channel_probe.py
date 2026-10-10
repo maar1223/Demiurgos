@@ -38,9 +38,7 @@ import importlib.util
 import inspect
 import os
 import shutil
-import subprocess
 import sys
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -57,6 +55,8 @@ from hermes_gateway_hooks import (
     revision_marker_signature,
 )
 from hermes_profile_config import merge_skills_external_dirs, resolve_skills_dir
+
+import hermes_probe_support as probe_support
 
 _HERE = Path(__file__).resolve().parent
 _WIKI = _HERE.parent
@@ -78,26 +78,15 @@ _PERSONAL_HERMES_HOME = Path.home() / ".hermes"
 Q1_GATEWAY_RESTART_REQUIRED = False
 
 
-class _ProbeIsolationError(RuntimeError):
-    """The probe must never touch the personal ``~/.hermes`` profile (P0-8)."""
-
-
-class _ProbeUnavailable(RuntimeError):
-    """A live-probe precondition (dedicated profile / Hermes runtime) is missing."""
+# Re-point the local error types at the shared helper's (REQ-LPH-5): the helper
+# is the single authority for the P0-8 predicate and the root resolver.
+_ProbeIsolationError = probe_support.ProbeIsolationError
+_ProbeUnavailable = probe_support.ProbeUnavailable
 
 
 def _assert_not_personal_profile(root: Path) -> None:
-    """P0-8 hard guard: refuse any profile root under the personal ``~/.hermes``.
-
-    The probe only ever resolves its profile through an explicitly provided
-    test root; pointing it at the personal home is a fail-closed refusal, never
-    a fallback.
-    """
-    if root.resolve() == _PERSONAL_HERMES_HOME.resolve():
-        raise _ProbeIsolationError(
-            f"probe refused personal profile {_PERSONAL_HERMES_HOME}: "
-            "the WU-3.0 probe only runs against a dedicated TEST profile (P0-8)"
-        )
+    """P0-8 hard guard delegate: the shared helper owns the predicate."""
+    probe_support.assert_not_personal_profile(root)
 
 
 @dataclass(frozen=True)
@@ -431,78 +420,48 @@ def test_probe_gate_opens_only_when_probe_passed(monkeypatch: pytest.MonkeyPatch
 
 
 def _dedicated_test_root_from_env() -> Path:
-    """Resolve the dedicated TEST profile root from the environment, refusing
-    the personal profile. Raises ``_ProbeUnavailable`` when not provisioned."""
-    value = (
-        os.environ.get("DEMIURGOS_HERMES_HOME", "").strip()
-        or os.environ.get("HERMES_HOME", "").strip()
+    """Resolve the dedicated TEST profile root via the shared helper (REQ-LPH-5).
+
+    Raises ``ProbeUnavailable`` when not provisioned and ``ProbeIsolationError``
+    when the root resolves to the personal profile."""
+    return probe_support.resolve_dedicated_profile_root()
+
+
+def _boot_and_probe_gateway(
+    hermes_bin: str,
+    home: Path,
+    *,
+    timeout: float = probe_support.DEFAULT_TIMEOUT,
+) -> probe_support.ProbeResult:
+    """Delegate the real boot/read/teardown to the shared helper (REQ-LPH-5)."""
+    return probe_support.boot_and_probe_gateway(hermes_bin, home, timeout=timeout)
+
+
+def _assert_profile_condition_b_config_level(home: Path) -> None:
+    """Condition (b) at config level (REQ-NC-1): the provisioned profile carries
+    the ``skills`` toolset AND the owned skills external dir."""
+    data = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+    assert "skills" in data["platform_toolsets"]["api_server"], (
+        "condition (b): skills toolset missing from platform_toolsets.api_server"
     )
-    if not value:
-        raise _ProbeUnavailable(
-            "no dedicated test profile is provisioned (DEMIURGOS_HERMES_HOME "
-            "unset); provisioning is installer-owned and out of WU-3.0 scope"
-        )
-    root = Path(value).expanduser().resolve()
-    _assert_not_personal_profile(root)
-    return root
-
-
-def _boot_and_probe_gateway(hermes_bin: str, home: Path, *, timeout: float = 90.0) -> dict:
-    """Boot a real Hermes gateway against ``home`` and collect hook/toolset
-    evidence from its output and gateway_state. Never runs by default."""
-    env = {
-        **os.environ,
-        "HERMES_HOME": str(home),
-        "DEMIURGOS_HERMES_HOME": str(home),
-    }
-    proc = subprocess.Popen(
-        [hermes_bin, "gateway", "run"],
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
+    external = data.get("skills", {}).get("external_dirs", [])
+    assert str(resolve_skills_dir(REPO_ROOT)) in external, (
+        "condition (b): owned skills dir missing from skills.external_dirs"
     )
-    evidence: list[str] = []
-    started = False
-    deadline = time.monotonic() + timeout
-    try:
-        while time.monotonic() < deadline:
-            line = proc.stdout.readline() if proc.stdout else ""
-            if not line:
-                if proc.poll() is not None:
-                    break
-                time.sleep(0.5)
-                continue
-            evidence.append(line)
-            if "registering hook" in line.lower() or "pre_tool_call" in line.lower():
-                started = True
-    finally:
-        try:
-            proc.terminate()
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-    return {
-        "booted": started,
-        "returncode": proc.returncode,
-        "hook_evidence": [
-            line for line in evidence
-            if "pre_tool_call" in line.lower() or "pre_llm_call" in line.lower()
-        ],
-    }
 
 
-def test_live_gateway_probe():
+def test_live_gateway_probe(plugin):
     """(3.0.1/3.0.3 live) Boot the real Hermes gateway on a dedicated TEST
-    profile and assert the four conditions end-to-end. Explicitly opt-in
-    (``DEMIURGOS_PROBE_LIVE=1``) and requires a provisioned dedicated profile;
-    otherwise SKIPPED with the exact reason — this environment has no dedicated
-    test profile (the only running gateway is the personal profile, which the
-    probe must never touch, P0-8), so the deterministic in-process probe above
-    is the executed evidence. A failing run here FAILS loudly, never silently
-    passes."""
-    if os.environ.get("DEMIURGOS_PROBE_LIVE", "").strip() != "1":
+    profile and assert the four conditions end-to-end.
+
+    Enabled only with ``DEMIURGOS_PROBE_LIVE=1`` and a provisioned dedicated
+    profile; otherwise SKIPPED with the exact reason (the only running gateway
+    is the personal profile, which the probe must never touch, P0-8), so the
+    deterministic in-process probe above is the executed evidence. A failing run
+    here FAILS loudly, never silently passes. Condition (a) is asserted from the
+    gateway log; (c)/(d) are proven in-process via the registered hook callables;
+    (b) is asserted at config level (model-level (b) is deferred, not claimed)."""
+    if not probe_support.live_probe_enabled():
         pytest.skip(
             "live gateway probe disabled (DEMIURGOS_PROBE_LIVE=1 required); "
             "WU-3.0 deterministic in-process probe executed instead"
@@ -517,13 +476,45 @@ def test_live_gateway_probe():
     except _ProbeIsolationError as exc:
         pytest.fail(str(exc))  # isolation is a hard fail, never a skip
 
-    evidence = _boot_and_probe_gateway(hermes_bin, home)
-    assert evidence["booted"], (
+    try:
+        result = _boot_and_probe_gateway(hermes_bin, home)
+    except probe_support.ProbeLogDriftError as exc:
+        pytest.skip(str(exc))  # log-path drift is an honest skip, never a pass
+
+    # (a) live: both hooks registered, observed from the gateway log.
+    assert result.booted, (
         "gateway did not come up with hook evidence; "
-        f"returncode={evidence['returncode']}"
+        f"returncode={result.returncode}"
     )
-    assert evidence["hook_evidence"], (
-        "no pre_tool_call/pre_llm_call registration evidence in gateway output"
+    joined = "\n".join(result.hook_evidence).lower()
+    assert "pre_tool_call" in joined and "pre_llm_call" in joined, (
+        "both pre_tool_call and pre_llm_call registration must appear in the "
+        f"gateway log; saw {result.hook_evidence!r}"
     )
-    state = home / "gateway_state.json"
-    assert state.is_file(), "gateway_state.json missing after boot"
+
+    # (c)/(d) live, in-process: the registered hook callables fire fail-closed.
+    _inspect_live_guard_chain(plugin)
+
+    # (b) config level against the provisioned profile.
+    _assert_profile_condition_b_config_level(home)
+
+
+# -- runtime-anchor guard: agent.log path (R6) -------------------------------
+
+
+def test_gateway_runtime_anchor_names_agent_log():
+    """R6 guard: text-scan the installed runtime for the ``agent.log`` filename
+    the helper depends on, mirroring the ``test_q1_...`` skip-on-absence pattern.
+    Skips honestly when the pinned runtime is absent (the helper's
+    ``ProbeLogDriftError`` skip is the runtime fallback)."""
+    agent = _hermes_agent_dir()
+    if agent is None:
+        pytest.skip("installed hermes-agent runtime not found; log-path anchor unchecked")
+    logging_py = agent / "hermes_logging.py"
+    if not logging_py.is_file():
+        pytest.skip(f"runtime anchor {logging_py} absent; log-path anchor unchecked")
+    source = logging_py.read_text(encoding="utf-8")
+    assert "agent.log" in source, (
+        "installed runtime no longer names agent.log in hermes_logging.py; the "
+        "helper's <HERMES_HOME>/logs/agent.log assumption has drifted"
+    )
