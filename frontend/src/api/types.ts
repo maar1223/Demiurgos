@@ -356,8 +356,9 @@ export interface TokenStatus {
   has_token: boolean;
 }
 
-/** Telegram card status (ONB-3.3) from GET /api/telegram/status. The token
- *  value is never present — only its write-only presence boolean. */
+/** Telegram card status (ONB-3.3) derived by the readiness projector from the
+ *  stored token plus probe evidence. The token value is never present — only
+ *  its write-only presence boolean. */
 export interface TelegramStatus {
   state: CardState;
   has_token: boolean;
@@ -365,7 +366,7 @@ export interface TelegramStatus {
   error_code: string;
 }
 
-/** Result of POST /api/telegram/test-connection — same shape plus a friendly
+/** Result of POST /api/idea-capture/test-connection — same shape plus a friendly
  *  server message; never carries the token value. */
 export interface TelegramTestResult extends TelegramStatus {
   message?: string;
